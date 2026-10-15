@@ -252,6 +252,7 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn collect_slow(&mut self, _program: &ResidualProgram, full: bool) {
         let full = self.heap.collection_is_full(full);
+        self.private_homes.clear();
         #[cfg(feature = "profile-aggregate")]
         for (index, frame) in self.frames.iter().enumerate() {
             self.profile.gc_frame(

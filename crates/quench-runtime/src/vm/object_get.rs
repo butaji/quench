@@ -593,15 +593,36 @@ impl<H: Host> Vm<H> {
         self.private_brand_home(p, target, atom).is_some()
     }
 
+    /// The home object of `target`'s private name `atom` as seen from the running frame,
+    /// if `target` carries it.
     pub(super) fn private_brand_home(
         &mut self,
         p: &ResidualProgram,
         target: Value,
         atom: Atom,
     ) -> Option<Value> {
-        let Some(frame_index) = self.frames.len().checked_sub(1) else {
-            return None;
+        let home = self.private_name_home(p, atom)?;
+        self.object_data(target)
+            .is_some_and(|object| object.has_private_name(PrivateBrand { home, name: atom }))
+            .then_some(home)
+    }
+
+    /// The home object that declares private name `atom` for the running frame: the nearest
+    /// eval-introduced private binding, otherwise the first visible class home declaring the
+    /// name. It depends on the frame's function and environment chain, never on the target,
+    /// so a found home is memoized until the next collection.
+    fn private_name_home(&mut self, p: &ResidualProgram, atom: Atom) -> Option<Value> {
+        let frame_index = self.frames.len().checked_sub(1)?;
+        let start = self.captured_parent_environment(frame_index);
+        let key = PrivateHomeKey {
+            environment: start,
+            program: self.frames[frame_index].program,
+            function: self.frames[frame_index].function,
+            name: atom,
         };
+        if let Some(home) = self.private_homes.get(&key) {
+            return Some(*home);
+        }
         let private_home_binding = self.private_home_binding_atom(atom);
         let mut function = Some(self.frames[frame_index].function);
         let mut home_atoms = Vec::new();
@@ -615,7 +636,7 @@ impl<H: Host> Vm<H> {
             }
             function = metadata.parent;
         }
-        let mut environment = self.captured_parent_environment(frame_index);
+        let mut environment = start;
         let mut homes = Vec::with_capacity(home_atoms.len());
         while let Some(Cell::Environment {
             parent,
@@ -631,15 +652,7 @@ impl<H: Host> Vm<H> {
                 .rev()
                 .find(|(binding, _)| *binding == private_home_binding)
             {
-                return self
-                    .object_data(target)
-                    .is_some_and(|object| {
-                        object.has_private_name(PrivateBrand {
-                            home: *home,
-                            name: atom,
-                        })
-                    })
-                    .then_some(*home);
+                return Some(*home);
             }
             if *function != u32::MAX {
                 let owner = program.and_then(|program| {
@@ -668,19 +681,18 @@ impl<H: Host> Vm<H> {
             }
             environment = *parent;
         }
-        for (_, home) in homes.iter().copied() {
-            let declares_name = self
-                .object_data(home)
-                .is_some_and(|object| object.has_private_name(PrivateBrand { home, name: atom }));
-            if !declares_name {
-                continue;
-            }
-            let branded = self
-                .object_data(target)
-                .is_some_and(|object| object.has_private_name(PrivateBrand { home, name: atom }));
-            return branded.then_some(home);
-        }
-        None
+        let home = homes.into_iter().map(|(_, home)| home).find(|home| {
+            self.object_data(*home).is_some_and(|object| {
+                object.has_private_name(PrivateBrand {
+                    home: *home,
+                    name: atom,
+                })
+            })
+        })?;
+        // Eval-introduced private bindings live only in environments made for that eval, so
+        // a cached chain never gains a nearer one.
+        self.private_homes.insert(key, home);
+        Some(home)
     }
 
     pub(super) fn get_private_proxy_field(
