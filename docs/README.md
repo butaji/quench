@@ -593,6 +593,38 @@ container: dynamic -no-jit 5.2 MB / -jit 7.6 MB, static 3.5 MB / 6.3 MB.
 A static position-independent build relocates its read-only pointers at
 startup and measured 9.1 MB.
 
+The static `quench-node` keeps its link relocations (`--emit-relocs`, never
+loaded), and qualification rewrites its block layout with `llvm-bolt` (BOLT
+20, Ubuntu `bolt-20`). A symbol order moves whole functions, but a run
+executes about a third of the bytes of the functions it enters, and fault-around
+keeps every 64 KB window it touches resident. `bolt-profile` (`quench-wasm-test`)
+turns the order's callgrind profiles (taken with `--dump-instr=yes
+--dump-line=no`) into a basic-sample profile, so BOLT moves each function's
+executed blocks into hot text, in the trained function order, and the rest into
+cold text. The interpreter's dispatch (`run_frame_general_until`, the lane
+handlers) stays whole (`--dense`): a program reaches whichever blocks its code
+needs. BOLT leaves code not generated from Rust in place (glibc's
+single-thread atomics jump over a `lock` prefix, which BOLT splits), and
+`symbol-order --foreign-first` packs that code at the start of the original
+text. `bolt-profile` reads the symbols of the binary the profiles ran on and
+writes counts per function offset, so the order's training profiles apply to
+the relinked binary: convert them before relinking.
+
+```sh
+target/production/bolt-profile $PROFILED_BINARY bolt --order $ORDER \
+  --dense 13dispatch_fast --dense run_frame_general_until run/*.out*
+# relink with $ORDER, then:
+llvm-bolt $BINARY -o $BINARY-bolt -data=bolt/profile.fdata \
+  -reorder-blocks=ext-tsp -split-functions -split-all-cold \
+  -reorder-functions=user -function-order=bolt/function.order \
+  -skip-funcs-file=bolt/skip.funcs -use-gnu-stack
+```
+
+Compare binaries only with equal page-cache state: a freshly written file is
+cached in large folios, whose pages fault-around maps together (a just-written
+BOLT output measured 8 MB above the same file once evicted with
+`posix_fadvise(POSIX_FADV_DONTNEED)`).
+
 Measure peak RSS with a launcher whose own image is small (`vfork`, `exec`,
 `wait4`): a forked interpreter's pre-`exec` image counts toward the child's
 `ru_maxrss`.
