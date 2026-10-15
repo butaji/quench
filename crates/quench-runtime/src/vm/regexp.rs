@@ -2211,7 +2211,7 @@ impl<H: Host> Vm<H> {
         else {
             return Ok(());
         };
-        if self.shapes[shape as usize].storage_len != REGEXP_RESULT_PROPERTY_COUNT {
+        if self.shapes[shape as usize].storage_len() != REGEXP_RESULT_PROPERTY_COUNT {
             return Ok(());
         }
         let proto = self
