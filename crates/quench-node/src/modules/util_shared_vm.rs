@@ -760,34 +760,42 @@ pub(crate) fn argument_type_description(
     Ok(received)
 }
 
-/// Numeric ERR_OUT_OF_RANGE input rendering, shared by native validators.
+/// ERR_OUT_OF_RANGE rendering shares Node inspection and integer separators.
 pub(crate) fn range_error_received(
     context: &mut NativeContext<'_, NodeHost>,
     value: RootId,
 ) -> Result<String, RootedError> {
-    let text = context.to_string(value)?;
-    let Some(number) = context
-        .rooted_value(value)
-        .and_then(|value| value.as_number())
-    else {
-        return Ok(text);
-    };
-    if number == 0.0 && number.is_sign_negative() {
-        return Ok("-0".to_owned());
+    if let Some(number) = context.rooted_value(value).and_then(|value| value.as_number()) {
+        let text = context.to_string(value)?;
+        if number == 0.0 && number.is_sign_negative() { return Ok("-0".to_owned()); }
+        return Ok(if number.fract() == 0.0 && number.abs() > f64::from(u32::MAX) + 1.0 {
+            integer_separators(&text)
+        } else { text });
     }
-    if number.fract() == 0.0 && number.abs() > f64::from(u32::MAX) + 1.0 {
-        let start = usize::from(text.starts_with('-'));
-        let mut result = String::with_capacity(text.len() + text.len() / 3);
-        for (index, character) in text.char_indices() {
-            if index > start && (text.len() - index) % 3 == 0 {
-                result.push('_');
+    let inspect = internal_inspect(context)?;
+    let undefined = context.undefined();
+    let inspected = context.call_rooted(inspect, undefined, &[value])?;
+    let text = context.to_string(inspected)?;
+    if !context.is_object_rooted(value)? {
+        if let Some(integer) = text.strip_suffix('n') {
+            let magnitude = integer.strip_prefix('-').unwrap_or(integer);
+            let boundary = (u32::MAX as u64 + 1).to_string();
+            if magnitude.len() > boundary.len() || (magnitude.len() == boundary.len() && magnitude > boundary.as_str()) {
+                return Ok(format!("{}n", integer_separators(integer)));
             }
-            result.push(character);
         }
-        Ok(result)
-    } else {
-        Ok(text)
     }
+    Ok(text)
+}
+
+fn integer_separators(text: &str) -> String {
+    let start = usize::from(text.starts_with('-'));
+    let mut result = String::with_capacity(text.len() + text.len() / 3);
+    for (index, character) in text.char_indices() {
+        if index > start && (text.len() - index) % 3 == 0 { result.push('_'); }
+        result.push(character);
+    }
+    result
 }
 
 /// Inspect's depth boundary derives the constructor from prototype descriptors,
