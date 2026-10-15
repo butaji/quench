@@ -1,0 +1,9 @@
+   Compiling quench-runtime v0.1.0 (/workspace/scratch/quench-npm-file-url/crates/quench-runtime)
+    Finished `test` profile [unoptimized] target(s) in 1m 59s
+     Running unittests src/lib.rs (/workspace/quench/target/npm-file-url/debug/deps/quench_runtime-a37f4bae6097d42f)
+
+running 1 test
+test vm::tests::collection_construction_survives_gc_in_iterator_and_entry_callbacks ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 625 filtered out; finished in 0.15s
+

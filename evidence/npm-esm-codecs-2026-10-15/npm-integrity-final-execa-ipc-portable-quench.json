@@ -1,0 +1,1 @@
+{"complete":true,"first":{"first":{"value":"hello"}},"second":{"second":["world",42],"cancelAborted":null},"exitCode":0,"ipcOutput":[{"first":{"value":"hello"}},{"second":["world",42],"cancelAborted":null}]}

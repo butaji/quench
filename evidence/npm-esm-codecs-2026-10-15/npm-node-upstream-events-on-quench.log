@@ -1,0 +1,10 @@
+/workspace/scratch/node26-12-oracle/lib/internal/event_target.js:808
+      throw new ERR_INVALID_ARG_TYPE('event', 'Event', event);
+      ^
+
+TypeError: The "event" argument must be an instance of Event. Received an instance of Event
+    at /workspace/scratch/node26-12-oracle/lib/internal/errors.js:474:11
+    at dispatchEvent (/workspace/scratch/node26-12-oracle/lib/internal/event_target.js:808:13)
+    at /workspace/scratch/node26-12-oracle/test/parallel/test-events-on-async-iterator.js:252:22
+
+Node.js v22.0.0
