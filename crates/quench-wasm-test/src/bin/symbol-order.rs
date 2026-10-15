@@ -15,6 +15,13 @@
 //! executes once start-up is over. Those functions come first, the first run
 //! profile's in its order and the rest by how many run profiles executed them,
 //! so the code every run touches is dense and start-up code stays apart.
+//! Each further `--run` group is a later tier, ranked on its own after the
+//! first and the dense family. `--dense PATTERN` places every function whose symbol contains PATTERN
+//! (the interpreter's per-instruction lane handlers, `13dispatch_fast`): a run
+//! reaches whichever handlers its code needs, so the whole family stays packed.
+//! `--foreign-first` moves the code not generated from Rust ahead, keeping its order: in a
+//! link that `llvm-bolt` rewrites, BOLT moves the Rust functions into its own hot text and
+//! leaves that code in place (`bolt-profile`), packed instead of scattered through the gaps.
 
 use std::{collections::HashSet, env, fs, process::Command, process::ExitCode};
 
@@ -37,6 +44,9 @@ const PROCESS_RUNTIME: &[&str] = &[
     "__do_global_dtors_aux",
     "frame_dummy",
 ];
+
+/// The mangling prefix of Rust symbols (v0).
+const RUST_SYMBOL_PREFIX: &str = "_R";
 
 /// `nm` symbol kinds that name code.
 const CODE_KINDS: &[&str] = &["t", "T", "w", "W"];
@@ -94,16 +104,11 @@ fn executed(profile: &str) -> Result<Vec<String>, String> {
     Ok(functions)
 }
 
-/// The run profiles' functions: the first profile's in its order, then the
-/// others' by how many profiles executed them, ties in first-appearance order.
-fn run_phase(profiles: &[String]) -> Result<Vec<String>, String> {
-    let Some((first, rest)) = profiles.split_first() else {
-        return Ok(Vec::new());
-    };
-    let mut order = executed(first)?;
+/// Functions by how many of `profiles` executed them, ties in first-appearance order.
+fn ranked(profiles: &[String]) -> Result<Vec<String>, String> {
     let mut counts: std::collections::HashMap<String, (usize, usize)> =
         std::collections::HashMap::new();
-    for profile in rest {
+    for profile in profiles {
         for name in executed(profile)? {
             let next = counts.len();
             counts
@@ -114,11 +119,43 @@ fn run_phase(profiles: &[String]) -> Result<Vec<String>, String> {
     }
     let mut ranked: Vec<_> = counts.into_iter().collect();
     ranked.sort_by_key(|(_, (count, first_seen))| (std::cmp::Reverse(*count), *first_seen));
-    order.extend(ranked.into_iter().map(|(name, _)| name));
+    Ok(ranked.into_iter().map(|(name, _)| name).collect())
+}
+
+/// The first run tier's functions: its first profile's in order, then the others' ranked.
+fn run_phase(profiles: &[String]) -> Result<Vec<String>, String> {
+    let Some((first, rest)) = profiles.split_first() else {
+        return Ok(Vec::new());
+    };
+    let mut order = executed(first)?;
+    order.extend(ranked(rest)?);
     Ok(order)
 }
 
-fn run(binary: &str, out: &str, profiles: &[String], run: &[String]) -> Result<(), String> {
+/// Appends the binary's copies of `names` not yet ordered.
+fn place<'a>(
+    names: impl IntoIterator<Item = String>,
+    known: &std::collections::HashMap<&'a str, Vec<&'a str>>,
+    seen: &mut HashSet<&'a str>,
+    order: &mut Vec<&'a str>,
+) {
+    for name in names {
+        for name in known.get(stable_name(&name)).into_iter().flatten() {
+            if seen.insert(*name) {
+                order.push(name);
+            }
+        }
+    }
+}
+
+fn run(
+    binary: &str,
+    out: &str,
+    profiles: &[String],
+    run: &[Vec<String>],
+    dense: &[String],
+    foreign_first: bool,
+) -> Result<(), String> {
     let symbols = code_symbols(binary)?;
     // Profiles may come from an earlier link of the same build: match names
     // without LTO module hashes, and write the binary's current names. A
@@ -130,12 +167,19 @@ fn run(binary: &str, out: &str, profiles: &[String], run: &[String]) -> Result<(
     }
     let mut seen = HashSet::new();
     let mut order: Vec<&str> = Vec::new();
-    for name in run_phase(run)? {
-        for name in known.get(stable_name(&name)).into_iter().flatten() {
-            if seen.insert(*name) {
-                order.push(name);
-            }
-        }
+    let (first_tier, later_tiers) = run
+        .split_first()
+        .map_or((&[][..], &[][..]), |(first, later)| {
+            (first.as_slice(), later)
+        });
+    place(run_phase(first_tier)?, &known, &mut seen, &mut order);
+    let dense_names = symbols
+        .iter()
+        .filter(|name| dense.iter().any(|pattern| name.contains(pattern.as_str())))
+        .cloned();
+    place(dense_names, &known, &mut seen, &mut order);
+    for tier in later_tiers {
+        place(ranked(tier)?, &known, &mut seen, &mut order);
     }
     let runtime = PROCESS_RUNTIME.iter().map(|name| (*name).to_owned());
     for profile in profiles {
@@ -147,6 +191,9 @@ fn run(binary: &str, out: &str, profiles: &[String], run: &[String]) -> Result<(
             }
         }
     }
+    if foreign_first {
+        order.sort_by_key(|name| name.starts_with(RUST_SYMBOL_PREFIX));
+    }
     let mut text = order.join("\n");
     text.push('\n');
     fs::write(out, text).map_err(|error| format!("{out}: {error}"))?;
@@ -157,14 +204,28 @@ fn run(binary: &str, out: &str, profiles: &[String], run: &[String]) -> Result<(
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
     let [binary, out, profiles @ ..] = args.as_slice() else {
-        eprintln!("usage: symbol-order <binary> <out.order> <cachegrind.out>... [--run <callgrind.out>...]");
+        eprintln!("usage: symbol-order <binary> <out.order> [--foreign-first] [--dense PATTERN]... <cachegrind.out>... [--run <callgrind.out>...]...");
         return ExitCode::from(2);
     };
-    let (profiles, run_profiles) = match profiles.iter().position(|arg| arg == "--run") {
-        Some(index) => (&profiles[..index], &profiles[index + 1..]),
-        None => (profiles, &[][..]),
-    };
-    match run(binary, out, profiles, run_profiles) {
+    let mut dense = Vec::new();
+    let mut foreign_first = false;
+    let mut rest = Vec::new();
+    let mut arguments = profiles.iter();
+    while let Some(argument) = arguments.next() {
+        match (argument.as_str(), arguments.clone().next()) {
+            ("--foreign-first", _) => foreign_first = true,
+            ("--dense", Some(pattern)) => {
+                dense.push(pattern.clone());
+                arguments.next();
+            }
+            _ => rest.push(argument.clone()),
+        }
+    }
+    // Each `--run` starts a run tier; profiles before the first are start-up profiles.
+    let mut groups = rest.split(|arg| arg == "--run");
+    let profiles = groups.next().unwrap_or_default().to_vec();
+    let run_profiles: Vec<Vec<String>> = groups.map(<[String]>::to_vec).collect();
+    match run(binary, out, &profiles, &run_profiles, &dense, foreign_first) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("error: {error}");

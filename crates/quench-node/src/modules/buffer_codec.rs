@@ -28,6 +28,7 @@ pub(crate) fn encode_str(input: &str, encoding: &str) -> Vec<u8> {
 pub(crate) fn encode_units(input: &[u16], encoding: &str) -> Vec<u8> {
     match encoding {
         "latin1" | "ascii" | "utf16le" => encode_fixed_width_units(input.iter().copied(), encoding),
+        "base64" | "base64url" => base64_decode(&input.iter().map(|unit| *unit as u8).collect::<Vec<_>>()),
         _ => encode_str(&String::from_utf16_lossy(input), encoding),
     }
 }
@@ -60,6 +61,10 @@ pub(crate) fn decode_units(bytes: &[u8], encoding: &str) -> Vec<u16> {
 }
 
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+pub(crate) fn is_standard_base64_digit(byte: u8) -> bool {
+    B64.contains(&byte)
+}
 
 /// Base64 encode with Node's standard and URL-safe output variants.
 pub(crate) fn base64_encode(bytes: &[u8], padding: bool, url: bool) -> String {

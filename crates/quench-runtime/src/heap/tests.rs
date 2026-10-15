@@ -301,7 +301,7 @@ fn array_buffer_backing_is_accounted_until_owner_collection() {
     let mut heap = Heap::new();
     let buffer = heap.alloc(Cell::ArrayBuffer {
         object: Box::new(plain_object()),
-        bytes: Rc::new(vec![0; 16]),
+        bytes: vec![0; 16].into(),
         shared: false,
         detached: false,
         max_byte_length: 16,

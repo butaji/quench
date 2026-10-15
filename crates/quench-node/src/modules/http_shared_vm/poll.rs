@@ -306,7 +306,8 @@ pub(crate) fn poll(
                             let incoming_factory = host.http.incoming_factory.ok_or_else(|| {
                                 "HTTP incoming-message factory is unavailable".to_owned()
                             })?;
-                            let close_after_response = message.headers.iter().any(|(name, value)| {
+                            let http10 = message.version == "1.0";
+                            let close_after_response = http10 || message.headers.iter().any(|(name, value)| {
                                 name.eq_ignore_ascii_case("connection")
                                     && value.eq_ignore_ascii_case("close")
                             });
@@ -327,6 +328,8 @@ pub(crate) fn poll(
                                     },
                                     body: Default::default(),
                                     send_date: true,
+                                    http10,
+                                    use_chunked_encoding_by_default: !http10 || message.headers.iter().any(|(name, value)| name.eq_ignore_ascii_case("te") && value.split(',').any(|token| token.trim().eq_ignore_ascii_case("chunked"))),
                                     lifecycle: super::state::ResponseLifecycle::Open,
                                 },
                             );
