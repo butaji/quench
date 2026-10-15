@@ -93,11 +93,6 @@ pub(super) struct LaneView {
     /// How a lane call activates the function without a frame; `None`
     /// when its activation needs a frame (locals outside registers).
     activation: Option<ActivationShape>,
-    /// The general loop enters the lane in this function: a Wasm function, or a JavaScript
-    /// one with a loop the lane runs whole (`closes_loop`). Elsewhere JavaScript leaves the
-    /// lane at its calls and property operations, and the hand-offs cost more than the lane
-    /// saves (Richards +22%, DeltaBlue +15% instructions when every function used it).
-    enters: bool,
 }
 
 /// Registers a lane call writes as one fixed block when the window fits it:
@@ -3146,8 +3141,7 @@ impl<H: Host> Vm<H> {
         Some(target)
     }
 
-    /// The lane view of `function`, derived on first use, whether or not the general loop
-    /// enters it.
+    /// The lane view of `function`, derived on first use.
     fn lane_view_any(&self, program: ProgramId, function: u32) -> Option<*const LaneView> {
         self.programs.lane_view(program, function, derive_lane_view::<H>)
     }
@@ -4906,7 +4900,6 @@ fn derive_lane_view<H: Host>(
             params: function.params,
             initial: function.initial_register.value(),
         });
-    let enters = kind == crate::bytecode::ProgramKind::Wasm || closes_loop(function, &exits);
     LaneView {
         records: records
             .into_iter()
@@ -4915,7 +4908,6 @@ fn derive_lane_view<H: Host>(
         entries,
         memory_register,
         activation,
-        enters,
     }
 }
 
@@ -5078,18 +5070,6 @@ fn operator_handler<H: Host, const CONSTANT: bool>(operator: u32) -> Option<Hand
     )
 }
 
-/// Whether some loop of `function`, from a backward jump's target through the jump, has no
-/// instruction the lane exits at.
-fn closes_loop(function: &Function, exits: &[bool]) -> bool {
-    function.code.iter().enumerate().any(|(pc, packed)| {
-        let instruction = decoded_instruction(function, *packed);
-        let target = instruction.imm() as usize;
-        instruction.op().immediate_role() == ImmediateRole::JumpTarget
-            && target <= pc
-            && !exits[target..=pc].contains(&true)
-    })
-}
-
 /// The register field of `instruction` that reads `register`, as an
 /// accumulator position; `ACC_NONE` when no register field reads it, or more
 /// than one does. A register pair's first register is the last resort.
@@ -5138,10 +5118,7 @@ pub(super) fn decoded_instruction(
 impl<H: Host> Vm<H> {
     /// The lane view of `function`, or null when its program has none.
     pub(super) fn lane_view(&self, program: ProgramId, function: u32) -> *const LaneView {
-        self.programs
-            .lane_view(program, function, derive_lane_view::<H>)
-            // SAFETY: the program store keeps a derived view alive with its program.
-            .filter(|view| unsafe { (**view).enters })
+        self.lane_view_any(program, function)
             .unwrap_or(std::ptr::null())
     }
 
