@@ -858,6 +858,39 @@ fn inner_lexical_bindings_shadow_outer_immutable_captures() {
 }
 
 #[test]
+fn local_bindings_shadow_captured_function_names_and_constants() {
+    // A parameter, var or let inside a nested function shadows the enclosing function
+    // expression's name, and a var in a finally block is a function-scoped local.
+    let source = "'use strict';\n\
+         const n = 0;\n\
+         const named = function e() {\n\
+           function param(e) { e = 2; return e; }\n\
+           function local() { var e; e = 3; return e; }\n\
+           function block() { let e; e = 4; return e; }\n\
+           return [param(1), local(), block()].join();\n\
+         };\n\
+         function finallyVar() { try { return 5; } finally { if (true) { var n = 6; } } }\n\
+         var result = named() + ',' + finallyVar();\n\
+         var message = (() => { try { n = 1; } catch (error) { return error.message; } })();";
+    assert_eq!(global_text(source, "result"), "2,3,4,5");
+    assert_eq!(global_text(source, "message"), "Assignment to constant variable.");
+}
+
+#[test]
+fn array_results_survive_collections_in_proxy_traps() {
+    // splice, slice and concat build their result while proxy traps run guest code
+    // that allocates enough to collect.
+    let source = "var churn = () => { let keep; for (let i = 0; i < 20000; i++) keep = { i, s: 'x' + i }; return keep; };\n\
+         var target = []; for (let i = 0; i < 64; i++) target.push({ v: i });\n\
+         var proxy = new Proxy(target, { get(t, k, r) { churn(); return Reflect.get(t, k, r); } });\n\
+         var spliced = Array.prototype.splice.call(proxy, 0, 32);\n\
+         var sliced = Array.prototype.slice.call(proxy, 0, 16);\n\
+         var joined = Array.prototype.concat.call([], proxy, proxy).length;\n\
+         var result = [spliced.length, spliced[31].v, sliced[15].v, joined, target.length].join();";
+    assert_eq!(global_text(source, "result"), "32,31,47,64,32");
+}
+
+#[test]
 fn promise_record_edges_follow_promise_and_resolver_lifetime() {
     let mut vm = Vm::new(SilentHost);
     let promise = vm.promise_object();

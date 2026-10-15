@@ -6911,3 +6911,116 @@ const ab=new ArrayBuffer(2);structuredClone(ab,{transfer:[ab]});out.push(u.inspe
 console.log(JSON.stringify(out));
 "#);
 }
+
+#[test]
+fn http_response_preserves_http10_close_framing_raw_send_and_date_setting() {
+    compare_node_stream_source(r#"
+'use strict';
+const http=require('http'),net=require('net');
+let index=0,dateReads=0;
+const cases=[['1.0',false,false],['1.0',true,false],['1.0',false,true],['1.1',false,true],['1.0',false,false,false]];
+function next(){
+ if(index===cases.length)return;
+ const [version,split,length,head=true]=cases[index++];dateReads=0;
+ const server=http.createServer((req,res)=>{
+  const f=res._send;console.log(JSON.stringify(['method',f.name,f.length,Object.hasOwn(f,'prototype'),Object.hasOwn(res,'_send')]));
+  Object.defineProperty(res,'sendDate',{get(){dateReads++;return false},configurable:true});
+  const headers={'Content-Type':'text/plain'};
+  if(length)headers['Content-Length']='6';
+  if(head)res.writeHead(200,headers);else for(const key of Object.keys(headers))res.setHeader(key,headers[key]);
+  if(split){res.write('hel');res._send('');res.write('lo\n');res._send('');res.end()}
+  else res.end('hello\n');
+ });
+ server.listen(0,()=>{
+  const client=net.createConnection(server.address().port);let data='';
+  client.setEncoding('utf8');client.on('connect',()=>client.write(`GET / HTTP/${version}\r\nHost: localhost\r\n${version==='1.1'?'Connection: close\r\n':''}\r\n`));
+  client.on('data',chunk=>data+=chunk);
+  client.on('end',()=>{require('assert').strictEqual(dateReads,1);console.log(JSON.stringify([version,split,length,data]));client.end();server.close(next)});
+ });
+}
+next();
+"#);
+}
+
+#[test]
+fn http_header_validators_preserve_metadata_coercions_errors_and_byte_rules() {
+compare_node_stream_source(r#"
+'use strict';
+const http=require('http'),out=[],hooks=[];
+function shape(fn){
+ if(typeof fn!=='function')return typeof fn;
+ let constructible;try{Reflect.construct(Object,[],fn);constructible=true}catch{constructible=false}
+ const properties=Object.getOwnPropertyDescriptors(fn);
+ return [fn.name,fn.length,Object.hasOwn(fn,'prototype'),constructible,Object.keys(fn),Object.fromEntries(['name','length','withoutStackTrace'].filter(k=>properties[k]).map(k=>[k,[properties[k].writable,properties[k].enumerable,properties[k].configurable]]))];
+}
+function invoke(tag,fn,args){
+ hooks.length=0;
+ try{const result=Reflect.apply(fn,undefined,args);out.push([tag,'return',typeof result,result===undefined,hooks.slice()])}
+ catch(e){out.push([tag,'throw',e.name,e.code,e.message,hooks.slice()])}
+}
+for(const name of ['validateHeaderName','validateHeaderValue']){
+ const fn=http[name];out.push([name,shape(fn),shape(fn.withoutStackTrace),fn===fn.withoutStackTrace]);
+}
+const names=[undefined,null,false,0,1,1n,Symbol('name'),'', 'valid-Name','x space','x\tname','x\x7fname','é','😀','\ud800',new String('boxed'),[],{}, {toString(){hooks.push('name-string');return 'bad name'}},{[Symbol.toPrimitive](hint){hooks.push(['name-hint',hint]);return 'bad name'}}];
+const labels=[undefined,null,false,0,'','Custom label',Symbol('label'),{toString(){hooks.push('label-string');return 'Object label'}}];
+for(let n=0;n<names.length;n++)for(let l=0;l<labels.length;l++)invoke(['name',n,l],http.validateHeaderName,[names[n],labels[l]]);
+for(const [tag,value] of [['string-throw',{toString(){hooks.push('throw');throw new RangeError('hook failed')}}],['primitive-throw',{[Symbol.toPrimitive](hint){hooks.push(hint);throw new RangeError('primitive failed')}}]]){
+ invoke(['name-hook',tag],http.validateHeaderName,[value]);
+ invoke(['value-hook',tag],http.validateHeaderValue,['x',value]);
+}
+const values=[undefined,null,false,0,-0,1n,Symbol('value'),'', 'valid','\t','\r','\n','\0','\x7f','é','\u0100','😀','\ud800',new String('boxed'),[],{}, {toString(){hooks.push('value-string');return 'ok'}},{[Symbol.toPrimitive](hint){hooks.push(['value-hint',hint]);return 'ok'}}];
+for(let v=0;v<values.length;v++)for(const lenient of [undefined,false,true,0,1,'',{},null])invoke(['value',v,typeof lenient,String(lenient)],http.validateHeaderValue,['x',values[v],lenient]);
+for(let code=0;code<=255;code++)for(const lenient of [false,true])invoke(['byte',code,lenient],http.validateHeaderValue,['x',String.fromCharCode(code),lenient]);
+for(let n=0;n<names.length;n++)for(const value of [undefined,'\r','ok'])invoke(['error-name',n,value],http.validateHeaderValue,[names[n],value]);
+for(const name of ['validateHeaderName','validateHeaderValue'])for(const args of [[],['valid','ok'],['bad name','\r']])invoke(['unwrapped',name,args],http[name].withoutStackTrace,args);
+console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn cli_eval_builtin_globals_preserve_lazy_descriptors_cache_and_assignment() {
+compare_node_stream_source(r#"
+'use strict';
+const out=[];
+function descriptor(name){const d=Object.getOwnPropertyDescriptor(globalThis,name);return !d?null:[d.enumerable,d.configurable,typeof d.get,typeof d.set,d.get&&[d.get.name,d.get.length,Object.hasOwn(d.get,'prototype')],d.set&&[d.set.name,d.set.length,Object.hasOwn(d.set,'prototype')]]}
+for(const name of ['vm','fs','path','util','buffer','fs/promises','_http_agent'])out.push(['initial',name,descriptor(name)]);
+const before=Object.getOwnPropertyDescriptor(globalThis,'vm');
+try{const value=vm;const after=Object.getOwnPropertyDescriptor(globalThis,'vm');out.push(['load',value===require('vm'),descriptor('vm'),before.get===after.get,before.set===after.set])}catch(e){out.push(['load-error',e.name,e.message])}
+try{vm=123;out.push(['assign',vm,Object.getOwnPropertyDescriptor(globalThis,'vm')])}catch(e){out.push(['assign-error',e.name,e.message])}
+console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn cli_eval_builtin_globals_use_original_module_identity_and_mutable_require_hook() {
+compare_node_stream_source(r#"
+'use strict';
+const M=require('module'),original=M.prototype.require,out=[];
+M.prototype.require=function(name){out.push(['require-hook',name,this.id,this.filename,this.loaded]);if(name==='vm')return {fromHook:1};return original.call(this,name)};
+try{const first=vm;M.prototype.require=function(){throw new Error('second require must not run')};out.push(['cached',first===vm,first.fromHook])}catch(e){out.push(['error',e.name,e.message])}
+M.prototype.require=original;
+console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn cli_eval_builtin_accessors_preserve_blocked_cache_inherited_setters_and_errors() {
+compare_node_stream_source(r#"
+'use strict';
+const M=require('module'),original=M.prototype.require,out=[];
+let calls=0;
+M.prototype.require=function(name){if(name==='fs'){calls++;return {calls}}return original.call(this,name)};
+Object.defineProperty(globalThis,'fs',{configurable:false});
+const a=fs,b=fs;out.push(['blocked-cache',a.calls,b.calls,a===b]);
+try{fs=1}catch(e){out.push(['blocked-set',e.name,e.message])}
+M.prototype.require=original;
+let seen=[];
+Object.defineProperty(Object.getPrototypeOf(globalThis),'path',{set(v){seen.push([this===globalThis,v])},configurable:true});
+path=4;out.push(['inherited-setter',seen,Object.hasOwn(globalThis,'path')]);
+delete Object.getPrototypeOf(globalThis).path;
+const marker={};M.prototype.require=function(){throw marker};
+try{void vm}catch(e){out.push(['original-error',e===marker])}
+M.prototype.require=original;
+console.log(JSON.stringify(out));
+"#);
+}

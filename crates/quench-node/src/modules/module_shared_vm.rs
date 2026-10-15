@@ -11,7 +11,7 @@ const REQUIRE_FACADES: &str = quench_js_check::checked_js!(
     ]; }"#
 );
 
-const BUILTIN_MODULES: &[&str] = &[
+pub(crate) const BUILTIN_MODULES: &[&str] = &[
     "_http_agent",
     "_http_client",
     "_http_common",
