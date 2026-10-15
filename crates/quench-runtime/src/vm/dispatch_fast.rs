@@ -1564,6 +1564,36 @@ lane_handler! {
     }
 }
 
+/// The nullish constant a `lane_jump_nullish_false` record compares against, in its `c`
+/// field.
+const NULLISH_NULL: u16 = 0;
+const NULLISH_UNDEFINED: u16 = 1;
+
+lane_handler! {
+    /// `lane_jump_binary_false` of a register under an equality operator against a `null` or
+    /// `undefined` constant, decoded when the view was derived
+    /// (`specialize_register_operands`): strict equality is identity with the constant; loose
+    /// equality holds for `null` and `undefined`, and among other values only for
+    /// [[IsHTMLDDA]] objects (`Vm::identity_equality`).
+    fn lane_jump_nullish_false<BACKWARD: bool>(cx, r, ip, i, view) {
+        let value = r.get(i.b);
+        let Some((strict, negated)) = super::operations::equality_operator(u32::from(i.a)) else {
+            return exit(ip);
+        };
+        let equal = if strict {
+            value == if i.c == NULLISH_NULL { Value::NULL } else { Value::UNDEFINED }
+        } else {
+            value.is_null()
+                || value.is_undefined()
+                || (value.is_heap() && (unsafe { vm(cx) }).is_html_dda(value))
+        };
+        if equal == negated {
+            return lane_jump(cx, r, ip, BACKWARD, view, None);
+        }
+        next!(cx, r, following(ip), view)
+    }
+}
+
 /// The relations the general loop decides past Number comparison without running guest
 /// code: identity equality and an ordinary `instanceof`. Out of line, so the comparison
 /// handlers keep their Number path's shape.
@@ -5052,6 +5082,28 @@ fn specialize_register_operands<H: Host>(
             continue;
         }
         let backward = record.handler == backward_test;
+        let nullish = (right_kind == Constant && record.handler != get_index)
+            .then(|| constants.get(usize::from(right.payload())))
+            .flatten()
+            .and_then(|constant| match *constant {
+                Value::NULL => Some(NULLISH_NULL),
+                Value::UNDEFINED => Some(NULLISH_UNDEFINED),
+                _ => None,
+            })
+            .filter(|_| {
+                super::operations::equality_operator(u32::from(instruction.a())).is_some()
+            });
+        if let Some(constant) = nullish {
+            let handler: Handler = if backward {
+                lane_jump_nullish_false::<H, true>
+            } else {
+                lane_jump_nullish_false::<H, false>
+            };
+            record.handler = handler as *const ();
+            record.b = left.payload();
+            record.c = constant;
+            continue;
+        }
         if right_kind == Constant
             && record.handler != get_index
             && let Some(small) = constants
