@@ -164,6 +164,8 @@ impl SharedNodeState {
     /// Forget cached guest handles before bootstrapping a replacement VM heap.
     pub(crate) fn reset_cached_vm_roots(&mut self) {
         self.module_cache.clear();
+        self.module_parent_api = None;
+        self.active_esm_requires.clear();
         self.buffer_prototype = None;
         self.primordials_module = None;
         self.event_targets_api = None;
