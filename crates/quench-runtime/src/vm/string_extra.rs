@@ -94,6 +94,8 @@ fn unescape_escape(units: &[u16], index: usize) -> Option<(u16, usize)> {
     Some((u16::from((high << 4) | low), 3))
 }
 
+const MALFORMED_URI_MESSAGE: &str = "URI malformed";
+
 pub(super) fn encode_uri(
     value: &super::wtf16::JsString,
     component: bool,
@@ -106,10 +108,10 @@ pub(super) fn encode_uri(
         let unit = units[index];
         let (code_point, width) = if LEADING_SURROGATES.contains(&unit) {
             let Some(&trailing) = units.get(index + 1) else {
-                return Err("malformed URI sequence");
+                return Err(MALFORMED_URI_MESSAGE);
             };
             if !TRAILING_SURROGATES.contains(&trailing) {
-                return Err("malformed URI sequence");
+                return Err(MALFORMED_URI_MESSAGE);
             }
             (
                 SURROGATE_CODE_POINT_OFFSET
@@ -118,11 +120,11 @@ pub(super) fn encode_uri(
                 2,
             )
         } else if TRAILING_SURROGATES.contains(&unit) {
-            return Err("malformed URI sequence");
+            return Err(MALFORMED_URI_MESSAGE);
         } else {
             (u32::from(unit), 1)
         };
-        let character = char::from_u32(code_point).ok_or("malformed URI sequence")?;
+        let character = char::from_u32(code_point).ok_or(MALFORMED_URI_MESSAGE)?;
         let mut utf8 = [0; 4];
         for byte in character.encode_utf8(&mut utf8).as_bytes() {
             let unescaped = byte.is_ascii_alphanumeric()
@@ -156,16 +158,16 @@ pub(super) fn decode_uri(
             continue;
         }
         if index + 2 >= units.len() {
-            return Err("malformed URI escape");
+            return Err(MALFORMED_URI_MESSAGE);
         }
-        let first = (hex_digit(units[index + 1]).ok_or("malformed URI escape")? << 4)
-            | hex_digit(units[index + 2]).ok_or("malformed URI escape")?;
+        let first = (hex_digit(units[index + 1]).ok_or(MALFORMED_URI_MESSAGE)? << 4)
+            | hex_digit(units[index + 2]).ok_or(MALFORMED_URI_MESSAGE)?;
         let (width, mut code_point, minimum) = match first {
             0x00..=0x7f => (1, u32::from(first), 0),
             0xc2..=0xdf => (2, u32::from(first & 0x1f), 0x80),
             0xe0..=0xef => (3, u32::from(first & 0x0f), 0x800),
             0xf0..=0xf4 => (4, u32::from(first & 0x07), 0x10000),
-            _ => return Err("malformed URI sequence"),
+            _ => return Err(MALFORMED_URI_MESSAGE),
         };
         if width == 1 && !component && URI_RESERVED.contains(&(first as u8)) {
             output.extend_from_slice(&units[index..index + 3]);
@@ -175,19 +177,19 @@ pub(super) fn decode_uri(
         for continuation in 1..width {
             let escape = index + continuation * 3;
             if units.get(escape) != Some(&(b'%' as u16)) || escape + 2 >= units.len() {
-                return Err("malformed URI sequence");
+                return Err(MALFORMED_URI_MESSAGE);
             }
-            let byte = (hex_digit(units[escape + 1]).ok_or("malformed URI escape")? << 4)
-                | hex_digit(units[escape + 2]).ok_or("malformed URI escape")?;
+            let byte = (hex_digit(units[escape + 1]).ok_or(MALFORMED_URI_MESSAGE)? << 4)
+                | hex_digit(units[escape + 2]).ok_or(MALFORMED_URI_MESSAGE)?;
             if byte & 0xc0 != 0x80 {
-                return Err("malformed URI sequence");
+                return Err(MALFORMED_URI_MESSAGE);
             }
             if continuation == 1
                 && ((first == 0xe0 && byte < 0xa0)
                     || (first == 0xf0 && byte < 0x90)
                     || (first == 0xf4 && byte > 0x8f))
             {
-                return Err("malformed URI sequence");
+                return Err(MALFORMED_URI_MESSAGE);
             }
             code_point = (code_point << 6) | u32::from(byte & 0x3f);
         }
@@ -195,7 +197,7 @@ pub(super) fn decode_uri(
             || code_point > 0x10ffff
             || SURROGATE_CODE_POINTS.contains(&code_point)
         {
-            return Err("malformed URI sequence");
+            return Err(MALFORMED_URI_MESSAGE);
         }
         if code_point <= 0xffff {
             output.push(code_point as u16);

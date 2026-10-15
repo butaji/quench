@@ -465,6 +465,11 @@ impl<H: Host> Vm<H> {
         let set_proto = self
             .heap
             .alloc(Cell::Object(Self::empty_object(prototype_parent)));
+        let global = self.function_realm(program, set)?;
+        self.realm
+            .intrinsics
+            .builtin_prototypes
+            .insert((global, Native::Set), set_proto);
         let size_getter = self.native_value(Native::SetSizeGetter);
         self.set_builtin_function_name(size_getter, "get size")?;
         self.set_named(program, set_proto, "size", size_getter)?;

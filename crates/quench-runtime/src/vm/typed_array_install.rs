@@ -1,5 +1,20 @@
 use super::*;
 
+pub(super) const TYPED_ARRAY_BASE_METHODS: &[(&str, Native)] = &[
+    ("set", Native::Uint8ArraySet),
+    ("reverse", Native::Uint8ArrayReverse),
+    ("fill", Native::Uint8ArrayFill),
+    ("copyWithin", Native::Uint8ArrayCopyWithin),
+    ("subarray", Native::Uint8ArraySubarray),
+    ("slice", Native::Uint8ArraySlice),
+    ("includes", Native::Uint8ArrayIncludes),
+    ("indexOf", Native::Uint8ArrayIndexOf),
+    ("join", Native::Uint8ArrayJoin),
+    ("keys", Native::Uint8ArrayKeys),
+    ("values", Native::Uint8ArrayValues),
+    ("entries", Native::Uint8ArrayEntries),
+];
+
 /// Uint8Array's own base64 and hex methods, installed in every realm.
 pub(super) const UINT8_ARRAY_PROTOTYPE_METHODS: &[(&str, Native)] = &[
     ("setFromBase64", Native::Uint8ArraySetFromBase64),
