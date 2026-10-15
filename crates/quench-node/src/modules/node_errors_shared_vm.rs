@@ -167,7 +167,7 @@ pub(super) fn decorate_argument_type(
     decorate_type_error(context, error, INVALID_ARGUMENT_TYPE)
 }
 
-pub(super) fn decorate_error(
+pub(crate) fn decorate_error(
     context: &mut NativeContext<'_, NodeHost>,
     error: RootId,
     code: &'static str,
