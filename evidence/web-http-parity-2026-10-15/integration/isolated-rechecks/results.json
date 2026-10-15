@@ -1,0 +1,30 @@
+[
+  {
+    "test": "child_process_reference_state_and_public_handle_hooks_match_node_liveness",
+    "exit_code": 0
+  },
+  {
+    "test": "native_fs_watch_missing_path_and_unreferenced_exit_match_node",
+    "exit_code": 0
+  },
+  {
+    "test": "native_buffer_constructor_deprecation_follows_original_vm_filenames_and_process_flags",
+    "exit_code": 0
+  },
+  {
+    "test": "net_server_reference_requests_preserve_public_hooks_and_real_listener_liveness",
+    "exit_code": 0
+  },
+  {
+    "test": "net_socket_reference_requests_preserve_public_hooks_and_real_socket_liveness",
+    "exit_code": 0
+  },
+  {
+    "test": "synchronous_child_deadlines_reap_selected_signals_and_preserve_exit_handlers",
+    "exit_code": 0
+  },
+  {
+    "test": "synchronous_child_timeout_closes_grandchild_pipes_after_direct_exit",
+    "exit_code": 0
+  }
+]
