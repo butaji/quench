@@ -161,9 +161,17 @@ impl<H: Host> Vm<H> {
         let object = self.object_data(holder)?;
         let shape = object.shape();
         let values = (0..self.shapes[shape as usize].storage_len())
-            .map(|slot| self.heap.property_get(object, slot).unwrap_or(Value::UNDEFINED))
+            .map(|slot| {
+                self.heap
+                    .property_get(object, slot)
+                    .unwrap_or(Value::UNDEFINED)
+            })
             .collect();
-        Some(SealedHolder { holder, shape, values })
+        Some(SealedHolder {
+            holder,
+            shape,
+            values,
+        })
     }
 
     /// Whether sealed holder `index` is still in its sealed shape with its sealed values.
@@ -172,7 +180,10 @@ impl<H: Host> Vm<H> {
         self.object_data(sealed.holder).is_some_and(|object| {
             object.shape() == sealed.shape
                 && sealed.values.iter().enumerate().all(|(slot, value)| {
-                    self.heap.property_get(object, slot).unwrap_or(Value::UNDEFINED) == *value
+                    self.heap
+                        .property_get(object, slot)
+                        .unwrap_or(Value::UNDEFINED)
+                        == *value
                 })
         })
     }
@@ -210,7 +221,11 @@ impl<H: Host> Vm<H> {
                     continue;
                 }
                 // Recorded first: once overwritten, the script's values are rooted only here.
-                self.startup_intrinsics.swapped.push(SwappedProperty { holder, key, previous: current });
+                self.startup_intrinsics.swapped.push(SwappedProperty {
+                    holder,
+                    key,
+                    previous: current,
+                });
                 if !self.redefine_slot_property(p, holder, key, original)? {
                     self.startup_intrinsics.swapped.pop();
                 }
