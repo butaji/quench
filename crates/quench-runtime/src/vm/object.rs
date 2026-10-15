@@ -726,9 +726,10 @@ impl<H: Host> Vm<H> {
         if cache.receiver != receiver.shape() || cache.holder != NO_FIELD_HOLDER {
             return None;
         }
-        self.profile.field_cache_hit(0, 0);
         // SAFETY: as for `cached_field_hit`.
-        Some(unsafe { self.heap.property_get_unchecked(receiver, cache.slot as usize) })
+        let value = unsafe { self.heap.property_get_shaped(receiver, cache.slot as usize) }?;
+        self.profile.field_cache_hit(0, 0);
+        Some(value)
     }
 
     /// The data field a direct object's immediate prototype holds at the site's primary
@@ -796,9 +797,10 @@ impl<H: Host> Vm<H> {
         }
         let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
         let slot = self.inline_megamorphic_field_slot(self.field_cache_index(site), receiver.shape())?;
-        self.profile.field_cache_hit(2, 0);
         // SAFETY: as for `cached_field_hit`.
-        Some(unsafe { self.heap.property_get_unchecked(receiver, usize::from(slot)) })
+        let value = unsafe { self.heap.property_get_shaped(receiver, usize::from(slot)) }?;
+        self.profile.field_cache_hit(2, 0);
+        Some(value)
     }
 
     /// `get_field_polymorphic` for an ordinary record receiver up to the point where it
@@ -1034,10 +1036,7 @@ impl<H: Host> Vm<H> {
         }
         // SAFETY: both immutable shapes and the property slot were recorded together after
         // confirming an immediate-prototype data property.
-        let value = unsafe {
-            self.heap
-                .property_get_unchecked(holder, cache.slot as usize)
-        };
+        let value = unsafe { self.heap.property_get_shaped(holder, cache.slot as usize) }?;
         Some(FieldCacheHit {
             value,
             tier: 0,
@@ -1213,10 +1212,7 @@ impl<H: Host> Vm<H> {
             holder = Some(data);
         }
         // SAFETY: the holder's shape was recorded together with this data slot.
-        let value = unsafe {
-            self.heap
-                .property_get_unchecked(holder?, usize::from(cache.slot))
-        };
+        let value = unsafe { self.heap.property_get_shaped(holder?, usize::from(cache.slot)) }?;
         Some(FieldCacheHit {
             value,
             tier: 0,
