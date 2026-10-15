@@ -277,6 +277,8 @@ struct ScriptActivation {
     caller_capture: *const crate::heap::EnvironmentSlots,
     /// The guest-call budget the activation holds, as its frame push would.
     guard: crate::stack::GuestCallGuard,
+    /// A `new` made it: its completion is `this` unless it returns an object.
+    constructs: bool,
 }
 
 /// A user function a lane `Call` may activate without a frame, valid as the general loop's
@@ -293,6 +295,8 @@ pub(super) struct ScriptCallTarget {
     registers: u16,
     params: u16,
     strict: bool,
+    /// `new` may activate it too (`Vm::inline_constructible`).
+    constructs: bool,
 }
 
 const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
@@ -306,6 +310,7 @@ const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
     registers: 0,
     params: 0,
     strict: false,
+    constructs: false,
 };
 
 /// Entries of the script call cache, indexed by the callee's heap index.
@@ -373,6 +378,9 @@ struct LaneContext<H: Host> {
     /// JavaScript calls may activate their callees without frames: the general loop
     /// would push them in place (`Vm::try_inline_user_call`).
     script_calls: bool,
+    /// `new` may activate its callee without a frame too: the run's frame is an ordinary
+    /// body, from which the general loop pushes constructions (`Vm::inline_construct_target`).
+    script_constructs: bool,
     /// The running activation's `this`, or `DELETED` when the frame's binding decides
     /// it (`Vm::current_this`).
     this: Value,
@@ -2822,6 +2830,10 @@ impl<H: Host> Vm<H> {
             self.frames[caller].pc = call_pc + 1;
             let count = usize::from(code.functions[activation.function as usize].registers);
             let window = &registers[activation.window..activation.window + count];
+            let construct_this = activation
+                .script
+                .as_ref()
+                .and_then(|script| script.constructs.then_some(script.this));
             let call_guard = match activation.script {
                 Some(script) => {
                     self.push_script_frame_with_registers(
@@ -2847,7 +2859,7 @@ impl<H: Host> Vm<H> {
                 caller_cursor: None,
                 call_pc: call_pc as u32,
                 destination: result & crate::bytecode::REGISTER_MASK,
-                construct_this: None,
+                construct_this,
                 returns: result & crate::bytecode::RETURN_REGISTER != 0,
                 call_guard,
             });
@@ -2921,6 +2933,7 @@ impl<H: Host> Vm<H> {
             registers: body.registers,
             params: body.params,
             strict: body.strict,
+            constructs: Self::inline_constructible(body),
         };
         self.lane_stack.script_targets[index] = target;
         Some(target)
@@ -2943,15 +2956,9 @@ lane_handler! {
             return exit(ip);
         }
         let vm = unsafe { vm(cx) };
-        let callee = r.get(i.b);
-        let target = match vm.script_call_target(callee) {
-            Some(target) => target,
-            None => match vm.resolve_script_call_target(unsafe { &*(*cx).code }, callee) {
-                Some(target) => target,
-                None => return exit(ip),
-            },
+        let Some(target) = lane_script_target(cx, r.get(i.b)) else {
+            return exit(ip);
         };
-        let argc = ImmediateLayout::argument_count(i.imm());
         let receiver = r.get(i.c);
         // `call_this_value` without its boxing of primitives, which allocates.
         let this = if target.strict || vm.is_object_like(receiver) {
@@ -2961,88 +2968,149 @@ lane_handler! {
         } else {
             return exit(ip);
         };
-        let count = usize::from(target.registers);
-        // A call that returns its callee's completion completes its caller too, which only an
-        // activation's return does in the lane; a strict caller makes it a tail call instead.
-        let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
-        if returns
-            && vm.lane_stack.activations.last().is_none_or(|caller| {
-                unsafe { &*(*cx).code }.functions[caller.function as usize].strict
-            })
-        {
-            return exit(ip);
-        }
-        if argc > target.params
-            || vm.with_scope_entered
-            || LANE_FLOOR.with(std::cell::Cell::get) == COLLECTION_DUE_FLOOR
-        {
-            return exit(ip);
-        }
-        if vm.lane_stack.activations.len() == vm.lane_stack.activations.capacity()
-            || vm.lane_stack.values.capacity() - vm.lane_stack.values.len()
-                < count.max(ACTIVATION_FILL_BLOCK)
-        {
-            return lane_script_call_frame::<H>(ip);
-        }
-        let Ok(guard) = crate::stack::GuestCallGuard::enter() else {
-            return exit(ip);
-        };
-        // A `new.target` set for this activation has no observable binding to land in.
-        vm.construct_target = None;
-        let stack = &mut vm.lane_stack;
-        let window = stack.values.len();
         let arguments = ImmediateLayout::call_window_base(i.imm());
-        // SAFETY: capacity holds the window; each slot is written before the length covers
-        // it, and no activation's window moves. Parameter `k` lives in register `k` of a
-        // plain activation (`Vm::place_plain_parameters`).
-        let callee_registers = unsafe {
-            let registers = stack.values.as_mut_ptr().add(window);
-            if count <= ACTIVATION_FILL_BLOCK {
-                registers
-                    .cast::<[Value; ACTIVATION_FILL_BLOCK]>()
-                    .write_unaligned([Value::UNDEFINED; ACTIVATION_FILL_BLOCK]);
-            } else {
-                for index in 0..count {
-                    registers.add(index).write(Value::UNDEFINED);
-                }
-            }
-            for offset in 0..argc {
-                registers
-                    .add(usize::from(offset))
-                    .write(r.get(arguments + offset));
-            }
-            stack.values.set_len(window + count);
-            Registers(registers)
-        };
-        stack.activations.push(Activation {
-            function: target.function,
-            call: ip,
-            caller_base: unsafe { (*cx).base },
-            caller_registers: r,
-            caller_memory: MemoryView::NONE,
-            window,
-            script: Some(ScriptActivation {
-                callee,
-                env: target.env,
-                this,
-                argc,
-                caller_this: unsafe { (*cx).this },
-                caller_env: unsafe { (*cx).env },
-                caller_capture: unsafe { (*cx).capture },
-                guard,
-            }),
-        });
-        // SAFETY: the program store keeps a derived view alive with its program.
-        let base = unsafe { (*target.view).records() };
-        unsafe {
-            (*cx).registers = callee_registers;
-            (*cx).base = base;
-            (*cx).this = this;
-            (*cx).env = target.env;
-            (*cx).capture = std::ptr::null();
+        match lane_activate(cx, r, ip, target, arguments, this, false) {
+            Ok((registers, base)) => next!(cx, registers, base, Carried::SCRIPT),
+            Err(next) => next,
         }
-        next!(cx, callee_registers, base, Carried::SCRIPT)
     }
+}
+
+lane_handler! {
+    /// `new` of a frameless target that `Vm::inline_construct_target` would push: the
+    /// receiver it allocates, then the activation `lane_script_call` makes, whose
+    /// completion substitutes the receiver for a non-object result. Any other
+    /// construction takes the general path.
+    fn lane_script_construct<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let callee = r.get(i.b);
+        if !unsafe { (*cx).script_calls && (*cx).script_constructs }
+            || vm.construct_target.is_some()
+        {
+            return exit(ip);
+        }
+        let Some(target) = lane_script_target(cx, callee).filter(|target| target.constructs)
+        else {
+            return exit(ip);
+        };
+        let Some(this) = vm.inline_construct_receiver(callee) else {
+            return exit(ip);
+        };
+        // Allocating the receiver can make a collection due.
+        note_allocation(vm);
+        match lane_activate(cx, r, ip, target, i.c, this, true) {
+            Ok((registers, base)) => next!(cx, registers, base, Carried::SCRIPT),
+            Err(next) => next,
+        }
+    }
+}
+
+/// The frameless target of a lane call to `callee`, resolved on first use.
+#[inline(always)]
+fn lane_script_target<H: Host>(cx: *mut LaneContext<H>, callee: Value) -> Option<ScriptCallTarget> {
+    let vm = unsafe { vm(cx) };
+    vm.script_call_target(callee)
+        .or_else(|| vm.resolve_script_call_target(unsafe { &*(*cx).code }, callee))
+}
+
+/// Activate `target` for the call record at `ip`, whose arguments start at register
+/// `arguments`: the activation's registers and the callee's first record, or the record
+/// to continue at when the call takes the general path.
+#[inline(always)]
+fn lane_activate<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    target: ScriptCallTarget,
+    arguments: u16,
+    this: Value,
+    constructs: bool,
+) -> Result<(Registers, Ip), Ip> {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: `ip` is a record of the running view.
+    let i = unsafe { &*ip };
+    let argc = ImmediateLayout::argument_count(i.imm());
+    let count = usize::from(target.registers);
+    // A call that returns its callee's completion completes its caller too, which only an
+    // activation's return does in the lane; a strict caller makes it a tail call instead.
+    let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
+    if returns
+        && vm.lane_stack.activations.last().is_none_or(|caller| {
+            unsafe { &*(*cx).code }.functions[caller.function as usize].strict
+        })
+    {
+        return Err(exit(ip));
+    }
+    if argc > target.params
+        || vm.with_scope_entered
+        || LANE_FLOOR.with(std::cell::Cell::get) == COLLECTION_DUE_FLOOR
+    {
+        return Err(exit(ip));
+    }
+    if vm.lane_stack.activations.len() == vm.lane_stack.activations.capacity()
+        || vm.lane_stack.values.capacity() - vm.lane_stack.values.len()
+            < count.max(ACTIVATION_FILL_BLOCK)
+    {
+        return Err(lane_script_call_frame::<H>(ip));
+    }
+    let Ok(guard) = crate::stack::GuestCallGuard::enter() else {
+        return Err(exit(ip));
+    };
+    // A `new.target` set for this activation has no observable binding to land in.
+    vm.construct_target = None;
+    let stack = &mut vm.lane_stack;
+    let window = stack.values.len();
+    // SAFETY: capacity holds the window; each slot is written before the length covers
+    // it, and no activation's window moves. Parameter `k` lives in register `k` of a
+    // plain activation (`Vm::place_plain_parameters`).
+    let callee_registers = unsafe {
+        let registers = stack.values.as_mut_ptr().add(window);
+        if count <= ACTIVATION_FILL_BLOCK {
+            registers
+                .cast::<[Value; ACTIVATION_FILL_BLOCK]>()
+                .write_unaligned([Value::UNDEFINED; ACTIVATION_FILL_BLOCK]);
+        } else {
+            for index in 0..count {
+                registers.add(index).write(Value::UNDEFINED);
+            }
+        }
+        for offset in 0..argc {
+            registers
+                .add(usize::from(offset))
+                .write(r.get(arguments + offset));
+        }
+        stack.values.set_len(window + count);
+        Registers(registers)
+    };
+    stack.activations.push(Activation {
+        function: target.function,
+        call: ip,
+        caller_base: unsafe { (*cx).base },
+        caller_registers: r,
+        caller_memory: MemoryView::NONE,
+        window,
+        script: Some(ScriptActivation {
+            callee: target.callee,
+            env: target.env,
+            this,
+            argc,
+            caller_this: unsafe { (*cx).this },
+            caller_env: unsafe { (*cx).env },
+            caller_capture: unsafe { (*cx).capture },
+            guard,
+            constructs,
+        }),
+    });
+    // SAFETY: the program store keeps a derived view alive with its program.
+    let base = unsafe { (*target.view).records() };
+    unsafe {
+        (*cx).registers = callee_registers;
+        (*cx).base = base;
+        (*cx).this = this;
+        (*cx).env = target.env;
+        (*cx).capture = std::ptr::null();
+    }
+    Ok((callee_registers, base))
 }
 
 /// A frameless call without room on the lane stack: grow the stack, then take the
@@ -3224,7 +3292,7 @@ lane_handler! {
 #[inline(always)]
 fn lane_complete_activation<H: Host>(
     cx: *mut LaneContext<H>,
-    value: Value,
+    mut value: Value,
 ) -> Option<(Registers, Ip, Carried)> {
     let vm = unsafe { vm(cx) };
     let mut activation = vm.lane_stack.activations.pop()?;
@@ -3240,6 +3308,11 @@ fn lane_complete_activation<H: Host>(
                 (*cx).this = script.caller_this;
                 (*cx).env = script.caller_env;
                 (*cx).capture = script.caller_capture;
+            }
+            // [[Construct]] of an ordinary constructor yields its returned object,
+            // otherwise the receiver it allocated.
+            if script.constructs && !vm.is_object_like(value) {
+                value = script.this;
             }
             drop(script.guard);
         }
@@ -3441,6 +3514,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::WasmFillRegisters => Some(lane_fill_registers::<H>),
         Op::CallKnown => Some(lane_call_known::<H>),
         Op::Call => Some(lane_script_call::<H>),
+        Op::Construct => Some(lane_script_construct::<H>),
         Op::Return => Some(lane_return::<H>),
         _ => None,
     }
@@ -3559,7 +3633,7 @@ pub(super) fn lane_fields_fit(instruction: WideInstruction, function: &Function)
             // A lane call reads its return flag from the field (`lane_call_fits`).
             FieldLayout::ResultRegister
                 if field == InstructionField::A
-                    && (matches!(op, Op::Call | Op::GetField | Op::Unary)
+                    && (matches!(op, Op::Call | Op::Construct | Op::GetField | Op::Unary)
                         || (op == Op::Binary && instruction.returns_from_frame())) =>
             {
                 instruction.result_register() < registers
@@ -3623,6 +3697,11 @@ fn lane_call_fits(instruction: WideInstruction) -> bool {
             lane_returns(instruction)
                 && !instruction.direct_eval()
                 && !instruction.parameter_eval()
+        }
+        Op::Construct => {
+            lane_returns(instruction)
+                && !instruction.is_super_construct()
+                && !ImmediateLayout::construct_array_arguments(instruction.imm())
         }
         Op::GetField => lane_returns(instruction) || lane_sinks_field(instruction),
         Op::Unary => lane_returns(instruction),
@@ -4594,6 +4673,12 @@ impl<H: Host> Vm<H> {
                 && !self.parameter_eval
                 && *frame + 1 == self.frames.len()
                 && self.frames[*frame].function != super::ROOT_FUNCTION_ID,
+            script_constructs: code
+                .functions
+                .get(self.frames[*frame].function as usize)
+                .is_some_and(|function| {
+                    function.dispatch == crate::bytecode::DispatchClass::General
+                }),
             this: self.frame_lane_this(*frame),
             env: Value::DELETED,
             capture: std::ptr::null(),
