@@ -18,7 +18,7 @@ export async function exercise(glob) {
   fs.writeFileSync('glob-contract/skip.js', 'skip');
   const patterns = ['glob-contract/*.js', '!glob-contract/skip.js'];
   const expected = ['glob-contract/a.js', 'glob-contract/b.js'];
-  equal('default', (await glob(patterns)).sort(), expected);
+  equal('', (await glob(patterns)).sort(), expected);
   equal('sync', glob.sync(patterns).sort(), expected);
   equal('sync', glob.sync('glob-contract/missing.js'), []);
   const streamed = [];
@@ -49,7 +49,7 @@ export async function exercise(glob) {
   throws('isDynamicPattern', () => glob.isDynamicPattern(''));
   let rejection;
   try { await glob(''); } catch (error) { rejection = error; }
-  equal('default', rejection instanceof TypeError, true);
+  equal('', rejection instanceof TypeError, true);
   return { package: 'fast-glob', assertions, checks,
     scope: 'Pinned public callable and attached-function corpus, with filesystem, stream and error checks; returned stream APIs and other inputs remain separate obligations' };
 }
