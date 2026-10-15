@@ -308,3 +308,20 @@ EarleyBoyer 13.48 → 13.21, NavierStokes 8.14 → 7.87, RayTrace 6.72 → 6.56,
 
 Both sides start about 2 MiB higher than this batch before the merge: the trunk's start-up
 rose from about 67M to 712M instructions (Richards N=0), now under investigation.
+
+## Node primordials on first use
+
+The trunk embeds the pinned Node library, so `primordials.js` became available, and ran, at
+every start (Richards N=0 instructions 67M → 712M, every fixture about 2 MiB more resident).
+Only Node's internal modules and the emitter async resource read the snapshot; it now builds
+on first use inside the sealed startup intrinsics. The async-hook registry keeps the plain
+`Set` it always received (it initializes before the snapshot existed).
+
+Guard (`guard-lazy-primordials-raw.txt`, base merge 710f759bc, candidate e3ea30380):
+start-up −640M instructions on all eight; per run Crypto +0.22%, DeltaBlue +0.67%,
+EarleyBoyer +1.32%, NavierStokes 0.00%, RayTrace +0.98%, RegExp −1.61%, Richards −0.01%,
+Splay −20.62% (a smaller live heap moves the trunk-owned collection points).
+Matched unbolted maxrss (`board-lazy-primordials.txt`, MiB, medians): Crypto 6.94 → 5.08,
+DeltaBlue 6.54 → 4.65, EarleyBoyer 13.08 → 11.19, NavierStokes 7.83 → 5.45, RayTrace
+6.43 → 4.30, RegExp 16.89 → 14.90, Richards 6.08 → 4.25, Splay 50.76 → 49.00.
+Node `framework-core` gate: 43/43.
