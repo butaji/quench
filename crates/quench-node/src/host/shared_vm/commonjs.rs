@@ -345,10 +345,14 @@ const WEB_STREAM_GLOBALS: &[&str] = &[
     "WritableStreamDefaultWriter",
     "WritableStreamDefaultController",
 ];
+// Blob/File are independent of Fetch. Importing buffer must not recursively
+// load undici while the public Buffer binding is still being initialized.
 const WEB_API_GLOBALS: &[&str] = &[
     "__quenchBlobEnsureReadable",
     "Blob",
     "File",
+];
+const FETCH_API_GLOBALS: &[&str] = &[
     "FormData",
     "Headers",
     "Request",
@@ -360,6 +364,7 @@ fn install_shared_web_globals(context: &mut Context<'_>) -> Result<(), RootedErr
     for (operation, names) in [
         ("webStreamsInitialize", WEB_STREAM_GLOBALS),
         ("webApisInitialize", WEB_API_GLOBALS),
+        ("webFetchInitialize", FETCH_API_GLOBALS),
     ] {
         let initializer = context.host_function(super::operation(operation))?;
         context.define_lazy_data_properties_rooted(global, names, false, initializer)?;
@@ -414,14 +419,17 @@ pub(super) fn initialize_web_apis(
         crate::polyfills::bootstrap::globals_extra::web_api_source(),
         "node:bootstrap/shared-vm/web-apis.js",
     )?;
+    Ok(context.undefined())
+}
+
+pub(super) fn initialize_fetch_apis(
+    context: &mut Context<'_>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
     // Execute Node's pinned implementation in this VM, sharing its WebIDL and
     // Fetch algorithms rather than maintaining a second partial implementation.
     let global = context.global_root()?;
-    let buffer = cached_builtin(context, BuiltinModule::Buffer)?;
-    let file = get(context, global, "File")?;
-    set(context, buffer, "File", file)?;
-    let key = context.string_rooted("File");
-    context.define_data_property_rooted(global, key, file, true, false, true)?;
     let root = context.host_mut().node_library_root.clone();
     let path = root.join("deps/undici/undici.js");
     let parent = module_record(context, &root.join("lib/internal/fetch.js"), None, false)?;
