@@ -85,8 +85,34 @@ pub(crate) fn prepare(
     Ok(status)
 }
 
-/// Match the two original reads/conversions: validation, then wire serialization.
-pub(crate) fn encode(c: &mut Context<'_>, response: RootId) -> Result<Vec<u8>, RootedError> {
+/// Node's default status-line cache is observable through getters and map mutation.
+pub(crate) fn encode(
+    c: &mut Context<'_>,
+    response: RootId,
+    status: u16,
+) -> Result<Vec<u8>, RootedError> {
+    let value = get(c, response, "statusMessage")?;
+    let codes = c.host_function_data()?;
+    let key = c.number(f64::from(status));
+    let default = c.get_property_rooted(codes, key)?;
+    if c.strict_equal_rooted(value, default)? {
+        let state = c.host_mut().shared_state();
+        if let Some(cached) = state.borrow().http.status_reasons.get(&status) {
+            return Ok(cached.clone());
+        }
+        let value = get(c, response, "statusMessage")?;
+        let bytes = c
+            .to_string_code_units(value)?
+            .into_iter()
+            .map(|unit| unit as u8)
+            .collect::<Vec<_>>();
+        state
+            .borrow_mut()
+            .http
+            .status_reasons
+            .insert(status, bytes.clone());
+        return Ok(bytes);
+    }
     let value = get(c, response, "statusMessage")?;
     let units = c.to_string_code_units(value)?;
     if !units

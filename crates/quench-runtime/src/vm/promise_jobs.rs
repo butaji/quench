@@ -550,6 +550,60 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// Whether `then` is this realm's own %Promise.prototype.then%.
+    fn is_intrinsic_promise_then(&self, then: Value) -> bool {
+        matches!(
+            self.heap.get(then),
+            Some(Cell::Function {
+                kind: FunctionKind::Native(Native::PromiseThen),
+                object,
+                ..
+            }) if object.realm == self.realm.globals
+        )
+    }
+
+    /// `promise.then(resolve, reject)` for `target`'s fresh resolving functions, as a
+    /// thenable job performs it with the intrinsic `then`. The species lookup runs exactly
+    /// as `then` would; when it yields %Promise%, the derived promise and both resolving
+    /// functions are unobservable, so `promise`'s settlement resolves `target` directly
+    /// through a pass-through reaction (one job later, as the resolving function would).
+    fn promise_then_resolving(
+        &mut self,
+        p: &ResidualProgram,
+        promise: Value,
+        target: Value,
+    ) -> Result<Value, JsError> {
+        let next = self
+            .promise_species_constructor(p, promise)
+            .and_then(|constructor| {
+                if constructor == self.intrinsic_promise_constructor() {
+                    return Ok(None);
+                }
+                let (next, resolve, reject) = self.new_promise_capability(p, constructor)?;
+                self.realm
+                    .promise
+                    .reaction_capabilities
+                    .insert(next, (resolve, reject));
+                Ok(Some(next))
+            });
+        match next {
+            Ok(None) => {
+                self.perform_promise_then(p, promise, Value::UNDEFINED, Value::UNDEFINED, target);
+            }
+            Ok(Some(next)) => {
+                let (resolve, reject) = self.promise_resolving_functions(target);
+                self.perform_promise_then(p, promise, resolve, reject, next);
+            }
+            // `then` threw: the thenable job rejects `target` with the reason.
+            Err(error) => {
+                let (_, reject) = self.promise_resolving_functions(target);
+                let reason = error.thrown_value().unwrap_or(Value::UNDEFINED);
+                self.call_value(p, reject, Value::UNDEFINED, &[reason])?;
+            }
+        }
+        Ok(Value::UNDEFINED)
+    }
+
     pub(super) fn promise_thenable_job(&mut self, p: &ResidualProgram) -> Result<Value, JsError> {
         let job = self
             .active_native_callable()
@@ -563,16 +617,29 @@ impl<H: Host> Vm<H> {
         let previous_context = thenable
             .execution_context
             .and_then(|context| self.host.enter_job_context(context));
-        let outcome = (|| {
-            let (resolve, reject) = self.promise_resolving_functions(thenable.promise);
-            if let Err(error) =
-                self.call_value(p, thenable.then, thenable.thenable, &[resolve, reject])
-            {
-                let reason = error.thrown_value().unwrap_or(Value::UNDEFINED);
-                self.call_value(p, reject, Value::UNDEFINED, &[reason])?;
-            }
-            Ok(Value::UNDEFINED)
-        })();
+        let outcome = self.with_call_roots(
+            [thenable.promise, thenable.thenable, thenable.then],
+            |vm| {
+                if vm.is_intrinsic_promise_then(thenable.then)
+                    && vm.realm.promise.records.contains_key(&thenable.thenable)
+                    && !vm
+                        .realm
+                        .promise
+                        .reaction_capabilities
+                        .contains_key(&thenable.promise)
+                {
+                    return vm.promise_then_resolving(p, thenable.thenable, thenable.promise);
+                }
+                let (resolve, reject) = vm.promise_resolving_functions(thenable.promise);
+                if let Err(error) =
+                    vm.call_value(p, thenable.then, thenable.thenable, &[resolve, reject])
+                {
+                    let reason = error.thrown_value().unwrap_or(Value::UNDEFINED);
+                    vm.call_value(p, reject, Value::UNDEFINED, &[reason])?;
+                }
+                Ok(Value::UNDEFINED)
+            },
+        );
         if thenable.execution_context.is_some() {
             self.host.restore_job_context(previous_context);
         }
