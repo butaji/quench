@@ -6775,6 +6775,20 @@ process.emitWarning=originalWarning;out.push(warnings);console.log(JSON.stringif
 }
 
 #[test]
+fn buffer_pool_size_preserves_public_configuration_and_legacy_numeric_construction() {
+    compare_node_stream_source(r#"
+const B=require('buffer').Buffer,out=[];
+const d=Object.getOwnPropertyDescriptor(B,'poolSize');
+out.push([d.value,d.writable,d.enumerable,d.configurable]);
+const emit=process.emitWarning;process.emitWarning=()=>{};
+const b=new B(B.poolSize);out.push([b.length,b.parent instanceof ArrayBuffer]);
+B.poolSize=128;out.push(B.poolSize);delete B.poolSize;out.push(Object.hasOwn(B,'poolSize'));
+Object.defineProperty(B,'poolSize',d);out.push(B.poolSize);
+process.emitWarning=emit;console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
 fn native_buffer_constructor_deprecation_follows_original_vm_filenames_and_process_flags() {
     compare_node_stream_source(r#"
 'use strict';
@@ -6973,6 +6987,91 @@ for(let v=0;v<values.length;v++)for(const lenient of [undefined,false,true,0,1,'
 for(let code=0;code<=255;code++)for(const lenient of [false,true])invoke(['byte',code,lenient],http.validateHeaderValue,['x',String.fromCharCode(code),lenient]);
 for(let n=0;n<names.length;n++)for(const value of [undefined,'\r','ok'])invoke(['error-name',n,value],http.validateHeaderValue,[names[n],value]);
 for(const name of ['validateHeaderName','validateHeaderValue'])for(const args of [[],['valid','ok'],['bad name','\r']])invoke(['unwrapped',name,args],http[name].withoutStackTrace,args);
+console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn cli_eval_builtin_globals_preserve_lazy_descriptors_cache_and_assignment() {
+compare_node_stream_source(r#"
+'use strict';
+const out=[];
+function descriptor(name){const d=Object.getOwnPropertyDescriptor(globalThis,name);return !d?null:[d.enumerable,d.configurable,typeof d.get,typeof d.set,d.get&&[d.get.name,d.get.length,Object.hasOwn(d.get,'prototype')],d.set&&[d.set.name,d.set.length,Object.hasOwn(d.set,'prototype')]]}
+for(const name of ['vm','fs','path','util','buffer','fs/promises','_http_agent'])out.push(['initial',name,descriptor(name)]);
+const before=Object.getOwnPropertyDescriptor(globalThis,'vm');
+try{const value=vm;const after=Object.getOwnPropertyDescriptor(globalThis,'vm');out.push(['load',value===require('vm'),descriptor('vm'),before.get===after.get,before.set===after.set])}catch(e){out.push(['load-error',e.name,e.message])}
+try{vm=123;out.push(['assign',vm,Object.getOwnPropertyDescriptor(globalThis,'vm')])}catch(e){out.push(['assign-error',e.name,e.message])}
+console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn cli_eval_builtin_globals_use_original_module_identity_and_mutable_require_hook() {
+compare_node_stream_source(r#"
+'use strict';
+const M=require('module'),original=M.prototype.require,out=[];
+M.prototype.require=function(name){out.push(['require-hook',name,this.id,this.filename,this.loaded]);if(name==='vm')return {fromHook:1};return original.call(this,name)};
+try{const first=vm;M.prototype.require=function(){throw new Error('second require must not run')};out.push(['cached',first===vm,first.fromHook])}catch(e){out.push(['error',e.name,e.message])}
+M.prototype.require=original;
+console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn cli_eval_builtin_accessors_preserve_blocked_cache_inherited_setters_and_errors() {
+compare_node_stream_source(r#"
+'use strict';
+const M=require('module'),original=M.prototype.require,out=[];
+let calls=0;
+M.prototype.require=function(name){if(name==='fs'){calls++;return {calls}}return original.call(this,name)};
+Object.defineProperty(globalThis,'fs',{configurable:false});
+const a=fs,b=fs;out.push(['blocked-cache',a.calls,b.calls,a===b]);
+try{fs=1}catch(e){out.push(['blocked-set',e.name,e.message])}
+M.prototype.require=original;
+let seen=[];
+Object.defineProperty(Object.getPrototypeOf(globalThis),'path',{set(v){seen.push([this===globalThis,v])},configurable:true});
+path=4;out.push(['inherited-setter',seen,Object.hasOwn(globalThis,'path')]);
+delete Object.getPrototypeOf(globalThis).path;
+const marker={};M.prototype.require=function(){throw marker};
+try{void vm}catch(e){out.push(['original-error',e===marker])}
+M.prototype.require=original;
+console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn native_buffer_from_and_copy_bytes_preserve_conversion_bounds_brands_and_hooks() {
+compare_node_stream_source(r#"
+'use strict';const B=Buffer,out=[],hooks=[];
+function check(tag,value,...tail){hooks.length=0;try{const b=B.from(value,...tail);out.push([tag,'ok',Array.from(b),Object.getPrototypeOf(b)===B.prototype,b.buffer===value,hooks.slice()])}catch(e){out.push([tag,e.name,e.code,e.message,hooks.slice()])}}
+for(const fn of [B.from,B.copyBytesFrom])out.push(['shape',fn&&fn.name,fn&&fn.length,!!fn&&Object.hasOwn(fn,'prototype')]);
+const values=[undefined,null,false,0,1,1n,Symbol('v'),{},Object.create(null),new Boolean(true),new Number(3),new String('test'),{valueOf(){hooks.push('valueOf');return 'test'}},{[Symbol.toPrimitive](hint){hooks.push(hint);return 'test'}},{valueOf(){hooks.push('valueOf');return null}},{valueOf:null},{valueOf:1},{length:3,0:257,1:-1,2:2},{length:'3',0:1},{length:NaN},{type:'Buffer',data:[1,2,3]},new Uint8Array([1,2,255]),new Uint16Array([0xffff,256]),new BigInt64Array([1n]),new DataView(new ArrayBuffer(3)),[1,2,257],['1','2',null]];
+for(let i=0;i<values.length;i++)check(['value',i],values[i]);
+for(const value of ['test','é','😀','\ud800','aaZZbb'])for(const enc of [undefined,null,false,0,{},'utf8','utf16le','latin1','hex','base64','bogus'])check(['string',value,typeof enc,String(enc)],value,enc);
+for(const offset of [undefined,null,0,1,1.5,-1,6,NaN,Infinity,'2',1n,{valueOf(){hooks.push('offset');return 1}}])for(const length of [undefined,null,0,2,2.5,-1,9,NaN,Infinity,'2',1n])check(['ab',typeof offset,String(offset),typeof length,String(length)],new Uint8Array([1,2,3,4,5]).buffer,offset,length);
+for(const kind of ['valueOf','primitive','length','buffer','type','data']){
+ let o={};
+ if(kind==='valueOf')Object.defineProperty(o,'valueOf',{get(){hooks.push('get-valueOf');return function(){hooks.push('call-valueOf');return 'xy'}}});
+ if(kind==='primitive')o[Symbol.toPrimitive]=hint=>{hooks.push(hint);return 'xy'};
+ if(kind==='length')Object.defineProperty(o,'length',{get(){hooks.push('length');return 2}});
+ if(kind==='buffer'){o.buffer=new ArrayBuffer(2)};
+ if(kind==='type'){o.type='Buffer';Object.defineProperty(o,'data',{get(){hooks.push('data');return [3,4]}})};
+ if(kind==='data')o={type:'Buffer',data:new Uint8Array([3,4])};
+ check(['hooks',kind],o);
+}
+for(const source of [new Uint8Array([1,2,3]),new Uint16Array([0x1234,0xabcd]),new BigInt64Array([1n,-2n]),new DataView(new ArrayBuffer(4)),[],new Uint8Array(0)])for(const offset of [undefined,null,0,1,-1,NaN,1.5,9,'1',1n])for(const length of [undefined,0,1,9,-1]){
+ hooks.length=0;try{const b=B.copyBytesFrom(source,offset,length);out.push(['copy',source.constructor.name,typeof offset,String(offset),length,'ok',Array.from(b)])}catch(e){out.push(['copy',source.constructor.name,typeof offset,String(offset),length,e.name,e.code,e.message])}
+}
+console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn inspect_shallow_null_prototype_records_preserve_empty_hidden_and_symbol_keys() {
+compare_node_stream_source(r#"
+const u=require('util'),out=[],empty=Object.create(null),visible=Object.assign(Object.create(null),{a:1}),hidden=Object.create(null),symbol=Object.create(null),hiddenSymbol=Object.create(null);
+Object.defineProperty(hidden,'x',{value:1});symbol[Symbol('x')]=1;Object.defineProperty(hiddenSymbol,Symbol('x'),{value:1});
+for(const value of [empty,visible,hidden,symbol,hiddenSymbol])for(const depth of [-2,-1])for(const showHidden of [false,true])out.push(u.inspect(value,{depth,showHidden}));
 console.log(JSON.stringify(out));
 "#);
 }

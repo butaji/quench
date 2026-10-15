@@ -15,6 +15,7 @@ pub(crate) mod buffer_search_shared_vm;
 pub(crate) mod buffer_bigint_shared_vm;
 pub(crate) mod buffer_swap_shared_vm;
 pub(crate) mod buffer_constructor_shared_vm;
+pub(crate) mod buffer_from_shared_vm;
 pub(crate) mod child_process_env_shared_vm;
 pub(crate) mod child_process_exec_shared_vm;
 pub(crate) mod child_process_fork_shared_vm;
@@ -28,6 +29,7 @@ pub(crate) mod child_process_stdio_shared_vm;
 #[cfg(unix)]
 pub(crate) mod child_process_sync;
 pub(crate) mod clone_shared_vm;
+pub(crate) mod eval_globals_shared_vm;
 pub(crate) mod console_shared_vm;
 pub(crate) mod console_source;
 pub(crate) mod crypto_engine_shared_vm;

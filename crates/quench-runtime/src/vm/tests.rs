@@ -206,7 +206,7 @@ fn rootless_shapes_survive_collection_and_shape_compaction() {
     vm.collect_now(&program);
     assert!(vm.shapes.len() < before);
     let object = vm.object_data(owner).unwrap();
-    assert_eq!(vm.shapes[object.shape() as usize].storage_len, 1);
+    assert_eq!(vm.shapes[object.shape() as usize].storage_len(), 1);
     assert_eq!(
         vm.heap.property_get(vm.object_data(owner).unwrap(), 0),
         Some(Value::integer(42))
@@ -1240,7 +1240,7 @@ fn dictionary_shapes_fall_back_after_deletion_and_prototype_use() {
 #[test]
 fn dictionary_shape_starts_when_property_slots_exceed_cache_encoding() {
     let mut vm = Vm::new(SilentHost);
-    vm.shapes[0].storage_len = super::object::FIELD_CACHE_SLOT_CAPACITY;
+    vm.shapes[0].storage_len = super::object::FIELD_CACHE_SLOT_CAPACITY as u32;
     let atom = vm.intern_atom("overflow");
     let key = super::property_key::PropertyKey::string(atom);
     let shape = vm.transition_property_shape(0, key);
@@ -1254,7 +1254,7 @@ fn dictionary_shape_starts_when_property_slots_exceed_cache_encoding() {
         Some(super::object::FIELD_CACHE_SLOT_CAPACITY)
     );
     assert_eq!(
-        vm.shapes[shape as usize].storage_len,
+        vm.shapes[shape as usize].storage_len(),
         super::object::FIELD_CACHE_SLOT_CAPACITY + 1
     );
     #[cfg(feature = "profile-aggregate")]
@@ -9822,4 +9822,29 @@ fn nullish_property_diagnostics_include_original_property_names() {
       if(hooks!==0)throw Error('rejected base invoked key conversion');
     "#;
     for program in [Engine::compile(crate::ExecutionRequest{source,name:"nullish-property-errors.js",kind:crate::SourceKind::Script}).unwrap(),Engine::specialize(source,"nullish-property-errors.js").unwrap()] {Vm::new(SilentHost).execute(&program).unwrap();}
+}
+
+#[test]
+fn typed_array_offset_and_content_errors_preserve_numeric_hooks_and_targets() {
+    let source = r#"
+const ab=new ArrayBuffer(5),calls=[];
+try{new Uint8Array(ab,{valueOf(){calls.push('offset');return -1.5}},{valueOf(){calls.push('length');return 1}})}catch(e){print(e.name);print(e.message)}
+print(calls.join());print(new Uint8Array(ab,-0.5).length);
+const marker={};try{new Uint8Array(ab,{valueOf(){throw marker}})}catch(e){print(e===marker)}
+for(const [target,source] of [[new Uint8Array(2),new BigInt64Array(1)],[new BigInt64Array(2),new Uint8Array(1)]]){
+ try{target.set(source)}catch(e){print(e.name);print(e.message)}
+ print(Array.from(target,String).join());
+}
+"#;
+    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
+        let output=Rc::new(RefCell::new(Vec::new()));
+        let mut vm=Vm::new(RecordingHost(output.clone()));
+        let program=compile(source,"typed-array-offset-content-errors.js").unwrap();
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(),[
+            "RangeError","Start offset -1.5 is outside the bounds of the buffer","offset","5","true",
+            "TypeError","Cannot mix BigInt and other types, use explicit conversions","0,0",
+            "TypeError","Cannot mix BigInt and other types, use explicit conversions","0,0",
+        ]);
+    }
 }

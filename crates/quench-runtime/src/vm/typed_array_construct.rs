@@ -107,7 +107,11 @@ impl<H: Host> Vm<H> {
                     let offset_value = offset
                         .and_then(|root| self.heap.root_value(root))
                         .unwrap_or(Value::number(0.0));
-                    let offset = self.array_buffer_to_index(p, offset_value)?;
+                    let offset = self.buffer_to_index(
+                        p,
+                        offset_value,
+                        super::array_buffer::BufferIndexUse::TypedArrayByteOffset,
+                    )?;
                     if !offset.is_multiple_of(width) {
                         return Err(self
                             .range_error(p, format!("{name} byte offset is out of range").into()));
