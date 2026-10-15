@@ -662,7 +662,14 @@ lane_handler! {
 macro_rules! sibling {
     ($handler:expr, $r:expr, $ip:expr, $view:expr) => {{
         let view: Carried = $view;
-        return $handler($r, $ip, view.memory.bytes, view.memory.reach, view.integers, view.acc);
+        return $handler(
+            $r,
+            $ip,
+            view.memory.bytes,
+            view.memory.reach,
+            view.integers,
+            view.acc,
+        );
     }};
 }
 
@@ -864,7 +871,8 @@ fn lane_set_field<H: Host>(
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let vm = unsafe { vm(cx) };
-    if !vm.set_field_cache_hit(code, object, i.imm(), r.get(i.a), i.c) {
+    // The general loop's cached write: the store inline, the add out of line.
+    if !vm.cached_field_write_hit(code, object, i.imm(), r.get(i.a), i.c) {
         return exit(ip);
     }
     // Adding a property can allocate.
@@ -3579,7 +3587,10 @@ fn derive_lane_view<H: Host>(
         });
     let enters = kind == crate::bytecode::ProgramKind::Wasm || closes_loop(function, &exits);
     LaneView {
-        records: records.into_iter().map(std::cell::UnsafeCell::new).collect(),
+        records: records
+            .into_iter()
+            .map(std::cell::UnsafeCell::new)
+            .collect(),
         entries,
         memory_register,
         activation,
