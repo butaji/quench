@@ -1,15 +1,11 @@
 use crate::host::NodeHost;
 use crate::modules::fs_ops;
 use quench_runtime::{NativeContext, RootId, RootedError};
-use std::io::Read;
 
 // Node's internal fs readFile limit, independent of Buffer's larger capacity.
 const MAX_READ_FILE_BYTES: u64 = i32::MAX as u64;
 
-enum ReadFileFailure {
-    Io(std::io::Error),
-    TooLarge(u64),
-}
+use fs_ops::ReadFileFailure;
 
 #[path = "fs_shared_vm/stat.rs"]
 pub(crate) mod stat;
@@ -2760,10 +2756,6 @@ pub(crate) fn read_file_sync(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let input = args.first().copied().unwrap_or_else(|| context.undefined());
-    let undefined = context.undefined();
-    let input = crate::modules::url_shared_vm::to_path_if_file_url(context, undefined, &[input])?;
-    let path = context.to_string(input)?;
-    let path = resolve_shared_path(context, path);
     let (encoding, flag) = if let Some(options) = args.get(1).copied().filter(|options| {
         context
             .rooted_value(*options)
@@ -2783,24 +2775,60 @@ pub(crate) fn read_file_sync(
     } else {
         (None, None)
     };
-    let bytes = (|| -> Result<Vec<u8>, ReadFileFailure> {
-        let file = fs_ops::open(&path, flag.as_deref(), None).map_err(ReadFileFailure::Io)?;
-        let size = file.metadata().map_err(ReadFileFailure::Io)?.len();
-        if size > MAX_READ_FILE_BYTES {
-            return Err(ReadFileFailure::TooLarge(size));
+    let encoding = encoding.filter(|encoding| !encoding.is_empty());
+    let fast_utf8 = matches!(encoding.as_deref(), Some("utf8" | "utf-8"));
+    // Node's isInt32 intentionally performs ToInt32 before strict equality,
+    // including observable valueOf/toString on non-numeric paths.
+    let zero = context.number(0.0);
+    let integer = context.bitwise_or_rooted(input, zero)?;
+    let fd = if context.strict_equal_rooted(input, integer)? {
+        Some(context.to_number(integer)? as i32)
+    } else {
+        None
+    };
+    let mut filename = None;
+    let bytes = if let Some(fd) = fd {
+        if !fast_utf8 {
+            let maximum = context.number(i32::MAX as f64);
+            if let Err(error) =
+                super::util_shared_vm::validate_integer(context, input, "fd", 0.0, maximum)
+            {
+                if let Some(exception) = error.exception {
+                    super::node_errors_shared_vm::hide_range_error(
+                        context,
+                        exception,
+                        "ERR_OUT_OF_RANGE",
+                    )?;
+                }
+                return Err(error);
+            }
         }
-        let mut bytes = Vec::new();
-        file.take(MAX_READ_FILE_BYTES + 1)
-            .read_to_end(&mut bytes)
-            .map_err(ReadFileFailure::Io)?;
-        if bytes.len() as u64 > MAX_READ_FILE_BYTES {
-            return Err(ReadFileFailure::TooLarge(bytes.len() as u64));
+        let fs = context.host_mut().shared_state().borrow().fs.clone();
+        fs.with_descriptor(fd, |file| Ok(fs_ops::read_file(file, MAX_READ_FILE_BYTES)))
+            .unwrap_or_else(|error| {
+                Err(ReadFileFailure::Io {
+                    syscall: if fast_utf8 { "read" } else { "fstat" },
+                    error,
+                })
+            })
+    } else {
+        let input = super::fs_path::validate(context, input, "path")?;
+        let path = super::fs_path::resolve(context, input)?;
+        filename = Some(super::fs_path::display(context, input)?);
+        match fs_ops::open(&path, flag.as_deref(), None) {
+            Ok(mut file) => fs_ops::read_file(&mut file, MAX_READ_FILE_BYTES),
+            Err(error) => Err(ReadFileFailure::Io {
+                syscall: "open",
+                error,
+            }),
         }
-        Ok(bytes)
-    })();
+    };
     match bytes {
+        Ok(bytes) if fast_utf8 => {
+            super::buffer_string_shared_vm::decode_bytes(context, &bytes, "utf8")
+        }
         Ok(bytes) => match encoding.as_deref() {
-            None | Some("buffer") => crate::modules::buffer_shared_vm::from_bytes(context, &bytes),
+            None => crate::modules::buffer_shared_vm::from_bytes(context, &bytes),
             Some(encoding) => {
                 let buffer = crate::modules::buffer_shared_vm::from_bytes(context, &bytes)?;
                 let to_string = get(context, buffer, "toString")?;
@@ -2811,22 +2839,20 @@ pub(crate) fn read_file_sync(
         Err(ReadFileFailure::TooLarge(size)) => {
             let error =
                 context.range_error_rooted(&format!("File size ({size}) is greater than 2 GiB"))?;
-            let code = context.string_rooted("ERR_FS_FILE_TOO_LARGE");
-            set(context, error, "code", code)?;
+            super::node_errors_shared_vm::decorate_formatted_range_error(
+                context,
+                error,
+                "ERR_FS_FILE_TOO_LARGE",
+            )?;
             Err(context.throw(error))
         }
-        Err(ReadFileFailure::Io(error)) => {
-            let code = fs_error_code(error.kind());
-            let error = context.error_rooted(&format!(
-                "{code}: {}, open '{path}'",
-                std::io::Error::from_raw_os_error(error.raw_os_error().unwrap_or(5))
-            ))?;
-            let code_value = context.string_rooted(code);
-            let property = context.string_rooted("code");
-            if !context.set_property_rooted(error, property, code_value, error)? {
-                return Err(RootedError::host("cannot set fs error code"));
-            }
-            Err(context.throw(error))
+        Err(ReadFileFailure::Io { syscall, error }) => {
+            let path = if syscall == "open" {
+                filename.as_deref()
+            } else {
+                None
+            };
+            sync::throw_io_error(context, syscall, path, &error)
         }
     }
 }

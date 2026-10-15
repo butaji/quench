@@ -1,6 +1,6 @@
 //! Runtime-neutral filesystem operations used by the shared Node adapters.
 
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Copy, Default)]
@@ -102,6 +102,44 @@ pub(crate) fn valid_write_flag(flag: Option<&str>) -> bool {
     )
 }
 
+pub(crate) enum ReadFileFailure {
+    Io {
+        syscall: &'static str,
+        error: io::Error,
+    },
+    TooLarge(u64),
+}
+
+/// Shared bounded reads preserve the supplied descriptor's current file position.
+pub(crate) fn read_file(
+    file: &mut std::fs::File,
+    maximum: u64,
+) -> Result<Vec<u8>, ReadFileFailure> {
+    let metadata = file.metadata().map_err(|error| ReadFileFailure::Io {
+        syscall: "fstat",
+        error,
+    })?;
+    let size = if metadata.is_file() {
+        metadata.len()
+    } else {
+        0
+    };
+    if size > maximum {
+        return Err(ReadFileFailure::TooLarge(size));
+    }
+    let mut bytes = Vec::new();
+    file.take(maximum + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| ReadFileFailure::Io {
+            syscall: "read",
+            error,
+        })?;
+    if bytes.len() as u64 > maximum {
+        return Err(ReadFileFailure::TooLarge(bytes.len() as u64));
+    }
+    Ok(bytes)
+}
+
 pub(crate) fn open_write(path: &str, flag: Option<&str>) -> io::Result<std::fs::File> {
     let mut open = std::fs::OpenOptions::new();
     match flag.unwrap_or("w") {
@@ -131,7 +169,11 @@ pub(crate) fn open_write(path: &str, flag: Option<&str>) -> io::Result<std::fs::
     open.open(path)
 }
 
-pub(crate) fn open(path: &str, flag: Option<&str>, mode: Option<u32>) -> io::Result<std::fs::File> {
+pub(crate) fn open(
+    path: impl AsRef<Path>,
+    flag: Option<&str>,
+    mode: Option<u32>,
+) -> io::Result<std::fs::File> {
     let mut options = std::fs::OpenOptions::new();
     match flag.unwrap_or("r") {
         "r" | "rs" => {
