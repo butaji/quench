@@ -1245,15 +1245,34 @@ fn throw_operation_error(
     error: &ops::OperationError,
 ) -> Result<RootId, RootedError> {
     let details = fs_error_details::operation_error_details(error);
+    throw_error_details(context, details)
+}
+
+pub(super) fn throw_io_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    syscall: &str,
+    path: Option<&str>,
+    error: &std::io::Error,
+) -> Result<RootId, RootedError> {
+    throw_error_details(
+        context,
+        fs_error_details::error_details(syscall, path, error),
+    )
+}
+
+fn throw_error_details(
+    context: &mut NativeContext<'_, NodeHost>,
+    details: fs_error_details::FsErrorDetails,
+) -> Result<RootId, RootedError> {
     let exception = context.error_rooted(&details.message)?;
     if let Some(name) = details.name {
         set_string(context, exception, "name", name)?;
     }
+    let errno = context.number(details.errno as f64);
+    set(context, exception, "errno", errno)?;
     set_string(context, exception, "code", details.code)?;
     let syscall = context.string_rooted(&details.syscall);
     set(context, exception, "syscall", syscall)?;
-    let errno = context.number(details.errno as f64);
-    set(context, exception, "errno", errno)?;
     if let Some(path) = details.path {
         let path = context.string_rooted(&path);
         set(context, exception, "path", path)?;
