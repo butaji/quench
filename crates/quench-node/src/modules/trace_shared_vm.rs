@@ -360,7 +360,10 @@ pub(crate) fn internal_binding(
     let name = context.to_string(args.first().copied().unwrap_or(absent))?;
     let binding = context.object_rooted()?;
     match name.as_str() {
+        "types" => return super::util_shared_vm::types_binding(context),
         "util" => return super::util_shared_vm::key_binding(context),
+        "encoding_binding" => return super::encoding_binding_shared_vm::binding(context),
+        "symbols" => return super::util_shared_vm::symbols_binding(context),
         "http2" => return crate::host::shared_vm::commonjs::http2_binding(context),
         "buffer" => return super::buffer_fill_shared_vm::binding(context),
         "crypto" => return super::tls_shared_vm::facade::binding(context),
@@ -382,6 +385,10 @@ pub(crate) fn internal_binding(
             put(context, binding, "usePerfetto", perfetto)?;
         }
         "constants" => {
+            let fs = super::fs_shared_vm::fs_constants(context)?;
+            put(context, binding, "fs", fs)?;
+            let zlib = super::zlib_shared_vm::constants(context)?;
+            put(context, binding, "zlib", zlib)?;
             let trace = context.object_rooted()?;
             for (name, code) in [
                 ("TRACE_EVENT_PHASE_BEGIN", b'B'),

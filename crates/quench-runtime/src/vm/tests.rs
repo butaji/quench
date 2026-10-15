@@ -1044,6 +1044,20 @@ fn string_indices_are_canonical_and_iterator_results_define_data_properties() {
 }
 
 #[test]
+fn typed_array_index_stores_convert_and_ignore_out_of_range_indices() {
+    // Integer-indexed stores go straight to TypedArraySetElement: values convert by kind,
+    // out-of-range indices and prototype setters are never reached, and a non-typed
+    // receiver inheriting from a typed array gets an ordinary own property.
+    let source = "var u = new Uint8Array(4), c = new Uint8ClampedArray(1), seen = 0;\n\
+         Object.defineProperty(Object.getPrototypeOf(Uint8Array.prototype), 5, { set: function () { seen++; }, configurable: true });\n\
+         u[0] = 300; u[1] = -1; u[2] = { valueOf: function () { return 7; } }; u[5] = 1; c[0] = 300;\n\
+         var o = Object.create(u); o[0] = 42;\n\
+         delete Object.getPrototypeOf(Uint8Array.prototype)[5];\n\
+         var result = [Array.from(u).join(), c[0], seen, u[5], u[0], Object.keys(o).join()].join('|');";
+    assert_eq!(global_text(source, "result"), "44,255,7,0|255|0||44|0");
+}
+
+#[test]
 fn promise_record_edges_follow_promise_and_resolver_lifetime() {
     let mut vm = Vm::new(SilentHost);
     let promise = vm.promise_object();

@@ -11,6 +11,7 @@ pub(crate) struct State {
     api: Option<RootId>,
     stats_warning_emitted: bool,
     canonical_bigint_stats: Option<RootId>,
+    statfs_projection: Option<RootId>,
 }
 const FACTORY: &str = quench_js_check::checked_js!(
     r#"(statsConstruct, mode, checkMode, date, DateConstructor, NumberConstructor, round, emitWarning) => {
@@ -115,7 +116,7 @@ pub(crate) fn install(
 }
 /// Internal fs utilities export the same public stat type used by their
 /// binding projection. Preserve that identity when the module is available.
-pub(crate) fn adopt_bigint_stats(
+pub(crate) fn adopt_binding_types(
     context: &mut NativeContext<'_, NodeHost>,
     exports: RootId,
 ) -> Result<(), RootedError> {
@@ -130,11 +131,42 @@ pub(crate) fn adopt_bigint_stats(
     if let Some(old) = old {
         context.release_root(old);
     }
+    if shared.borrow().fs_stats.statfs_projection.is_none() {
+        let projection = get(context, exports, "getStatFsFromBinding")?;
+        let projection = context.retain(projection)?;
+        shared.borrow_mut().fs_stats.statfs_projection = Some(projection);
+    }
     let api = shared.borrow().fs_stats.api;
     if let Some(api) = api {
         set(context, api, "BigIntStats", constructor)?;
     }
     Ok(())
+}
+
+/// Preserve the configured Node library's private StatFs constructor and prototype.
+pub(crate) fn statfs_from_values(
+    context: &mut NativeContext<'_, NodeHost>,
+    values: &[RootId],
+) -> Result<RootId, RootedError> {
+    let shared = context.host_mut().shared_state();
+    if shared.borrow().fs_stats.statfs_projection.is_none() {
+        context.with_startup_intrinsics(|context| {
+            crate::host::shared_vm::commonjs::node_library_export(
+                context,
+                "fs.js",
+                "internal/fs/utils.js",
+                "getStatFsFromBinding",
+            )
+        })?;
+    }
+    let projection = shared
+        .borrow()
+        .fs_stats
+        .statfs_projection
+        .ok_or_else(|| RootedError::host("Node statfs binding projection missing"))?;
+    let values = context.array_rooted(values)?;
+    let undefined = context.undefined();
+    context.call_rooted(projection, undefined, &[values])
 }
 
 pub(crate) fn decorate_stats(
