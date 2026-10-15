@@ -858,6 +858,20 @@ fn timer_handle_api(
     if let Some(api) = context.host_mut().shared_state().borrow().timer_handle_api {
         return Ok(api);
     }
+    // Built on first timer use, with the startup intrinsics in place, so the captured
+    // Reflect and String are the originals whatever a script has done to them.
+    let api = context.with_startup_intrinsics(build_timer_handle_api)?;
+    context
+        .host_mut()
+        .shared_state()
+        .borrow_mut()
+        .timer_handle_api = Some(api);
+    Ok(api)
+}
+
+fn build_timer_handle_api(
+    context: &mut NativeContext<'_, NodeHost>,
+) -> Result<TimerHandleApi, RootedError> {
     let refed_key = context.symbol_rooted(Some(TIMER_REFED));
     let async_id_key = context.symbol_rooted(Some("asyncId"));
     let primitive_key = context.symbol_rooted(Some("kHasPrimitive"));
@@ -894,11 +908,6 @@ fn timer_handle_api(
         timeout_prototype: context.retain(timeout_prototype)?,
         immediate_prototype: context.retain(immediate_prototype)?,
     };
-    context
-        .host_mut()
-        .shared_state()
-        .borrow_mut()
-        .timer_handle_api = Some(api);
     Ok(api)
 }
 
@@ -1275,8 +1284,6 @@ pub(crate) fn timer_close(context: &mut NativeContext<'_, NodeHost>, receiver: R
 
 /// Public timer functions defer the promise export lookup, preserving its identity and hooks.
 pub(crate) fn install_promisify_globals(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
-    // Capture the intrinsic deletion operation before guest code can replace Reflect.
-    timer_handle_api(context)?;
     let global = context.global_root()?;
     let symbol = property(context, global, "Symbol")?;
     let registry = property(context, symbol, "for")?;

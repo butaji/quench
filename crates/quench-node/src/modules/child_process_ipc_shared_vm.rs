@@ -57,6 +57,8 @@ pub(crate) struct State {
     pub(crate) channel: Option<IpcChannel>,
     parse: Option<RootId>,
     stringify: Option<RootId>,
+    /// The `EventEmitter` the IPC surface extends, kept until a channel needs it.
+    emitter: Option<RootId>,
     api_factory: Option<RootId>,
 }
 
@@ -332,17 +334,36 @@ pub(crate) fn install_process(
     process: RootId,
     emitter: RootId,
 ) -> Result<(), RootedError> {
-    let factory =
-        context.evaluate_script_rooted(API_FACTORY, "node:child_process/ipc-surface.js")?;
-    let undefined = context.undefined();
-    let factory = context.call_rooted(factory, undefined, &[emitter])?;
-    let factory = context.retain(factory)?;
+    let emitter = context.retain(emitter)?;
     let state = context.host_mut().shared_state();
-    let previous = state.borrow_mut().process_ipc.api_factory.replace(factory);
+    let previous = state.borrow_mut().process_ipc.emitter.replace(emitter);
     if let Some(previous) = previous {
         context.release_root(previous);
     }
     install(context, PROCESS_OWNER, process)
+}
+
+/// The IPC surface factory, evaluated under the startup intrinsics when the
+/// first channel needs it: most processes never have one.
+fn api_factory(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    let state = context.host_mut().shared_state();
+    let (factory, emitter) = {
+        let state = state.borrow();
+        (state.process_ipc.api_factory, state.process_ipc.emitter)
+    };
+    if let Some(factory) = factory {
+        return Ok(factory);
+    }
+    let emitter = emitter.ok_or_else(|| RootedError::host("IPC event emitter missing"))?;
+    let factory = context.with_startup_intrinsics(|context| {
+        let factory =
+            context.evaluate_script_rooted(API_FACTORY, "node:child_process/ipc-surface.js")?;
+        let undefined = context.undefined();
+        context.call_rooted(factory, undefined, &[emitter])
+    })?;
+    let factory = context.retain(factory)?;
+    state.borrow_mut().process_ipc.api_factory = Some(factory);
+    Ok(factory)
 }
 
 pub(crate) fn install(
@@ -354,11 +375,7 @@ pub(crate) fn install(
     if channel(&mut state.borrow_mut(), owner).is_none() {
         return Ok(());
     }
-    let factory = state
-        .borrow()
-        .process_ipc
-        .api_factory
-        .ok_or_else(|| RootedError::host("IPC API factory missing"))?;
+    let factory = api_factory(context)?;
     let owner = context.number(owner as f64);
     let data = context.array_rooted(&[owner, target])?;
     let send =
