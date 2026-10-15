@@ -940,6 +940,7 @@ pub(crate) fn is_builtin_specifier(specifier: &str) -> bool {
 
 const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("internal/process/task_queues", BuiltinModule::Internal("internal/process/task_queues")),
+    ("internal/buffer", BuiltinModule::Internal("internal/buffer")),
     ("internal/worker/io", BuiltinModule::Internal("internal/worker/io")),
     ("constants", BuiltinModule::Internal("constants")),
     ("node:constants", BuiltinModule::Internal("constants")),
@@ -1242,6 +1243,7 @@ pub(crate) fn dns_module(context: &mut Context<'_>) -> Result<RootId, RootedErro
 
 fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<RootId, RootedError> {
     match builtin {
+        BuiltinModule::Internal("internal/buffer") => crate::modules::buffer_constructor_shared_vm::internal_module(context),
         BuiltinModule::Internal("internal/worker/io") => {
             let global = context.global_root()?;
             let module = context.object_rooted()?;
@@ -1302,7 +1304,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::Stream => node_library_module(context, "stream.js", "stream.js"),
         BuiltinModule::StreamPromises => node_library_module(context, "stream.js", "stream/promises.js"),
         BuiltinModule::WebStreams => node_library_module(context, "stream/web.js", "stream/web.js"),
-        BuiltinModule::StringDecoder => crate::modules::string_decoder_shared_vm::module(context),
+        BuiltinModule::StringDecoder => node_library_module(context, "string_decoder.js", "string_decoder.js"),
         BuiltinModule::Timers => {
             let promises = cached_builtin(context, BuiltinModule::TimersPromises)?;
             crate::modules::timers_shared_vm::timers_module(context, promises)
@@ -1826,7 +1828,7 @@ const getLinkedBinding = () => ({});
       os: { signals: (require("os").constants || {}).signals || {}, errno: { EISDIR: -21 } },
       crypto: { ENGINE_METHOD_ALL: 0xffff },
     };
-    case "string_decoder": return { encodings: ["hex", "utf8", "ascii", "binary", "base64", "base64url", "latin1", "ucs2", "utf16le"] };
+    case "string_decoder": return __nativeInternalBinding("string_decoder");
     case "buffer": return Object.assign({}, require("buffer"), __nativeInternalBinding("buffer"));
     case "fs": return require("fs");
     case "crypto": {
