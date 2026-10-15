@@ -109,6 +109,7 @@ pub(crate) mod util_extend_shared_vm;
 pub(crate) mod stream_duplex_pair_shared_vm;
 pub(crate) mod stream_emitter_shared_vm;
 pub(crate) mod util_env;
+pub(crate) mod util_parse_args_shared_vm;
 pub(crate) mod util_shared_vm;
 pub mod util_strip;
 pub(crate) mod util_style_shared_vm;
