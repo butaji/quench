@@ -165,7 +165,9 @@ large), so the run kept 4-6 MB of file pages resident. `quench_entry_compiled`
 first: the empty start's in order, then the corpus's by how many programs
 executed them; then every per-instruction lane handler (`--dense
 13dispatch_fast`, 126 KB of small functions a hot loop reaches by its code,
-which short training programs rarely do). The start-up order follows. Retrain both orders (static and
+which short training programs rarely do); then the Test262 sample's run
+functions, ranked as a second tier so its builtin coverage does not push the
+interpreter's paths apart. The start-up order follows. Retrain both orders (static and
 dynamic builds) on their own binaries:
 
 ```sh
@@ -176,7 +178,8 @@ for f in empty.cjs quench-bench/deegen-curriculum/*.js quench-bench/micros/*.js 
     --callgrind-out-file=run/$(basename $f).out $BINARY $f
 done
 target/production/symbol-order $BINARY $ORDER --dense 13dispatch_fast \
-  train/empty.cjs.out train/*.js.out --run run/empty.cjs.out run/*.js.out
+  train/empty.cjs.out train/*.js.out \
+  --run run/empty.cjs.out run/{curriculum,micros}*.out --run run/test262-*.out
 ```
 
 Stock V8-v7 max RSS against the previous orders (MB), static / dynamic:
