@@ -40,7 +40,7 @@ pub use vm::{ExecutionMode, JsError};
 
 mod api;
 pub use api::{
-    BuiltinBrand, BuiltinData, ExecutionRequest, HostFunction, HostFunctionId, HostWeakRoot,
+    BuiltinBrand, BuiltinData, PromiseSnapshot, ExecutionRequest, HostFunction, HostFunctionId, HostWeakRoot,
     NativeArithmetic, NativeContext, PromiseRejectionEvent, RootedError, RootedIterator, Runtime,
     RuntimeError, SourceKind, SynchronousModule,
 };

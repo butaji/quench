@@ -87,12 +87,6 @@ pub(crate) mod querystring_data;
 pub(crate) mod querystring_shared_vm;
 pub(crate) mod readline_shared_vm;
 pub(crate) mod shared_event_loop;
-pub(crate) mod stream_close_shared_vm;
-pub(crate) mod stream_pipe_shared_vm;
-pub(crate) mod stream_shared_vm;
-pub(crate) mod stream_constructor_shared_vm;
-pub(crate) mod stream_source;
-pub(crate) mod stream_state;
 pub(crate) mod string_decoder_codec;
 pub(crate) mod string_decoder_shared_vm;
 pub(crate) mod test_shared_vm;
@@ -109,8 +103,6 @@ pub(crate) mod url_shared_vm;
 pub(crate) mod url_whatwg_data;
 pub(crate) mod util_callbackify_shared_vm;
 pub(crate) mod util_extend_shared_vm;
-pub(crate) mod stream_duplex_pair_shared_vm;
-pub(crate) mod stream_emitter_shared_vm;
 pub(crate) mod util_env;
 pub(crate) mod util_parse_args_shared_vm;
 pub(crate) mod util_shared_vm;
@@ -139,3 +131,5 @@ pub(crate) mod util_inspect_builtin_shared_vm;
 pub(crate) mod buffer_fill_shared_vm;
 
 pub(crate) mod buffer_inspect_shared_vm;
+
+pub(crate) mod encoding_binding_shared_vm;

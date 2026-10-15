@@ -171,6 +171,11 @@ impl<H: Host> Vm<H> {
                 self.replace_dense_element(object, index, value);
                 return Ok(());
             }
+            // A typed array's integer-indexed [[Set]] is TypedArraySetElement: its indices
+            // carry no descriptors, accessors or integrity state for the checks below.
+            if self.typed_array_set(p, object, index, value)? {
+                return Ok(());
+            }
             if let Some((atom, attributes)) = self.array_descriptor_entry(object, index)
                 && attributes.accessor
             {
@@ -228,9 +233,6 @@ impl<H: Host> Vm<H> {
                         Ok(())
                     };
                 }
-            }
-            if self.typed_array_set(p, object, index, value)? {
-                return Ok(());
             }
             if self.heap.array(object).is_some()
                 && !self.has_own_array_index(object, index)
