@@ -877,6 +877,20 @@ fn local_bindings_shadow_captured_function_names_and_constants() {
 }
 
 #[test]
+fn array_results_survive_collections_in_proxy_traps() {
+    // splice, slice and concat build their result while proxy traps run guest code
+    // that allocates enough to collect.
+    let source = "var churn = () => { let keep; for (let i = 0; i < 20000; i++) keep = { i, s: 'x' + i }; return keep; };\n\
+         var target = []; for (let i = 0; i < 64; i++) target.push({ v: i });\n\
+         var proxy = new Proxy(target, { get(t, k, r) { churn(); return Reflect.get(t, k, r); } });\n\
+         var spliced = Array.prototype.splice.call(proxy, 0, 32);\n\
+         var sliced = Array.prototype.slice.call(proxy, 0, 16);\n\
+         var joined = Array.prototype.concat.call([], proxy, proxy).length;\n\
+         var result = [spliced.length, spliced[31].v, sliced[15].v, joined, target.length].join();";
+    assert_eq!(global_text(source, "result"), "32,31,47,64,32");
+}
+
+#[test]
 fn promise_record_edges_follow_promise_and_resolver_lifetime() {
     let mut vm = Vm::new(SilentHost);
     let promise = vm.promise_object();
