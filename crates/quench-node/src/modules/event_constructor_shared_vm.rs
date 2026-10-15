@@ -229,20 +229,6 @@ pub(super) fn event_removed(
     Ok(())
 }
 
-pub(super) fn emitter_owner(
-    context: &mut NativeContext<'_, NodeHost>,
-    data: RootId,
-    target: RootId,
-) -> Result<RootId, RootedError> {
-    let delegates = get(context, data, "streamEmitters")?;
-    if context.is_object_rooted(delegates)? {
-        let find = get(context, data, "streamEmitterGet")?;
-        let owner = context.call_rooted(find, delegates, &[target])?;
-        if !nullish(context, owner) { return Ok(owner); }
-    }
-    Ok(target)
-}
-
 /// Node observes thenables only while the emitter's private capture flag is set.
 pub(super) fn capture_result(
     context: &mut NativeContext<'_, NodeHost>,
@@ -256,7 +242,6 @@ pub(super) fn capture_result(
     if nullish(context, result) {
         return Ok(undefined);
     }
-    let target = emitter_owner(context, data, target)?;
     let key = get(context, data, "captureKey")?;
     let enabled = context.get_property_rooted(target, key)?;
     if !context.truthy_rooted(enabled)? {
