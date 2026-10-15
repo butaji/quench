@@ -68,11 +68,7 @@ pub(crate) fn constructor(
     if context.truthy_rooted(cached)? {
         return Ok(cached);
     }
-    let primordials = context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .primordials_module;
+    let primordials = crate::host::shared_vm::commonjs::node_primordials(context)?;
     let global = context.global_root()?;
     let weak = if let Some(primordials) = primordials {
         get(context, primordials, "SafeWeakMap")?
