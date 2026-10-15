@@ -986,9 +986,52 @@ pub(crate) fn validate_integer(context: &mut NativeContext<'_, NodeHost>, value:
     Ok(number)
 }
 
-pub(crate) fn typed_array_name(context: &mut NativeContext<'_, NodeHost>, value: RootId) -> Result<&'static str, RootedError> {
-    for &(name,brand) in TYPE_PREDICATES {
-        if brand != BuiltinBrand::TypedArray && name.ends_with("Array") && context.has_builtin_brand_rooted(value,brand)? { return Ok(name.strip_prefix("is").expect("type predicate prefix")); }
+/// C++ binding validators use intrinsic errors with message before enumerable code,
+/// unlike the coded subclasses exposed by Node's JavaScript validators.
+pub(crate) fn validate_binding_integer(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: RootId,
+    name: &str,
+    minimum: f64,
+    maximum: RootId,
+) -> Result<f64, RootedError> {
+    match validate_integer(context, value, name, minimum, maximum) {
+        Ok(number) => Ok(number),
+        Err(original) => {
+            let Some(exception) = original.exception else {
+                return Err(original);
+            };
+            let key = context.string_rooted("message");
+            let message = context.get_property_rooted(exception, key)?;
+            let message = context.to_string(message)?;
+            let (error, code) = if context
+                .rooted_value(value)
+                .and_then(|value| value.as_number())
+                .is_some()
+            {
+                (context.range_error_rooted(&message)?, "ERR_OUT_OF_RANGE")
+            } else {
+                (context.type_error_rooted(&message)?, "ERR_INVALID_ARG_TYPE")
+            };
+            let key = context.string_rooted("code");
+            let code = context.string_rooted(code);
+            context.define_data_property_rooted(error, key, code, true, true, true)?;
+            Err(context.throw(error))
+        }
+    }
+}
+
+pub(crate) fn typed_array_name(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: RootId,
+) -> Result<&'static str, RootedError> {
+    for &(name, brand) in TYPE_PREDICATES {
+        if brand != BuiltinBrand::TypedArray
+            && name.ends_with("Array")
+            && context.has_builtin_brand_rooted(value, brand)?
+        {
+            return Ok(name.strip_prefix("is").expect("type predicate prefix"));
+        }
     }
     Err(RootedError::host("typed array brand has no display name"))
 }
