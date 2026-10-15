@@ -858,6 +858,25 @@ fn inner_lexical_bindings_shadow_outer_immutable_captures() {
 }
 
 #[test]
+fn local_bindings_shadow_captured_function_names_and_constants() {
+    // A parameter, var or let inside a nested function shadows the enclosing function
+    // expression's name, and a var in a finally block is a function-scoped local.
+    let source = "'use strict';\n\
+         const n = 0;\n\
+         const named = function e() {\n\
+           function param(e) { e = 2; return e; }\n\
+           function local() { var e; e = 3; return e; }\n\
+           function block() { let e; e = 4; return e; }\n\
+           return [param(1), local(), block()].join();\n\
+         };\n\
+         function finallyVar() { try { return 5; } finally { if (true) { var n = 6; } } }\n\
+         var result = named() + ',' + finallyVar();\n\
+         var message = (() => { try { n = 1; } catch (error) { return error.message; } })();";
+    assert_eq!(global_text(source, "result"), "2,3,4,5");
+    assert_eq!(global_text(source, "message"), "Assignment to constant variable.");
+}
+
+#[test]
 fn promise_record_edges_follow_promise_and_resolver_lifetime() {
     let mut vm = Vm::new(SilentHost);
     let promise = vm.promise_object();
