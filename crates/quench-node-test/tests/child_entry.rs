@@ -6976,3 +6976,51 @@ for(const name of ['validateHeaderName','validateHeaderValue'])for(const args of
 console.log(JSON.stringify(out));
 "#);
 }
+
+#[test]
+fn cli_eval_builtin_globals_preserve_lazy_descriptors_cache_and_assignment() {
+compare_node_stream_source(r#"
+'use strict';
+const out=[];
+function descriptor(name){const d=Object.getOwnPropertyDescriptor(globalThis,name);return !d?null:[d.enumerable,d.configurable,typeof d.get,typeof d.set,d.get&&[d.get.name,d.get.length,Object.hasOwn(d.get,'prototype')],d.set&&[d.set.name,d.set.length,Object.hasOwn(d.set,'prototype')]]}
+for(const name of ['vm','fs','path','util','buffer','fs/promises','_http_agent'])out.push(['initial',name,descriptor(name)]);
+const before=Object.getOwnPropertyDescriptor(globalThis,'vm');
+try{const value=vm;const after=Object.getOwnPropertyDescriptor(globalThis,'vm');out.push(['load',value===require('vm'),descriptor('vm'),before.get===after.get,before.set===after.set])}catch(e){out.push(['load-error',e.name,e.message])}
+try{vm=123;out.push(['assign',vm,Object.getOwnPropertyDescriptor(globalThis,'vm')])}catch(e){out.push(['assign-error',e.name,e.message])}
+console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn cli_eval_builtin_globals_use_original_module_identity_and_mutable_require_hook() {
+compare_node_stream_source(r#"
+'use strict';
+const M=require('module'),original=M.prototype.require,out=[];
+M.prototype.require=function(name){out.push(['require-hook',name,this.id,this.filename,this.loaded]);if(name==='vm')return {fromHook:1};return original.call(this,name)};
+try{const first=vm;M.prototype.require=function(){throw new Error('second require must not run')};out.push(['cached',first===vm,first.fromHook])}catch(e){out.push(['error',e.name,e.message])}
+M.prototype.require=original;
+console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn cli_eval_builtin_accessors_preserve_blocked_cache_inherited_setters_and_errors() {
+compare_node_stream_source(r#"
+'use strict';
+const M=require('module'),original=M.prototype.require,out=[];
+let calls=0;
+M.prototype.require=function(name){if(name==='fs'){calls++;return {calls}}return original.call(this,name)};
+Object.defineProperty(globalThis,'fs',{configurable:false});
+const a=fs,b=fs;out.push(['blocked-cache',a.calls,b.calls,a===b]);
+try{fs=1}catch(e){out.push(['blocked-set',e.name,e.message])}
+M.prototype.require=original;
+let seen=[];
+Object.defineProperty(Object.getPrototypeOf(globalThis),'path',{set(v){seen.push([this===globalThis,v])},configurable:true});
+path=4;out.push(['inherited-setter',seen,Object.hasOwn(globalThis,'path')]);
+delete Object.getPrototypeOf(globalThis).path;
+const marker={};M.prototype.require=function(){throw marker};
+try{void vm}catch(e){out.push(['original-error',e===marker])}
+M.prototype.require=original;
+console.log(JSON.stringify(out));
+"#);
+}
