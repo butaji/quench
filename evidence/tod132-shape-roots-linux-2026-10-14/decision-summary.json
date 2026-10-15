@@ -1,6 +1,5 @@
 {
   "baseline_commit": "cb077bb75",
-  "final_integration_sync": "04f4de50e",
   "collector_implementation_changed": false,
   "collector_policy_changed": false,
   "variants": [
@@ -48,5 +47,7 @@
     }
   ],
   "correctness": "initial prototype 604/604 runtime tests; all three match Node in forced-GC lifecycle fixture; refinement full test builds stopped on RSS rejection",
-  "final_workspace_check": "pass"
+  "final_workspace_check": "pass",
+  "integration_sync_before_evidence_commit": "04f4de50e",
+  "build_limitation": "Existing link-order inputs held fixed; no candidate-specific disjoint-corpus retraining. Rejections apply to recorded builds."
 }
