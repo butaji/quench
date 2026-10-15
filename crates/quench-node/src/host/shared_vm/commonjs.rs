@@ -1308,6 +1308,10 @@ pub(crate) fn http2_binding(context: &mut Context<'_>) -> Result<RootId, RootedE
     cached_builtin(context, BuiltinModule::Http2Binding)
 }
 
+pub(crate) fn fs_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    cached_builtin(context, BuiltinModule::Fs)
+}
+
 pub(crate) fn buffer_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     cached_builtin(context, BuiltinModule::Buffer)
 }
@@ -2010,6 +2014,8 @@ fn load_with_resolution(
         }
         return Err(require_module_error(context, "ERR_REQUIRE_CYCLE_MODULE", &message)?);
     }
+    let library_root = context.host_mut().node_library_root.clone();
+    let library_relative = filename.strip_prefix(&library_root).ok();
     let cache = if crate::node_sources::source(filename, &context.host_mut().node_library_root).is_some() {
         ModuleCache::NodeLibrary
     } else { ModuleCache::CommonJs };
@@ -2064,26 +2070,8 @@ fn load_with_resolution(
                 ));
             }
             _ => {
-                // Node's internal crypto utility creates a private `kHandle`
-                // symbol for native Hash objects. The compact crypto builtin
-                // uses the global registry to expose the matching handle to
-                // that source module.
-                let source: std::borrow::Cow<'_, str> = if filename
-                    .to_string_lossy()
-                    .ends_with("/internal/crypto/util.js")
-                {
-                    text.replace(
-                        "const kHandle = Symbol('kHandle');",
-                        "const kHandle = Symbol.for('quench.internal.crypto.kHandle');",
-                    )
-                    .into()
-                } else {
-                    text.into()
-                };
-                let text = source.strip_prefix('\u{feff}').unwrap_or(&source);
-                let is_primordials = filename
-                    .to_string_lossy()
-                    .ends_with("/internal/per_context/primordials.js");
+                let is_primordials = library_relative
+                    == Some(Path::new("lib/internal/per_context/primordials.js"));
                 let text = if text.starts_with("#!") {
                     text.find('\n').map_or("", |end| &text[end..])
                 } else {
@@ -2109,8 +2097,7 @@ fn load_with_resolution(
                         .unwrap_or(Path::new("."))
                         .to_string_lossy(),
                 );
-                let in_node_internal =
-                    filename.starts_with(context.host_mut().node_library_root.join("lib"));
+                let in_node_internal = library_relative.is_some_and(|path| path.starts_with("lib"));
                 let primordials = match primordial_seed {
                     Some(root) => root,
                     None if in_node_internal => {
@@ -2118,9 +2105,8 @@ fn load_with_resolution(
                     }
                     None => context.undefined(),
                 };
-                let is_realm_bootstrap = filename
-                    .to_string_lossy()
-                    .ends_with("/internal/bootstrap/realm.js");
+                let is_realm_bootstrap = library_relative
+                    == Some(Path::new("lib/internal/bootstrap/realm.js"));
                 let internal_binding = if is_realm_bootstrap {
                     r#"const getInternalBinding = (name) => {
   if (name === "builtins") return { builtinIds: [], compileFunction() {}, setInternalLoaders() {} };
@@ -2232,7 +2218,6 @@ const getLinkedBinding = () => ({});
                 };
                 let wrapper_source = format!("{prefix}{text}{WRAPPER_SUFFIX}");
                 drop(text);
-                drop(source);
                 let wrapper = evaluate_wrapper(context, &prefix, &wrapper_source, &key)?;
                 // The compiled program keeps its own source; the module body runs inside this
                 // call, so the file text and wrapper are released before it.
@@ -2257,7 +2242,7 @@ const getLinkedBinding = () => ({});
             }
         }
         let exports = get(context, module, "exports")?;
-        if filename == context.host_mut().node_library_root.join("lib/internal/util/debuglog.js") {
+        if library_relative == Some(Path::new("lib/internal/util/debuglog.js")) {
             let initialize = get(context, exports, "initializeDebugEnv")?;
             let initial = context.host_mut().initial_node_debug.clone();
             let debug = initial.map(|value| context.string_rooted(&value)).unwrap_or_else(|| context.undefined());
@@ -2282,9 +2267,18 @@ const getLinkedBinding = () => ({});
             transition_child(context, parent, module, ChildTransition::Detach)?;
         }
     }
-    if key.ends_with("/internal/fs/utils.js") {
+    if library_relative == Some(Path::new("lib/internal/crypto/util.js")) {
         if let Ok(exports) = &result {
-            crate::modules::fs_shared_vm::stat::types::adopt_binding_types(context, *exports)?;
+            if roots.borrow().crypto_handle_symbol.is_none() {
+                let symbol = get(context, *exports, "kHandle")?;
+                roots.borrow_mut().crypto_handle_symbol = Some(context.retain(symbol)?);
+            }
+        }
+    }
+    let is_fs_utilities = library_relative == Some(Path::new("lib/internal/fs/utils.js"));
+    if is_fs_utilities {
+        if let Ok(exports) = &result {
+            crate::modules::fs_policy_shared_vm::adopt(context, *exports)?;
             let state = get(context, *exports, "vfsState")?;
             let global = context.global_root()?;
             set(context, global, "\0quench:vfsState", state)?;

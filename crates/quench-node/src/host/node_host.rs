@@ -66,6 +66,7 @@ pub(crate) struct SharedNodeState {
     pub(crate) fs_watch: crate::modules::fs_watch_shared_vm::State,
     pub(crate) tls_contexts: crate::modules::tls_shared_vm::contexts::State,
     pub(crate) fs_stats: crate::modules::fs_shared_vm::stat::types::State,
+    pub(crate) fs_policy: crate::modules::fs_policy_shared_vm::State,
     pub(crate) fs_stat_watch: crate::modules::fs_stat_watch_shared_vm::State,
     pub(crate) cwd: crate::modules::process_state::ProcessCwd,
     pub(crate) buffer_prototype: Option<quench_runtime::RootId>,
@@ -75,6 +76,7 @@ pub(crate) struct SharedNodeState {
     pub(crate) commonjs_cache: Option<CommonJsCache>,
     /// Node's internal primordial snapshot used when loading `lib/internal/*`.
     pub(crate) primordials_module: Option<quench_runtime::RootId>,
+    pub(crate) crypto_handle_symbol: Option<quench_runtime::RootId>,
     pub(crate) event_targets_api: Option<quench_runtime::RootId>,
     pub(crate) trace: crate::modules::trace_state::TraceState,
     pub(crate) util_intrinsics: Option<crate::modules::util_shared_vm::UtilIntrinsics>,
@@ -178,6 +180,7 @@ impl SharedNodeState {
         self.active_esm_requires.clear();
         self.buffer_prototype = None;
         self.primordials_module = None;
+        self.crypto_handle_symbol = None;
         self.event_targets_api = None;
         self.process_module = None;
         self.assert_module = None;
@@ -197,6 +200,7 @@ impl SharedNodeState {
         self.fs_watch = crate::modules::fs_watch_shared_vm::State::default();
         self.tls_contexts = crate::modules::tls_shared_vm::contexts::State::default();
         self.fs_stats = crate::modules::fs_shared_vm::stat::types::State::default();
+        self.fs_policy = crate::modules::fs_policy_shared_vm::State::default();
         self.fs_stat_watch = crate::modules::fs_stat_watch_shared_vm::State::default();
     }
 
@@ -216,6 +220,7 @@ impl SharedNodeState {
             fs_watch: crate::modules::fs_watch_shared_vm::State::default(),
             tls_contexts: crate::modules::tls_shared_vm::contexts::State::default(),
             fs_stats: crate::modules::fs_shared_vm::stat::types::State::default(),
+            fs_policy: crate::modules::fs_policy_shared_vm::State::default(),
             fs_stat_watch: crate::modules::fs_stat_watch_shared_vm::State::default(),
             cwd,
             buffer_prototype: None,
@@ -224,6 +229,7 @@ impl SharedNodeState {
             module_parent_api: None,
             active_esm_requires: std::collections::HashMap::new(),
             primordials_module: None,
+            crypto_handle_symbol: None,
             event_targets_api: None,
             util_intrinsics: None,
             node_error_api: None,

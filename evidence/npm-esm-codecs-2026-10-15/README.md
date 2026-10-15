@@ -1,6 +1,6 @@
 # npm module, codec, stream and lifecycle repair evidence
 
-Total Node/package/function parity is **not reached**. The latest completed
+Total Node/package/function parity is **not reached**. The canonical-stream
 qualification cut is production source `faa120035a332d3b5eb232eaadcad1399f306d7d`,
 with fixture-only IPC handshake repair `0cc26891e`. Its executable SHA256 is
 `d6482c1dbf34b2d0045f033404c6e469c916e893b7ceb8c205a610a7ce0681ff`.
@@ -22,8 +22,9 @@ Quench cuts and establishes no package speed win. The requested performance
 phase after parity has not started.
 
 `npm-canonical-sync-summary.json` binds these results. Newer integration
-`f0dc38338` contains filesystem/provenance/crypto changes and is awaiting a
-combined merge and fresh qualification; these results do not qualify it.
+`f0dc38338` is qualified separately on combined source `b8b02f992` in
+[the filesystem sync packet](../npm-fs-sync-2026-10-15/README.md); the results
+here remain specific to `faa120035`.
 Prior `71db80153` results below remain historical/source-specific.
 
 The repair includes module identity/require/cache/parse goals and codecs below,

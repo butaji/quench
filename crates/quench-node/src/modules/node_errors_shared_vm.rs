@@ -222,6 +222,21 @@ pub(super) fn decorate_formatted_type_error(
     )
 }
 
+pub(super) fn decorate_formatted_range_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    error: RootId,
+    code: &'static str,
+) -> Result<(), RootedError> {
+    decorate_ordered_error(
+        context,
+        error,
+        code,
+        ErrorClass::RangeError,
+        &[],
+        MessageOrder::BeforeCode,
+    )
+}
+
 fn decorate_coded_error(
     context: &mut NativeContext<'_, NodeHost>,
     error: RootId,

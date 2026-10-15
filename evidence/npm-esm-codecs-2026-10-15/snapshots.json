@@ -254,11 +254,12 @@
     "checks_complete": true
   },
   "latest_integration": {
-    "qualified_base": "fcc81c6a09b8ff4fd68e923885c62cdc9542b6bc",
-    "qualified_candidate": "faa120035a332d3b5eb232eaadcad1399f306d7d",
-    "newer_fetched_source": "f0dc383381d2ea66a54eff3c47a10587bfb96cb5",
-    "newer_combined_qualification": "pending",
-    "candidate_sha256": "d6482c1dbf34b2d0045f033404c6e469c916e893b7ceb8c205a610a7ce0681ff"
+    "qualified_base": "f0dc383381d2ea66a54eff3c47a10587bfb96cb5",
+    "qualified_candidate": "b8b02f99245ee4e3392c84b75480733d7f135802",
+    "candidate_sha256": "8bf0b426e7f8cf23df979d055b84d91c21e6ca5878f88590618aa1773a07c7fe",
+    "qualification_packet": "../npm-fs-sync-2026-10-15/npm-fs-sync-summary.json",
+    "checks_complete": true,
+    "total_parity": false
   },
   "canonical_checks": {
     "production_source": "faa120035a332d3b5eb232eaadcad1399f306d7d",
