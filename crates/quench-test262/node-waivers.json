@@ -15,47 +15,47 @@
       "cases": [
         {
           "path": "built-ins/Error/prototype/stack/getter-cross-realm.js",
-          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+          "failure": "quench runtime: TypeError: Cannot read properties of undefined (reading 'get')"
         },
         {
           "path": "built-ins/Error/prototype/stack/getter-data-property-shadows.js",
-          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+          "failure": "quench runtime: TypeError: Cannot read properties of undefined (reading 'get')"
         },
         {
           "path": "built-ins/Error/prototype/stack/getter-error-as-prototype.js",
-          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+          "failure": "quench runtime: TypeError: Cannot read properties of undefined (reading 'get')"
         },
         {
           "path": "built-ins/Error/prototype/stack/getter-error-instance.js",
-          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+          "failure": "quench runtime: TypeError: Cannot read properties of undefined (reading 'get')"
         },
         {
           "path": "built-ins/Error/prototype/stack/getter-error-prototype.js",
-          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+          "failure": "quench runtime: TypeError: Cannot read properties of undefined (reading 'get')"
         },
         {
           "path": "built-ins/Error/prototype/stack/getter-foreign-new-target.js",
-          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+          "failure": "quench runtime: TypeError: Cannot read properties of undefined (reading 'get')"
         },
         {
           "path": "built-ins/Error/prototype/stack/getter-no-error-data.js",
-          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+          "failure": "quench runtime: TypeError: Cannot read properties of undefined (reading 'get')"
         },
         {
           "path": "built-ins/Error/prototype/stack/getter-not-a-constructor.js",
-          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+          "failure": "quench runtime: TypeError: Cannot read properties of undefined (reading 'get')"
         },
         {
           "path": "built-ins/Error/prototype/stack/getter-receiver-is-proxy.js",
-          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+          "failure": "quench runtime: TypeError: Cannot read properties of undefined (reading 'get')"
         },
         {
           "path": "built-ins/Error/prototype/stack/getter-subclass.js",
-          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+          "failure": "quench runtime: TypeError: Cannot read properties of undefined (reading 'get')"
         },
         {
           "path": "built-ins/Error/prototype/stack/getter-this-not-object.js",
-          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+          "failure": "quench runtime: TypeError: Cannot read properties of undefined (reading 'get')"
         },
         {
           "path": "built-ins/Error/prototype/stack/instance-no-own-stack.js",
@@ -71,87 +71,87 @@
         },
         {
           "path": "built-ins/Error/prototype/stack/setter-creates-own-property.js",
-          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+          "failure": "quench runtime: TypeError: Cannot read properties of undefined (reading 'set')"
         },
         {
           "path": "built-ins/Error/prototype/stack/setter-cross-realm.js",
-          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+          "failure": "quench runtime: TypeError: Cannot read properties of undefined (reading 'set')"
         },
         {
           "path": "built-ins/Error/prototype/stack/setter-delete-round-trip.js",
-          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+          "failure": "quench runtime: TypeError: Cannot read properties of undefined (reading 'get')"
         },
         {
           "path": "built-ins/Error/prototype/stack/setter-empty-string.js",
-          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+          "failure": "quench runtime: TypeError: Cannot read properties of undefined (reading 'set')"
         },
         {
           "path": "built-ins/Error/prototype/stack/setter-existing-own-property.js",
-          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+          "failure": "quench runtime: TypeError: Cannot read properties of undefined (reading 'set')"
         },
         {
           "path": "built-ins/Error/prototype/stack/setter-no-argument.js",
-          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+          "failure": "quench runtime: TypeError: Cannot read properties of undefined (reading 'set')"
         },
         {
           "path": "built-ins/Error/prototype/stack/setter-non-error-receiver.js",
-          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+          "failure": "quench runtime: TypeError: Cannot read properties of undefined (reading 'set')"
         },
         {
           "path": "built-ins/Error/prototype/stack/setter-non-extensible-receiver.js",
-          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+          "failure": "quench runtime: TypeError: Cannot read properties of undefined (reading 'set')"
         },
         {
           "path": "built-ins/Error/prototype/stack/setter-non-string-value.js",
-          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+          "failure": "quench runtime: TypeError: Cannot read properties of undefined (reading 'set')"
         },
         {
           "path": "built-ins/Error/prototype/stack/setter-non-writable-stack.js",
-          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+          "failure": "quench runtime: TypeError: Cannot read properties of undefined (reading 'set')"
         },
         {
           "path": "built-ins/Error/prototype/stack/setter-not-a-constructor.js",
-          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+          "failure": "quench runtime: TypeError: Cannot read properties of undefined (reading 'set')"
         },
         {
           "path": "built-ins/Error/prototype/stack/setter-own-accessor.js",
-          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+          "failure": "quench runtime: TypeError: Cannot read properties of undefined (reading 'set')"
         },
         {
           "path": "built-ins/Error/prototype/stack/setter-proxy-trap-rejects.js",
-          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+          "failure": "quench runtime: TypeError: Cannot read properties of undefined (reading 'set')"
         },
         {
           "path": "built-ins/Error/prototype/stack/setter-proxy-trap-throws.js",
-          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+          "failure": "quench runtime: TypeError: Cannot read properties of undefined (reading 'set')"
         },
         {
           "path": "built-ins/Error/prototype/stack/setter-proxy-wrapping-prototype.js",
-          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+          "failure": "quench runtime: TypeError: Cannot read properties of undefined (reading 'set')"
         },
         {
           "path": "built-ins/Error/prototype/stack/setter-receiver-is-null-proto.js",
-          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+          "failure": "quench runtime: TypeError: Cannot read properties of undefined (reading 'set')"
         },
         {
           "path": "built-ins/Error/prototype/stack/setter-receiver-is-other-prototype.js",
-          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+          "failure": "quench runtime: TypeError: Cannot read properties of undefined (reading 'set')"
         },
         {
           "path": "built-ins/Error/prototype/stack/setter-receiver-is-prototype.js",
-          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+          "failure": "quench runtime: TypeError: Cannot read properties of undefined (reading 'set')"
         },
         {
           "path": "built-ins/Error/prototype/stack/setter-receiver-is-proxy.js",
-          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+          "failure": "quench runtime: TypeError: Cannot read properties of undefined (reading 'set')"
         },
         {
           "path": "built-ins/Error/prototype/stack/setter-this-not-object.js",
-          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+          "failure": "quench runtime: TypeError: Cannot read properties of undefined (reading 'set')"
         },
         {
           "path": "built-ins/Error/prototype/stack/setter-via-assignment.js",
-          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+          "failure": "quench runtime: TypeError: Cannot read properties of undefined (reading 'get')"
         }
       ]
     },
