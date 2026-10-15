@@ -1238,6 +1238,12 @@ fn cached_builtin(
     if matches!(builtin, BuiltinModule::Crypto | BuiltinModule::Events) {
         let policy = context.with_startup_intrinsics(|context| {
             if matches!(builtin, BuiltinModule::Events) {
+                // Node's public and internal abort helpers share one authority.
+                // In this host the native helper owns dispatch resistance and
+                // disposal for the actual AbortSignal implementation.
+                let abort = node_library_module(context, "events.js", "internal/events/abort_listener.js")?;
+                let listener = get(context, module, "addAbortListener")?;
+                set(context, abort, "addAbortListener", listener)?;
                 let on = node_library_export(context, "events.js", "events.js", "on")?;
                 return set(context, module, "on", on);
             }
@@ -1257,10 +1263,16 @@ fn cached_builtin(
 pub(crate) fn node_library_export(
     context: &mut Context<'_>, owner: &str, relative: &str, name: &str,
 ) -> Result<RootId, RootedError> {
+    let library = node_library_module(context, owner, relative)?;
+    get(context, library, name)
+}
+
+fn node_library_module(
+    context: &mut Context<'_>, owner: &str, relative: &str,
+) -> Result<RootId, RootedError> {
     let root = context.host_mut().node_library_root.clone();
     let parent = module_record(context, &root.join("lib").join(owner), None, false)?;
-    let library = load(context, &root.join("lib").join(relative), Some(parent), EntryGoal::CommonJs)?;
-    get(context, library, name)
+    load(context, &root.join("lib").join(relative), Some(parent), EntryGoal::CommonJs)
 }
 
 pub(crate) fn module_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
