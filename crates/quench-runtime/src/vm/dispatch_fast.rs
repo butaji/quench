@@ -236,6 +236,18 @@ struct Carried {
     acc: Value,
 }
 
+impl Carried {
+    /// What a JavaScript record that produces no accumulator carries on. A JavaScript
+    /// function binds no memory (`frame_memory_view`), integers are always tagged, and only
+    /// the record after a producer reads the accumulator. Passing this instead of the
+    /// incoming state frees the registers that state would occupy across the record.
+    const SCRIPT: Self = Self {
+        memory: MemoryView::NONE,
+        integers: crate::value::IntegerEncoding::TAG,
+        acc: Value::UNDEFINED,
+    };
+}
+
 /// A Wasm activation a lane call made without a VM frame. Its registers are
 /// a window of the lane stack; it returns to the record after `call` in its
 /// caller, whose registers, view and memory it keeps for the return.
@@ -830,9 +842,69 @@ lane_handler! {
     }
 }
 
+/// The register a field record's base field names; `None` for `this` and a nested base.
+#[inline(always)]
+fn field_register(base: u16) -> Option<u16> {
+    if base == crate::bytecode::FieldBase::NESTED {
+        return None;
+    }
+    crate::bytecode::FieldBase(base).register_index()
+}
+
+lane_handler! {
+    /// `GetField` of a register: the site's primary own entry inline. Any other read goes
+    /// through `lane_get_field_miss`, which may move the record to a fitting handler.
+    fn lane_get_field_own<>(cx, r, ip, i, view) {
+        let Some(register) = field_register(i.b) else {
+            sibling!(lane_get_field_miss::<H>, r, ip, Carried::SCRIPT)
+        };
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let Some(value) = (unsafe { vm(cx) }).primary_own_field_hit(code, r.get(register), i.c)
+        else {
+            sibling!(lane_get_field_miss::<H>, r, ip, Carried::SCRIPT)
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::SCRIPT)
+    }
+}
+
+lane_handler! {
+    /// `GetField` of a register at a site past one shape (`Vm::field_site_polymorphic`):
+    /// its inline own entries; any other read takes `lane_get_field`.
+    fn lane_get_field_polymorphic<>(cx, r, ip, i, view) {
+        let register = field_register(i.b);
+        debug_assert!(register.is_some());
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let object = r.get(register.unwrap_or_default());
+        let Some(value) = (unsafe { vm(cx) }).polymorphic_own_field_hit(code, object, i.c) else {
+            sibling!(lane_get_field::<H>, r, ip, Carried::SCRIPT)
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::SCRIPT)
+    }
+}
+
+lane_handler! {
+    /// A primary-entry miss of `lane_get_field_own`: a record whose base is no register
+    /// moves to `lane_get_field`, one whose site went polymorphic to
+    /// `lane_get_field_polymorphic`; the read itself takes `lane_get_field`.
+    #[inline(never)]
+    fn lane_get_field_miss<>(cx, r, ip, i, view) {
+        if field_register(i.b).is_none() {
+            requicken(ip, lane_get_field::<H>);
+        } else if (unsafe { vm(cx) }).field_site_polymorphic(i.c) {
+            requicken(ip, lane_get_field_polymorphic::<H>);
+        }
+        sibling!(lane_get_field::<H>, r, ip, Carried::SCRIPT)
+    }
+}
+
 lane_handler! {
     /// A field read that hits its cache; any other read takes the general
     /// path, which repeats the side-effect-free lookup.
+    #[inline(never)]
     fn lane_get_field<>(cx, r, ip, i, view) {
         if i.b == crate::bytecode::FieldBase::NESTED {
             return exit(ip);
@@ -854,7 +926,7 @@ lane_handler! {
             return exit(ip);
         };
         r.set(i.a, value);
-        next!(cx, r, following(ip), view)
+        next!(cx, r, following(ip), Carried::SCRIPT)
     }
 }
 
@@ -866,7 +938,6 @@ fn lane_set_field<H: Host>(
     ip: Ip,
     object: Value,
     i: &LaneInstruction,
-    view: Carried,
 ) -> Ip {
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
@@ -877,13 +948,13 @@ fn lane_set_field<H: Host>(
     }
     // Adding a property can allocate.
     note_allocation(vm);
-    next!(cx, r, following(ip), view)
+    next!(cx, r, following(ip), Carried::SCRIPT)
 }
 
 lane_handler! {
     /// `SetField` and `SetFieldStrict`.
     fn lane_set_object_field<>(cx, r, ip, i, view) {
-        lane_set_field(cx, r, ip, r.get(i.b), i, view)
+        lane_set_field(cx, r, ip, r.get(i.b), i)
     }
 }
 
@@ -893,7 +964,7 @@ lane_handler! {
         let Some(this) = (unsafe { vm(cx).current_this((*cx).frame) }) else {
             return exit(ip);
         };
-        lane_set_field(cx, r, ip, this, i, view)
+        lane_set_field(cx, r, ip, this, i)
     }
 }
 
@@ -2760,7 +2831,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
     match op {
         Op::StoreLocalPlain => Some(lane_store_local_plain::<H>),
         Op::LoadThis => Some(lane_load_this::<H>),
-        Op::GetField => Some(lane_get_field::<H>),
+        Op::GetField => Some(lane_get_field_own::<H>),
         Op::SetField | Op::SetFieldStrict => Some(lane_set_object_field::<H>),
         Op::SetThisField | Op::SetThisFieldStrict => Some(lane_set_this_field::<H>),
         Op::ToNumeric => Some(lane_to_numeric::<H>),
