@@ -1069,6 +1069,8 @@ pub(super) struct AsyncResumeJob {
     pub(super) generator: Option<Value>,
     pub(super) rejected: bool,
     pub(super) yielded: bool,
+    /// The other reaction of the same `await`, removed when either one runs.
+    pub(super) sibling: Value,
 }
 
 #[derive(Clone, Debug)]
