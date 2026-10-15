@@ -65,11 +65,17 @@ fn derive_shape_lookup_index(shapes: &[Shape], shape: u32) -> ShapeLookupIndex {
     while let Some(id) = current {
         let shape = &shapes[id as usize];
         match shape.transition {
-            ShapeTransition::Add { key, slot } => {
+            ShapeTransition::Add {
+                key,
+                slot,
+                attributes: value,
+            } => {
                 if seen_keys.insert(key) {
                     entries.push((key, slot));
                 }
-                seen_slots.insert(slot);
+                if seen_slots.insert(slot) && value != DEFAULT_DATA_ATTRIBUTES {
+                    attributes.insert(slot, value.shape());
+                }
             }
             ShapeTransition::Delete { key, slot } => {
                 seen_keys.insert(key);
@@ -185,6 +191,7 @@ impl<H: Host> Vm<H> {
                 ShapeTransition::Add {
                     key: candidate,
                     slot,
+                    ..
                 } if candidate == key => break Some(slot as usize),
                 ShapeTransition::Delete { key: candidate, .. } if candidate == key => break None,
                 ShapeTransition::Root
@@ -248,8 +255,12 @@ impl<H: Host> Vm<H> {
                     return Some(attributes.attributes(&self.shape_accessors));
                 }
                 ShapeTransition::Add {
-                    slot: candidate, ..
-                } if candidate as usize == slot => return Some(DEFAULT_PROPERTY_ATTRIBUTES),
+                    slot: candidate,
+                    attributes,
+                    ..
+                } if candidate as usize == slot => {
+                    return Some(attributes.shape().attributes(&self.shape_accessors));
+                }
                 ShapeTransition::Delete {
                     slot: candidate, ..
                 } if candidate as usize == slot => return Some(DEFAULT_PROPERTY_ATTRIBUTES),
@@ -715,9 +726,10 @@ impl<H: Host> Vm<H> {
         if cache.receiver != receiver.shape() || cache.holder != NO_FIELD_HOLDER {
             return None;
         }
-        self.profile.field_cache_hit(0, 0);
         // SAFETY: as for `cached_field_hit`.
-        Some(unsafe { self.heap.property_get_unchecked(receiver, cache.slot as usize) })
+        let value = unsafe { self.heap.property_get_shaped(receiver, cache.slot as usize) }?;
+        self.profile.field_cache_hit(0, 0);
+        Some(value)
     }
 
     /// The data field a direct object's immediate prototype holds at the site's primary
@@ -740,6 +752,32 @@ impl<H: Host> Vm<H> {
         Some(hit.value)
     }
 
+    /// The data field a direct object inherits from beyond its immediate prototype, at the
+    /// site's inherited entry (`cached_inherited_field_value`): `field_miss_data_value`'s
+    /// cache hit for a site that has one (`field_site_inherited`).
+    #[inline(always)]
+    pub(super) fn inherited_field_hit(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        site: u16,
+    ) -> Option<Value> {
+        if !(self.specialized && p.specialized) {
+            return None;
+        }
+        let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
+        let hit = self.cached_inherited_field_value(self.field_cache_index(site), receiver)?;
+        self.profile
+            .field_cache_hit(usize::from(hit.tier), hit.depth);
+        Some(hit.value)
+    }
+
+    /// Whether the site has an inherited entry (`inherited_field_hit`).
+    pub(super) fn field_site_inherited(&self, site: u16) -> bool {
+        self.inherited_field_caches
+            .contains_key(&self.field_cache_index(site))
+    }
+
     /// Whether the site's primary entry names a prototype holder (`primary_holder_field_hit`).
     pub(super) fn field_site_holder(&self, site: u16) -> bool {
         self.field_caches[self.field_cache_index(site)].holder != NO_FIELD_HOLDER
@@ -759,9 +797,10 @@ impl<H: Host> Vm<H> {
         }
         let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
         let slot = self.inline_megamorphic_field_slot(self.field_cache_index(site), receiver.shape())?;
-        self.profile.field_cache_hit(2, 0);
         // SAFETY: as for `cached_field_hit`.
-        Some(unsafe { self.heap.property_get_unchecked(receiver, usize::from(slot)) })
+        let value = unsafe { self.heap.property_get_shaped(receiver, usize::from(slot)) }?;
+        self.profile.field_cache_hit(2, 0);
+        Some(value)
     }
 
     /// `get_field_polymorphic` for an ordinary record receiver up to the point where it
@@ -997,10 +1036,7 @@ impl<H: Host> Vm<H> {
         }
         // SAFETY: both immutable shapes and the property slot were recorded together after
         // confirming an immediate-prototype data property.
-        let value = unsafe {
-            self.heap
-                .property_get_unchecked(holder, cache.slot as usize)
-        };
+        let value = unsafe { self.heap.property_get_shaped(holder, cache.slot as usize) }?;
         Some(FieldCacheHit {
             value,
             tier: 0,
@@ -1176,10 +1212,7 @@ impl<H: Host> Vm<H> {
             holder = Some(data);
         }
         // SAFETY: the holder's shape was recorded together with this data slot.
-        let value = unsafe {
-            self.heap
-                .property_get_unchecked(holder?, usize::from(cache.slot))
-        };
+        let value = unsafe { self.heap.property_get_shaped(holder?, usize::from(cache.slot)) }?;
         Some(FieldCacheHit {
             value,
             tier: 0,
@@ -1260,6 +1293,31 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<(), JsError> {
         self.set_shape_property(object, PropertyKey::string(atom), value)
+    }
+
+    /// `set_property`, then `set_property_attributes`: the host's way to install a property
+    /// with chosen attributes. An absent data property is created with them in one shape.
+    pub(super) fn set_property_with_attributes(
+        &mut self,
+        object: Value,
+        atom: Atom,
+        value: Value,
+        attributes: PropertyAttributes,
+    ) -> Result<(), JsError> {
+        let key = PropertyKey::string(atom);
+        if let Some(data) = DataAttributes::of(attributes)
+            && let Some(object_data) = self.object_data(object)
+            && self.property_shape_slot(object_data.shape(), key).is_none()
+        {
+            self.create_shape_data_property(object, key, value, data)?;
+            if data != DEFAULT_DATA_ATTRIBUTES {
+                self.invalidate_method_caches_for_key(key);
+            }
+            return Ok(());
+        }
+        self.set_property(object, atom, value)?;
+        self.set_property_attributes(object, key, attributes);
+        Ok(())
     }
 
     /// ECMAScript `OrdinarySet` with an explicit receiver. This is the shared
@@ -1597,12 +1655,22 @@ impl<H: Host> Vm<H> {
         key: PropertyKey,
         value: Value,
     ) -> Result<(), JsError> {
+        self.create_shape_data_property(object, key, value, DEFAULT_DATA_ATTRIBUTES)
+    }
+
+    fn create_shape_data_property(
+        &mut self,
+        object: Value,
+        key: PropertyKey,
+        value: Value,
+        attributes: DataAttributes,
+    ) -> Result<(), JsError> {
         let shape = self
             .object_data(object)
             .ok_or_else(|| JsError("property write on non-object".into()))?
             .shape();
         self.check_property_key_write(object, key, false)?;
-        let next_shape = self.transition_property_shape(shape, key);
+        let next_shape = self.transition_data_property_shape(shape, key, attributes);
         self.heap.property_add(object, value, next_shape);
         if let PropertyKey::String(atom) = key {
             self.invalidate_method_caches_for_prototype_add(object, atom);
@@ -2245,10 +2313,19 @@ impl<H: Host> Vm<H> {
         self.transition_property_shape(shape, PropertyKey::string(atom))
     }
     pub(super) fn transition_property_shape(&mut self, shape: u32, key: PropertyKey) -> u32 {
+        self.transition_data_property_shape(shape, key, DEFAULT_DATA_ATTRIBUTES)
+    }
+    fn transition_data_property_shape(
+        &mut self,
+        shape: u32,
+        key: PropertyKey,
+        attributes: DataAttributes,
+    ) -> u32 {
         let transition = ShapeTransition::Add {
             key,
             slot: u32::try_from(self.shapes[shape as usize].storage_len())
                 .expect("object property index exceeds u32"),
+            attributes,
         };
         self.append_cached_shape_transition(shape, transition)
     }

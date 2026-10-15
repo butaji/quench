@@ -499,10 +499,10 @@ impl<H: Host> Vm<H> {
         let setter = self.realm_native_value_optional(Native::ObjectPrototypeProtoSetter, realm);
         self.set_builtin_function_name(getter, "get __proto__")?;
         self.set_builtin_function_name(setter, "set __proto__")?;
-        self.set_property(prototype, prototype_atom, Value::UNDEFINED)?;
-        self.set_property_attributes(
+        self.set_property_with_attributes(
             prototype,
-            PropertyKey::string(prototype_atom),
+            prototype_atom,
+            Value::UNDEFINED,
             PropertyAttributes {
                 writable: false,
                 enumerable: false,
@@ -511,7 +511,7 @@ impl<H: Host> Vm<H> {
                 getter: Some(getter),
                 setter: Some(setter),
             },
-        );
+        )?;
         Ok(())
     }
 
