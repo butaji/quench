@@ -1,6 +1,18 @@
 use super::typed_array_install::TYPED_ARRAY_INSTALLS;
 use super::*;
 
+/// The shapes an ordinary closure's own properties step through as `Vm::closure_in_realm`
+/// defines them, each with its final attributes: `length`, then `name`, then for a
+/// constructor `prototype`, paired with its prototype object's shape once `constructor` is
+/// defined. Recorded from the first such closure built property by property; a later one
+/// adds its values along them.
+#[derive(Clone, Copy)]
+pub(super) struct ClosureShapes {
+    length: u32,
+    name: u32,
+    prototype: Option<(u32, u32)>,
+}
+
 impl<H: Host> Vm<H> {
     pub(super) fn function_realm(
         &mut self,
@@ -340,8 +352,38 @@ impl<H: Host> Vm<H> {
                 .weak_handle(function)
                 .expect("new closure is live"),
         );
+        let name_value = function_plan
+            .name
+            .map(|atom| {
+                self.heap
+                    .alloc(Cell::String(JsString::from_str(self.atom_name(atom))))
+            })
+            .unwrap_or_else(|| self.heap.alloc(Cell::String(JsString::from_str(""))));
+        let length_value = Value::number(function_plan.length as f64);
+        // An ordinary closure's own properties and its prototype's `constructor` take the
+        // shapes the first one recorded; every other closure defines them one by one.
+        let ordinary = !function_plan.is_async
+            && !function_plan.is_generator
+            && !function_plan.is_class_constructor;
+        let shapes_key = usize::from(prototype.is_some());
+        if ordinary && let Some(shapes) = self.closure_shapes[shapes_key] {
+            self.heap.property_add(function, length_value, shapes.length);
+            self.heap.property_add(function, name_value, shapes.name);
+            if let (Some(prototype), Some((with_prototype, constructor))) =
+                (prototype, shapes.prototype)
+            {
+                self.heap.property_add(function, prototype, with_prototype);
+                self.heap.property_add(prototype, function, constructor);
+            }
+            return Ok(function);
+        }
+        let mut recorded = ClosureShapes {
+            length: 0,
+            name: 0,
+            prototype: None,
+        };
         let length = self.intern_atom("length");
-        self.set_property(function, length, Value::number(function_plan.length as f64))?;
+        self.set_property(function, length, length_value)?;
         self.set_property_attributes(
             function,
             property_key::PropertyKey::string(length),
@@ -354,14 +396,8 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
+        recorded.length = self.closure_shape(function);
         let name = self.intern_atom("name");
-        let name_value = function_plan
-            .name
-            .map(|atom| {
-                self.heap
-                    .alloc(Cell::String(JsString::from_str(self.atom_name(atom))))
-            })
-            .unwrap_or_else(|| self.heap.alloc(Cell::String(JsString::from_str(""))));
         self.set_property(function, name, name_value)?;
         self.set_property_attributes(
             function,
@@ -375,8 +411,10 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
+        recorded.name = self.closure_shape(function);
+        let prototype_atom = self.known_prototype_atom();
         if let Some(prototype) = prototype
-            && let Some(atom) = self.known_prototype_atom()
+            && let Some(atom) = prototype_atom
         {
             self.set_property(function, atom, prototype)?;
             self.set_property_attributes(
@@ -408,8 +446,28 @@ impl<H: Host> Vm<H> {
             && let Some(prototype) = prototype
         {
             self.set_builtin_value_named(prototype, "constructor", constructor)?;
+            recorded.prototype =
+                Some((self.closure_shape(function), self.closure_shape(prototype)));
+        }
+        let shared = |shape: u32| !self.shape_is_dictionary(shape);
+        if ordinary
+            && (prototype.is_none() || prototype_atom.is_some())
+            && shared(recorded.length)
+            && shared(recorded.name)
+            && recorded
+                .prototype
+                .is_none_or(|(function, prototype)| shared(function) && shared(prototype))
+        {
+            self.closure_shapes[shapes_key] = Some(recorded);
         }
         Ok(function)
+    }
+
+    /// The shape of an object `closure_in_realm` just made.
+    fn closure_shape(&self, object: Value) -> u32 {
+        self.object_data(object)
+            .expect("a new closure or prototype is an object")
+            .shape()
     }
 
     fn realm_constructor(&mut self, realm: Value, name: &str) -> Option<Value> {
