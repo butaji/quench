@@ -1918,7 +1918,7 @@ const getLinkedBinding = () => ({});
     }
     if key.ends_with("/internal/fs/utils.js") {
         if let Ok(exports) = &result {
-            crate::modules::fs_shared_vm::stat::types::adopt_bigint_stats(context, *exports)?;
+            crate::modules::fs_shared_vm::stat::types::adopt_binding_types(context, *exports)?;
             let state = get(context, *exports, "vfsState")?;
             let global = context.global_root()?;
             set(context, global, "\0quench:vfsState", state)?;
