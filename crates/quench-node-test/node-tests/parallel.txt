@@ -740,3 +740,10 @@ test-promise-unhandled-warn.js # profile=promise-rejections
 test-promises-warning-on-unhandled-rejection.js # profile=promise-rejections
 test-promises-unhandled-symbol-rejections.js # profile=promise-rejections
 test-promises-unhandled-proxy-rejections.js # profile=promise-rejections
+
+# Web HTTP parity: unchanged stable Node fixtures for request/response framing.
+test-http-res-write-after-end.js # profile=web-parity
+test-http-request-arguments.js # profile=web-parity
+test-http-server-de-chunked-trailer.js # profile=web-parity
+test-http-request-method-delete-payload.js # profile=web-parity
+test-http-transfer-encoding-repeated-chunked.js # profile=web-parity

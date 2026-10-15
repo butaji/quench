@@ -317,7 +317,7 @@ pub(crate) fn request_head_with_chunking(
         }
     } else if force_chunked && !has_content_length {
         head.push_str("Transfer-Encoding: chunked\r\n");
-    } else if !has_content_length && (body_len > 0 || default_empty_body(method)) {
+    } else if !has_content_length && default_request_chunking(method) {
         head.push_str(&format!("Content-Length: {body_len}\r\n"));
     }
     if !headers
@@ -330,6 +330,9 @@ pub(crate) fn request_head_with_chunking(
     head
 }
 
-fn default_empty_body(method: &str) -> bool {
-    matches!(method.to_ascii_uppercase().as_str(), "POST" | "PUT")
+pub(crate) fn default_request_chunking(method: &str) -> bool {
+    !matches!(
+        method.to_ascii_uppercase().as_str(),
+        "GET" | "HEAD" | "DELETE" | "OPTIONS" | "TRACE" | "CONNECT"
+    )
 }
