@@ -9,6 +9,12 @@ const BITWISE_NOT: u32 = UnaryOperator::BitwiseNot as u32;
 const TYPEOF: u32 = UnaryOperator::Typeof as u32;
 const VOID: u32 = UnaryOperator::Void as u32;
 
+/// The unary operators that convert their operand to a numeric value; on a Number they
+/// run no guest code.
+pub(super) fn numeric_unary(op: u32) -> bool {
+    matches!(op, UNARY_PLUS | UNARY_NEGATION | BITWISE_NOT)
+}
+
 impl<H: Host> Vm<H> {
     pub(super) fn typeof_value(&mut self, value: Value) -> Value {
         let text = if self.is_html_dda(value) {
@@ -132,7 +138,7 @@ impl<H: Host> Vm<H> {
         op: u32,
         value: Value,
     ) -> Result<Value, JsError> {
-        let numeric = matches!(op, UNARY_PLUS | UNARY_NEGATION | BITWISE_NOT);
+        let numeric = numeric_unary(op);
         let value = if numeric && self.is_object_like(value) {
             self.to_primitive(p, value, "number")?
         } else {
