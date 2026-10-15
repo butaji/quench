@@ -126,8 +126,8 @@ pub struct HostFunction<H: Host> {
 /// Declare global and module-owned native descriptors from one binding table.
 #[macro_export]
 macro_rules! host_functions {
-    ($( $scope:ident $name:literal ($length:literal) => $callback:path ),* $(,)?) => {
-        &[$($crate::HostFunction {
+    ($( $(#[$attribute:meta])* $scope:ident $name:literal ($length:literal) => $callback:path ),* $(,)?) => {
+        &[$($(#[$attribute])* $crate::HostFunction {
             name: $name,
             length: $length,
             global: $crate::host_functions!(@global $scope $name),

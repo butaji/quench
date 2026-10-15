@@ -136,3 +136,6 @@ pub(crate) mod buffer_fill_shared_vm;
 pub(crate) mod buffer_inspect_shared_vm;
 
 pub(crate) mod encoding_binding_shared_vm;
+
+#[cfg(target_os = "linux")]
+pub(crate) mod os_binding_shared_vm;
