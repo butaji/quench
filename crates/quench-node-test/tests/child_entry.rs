@@ -6751,3 +6751,60 @@ for(const placement of ['before','after']){
 process.on('exit',()=>console.log(JSON.stringify(out)));
 "#);
 }
+
+#[test]
+fn native_buffer_constructor_preserves_calls_species_original_methods_and_warning_identity() {
+    compare_node_stream_source(r#"
+'use strict';
+const {Buffer:B}=require('buffer'),out=[],warnings=[];
+const originalWarning=process.emitWarning;process.emitWarning=function(...args){warnings.push([this===process,args]);};
+const p=Object.getOwnPropertyDescriptor(B,'prototype'),s=Object.getOwnPropertyDescriptor(B,Symbol.species);
+out.push([B.name,B.length,p.writable,p.enumerable,p.configurable,Object.getPrototypeOf(B)===Uint8Array,B.prototype.constructor===B,B[Symbol.species]===B,B[Symbol.species].name,B[Symbol.species].prototype===B.prototype,s.enumerable,s.configurable,s.get.name,s.get.length,Object.hasOwn(s.get,'prototype')]);
+for(const args of [[3],['abc'],[[1,2,255]],[new ArrayBuffer(5),1,3]])for(const construct of [false,true]){
+ const value=construct?new B(...args):B(...args);out.push([construct,Array.from(value),value instanceof B,value instanceof Uint8Array,value.constructor===B,B.isBuffer(value)]);
+}
+try{new B(42,'utf8');}catch(e){out.push([e.name,e.code,e.message]);}
+class Derived extends B{}const derived=new Derived([4,5]);out.push([derived instanceof Derived,derived instanceof B,derived.constructor===B,Array.from(derived)]);
+const marker={},from=B.from,alloc=B.alloc;
+B.from=function(...args){out.push(['from',this===B,args.length,args[0],args[1],args[2]]);return marker;};out.push(B('input','utf8',2)===marker,new B('input')===marker);B.from=from;
+B.alloc=function(...args){out.push(['alloc',this===B,args]);return marker;};out.push(B(3)===marker,new B(3)===marker);B.alloc=alloc;
+const real=B.from([1]);Object.defineProperty(B,Symbol.hasInstance,{configurable:true,value(value){out.push(['membership',this===B,value===real]);return true;}});out.push(B.isBuffer(real));delete B[Symbol.hasInstance];
+const identity=B.isBuffer;out.push([identity.name,identity.length,Object.hasOwn(identity,'prototype')]);
+process.emitWarning=originalWarning;out.push(warnings);console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn native_buffer_constructor_deprecation_follows_original_vm_filenames_and_process_flags() {
+    compare_node_stream_source(r#"
+'use strict';
+const {spawnSync}=require('child_process'),out=[];
+for(const filename of ['/a/node_modules/x.js','/a/node_modules/pkg/node_modules/x.js','/a.js','/node_modules/b.js','c:\\a\\node_modules\\b.js','c:\\a.js','node_modules']){
+ for(const pending of [false,true]){
+  const source=`const vm=require('vm'),warnings=[];process.emitWarning=function(message,type,code){warnings.push([this===process,message,type,code]);};vm.runInNewContext('Buffer(2);new Buffer(2)',{Buffer},{filename:${JSON.stringify(filename)}});console.log(JSON.stringify(warnings));`;
+  const result=spawnSync(process.execPath,[...(pending?['--pending-deprecation']:[]),'-e',source],{encoding:'utf8'});
+  out.push([filename,pending,result.status,result.signal,result.stdout,result.stderr]);
+ }
+}
+console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn native_buffer_of_avoids_legacy_warnings_and_preserves_original_coercions() {
+    compare_node_stream_source(r#"
+ 'use strict';
+const B=require('buffer').Buffer,out=[],warnings=[];
+process.emitWarning=(...args)=>warnings.push(args);
+const f=B.of,d=Object.getOwnPropertyDescriptor(B,'of');
+out.push([f.name,f.length,Object.hasOwn(f,'prototype'),d.writable,d.enumerable,d.configurable]);
+for(const args of [[],[0,1],[-1,256,257,1.9,NaN,Infinity,undefined,null,'3']]){
+ const v=f.call(function(){throw new Error('wrong receiver')},...args);out.push([Array.from(v),v.constructor===B,B.isBuffer(v)]);
+}
+const hooks=[];const a={valueOf(){hooks.push('a');return 260}},b={valueOf(){hooks.push('b');return -2}};
+out.push(Array.from(f(a,b)),hooks);
+for(const v of [1n,Symbol('x')])try{f(v)}catch(e){out.push([e.name,e.message])}
+try{new f(1)}catch(e){out.push([e.name])}
+out.push(warnings);console.log(JSON.stringify(out));
+"#);
+}
