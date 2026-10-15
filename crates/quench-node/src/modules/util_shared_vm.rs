@@ -360,6 +360,16 @@ const UTIL: &str = quench_js_check::checked_js!(
 pub(crate) struct UtilIntrinsics {
     pub(crate) module: RootId,
     pub(crate) inspect: RootId,
+    pub(crate) formatters: RootId,
+}
+
+pub(crate) fn internal_formatters(
+    context: &mut NativeContext<'_, NodeHost>,
+) -> Result<RootId, RootedError> {
+    module(context)?;
+    context.host_mut().shared_state().borrow().util_intrinsics
+        .map(|api| api.formatters)
+        .ok_or_else(|| RootedError::host("util formatters missing"))
 }
 
 pub(crate) fn internal_inspect(
@@ -466,13 +476,22 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     }
     let key = context.string_rooted("types");
     context.set_property_rooted(module, key, types, module)?;
+    // Retain original identities before publishing mutable util exports. Console
+    // can request these lazily without observing later public export replacement.
+    let formatters = context.null_object_rooted()?;
+    for name in ["format", "formatWithOptions"] {
+        let key = context.string_rooted(name);
+        let function = context.get_property_rooted(module, key)?;
+        context.define_data_property_rooted(formatters, key, function, false, true, false)?;
+    }
     let module = context.retain(module)?;
     let inspect = context.retain(inspect)?;
+    let formatters = context.retain(formatters)?;
     context
         .host_mut()
         .shared_state()
         .borrow_mut()
-        .util_intrinsics = Some(UtilIntrinsics { module, inspect });
+        .util_intrinsics = Some(UtilIntrinsics { module, inspect, formatters });
     Ok(module)
 }
 

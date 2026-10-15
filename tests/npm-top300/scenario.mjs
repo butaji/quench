@@ -473,10 +473,18 @@ async function exercise() {
     case 'micromatch': equal(api(['a.js', 'a.ts'], '*.js'), ['a.js']); break;
     case 'esutils': equal(api.keyword.isIdentifierNameES6('hello'), true); equal(api.keyword.isIdentifierNameES6('a-b'), false); break;
     case 'strip-bom': equal(api('\ufeffhello'), 'hello'); break;
-    case 'fast-glob': equal(await api('*.txt'), [fixture]); break;
+    case 'fast-glob': {
+      const result = await (await import('./contracts/fast-glob.mjs')).exercise(api);
+      assertions += result.assertions;
+      fs.writeFileSync('function-checks.json', JSON.stringify(result)); break;
+    }
     case 'flatted': { const object = { a: 1 }; object.self = object; const restored = api.parse(api.stringify(object)); equal(restored.self, restored); equal(restored.a, 1); break; }
     case 'raw-body': equal(await api(Readable.from([Buffer.from('hello')]), { encoding: 'utf8' }), 'hello'); break;
-    case 'require-from-string': equal(api('module.exports = 42'), 42); break;
+    case 'require-from-string': {
+      const { exercise } = await import('./contracts/require-from-string.mjs');
+      const result = exercise(api); assertions += result.assertions;
+      fs.writeFileSync('function-checks.json', JSON.stringify(result)); break;
+    }
     case 'whatwg-mimetype': { const mime = new api.MIMEType('Text/HTML; Charset=utf-8'); equal(mime.essence, 'text/html'); equal(mime.parameters.get('charset'), 'utf-8'); break; }
     case 'deep-is': equal(api({ a: [1] }, { a: [1] }), true); equal(api({ a: 1 }, { a: 2 }), false); break;
     case 'path-parse': equal(api('/a/file.txt'), { root: '/', dir: '/a', base: 'file.txt', ext: '.txt', name: 'file' }); break;
