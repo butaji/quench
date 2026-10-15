@@ -204,55 +204,58 @@ impl<H: Host> Vm<H> {
             }
         };
         let removed = self.array_species_create(p, object, delete_count)?;
-        for offset in 0..delete_count {
-            let source_index = start + offset;
-            let source = Value::number(source_index as f64);
-            if self.has_property(p, object, source)? {
-                let value = self.get_index(p, object, source)?;
-                self.create_data_property_or_throw(p, removed, offset, value)?;
+        // `removed` is held only here while guest code (getters, traps) can collect.
+        self.with_call_roots([removed], |vm| {
+            for offset in 0..delete_count {
+                let source_index = start + offset;
+                let source = Value::number(source_index as f64);
+                if vm.has_property(p, object, source)? {
+                    let value = vm.get_index(p, object, source)?;
+                    vm.create_data_property_or_throw(p, removed, offset, value)?;
+                }
             }
-        }
-        self.set_array_like_length(p, removed, delete_count)?;
+            vm.set_array_like_length(p, removed, delete_count)?;
 
-        let items = args.iter().copied().skip(2).collect::<Vec<_>>();
-        let new_length = length
-            .checked_sub(delete_count)
-            .and_then(|length| length.checked_add(items.len()))
-            .filter(|length| *length as f64 <= MAX_SAFE_INTEGER)
-            .ok_or_else(|| self.type_error(p, "splice result exceeds safe integer".into()))?;
-        if items.len() < delete_count {
-            for index in start..(length - delete_count) {
-                self.move_array_like_property(
+            let items = args.iter().copied().skip(2).collect::<Vec<_>>();
+            let new_length = length
+                .checked_sub(delete_count)
+                .and_then(|length| length.checked_add(items.len()))
+                .filter(|length| *length as f64 <= MAX_SAFE_INTEGER)
+                .ok_or_else(|| vm.type_error(p, "splice result exceeds safe integer".into()))?;
+            if items.len() < delete_count {
+                for index in start..(length - delete_count) {
+                    vm.move_array_like_property(
+                        p,
+                        object,
+                        index + items.len(),
+                        index + delete_count,
+                    )?;
+                }
+                for index in (new_length..length).rev() {
+                    vm.delete_array_like_property(p, object, Value::number(index as f64))?;
+                }
+            } else if items.len() > delete_count {
+                for index in (start..(length - delete_count)).rev() {
+                    vm.move_array_like_property(
+                        p,
+                        object,
+                        index + items.len(),
+                        index + delete_count,
+                    )?;
+                }
+            }
+            for (offset, value) in items.into_iter().enumerate() {
+                vm.set_index_mode(
                     p,
                     object,
-                    index + items.len(),
-                    index + delete_count,
+                    Value::number((start + offset) as f64),
+                    value,
+                    true,
                 )?;
             }
-            for index in (new_length..length).rev() {
-                self.delete_array_like_property(p, object, Value::number(index as f64))?;
-            }
-        } else if items.len() > delete_count {
-            for index in (start..(length - delete_count)).rev() {
-                self.move_array_like_property(
-                    p,
-                    object,
-                    index + items.len(),
-                    index + delete_count,
-                )?;
-            }
-        }
-        for (offset, value) in items.into_iter().enumerate() {
-            self.set_index_mode(
-                p,
-                object,
-                Value::number((start + offset) as f64),
-                value,
-                true,
-            )?;
-        }
-        self.set_array_like_length(p, object, new_length)?;
-        Ok(removed)
+            vm.set_array_like_length(p, object, new_length)?;
+            Ok(removed)
+        })
     }
 
     fn move_array_like_property(
@@ -309,48 +312,51 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let source = self.box_object_or_type_error(p, this)?;
         let target = self.array_species_create(p, source, 0)?;
-        let spreadable_atom = self
-            .well_known_symbols
-            .get("isConcatSpreadable")
-            .copied()
-            .ok_or_else(|| JsError("Symbol.isConcatSpreadable is not initialized".into()))?;
-        let mut next = 0usize;
-        for item in std::iter::once(source).chain(args.iter().copied()) {
-            let spreadable = if self.is_object_like(item) {
-                let value = self.get_index(p, item, spreadable_atom)?;
-                if value.is_undefined() {
-                    self.is_array(p, item)?
+        // `target` is held only here while guest code (getters, traps) can collect.
+        self.with_call_roots([target], |vm| {
+            let spreadable_atom = vm
+                .well_known_symbols
+                .get("isConcatSpreadable")
+                .copied()
+                .ok_or_else(|| JsError("Symbol.isConcatSpreadable is not initialized".into()))?;
+            let mut next = 0usize;
+            for item in std::iter::once(source).chain(args.iter().copied()) {
+                let spreadable = if vm.is_object_like(item) {
+                    let value = vm.get_index(p, item, spreadable_atom)?;
+                    if value.is_undefined() {
+                        vm.is_array(p, item)?
+                    } else {
+                        vm.truthy(value)
+                    }
                 } else {
-                    self.truthy(value)
+                    false
+                };
+                if !spreadable {
+                    if next as f64 >= MAX_SAFE_INTEGER {
+                        return Err(
+                            vm.type_error(p, "array concat index exceeds safe integer".into())
+                        );
+                    }
+                    vm.create_data_property_or_throw(p, target, next, item)?;
+                    next += 1;
+                    continue;
                 }
-            } else {
-                false
-            };
-            if !spreadable {
-                if next as f64 >= MAX_SAFE_INTEGER {
-                    return Err(
-                        self.type_error(p, "array concat index exceeds safe integer".into())
-                    );
+                let length = vm.array_like_length(p, item)?;
+                if next.saturating_add(length) as f64 > MAX_SAFE_INTEGER {
+                    return Err(vm.type_error(p, "array concat length exceeds safe integer".into()));
                 }
-                self.create_data_property_or_throw(p, target, next, item)?;
-                next += 1;
-                continue;
-            }
-            let length = self.array_like_length(p, item)?;
-            if next.saturating_add(length) as f64 > MAX_SAFE_INTEGER {
-                return Err(self.type_error(p, "array concat length exceeds safe integer".into()));
-            }
-            for index in 0..length {
-                let source_key = Value::number(index as f64);
-                if self.has_property(p, item, source_key)? {
-                    let value = self.get_index(p, item, source_key)?;
-                    self.create_data_property_or_throw(p, target, next, value)?;
+                for index in 0..length {
+                    let source_key = Value::number(index as f64);
+                    if vm.has_property(p, item, source_key)? {
+                        let value = vm.get_index(p, item, source_key)?;
+                        vm.create_data_property_or_throw(p, target, next, value)?;
+                    }
+                    next += 1;
                 }
-                next += 1;
             }
-        }
-        self.set_array_like_length(p, target, next)?;
-        Ok(target)
+            vm.set_array_like_length(p, target, next)?;
+            Ok(target)
+        })
     }
 
     pub(super) fn array_push_native(
@@ -517,15 +523,18 @@ impl<H: Host> Vm<H> {
             .unwrap_or(length);
         let count = end.saturating_sub(start);
         let result = self.array_species_create(p, object, count)?;
-        for (destination, source) in (start..end).enumerate() {
-            let key = Value::number(source as f64);
-            if self.has_property(p, object, key)? {
-                let value = self.get_index(p, object, key)?;
-                self.create_data_property_or_throw(p, result, destination, value)?;
+        // `result` is held only here while guest code (getters, traps) can collect.
+        self.with_call_roots([result], |vm| {
+            for (destination, source) in (start..end).enumerate() {
+                let key = Value::number(source as f64);
+                if vm.has_property(p, object, key)? {
+                    let value = vm.get_index(p, object, key)?;
+                    vm.create_data_property_or_throw(p, result, destination, value)?;
+                }
             }
-        }
-        self.set_array_like_length(p, result, count)?;
-        Ok(result)
+            vm.set_array_like_length(p, result, count)?;
+            Ok(result)
+        })
     }
 
     pub(super) fn array_species_create(
