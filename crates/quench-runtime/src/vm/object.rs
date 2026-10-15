@@ -713,6 +713,31 @@ impl<H: Host> Vm<H> {
         Some(unsafe { self.heap.property_get_unchecked(receiver, cache.slot as usize) })
     }
 
+    /// The data field a direct object's immediate prototype holds at the site's primary
+    /// holder entry: `cached_field_hit`'s holder tier for a site whose primary entry names a
+    /// prototype (`field_site_holder`).
+    #[inline(always)]
+    pub(super) fn primary_holder_field_hit(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        site: u16,
+    ) -> Option<Value> {
+        if !(self.specialized && p.specialized) {
+            return None;
+        }
+        let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
+        let hit = self.cached_ordinary_holder_field_value(self.field_cache_index(site), receiver)?;
+        self.profile
+            .field_cache_hit(usize::from(hit.tier), hit.depth);
+        Some(hit.value)
+    }
+
+    /// Whether the site's primary entry names a prototype holder (`primary_holder_field_hit`).
+    pub(super) fn field_site_holder(&self, site: u16) -> bool {
+        self.field_caches[self.field_cache_index(site)].holder != NO_FIELD_HOLDER
+    }
+
     /// The own data field of a direct object among the site's inline megamorphic entries,
     /// which include the primary entry: `cached_field_hit` for a site past one shape.
     #[inline(always)]
