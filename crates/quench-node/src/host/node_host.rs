@@ -49,6 +49,14 @@ pub(crate) struct CommonJsEntry {
     pub(crate) goal: EntryGoal,
 }
 
+/// Before node:module is built the loader owns its cache directly. Thereafter
+/// Module._cache is authoritative, including guest replacement of that property.
+#[derive(Clone, Copy)]
+pub(crate) enum CommonJsCache {
+    Bootstrap(quench_runtime::RootId),
+    Module(quench_runtime::RootId),
+}
+
 /// Host-owned state and lifecycle data for the shared VM path.
 pub(crate) struct SharedNodeState {
     pub(crate) async_hooks: crate::modules::async_hooks_state::SharedAsyncHooksState,
@@ -62,7 +70,8 @@ pub(crate) struct SharedNodeState {
     pub(crate) buffer_prototype: Option<quench_runtime::RootId>,
     pub(crate) module_parent_api: Option<quench_runtime::RootId>,
     pub(crate) active_esm_requires: std::collections::HashMap<String, quench_runtime::RootId>,
-    pub(crate) module_cache: std::collections::HashMap<String, quench_runtime::RootId>,
+    pub(crate) builtin_cache: std::collections::HashMap<String, quench_runtime::RootId>,
+    pub(crate) commonjs_cache: Option<CommonJsCache>,
     /// Node's internal primordial snapshot used when loading `lib/internal/*`.
     pub(crate) primordials_module: Option<quench_runtime::RootId>,
     pub(crate) event_targets_api: Option<quench_runtime::RootId>,
@@ -163,7 +172,8 @@ pub(crate) enum ChildProcessEvent {
 impl SharedNodeState {
     /// Forget cached guest handles before bootstrapping a replacement VM heap.
     pub(crate) fn reset_cached_vm_roots(&mut self) {
-        self.module_cache.clear();
+        self.builtin_cache.clear();
+        self.commonjs_cache = None;
         self.module_parent_api = None;
         self.active_esm_requires.clear();
         self.buffer_prototype = None;
@@ -209,7 +219,8 @@ impl SharedNodeState {
             fs_stat_watch: crate::modules::fs_stat_watch_shared_vm::State::default(),
             cwd,
             buffer_prototype: None,
-            module_cache: std::collections::HashMap::new(),
+            builtin_cache: std::collections::HashMap::new(),
+            commonjs_cache: None,
             module_parent_api: None,
             active_esm_requires: std::collections::HashMap::new(),
             primordials_module: None,

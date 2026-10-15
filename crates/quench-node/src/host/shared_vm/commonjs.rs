@@ -457,6 +457,39 @@ pub(crate) fn require_for_module(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let specifier = specifier(context, args, Request::Require)?;
+    let parent_path = get(context, parent, "path")?;
+    let api = module_parent_api(context)?;
+    let paths = get(context, api, "relativePaths")?;
+    let map_get = get(context, api, "mapGet")?;
+    let mut directory_cache = context.call_rooted(map_get, paths, &[parent_path])?;
+    if !context.rooted_value(directory_cache).is_some_and(|value| value.is_undefined()) {
+        let resolved = get(context, directory_cache, &specifier)?;
+        if let Some(filename) = context.string_text(resolved)? {
+            let cache = commonjs_cache(context)?;
+            let cached = get(context, cache, &filename)?;
+            if !context.rooted_value(cached).is_some_and(|value| value.is_undefined()) {
+                if context.host_mut().shared_state().borrow().active_esm_requires.contains_key(&filename) {
+                    return load(context, Path::new(&filename), Some(parent), EntryGoal::Node);
+                }
+                transition_child(context, parent, cached, ChildTransition::Attach)?;
+                return get(context, cached, "exports");
+            }
+            delete_relative_resolution(context, directory_cache, &specifier)?;
+        }
+    }
+    // Node's explicit node: spelling bypasses CommonJS cache substitutions.
+    // Bare builtins participate in Module._cache just like resolved filenames.
+    if !specifier.starts_with("node:")
+        && !specifier.starts_with("internal/")
+        && BuiltinModule::from_specifier(&specifier).is_some()
+    {
+        let cache = commonjs_cache(context)?;
+        let cached = get(context, cache, &specifier)?;
+        if !context.rooted_value(cached).is_some_and(|value| value.is_undefined()) {
+            transition_child(context, parent, cached, ChildTransition::Attach)?;
+            return get(context, cached, "exports");
+        }
+    }
     if specifier == "vfs" {
         let error = context.error_rooted("Cannot find module 'vfs'")?;
         let code = context.string_rooted("MODULE_NOT_FOUND");
@@ -749,7 +782,15 @@ pub(crate) fn require_for_module(
     } else {
         EntryGoal::Node
     };
-    load(context, &filename, Some(parent), goal)
+    if crate::node_sources::source(&filename, &context.host_mut().node_library_root).is_some() {
+        return load(context, &filename, Some(parent), goal);
+    }
+    if context.rooted_value(directory_cache).is_some_and(|value| value.is_undefined()) {
+        directory_cache = context.null_object_rooted()?;
+        let map_set = get(context, api, "mapSet")?;
+        context.call_rooted(map_set, paths, &[parent_path, directory_cache])?;
+    }
+    load_with_resolution(context, &filename, Some(parent), goal, Some((directory_cache, &specifier)))
 }
 
 pub(super) fn resolve(
@@ -1171,20 +1212,20 @@ fn cached_builtin(
         .ok_or_else(|| RootedError::host("builtin module has no canonical cache key"))?;
     let key = format!("\0builtin:{canonical}");
     let roots = context.host_mut().shared_state();
-    if let Some(module) = roots.borrow().module_cache.get(&key).copied() {
+    if let Some(module) = roots.borrow().builtin_cache.get(&key).copied() {
         return Ok(module);
     }
 
     let module = context.with_startup_intrinsics(|context| build_builtin(context, builtin))?;
     let retained = context.retain(module)?;
-    roots.borrow_mut().module_cache.insert(key.clone(), retained);
+    roots.borrow_mut().builtin_cache.insert(key.clone(), retained);
     if matches!(builtin, BuiltinModule::Crypto) {
         let policy = context.with_startup_intrinsics(|context| {
             let setter = node_library_export(context, "crypto.js", "internal/crypto/util.js", "setEngine")?;
             set(context, module, "setEngine", setter)
         });
         if let Err(error) = policy {
-            roots.borrow_mut().module_cache.remove(&key);
+            roots.borrow_mut().builtin_cache.remove(&key);
             context.release_root(retained);
             return Err(error);
         }
@@ -1581,9 +1622,113 @@ fn module_parent_api(context: &mut Context<'_>) -> Result<RootId, RootedError> {
         let method = get(context, prototype, name)?;
         set(context, api, name, method)?;
     }
+    let reflect = get(context, global, "Reflect")?;
+    let delete = get(context, reflect, "deleteProperty")?;
+    set(context, api, "deleteProperty", delete)?;
+    let map_constructor = get(context, global, "Map")?;
+    let paths = context.construct_rooted(map_constructor, map_constructor, &[])?;
+    set(context, api, "relativePaths", paths)?;
+    let prototype = get(context, map_constructor, "prototype")?;
+    for (key, name) in [("mapGet", "get"), ("mapSet", "set")] {
+        let method = get(context, prototype, name)?;
+        set(context, api, key, method)?;
+    }
     let api = context.retain(api)?;
     context.host_mut().shared_state().borrow_mut().module_parent_api = Some(api);
     Ok(api)
+}
+
+fn delete_relative_resolution(context: &mut Context<'_>, cache: RootId, specifier: &str) -> Result<(), RootedError> {
+    let api = module_parent_api(context)?;
+    let delete = get(context, api, "deleteProperty")?;
+    let key = context.string_rooted(specifier);
+    let undefined = context.undefined();
+    context.call_rooted(delete, undefined, &[cache, key])?;
+    Ok(())
+}
+
+pub(crate) fn commonjs_cache(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    use crate::host::node_host::CommonJsCache;
+    let shared = context.host_mut().shared_state();
+    let owner = shared.borrow().commonjs_cache;
+    match owner {
+        Some(CommonJsCache::Bootstrap(cache)) => Ok(cache),
+        Some(CommonJsCache::Module(module)) => get(context, module, "_cache"),
+        None => {
+            let cache = context.null_object_rooted()?;
+            let cache = context.retain(cache)?;
+            shared.borrow_mut().commonjs_cache = Some(CommonJsCache::Bootstrap(cache));
+            Ok(cache)
+        }
+    }
+}
+
+pub(crate) fn attach_module_cache(context: &mut Context<'_>, module: RootId) -> Result<(), RootedError> {
+    use crate::host::node_host::CommonJsCache;
+    let cache = commonjs_cache(context)?;
+    set(context, module, "_cache", cache)?;
+    let owner = context.retain(module)?;
+    let previous = context.host_mut().shared_state().borrow_mut().commonjs_cache.replace(CommonJsCache::Module(owner));
+    if let Some(CommonJsCache::Bootstrap(root) | CommonJsCache::Module(root)) = previous {
+        context.release_root(root);
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum ModuleCache {
+    NodeLibrary,
+    CommonJs,
+}
+
+impl ModuleCache {
+    fn get(self, context: &mut Context<'_>, name: &str) -> Result<RootId, RootedError> {
+        match self {
+            Self::NodeLibrary => Ok(context.host_mut().shared_state().borrow().builtin_cache.get(name).copied().unwrap_or_else(|| context.undefined())),
+            Self::CommonJs => {
+                let cache = commonjs_cache(context)?;
+                get(context, cache, name)
+            }
+        }
+    }
+
+    fn insert(self, context: &mut Context<'_>, name: &str, module: RootId) -> Result<(), RootedError> {
+        match self {
+            Self::NodeLibrary => {
+                let root = context.retain(module)?;
+                let old = context.host_mut().shared_state().borrow_mut().builtin_cache.insert(name.to_owned(), root);
+                if let Some(old) = old { context.release_root(old); }
+                Ok(())
+            }
+            Self::CommonJs => {
+                let cache = commonjs_cache(context)?;
+                context.assign_named_property_rooted(cache, name, module)
+            }
+        }
+    }
+
+    fn remove(self, context: &mut Context<'_>, name: &str) -> Result<(), RootedError> {
+        match self {
+            Self::NodeLibrary => {
+                let old = context.host_mut().shared_state().borrow_mut().builtin_cache.remove(name);
+                if let Some(old) = old { context.release_root(old); }
+                Ok(())
+            }
+            Self::CommonJs => {
+                let cache = commonjs_cache(context)?;
+                let api = module_parent_api(context)?;
+                let delete = get(context, api, "deleteProperty")?;
+                let key = context.string_rooted(name);
+                let undefined = context.undefined();
+                let deleted = context.call_rooted(delete, undefined, &[cache, key])?;
+                if !context.truthy_rooted(deleted)? {
+                    let error = context.type_error_rooted(&format!("Cannot delete property '{name}' of [object Object]"))?;
+                    return Err(context.throw(error));
+                }
+                Ok(())
+            }
+        }
+    }
 }
 
 fn first_module_parent(context: &mut Context<'_>, module: RootId) -> Result<RootId, RootedError> {
@@ -1668,6 +1813,8 @@ fn module_record(
     set(context, require, "resolve", resolve)?;
     let main = get(context, process, "mainModule")?;
     set(context, require, "main", main)?;
+    let cache = commonjs_cache(context)?;
+    set(context, require, "cache", cache)?;
     set(context, module, "require", require)?;
     Ok(module)
 }
@@ -1744,6 +1891,16 @@ fn load(
     parent: Option<RootId>,
     goal: EntryGoal,
 ) -> Result<RootId, RootedError> {
+    load_with_resolution(context, filename, parent, goal, None)
+}
+
+fn load_with_resolution(
+    context: &mut Context<'_>,
+    filename: &Path,
+    parent: Option<RootId>,
+    goal: EntryGoal,
+    resolution: Option<(RootId, &str)>,
+) -> Result<RootId, RootedError> {
     let key = filename.to_string_lossy().into_owned();
     let roots = context.host_mut().shared_state();
     let active = roots.borrow().active_esm_requires.get(&key).copied();
@@ -1756,12 +1913,15 @@ fn load(
         }
         return Err(require_module_error(context, "ERR_REQUIRE_CYCLE_MODULE", &message)?);
     }
-    let cached = roots.borrow().module_cache.get(&key).copied();
-    if let Some(module) = cached {
+    let cache = if crate::node_sources::source(filename, &context.host_mut().node_library_root).is_some() {
+        ModuleCache::NodeLibrary
+    } else { ModuleCache::CommonJs };
+    let cached = cache.get(context, &key)?;
+    if !context.rooted_value(cached).is_some_and(|value| value.is_undefined()) {
         if let Some(parent) = parent {
-            transition_child(context, parent, module, ChildTransition::Attach)?;
+            transition_child(context, parent, cached, ChildTransition::Attach)?;
         }
-        return get(context, module, "exports");
+        return get(context, cached, "exports");
     }
     let is_esm = goal == EntryGoal::Node && source_kind(filename).map_err(RootedError::host)? == quench_runtime::SourceKind::Module;
     let is_main = parent.is_none() && context.host_mut().commonjs_entry.is_some();
@@ -1769,12 +1929,15 @@ fn load(
     if let Some(parent) = parent {
         transition_child(context, parent, module, ChildTransition::Attach)?;
     }
-    let retained = context.retain(module)?;
-    roots
-        .borrow_mut()
-        .module_cache
-        .insert(key.clone(), retained);
-    if is_esm { roots.borrow_mut().active_esm_requires.insert(key.clone(), retained); }
+    cache.insert(context, &key, module)?;
+    if let Some((directory, specifier)) = resolution {
+        let name = context.string_rooted(&key);
+        set(context, directory, specifier, name)?;
+    }
+    if is_esm {
+        let retained = context.retain(module)?;
+        roots.borrow_mut().active_esm_requires.insert(key.clone(), retained);
+    }
     let result = (|| {
         if is_esm {
             let exports = require_es_module(context, filename, parent)?;
@@ -2004,10 +2167,16 @@ const getLinkedBinding = () => ({});
         set(context, module, "loaded", loaded)?;
         get(context, module, "exports")
     })();
-    if is_esm { roots.borrow_mut().active_esm_requires.remove(&key); }
+    if is_esm {
+        if let Some(retained) = roots.borrow_mut().active_esm_requires.remove(&key) {
+            context.release_root(retained);
+        }
+    }
     if result.is_err() {
-        roots.borrow_mut().module_cache.remove(&key);
-        context.release_root(retained);
+        cache.remove(context, &key)?;
+        if let Some((directory, specifier)) = resolution {
+            delete_relative_resolution(context, directory, specifier)?;
+        }
         if let Some(parent) = parent {
             transition_child(context, parent, module, ChildTransition::Detach)?;
         }
