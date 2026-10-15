@@ -97,6 +97,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         parents,
     )?;
     name_function(context, module, "Module")?;
+    crate::host::shared_vm::commonjs::attach_module_cache(context, module)?;
     set(context, module, "Module", module)?;
     let prototype = get(context, module, "prototype")?;
     let constructor = context.host_function_with_data(

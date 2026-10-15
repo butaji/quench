@@ -2084,7 +2084,7 @@ pub(crate) fn fs_constants(context: &mut NativeContext<'_, NodeHost>) -> Result<
         ("UV_DIRENT_CHAR", 6), ("UV_DIRENT_BLOCK", 7),
     ];
     let shared = context.host_mut().shared_state();
-    if let Some(constants) = shared.borrow().module_cache.get(CACHE_KEY).copied() { return Ok(constants); }
+    if let Some(constants) = shared.borrow().builtin_cache.get(CACHE_KEY).copied() { return Ok(constants); }
     let constants = context.null_object_rooted()?;
     for &(name, value) in FS_CONSTANT_VALUES.iter().chain(DIRENT_TYPES.iter()) {
         let key = context.string_rooted(name);
@@ -2092,7 +2092,7 @@ pub(crate) fn fs_constants(context: &mut NativeContext<'_, NodeHost>) -> Result<
         context.define_data_property_rooted(constants, key, value, false, true, false)?;
     }
     let retained = context.retain(constants)?;
-    shared.borrow_mut().module_cache.insert(CACHE_KEY.to_owned(), retained);
+    shared.borrow_mut().builtin_cache.insert(CACHE_KEY.to_owned(), retained);
     Ok(constants)
 }
 
