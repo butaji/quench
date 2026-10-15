@@ -7708,3 +7708,60 @@ console.log(JSON.stringify(out));
 "#,
     );
 }
+
+#[test]
+fn filesystem_metadata_callback_exceptions_escape_without_second_delivery() {
+    for method in ["stat", "lstat", "statfs"] {
+        for missing in [false, true] {
+            let source = format!(
+                r#"
+const fs=require('node:fs');
+const marker={{}},method={method:?};let count=0;
+process.on('uncaughtException',error=>console.log('uncaught',error===marker,count));
+fs[method]({path},function(error,stats){{count++;console.log('callback',count,error===null,!!stats);throw marker;}});
+"#,
+                path = if missing {
+                    "'/quench-metadata-missing-'+process.pid"
+                } else {
+                    "'/'"
+                },
+            );
+            compare_node_stream_source(&source);
+        }
+    }
+}
+
+#[test]
+fn file_url_conversion_observes_url_like_getters_options_and_primordials() {
+    compare_node_stream_source(
+        r#"
+const {fileURLToPath}=require('node:url'),assert=require('node:assert'),fs=require('node:fs'),out=[];
+function result(f){try{return ['value',f()]}catch(e){return ['error',e.name,e.code??null,e.message]}}
+for(const input of [undefined,null,1,true,{},[],Symbol('x')])out.push(result(()=>fileURLToPath(input)));
+for(const input of ['file:///tmp/a%20b','file://localhost/tmp/a','file://host/tmp','https://example.org/','file:///a%2fb','file:///a%5cb','file:///%FF','file:///%ZZ','file:///C:/foo','file://xn--bcher-kva/share'])for(const windows of [false,true,null])out.push([input,windows,result(()=>fileURLToPath(input,{windows}))]);
+for(const input of [new URL('file:///a%2Fb'),{href:'file:///',protocol:'file:',hostname:'',pathname:'/a%2Fb'}])assert.throws(()=>fileURLToPath(input),e=>{assert.strictEqual(e.input,input);const d=Object.getOwnPropertyDescriptor(e,'input');assert.deepStrictEqual([d.writable,d.enumerable,d.configurable],[true,true,true]);out.push([String(e),Reflect.ownKeys(e).filter(k=>k!=='stack')]);return true});
+const trace=[],u={};for(const [name,value] of Object.entries({href:'file:///',protocol:'file:',auth:undefined,path:undefined,hostname:'',pathname:'/tmp/a%20b'}))Object.defineProperty(u,name,{get(){trace.push(name);return value}});
+const options={get windows(){trace.push('windows');return false}};assert.strictEqual(fileURLToPath(u,options),'/tmp/a b');out.push(['order',trace]);
+const marker={};assert.throws(()=>fileURLToPath(null,{get windows(){throw marker}}),e=>e===marker);
+for(const name of ['href','protocol','auth','path','hostname','pathname']){const u=new URL('file:///');Object.defineProperty(u,name,{get(){throw marker}});assert.throws(()=>fileURLToPath(u),e=>e===marker);assert.throws(()=>fs.statSync(u),e=>e===marker);}
+{const pathname={length:0,toString(){return '/object-path'}},u={href:'file:///',protocol:'file:',hostname:'',pathname};assert.strictEqual(fileURLToPath(u),pathname);}
+{const pathname='\ud800',u={href:'file:///',protocol:'file:',hostname:'',pathname};assert.strictEqual(fileURLToPath(u),pathname);}
+const originalURL=globalThis.URL,originalIncludes=String.prototype.includes,originalDecode=globalThis.decodeURIComponent;
+try{globalThis.URL=function(){throw marker};String.prototype.includes=function(){throw marker};globalThis.decodeURIComponent=function(){throw marker};assert.strictEqual(fileURLToPath('file:///tmp/a%20b'),'/tmp/a b');}finally{globalThis.URL=originalURL;String.prototype.includes=originalIncludes;globalThis.decodeURIComponent=originalDecode;}
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[test]
+fn uri_globals_preserve_node_error_messages_and_utf16() {
+    compare_node_stream_source(
+        r#"
+const assert=require('node:assert'),out=[];
+for(const name of ['encodeURI','encodeURIComponent'])for(const value of ['\ud800','\udfff','a\ud800b'])assert.throws(()=>globalThis[name](value),e=>{out.push([name,e.name,e.message,e.code??null]);return e instanceof URIError&&e.message==='URI malformed'});
+for(const name of ['decodeURI','decodeURIComponent'])for(const value of ['%','%0','%ZZ','%FF','%C0%80','%ED%A0%80','%F4%90%80%80','%E2%82','%E2x%82%AC'])assert.throws(()=>globalThis[name](value),e=>{out.push([name,e.name,e.message,e.code??null]);return e instanceof URIError&&e.message==='URI malformed'});
+assert.strictEqual(decodeURIComponent('\ud800'),'\ud800');assert.strictEqual(decodeURIComponent('%F0%90%80%80'),'𐀀');assert.strictEqual(decodeURI('%2f'),'%2f');assert.strictEqual(decodeURIComponent('%2f'),'/');
+console.log(JSON.stringify(out));
+"#,
+    );
+}
