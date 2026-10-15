@@ -18,21 +18,6 @@ impl Host for SilentHost {
 
 #[test]
 fn collection_construction_survives_gc_in_iterator_and_entry_callbacks() {
-    struct CollectingHost(Rc<RefCell<Vec<String>>>);
-    impl Host for CollectingHost {
-        fn write_line(&mut self, line: &str) {
-            self.0.borrow_mut().push(line.into());
-        }
-        fn clock_millis(&mut self) -> f64 {
-            0.0
-        }
-        fn globals(&self) -> &'static [crate::HostGlobal] {
-            &[crate::HostGlobal {
-                name: "$262",
-                capability: crate::CapabilityId::CreateRealm,
-            }]
-        }
-    }
     let source = r#"
       const out=[];
       for (const C of [Map, Set, WeakMap, WeakSet]) {
@@ -62,11 +47,10 @@ fn collection_construction_survives_gc_in_iterator_and_entry_callbacks() {
       let closed=0;
       try { new Map({[Symbol.iterator](){return {next(){return {value:17,done:false}},return(){$262.gc();closed++;return {done:true}}}}}); }
       catch(error) {out.push(error.name,closed);}
-      print(JSON.stringify(out));
+      if (JSON.stringify(out)!=='[true,true,true,true,"TypeError",1]') throw new Error(JSON.stringify(out));
     "#;
     for specialized in [false, true] {
-        let output = Rc::new(RefCell::new(Vec::new()));
-        let mut vm = Vm::new(CollectingHost(output.clone()));
+        let mut vm = Vm::new(Test262Host);
         let program = if specialized {
             Engine::specialize(source, "collection-constructor-gc.js")
         } else {
@@ -78,10 +62,6 @@ fn collection_construction_survives_gc_in_iterator_and_entry_callbacks() {
         }
         .unwrap();
         vm.execute(&program).unwrap();
-        assert_eq!(
-            output.borrow().as_slice(),
-            [r#"[true,true,true,true,"TypeError",1]"#]
-        );
     }
 }
 
