@@ -20,9 +20,9 @@ const MODULE_FACTORY: &str = r#"((initializeServer, EventEmitter, request, creat
     error.code = "ERR_INVALID_ARG_TYPE";
     return error;
   };
-  class Server extends EventEmitter {
-    constructor(options, requestListener) {
-      super();
+  function Server(options, requestListener) {
+      if (!(this instanceof Server)) return new Server(options, requestListener);
+      EventEmitter.call(this);
       if (typeof options === "function") {
         requestListener = options;
         options = undefined;
@@ -35,13 +35,17 @@ const MODULE_FACTORY: &str = r#"((initializeServer, EventEmitter, request, creat
       }
       this.timeout = 0;
       initializeServer([this, requestListener]);
-    }
-    setTimeout(msecs, callback) {
+  }
+  Object.setPrototypeOf(Server, EventEmitter);
+  Object.setPrototypeOf(Server.prototype, EventEmitter.prototype);
+  Object.defineProperty(Server.prototype, "setTimeout", {
+    configurable: true, writable: true,
+    value: function setTimeout(msecs, callback) {
       this.timeout = msecs;
       if (callback !== undefined) this.on("timeout", callback);
       return this;
     }
-  }
+  });
   const createServer = (...args) => new Server(...args);
   class Agent {
     constructor(options) {
@@ -101,7 +105,7 @@ const RESPONSE_FACTORY: &str = r#"((Writable, setHeaderOperation, getHeaderOpera
     const writeStream = response.write.bind(response);
     response.write = (chunk, encoding, callback) => {
       const result = writeStream(chunk, encoding, callback);
-      write(id, chunk, !ending, response.statusCode, response.statusMessage, response);
+      write(id, chunk, !ending, response.statusCode, response.statusMessage, response, typeof encoding === "string" ? encoding : undefined);
       response.headersSent = true;
       return result;
     };
@@ -896,19 +900,14 @@ pub(crate) fn response_initialize(
     Ok(context.undefined())
 }
 
-pub(crate) fn response_send(
+fn response_chunk_bytes(
     context: &mut Context<'_>,
-    receiver: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let responses = context.host_function_data()?;
-    let id = context.weak_map_get_rooted(responses, receiver)?;
-    let id = argument_id(context, Some(id))?;
-    let chunk = argument(context, args.first().copied());
+    chunk: RootId,
+    encoding: Option<RootId>,
+) -> Result<Vec<u8>, RootedError> {
     let bytes = match context.view_bytes_rooted(chunk) {
         Some(bytes) => bytes,
         None => {
-            let encoding = args.get(1).copied();
             let encoding = match encoding {
                 Some(value) if context.truthy_rooted(value)? => context.to_string(value)?,
                 _ => "utf8".to_owned(),
@@ -926,6 +925,19 @@ pub(crate) fn response_send(
             crate::modules::buffer_codec::encode_units(&units, encoding_name)
         }
     };
+    Ok(bytes)
+}
+
+pub(crate) fn response_send(
+    context: &mut Context<'_>,
+    receiver: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let responses = context.host_function_data()?;
+    let id = context.weak_map_get_rooted(responses, receiver)?;
+    let id = argument_id(context, Some(id))?;
+    let chunk = argument(context, args.first().copied());
+    let bytes = response_chunk_bytes(context, chunk, args.get(1).copied())?;
     let shared = context.host_mut().shared_state();
     let socket = shared
         .borrow()
@@ -1004,7 +1016,7 @@ fn response_status(
         status,
         crate::modules::http_status_shared_vm::Reason::Existing(reason),
     )?;
-    let reason = crate::modules::http_status_shared_vm::encode(context, response)?;
+    let reason = crate::modules::http_status_shared_vm::encode(context, response, status)?;
     Ok((status, reason))
 }
 
@@ -1015,7 +1027,7 @@ pub(crate) fn response_write(
 ) -> Result<RootId, RootedError> {
     let id = argument_id(context, args.first().copied())?;
     let chunk_root = argument(context, args.get(1).copied());
-    let chunk = context.to_string(chunk_root)?.into_bytes();
+    let chunk = response_chunk_bytes(context, chunk_root, args.get(6).copied())?;
     let explicit = args
         .get(2)
         .and_then(|root| context.rooted_value(*root))
@@ -1082,6 +1094,7 @@ pub(crate) fn response_write(
                 !response.http10,
                 response.http10,
                 response.send_date,
+                std::time::SystemTime::now(),
             )
         } else if is_chunked(&response.headers) {
             crate::modules::http_protocol::chunk_frame(&chunk)
@@ -1145,7 +1158,7 @@ pub(crate) fn response_write_head(
     }
     let entry_root = argument(context, args.get(3).copied());
     let entries = write_head_entries(context, entry_root)?;
-    let status_message = crate::modules::http_status_shared_vm::encode(context, response_root)?;
+    let status_message = crate::modules::http_status_shared_vm::encode(context, response_root, status)?;
 
     response_send_date(context, id, args.get(5).copied())?;
     let state = context.host_mut().shared_state();
@@ -1179,6 +1192,7 @@ pub(crate) fn response_write_head(
             !response.http10,
             response.http10,
             response.send_date,
+            std::time::SystemTime::now(),
         );
         (response.socket, bytes)
     };
@@ -1274,6 +1288,7 @@ pub(crate) fn response_finish(
             !http10,
             http10,
             send_date,
+            std::time::SystemTime::now(),
         );
         if chunked {
             framed.extend_from_slice(&crate::modules::http_protocol::chunk_terminator(&[]));
@@ -1557,12 +1572,12 @@ fn throw_header_issue(
     Err(context.throw(error))
 }
 
-fn throw_response_error(
+fn throw_response_error<T>(
     context: &mut Context<'_>,
     type_error: bool,
     code: &str,
     message: &str,
-) -> Result<RootId, RootedError> {
+) -> Result<T, RootedError> {
     let error = coded_error_rooted(context, type_error, code, message)?;
     Err(context.throw(error))
 }
