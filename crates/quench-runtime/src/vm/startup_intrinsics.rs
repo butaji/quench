@@ -54,6 +54,7 @@ pub(super) struct StartupIntrinsics {
     /// Open `enter_startup_intrinsics` calls; only the outermost one swaps.
     depth: usize,
     swapped: Vec<SwappedProperty>,
+    regexp: Option<super::regexp::LegacyRegExpSnapshot>,
 }
 
 impl StartupIntrinsics {
@@ -210,6 +211,7 @@ impl<H: Host> Vm<H> {
         if self.startup_intrinsics.depth > 1 {
             return Ok(());
         }
+        self.startup_intrinsics.regexp = Some(self.snapshot_regexp_legacy());
         for index in 0..self.startup_intrinsics.holders.len() {
             if self.holder_unchanged(index) {
                 continue;
@@ -267,6 +269,9 @@ impl<H: Host> Vm<H> {
             outcome = outcome.and(result);
         }
         self.startup_intrinsics.swapped.clear();
+        if let Some(snapshot) = self.startup_intrinsics.regexp.take() {
+            self.restore_regexp_legacy(snapshot);
+        }
         outcome
     }
 
