@@ -32,6 +32,17 @@ impl<H: Host> Vm<H> {
     }
 
     pub(crate) fn embedding_view_bytes(&self, value: Value) -> Option<Vec<u8>> {
+        self.embedding_view_bytes_prefix(value, usize::MAX)
+    }
+
+    pub(crate) fn embedding_bytes_prefix(&self, value: Value, maximum: usize) -> Option<Vec<u8>> {
+        if let Some(Cell::ArrayBuffer { bytes, detached, .. }) = self.heap.get(value) {
+            return Some(if *detached { Vec::new() } else { bytes[..bytes.len().min(maximum)].to_vec() });
+        }
+        self.embedding_view_bytes_prefix(value, maximum)
+    }
+
+    fn embedding_view_bytes_prefix(&self, value: Value, maximum: usize) -> Option<Vec<u8>> {
         let (buffer, offset, byte_length) = match self.heap.get(value)? {
             Cell::TypedArray {
                 object,
@@ -78,7 +89,7 @@ impl<H: Host> Vm<H> {
         if *detached {
             return Some(Vec::new());
         }
-        let end = offset.checked_add(byte_length)?;
+        let end = offset.checked_add(byte_length.min(maximum))?;
         Some(bytes.get(offset..end)?.to_vec())
     }
 

@@ -822,3 +822,57 @@ fn native_call_stack_source_names_follow_original_compiler_metadata_after_collec
         Runtime::new(CallerSourcesHost).execute(&program).unwrap();
     }
 }
+
+struct SnapshotMetadataHost;
+impl Host for SnapshotMetadataHost {
+    fn write_line(&mut self, _: &str) {}
+    fn clock_millis(&mut self) -> f64 { 0.0 }
+    fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> { context.seal_startup_intrinsics(); Ok(()) }
+    fn functions(&self) -> &[HostFunction<Self>] { crate::host_functions![global "nativeSnapshotMetadata" (1) => native_snapshot_metadata] }
+}
+fn native_snapshot_metadata(context: &mut NativeContext<'_, SnapshotMetadataHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let value = args.first().copied().unwrap_or_else(|| context.undefined());
+    let target = context.proxy_target_rooted(value)?.unwrap_or_else(|| context.undefined());
+    context.collect()?;
+    let object = context.boolean(context.has_startup_global_name("Object"));
+    let added = context.boolean(context.has_startup_global_name("AddedAfterBootstrap"));
+    context.array_rooted(&[object, added, target])
+}
+#[test]
+fn native_bootstrap_names_and_proxy_targets_survive_mutation_revocation_and_collection() {
+    let source=r#"
+      delete globalThis.Object;globalThis.AddedAfterBootstrap=function AddedAfterBootstrap(){};
+      const target={marker:42};const pair=Proxy.revocable(target,{});
+      const info=nativeSnapshotMetadata(pair.proxy);
+      if(info[0]!==true||info[1]!==false||info[2]!==target)throw Error('snapshot or original target changed');
+      pair.revoke();if(nativeSnapshotMetadata(pair.proxy)[2]!==null)throw Error('revoked target changed');
+      if(nativeSnapshotMetadata(target)[2]!==undefined)throw Error('ordinary object acquired proxy slots');
+    "#;
+    for program in [Engine::compile(crate::ExecutionRequest{source,name:"native-snapshot-metadata.js",kind:crate::SourceKind::Script}).unwrap(),Engine::specialize(source,"native-snapshot-metadata.js").unwrap()] {
+        Runtime::new(SnapshotMetadataHost).execute(&program).unwrap();
+    }
+}
+
+struct BoundedViewHost;
+impl Host for BoundedViewHost {
+    fn write_line(&mut self,_:&str){}
+    fn clock_millis(&mut self)->f64{0.0}
+    fn functions(&self)->&[HostFunction<Self>]{crate::host_functions![global "nativeBoundedView" (1) => native_bounded_view]}
+}
+fn native_bounded_view(context:&mut NativeContext<'_,BoundedViewHost>,_:RootId,args:&[RootId])->Result<RootId,RootedError>{
+    let value=args.first().copied().unwrap_or_else(||context.undefined());
+    let keys=context.own_non_index_keys_rooted(value,false)?;context.collect()?;
+    let bytes=context.bytes_prefix_rooted(value,2).ok_or_else(||RootedError::host("buffer bytes missing"))?;
+    let bytes=context.uint8_array_rooted(&bytes)?;let keys=context.array_rooted(&keys)?;context.array_rooted(&[bytes,keys])
+}
+#[test]
+fn native_bounded_byte_snapshots_and_non_index_keys_preserve_views_and_gc_roots(){
+    let source=r#"
+      const ab=new Uint8Array([1,2,3,4]).buffer,view=new Uint8Array(ab,1,3),symbol=Symbol('key');view.extra=1;view[symbol]=2;Object.defineProperty(view,'hidden',{value:3});
+      const result=nativeBoundedView(view);
+      if(result[0].join()!=='2,3'||result[1].length!==3||result[1][0]!=='extra'||result[1][1]!=='hidden'||result[1][2]!==symbol)throw Error('view bytes or keys changed');
+      if(nativeBoundedView(ab)[0].join()!=='1,2')throw Error('backing prefix changed');
+      if(nativeBoundedView(new DataView(ab,2,2))[0].join()!=='3,4')throw Error('DataView prefix changed');
+    "#;
+    for program in [Engine::compile(crate::ExecutionRequest{source,name:"native-bounded-view.js",kind:crate::SourceKind::Script}).unwrap(),Engine::specialize(source,"native-bounded-view.js").unwrap()]{Runtime::new(BoundedViewHost).execute(&program).unwrap();}
+}

@@ -3,6 +3,12 @@ use super::*;
 use crate::heap::PrivateBrand;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn nullish_property_error(&mut self, p: &ResidualProgram, object: Value, property: Option<&str>) -> JsError {
+        let kind = if object.is_null() { "null" } else { "undefined" };
+        let message = match property { Some(property) => format!("Cannot read properties of {kind} (reading '{property}')"), None => format!("Cannot read properties of {kind}") };
+        self.type_error(p, message)
+    }
+
     pub(super) fn module_binding_value(&self, object: Value, atom: Atom) -> Option<Value> {
         let (program, slot) = self.object_data(object)?.module_binding(atom)?;
         let environment = self.programs.module_environment(program)?;
@@ -324,14 +330,8 @@ impl<H: Host> Vm<H> {
         let _stack = self.enter_stack()?;
         let private_name = self.is_private_name(atom);
         if object.is_null() || object.is_undefined() {
-            return Err(self.type_error(
-                p,
-                if object.is_null() {
-                    "cannot read properties of null".into()
-                } else {
-                    "cannot read properties of undefined".into()
-                },
-            ));
+            let property = self.atom_name(atom).to_owned();
+            return Err(self.nullish_property_error(p, object, Some(&property)));
         }
         if !private_name
             && self
