@@ -360,6 +360,7 @@ pub(crate) fn internal_binding(
     let name = context.to_string(args.first().copied().unwrap_or(absent))?;
     let binding = context.object_rooted()?;
     match name.as_str() {
+        "util" => return super::util_shared_vm::key_binding(context),
         "http2" => return crate::host::shared_vm::commonjs::http2_binding(context),
         "buffer" => return super::buffer_fill_shared_vm::binding(context),
         "crypto" => return super::tls_shared_vm::facade::binding(context),
