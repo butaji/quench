@@ -206,7 +206,7 @@ fn rootless_shapes_survive_collection_and_shape_compaction() {
     vm.collect_now(&program);
     assert!(vm.shapes.len() < before);
     let object = vm.object_data(owner).unwrap();
-    assert_eq!(vm.shapes[object.shape() as usize].storage_len, 1);
+    assert_eq!(vm.shapes[object.shape() as usize].storage_len(), 1);
     assert_eq!(
         vm.heap.property_get(vm.object_data(owner).unwrap(), 0),
         Some(Value::integer(42))
@@ -1225,7 +1225,7 @@ fn dictionary_shapes_fall_back_after_deletion_and_prototype_use() {
 #[test]
 fn dictionary_shape_starts_when_property_slots_exceed_cache_encoding() {
     let mut vm = Vm::new(SilentHost);
-    vm.shapes[0].storage_len = super::object::FIELD_CACHE_SLOT_CAPACITY;
+    vm.shapes[0].storage_len = super::object::FIELD_CACHE_SLOT_CAPACITY as u32;
     let atom = vm.intern_atom("overflow");
     let key = super::property_key::PropertyKey::string(atom);
     let shape = vm.transition_property_shape(0, key);
@@ -1239,7 +1239,7 @@ fn dictionary_shape_starts_when_property_slots_exceed_cache_encoding() {
         Some(super::object::FIELD_CACHE_SLOT_CAPACITY)
     );
     assert_eq!(
-        vm.shapes[shape as usize].storage_len,
+        vm.shapes[shape as usize].storage_len(),
         super::object::FIELD_CACHE_SLOT_CAPACITY + 1
     );
     #[cfg(feature = "profile-aggregate")]
