@@ -78,10 +78,10 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         self.set_builtin_function_name(getter, "get description")?;
         let description_atom = self.intern_atom("description");
-        self.set_property(prototype, description_atom, Value::UNDEFINED)?;
-        self.set_property_attributes(
+        self.set_property_with_attributes(
             prototype,
-            PropertyKey::string(description_atom),
+            description_atom,
+            Value::UNDEFINED,
             PropertyAttributes {
                 writable: false,
                 enumerable: false,
@@ -90,7 +90,7 @@ impl<H: Host> Vm<H> {
                 getter: Some(getter),
                 setter: None,
             },
-        );
+        )?;
         Ok(())
     }
 

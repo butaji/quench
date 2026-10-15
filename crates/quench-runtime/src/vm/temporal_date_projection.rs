@@ -127,10 +127,10 @@ impl<H: Host> Vm<H> {
                 let getter_value = self.native_value(*getter);
                 self.set_builtin_function_name(getter_value, &format!("get {property}"))?;
                 let atom = self.intern_atom(property);
-                self.set_property(prototype, atom, Value::UNDEFINED)?;
-                self.set_property_attributes(
+                self.set_property_with_attributes(
                     prototype,
-                    PropertyKey::string(atom),
+                    atom,
+                    Value::UNDEFINED,
                     PropertyAttributes {
                         writable: false,
                         enumerable: false,
@@ -139,7 +139,7 @@ impl<H: Host> Vm<H> {
                         getter: Some(getter_value),
                         setter: None,
                     },
-                );
+                )?;
             }
             for (method, native) in methods {
                 self.set_builtin_named(p, prototype, method, *native)?;

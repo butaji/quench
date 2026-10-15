@@ -856,10 +856,10 @@ impl<H: Host> Vm<H> {
                 let character = self
                     .heap
                     .alloc(Cell::String(super::wtf16::JsString::from_units(&[unit])));
-                self.set_property(object, key, character)?;
-                self.set_property_attributes(
+                self.set_property_with_attributes(
                     object,
-                    PropertyKey::string(key),
+                    key,
+                    character,
                     PropertyAttributes {
                         writable: false,
                         enumerable: true,
@@ -868,13 +868,13 @@ impl<H: Host> Vm<H> {
                         getter: None,
                         setter: None,
                     },
-                );
+                )?;
             }
             let length = self.intern_atom("length");
-            self.set_property(object, length, Value::number(text.units().len() as f64))?;
-            self.set_property_attributes(
+            self.set_property_with_attributes(
                 object,
-                PropertyKey::string(length),
+                length,
+                Value::number(text.units().len() as f64),
                 PropertyAttributes {
                     writable: false,
                     enumerable: false,
@@ -883,7 +883,7 @@ impl<H: Host> Vm<H> {
                     getter: None,
                     setter: None,
                 },
-            );
+            )?;
         }
         let marker_atom = self.intern_atom(marker);
         self.set_property(object, marker_atom, value)?;
@@ -1940,10 +1940,10 @@ impl<H: Host> Vm<H> {
         let throw_type_error = self.throw_type_error_for_realm(global);
         for key in ["caller", "arguments"] {
             let atom = self.intern_atom(key);
-            self.set_property(prototype, atom, Value::UNDEFINED)?;
-            self.set_property_attributes(
+            self.set_property_with_attributes(
                 prototype,
-                PropertyKey::string(atom),
+                atom,
+                Value::UNDEFINED,
                 PropertyAttributes {
                     writable: false,
                     enumerable: false,
@@ -1952,7 +1952,7 @@ impl<H: Host> Vm<H> {
                     getter: Some(throw_type_error),
                     setter: Some(throw_type_error),
                 },
-            );
+            )?;
         }
         let name = self.intern_atom("Function");
         self.set_property_attributes(
