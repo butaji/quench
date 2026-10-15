@@ -1293,8 +1293,16 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
                 "({ isMainThread: true, MessageChannel: globalThis.MessageChannel, MessagePort: globalThis.MessagePort, Worker: class Worker { constructor() { throw Object.assign(new Error('Worker threads are unavailable in this runtime'), { code: 'ERR_WORKER_UNSUPPORTED_OPERATION' }); } } })",
                 "node:worker_threads.js",
             )?;
-            let mark = context.host_function(super::operation("markAsUncloneable"))?;
-            set(context, module, "markAsUncloneable", mark)?;
+            for name in ["markAsUncloneable", "markAsUntransferable", "isMarkedAsUntransferable"] {
+                let operation = context.host_function(super::operation(name))?;
+                let factory = context.evaluate_script_rooted(
+                    &format!("(operation)=>function {name}(object){{return operation(object)}}"),
+                    "node:worker_threads/marker.js",
+                )?;
+                let undefined = context.undefined();
+                let method = context.call_rooted(factory, undefined, &[operation])?;
+                set(context, module, name, method)?;
+            }
             Ok(module)
         }
         BuiltinModule::Url => crate::modules::url_shared_vm::module(context),
