@@ -113,12 +113,10 @@ fn read_unknown_into(
     if !c.strict_equal_rooted(count, zero)? {
         close(c, fs, handle)?;
         let capacity = get(c, buffer, "byteLength")?;
-        let error = super::fs_policy_shared_vm::call(
-            c,
-            "createReadFileBufferTooSmallError",
-            &[name, capacity],
-        )?;
-        return Err(c.throw(error));
+        let reason = c.string_rooted("is too small to contain the entire file");
+        return Err(super::fs_policy_shared_vm::invalid_value(
+            c, name, capacity, reason,
+        )?);
     }
     Ok(position)
 }
@@ -146,12 +144,7 @@ pub(super) fn read_general(
         }
     };
     let maximum = c.number(i32::MAX as f64);
-    if let Err(error) = super::util_shared_vm::validate_integer(c, handle.fd, "fd", 0.0, maximum) {
-        if let Some(exception) = error.exception {
-            super::node_errors_shared_vm::hide_range_error(c, exception, "ERR_OUT_OF_RANGE")?;
-        }
-        return Err(error);
-    }
+    super::util_shared_vm::validate_binding_integer(c, handle.fd, "fd", 0.0, maximum)?;
     let descriptor = c.to_number(handle.fd)? as i32;
     let state = c.host_mut().shared_state().borrow().fs.clone();
     let metadata = state.with_descriptor(descriptor, |file| file.metadata());

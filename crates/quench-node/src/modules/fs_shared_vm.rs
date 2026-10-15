@@ -2808,7 +2808,7 @@ pub(crate) fn read_file_sync(
         fs.with_descriptor(fd, |file| Ok(fs_ops::read_file(file, MAX_READ_FILE_BYTES)))
             .unwrap_or_else(|error| {
                 Err(ReadFileFailure::Io {
-                    syscall: if fast_utf8 { "read" } else { "fstat" },
+                    syscall: "read",
                     error,
                 })
             })
