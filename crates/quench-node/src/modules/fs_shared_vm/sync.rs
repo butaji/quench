@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_TEMP_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
-const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSync, symlinkSync, linkSync, renameSync, unlinkSync, chownSync, lchownSync, fchownSync, truncateSync, ftruncateSync, writeFileSync, openSync, closeSync, fstatSync, readSyncNative, writeDescriptor, syncDescriptor) => {
+const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSync, symlinkSync, linkSync, renameSync, unlinkSync, chownSync, lchownSync, fchownSync, truncateSync, ftruncateSync, writeFileSync, openSync, closeSync, fstatSync, readSyncNative, writeSyncNative, writeDescriptor, syncDescriptor) => {
   let warnedMkdtempX = false;
   const normalizePath = (path) =>
     typeof path === 'string' ? path : Buffer.isBuffer(path) ? path.toString() : ArrayBuffer.isView(path) && !(path instanceof DataView) ? Buffer.from(path).toString() : path instanceof URL ? decodeURIComponent(path.pathname) : path;
@@ -291,24 +291,10 @@ const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSy
       return fstatSync(fd, options);
     },
     readSync(fd, buffer, offset, length, position) {
-      return readSyncNative(...arguments);
+      return readSyncNative(fd, buffer, offset, length, position, arguments.length);
     },
-    writeSync(fd, data, offset, length, position) {
-      validateFd(fd);
-      if (typeof data === "string") {
-        const encoding = typeof length === "string" ? length : "utf8";
-        const bytes = Buffer.from(data, encoding);
-        return writeDescriptor(fd, bytes, offset == null ? null : offset);
-      }
-      const bytes = writeBytes(data, undefined);
-      if (offset && typeof offset === "object") {
-        const options = offset;
-        offset = options.offset ?? 0;
-        length = options.length;
-        position = options.position;
-      }
-      [offset, length] = validateReadWriteRange(bytes, offset, length);
-      return writeDescriptor(fd, bytes.subarray(offset, offset + length), position);
+    writeSync(fd, buffer, offset, length, position) {
+      return writeSyncNative(fd, buffer, offset, length, position);
     },
     fsyncSync(fd) { validateFd(fd); return syncDescriptor(fd, false); },
     fdatasyncSync(fd) { validateFd(fd); return syncDescriptor(fd, true); },
@@ -338,6 +324,7 @@ pub(crate) fn install(
     let close = context.host_function(crate::host::shared_vm::operation("fsCloseSync"))?;
     let fstat = context.host_function(crate::host::shared_vm::operation("fsFstatSync"))?;
     let read_sync = context.host_function(crate::host::shared_vm::operation("fsReadSync"))?;
+    let write_sync = context.host_function(crate::host::shared_vm::operation("fsWriteSync"))?;
     let write_descriptor =
         context.host_function(crate::host::shared_vm::operation("fsWriteDescriptor"))?;
     let sync_descriptor =
@@ -367,6 +354,7 @@ pub(crate) fn install(
             close,
             fstat,
             read_sync,
+            write_sync,
             write_descriptor,
             sync_descriptor,
         ],
@@ -467,6 +455,9 @@ pub(crate) fn close_sync(
     }
 }
 
+const READ_SYNC_POSITIONAL_ARITY: usize = 5;
+const READ_SYNC_OPTIONS_ARITY: usize = 3;
+
 /// Release-specific overload and validation policy executes through the configured
 /// Node validators; the actual byte copy remains a native/Core operation.
 pub(crate) fn read_sync(
@@ -483,7 +474,13 @@ pub(crate) fn read_sync(
     let mut offset = args.get(2).copied().unwrap_or(undefined);
     let mut length = args.get(3).copied().unwrap_or(undefined);
     let mut position = args.get(4).copied().unwrap_or(undefined);
-    if args.len() <= 3
+    // readSync(fd, buffer, options) is selected by the original caller arity.
+    let count = args
+        .get(READ_SYNC_POSITIONAL_ARITY)
+        .copied()
+        .ok_or_else(|| RootedError::host("readSync caller arity missing"))?;
+    let count = context.to_number(count)?;
+    if count <= READ_SYNC_OPTIONS_ARITY as f64
         || context.rooted_value(offset).is_some_and(Value::is_null)
         || context.is_object_rooted(offset)?
     {
@@ -664,7 +661,7 @@ pub(crate) fn write_descriptor(
             .get(&fd)
             .map(|descriptor| descriptor.path.clone())
             .unwrap_or_default();
-        (state.fs.write_descriptor(fd, &bytes, position), path)
+        (state.fs.write_all_descriptor(fd, &bytes, position), path)
     };
     match result {
         Ok(written) => Ok(context.number(written as f64)),

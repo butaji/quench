@@ -1058,6 +1058,36 @@ fn typed_array_index_stores_convert_and_ignore_out_of_range_indices() {
 }
 
 #[test]
+fn finished_jobs_release_their_values_while_the_queue_keeps_draining() {
+    // A job leaves the queue before it runs, so a value only its arguments held is
+    // collectable while later jobs of the same drain still run: its cleanup is observed
+    // inside the await loop instead of never.
+    let source = "var finalized = false, registry = new FinalizationRegistry(function () { finalized = true; });\n\
+         function make() { var o = {}; registry.register(o, 0); return o; }\n\
+         var result = 'pending';\n\
+         (async function () {\n\
+           await Promise.resolve(make());\n\
+           for (var i = 0; i < 20000 && !finalized; i++) await { i: i };\n\
+           result = String(finalized);\n\
+         })();";
+    assert_eq!(global_text(source, "result"), "true");
+}
+
+#[test]
+fn json_parse_builds_the_same_values_with_and_without_a_reviver() {
+    // Without a reviver values are built during the parse; with one, from the source tree.
+    // Both give escapes, numbers, duplicate keys, key order and `__proto__` the same way.
+    let source = "var text = '{\"b\":\"x\\\\ny\\\\u00e9\",\"2\":[1,-0,2.5e3,1E-2],\"a\":{\"__proto__\":{\"k\":1}},\"b\":true,\"\":null}';\n\
+         var plain = JSON.parse(text), revived = JSON.parse(text, function (k, v) { return v; });\n\
+         var describe = function (o) { return [Object.keys(o).join(), JSON.stringify(o), Object.is(o['2'][1], -0), Object.getPrototypeOf(o.a) === Object.prototype, Object.keys(o.a).join()].join('|'); };\n\
+         var result = describe(plain) === describe(revived) ? describe(plain) : 'differs: ' + describe(plain) + ' / ' + describe(revived);";
+    assert_eq!(
+        global_text(source, "result"),
+        "2,b,a,|{\"2\":[1,0,2500,0.01],\"b\":true,\"a\":{\"__proto__\":{\"k\":1}},\"\":null}|true|true|__proto__"
+    );
+}
+
+#[test]
 fn promise_record_edges_follow_promise_and_resolver_lifetime() {
     let mut vm = Vm::new(SilentHost);
     let promise = vm.promise_object();

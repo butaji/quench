@@ -1,0 +1,24 @@
+crypto qn-b16 4384 4304 4424
+crypto qjs   
+deltablue qn-b16 3960 3960 3960
+deltablue qjs   
+earley-boyer qn-b16 10556 10416 10420
+earley-boyer qjs   
+navier-stokes qn-b16 4908 4908 4908
+navier-stokes qjs   
+raytrace qn-b16 3624 3636 3616
+raytrace qjs   
+regexp qn-b16 14544 14372 14608
+regexp qjs   
+richards qn-b16 3580 3580 3584
+richards qjs   
+splay qn-b16 48620 48572 48568
+splay qjs   
+crypto qjs 3400 3504 3532
+deltablue qjs 3772 3748 3768
+earley-boyer qjs 16756 16716 16528
+navier-stokes qjs 4884 5052 4932
+raytrace qjs 3448 3300 3156
+regexp qjs 6708 6728 6664
+richards qjs 3348 3308 3360
+splay qjs 147000 147056 146960
