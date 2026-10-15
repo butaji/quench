@@ -1760,6 +1760,7 @@ var reason={};try{Date.parse({toString(){throw reason;}});print(false);}catch(e)
     try{await import(path);print(false);}catch(e){print(e===first);}
     print(qq_source_runs===0 && qq_bad_runs===0 && qq_effect_runs===0);
   }
+  var effect=await import('./task20-module-source-fixtures/effect.mjs');print(effect.value===43 && qq_effect_runs===1);
   var ns=await import(leaf);print(ns.answer===42 && qq_source_runs===1);ns.bump();print(ns.answer===43);print(await import(leaf)===ns);
   try{await import.source(leaf);print(false);}catch(e){print(e instanceof SyntaxError);}print(qq_source_runs===1);
   var events=[], specifier={toString(){events.push('specifier');$262.gc();return leaf;}};
@@ -1838,7 +1839,7 @@ checkSources().then(()=>print('done'),e=>{print('unexpected');print(e);});
                 let output = host.clone();
                 let mut runtime = Runtime::new(ModuleCapture(host));
                 runtime.execute(&program).unwrap();
-                let mut expected = vec!["true"; 31];
+                let mut expected = vec!["true"; 32];
                 expected.push("done");
                 assert_eq!(output.0.borrow().as_slice(), expected.as_slice());
             }
@@ -4568,6 +4569,53 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
                 "false",
             ],
         );
+    }
+
+    #[test]
+    fn regression_cyclic_modules_link_hoists_namespaces_aliases_and_typed_imports() {
+        const SOURCE: &str = r#"
+            import * as a from './a.mjs';
+            import * as barrel from './barrel.mjs';
+            import { read, early, namespace, config as reexportedConfig } from './b.mjs';
+            import config from './config.json' with { type: 'json' };
+            export function entryHoisted() { return a.value; }
+            print(early);
+            print(JSON.stringify(globalThis.cycleTrace));
+            print(read());
+            print(namespace === a && barrel.namespace === a);
+            print(barrel.alias === a.hoisted && barrel.hoisted === a.hoisted);
+            print(reexportedConfig === config && config.answer === 42);
+            a.bump();
+            print(a.value + ':' + barrel.value + ':' + read());
+            print(Object.getOwnPropertyDescriptor(barrel, 'value').value);
+            import('./a.mjs').then(namespace => print(namespace === a));
+        "#;
+        const MODULES: &[(&str, &str)] = &[
+            ("entry.mjs", SOURCE),
+            ("a.mjs", include_str!("../../../tests/npm-top300/regressions/esm-graph/a.mjs")),
+            ("b.mjs", include_str!("../../../tests/npm-top300/regressions/esm-graph/b.mjs")),
+            ("alias.mjs", include_str!("../../../tests/npm-top300/regressions/esm-graph/alias.mjs")),
+            ("barrel.mjs", include_str!("../../../tests/npm-top300/regressions/esm-graph/barrel.mjs")),
+            ("config.json", include_str!("../../../tests/npm-top300/regressions/esm-graph/config.json")),
+        ];
+        struct ModuleCapture(Capture);
+        impl Host for ModuleCapture {
+            fn write_line(&mut self, text: &str) { self.0.write_line(text); }
+            fn clock_millis(&mut self) -> f64 { 0.0 }
+            fn resolve_dynamic_import(&mut self, _: &str, specifier: &str) -> Result<Option<crate::ModuleSource>, String> {
+                let name = specifier.rsplit('/').next().unwrap();
+                Ok(MODULES.iter().find(|(candidate, _)| *candidate == name).map(|(_, source)| crate::ModuleSource {
+                    name: format!("cyclic-module-graph/{name}"), source: (*source).into(), bytes: source.as_bytes().to_vec(),
+                }))
+            }
+        }
+        for compile in [Engine::specialize_module as fn(&str, &str) -> _, Engine::specialize_module_unspecialized] {
+            let view = Capture::default();
+            let mut runtime = Runtime::new(ModuleCapture(view.clone()));
+            let program = compile(SOURCE, "cyclic-module-graph/entry.mjs").unwrap();
+            runtime.execute(&program).unwrap();
+            assert_eq!(view.0.borrow().as_slice(), &["true", "[\"b\",\"a\"]", "1", "true", "true", "true", "2:2:2", "2", "true"]);
+        }
     }
 
     #[test]

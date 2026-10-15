@@ -672,25 +672,36 @@ impl quench_runtime::Host for NodeHost {
         } else {
             referrer.parent().unwrap_or(Path::new(".")).to_path_buf()
         };
-        let resolver = oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
-            extensions: vec![".mjs".into(), ".js".into(), ".json".into(), ".cjs".into()],
-            main_files: vec!["index".into()],
-            condition_names: vec!["node".into(), "import".into(), "default".into()],
-            ..Default::default()
-        });
-        let resolution_specifier = if internal {
-            format!("./{specifier}")
+        let path = if !internal {
+            commonjs::exact_file_path(&base, specifier)
         } else {
-            specifier.to_owned()
+            None
         };
-        let resolution = match resolver.resolve(&base, &resolution_specifier) {
-            Ok(resolution) => resolution,
-            Err(
-                oxc_resolver::ResolveError::NotFound(_) | oxc_resolver::ResolveError::Specifier(_),
-            ) => return Ok(None),
-            Err(error) => return Err(error.to_string()),
+        let path = match path {
+            Some(path) => path,
+            None => {
+                let resolver = oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
+                    extensions: vec![".mjs".into(), ".js".into(), ".json".into(), ".cjs".into()],
+                    main_files: vec!["index".into()],
+                    condition_names: vec!["node".into(), "import".into(), "default".into()],
+                    ..Default::default()
+                });
+                let resolution_specifier = if internal {
+                    format!("./{specifier}")
+                } else {
+                    specifier.to_owned()
+                };
+                let resolution = match resolver.resolve(&base, &resolution_specifier) {
+                    Ok(resolution) => resolution,
+                    Err(
+                        oxc_resolver::ResolveError::NotFound(_)
+                        | oxc_resolver::ResolveError::Specifier(_),
+                    ) => return Ok(None),
+                    Err(error) => return Err(error.to_string()),
+                };
+                resolution.full_path()
+            }
         };
-        let path = resolution.full_path();
         let path = std::fs::canonicalize(&path).unwrap_or(path);
         let bytes =
             std::fs::read(&path).map_err(|error| format!("module {}: {error}", path.display()))?;
@@ -759,6 +770,14 @@ impl quench_runtime::Host for NodeHost {
         url::Url::from_file_path(absolute)
             .map(|url| url.to_string())
             .unwrap_or_else(|_| source_name.to_owned())
+    }
+
+    fn stack_source_name(&mut self, source_name: &str, is_module: bool) -> String {
+        if is_module {
+            self.import_meta_url(source_name)
+        } else {
+            source_name.to_owned()
+        }
     }
 
     fn capture_job_context(&mut self) -> Option<quench_runtime::HostExecutionContext> {
