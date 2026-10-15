@@ -7405,3 +7405,23 @@ process.emitWarning=original;console.log(JSON.stringify(out));
 
 "#);
 }
+
+#[test]
+fn native_stream_duplex_pair_preserves_metadata_demand_finish_and_peer_destruction() {
+compare_node_stream_source(r#"
+const {duplexPair,Duplex}=require('stream'),out=[],events=[];const f=duplexPair;out.push(['function',f.name,f.length,Object.hasOwn(f,'prototype'),Object.getOwnPropertyDescriptor(require('stream'),'duplexPair')]);
+const [a,b]=f({objectMode:true,highWaterMark:2});const proto=Object.getPrototypeOf(a);out.push(['side',a instanceof Duplex,b instanceof Duplex,a!==b,Object.getPrototypeOf(b)===proto,proto.constructor.name,Object.getOwnPropertyNames(proto),Object.getOwnPropertySymbols(proto).map(s=>[String(s),Object.getOwnPropertyDescriptor(proto,s).value.name]),Object.getOwnPropertySymbols(a).map(s=>[String(s),typeof a[s]])]);
+const item={id:1};a.write(item,()=>events.push('write-callback'));events.push(['queued',a.writableLength,b.readableLength]);const value=b.read();events.push(['read',value===item]);a.end(()=>events.push('finish-callback'));b.on('end',()=>events.push('peer-end'));b.resume();a.on('finish',()=>events.push('finish'));setImmediate(()=>{out.push(['flow',events]);const [c,d]=f();const error=new Error('marker'),closed=[];c.on('error',e=>closed.push(['error',e===error]));d.on('error',()=>closed.push('peer-error'));c.on('close',()=>closed.push('close'));d.on('close',()=>closed.push('peer-close'));c.destroy(error);setImmediate(()=>{out.push(['destroy',closed,c.destroyed,d.destroyed]);console.log(JSON.stringify(out));});});
+
+"#);
+}
+
+#[test]
+fn native_stream_emitters_preserve_capture_flags_limits_and_domain_owner() {
+compare_node_stream_source(r#"
+const {Readable,Writable,Duplex,PassThrough}=require('stream'),EE=require('events'),out=[];
+for(const Type of [Readable,Writable,Duplex,PassThrough]){const s=new Type({read(){},write(c,e,cb){cb()},captureRejections:true});const symbols=Object.getOwnPropertySymbols(s),shape=symbols.find(x=>String(x)==='Symbol(shapeMode)'),capture=symbols.find(x=>String(x)==='Symbol(kCapture)');s.setMaxListeners(7);out.push([Type.name,s[shape],s[capture],s._maxListeners,s.getMaxListeners(),Object.getOwnPropertyDescriptor(s,capture)]);s.destroy();}
+const domain=require('domain').create(),marker=new Error('marker');let stream;domain.on('error',e=>out.push(['domain-error',e===marker,e.domainEmitter===stream,e.domain===domain]));domain.run(()=>{stream=new PassThrough({autoDestroy:false});out.push(['domain',stream.domain===domain,domain.members.includes(stream),domain.members.length]);});try{stream.emit('error',marker)}catch(e){out.push(['thrown',e===marker])}setImmediate(()=>console.log(JSON.stringify(out)));
+
+"#);
+}
