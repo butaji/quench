@@ -427,12 +427,17 @@ pub(crate) fn path_to_file_url(
     context.construct_rooted(constructor, constructor, &[href])
 }
 
-/// Node observes URL-like properties rather than serializing through `toString`.
-pub(crate) fn file_url_to_path(
+struct FileUrlPath {
+    url: RootId,
+    hostname: RootId,
+    pathname: RootId,
+    windows: bool,
+}
+
+fn validated_file_url_path(
     context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
     args: &[RootId],
-) -> Result<RootId, RootedError> {
+) -> Result<FileUrlPath, RootedError> {
     let windows = windows_option(context, args)?;
     let input = args.first().copied().unwrap_or_else(|| context.undefined());
     let path = if context.string_text(input)?.is_some() {
@@ -467,13 +472,30 @@ pub(crate) fn file_url_to_path(
             "macos" => "darwin",
             platform => platform,
         };
-        return Err(coded_url_type_error(
-            context,
-            "ERR_INVALID_FILE_URL_HOST",
-            &format!("File URL host must be \"localhost\" or empty on {platform}"),
-        ));
+        return Err(invalid_file_url_host(context, platform));
     }
-    let mut pathname = get(context, path, "pathname")?;
+    let pathname = get(context, path, "pathname")?;
+    Ok(FileUrlPath {
+        url: path,
+        hostname,
+        pathname,
+        windows,
+    })
+}
+
+/// Node observes URL-like properties rather than serializing through `toString`.
+pub(crate) fn file_url_to_path(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let FileUrlPath {
+        url: path,
+        hostname,
+        mut pathname,
+        windows,
+    } = validated_file_url_path(context, args)?;
+    let local = context.string_text(hostname)?.as_deref() == Some("");
     // The length and indexed reads deliberately remain observable for URL-like objects.
     let mut index = 0usize;
     loop {
@@ -508,13 +530,7 @@ pub(crate) fn file_url_to_path(
         index += 1;
     }
     if windows {
-        let mut units = context.to_string_code_units(pathname)?;
-        for unit in &mut units {
-            if *unit == u16::from(b'/') {
-                *unit = u16::from(b'\\');
-            }
-        }
-        pathname = context.string_units_rooted(&units);
+        pathname = windows_path_separators(context, pathname)?;
     }
     let percent = context.string_rooted("%");
     let encoded = intrinsic_string_method(context, "includes", pathname, &[percent])?;
@@ -590,97 +606,125 @@ fn invalid_file_url_path(
     context.throw(exception)
 }
 
+/// The byte variant uses forgiving percent decoding, including encoded separators.
 pub(crate) fn file_url_to_path_buffer(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let Some(input) = args.first().copied() else {
-        return Err(invalid_url_argument(context));
-    };
-    let input = url_argument_text(context, input)?.ok_or_else(|| invalid_url_argument(context))?;
-    let windows = windows_option(context, args)?;
-    let parsed = url::Url::parse(&input).map_err(|_| invalid_url(context, &input))?;
-    if parsed.scheme() != "file" {
-        return Err(coded_url_type_error(
-            context,
-            "ERR_INVALID_URL_SCHEME",
-            "The URL must be of scheme file",
-        ));
+    let FileUrlPath {
+        url,
+        hostname,
+        mut pathname,
+        windows,
+    } = validated_file_url_path(context, args)?;
+    if windows {
+        pathname = windows_path_separators(context, pathname)?;
     }
-    if !windows
-        && parsed
-            .host_str()
-            .is_some_and(|host| !host.is_empty() && !host.eq_ignore_ascii_case("localhost"))
+    let utf8 = context.string_rooted("utf8");
+    let input = file_path_buffer_from(context, &[pathname, utf8])?;
+    // Execute the unmodified configured Node library as guest policy on Quench.
+    let percent_decode = context.with_startup_intrinsics(|context| {
+        crate::host::shared_vm::commonjs::node_library_export(
+            context,
+            "internal/url.js",
+            "internal/data_url.js",
+            "percentDecode",
+        )
+    })?;
+    let undefined = context.undefined();
+    let decoded = context.call_rooted(percent_decode, undefined, &[input])?;
+    let mut parts = Vec::new();
+    for name in ["buffer", "byteOffset", "byteLength"] {
+        let getter = context.with_startup_intrinsics(|context| {
+            let global = context.global_root()?;
+            let constructor = get(context, global, "Uint8Array")?;
+            let prototype = get(context, constructor, "prototype")?;
+            let prototype = context.prototype_rooted(prototype)?;
+            let key = context.string_rooted(name);
+            let descriptor = context.own_property_descriptor_rooted(prototype, key)?;
+            get(context, descriptor, "get")
+        })?;
+        parts.push(context.call_rooted(getter, decoded, &[])?);
+    }
+    let decoded = file_path_buffer_from(context, &parts)?;
+    if !windows {
+        return Ok(decoded);
+    }
+    if context.string_text(hostname)?.as_deref() != Some("") {
+        let prefix = context.string_rooted("\\\\");
+        let ascii = context.string_rooted("ascii");
+        let prefix = file_path_buffer_from(context, &[prefix, ascii])?;
+        let domain = domain_to_unicode(context, undefined, &[hostname])?;
+        let domain = file_path_buffer_from(context, &[domain, utf8])?;
+        let values = context.array_rooted(&[prefix, domain, decoded])?;
+        let buffer = file_path_buffer_constructor(context)?;
+        let concat = get(context, buffer, "concat")?;
+        return context.call_rooted(concat, buffer, &[values]);
+    }
+    let letter = get(context, decoded, "1")?;
+    let lowercase = context.number(f64::from(b' '));
+    let letter = context.bitwise_or_rooted(letter, lowercase)?;
+    let letter = context.to_number(letter)?;
+    let separator = get(context, decoded, "2")?;
+    let colon = context.number(f64::from(b':'));
+    if !(f64::from(b'a')..=f64::from(b'z')).contains(&letter)
+        || !context.strict_equal_rooted(separator, colon)?
     {
-        return Err(coded_url_type_error(
+        return Err(invalid_file_url_path(
             context,
-            "ERR_INVALID_FILE_URL_HOST",
-            "File URL host must be \"localhost\" or empty on this platform",
+            url,
+            "File URL path must be absolute",
         ));
     }
-    if parsed.path().to_ascii_lowercase().contains("%2f")
-        || (windows && parsed.path().to_ascii_lowercase().contains("%5c"))
-    {
-        return Err(coded_url_type_error(
-            context,
-            "ERR_INVALID_FILE_URL_PATH",
-            "File URL path must not include encoded / characters",
-        ));
-    }
-    let bytes = if windows {
-        let path = if cfg!(windows) {
-            parsed
-                .to_file_path()
-                .map_err(|_| invalid_url(context, &input))?
-                .to_string_lossy()
-                .into_owned()
-        } else {
-            windows_file_url_path(&parsed).ok_or_else(|| {
-                coded_url_type_error(
-                    context,
-                    "ERR_INVALID_FILE_URL_PATH",
-                    "File URL path must be an absolute Windows path",
-                )
-            })?
-        };
-        path.into_bytes()
-    } else {
-        decode_percent_bytes(parsed.path()).ok_or_else(|| {
-            coded_url_type_error(
-                context,
-                "ERR_INVALID_FILE_URL_PATH",
-                "File URL path contains invalid percent encoding",
-            )
-        })?
-    };
-    let values = bytes
-        .iter()
-        .map(|byte| context.number(f64::from(*byte)))
-        .collect::<Vec<_>>();
-    let values = context.array_rooted(&values)?;
-    let global = context.global_root()?;
-    let buffer = get(context, global, "Buffer")?;
-    let from = get(context, buffer, "from")?;
-    context.call_rooted(from, buffer, &[values])
+    let subarray = get(context, decoded, "subarray")?;
+    let one = context.number(1.0);
+    context.call_rooted(subarray, decoded, &[one])
 }
 
-fn decode_percent_bytes(input: &str) -> Option<Vec<u8>> {
-    let bytes = input.as_bytes();
-    let mut output = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'%' {
-            let high = hex_value(*bytes.get(index + 1)?)?;
-            let low = hex_value(*bytes.get(index + 2)?)?;
-            output.push((high << 4) | low);
-            index += 3;
-        } else {
-            output.push(bytes[index]);
-            index += 1;
+fn file_path_buffer_constructor(
+    context: &mut NativeContext<'_, NodeHost>,
+) -> Result<RootId, RootedError> {
+    let module = crate::host::shared_vm::commonjs::buffer_module(context)?;
+    get(context, module, "Buffer")
+}
+
+fn file_path_buffer_from(
+    context: &mut NativeContext<'_, NodeHost>,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let buffer = file_path_buffer_constructor(context)?;
+    let from = get(context, buffer, "from")?;
+    context.call_rooted(from, buffer, args)
+}
+
+fn windows_path_separators(
+    context: &mut NativeContext<'_, NodeHost>,
+    pathname: RootId,
+) -> Result<RootId, RootedError> {
+    let mut units = context.to_string_code_units(pathname)?;
+    for unit in &mut units {
+        if *unit == u16::from(b'/') {
+            *unit = u16::from(b'\\');
         }
     }
-    Some(output)
+    Ok(context.string_units_rooted(&units))
+}
+
+fn invalid_file_url_host(context: &mut NativeContext<'_, NodeHost>, platform: &str) -> RootedError {
+    let message = format!("File URL host must be \"localhost\" or empty on {platform}");
+    let exception = match context.type_error_rooted(&message) {
+        Ok(exception) => exception,
+        Err(error) => return error,
+    };
+    if let Err(error) = super::node_errors_shared_vm::decorate_formatted_type_error(
+        context,
+        exception,
+        "ERR_INVALID_FILE_URL_HOST",
+    ) {
+        return error;
+    }
+    context.throw(exception)
 }
 
 fn windows_option(
@@ -768,25 +812,6 @@ fn push_url_segments(url: &mut url::Url, path: &str, trailing_slash: bool) -> Op
     Some(())
 }
 
-fn windows_file_url_path(url: &url::Url) -> Option<String> {
-    let path = percent_decode(url.path())?;
-    if let Some(host) = url
-        .host_str()
-        .filter(|host| !host.is_empty() && !host.eq_ignore_ascii_case("localhost"))
-    {
-        let share_path = path.trim_start_matches('/').replace('/', "\\");
-        return Some(format!("\\\\{host}\\{share_path}"));
-    }
-    let drive_path = path.strip_prefix('/')?;
-    if drive_path.len() < 2
-        || !drive_path.as_bytes()[0].is_ascii_alphabetic()
-        || drive_path.as_bytes()[1] != b':'
-    {
-        return None;
-    }
-    Some(drive_path.replace('/', "\\"))
-}
-
 fn percent_decode(input: &str) -> Option<String> {
     let bytes = input.as_bytes();
     let mut decoded = Vec::with_capacity(bytes.len());
@@ -861,25 +886,17 @@ fn invalid_path_argument(context: &mut NativeContext<'_, NodeHost>) -> RootedErr
     )
 }
 
-fn invalid_url_argument(context: &mut NativeContext<'_, NodeHost>) -> RootedError {
-    coded_url_type_error(
-        context,
-        "ERR_INVALID_ARG_TYPE",
-        "The \"url\" argument must be of type string or an instance of URL",
-    )
-}
-
 fn coded_url_type_error(
     context: &mut NativeContext<'_, NodeHost>,
-    code: &str,
+    code: &'static str,
     message: &str,
 ) -> RootedError {
     let exception = match context.type_error_rooted(message) {
         Ok(exception) => exception,
         Err(error) => return error,
     };
-    let code = context.string_rooted(code);
-    if let Err(error) = set(context, exception, "code", code) {
+    if let Err(error) = super::node_errors_shared_vm::decorate_type_error(context, exception, code)
+    {
         return error;
     }
     context.throw(exception)
