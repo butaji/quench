@@ -10,7 +10,7 @@ pub(super) enum PropertyCopyKind {
 }
 
 impl<H: Host> Vm<H> {
-    fn own_keys_array(&mut self, keys: Vec<Value>) -> Value {
+    pub(super) fn own_keys_array(&mut self, keys: Vec<Value>) -> Value {
         let roots = keys
             .iter()
             .copied()
@@ -32,6 +32,11 @@ impl<H: Host> Vm<H> {
         result
     }
 
+    fn is_internal_property_name(&self, atom: Atom) -> bool {
+        self.atom_class(atom).contains(AtomClass::INTERNAL)
+            && self.atom_name(atom).starts_with(INTERNAL_PROPERTY_PREFIX)
+    }
+
     pub(super) fn own_named_keys(&self, object: Value) -> Vec<Atom> {
         let Some(data) = self.object_data(object) else {
             return Vec::new();
@@ -40,7 +45,7 @@ impl<H: Host> Vm<H> {
             .into_iter()
             .filter(|(atom, slot)| {
                 self.heap.property_get(data, *slot).is_some()
-                    && !self.atom_name(*atom).starts_with(INTERNAL_PROPERTY_PREFIX)
+                    && !self.is_internal_property_name(*atom)
             })
             .map(|(atom, _)| atom)
             .collect()
@@ -55,7 +60,7 @@ impl<H: Host> Vm<H> {
             .into_iter()
             .filter(|(atom, slot)| {
                 self.heap.property_get(data, *slot).is_some()
-                    && self.atom_name(*atom).starts_with(INTERNAL_PROPERTY_PREFIX)
+                    && self.is_internal_property_name(*atom)
             })
             .map(|(atom, _)| atom)
             .collect()
