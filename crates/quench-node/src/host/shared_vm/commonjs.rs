@@ -125,7 +125,6 @@ pub(crate) fn source_kind(path: &Path) -> Result<quench_runtime::SourceKind, Str
 }
 
 pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
-    let roots = context.host_mut().shared_state();
     let process_surface = context.evaluate_script_rooted(
         crate::polyfills::post_bootstrap::process_surface_00::JS,
         "node:bootstrap/process-surface.js",
@@ -174,13 +173,7 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     context.define_data_property_rooted(global, key, print_eval, false, false, false)?;
     install_performance_global(context)?;
     crate::modules::crypto_shared_vm::install_global(context)?;
-    let node_primordials = context
-        .host_mut()
-        .node_library_root
-        .join("lib/internal/per_context/primordials.js");
-    if node_primordials.is_file()
-        || crate::node_sources::source(&node_primordials, &context.host_mut().node_library_root).is_some()
-    {
+    if node_primordials_source(context).is_some() {
         // Node 24 exposes these well-known disposal symbols before its
         // primordial snapshot is built. The runtime may not provide them yet,
         // so seed stable symbols for Node's internal modules first.
@@ -190,10 +183,6 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
         )?;
         let undefined = context.undefined();
         context.call_rooted(seed_disposal_symbols, undefined, &[])?;
-        let exports = load(context, &node_primordials, None, EntryGoal::CommonJs)?;
-        let retained = context.retain(exports)?;
-        roots.borrow_mut().primordials_module = Some(retained);
-        context.release_root(exports);
     }
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_primordials");
@@ -1327,8 +1316,16 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
                 "({ isMainThread: true, MessageChannel: globalThis.MessageChannel, MessagePort: globalThis.MessagePort, Worker: class Worker { constructor() { throw Object.assign(new Error('Worker threads are unavailable in this runtime'), { code: 'ERR_WORKER_UNSUPPORTED_OPERATION' }); } } })",
                 "node:worker_threads.js",
             )?;
-            let mark = context.host_function(super::operation("markAsUncloneable"))?;
-            set(context, module, "markAsUncloneable", mark)?;
+            for name in ["markAsUncloneable", "markAsUntransferable", "isMarkedAsUntransferable"] {
+                let operation = context.host_function(super::operation(name))?;
+                let factory = context.evaluate_script_rooted(
+                    &format!("(operation)=>function {name}(object){{return operation(object)}}"),
+                    "node:worker_threads/marker.js",
+                )?;
+                let undefined = context.undefined();
+                let method = context.call_rooted(factory, undefined, &[operation])?;
+                set(context, module, name, method)?;
+            }
             Ok(module)
         }
         BuiltinModule::Url => crate::modules::url_shared_vm::module(context),
@@ -1654,6 +1651,32 @@ pub(crate) fn create_require(
     get(context, module, "require")
 }
 
+/// The pinned Node library's primordials module, when the library is present.
+fn node_primordials_source(context: &mut Context<'_>) -> Option<PathBuf> {
+    let root = context.host_mut().node_library_root.clone();
+    let path = root.join("lib/internal/per_context/primordials.js");
+    (path.is_file() || crate::node_sources::source(&path, &root).is_some()).then_some(path)
+}
+
+/// Node's primordials snapshot, which only Node's internal modules and their host
+/// counterparts read: built on first use from the sealed intrinsics, so it captures the
+/// same originals at any time, and never paid for by a script that does not reach them.
+pub(crate) fn node_primordials(context: &mut Context<'_>) -> Result<Option<RootId>, RootedError> {
+    let state = context.host_mut().shared_state();
+    if let Some(primordials) = state.borrow().primordials_module {
+        return Ok(Some(primordials));
+    }
+    let Some(path) = node_primordials_source(context) else {
+        return Ok(None);
+    };
+    let exports = context
+        .with_startup_intrinsics(|context| load(context, &path, None, EntryGoal::CommonJs))?;
+    let retained = context.retain(exports)?;
+    context.release_root(exports);
+    state.borrow_mut().primordials_module = Some(retained);
+    Ok(Some(retained))
+}
+
 fn load(
     context: &mut Context<'_>,
     filename: &Path,
@@ -1758,10 +1781,9 @@ fn load(
                     filename.starts_with(context.host_mut().node_library_root.join("lib"));
                 let primordials = match primordial_seed {
                     Some(root) => root,
-                    None if in_node_internal => roots
-                        .borrow()
-                        .primordials_module
-                        .unwrap_or_else(|| context.undefined()),
+                    None if in_node_internal => {
+                        node_primordials(context)?.unwrap_or_else(|| context.undefined())
+                    }
                     None => context.undefined(),
                 };
                 let is_realm_bootstrap = filename
@@ -1923,7 +1945,7 @@ const getLinkedBinding = () => ({});
     }
     if key.ends_with("/internal/fs/utils.js") {
         if let Ok(exports) = &result {
-            crate::modules::fs_shared_vm::stat::types::adopt_bigint_stats(context, *exports)?;
+            crate::modules::fs_shared_vm::stat::types::adopt_binding_types(context, *exports)?;
             let state = get(context, *exports, "vfsState")?;
             let global = context.global_root()?;
             set(context, global, "\0quench:vfsState", state)?;
