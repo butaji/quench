@@ -50,6 +50,13 @@ pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>) -> Result<RootI
     let binding = context.object_rooted()?;
     let key = context.string_rooted("SecureContext");
     context.define_data_property_rooted(binding, key, native, true, true, true)?;
+    if super::super::crypto_engine_shared_vm::SUPPORTED {
+        let function = context.host_function(crate::host::shared_vm::operation("cryptoSetEngineBinding"))?;
+        let key = context.string_rooted("name");
+        let name = context.string_rooted("setEngine");
+        context.define_data_property_rooted(function, key, name, false, false, true)?;
+        set(context, binding, "setEngine", function)?;
+    }
     set(context, api, "binding", binding)?;
     let prototype = get(context, native, "prototype")?;
     for (name, operation) in [

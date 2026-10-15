@@ -3178,22 +3178,16 @@ impl<H: Host> Vm<H> {
         })
     }
 
+    /// CreateIterResultObject: a fresh ordinary object whose `value` and `done` are data
+    /// properties, laid out as the literal `{ value, done }`.
     pub(super) fn iterator_result(&mut self, value: Value, done: bool) -> Result<Value, JsError> {
-        let result = self.heap.alloc(Cell::Object(Self::empty_object(
-            self.realm_object_prototype(self.realm.globals),
-        )));
-        let value_atom = self
-            .lookup_atom("value")
-            .ok_or_else(|| JsError("iterator result atom is unavailable".into()))?;
-        let done_atom = self
-            .lookup_atom("done")
-            .ok_or_else(|| JsError("iterator result atom is unavailable".into()))?;
-        self.set_property(result, value_atom, value)?;
-        self.set_property(
-            result,
-            done_atom,
-            if done { Value::TRUE } else { Value::FALSE },
-        )?;
-        Ok(result)
+        let atoms = [self.intern_atom("value"), self.intern_atom("done")];
+        let shape = self.literal_shape(&atoms);
+        let prototype = self.realm_object_prototype(self.realm.globals);
+        Ok(self.heap.alloc_object_with_properties(
+            prototype,
+            shape,
+            &[value, if done { Value::TRUE } else { Value::FALSE }],
+        ))
     }
 }
