@@ -1016,7 +1016,7 @@ fn response_status(
         status,
         crate::modules::http_status_shared_vm::Reason::Existing(reason),
     )?;
-    let reason = crate::modules::http_status_shared_vm::encode(context, response)?;
+    let reason = crate::modules::http_status_shared_vm::encode(context, response, status)?;
     Ok((status, reason))
 }
 
@@ -1158,7 +1158,7 @@ pub(crate) fn response_write_head(
     }
     let entry_root = argument(context, args.get(3).copied());
     let entries = write_head_entries(context, entry_root)?;
-    let status_message = crate::modules::http_status_shared_vm::encode(context, response_root)?;
+    let status_message = crate::modules::http_status_shared_vm::encode(context, response_root, status)?;
 
     response_send_date(context, id, args.get(5).copied())?;
     let state = context.host_mut().shared_state();

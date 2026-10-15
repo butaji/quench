@@ -7240,6 +7240,8 @@ const http=require('http'),net=require('net'),codes=http.STATUS_CODES,marker={},
 const initial=[Object.keys(codes).map(k=>[k,codes[k],Object.getOwnPropertyDescriptor(codes,k)]),Object.getOwnPropertyDescriptor(http,'STATUS_CODES').writable,Object.getPrototypeOf(codes)===Object.prototype];
 const cases=[
  ['head-default',r=>r.writeHead(200)],
+ ['cached-default-map-mutation',r=>{codes[200]='New';r.writeHead(200)}],
+ ['custom-message-accessor',(r,events)=>{Object.defineProperty(r,'statusMessage',{configurable:true,get(){events.push('get');return 'Custom'}});r.writeHead(200)}],
  ['implicit-default',r=>{r.statusCode=451;r.end('x')}],
  ['map-mutation',r=>{codes[600]='Changed';r.statusCode=600;r.end('x')}],
  ['map-falsy',r=>{codes[601]=0;r.statusCode=601;r.end('x')}],
