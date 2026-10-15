@@ -283,6 +283,11 @@ fn install_vfs_globals(context: &mut Context<'_>) -> Result<(), RootedError> {
     let path_projection = context.host_function(super::operation("vfsStreamPath"))?;
     let key = context.string_rooted("__quenchVfsStreamPath");
     context.define_data_property_rooted(global, key, path_projection, false, false, true)?;
+    for (name, operation) in [("__quenchVfsOpenDescriptor", "vfsDescriptorOpen"), ("__quenchVfsCloseDescriptor", "vfsDescriptorRelease")] {
+        let function = context.host_function(super::operation(operation))?;
+        let key = context.string_rooted(name);
+        context.define_data_property_rooted(global, key, function, false, false, true)?;
+    }
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_vfs_globals");
 
@@ -296,6 +301,45 @@ fn install_vfs_globals(context: &mut Context<'_>) -> Result<(), RootedError> {
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_vfs_polyfill");
     Ok(())
+}
+
+/// Source owns virtual descriptor allocation; legacy real-provider records
+/// remain actual OS descriptors in the disjoint, unmasked descriptor range.
+pub(crate) fn vfs_descriptor_get(context: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    vfs_descriptor_lookup(context, args, false)
+}
+pub(crate) fn vfs_descriptor_close(context: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    vfs_descriptor_lookup(context, args, true)
+}
+fn vfs_descriptor_lookup(context: &mut Context<'_>, args: &[RootId], closing: bool) -> Result<RootId, RootedError> {
+    let data = context.host_function_data()?;
+    let source = get(context, data, "0")?;
+    let missing = context.undefined();
+    let value = context.call_rooted(source, missing, args)?;
+    let found = if closing { context.truthy_rooted(value)? } else { !context.rooted_value(value).is_some_and(|value| value.is_undefined()) };
+    if found { return Ok(value); }
+    let legacy = get(context, data, "1")?;
+    let method = get(context, data, "2")?;
+    context.call_rooted(method, legacy, args)
+}
+pub(crate) fn vfs_descriptor_open(context: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let module = cached_builtin(context, BuiltinModule::InternalVfsFd)?;
+    let open = get(context, module, "openVirtualFd")?;
+    let missing = context.undefined();
+    context.call_rooted(open, missing, args)
+}
+pub(crate) fn vfs_descriptor_release(context: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let module = cached_builtin(context, BuiltinModule::InternalVfsFd)?;
+    let get_fd = get(context, module, "getVirtualFd")?;
+    let missing = context.undefined();
+    let record = context.call_rooted(get_fd, missing, args)?;
+    if context.is_object_rooted(record)? {
+        let entry = get(context, record, "entry")?;
+        let close = get(context, entry, "closeSync")?;
+        context.call_rooted(close, entry, &[])?;
+    }
+    let close = get(context, module, "closeVirtualFd")?;
+    context.call_rooted(close, missing, args)
 }
 
 /// Public fs streams retain the caller's path while provider I/O uses its mount-relative path.
@@ -590,17 +634,7 @@ pub(crate) fn require_for_module(
             return cached_builtin(context, BuiltinModule::InternalUrl);
         }
         Some(BuiltinModule::InternalVfsFd) => {
-            return context.evaluate_script_rooted(
-                r#"(() => {
-  const openFDs = globalThis.__quenchVfsFdHandles;
-  return {
-    VFS_FD_MASK: 0x40000000,
-    getVirtualFd(fd) { return openFDs.get(fd); },
-    closeVirtualFd(fd) { return openFDs.delete(fd); },
-  };
-})()"#,
-                "internal/vfs/fd.js",
-            );
+            return cached_builtin(context, BuiltinModule::InternalVfsFd);
         }
         Some(BuiltinModule::Vm) => {
             return cached_builtin(context, BuiltinModule::Vm);
@@ -978,7 +1012,7 @@ impl BuiltinModule {
             | Self::PathPosix
             | Self::PathWin32 => None,
             Self::InternalUrl => Some("internal/url"),
-            Self::InternalVfsFd => None,
+            Self::InternalVfsFd => Some("internal/vfs/fd"),
             Self::InternalUndici => None,
             Self::InternalDgram
             | Self::InternalTestBinding
@@ -1337,6 +1371,24 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             crate::modules::crypto_key_shared_vm::install_provider_accessors(context, module)?;
             Ok(module)
         }
+        BuiltinModule::InternalVfsFd => {
+            let module = node_library_module(context, "vfs.js", "internal/vfs/fd.js")?;
+            let global = context.global_root()?;
+            let legacy = get(context, global, "__quenchVfsFdHandles")?;
+            if context.is_object_rooted(legacy)? {
+                for (name, method, operation) in [("getVirtualFd", "get", "vfsDescriptorGet"), ("closeVirtualFd", "delete", "vfsDescriptorClose")] {
+                    let source = get(context, module, name)?;
+                    let legacy_method = get(context, legacy, method)?;
+                    let data = context.array_rooted(&[source, legacy, legacy_method])?;
+                    let bridge = context.host_constructor_with_data(super::operation(operation), data)?;
+                    let key = context.string_rooted("name");
+                    let display = context.string_rooted(name);
+                    context.define_data_property_rooted(bridge, key, display, false, false, true)?;
+                    set(context, module, name, bridge)?;
+                }
+            }
+            Ok(module)
+        }
         BuiltinModule::Internal("internal/buffer") => crate::modules::buffer_constructor_shared_vm::internal_module(context),
         BuiltinModule::Internal("internal/worker/io") =>
             native_global_namespace(context, &["MessageChannel", "MessagePort"]),
@@ -1523,7 +1575,6 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         | BuiltinModule::InternalTestBinding
         | BuiltinModule::InternalBlockList
         | BuiltinModule::InternalSocketAddress
-        | BuiltinModule::InternalVfsFd
         | BuiltinModule::InternalUndici => Err(RootedError::host(
             "special builtin passed to generic shared module builder",
         )),

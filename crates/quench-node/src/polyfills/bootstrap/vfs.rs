@@ -1083,12 +1083,10 @@ class __QuenchVirtualFileSystem {
     ) {
       this.writeFileSync(key, "");
     }
-    const fd = __quenchVfsNextFd++;
+    const entry = this.__makeHandle(key, flags);
+    const fd = globalThis.__quenchVfsOpenDescriptor(entry);
+    globalThis.__quenchVfsBindPosition(this.__fdPositions, fd, entry);
     this.__fds.set(fd, key);
-    globalThis.__quenchVfsFdHandles ||= new Map();
-    globalThis.__quenchVfsFdHandles.set(fd, {
-      entry: globalThis.__quenchVfsBindPosition(this.__fdPositions, fd, this.__makeHandle(key, flags))
-    });
     this.__fdPositions.set(
       fd,
       String(flags).includes("a") ? this.readFileSync(key).length : 0
@@ -1198,12 +1196,14 @@ class __QuenchVirtualFileSystem {
     if (this.__realFds.delete(fd)) {
       this.__fds.delete(fd);
       if (globalThis.__nodeFdPaths) delete globalThis.__nodeFdPaths[fd];
+      globalThis.__quenchVfsFdHandles?.delete(fd);
+      this.__fdPositions.delete(fd);
       return __quenchVfsNative.close(fd);
     }
     if (!this.__fds.delete(fd)) throw __quenchVfsError("EBADF", "close", fd);
     this.__closedFds.add(fd);
+    globalThis.__quenchVfsCloseDescriptor(fd);
     this.__fdPositions.delete(fd);
-    globalThis.__quenchVfsFdHandles?.delete(fd);
   }
   watch(path, options, listener) {
     if (typeof options === "function") {
@@ -2001,7 +2001,6 @@ for (const name of __quenchVfsMutationMethods) {
   };
 }
 const __quenchVfsMounts = new Set();
-let __quenchVfsNextFd = 0x40000000;
 let __quenchVfsNextIno = 1;
 const __quenchVfsStats = (kind, size = 0, options = {}) => {
   const bigint = options?.bigint === true;
