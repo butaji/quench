@@ -22,15 +22,10 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     )?;
     let write =
         context.host_function_with_data(crate::host::shared_vm::operation("consoleWrite"), noop)?;
-    let util = crate::host::shared_vm::commonjs::util_module(context)?;
-    let format = get(context, util, "format")?;
-    let format_with_options = get(context, util, "formatWithOptions")?;
+    // `util` is built on the first output that needs formatting.
+    let load_util = context.host_function(crate::host::shared_vm::operation("consoleLoadUtil"))?;
     let undefined = context.undefined();
-    let constructor = context.call_rooted(
-        factory,
-        undefined,
-        &[initialize, write, format, format_with_options],
-    )?;
+    let constructor = context.call_rooted(factory, undefined, &[initialize, write, load_util])?;
     let prototype = get(context, constructor, "prototype")?;
     super::console_timing_shared_vm::install(context, prototype)?;
     let trace = context.host_function(crate::host::shared_vm::operation("consoleTrace"))?;
@@ -289,4 +284,12 @@ pub(crate) fn write(
         return Err(cleanup);
     }
     result
+}
+
+pub(crate) fn load_util(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    crate::host::shared_vm::commonjs::util_module(context)
 }
