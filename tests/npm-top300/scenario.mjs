@@ -311,7 +311,10 @@ async function exercise() {
       equal(result.status, 0); equal(result.stdout, 'hello\n'); break;
     }
     case 'statuses': equal(api(404), 'Not Found'); equal(api('not found'), 404); break;
-    case 'whatwg-url': equal(new api.URL('../b?q=1', 'https://example.com/a/').href, 'https://example.com/b?q=1'); break;
+    case 'whatwg-url': {
+      const coverage = (await import('./contracts/whatwg-url.mjs')).exercise(api);
+      fs.writeFileSync('function-checks.json', JSON.stringify(coverage)); break;
+    }
     case 'fast-deep-equal': equal(api({ a: [1, 2] }, { a: [1, 2] }), true); equal(api([1], [2]), false); break;
     case 'locate-path': equal(await namespace.locatePath(['absent.txt', fixture]), fixture); break;
     case 'is-number': equal(api('42'), true); equal(api(''), false); break;
