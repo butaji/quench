@@ -52,7 +52,7 @@ const TYPE_PREDICATES: &[(&str, BuiltinBrand)] = &[
 pub(crate) const MAX_SAFE_INTEGER: f64 = ((1_u64 << f64::MANTISSA_DIGITS) - 1) as f64;
 
 const UTIL: &str = quench_js_check::checked_js!(
-    r#"((quote, shallowLabel, customHook) => {
+    r#"((quote, shallowLabel, customHook, formatString, builtinHook) => {
   const propertyName = (key) => /^[A-Za-z_$][\w$]*$/.test(key) ? key : quote(key);
 
   function inspect(value, options = {}) {
@@ -106,13 +106,16 @@ const UTIL: &str = quench_js_check::checked_js!(
       if (seen.has(current)) return "[Circular]";
       seen.add(current);
       let result;
-      if (Array.isArray(current)) {
+      const builtin = builtinHook(current, settings, depth, render, propertyName);
+      if (builtin !== undefined) {
+        result = builtin;
+      } else if (Array.isArray(current)) {
         const items = [];
         for (let index = 0; index < current.length; index++) {
           items.push(index in current ? render(current[index], depth + 1) : "<empty>");
         }
         result = items.length ? `[ ${items.join(", ")} ]` : "[]";
-      } else if (current instanceof RegExp || current instanceof Date) {
+      } else if (current instanceof RegExp) {
         result = String(current);
       } else if (current instanceof Map) {
         const entries = [];
@@ -164,7 +167,7 @@ const UTIL: &str = quench_js_check::checked_js!(
       if (index >= args.length) return token;
       const value = args[index++];
       switch (token) {
-        case "%s": return String(value);
+        case "%s": return formatString(value, inspect);
         case "%d": return String(Number(value));
         case "%i": return String(Number.parseInt(value, 10));
         case "%f": return String(Number.parseFloat(value));
@@ -409,7 +412,9 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         crate::host::shared_vm::operation("utilInspectCustom"),
         custom_key,
     )?;
-    let module = context.call_rooted(factory, undefined, &[quote, shallow, custom])?;
+    let format_string = super::util_format_string_shared_vm::function(context)?;
+    let builtin = super::util_inspect_builtin_shared_vm::function(context)?;
+    let module = context.call_rooted(factory, undefined, &[quote, shallow, custom, format_string, builtin])?;
     let inspect_key = context.string_rooted("inspect");
     let inspect = context.get_property_rooted(module, inspect_key)?;
     super::util_style_shared_vm::install(context, module, inspect)?;

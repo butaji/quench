@@ -9740,3 +9740,21 @@ fn primitive_intrinsic_prototypes_survive_global_replacement_realms_and_collecti
         vm.eval_global_script_named(&program,check,false,"original-primitive-check.js").unwrap();
     }
 }
+
+#[test]
+fn typed_array_getter_diagnostics_do_not_observe_guest_conversion_hooks() {
+    let source=r#"
+      let hooks=0;const object={toString(){hooks++;throw Error('guest hook');},[Symbol.toStringTag]:'Special'};
+      for(const property of ['length','byteLength','byteOffset','buffer']) {
+        const getter=Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype),property).get;
+        for(const [value,label] of [[null,'null'],[undefined,'undefined'],[object,'#<Object>'],[new DataView(new ArrayBuffer(0)),'#<DataView>']]) {
+          try { getter.call(value);throw Error('accepted invalid receiver'); }
+          catch(error) { if(!(error instanceof TypeError)||error.message!==`Method get TypedArray.prototype.${property} called on incompatible receiver ${label}`)throw error; }
+        }
+      }
+      if(hooks!==0)throw Error('diagnostics invoked guest conversion');
+    "#;
+    for program in [Engine::compile(crate::ExecutionRequest{source,name:"typed-getter-diagnostics.js",kind:crate::SourceKind::Script}).unwrap(),Engine::specialize(source,"typed-getter-diagnostics.js").unwrap()] {
+        Vm::new(SilentHost).execute(&program).unwrap();
+    }
+}

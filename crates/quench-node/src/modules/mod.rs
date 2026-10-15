@@ -117,3 +117,9 @@ pub(crate) mod trace_shared_vm;
 pub(crate) mod trace_state;
 
 pub(crate) mod console_timing_shared_vm;
+
+pub(crate) mod buffer_write_shared_vm;
+
+pub(crate) mod util_format_string_shared_vm;
+
+pub(crate) mod util_inspect_builtin_shared_vm;

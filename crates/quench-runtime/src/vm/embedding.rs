@@ -311,6 +311,11 @@ impl<H: Host> Vm<H> {
         self.instanceof(&program, value, constructor)
     }
 
+    pub(crate) fn embedding_proxy_target(&self, root: RootId) -> Result<Option<Value>, JsError> {
+        let value = self.embedding_value(root)?;
+        Ok(match self.heap.get(value) { Some(Cell::Proxy { target, .. }) => Some(*target), _ => None })
+    }
+
     pub(crate) fn embedding_builtin_data(
         &self,
         root: RootId,
