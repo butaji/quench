@@ -35,6 +35,19 @@ impl CloneGraph {
 }
 
 impl<H: Host> Vm<H> {
+    pub(crate) fn embedding_mark_uncloneable(&mut self, source: RootId) -> Result<(), JsError> {
+        let source = self.embedding_value(source)?;
+        // The host marker applies to ordinary objects. Built-in serialized
+        // types (arrays, buffers, maps) retain their own clone protocol.
+        if self.heap.object_record(source).is_some() {
+            self.heap
+                .object_mut(source)
+                .expect("ordinary object remains live")
+                .forbid_structured_clone();
+        }
+        Ok(())
+    }
+
     pub(crate) fn embedding_structured_clone(
         &mut self,
         source: RootId,
@@ -139,6 +152,11 @@ impl<H: Host> Vm<H> {
             return Ok(clone);
         }
         if let Some(object) = self.heap.object_record(source) {
+            if object.is_structured_clone_forbidden() {
+                return Err(
+                    self.data_clone_error(program, "Cannot clone object of unsupported type.")
+                );
+            }
             if object.has_error_data() || object.is_module_namespace() {
                 return Err(self.data_clone_error(program, "Object cannot be cloned"));
             }
@@ -285,6 +303,6 @@ impl<H: Host> Vm<H> {
             });
         let name = self.heap.alloc(Cell::String("DataCloneError".into()));
         let _ = self.set_builtin_value_named(error, "name", name);
-        JsError::thrown(error, format!("DataCloneError: {message}"))
+        JsError::data_clone(error, message)
     }
 }

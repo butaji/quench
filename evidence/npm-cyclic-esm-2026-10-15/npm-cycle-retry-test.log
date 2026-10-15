@@ -1,0 +1,13 @@
+    Blocking waiting for file lock on build directory
+   Compiling quench-runtime v0.1.0 (/workspace/quench/crates/quench-runtime)
+   Compiling quench-wasm v0.1.0 (/workspace/quench/crates/quench-wasm)
+   Compiling quench-node v0.1.0 (/workspace/quench/crates/quench-node)
+   Compiling quench-node-test v0.1.0 (/workspace/quench/crates/quench-node-test)
+    Finished `iteration` profile [optimized] target(s) in 3m 34s
+     Running tests/child_entry.rs (target/iteration/deps/child_entry-3c6b30a5d9b2b66c)
+
+running 1 test
+test cyclic_esm_instantiates_live_bindings_before_running_dependencies ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 238 filtered out; finished in 0.13s
+

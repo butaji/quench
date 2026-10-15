@@ -1,0 +1,8 @@
+/workspace/quench/work/node_modules/node-stable-source/test/parallel/test-http-request-method-delete-payload.js:8
+const server = http.createServer(common.mustCall(function(req, res) {
+               ^
+
+TypeError: value is not callable
+    at /workspace/quench/work/node_modules/node-stable-source/test/parallel/test-http-request-method-delete-payload.js:8:16
+
+Node.js v22.0.0

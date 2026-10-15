@@ -31,6 +31,7 @@ oxc_ast = { workspace = true }
 oxc_ast_visit = { workspace = true }
 oxc_parser = { workspace = true }
 oxc_span = { workspace = true }
+oxc_syntax = { workspace = true }
 quench-stack = { path = "../quench-stack" }
 url = "2"
 brotli = "7"
@@ -38,6 +39,7 @@ encoding_rs = "0.8"
 crc32fast = "1"
 flate2 = { version = "1", features = ["zlib-rs"] }
 idna = "1"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 libc = "0.2"
 socket2 = { version = "0.6", features = ["all"] }
 zstd = "0.13"

@@ -34,6 +34,7 @@ fn on_path(program: &str) -> bool {
 }
 
 fn main() {
+    embed_node_sources();
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed={X86_64_LINUX_ORDER}");
     println!("cargo:rerun-if-changed={X86_64_LINUX_STATIC_ORDER}");
@@ -80,5 +81,53 @@ fn main() {
             order.display()
         );
         println!("cargo:rustc-link-arg-bins=-Wl,--no-warn-symbol-ordering");
+    }
+}
+
+/// Node's pinned library runs as guest JavaScript in the shared VM. Embedding
+/// its immutable sources makes built-ins independent of a development checkout.
+fn embed_node_sources() {
+    let root = std::path::PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap())
+        .join("../../tests/node")
+        .canonicalize()
+        .expect("initialize tests/node submodule");
+    let mut pending = vec![root.join("lib")];
+    let mut files = vec![root.join("deps/undici/undici.js")];
+    while let Some(directory) = pending.pop() {
+        println!("cargo:rerun-if-changed={}", directory.display());
+        for entry in std::fs::read_dir(directory).expect("read pinned Node library") {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if path.extension().is_some_and(|extension| extension == "js") {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    let mut generated = String::from("const SOURCES: &[(&str, &str)] = &[\n");
+    let mut entries = files
+        .into_iter()
+        .map(|path| {
+            let relative = path
+                .strip_prefix(&root)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/");
+            (relative, path)
+        })
+        .collect::<Vec<_>>();
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    for (relative, path) in entries {
+        println!("cargo:rerun-if-changed={}", path.display());
+        generated.push_str(&format!(
+            "({relative:?}, include_str!({:?})),\n",
+            path.to_str().unwrap()
+        ));
+    }
+    generated.push_str("];\n");
+    let output = std::path::PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("node_sources.rs");
+    if std::fs::read_to_string(&output).ok().as_deref() != Some(&generated) {
+        std::fs::write(output, generated).unwrap();
     }
 }

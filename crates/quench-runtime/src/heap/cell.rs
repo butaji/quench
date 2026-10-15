@@ -1246,6 +1246,7 @@ struct ObjectExtras {
     raw_json: bool,
     error_data: bool,
     module_namespace: bool,
+    structured_clone_forbidden: bool,
     module_bindings: Vec<(Atom, ProgramId, u16)>,
     deferred_module: Option<crate::ModuleSource>,
     private_names: Vec<PrivateBrand>,
@@ -1554,6 +1555,14 @@ impl Object {
         let mut object = Self::new(proto);
         object.extras_mut().error_data = true;
         object
+    }
+
+    pub(crate) fn forbid_structured_clone(&mut self) {
+        self.extras_mut().structured_clone_forbidden = true;
+    }
+
+    pub(crate) fn is_structured_clone_forbidden(&self) -> bool {
+        self.extras().is_some_and(|extras| extras.structured_clone_forbidden)
     }
 
     pub(crate) fn has_error_data(&self) -> bool {
@@ -2166,6 +2175,7 @@ impl Cell {
     pub(crate) fn profile_variant_name(&self) -> &'static str {
         match self {
             Self::Object(_) => "object",
+            Self::WasmObject { .. } => "wasm_object",
             Self::Array { .. } => "array",
             Self::ArrayBuffer { .. } => "array_buffer",
             Self::TypedArray { .. } => "typed_array",

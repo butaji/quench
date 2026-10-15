@@ -6,6 +6,7 @@
 pub mod esm_imports;
 pub mod host;
 pub mod modules;
+mod node_sources;
 pub mod polyfills;
 pub mod shared_run;
 

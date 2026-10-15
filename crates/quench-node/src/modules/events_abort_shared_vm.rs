@@ -155,6 +155,25 @@ pub(crate) fn add_abort_listener(
     let data = context.host_function_data()?;
     let aborted = context.get_property_rooted(signal, aborted_key)?;
     let live = !context.truthy_rooted(aborted)?;
+    let event_constructor = if live {
+        undefined
+    } else {
+        context.with_startup_intrinsics(|context| {
+            get(context, data, "abortState")?;
+            get(context, data, "eventCtor")
+        })?
+    };
+    let registered = context.boolean(live);
+    let dispose_data = context.null_object_rooted()?;
+    for (name, value) in [
+        ("signal", signal),
+        ("listener", listener),
+        ("registered", registered),
+        ("eventConstructor", event_constructor),
+    ] {
+        let key = context.string_rooted(name);
+        context.define_data_property_rooted(dispose_data, key, value, true, true, true)?;
+    }
     if live {
         let options = get(context, data, "abortListenerOptions")?;
         let add = get(context, signal, "addEventListener")?;
@@ -163,12 +182,10 @@ pub(crate) fn add_abort_listener(
     } else {
         let job = context.host_function_with_data(
             crate::host::shared_vm::operation("abortedListenerJob"),
-            listener,
+            dispose_data,
         )?;
         context.queue_microtask_rooted(job, &[])?;
     }
-    let live = context.boolean(live);
-    let dispose_data = context.array_rooted(&[signal, listener, live])?;
     let dispose = context.host_function_with_data(
         crate::host::shared_vm::operation("abortListenerDispose"),
         dispose_data,
@@ -183,9 +200,32 @@ pub(crate) fn aborted_listener_job(
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let listener = context.host_function_data()?;
+    let data = context.host_function_data()?;
+    let listener = get(context, data, "listener")?;
+    let signal = get(context, data, "signal")?;
     let undefined = context.undefined();
-    context.call_rooted(listener, undefined, &[])?;
+    // Once this queued job runs, retaining the disposable must not retain the
+    // delivered listener or signal. Native-context roots cover this invocation.
+    for name in ["listener", "signal"] {
+        let key = context.string_rooted(name);
+        context.set_property_rooted(data, key, undefined, data)?;
+    }
+    if !context.strict_equal_rooted(listener, undefined)? {
+        let constructor = get(context, data, "eventConstructor")?;
+        let kind = context.string_rooted("abort");
+        let event = context.construct_rooted(constructor, constructor, &[kind])?;
+        for name in ["target", "currentTarget"] {
+            let key = context.string_rooted(name);
+            context.set_property_rooted(event, key, signal, event)?;
+        }
+        let trusted = context.boolean(true);
+        let key = context.string_rooted("_quenchIsTrusted");
+        context.set_property_rooted(event, key, trusted, event)?;
+        context.call_rooted(listener, undefined, &[event])?;
+        let key = context.string_rooted("currentTarget");
+        let null = context.null();
+        context.set_property_rooted(event, key, null, event)?;
+    }
     Ok(undefined)
 }
 
@@ -195,14 +235,20 @@ pub(crate) fn abort_listener_dispose(
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let data = context.host_function_data()?;
-    let live = get(context, data, "2")?;
+    let live = get(context, data, "registered")?;
     let undefined = context.undefined();
     if context.truthy_rooted(live)? {
-        let signal = get(context, data, "0")?;
-        let listener = get(context, data, "1")?;
+        let signal = get(context, data, "signal")?;
+        let listener = get(context, data, "listener")?;
         let remove = get(context, signal, "removeEventListener")?;
         let event = context.string_rooted("abort");
         context.call_rooted(remove, signal, &[event, listener])?;
+    } else {
+        // The queued delivery and disposal share the listener slot. Clearing it
+        // cancels an already-aborted signal's pending microtask without adding
+        // an independent cancellation flag.
+        let key = context.string_rooted("listener");
+        context.set_property_rooted(data, key, undefined, data)?;
     }
     Ok(undefined)
 }
