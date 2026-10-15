@@ -103,6 +103,10 @@ impl<H: Host> Vm<H> {
         match cell {
             Cell::Proxy { kind, .. } => *kind == ProxyKind::Constructor,
             Cell::Function { kind, .. } => match kind {
+                FunctionKind::Native(Native::HostFunction) => {
+                    let Cell::Function { env, .. } = cell else { unreachable!() };
+                    self.host_function_constructible(*env)
+                }
                 FunctionKind::User(program_id, id) | FunctionKind::NumericUser(program_id, id) => {
                     self.programs.get(*program_id).is_some_and(|program| {
                         program.functions.get(*id as usize).is_some_and(|function| {
@@ -526,7 +530,9 @@ impl<H: Host> Vm<H> {
                     };
                     return vm.construct_value_with_new_target(p, target, new_target, &arguments);
                 }
-                if let FunctionKind::Native(native) = kind {
+                if let FunctionKind::Native(native) = kind
+                    && native != Native::HostFunction
+                {
                     let realm = vm.function_realm(p, callee)?;
                     let previous_global = vm.switch_realm_global(realm);
                     let result = vm.construct_native_with_new_target(p, native, args, new_target);

@@ -1918,6 +1918,80 @@ console.log('parent-resolution');fs.rmSync(dir,{recursive:true,force:true});
 }
 
 #[test]
+fn module_constructor_and_compile_preserve_receiver_exports_and_parent() {
+    compare_node_stream_source(r#"
+const assert=require('node:assert'),Module=require('node:module');
+assert.strictEqual(typeof Module,'function');assert.strictEqual(Module.Module,Module);
+assert.strictEqual(Module.length,0);assert.strictEqual(Module.name,'Module');
+const parent={children:[]};const m=new Module('/a/b.js',parent);
+assert(m instanceof Module);assert.strictEqual(m.constructor,Module);
+assert.deepStrictEqual(Object.keys(m),['id','path','exports','filename','loaded','children']);
+assert.strictEqual(m.id,'/a/b.js');assert.strictEqual(m.path,'/a');
+assert.strictEqual(m.filename,null);assert.strictEqual(m.loaded,false);
+assert.strictEqual(m.parent,parent);assert.strictEqual(parent.children[0],m);
+const replacement={};m.parent=replacement;assert.strictEqual(m.parent,replacement);
+assert.strictEqual(m.require('node:assert'),assert);
+const result=m._compile('exports.value=42;exports.info=[__filename,__dirname,module.filename,module.loaded,this===exports,arguments.length];','/virtual/file.cjs');
+assert.strictEqual(result,undefined);assert.deepStrictEqual(m.exports,{value:42,info:['/virtual/file.cjs','/virtual',null,false,true,5]});
+assert.strictEqual(m.filename,null);assert.strictEqual(m.loaded,false);
+m._compile('#!/usr/bin/node\nmodule.exports={replacement:true};','virtual.cjs');
+assert.deepStrictEqual(m.exports,{replacement:true});
+m._compile('\uFEFFmodule.exports={bom:true};','virtual.cjs');assert.deepStrictEqual(m.exports,{bom:true});
+const getter=Object.getOwnPropertyDescriptor(Module.prototype,'constructor');
+assert.strictEqual(typeof getter.get,'function');assert.strictEqual(getter.set,undefined);
+assert.strictEqual(getter.enumerable,false);assert.strictEqual(getter.configurable,false);
+assert.throws(()=>new Module(null),e=>e.code==='ERR_INVALID_ARG_TYPE');
+assert.throws(()=>Module('bare'),TypeError);
+console.log(JSON.stringify([m.id,m.path,m.loaded,m.exports,Module.prototype._compile.length]));
+"#);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn os_cpus_reports_online_linux_facts_and_millisecond_times() {
+    compare_node_stream_source(r#"
+const assert=require('node:assert'),fs=require('node:fs'),os=require('node:os');
+function snapshot(){return fs.readFileSync('/proc/stat','utf8').split('\n').filter(s=>/^cpu\d+ /.test(s)).map(s=>s.trim().split(/\s+/).slice(1).map(Number))}
+const before=snapshot(),cpus=os.cpus(),after=snapshot();
+assert.strictEqual(os.cpus.name,'cpus');assert.strictEqual(os.cpus.length,0);
+assert.strictEqual(cpus.length,before.length);assert(Array.isArray(new os.cpus()));
+for(let i=0;i<cpus.length;i++){
+ const cpu=cpus[i];assert.deepStrictEqual(Object.keys(cpu),['model','speed','times']);
+ assert.strictEqual(typeof cpu.model,'string');assert(Number.isInteger(cpu.speed)&&cpu.speed>=0);
+ const keys=['user','nice','sys','idle','irq'],indices=[0,1,2,3,5];
+ assert.deepStrictEqual(Object.keys(cpu.times),keys);
+ for(let j=0;j<keys.length;j++){const value=cpu.times[keys[j]],index=indices[j];assert(Number.isInteger(value));assert(value>=before[i][index]*10&&value<=after[i][index]*10)}
+}
+
+console.log(JSON.stringify([cpus.length,cpus.map(cpu=>cpu.model)]));
+"#);
+}
+
+#[test]
+fn binary_base64_globals_preserve_utf16_coercion_validation_and_identity() {
+    compare_node_stream_source(r#"
+const assert=require('node:assert'),buffer=require('node:buffer');
+assert.strictEqual(buffer.btoa,btoa);assert.strictEqual(buffer.atob,atob);
+assert.strictEqual(btoa.name,'btoa');assert.strictEqual(atob.name,'atob');
+assert.strictEqual(btoa.length,1);assert.strictEqual(atob.length,1);
+const bytes=String.fromCharCode(...Array.from({length:256},(_,i)=>i));
+assert.strictEqual(atob(btoa(bytes)),bytes);
+assert.strictEqual(btoa(undefined),'dW5kZWZpbmVk');assert.strictEqual(btoa(null),'bnVsbA==');
+for(const value of ['\ud800','\udfff','\u0100','💩'])assert.throws(()=>btoa(value),e=>e.name==='InvalidCharacterError'&&e.code===5&&e.message==='Invalid character');
+for(const value of ['-A','_A','AA=','AAAA=','A===','AAAA\v','AAAA\u00a0'])assert.throws(()=>atob(value),e=>e.name==='InvalidCharacterError'&&e.code===5&&e.message==='Invalid character');
+for(const value of ['A','AAAAA',undefined])assert.throws(()=>atob(value),e=>e.message==='The string to be decoded is not correctly encoded.');
+assert.strictEqual(atob(' A A == \n\t\r\f'),'\0');assert.strictEqual(atob('AB'),'\0');
+let calls=0;assert.strictEqual(btoa({[Symbol.toPrimitive](hint){assert.strictEqual(hint,'string');calls++;return 'A'}}),'QQ==');assert.strictEqual(calls,1);
+assert.throws(()=>btoa(Symbol('x')),TypeError);assert.throws(()=>atob(Symbol('x')),TypeError);
+assert.throws(()=>btoa(),e=>e.code==='ERR_MISSING_ARGS');assert.throws(()=>atob(),e=>e.code==='ERR_MISSING_ARGS');
+assert(new btoa('A') instanceof btoa);assert(new atob('QQ==') instanceof atob);
+const original=DOMException;globalThis.DOMException=function(){throw Error('replacement used')};
+assert.throws(()=>atob('!'),e=>e instanceof original&&e.name==='InvalidCharacterError');globalThis.DOMException=original;
+console.log(JSON.stringify([btoa(bytes),atob('SGVsbG8=')]));
+"#);
+}
+
+#[test]
 fn read_file_sync_accepts_file_urls_and_uses_url_validation() {
     compare_node_stream_source(r#"
 const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert'),url=require('url');
