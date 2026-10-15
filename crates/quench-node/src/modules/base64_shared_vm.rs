@@ -7,11 +7,8 @@ const PADDING: u16 = b'=' as u16;
 
 pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
     let global = context.global_root()?;
-    let key = context.string_rooted("DOMException");
-    let dom_exception = context.get_property_rooted(global, key)?;
     for name in ["atob", "btoa"] {
-        let function = context
-            .host_constructor_with_data(crate::host::shared_vm::operation(name), dom_exception)?;
+        let function = context.host_constructor(crate::host::shared_vm::operation(name))?;
         let key = context.string_rooted(name);
         context.define_data_property_rooted(global, key, function, true, true, true)?;
     }
@@ -36,7 +33,13 @@ fn invalid_character(
     context: &mut NativeContext<'_, NodeHost>,
     message: &str,
 ) -> Result<RootedError, RootedError> {
-    let constructor = context.host_function_data()?;
+    // The intrinsic `DOMException`, looked up only when an error needs it: reading the
+    // global builds the DOM event family (`events_shared_vm::EVENT_GLOBALS`).
+    let constructor = context.with_startup_intrinsics(|context| {
+        let global = context.global_root()?;
+        let key = context.string_rooted("DOMException");
+        context.get_property_rooted(global, key)
+    })?;
     let message = context.string_rooted(message);
     let name = context.string_rooted("InvalidCharacterError");
     let error = context.construct_rooted(constructor, constructor, &[message, name])?;
