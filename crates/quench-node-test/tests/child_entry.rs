@@ -6711,3 +6711,25 @@ const original=globalThis.BigInt;globalThis.BigInt=()=>{throw Error('public BigI
 console.log(JSON.stringify(out));
 "#);
 }
+
+#[test]
+fn native_buffer_swaps_preserve_generic_views_thresholds_aliases_and_backing_identity() {
+    compare_node_stream_source(r#"
+'use strict';
+const out=[];
+for(const name of ['swap16','swap32','swap64']){
+ const d=Object.getOwnPropertyDescriptor(Buffer.prototype,name),method=d.value;
+ out.push([name,method.name,method.length,d.writable,d.enumerable,d.configurable,Object.hasOwn(method,'prototype')]);
+ for(const length of [0,1,2,4,8,16,24,32,40,48,64,128])for(const Ctor of [Uint8Array,Int8Array,Uint16Array,Uint32Array,BigUint64Array]){
+  const view=new Ctor(length);for(let i=0;i<length;i++)view[i]=Ctor===BigUint64Array?BigInt(i+1):(i+1)*257+3;
+  try{out.push([Ctor.name,length,method.call(view)===view,Array.from(new Uint8Array(view.buffer))]);}catch(e){out.push([Ctor.name,length,e.name,e.code||null,e.code?e.message:null]);}
+ }
+ const b=Buffer.from([1,2,3,4,5,6,7,8,9,10]),slice=b.subarray(1,9);try{out.push(method.call(slice)===slice,Array.from(b));}catch(e){out.push(e.name,e.code);}
+ for(const value of [{length:8},new DataView(new ArrayBuffer(8)),null,undefined,new Proxy(new Uint8Array(8),{})]){try{method.call(value);out.push('accepted');}catch(e){out.push([e.name,e.code||null]);}}
+ const shadow=new Uint8Array(64);for(let i=0;i<shadow.length;i++)shadow[i]=i;Object.defineProperties(shadow,{length:{get(){throw Error('shadow length');}},buffer:{get(){throw Error('shadow buffer');}},byteOffset:{get(){throw Error('shadow offset');}},byteLength:{get(){throw Error('shadow byteLength');}}});try{out.push(method.call(shadow)===shadow,Array.from(shadow));}catch(e){out.push(e.message);}
+ const transferred=new Uint8Array(8);structuredClone(transferred.buffer,{transfer:[transferred.buffer]});try{out.push(method.call(transferred)===transferred);}catch(e){out.push([e.name,e.code||null]);}
+}
+const locale=Object.getOwnPropertyDescriptor(Buffer.prototype,'toLocaleString');out.push(locale.value===Buffer.prototype.toString,locale.enumerable,locale.writable,locale.configurable,Buffer.from('aβ').toLocaleString());
+console.log(JSON.stringify(out));
+"#);
+}
