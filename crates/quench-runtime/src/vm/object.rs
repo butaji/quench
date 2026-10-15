@@ -1773,7 +1773,9 @@ impl<H: Host> Vm<H> {
             };
         }
         let own = self.own_property(object, atom).is_some();
-        if !own && self.prototype_chain_contains_proxy(object) {
+        // Private initialization owns the receiver's hidden storage. A Proxy
+        // in its public prototype chain cannot observe or mediate that write.
+        if !own && !self.is_private_name(atom) && self.prototype_chain_contains_proxy(object) {
             return self.set_property_with_program_mode(p, object, atom, value, strict);
         }
         if let Some(attributes) = self.property_accessor(object, atom) {

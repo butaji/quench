@@ -1555,6 +1555,7 @@ dependencies = [
  "oxc_resolver",
  "oxc_span",
  "oxc_syntax",
+ "pkg-config",
  "quench-js-check",
  "quench-runtime",
  "quench-stack",

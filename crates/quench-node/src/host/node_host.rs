@@ -60,6 +60,8 @@ pub(crate) struct SharedNodeState {
     pub(crate) fs_stat_watch: crate::modules::fs_stat_watch_shared_vm::State,
     pub(crate) cwd: crate::modules::process_state::ProcessCwd,
     pub(crate) buffer_prototype: Option<quench_runtime::RootId>,
+    pub(crate) module_parent_api: Option<quench_runtime::RootId>,
+    pub(crate) active_esm_requires: std::collections::HashMap<String, quench_runtime::RootId>,
     pub(crate) module_cache: std::collections::HashMap<String, quench_runtime::RootId>,
     /// Node's internal primordial snapshot used when loading `lib/internal/*`.
     pub(crate) primordials_module: Option<quench_runtime::RootId>,
@@ -206,6 +208,8 @@ impl SharedNodeState {
             cwd,
             buffer_prototype: None,
             module_cache: std::collections::HashMap::new(),
+            module_parent_api: None,
+            active_esm_requires: std::collections::HashMap::new(),
             primordials_module: None,
             event_targets_api: None,
             util_intrinsics: None,

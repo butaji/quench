@@ -7556,3 +7556,65 @@ console.log(JSON.stringify({{out,firstId:first.id,firstLive:first.live}}));
     for result in &observations {assert!(!result.timed_out);assert_eq!(result.exit_code,Some(0),"{}",String::from_utf8_lossy(&result.stderr));assert!(result.stderr.is_empty());}
     assert_eq!(observations[0].stdout,observations[1].stdout);
 }
+
+#[test]
+fn text_decoder_unicode_labels_bom_fatal_errors_and_recovery_match_node() {
+    compare_node_stream_source(r#"
+const out=[];
+for(const label of ['utf8','utf-16','utf-16be','ascii'])for(const fatal of [false,true])for(const ignoreBOM of [false,true]){
+ const decoder=new TextDecoder(label,{fatal,ignoreBOM});
+ for(const bytes of [[],[65],[239,187,191,65],[255,254,65,0],[254,255,0,65],[0,216],[0,216,65],[195,40]]){
+  try{out.push([label,fatal,ignoreBOM,decoder.encoding,decoder.decode(new Uint8Array(bytes))])}
+  catch(e){out.push([label,fatal,ignoreBOM,e.name,e.code,e.message])}
+ }
+}
+for(const label of ['bogus','replacement','iso-2022-cn','\u00a0utf-8\u00a0'])try{new TextDecoder(label)}catch(e){out.push([label,e.name,e.code,e.message])}
+console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn synchronous_esm_require_preserves_namespaces_live_bindings_errors_and_later_imports() {
+    let directory=tempfile::tempdir().unwrap();
+    for (name,source) in [
+        ("plain.mjs","export let n=1;export function inc(){n++}"),
+        ("default.mjs","export default function f(){return 42};export let n=1;export function inc(){n++}"),
+        ("marker.mjs","export default 42;export const __esModule=false;"),
+        ("special.mjs","const value={answer:42};export {value as 'module.exports'};export default 7;"),
+        ("async.mjs","globalThis.asyncStarted=true;await 0;export const done=true;"),
+        ("parent.mjs","import './async.mjs';globalThis.parentExecuted=true;export const done=true;"),
+        ("cycle.mjs","import './cycle.cjs';export const n=1;"),
+        ("cycle.cjs","module.exports=require('./cycle.mjs');"),
+    ] {std::fs::write(directory.path().join(name),source).unwrap();}
+    let entry=directory.path().join("entry.cjs");
+    std::fs::write(&entry,r#"
+(async()=>{
+const out=[];
+for(const name of ['plain','default','marker','special']){
+ const value=require('./'+name+'.mjs');const ns=await import('./'+name+'.mjs');
+ out.push([name,value===require('./'+name+'.mjs'),value===ns,Object.getPrototypeOf(value)===null,Object.isExtensible(value),Reflect.ownKeys(value).map(k=>String(k))]);
+ if(value.inc){value.inc();out.push([name,value.n,ns.n]);}
+ if(value.default)out.push(['default',typeof value.default,value.__esModule]);
+}
+for(const name of ['parent','async','cycle']){
+ let previous;
+ for(let count=0;count<2;count++)try{require('./'+name+'.mjs');throw Error('unexpected success')}catch(e){
+  out.push([name,e.name,e.code,e.message,previous===e,e.requireStack,Object.getOwnPropertyDescriptor(e,'requireStack')]);previous=e;
+ }
+}
+out.push(['not started',globalThis.asyncStarted===undefined,globalThis.parentExecuted===undefined]);
+const asyncNS=await import('./parent.mjs');out.push(['async imported',asyncNS.done,globalThis.asyncStarted,globalThis.parentExecuted]);
+console.log(JSON.stringify({complete:true,out}));
+})().catch(e=>{console.error(e.stack);process.exitCode=1});
+"#).unwrap();
+    let observations=["node",env!("CARGO_BIN_EXE_run-parallel")].map(|executable|{
+        let mut command=Command::new(executable);command.arg(&entry);
+        if executable!="node"{command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1");}
+        quench_node_test::case_process::observe_command(command,Duration::from_secs(20)).unwrap()
+    });
+    for result in &observations {
+        assert!(!result.timed_out);assert_eq!(result.exit_code,Some(0),"{}",String::from_utf8_lossy(&result.stderr));assert!(result.stderr.is_empty());
+        let value:serde_json::Value=serde_json::from_slice(&result.stdout).unwrap();assert_eq!(value["complete"],true);
+    }
+    assert_eq!(observations[0].stdout,observations[1].stdout);
+}

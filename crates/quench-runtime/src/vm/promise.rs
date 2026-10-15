@@ -1717,6 +1717,7 @@ impl<H: Host> Vm<H> {
                                 vm.queue_dynamic_import_job(cache_key, module, promise);
                                 return Ok(Value::UNDEFINED);
                             }
+                            ModuleOutcome::Pending(ModulePhase::Instantiated) => {}
                             ModuleOutcome::Pending(_) => {
                                 let joined = vm
                                     .realm
@@ -2169,6 +2170,69 @@ impl<H: Host> Vm<H> {
         let value = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
         self.realm.promise.module_sources.insert(identity, value);
         Ok(value)
+    }
+
+    fn synchronous_graph_has_await(&self, key: &str, seen: &mut FxHashSet<String>) -> Result<bool, ()> {
+        let _stack = quench_stack::StackGuard::enter()?;
+        if !seen.insert(key.to_owned()) { return Ok(false); }
+        let Some(record) = self.realm.promise.modules.get(key) else { return Ok(false); };
+        let Some(program) = record.program.and_then(|program| self.programs.get(program)) else { return Ok(false); };
+        if program.functions.first().is_some_and(|function| function.is_async) { return Ok(true); }
+        for (request, dependency) in program.module_requests.iter().zip(&record.resolved_requests) {
+            if request.phase == crate::bytecode::ModuleRequestPhase::Evaluation
+                && request.module_type.as_deref().unwrap_or("javascript") == "javascript"
+                && self.synchronous_graph_has_await(&module_cache_key(dependency, "javascript"), seen)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    pub(super) fn synchronous_module_namespace(
+        &mut self,
+        p: &ResidualProgram,
+        module: &ModuleSource,
+    ) -> Result<crate::SynchronousModule<Value>, JsError> {
+        use crate::SynchronousModule;
+        let key = module_cache_key(&module.name, "javascript");
+        let linked = match self.instantiate_static_module_graph(p, module, None) {
+            Ok(linked) => linked,
+            Err(error) => {
+                self.reject_module_instantiation(p, &key, error)?;
+                unreachable!("failed instantiation throws");
+            }
+        };
+        if self.synchronous_graph_has_await(&key, &mut FxHashSet::default()).map_err(|()| self.stack_exhaustion_error())? {
+            for (linked_module, _) in linked {
+                if let Some(record) = self.realm.promise.modules.get_mut(&module_cache_key(&linked_module.name, "javascript")) {
+                    record.retain_instantiation();
+                }
+            }
+            return Ok(SynchronousModule::AsyncGraph);
+        }
+        drop(linked);
+        if self.realm.promise.modules.get(&key).is_some_and(|record| matches!(record.phase(), ModulePhase::Evaluating | ModulePhase::EvaluatingAsync | ModulePhase::WaitingForDependencies)) {
+            return Ok(SynchronousModule::Evaluating);
+        }
+        self.evaluate_static_module_source(p, module.clone(), &mut ModuleEvaluationStack::default())?;
+        match self.realm.promise.modules.get(&key).map(|record| record.outcome) {
+            Some(ModuleOutcome::Evaluated(namespace)) => Ok(SynchronousModule::Namespace(namespace)),
+            Some(ModuleOutcome::Errored(reason)) => Err(JsError::thrown(reason, "synchronous module evaluation failed".into())),
+            _ => Ok(SynchronousModule::Evaluating),
+        }
+    }
+
+    pub(super) fn module_namespace_with_export(
+        &mut self,
+        p: &ResidualProgram,
+        namespace: Value,
+        name: &str,
+        value: Value,
+    ) -> Result<Value, JsError> {
+        let mut exports = self.cached_static_exports(namespace)
+            .ok_or_else(|| self.type_error(p, "module namespace required".into()))?;
+        exports.push((name.to_owned(), StaticModuleValue::Cached(value)));
+        self.module_namespace_from_static(exports)
     }
 
     fn evaluate_javascript_module(
@@ -3289,7 +3353,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         module: &ModuleSource,
         precompiled: Option<ProgramId>,
-    ) -> Result<(), JsError> {
+    ) -> Result<Vec<(ModuleSource, ProgramId)>, JsError> {
         let mut graph = Vec::new();
         self.collect_static_module_programs(p, module, precompiled, &mut graph)?;
         let mut nodes = StaticModuleNodes::default();
@@ -3302,7 +3366,7 @@ impl<H: Host> Vm<H> {
             else {
                 return self
                     .syntax_error_result(p, "module export could not be resolved unambiguously")
-                    .map(|_| ());
+                    .map(|_| Vec::new());
             };
             let linked = self.module_namespace_from_static(exports)?;
             let key = module_cache_key(&module.name, "javascript");
@@ -3357,13 +3421,13 @@ impl<H: Host> Vm<H> {
             )?;
             self.programs.set_module_imports(*program, imports);
         }
-        for (module, _) in graph {
+        for (module, _) in &graph {
             let key = module_cache_key(&module.name, "javascript");
             if let Some(record) = self.realm.promise.modules.get_mut(&key) {
                 record.begin_linking();
             }
         }
-        Ok(())
+        Ok(graph)
     }
 
     fn collect_static_module_programs(
@@ -3525,7 +3589,7 @@ impl<H: Host> Vm<H> {
             .map(|record| record.outcome)
         {
             Some(ModuleOutcome::Evaluated(_)) => return Ok(()),
-            Some(ModuleOutcome::Pending(ModulePhase::Linking)) => {
+            Some(ModuleOutcome::Pending(ModulePhase::Linking | ModulePhase::Instantiated)) => {
                 self.realm
                     .promise
                     .modules

@@ -539,7 +539,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "bufferDecode" (2) => crate::modules::buffer_shared_vm::decode,
         method "bufferCanonicalEncoding" (1) => crate::modules::buffer_shared_vm::canonical_encoding,
         method "textDecoderCanonicalEncoding" (1) => crate::modules::text_decoder_shared_vm::canonical_encoding,
-        method "textDecoderDecode" (3) => crate::modules::text_decoder_shared_vm::decode,
+        method "textDecoderDecode" (4) => crate::modules::text_decoder_shared_vm::decode,
         method "textDecoderInitialize" (0) => crate::modules::text_decoder_shared_vm::initialize,
         method "stringDecoderChunk" (4) => crate::modules::string_decoder_shared_vm::decode_chunk,
         global "fetch" (2) => crate::modules::fetch_shared_vm::fetch,
