@@ -200,6 +200,8 @@ macro_rules! layout_accessors {
                 self.result_flags() & !layout.allowed_flags() == 0
             }
 
+            // The packed form decodes this only through its fixed-width form.
+            #[allow(dead_code)]
             pub(crate) fn call_window(self) -> RegisterWindow {
                 debug_assert!(matches!(
                     self.op().immediate_layout(),
@@ -681,11 +683,15 @@ macro_rules! layout_accessors {
                 ImmediateLayout::capture_slot(self.imm())
             }
 
+            // The packed form decodes this only through its fixed-width form.
+            #[allow(dead_code)]
             pub(crate) fn register_pair(self) -> (Register, Register) {
                 debug_assert_eq!(self.op().immediate_layout(), ImmediateLayout::RegisterPair);
                 ImmediateLayout::register_pair(self.imm())
             }
 
+            // The packed form decodes this only through its fixed-width form.
+            #[allow(dead_code)]
             pub(crate) fn construct_arguments(self) -> ConstructArguments {
                 debug_assert_eq!(
                     self.op().immediate_layout(),

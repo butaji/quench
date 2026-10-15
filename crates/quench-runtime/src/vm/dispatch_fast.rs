@@ -662,7 +662,14 @@ lane_handler! {
 macro_rules! sibling {
     ($handler:expr, $r:expr, $ip:expr, $view:expr) => {{
         let view: Carried = $view;
-        return $handler($r, $ip, view.memory.bytes, view.memory.reach, view.integers, view.acc);
+        return $handler(
+            $r,
+            $ip,
+            view.memory.bytes,
+            view.memory.reach,
+            view.integers,
+            view.acc,
+        );
     }};
 }
 
@@ -3579,7 +3586,10 @@ fn derive_lane_view<H: Host>(
         });
     let enters = kind == crate::bytecode::ProgramKind::Wasm || closes_loop(function, &exits);
     LaneView {
-        records: records.into_iter().map(std::cell::UnsafeCell::new).collect(),
+        records: records
+            .into_iter()
+            .map(std::cell::UnsafeCell::new)
+            .collect(),
         entries,
         memory_register,
         activation,
