@@ -973,6 +973,20 @@ fn finished_jobs_release_their_values_while_the_queue_keeps_draining() {
 }
 
 #[test]
+fn json_parse_builds_the_same_values_with_and_without_a_reviver() {
+    // Without a reviver values are built during the parse; with one, from the source tree.
+    // Both give escapes, numbers, duplicate keys, key order and `__proto__` the same way.
+    let source = "var text = '{\"b\":\"x\\\\ny\\\\u00e9\",\"2\":[1,-0,2.5e3,1E-2],\"a\":{\"__proto__\":{\"k\":1}},\"b\":true,\"\":null}';\n\
+         var plain = JSON.parse(text), revived = JSON.parse(text, function (k, v) { return v; });\n\
+         var describe = function (o) { return [Object.keys(o).join(), JSON.stringify(o), Object.is(o['2'][1], -0), Object.getPrototypeOf(o.a) === Object.prototype, Object.keys(o.a).join()].join('|'); };\n\
+         var result = describe(plain) === describe(revived) ? describe(plain) : 'differs: ' + describe(plain) + ' / ' + describe(revived);";
+    assert_eq!(
+        global_text(source, "result"),
+        "2,b,a,|{\"2\":[1,0,2500,0.01],\"b\":true,\"a\":{\"__proto__\":{\"k\":1}},\"\":null}|true|true|__proto__"
+    );
+}
+
+#[test]
 fn promise_record_edges_follow_promise_and_resolver_lifetime() {
     let mut vm = Vm::new(SilentHost);
     let promise = vm.promise_object();
