@@ -626,7 +626,9 @@ fn realm_intrinsic_registries_keep_each_realm_rooted() {
 fn unreachable_promise_callback_and_aggregate_cycles_are_collected() {
     let mut vm = Vm::new(SilentHost);
     let program = Engine::specialize(
-        "function make() { var p = new Promise(() => {}), value = {}; var handler = () => value; return [p, p.then(handler), p.finally(handler), Promise.all([p])]; }",
+        // A species other than %Promise% keeps a real capability; %Promise% reactions settle
+        // their promise directly.
+        "function make() { var p = new Promise(() => {}), q = new Promise(() => {}), value = {}; q.constructor = { [Symbol.species]: function (executor) { return new Promise(executor); } }; var handler = () => value; return [p, q, p.then(handler), q.then(handler), p.finally(handler), Promise.all([p])]; }",
         "promise-owner-cycles.js",
     ).unwrap();
     vm.execute(&program).unwrap();

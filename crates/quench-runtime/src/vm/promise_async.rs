@@ -96,21 +96,22 @@ impl<H: Host> Vm<H> {
                 yielded,
             },
         );
-        let record = self
-            .realm
-            .promise
-            .records
-            .get(&source)
-            .cloned()
-            .ok_or_else(|| JsError("await source is not a Promise".into()))?;
+        // `source` is a Promise, or a primitive standing for the fulfilled one an `await`
+        // never materializes.
+        let (state, result) = match self.realm.promise.records.get(&source) {
+            Some(record) => (record.state, record.result),
+            None if !self.is_object_like(source) => (PromiseState::Fulfilled, source),
+            None => return Err(JsError("await source is not a Promise".into())),
+        };
         self.observe_promise_rejection(source);
+        // Await performs PerformPromiseThen without a result capability.
         let reaction = PromiseReaction {
             on_fulfilled: fulfilled,
             on_rejected: rejected,
-            next: self.promise_object(),
+            next: Value::UNDEFINED,
             execution_context: self.host.capture_job_context(),
         };
-        if record.state == PromiseState::Pending {
+        if state == PromiseState::Pending {
             self.realm
                 .promise
                 .records
@@ -119,7 +120,7 @@ impl<H: Host> Vm<H> {
                 .reactions
                 .push(reaction);
         } else {
-            self.enqueue_promise_reaction(p, reaction, record.state, record.result);
+            self.enqueue_promise_reaction(p, reaction, state, result);
         }
         Ok(())
     }

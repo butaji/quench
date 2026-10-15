@@ -1,0 +1,53 @@
+{
+  "baseline_commit": "cb077bb75",
+  "collector_implementation_changed": false,
+  "collector_policy_changed": false,
+  "variants": [
+    {
+      "variant": "tokenizer-pairs",
+      "binaries": {
+        "baseline": "dac6eedb039e109bbb5b227b4b7612c05d3c67ae42d4eb16db22d8856307962b",
+        "candidate": "f2698a03098fc881bb249061aec00f542bcc44d39c8f693daf0678c7af4d696d"
+      },
+      "peak_rss_delta_bytes": 69632,
+      "paired_95_interval_bytes": [
+        69632.0,
+        69632.0
+      ],
+      "decision": "reject: peak RSS regression",
+      "wall_interpretation": "unqualified Linux diagnostic"
+    },
+    {
+      "variant": "outlined-tokenizer-pairs",
+      "binaries": {
+        "baseline": "dac6eedb039e109bbb5b227b4b7612c05d3c67ae42d4eb16db22d8856307962b",
+        "candidate": "d6d795a32f7030e2ed9c4fb63a201e18265afd3ab977aae5de02df2ecbaf056d"
+      },
+      "peak_rss_delta_bytes": 65536,
+      "paired_95_interval_bytes": [
+        65536.0,
+        65536.0
+      ],
+      "decision": "reject: peak RSS regression",
+      "wall_interpretation": "not used: concurrent compiler activity"
+    },
+    {
+      "variant": "slots-tokenizer-pairs",
+      "binaries": {
+        "baseline": "dac6eedb039e109bbb5b227b4b7612c05d3c67ae42d4eb16db22d8856307962b",
+        "candidate": "8082d298492833669d0a501e5480938cfe5590f9411f9d2a41d4468a0c457cc1"
+      },
+      "peak_rss_delta_bytes": 126976,
+      "paired_95_interval_bytes": [
+        126976.0,
+        126976.0
+      ],
+      "decision": "reject: peak RSS regression",
+      "wall_interpretation": "not used: concurrent compiler activity"
+    }
+  ],
+  "correctness": "initial prototype 604/604 runtime tests; all three match Node in forced-GC lifecycle fixture; refinement full test builds stopped on RSS rejection",
+  "final_workspace_check": "pass",
+  "integration_sync_before_evidence_commit": "04f4de50e",
+  "build_limitation": "Existing link-order inputs held fixed; no candidate-specific disjoint-corpus retraining. Rejections apply to recorded builds."
+}

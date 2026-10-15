@@ -43,6 +43,9 @@ struct RuntimeAtoms {
     last_index: Atom,
     /// `regexp::REGEXP_FLAG_ACCESSORS` names, in that order.
     regexp_flag_accessors: [Atom; regexp::REGEXP_FLAG_ACCESSORS.len()],
+    /// Read by every promise resolution and species lookup.
+    then: Atom,
+    constructor: Atom,
 }
 pub(crate) mod activation;
 mod activation_lifecycle;
@@ -1716,6 +1719,8 @@ impl<H: Host> Vm<H> {
             regexp_flags: self.intern_atom("flags"),
             last_index: self.intern_atom("lastIndex"),
             regexp_flag_accessors,
+            then: self.intern_atom("then"),
+            constructor: self.intern_atom("constructor"),
         };
         self.field_caches = vec![EMPTY_CACHE; program.cache_sites as usize];
         Self::prime_loop_decoding(program);

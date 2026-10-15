@@ -66,7 +66,7 @@ impl<H: Host> Vm<H> {
         let aggregate_root = self.heap.root(aggregate);
         let mut then_root = None;
         let outcome = (|| {
-            let then_atom = self.intern_atom("then");
+            let then_atom = self.runtime_atoms.then;
             let then =
                 self.get_property(p, self.heap.root_value(input_root).unwrap(), then_atom)?;
             if !self.is_function(then) {
