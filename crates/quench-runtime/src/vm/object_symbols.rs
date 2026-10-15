@@ -73,6 +73,10 @@ impl<H: Host> Vm<H> {
     ) -> Vec<Value> {
         let mut values = if include_indices {
             self.indexed_name_keys(object).unwrap_or_default()
+        } else if self.heap.array(object).is_some() && self.own_array_length(object).is_some() {
+            // Array length is a virtual own string key, not an array index.
+            // Keep it before named properties without expanding element keys.
+            vec![self.heap.alloc(Cell::String("length".into()))]
         } else {
             Vec::new()
         };
