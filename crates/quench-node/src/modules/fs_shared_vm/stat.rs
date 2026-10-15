@@ -787,16 +787,8 @@ fn stat_error(
     error: io::Error,
     path: &str,
 ) -> Result<RootedError, RootedError> {
-    let code = error_code(&error);
-    let description = match error.kind() {
-        io::ErrorKind::NotFound => "no such file or directory",
-        io::ErrorKind::PermissionDenied => "permission denied",
-        io::ErrorKind::NotADirectory => "not a directory",
-        io::ErrorKind::IsADirectory => "illegal operation on a directory",
-        _ if error.raw_os_error() == Some(libc::ELOOP) => "too many symbolic links encountered",
-        _ if error.raw_os_error() == Some(libc::EBADF) => "bad file descriptor",
-        _ => "input/output error",
-    };
+    let (code, _) = crate::modules::fs_error_codes::code_for(&error);
+    let description = crate::modules::fs_error_codes::strerror(code);
     let exception = context.error_rooted(&format!("{code}: {description}, stat '{path}'"))?;
     set_string(context, exception, "code", code)?;
     set_string(context, exception, "syscall", "stat")?;
@@ -813,13 +805,8 @@ fn path_error(
     path: &str,
     syscall: &str,
 ) -> Result<RootedError, RootedError> {
-    let code = error_code(&error);
-    let description = match error.kind() {
-        io::ErrorKind::NotFound => "no such file or directory",
-        io::ErrorKind::PermissionDenied => "permission denied",
-        io::ErrorKind::NotADirectory => "not a directory",
-        _ => "input/output error",
-    };
+    let (code, _) = crate::modules::fs_error_codes::code_for(&error);
+    let description = crate::modules::fs_error_codes::strerror(code);
     let exception = context.error_rooted(&format!("{code}: {description}, {syscall} '{path}'"))?;
     if let Some(errno) = error.raw_os_error() {
         set_number(context, exception, "errno", -f64::from(errno))?;
@@ -828,25 +815,6 @@ fn path_error(
     set_string(context, exception, "syscall", syscall)?;
     set_string(context, exception, "path", path)?;
     Ok(context.throw(exception))
-}
-
-fn error_code(error: &io::Error) -> &'static str {
-    match error.raw_os_error() {
-        Some(libc::EACCES) => "EACCES",
-        Some(libc::EBADF) => "EBADF",
-        Some(libc::EEXIST) => "EEXIST",
-        Some(libc::EISDIR) => "EISDIR",
-        Some(libc::EINVAL) => "EINVAL",
-        Some(libc::ENOTDIR) => "ENOTDIR",
-        Some(libc::ENOENT) => "ENOENT",
-        Some(libc::ELOOP) => "ELOOP",
-        _ => match error.kind() {
-            io::ErrorKind::NotFound => "ENOENT",
-            io::ErrorKind::PermissionDenied => "EACCES",
-            io::ErrorKind::NotADirectory => "ENOTDIR",
-            _ => "EIO",
-        },
-    }
 }
 
 fn set(

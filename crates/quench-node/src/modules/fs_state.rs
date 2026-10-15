@@ -3,7 +3,9 @@
 
 use std::cell::{Ref, RefCell};
 use std::collections::HashMap;
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Read, Write};
+#[cfg(not(unix))]
+use std::io::{Seek, SeekFrom};
 use std::rc::Rc;
 
 /// A handle to the one host-owned descriptor table shared by Node adapters.
@@ -95,6 +97,49 @@ impl FsState {
         Err(std::io::Error::from_raw_os_error(libc::EBADF))
     }
 
+    pub(crate) fn write_all_descriptor(
+        &self,
+        fd: i32,
+        bytes: &[u8],
+        position: Option<u64>,
+    ) -> std::io::Result<usize> {
+        self.with_descriptor(fd, |file| {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::FileExt;
+                match position {
+                    Some(position) => file.write_all_at(bytes, position),
+                    None => file.write_all(bytes),
+                }
+                .map(|()| bytes.len())
+            }
+            #[cfg(not(unix))]
+            {
+                let original = if position.is_some() {
+                    Some(file.stream_position()?)
+                } else {
+                    None
+                };
+                if let Some(position) = position {
+                    if let Err(error) = file.seek(SeekFrom::Start(position)) {
+                        return Err(if position > i32::MAX as u64 {
+                            std::io::Error::from_raw_os_error(libc::EFBIG)
+                        } else {
+                            error
+                        });
+                    }
+                }
+                let result = file.write_all(bytes).map(|()| bytes.len());
+                if let Some(original) = original {
+                    file.seek(SeekFrom::Start(original))?;
+                }
+                result
+            }
+        })
+    }
+
+    /// One native write, including partial progress; positional I/O must not move
+    /// the shared open-file offset.
     pub(crate) fn write_descriptor(
         &self,
         fd: i32,
@@ -102,25 +147,26 @@ impl FsState {
         position: Option<u64>,
     ) -> std::io::Result<usize> {
         self.with_descriptor(fd, |file| {
-            let original = if position.is_some() {
-                Some(file.stream_position()?)
-            } else {
-                None
-            };
-            if let Some(position) = position {
-                if let Err(error) = file.seek(SeekFrom::Start(position)) {
-                    return Err(if position > i32::MAX as u64 {
-                        std::io::Error::from_raw_os_error(libc::EFBIG)
-                    } else {
-                        error
-                    });
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::FileExt;
+                match position {
+                    Some(position) => file.write_at(bytes, position),
+                    None => file.write(bytes),
                 }
             }
-            let result = file.write_all(bytes).map(|()| bytes.len());
-            if let Some(original) = original {
-                file.seek(SeekFrom::Start(original))?;
+            #[cfg(not(unix))]
+            {
+                if let Some(position) = position {
+                    let original = file.stream_position()?;
+                    file.seek(SeekFrom::Start(position))?;
+                    let result = file.write(bytes);
+                    file.seek(SeekFrom::Start(original))?;
+                    result
+                } else {
+                    file.write(bytes)
+                }
             }
-            result
         })
     }
 
