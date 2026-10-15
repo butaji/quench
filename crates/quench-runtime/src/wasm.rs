@@ -205,6 +205,7 @@ pub struct WasmModule {
     pub(crate) elements: Rc<[WasmElement]>,
     pub(crate) tags: Rc<[WasmTag]>,
     pub(crate) start: Option<u32>,
+    pub(crate) exports: Rc<[WasmExport]>,
 }
 
 /// A typed entry derived from a module's canonical signature table.
@@ -252,23 +253,47 @@ impl WasmGlobal {
 }
 
 /// Derive host lookup names from the authoritative resource declarations.
+/// Each import with the kind of external value it requires.
 fn import_names<'a>(
     functions: &'a [scalar::CallableImport],
     globals: &'a [WasmGlobal],
     memories: &'a [WasmMemory],
     tables: &'a [WasmTable],
     tags: &'a [WasmTag],
-) -> impl Iterator<Item = &'a WasmImportName> {
+) -> impl Iterator<Item = (&'a WasmImportName, wasmparser::ExternalKind)> {
+    use wasmparser::ExternalKind;
     functions
         .iter()
-        .map(|import| &import.name)
-        .chain(globals.iter().filter_map(WasmGlobal::import))
-        .chain(memories.iter().filter_map(|memory| memory.import.as_ref()))
+        .map(|import| (&import.name, ExternalKind::Func))
+        .chain(
+            globals
+                .iter()
+                .filter_map(WasmGlobal::import)
+                .map(|name| (name, ExternalKind::Global)),
+        )
+        .chain(
+            memories
+                .iter()
+                .filter_map(|memory| memory.import.as_ref())
+                .map(|name| (name, ExternalKind::Memory)),
+        )
         .chain(tables.iter().filter_map(|table| match &table.initializer {
-            WasmTableInitializer::Import(name) => Some(name),
+            WasmTableInitializer::Import(name) => Some((name, ExternalKind::Table)),
             WasmTableInitializer::Reference(_) => None,
         }))
-        .chain(tags.iter().filter_map(|tag| tag.import.as_ref()))
+        .chain(
+            tags.iter()
+                .filter_map(|tag| tag.import.as_ref())
+                .map(|name| (name, ExternalKind::Tag)),
+        )
+}
+
+/// A module export: its name and what it names in its kind's index space.
+#[derive(Clone, Debug)]
+pub struct WasmExport {
+    pub name: String,
+    pub kind: wasmparser::ExternalKind,
+    pub index: u32,
 }
 
 /// Rooted instance bindings owned by one Runtime. Release with `release_wasm`.
@@ -314,6 +339,14 @@ impl WasmModule {
 
     /// Import order is derived from declaration indices, independent of resource kind.
     pub fn imports(&self) -> Vec<&WasmImportName> {
+        self.import_kinds()
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect()
+    }
+
+    /// Imports in declaration order, each with the kind of external value it requires.
+    pub fn import_kinds(&self) -> Vec<(&WasmImportName, wasmparser::ExternalKind)> {
         let mut imports: Vec<_> = import_names(
             self.signatures.imports(),
             &self.globals,
@@ -322,8 +355,18 @@ impl WasmModule {
             &self.tags,
         )
         .collect();
-        imports.sort_by_key(|name| name.index);
+        imports.sort_by_key(|(name, _)| name.index);
         imports
+    }
+
+    /// Attach the export section's entries in declaration order.
+    pub fn with_exports(mut self, exports: Vec<WasmExport>) -> Self {
+        self.exports = exports.into();
+        self
+    }
+
+    pub fn exports(&self) -> &[WasmExport] {
+        &self.exports
     }
 
     pub fn residual(&self) -> &ResidualProgram {
@@ -706,7 +749,7 @@ impl Engine {
         }
         let mut import_indices: Vec<_> =
             import_names(signature_pool.imports(), globals, memories, tables, tags)
-                .map(|name| name.index)
+                .map(|(name, _)| name.index)
                 .collect();
         import_indices.sort_unstable();
         if import_indices
@@ -929,6 +972,7 @@ impl Engine {
             elements: elements.into(),
             tags: tags.into(),
             start: None,
+            exports: Rc::default(),
         })
     }
 }

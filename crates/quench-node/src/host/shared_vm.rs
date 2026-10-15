@@ -589,6 +589,17 @@ impl quench_runtime::Host for NodeHost {
         quench_runtime::Host::clock_millis(&mut SystemHost)
     }
 
+    fn compile_wasm(
+        &mut self,
+        bytes: &[u8],
+        mode: quench_runtime::ExecutionMode,
+    ) -> Result<quench_runtime::WasmModule, String> {
+        quench_wasm::Engine::new()
+            .compile(bytes)
+            .and_then(|module| module.lower_shared_module_for(mode))
+            .map_err(|error| error.to_string())
+    }
+
     fn resolve_dynamic_import(
         &mut self,
         referrer: &str,
