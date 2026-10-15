@@ -7601,7 +7601,6 @@ fn util_parse_args_default_argv_matches_eval_print_and_file_entry_forms() {
 }
 
 #[test]
-<<<<<<< HEAD
 fn native_builtin_setup_preserves_regexp_and_crypto_uses_canonical_streams() {
     compare_node_stream_source(r#"
 const state=()=>[RegExp.input,RegExp.lastMatch,RegExp.lastParen,RegExp.leftContext,RegExp.rightContext,RegExp.$1,RegExp.$2,RegExp.$9];
@@ -7667,8 +7666,6 @@ fn native_encoding_and_array_buffer_copy_match_stable_slots_and_byte_ranges() {
 }
 
 #[test]
-=======
->>>>>>> origin/v2-merged
 fn structured_clone_views_preserve_backing_aliases_transfers_and_resize_modes() {
     compare_node_stream_source(
         r#"
@@ -7948,7 +7945,6 @@ Promise.all([callback,promise]).then(results=>{out.push(...results);console.log(
     );
 }
 
-<<<<<<< HEAD
 #[test]
 fn canonical_string_decoder_preserves_native_boundaries_and_live_state_views() {
     compare_node_stream_source(include_str!("../node-tests/test-string-decoder-native-state.js"));
@@ -7976,7 +7972,19 @@ server.listen(0,'127.0.0.1',()=>{
  socket.write('hé',()=>events.push(['write',socket.bytesWritten]));socket.end('😀',()=>events.push(['finish',socket.bytesWritten,socket.writable]));events.push(['queued',socket.bytesWritten]);
  socket.on('close',()=>server.close(()=>console.log(JSON.stringify(events))));
 });
-=======
+"#);
+}
+
+#[test]
+fn canonical_assertions_validate_rejections_and_share_success_results() {
+    compare_node_stream_source(include_str!("../node-tests/test-canonical-assertions.js"));
+}
+
+#[test]
+fn native_key_slots_preserve_material_comparison_and_reject_spoofed_brands() {
+    compare_node_stream_source(include_str!("../node-tests/test-native-key-slots.js"));
+}
+
 #[cfg(unix)]
 #[test]
 fn read_file_preserves_raw_paths_descriptor_positions_and_utf8_conversion_boundaries() {
@@ -8120,84 +8128,6 @@ const out=[];for(const target of [undefined,null,1,'x',true,1n,Symbol('x')]){
  try{Error.captureStackTrace(target);out.push('accepted')}catch(error){out.push([error.name,error.message,Reflect.ownKeys(error).filter(k=>k!=='stack')])}
 }console.log(JSON.stringify(out));
 "#,
-    );
-}
-
-#[test]
-fn native_builtin_setup_preserves_regexp_and_crypto_uses_canonical_streams() {
-    compare_node_stream_source(r#"
-const state=()=>[RegExp.input,RegExp.lastMatch,RegExp.lastParen,RegExp.leftContext,RegExp.rightContext,RegExp.$1,RegExp.$2,RegExp.$9];
-/(before)-(after)/.exec('leftbefore-afterright');RegExp.input='caller input';const before=JSON.stringify(state());
-const crypto=require('crypto');const after=JSON.stringify(state());
-const stream=require('stream');const promises=require('stream/promises');
-console.log(before===after,stream.promises===promises,stream.Stream===stream);
-const hash=crypto.createHash('sha256');console.log(hash instanceof stream.Transform);
-hash.on('data',chunk=>console.log(chunk.toString('hex')));hash.end('abc');
->>>>>>> origin/v2-merged
-"#);
-}
-
-#[test]
-<<<<<<< HEAD
-fn canonical_assertions_validate_rejections_and_share_success_results() {
-    compare_node_stream_source(include_str!("../node-tests/test-canonical-assertions.js"));
-}
-
-#[test]
-fn native_key_slots_preserve_material_comparison_and_reject_spoofed_brands() {
-    compare_node_stream_source(include_str!("../node-tests/test-native-key-slots.js"));
-=======
-fn native_internal_microtask_queue_keeps_original_identity_and_job_order() {
-    const SOURCE: &str = r#"
-const original=queueMicrotask;
-Object.defineProperty(globalThis,'queueMicrotask',{value(){throw Error('public queue consulted')},writable:false,configurable:false});
-const internal=require('internal/process/task_queues');
-console.log(internal.queueMicrotask===original,internal.queueMicrotask.name,internal.queueMicrotask.length);
-const trace=[];process.nextTick(()=>trace.push('tick'));
-internal.queueMicrotask(()=>{trace.push('microtask');console.log(trace.join(','))});trace.push('sync');
-"#;
-    compare_node_source_with_args(SOURCE, &["--no-warnings", "--expose-internals"]);
-}
-
-#[test]
-fn native_promise_inspection_preserves_slots_identity_and_rejection_handling() {
-    const SOURCE: &str = r#"
-const {internalBinding}=require('internal/test/binding');const u=internalBinding('util');
-const value={answer:42},pending=new Promise(()=>{}),fulfilled=Promise.resolve(value),rejected=Promise.reject(value);
-for(const p of [pending,fulfilled,rejected])for(const key of ['then','constructor'])Object.defineProperty(p,key,{get(){throw Error(key)}});
-console.log(u.getPromiseDetails(pending).length,u.getPromiseDetails(pending)[0],u.getPromiseDetails(fulfilled)[0],u.getPromiseDetails(rejected)[0]);
-console.log(u.getPromiseDetails(fulfilled)[1]===value,u.getPromiseDetails(rejected)[1]===value,u.getPromiseDetails({}));
-u.markPromiseAsHandled(rejected);u.markPromiseAsHandled(pending);
-const events=[];process.on('unhandledRejection',()=>events.push('unhandled'));process.on('rejectionHandled',()=>events.push('handled'));
-setImmediate(()=>console.log(JSON.stringify(events)));
-"#;
-    compare_node_source_with_args(SOURCE, &["--no-warnings", "--expose-internals"]);
-}
-
-#[test]
-fn canonical_web_streams_share_globals_and_preserve_byte_and_abort_algorithms() {
-    compare_node_stream_source(r#"
-const web=require('stream/web');
-console.log(['ReadableStream','WritableStream','TransformStream','TextEncoderStream','TextDecoderStream'].every(name=>web[name]===globalThis[name]));
-(async()=>{
- const bytes=new web.ReadableStream({type:'bytes',start(c){c.enqueue(new Uint8Array([1,2,3]));c.close()}});
- const reader=bytes.getReader({mode:'byob'});const buffer=new Uint8Array(8);const first=await reader.read(buffer);
- console.log(first.done,JSON.stringify([...first.value]),buffer.byteLength);
- const final=await reader.read(new Uint8Array(2));console.log(final.done,final.value.byteLength);
- const reason={reason:42};await new web.ReadableStream({cancel(value){console.log('cancel',value===reason)}}).cancel(reason);
- const writable=new web.WritableStream({abort(value){console.log('abort',value===reason)}});await writable.abort(reason);
- const encoder=new web.TextEncoderStream(),r=encoder.readable.getReader(),w=encoder.writable.getWriter();
- const read=r.read();await w.write('\ud83d');await w.write('\ude00');console.log('encoded',JSON.stringify([...(await read).value]));
- await w.close();console.log('closed',(await r.read()).done);
-})().catch(error=>{console.error(error);process.exitCode=1});
-"#);
-}
-
-#[test]
-fn native_encoding_and_array_buffer_copy_match_stable_slots_and_byte_ranges() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-native-encoding-bytes.js"),
-        &["--no-warnings", "--expose-internals"],
     );
 }
 
@@ -8389,5 +8319,4 @@ try {
 out[2]=target[0];console.log(JSON.stringify(out));
 "#,
     );
->>>>>>> origin/v2-merged
 }
