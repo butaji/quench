@@ -9808,3 +9808,28 @@ fn nullish_property_diagnostics_include_original_property_names() {
     "#;
     for program in [Engine::compile(crate::ExecutionRequest{source,name:"nullish-property-errors.js",kind:crate::SourceKind::Script}).unwrap(),Engine::specialize(source,"nullish-property-errors.js").unwrap()] {Vm::new(SilentHost).execute(&program).unwrap();}
 }
+
+#[test]
+fn typed_array_offset_and_content_errors_preserve_numeric_hooks_and_targets() {
+    let source = r#"
+const ab=new ArrayBuffer(5),calls=[];
+try{new Uint8Array(ab,{valueOf(){calls.push('offset');return -1.5}},{valueOf(){calls.push('length');return 1}})}catch(e){print(e.name);print(e.message)}
+print(calls.join());print(new Uint8Array(ab,-0.5).length);
+const marker={};try{new Uint8Array(ab,{valueOf(){throw marker}})}catch(e){print(e===marker)}
+for(const [target,source] of [[new Uint8Array(2),new BigInt64Array(1)],[new BigInt64Array(2),new Uint8Array(1)]]){
+ try{target.set(source)}catch(e){print(e.name);print(e.message)}
+ print(Array.from(target,String).join());
+}
+"#;
+    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
+        let output=Rc::new(RefCell::new(Vec::new()));
+        let mut vm=Vm::new(RecordingHost(output.clone()));
+        let program=compile(source,"typed-array-offset-content-errors.js").unwrap();
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(),[
+            "RangeError","Start offset -1.5 is outside the bounds of the buffer","offset","5","true",
+            "TypeError","Cannot mix BigInt and other types, use explicit conversions","0,0",
+            "TypeError","Cannot mix BigInt and other types, use explicit conversions","0,0",
+        ]);
+    }
+}
