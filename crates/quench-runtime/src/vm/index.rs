@@ -100,8 +100,11 @@ impl<H: Host> Vm<H> {
         key: Value,
     ) -> Result<Value, JsError> {
         if object.is_null() || object.is_undefined() {
-            let atom = self.intern_atom("");
-            return self.get_property(p, object, atom);
+            // A rejected base never invokes a property-key object's conversion hooks.
+            let property = if self.is_object_like(key) { None }
+                else if let Some(Cell::Symbol(description)) = self.heap.get(key) { Some(format!("Symbol({})", description.as_deref().unwrap_or(""))) }
+                else { Some(self.to_string(p, key)?) };
+            return Err(self.nullish_property_error(p, object, property.as_deref()));
         }
         let key = match self.heap.get(key) {
             Some(Cell::String(_) | Cell::Symbol(_)) => key,

@@ -264,41 +264,6 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
       return true;
     }
 
-    fill(value = 0, offset = 0, end = this.length, encoding = "utf8") {
-      if (typeof offset === "string") {
-        encoding = offset;
-        offset = 0;
-        end = this.length;
-      } else if (typeof end === "string") {
-        encoding = end;
-        end = this.length;
-      }
-      offset = Math.trunc(Number(offset));
-      end = Math.trunc(Number(end));
-      if (Number.isNaN(offset) || Number.isNaN(end)) {
-        throw codedTypeError('The "offset" and "end" arguments must be numbers', "ERR_INVALID_ARG_TYPE");
-      }
-      if (offset < 0 || offset > this.length || end < 0 || end > this.length) {
-        const error = new RangeError("The value of \"offset\" or \"end\" is out of range");
-        error.code = "ERR_OUT_OF_RANGE";
-        throw error;
-      }
-      if (end <= offset) return this;
-      let bytes;
-      if (typeof value === "string") bytes = encode(value, normalizeEncoding(encoding));
-      else if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) {
-        bytes = value instanceof ArrayBuffer
-          ? Array.from(new Uint8Array(value))
-          : Array.from(new Uint8Array(value.buffer, value.byteOffset, value.byteLength));
-      } else {
-        return Uint8Array.prototype.fill.call(this, value, offset, end);
-      }
-      if (bytes.length === 0) return Uint8Array.prototype.fill.call(this, 0, offset, end);
-      if (bytes.length === 1) return Uint8Array.prototype.fill.call(this, bytes[0], offset, end);
-      for (let index = offset; index < end; index++) this[index] = bytes[(index - offset) % bytes.length];
-      return this;
-    }
-
     copy(target, targetStart = 0, sourceStart = 0, sourceEnd = this.length) {
       if (!(this instanceof Uint8Array)) {
         throw codedTypeError('The "this" argument must be an instance of Buffer or Uint8Array', "ERR_INVALID_ARG_TYPE");
@@ -618,6 +583,8 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     super::buffer_bigint_shared_vm::install(context, prototype)?;
     super::buffer_swap_shared_vm::install(context, prototype)?;
     super::buffer_write_shared_vm::install(context, prototype)?;
+    super::buffer_fill_shared_vm::install(context, prototype)?;
+    super::buffer_inspect_shared_vm::install(context, module, prototype)?;
     install_backing_getters(context, buffer, prototype)?;
     let shared = context.host_mut().shared_state();
     let capture_prototype = shared.borrow().buffer_prototype.is_none();
