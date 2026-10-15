@@ -17,6 +17,75 @@ impl Host for SilentHost {
 }
 
 #[test]
+fn collection_construction_survives_gc_in_iterator_and_entry_callbacks() {
+    struct CollectingHost(Rc<RefCell<Vec<String>>>);
+    impl Host for CollectingHost {
+        fn write_line(&mut self, line: &str) {
+            self.0.borrow_mut().push(line.into());
+        }
+        fn clock_millis(&mut self) -> f64 {
+            0.0
+        }
+        fn globals(&self) -> &'static [crate::HostGlobal] {
+            &[crate::HostGlobal {
+                name: "$262",
+                capability: crate::CapabilityId::CreateRealm,
+            }]
+        }
+    }
+    let source = r#"
+      const out=[];
+      for (const C of [Map, Set, WeakMap, WeakSet]) {
+        const pair=C===Map || C===WeakMap;
+        const key={rank:1}, value={answer:42}; let once=false, observed;
+        const method=pair?'set':'add';
+        const descriptor=Object.getOwnPropertyDescriptor(C.prototype,method);
+        Object.defineProperty(C.prototype,method,{configurable:true,get(){
+          $262.gc();
+          return function(k,v){observed=k;$262.gc();return Reflect.apply(descriptor.value,this,pair?[k,v]:[k])};
+        }});
+        const iterable={ [Symbol.iterator]() {
+          $262.gc();
+          return {next() {
+            $262.gc();
+            if (once) return {done:true}; once=true;
+            return {done:false,value:pair?{
+              get 0() {$262.gc();return {rank:1}},
+              get 1() {$262.gc();return value}
+            }:key};
+          }};
+        }};
+        const result=new C(iterable);
+        Object.defineProperty(C.prototype,method,descriptor);
+        out.push(pair?result.get(observed)===value && observed.rank===1:result.has(key) && observed===key);
+      }
+      let closed=0;
+      try { new Map({[Symbol.iterator](){return {next(){return {value:17,done:false}},return(){$262.gc();closed++;return {done:true}}}}}); }
+      catch(error) {out.push(error.name,closed);}
+      print(JSON.stringify(out));
+    "#;
+    for specialized in [false, true] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(CollectingHost(output.clone()));
+        let program = if specialized {
+            Engine::specialize(source, "collection-constructor-gc.js")
+        } else {
+            Engine::compile(crate::ExecutionRequest {
+                source,
+                name: "collection-constructor-gc.js",
+                kind: crate::SourceKind::Script,
+            })
+        }
+        .unwrap();
+        vm.execute(&program).unwrap();
+        assert_eq!(
+            output.borrow().as_slice(),
+            [r#"[true,true,true,true,"TypeError",1]"#]
+        );
+    }
+}
+
+#[test]
 fn strict_terminal_calls_preserve_catch_and_finally_handlers() {
     let source = r#"
       'use strict';
