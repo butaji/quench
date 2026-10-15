@@ -34,6 +34,8 @@ const _: () = {
 };
 const DIRECT_OBJECT_HANDLE_BIT: u64 = 1 << 47;
 const DIRECT_ARRAY_HANDLE_BIT: u64 = 1 << 46;
+/// The bits that name a heap value's reference family (`Value::heap_reference`).
+const HEAP_FAMILY_MASK: u64 = TAG_MASK | DIRECT_OBJECT_HANDLE_BIT | DIRECT_ARRAY_HANDLE_BIT;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum HeapReference {
@@ -260,18 +262,13 @@ impl Value {
 
     #[inline(always)]
     pub(crate) fn direct_object_index(self) -> Option<u32> {
-        match self.heap_reference()? {
-            HeapReference::ObjectRecord(index) => Some(index),
-            HeapReference::LegacySlot(_) | HeapReference::ArrayRecord(_) => None,
-        }
+        // `heap_reference` as one family test: hot reads ask for this family alone.
+        (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_OBJECT_HANDLE_BIT).then_some(self.0 as u32)
     }
 
     #[inline(always)]
     pub(crate) fn direct_array_index(self) -> Option<u32> {
-        match self.heap_reference()? {
-            HeapReference::ArrayRecord(index) => Some(index),
-            HeapReference::LegacySlot(_) | HeapReference::ObjectRecord(_) => None,
-        }
+        (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_ARRAY_HANDLE_BIT).then_some(self.0 as u32)
     }
 
     pub fn is_undefined(self) -> bool {
