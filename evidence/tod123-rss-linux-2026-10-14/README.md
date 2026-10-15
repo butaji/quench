@@ -285,3 +285,8 @@ host):
 | RegExp | 15.4 | 14.9 | 6.6 | 30.5 | 55.1 | 52.6 | 70.7 |
 | Richards | 4.0 | 3.5 | 3.4 | 21.9 | 44.8 | 39.2 | 56.8 |
 | Splay | 49.3 | 49.0 | 147.0 | 62.5 | 395.6 | 188.4 | 460.8 |
+
+Callgrind (`guard-touched-pages-raw.txt`, previous publication against this
+one, across a v2-merged sync): start-up -2.0% to -12.6% except NavierStokes
++1.3% and RegExp +1.7%; per-run -25% (Richards) to +2.6% (RegExp), most of the
+per-run change from the merged upstream work.
