@@ -6789,3 +6789,22 @@ for(const filename of ['/a/node_modules/x.js','/a/node_modules/pkg/node_modules/
 console.log(JSON.stringify(out));
 "#);
 }
+
+#[test]
+fn native_buffer_of_avoids_legacy_warnings_and_preserves_original_coercions() {
+    compare_node_stream_source(r#"
+ 'use strict';
+const B=require('buffer').Buffer,out=[],warnings=[];
+process.emitWarning=(...args)=>warnings.push(args);
+const f=B.of,d=Object.getOwnPropertyDescriptor(B,'of');
+out.push([f.name,f.length,Object.hasOwn(f,'prototype'),d.writable,d.enumerable,d.configurable]);
+for(const args of [[],[0,1],[-1,256,257,1.9,NaN,Infinity,undefined,null,'3']]){
+ const v=f.call(function(){throw new Error('wrong receiver')},...args);out.push([Array.from(v),v.constructor===B,B.isBuffer(v)]);
+}
+const hooks=[];const a={valueOf(){hooks.push('a');return 260}},b={valueOf(){hooks.push('b');return -2}};
+out.push(Array.from(f(a,b)),hooks);
+for(const v of [1n,Symbol('x')])try{f(v)}catch(e){out.push([e.name,e.message])}
+try{new f(1)}catch(e){out.push([e.name])}
+out.push(warnings);console.log(JSON.stringify(out));
+"#);
+}
