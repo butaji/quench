@@ -14,27 +14,7 @@ pub(crate) fn code_for(error: &std::io::Error) -> (&'static str, i32) {
 
 #[cfg(unix)]
 fn code_name(raw: i32) -> &'static str {
-    match raw {
-        1 => "EPERM",
-        2 => "ENOENT",
-        9 => "EBADF",
-        13 => "EACCES",
-        16 => "EBUSY",
-        17 => "EEXIST",
-        18 => "EXDEV",
-        20 => "ENOTDIR",
-        21 => "EISDIR",
-        22 => "EINVAL",
-        27 => "EFBIG",
-        28 => "ENOSPC",
-        30 => "EROFS",
-        31 => "EMLINK",
-        62 => "ELOOP",
-        63 => "ENAMETOOLONG",
-        66 => "ENOTEMPTY",
-        78 => "ENOSYS",
-        _ => "EIO",
-    }
+    super::util_system_error_shared_vm::system_error_code(-f64::from(raw)).unwrap_or("EIO")
 }
 
 #[cfg(not(unix))]
@@ -53,6 +33,14 @@ fn code_name(raw: i32) -> &'static str {
 
 pub(crate) fn strerror(code: &str) -> &'static str {
     match code {
+        "EAGAIN" => "resource temporarily unavailable",
+        "EINTR" => "interrupted system call",
+        "ENOMEM" => "not enough memory",
+        "ESPIPE" => "invalid seek",
+        "EPIPE" => "broken pipe",
+        "EMFILE" => "too many open files",
+        "ENFILE" => "file table overflow",
+        "EIO" => "i/o error",
         "EPERM" => "operation not permitted",
         "ENOENT" => "no such file or directory",
         "EBADF" => "bad file descriptor",
@@ -67,7 +55,7 @@ pub(crate) fn strerror(code: &str) -> &'static str {
         "ENOSPC" => "no space left on device",
         "EROFS" => "read-only file system",
         "EMLINK" => "too many links",
-        "ELOOP" => "too many levels of symbolic links",
+        "ELOOP" => "too many symbolic links encountered",
         "ENAMETOOLONG" => "name too long",
         "ENOTEMPTY" => "directory not empty",
         "ENOSYS" => "function not implemented",

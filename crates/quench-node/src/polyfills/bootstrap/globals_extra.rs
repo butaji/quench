@@ -354,40 +354,6 @@ if (typeof globalThis.URLSearchParams !== "function") {
 }
 if (typeof globalThis.Blob !== "function" ||
     typeof globalThis.Blob.prototype?.arrayBuffer !== "function") {
-  if (typeof globalThis.ReadableStream !== "function") {
-    class __nodeBlobReadableStream {
-      constructor(source = {}) {
-        this._queue = [];
-        this._closed = false;
-        this._waiters = [];
-        const controller = {
-          enqueue: (value) => {
-            const waiter = this._waiters.shift();
-            if (waiter) waiter({ value, done: false });
-            else this._queue.push(value);
-          },
-          close: () => {
-            this._closed = true;
-            while (this._waiters.length) this._waiters.shift()({ value: undefined, done: true });
-          },
-        };
-        source.start?.(controller);
-      }
-      getReader() {
-        const stream = this;
-        return { read() {
-          if (stream._queue.length) return Promise.resolve({ value: stream._queue.shift(), done: false });
-          if (stream._closed) return Promise.resolve({ value: undefined, done: true });
-          return new Promise((resolve) => stream._waiters.push(resolve));
-        }, releaseLock() {} };
-      }
-      async *[Symbol.asyncIterator]() {
-        const reader = this.getReader();
-        for (;;) { const item = await reader.read(); if (item.done) return; yield item.value; }
-      }
-    }
-    globalThis.ReadableStream = __nodeBlobReadableStream;
-  }
   const __nodeBlobPart = (part) => {
     if (typeof part === "string") return Buffer.from(part);
     if (part instanceof ArrayBuffer) return Buffer.from(part);

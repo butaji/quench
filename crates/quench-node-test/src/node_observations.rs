@@ -188,6 +188,10 @@ fn capture_observation(
         .env_remove("NODE_PATH")
         .current_dir(repository);
     if parallel_fixture {
+        if let Some(project) = crate::case_process::parallel_checkout_root(&fixture) {
+            node_command.current_dir(project);
+        }
+        node_command.envs(crate::fixture_metadata::fixture_metadata(&source).env);
         // The official Node test runner applies fixture flags before asking
         // common/index.js to inspect them, so the child must not re-exec.
         node_command.env("NODE_SKIP_FLAG_CHECK", "true");
