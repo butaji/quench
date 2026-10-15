@@ -7423,5 +7423,19 @@ const {Readable,Writable,Duplex,PassThrough}=require('stream'),EE=require('event
 for(const Type of [Readable,Writable,Duplex,PassThrough]){const s=new Type({read(){},write(c,e,cb){cb()},captureRejections:true});const symbols=Object.getOwnPropertySymbols(s),shape=symbols.find(x=>String(x)==='Symbol(shapeMode)'),capture=symbols.find(x=>String(x)==='Symbol(kCapture)');s.setMaxListeners(7);out.push([Type.name,s[shape],s[capture],s._maxListeners,s.getMaxListeners(),Object.getOwnPropertyDescriptor(s,capture)]);s.destroy();}
 const domain=require('domain').create(),marker=new Error('marker');let stream;domain.on('error',e=>out.push(['domain-error',e===marker,e.domainEmitter===stream,e.domain===domain]));domain.run(()=>{stream=new PassThrough({autoDestroy:false});out.push(['domain',stream.domain===domain,domain.members.includes(stream),domain.members.length]);});try{stream.emit('error',marker)}catch(e){out.push(['thrown',e===marker])}setImmediate(()=>console.log(JSON.stringify(out)));
 
-"#);
+"#,
+    );
+}
+
+#[test]
+fn http_transfer_codings_match_node_default_error_order_and_wire_bytes() {
+    compare_node_stream_source(
+        r#"
+const http=require('http'),net=require('net');
+(async()=>{const rows=[];for(const [te,early] of [...['chunkedchunked','gzip','chunked, chunked','chunked, gzip','gzip, chunked','CHUNKED'].map(te=>[te,false]),['gzip',true]])await new Promise(resolve=>{
+ const events=[];const s=http.createServer((req,res)=>{events.push('request');res.sendDate=false;if(early)res.end('early');req.on('data',b=>events.push('data:'+b));req.on('end',()=>{events.push('end');res.end('ok')})});
+ s.listen(0,'127.0.0.1',()=>{let wire='';const c=net.connect(s.address().port,'127.0.0.1',()=>c.write('POST / HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: '+te+'\r\nConnection: close\r\n\r\n1\r\nA\r\n0\r\n\r\n'));c.setEncoding('utf8');c.on('data',b=>wire+=b);c.on('end',()=>s.close(()=>{rows.push([te,early,events,wire.startsWith('HTTP/1.1 400')?wire:[wire.split('\r\n')[0],wire.split('\r\n\r\n')[1]]]);resolve()}));});
+});console.log(JSON.stringify(rows))})();
+"#,
+    );
 }
