@@ -1033,8 +1033,8 @@ lane_handler! {
 }
 
 lane_handler! {
-    /// `Unary`: logical not of any value, and the numeric operators of a Number, run no
-    /// guest code; any other operand takes the general path.
+    /// `Unary`: logical not and `typeof` of any value, and the numeric operators of a
+    /// Number, run no guest code; any other operand takes the general path.
     fn lane_unary<>(cx, r, ip, i, view) {
         let Some(value) = (unsafe { lane_unary_value(cx, r, i) }) else {
             return exit(ip);
@@ -1044,8 +1044,8 @@ lane_handler! {
     }
 }
 
-/// A `Unary` record's value where it runs no guest code: logical not of any value, and the
-/// numeric operators of a Number.
+/// A `Unary` record's value where it runs no guest code: logical not and `typeof` of any
+/// value, and the numeric operators of a Number.
 ///
 /// # Safety
 /// `cx` is the running lane's context and `r` its registers.
@@ -1060,6 +1060,12 @@ unsafe fn lane_unary_value<H: Host>(
     let vm = unsafe { vm(cx) };
     if operator == super::coercion::LOGICAL_NOT {
         return Some(vm.logical_not(operand));
+    }
+    if operator == super::coercion::TYPEOF {
+        let name = vm.typeof_value(operand);
+        // Interning the type's name can allocate.
+        note_allocation(vm);
+        return Some(name);
     }
     if operand.as_number().is_none() || !super::coercion::numeric_unary(operator) {
         return None;
