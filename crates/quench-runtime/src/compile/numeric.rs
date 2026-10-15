@@ -63,6 +63,7 @@ fn compact_binary_stores(
     let old = std::mem::take(&mut function.code);
     let protected = protected_positions(
         &old,
+        &function.wide,
         &function.handlers,
         function.parameter_end_pc,
         &function.binding_sites,
@@ -114,6 +115,7 @@ fn compact_binary_stores(
     map[old.len()] = code.len();
     relocate(
         &mut code,
+        &mut function.wide,
         &map,
         &mut function.handlers,
         &mut function.parameter_end_pc,
