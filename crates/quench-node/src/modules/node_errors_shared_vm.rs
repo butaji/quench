@@ -172,7 +172,7 @@ pub(super) fn decorate_error(
     error: RootId,
     code: &'static str,
 ) -> Result<(), RootedError> {
-    decorate_coded_error(context, error, code, ErrorClass::Error)
+    decorate_coded_error(context, error, code, ErrorClass::Error, &[])
 }
 
 pub(super) fn decorate_type_error(
@@ -180,7 +180,7 @@ pub(super) fn decorate_type_error(
     error: RootId,
     code: &'static str,
 ) -> Result<(), RootedError> {
-    decorate_coded_error(context, error, code, ErrorClass::TypeError)
+    decorate_coded_error(context, error, code, ErrorClass::TypeError, &[])
 }
 
 pub(super) fn decorate_range_error(
@@ -188,7 +188,17 @@ pub(super) fn decorate_range_error(
     error: RootId,
     code: &'static str,
 ) -> Result<(), RootedError> {
-    decorate_coded_error(context, error, code, ErrorClass::RangeError)
+    decorate_coded_error(context, error, code, ErrorClass::RangeError, &[])
+}
+
+/// Fields produced by a Node error message constructor precede its message.
+pub(super) fn decorate_type_error_with_fields(
+    context: &mut NativeContext<'_, NodeHost>,
+    error: RootId,
+    code: &'static str,
+    fields: &[(&str, RootId)],
+) -> Result<(), RootedError> {
+    decorate_coded_error(context, error, code, ErrorClass::TypeError, fields)
 }
 
 fn decorate_coded_error(
@@ -196,6 +206,7 @@ fn decorate_coded_error(
     error: RootId,
     code: &'static str,
     class: ErrorClass,
+    fields: &[(&str, RootId)],
 ) -> Result<(), RootedError> {
     super::util_shared_vm::module(context)?;
     let prototype = coded_error_prototype(context, code, class)?;
@@ -215,6 +226,10 @@ fn decorate_coded_error(
     let code = context.string_rooted(code);
     let key = context.string_rooted("code");
     context.define_data_property_rooted(error, key, code, true, true, true)?;
+    for &(name, value) in fields {
+        let key = context.string_rooted(name);
+        context.define_data_property_rooted(error, key, value, true, true, true)?;
+    }
     context.define_data_property_rooted(error, message_key, message, true, false, true)?;
     Ok(())
 }
