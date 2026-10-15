@@ -6808,3 +6808,53 @@ try{new f(1)}catch(e){out.push([e.name])}
 out.push(warnings);console.log(JSON.stringify(out));
 "#);
 }
+
+#[test]
+fn native_buffer_write_preserves_overloads_encodings_bounds_backing_and_hooks() {
+ compare_node_stream_source(r#"
+'use strict';
+const B=require('buffer').Buffer,out=[];
+const fn=B.prototype.write,descriptor=Object.getOwnPropertyDescriptor(B.prototype,'write');
+out.push([fn.name,fn.length,Object.hasOwn(fn,'prototype'),descriptor.writable,descriptor.enumerable,descriptor.configurable]);
+const values=[undefined,null,0,NaN,-1,1.1,Infinity,'abc',1n,Symbol('x'),{}];
+const cases=[['abc'],['abc',2,8],['abc',2,9],['abc','utf8'],['abc','utf8',2],['abc',undefined,Symbol('ignored'),'bogus']];
+for(const value of values){cases.push(['abc',value],['abc',0,value],['abc',0,2,value],[value]);}
+for(const args of cases){const b=B.alloc(8,0x7f);try{out.push(['call',cases.indexOf(args),fn.apply(b,args),Array.from(b)])}catch(e){out.push(['call',cases.indexOf(args),e.name,e.code,e.message,Array.from(b)])}}
+for(const encoding of ['utf8','utf16le','hex','base64','latin1','ascii','UTF-8'])for(const value of ['abc','aé😀z','fffff','YWJjZA=='])for(let length=0;length<=8;length++){
+ const b=B.alloc(8,0x7f);try{out.push([encoding,value,length,fn.call(b,value,2,length,encoding),Array.from(b)])}catch(e){out.push([encoding,value,length,e.name,e.code,e.message])}
+}
+for(const receiver of [new Uint8Array(8),new Uint16Array(4),new BigUint64Array(1),new DataView(new ArrayBuffer(8)),{},null])try{out.push(['receiver',fn.call(receiver,'ab',0,2),ArrayBuffer.isView(receiver)?Array.from(new Uint8Array(receiver.buffer)):null])}catch(e){out.push(['receiver',e.name,e.code,e.message])}
+const hooks=[];const b=B.alloc(8);Object.defineProperty(b,'length',{get(){throw new Error('shadow length')}});Object.defineProperty(b,'buffer',{get(){throw new Error('shadow buffer')}});Object.defineProperty(b,'byteOffset',{get(){throw new Error('shadow offset')}});
+const encoding={[Symbol.toPrimitive](hint){hooks.push(hint);return 'utf8'}};try{out.push(['hooks',fn.call(b,'abc',1,5,encoding),hooks,Array.from(b)])}catch(e){out.push(['hooks',e.name,e.message,hooks])}
+
+for(const enc of ['utf8','ascii','latin1','utf16le','hex','base64']){
+ const value=enc==='hex'?'6162':enc==='base64'?'YWI=':'ab';
+ const b=B.alloc(8),events=[];Object.defineProperty(b,'byteLength',{get(){events.push('byteLength');return {valueOf(){events.push('number');return 8}}}});
+ try{out.push(['byte-length-hooks',enc,fn.call(b,value,1,4,enc),events,Array.from(b)])}catch(e){out.push(['byte-length-hooks',enc,e.name,e.code,e.message,events])}
+}
+{const b=B.alloc(2);structuredClone(b.buffer,{transfer:[b.buffer]});try{out.push(['detached',fn.call(b,'abc')])}catch(e){out.push(['detached',e.name,e.code,e.message])}}
+
+for(const mode of ['primitive','string','inspect']){
+ const events=[];const encoding=mode==='primitive'?{[Symbol.toPrimitive](hint){events.push(hint);return 'unknown'}}:mode==='string'?{valueOf(){events.push('valueOf');return 'unknown'},toString(){events.push('toString');return 'display'}}:{valueOf(){events.push('valueOf');return 'unknown'},[Symbol.for('nodejs.util.inspect.custom')](){events.push('inspect');return 'custom'}};
+ try{out.push(['unknown-hooks',mode,fn.call(B.alloc(8),'x',0,4,encoding),events])}catch(e){out.push(['unknown-hooks',mode,e.name,e.code,e.message,events])}
+}
+console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn native_util_string_format_preserves_primitives_builtin_objects_and_original_hooks() {
+compare_node_stream_source(r#"
+'use strict';
+const u=require('util'),out=[],hooks=[];
+class Custom{toString(){hooks.push('custom');return 'custom-string'}}
+globalThis.Custom=Custom;
+const values=[undefined,null,true,false,0,-0,NaN,Infinity,1n,Symbol('x'),'str',{},[],[1,[2]],new Date(0),/abc/,new Number(3),new String('abc'),new Custom(),{[Symbol.toPrimitive](hint){hooks.push(hint);return 'primitive'}},{[Symbol.for('nodejs.util.inspect.custom')](){hooks.push('inspect');return 'inspected'}}];
+for(const value of values)try{out.push(u.format('%s',value))}catch(e){out.push([e.name,e.message])}
+for(const value of [new Date(0),new Date(NaN),new Number(3),new String('abc'),new Boolean(false),Object(2n),Object(Symbol('boxed'))]){
+ value.extra={nested:1};Object.defineProperty(value,'hidden',{value:7});
+ out.push(u.format('%s',value));
+}
+out.push(hooks);console.log(JSON.stringify(out));
+"#);
+}

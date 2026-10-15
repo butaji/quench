@@ -822,3 +822,33 @@ fn native_call_stack_source_names_follow_original_compiler_metadata_after_collec
         Runtime::new(CallerSourcesHost).execute(&program).unwrap();
     }
 }
+
+struct SnapshotMetadataHost;
+impl Host for SnapshotMetadataHost {
+    fn write_line(&mut self, _: &str) {}
+    fn clock_millis(&mut self) -> f64 { 0.0 }
+    fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> { context.seal_startup_intrinsics(); Ok(()) }
+    fn functions(&self) -> &[HostFunction<Self>] { crate::host_functions![global "nativeSnapshotMetadata" (1) => native_snapshot_metadata] }
+}
+fn native_snapshot_metadata(context: &mut NativeContext<'_, SnapshotMetadataHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let value = args.first().copied().unwrap_or_else(|| context.undefined());
+    let target = context.proxy_target_rooted(value)?.unwrap_or_else(|| context.undefined());
+    context.collect()?;
+    let object = context.boolean(context.has_startup_global_name("Object"));
+    let added = context.boolean(context.has_startup_global_name("AddedAfterBootstrap"));
+    context.array_rooted(&[object, added, target])
+}
+#[test]
+fn native_bootstrap_names_and_proxy_targets_survive_mutation_revocation_and_collection() {
+    let source=r#"
+      delete globalThis.Object;globalThis.AddedAfterBootstrap=function AddedAfterBootstrap(){};
+      const target={marker:42};const pair=Proxy.revocable(target,{});
+      const info=nativeSnapshotMetadata(pair.proxy);
+      if(info[0]!==true||info[1]!==false||info[2]!==target)throw Error('snapshot or original target changed');
+      pair.revoke();if(nativeSnapshotMetadata(pair.proxy)[2]!==null)throw Error('revoked target changed');
+      if(nativeSnapshotMetadata(target)[2]!==undefined)throw Error('ordinary object acquired proxy slots');
+    "#;
+    for program in [Engine::compile(crate::ExecutionRequest{source,name:"native-snapshot-metadata.js",kind:crate::SourceKind::Script}).unwrap(),Engine::specialize(source,"native-snapshot-metadata.js").unwrap()] {
+        Runtime::new(SnapshotMetadataHost).execute(&program).unwrap();
+    }
+}

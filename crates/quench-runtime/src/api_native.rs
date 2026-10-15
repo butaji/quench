@@ -208,6 +208,18 @@ impl<'a, H: Host> NativeContext<'a, H> {
         result.map_err(|error| self.error(error))
     }
 
+    /// Whether a name was an own global property in the sealed host bootstrap.
+    pub fn has_startup_global_name(&self, name: &str) -> bool {
+        self.vm.has_startup_global_name(name)
+    }
+
+    /// A proxy's original target, including null for a revoked proxy, without traps.
+    pub fn proxy_target_rooted(&mut self, root: RootId) -> Result<Option<RootId>, RootedError> {
+        let result = self.vm.embedding_proxy_target(root);
+        let value = result.map_err(|error| self.error(error))?;
+        Ok(value.map(|value| self.scoped_value(value)))
+    }
+
     /// Test an internal-slot brand without invoking guest getters or proxy traps.
     pub fn has_builtin_brand_rooted(
         &mut self,
