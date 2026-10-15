@@ -1304,9 +1304,10 @@ impl<H: Host> Vm<H> {
         self.set_builtin_function_value_named(global, "eval", eval)?;
         let function = self.native_with_realm(Native::Function, global, global);
         self.set_named(program, global, "Function", function)?;
+        // %Object.prototype% ends every prototype chain of the realm.
         let object_prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.object_proto)));
+            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
         self.realm
             .intrinsics
             .builtin_prototypes
