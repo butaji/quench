@@ -26,6 +26,26 @@ pub(crate) fn total_memory_bytes() -> u64 {
     memory_info().total
 }
 
+/// Node's credentials binding skips empty variables and removes one trailing
+/// slash. This differs from both Rust's temp_dir and libuv's uv_os_tmpdir.
+#[cfg(target_os = "linux")]
+pub(crate) fn temporary_directory() -> String {
+    use std::os::unix::ffi::OsStrExt;
+
+    let directory = ["TMPDIR", "TMP", "TEMP"]
+        .into_iter()
+        .filter_map(std::env::var_os)
+        .find(|value| !value.is_empty());
+    let Some(directory) = directory else {
+        return "/tmp".to_owned();
+    };
+    let mut bytes = directory.as_bytes();
+    if bytes.len() > 1 && bytes.last() == Some(&b'/') {
+        bytes = &bytes[..bytes.len() - 1];
+    }
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
 #[cfg(target_os = "linux")]
 pub(crate) struct CpuInfo {
     pub(crate) model: String,
