@@ -645,6 +645,7 @@ impl<H: Host> Vm<H> {
         ) || self
             .object_data(source)
             .is_some_and(Object::is_module_namespace)
+            || self.has_lazy_data_properties(source)
         {
             return self.set_integrity_level(p, source, freeze);
         }
@@ -703,6 +704,7 @@ impl<H: Host> Vm<H> {
         ) || self
             .object_data(source)
             .is_some_and(Object::is_module_namespace)
+            || self.has_lazy_data_properties(source)
         {
             return self.test_integrity_level(p, source, freeze);
         }
