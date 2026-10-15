@@ -1,5 +1,5 @@
-use super::typed_array_install::TYPED_ARRAY_CALLBACK_METHODS;
 use super::typed_array_install::TYPED_ARRAY_INSTALLS;
+use super::typed_array_install::{TYPED_ARRAY_BASE_METHODS, TYPED_ARRAY_CALLBACK_METHODS};
 use super::typed_array_install::{UINT8_ARRAY_PROTOTYPE_METHODS, UINT8_ARRAY_STATIC_METHODS};
 use super::*;
 impl<H: Host> Vm<H> {
@@ -85,20 +85,7 @@ impl<H: Host> Vm<H> {
             "BYTES_PER_ELEMENT",
             Value::number(1.0),
         )?;
-        for (name, native) in [
-            ("set", Native::Uint8ArraySet),
-            ("reverse", Native::Uint8ArrayReverse),
-            ("fill", Native::Uint8ArrayFill),
-            ("copyWithin", Native::Uint8ArrayCopyWithin),
-            ("subarray", Native::Uint8ArraySubarray),
-            ("slice", Native::Uint8ArraySlice),
-            ("includes", Native::Uint8ArrayIncludes),
-            ("indexOf", Native::Uint8ArrayIndexOf),
-            ("join", Native::Uint8ArrayJoin),
-            ("keys", Native::Uint8ArrayKeys),
-            ("values", Native::Uint8ArrayValues),
-            ("entries", Native::Uint8ArrayEntries),
-        ] {
+        for &(name, native) in TYPED_ARRAY_BASE_METHODS {
             self.set_builtin_named(program, self.typed_array_proto, name, native)?;
         }
         for &(name, native) in UINT8_ARRAY_PROTOTYPE_METHODS {
@@ -253,16 +240,7 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
-        let Some(Cell::TypedArray { buffer, .. }) = self.heap.get(this) else {
-            return Err(self.type_error(p, "typed array receiver is invalid".into()));
-        };
-        if self.typed_array_out_of_bounds(this) || self.array_buffer_detached(*buffer) {
-            return Err(self.type_error(p, "typed array receiver is invalid".into()));
-        }
-        let buffer = match self.heap.get(this) {
-            Some(Cell::TypedArray { buffer, .. }) => *buffer,
-            _ => unreachable!("typed array receiver was validated"),
-        };
+        let buffer = self.validate_typed_array_method(p, native, this)?;
         let length = self.typed_array_length(this).unwrap_or_default();
         if matches!(
             native,
@@ -897,6 +875,84 @@ impl<H: Host> Vm<H> {
         self.heap.alloc(Cell::String(name.into()))
     }
 
+    pub(super) fn validate_typed_array_method(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        this: Value,
+    ) -> Result<Value, JsError> {
+        let Some(Cell::TypedArray { buffer, .. }) = self.heap.get(this) else {
+            let method = TYPED_ARRAY_BASE_METHODS
+                .iter()
+                .find_map(|(name, candidate)| (*candidate == native).then_some(*name));
+            let message = if matches!(native, Native::Uint8ArrayJoin | Native::Uint8ArraySlice) {
+                let receiver = self.typed_array_receiver_diagnostic(p, this)?;
+                format!(
+                    "Method %TypedArray%.prototype.{} called on incompatible receiver {receiver}",
+                    method.expect("installed typed method")
+                )
+            } else if method.is_some() {
+                "this is not a typed array.".to_owned()
+            } else {
+                "typed array receiver is invalid".to_owned()
+            };
+            return Err(self.type_error(p, message));
+        };
+        let buffer = *buffer;
+        if self.typed_array_out_of_bounds(this) || self.array_buffer_detached(buffer) {
+            let method = TYPED_ARRAY_BASE_METHODS
+                .iter()
+                .find_map(|(name, candidate)| (*candidate == native).then_some(*name));
+            let message = if let Some(method) = method {
+                let state = if native == Native::Uint8ArrayKeys {
+                    "detached"
+                } else {
+                    "detached or out-of-bounds"
+                };
+                format!("Cannot perform %TypedArray%.prototype.{method} on a {state} ArrayBuffer")
+            } else {
+                "typed array receiver is invalid".to_owned()
+            };
+            return Err(self.type_error(p, message));
+        }
+        Ok(buffer)
+    }
+
+    fn typed_array_receiver_diagnostic(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+    ) -> Result<String, JsError> {
+        let receiver = if this.is_null() {
+            "null".to_owned()
+        } else if this.is_undefined() {
+            "undefined".to_owned()
+        } else if self.is_function(this) {
+            self.function_source_value(this)
+                .and_then(|source| match self.heap.get(source) {
+                    Some(Cell::String(s)) => Some(s.host_string().to_owned()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| "function () { [native code] }".to_owned())
+        } else if this.direct_array_index().is_some() {
+            "[object Array]".to_owned()
+        } else {
+            match self.heap.get(this) {
+                Some(Cell::DataView { .. }) => "#<DataView>".to_owned(),
+                Some(Cell::Date { .. }) => "[object Date]".to_owned(),
+                Some(Cell::Symbol(description)) => {
+                    format!("Symbol({})", description.as_deref().unwrap_or(""))
+                }
+                Some(Cell::String(_) | Cell::BigInt(_)) => self.to_string(p, this)?,
+                _ if this.as_number().is_some() || this.as_bool().is_some() => {
+                    self.to_string(p, this)?
+                }
+                _ => self.diagnostic_object_receiver(this),
+            }
+        };
+        Ok(receiver)
+    }
+
     pub(super) fn typed_array_getter_native(
         &mut self,
         p: &ResidualProgram,
@@ -919,20 +975,7 @@ impl<H: Host> Vm<H> {
                 Native::TypedArrayLengthGetter => "length",
                 _ => unreachable!(),
             };
-            let receiver = if this.is_null() { "null".to_owned() }
-                else if this.is_undefined() { "undefined".to_owned() }
-                else if self.is_function(this) {
-                    self.function_source_value(this).and_then(|source| match self.heap.get(source) { Some(Cell::String(s)) => Some(s.host_string().to_owned()), _ => None })
-                        .unwrap_or_else(|| "function () { [native code] }".to_owned())
-                } else if this.direct_array_index().is_some() { "[object Array]".to_owned() }
-                else { match self.heap.get(this) {
-                    Some(Cell::DataView { .. }) => "#<DataView>".to_owned(),
-                    Some(Cell::Date { .. }) => "[object Date]".to_owned(),
-                    Some(Cell::Symbol(description)) => format!("Symbol({})", description.as_deref().unwrap_or("")),
-                    Some(Cell::String(_) | Cell::BigInt(_)) => self.to_string(p, this)?,
-                    _ if this.as_number().is_some() || this.as_bool().is_some() => self.to_string(p, this)?,
-                    _ => self.diagnostic_object_receiver(this),
-                }};
+            let receiver = self.typed_array_receiver_diagnostic(p, this)?;
             return Err(self.type_error(p, format!("Method get TypedArray.prototype.{property} called on incompatible receiver {receiver}")));
         };
         let (buffer, offset, length, length_tracking, kind) =

@@ -7,7 +7,7 @@ pub use embedding::RootedError;
 #[path = "api_native.rs"]
 mod native;
 pub use native::{
-    BuiltinBrand, BuiltinData, HostFunction, HostFunctionId, HostWeakRoot, NativeArithmetic,
+    BuiltinBrand, BuiltinData, PromiseSnapshot, HostFunction, HostFunctionId, HostWeakRoot, NativeArithmetic,
     NativeContext, RootedIterator,
 };
 

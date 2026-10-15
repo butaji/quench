@@ -36,6 +36,17 @@ fn typed_array_brand(kind: TypedArrayKind) -> crate::BuiltinBrand {
 }
 
 impl<H: Host> Vm<H> {
+    pub(super) fn boxed_primitive_data(
+        &self,
+        value: Value,
+    ) -> Option<(crate::BuiltinBrand, Value)> {
+        BOXED_MARKERS.iter().find_map(|&(brand, marker)| {
+            self.lookup_atom(marker)
+                .and_then(|atom| self.own_property(value, atom))
+                .map(|payload| (brand, payload))
+        })
+    }
+
     pub(crate) fn embedding_host_weak_root(&mut self, target: RootId) -> Result<RootId, JsError> {
         let value = self.embedding_value(target)?;
         let target = self
@@ -338,18 +349,9 @@ impl<H: Host> Vm<H> {
             return Ok(Some(D::Opaque));
         }
         if value.direct_object_index().is_some() {
-            for &(brand, marker) in BOXED_MARKERS {
-                if let Some(payload) = self
-                    .lookup_atom(marker)
-                    .and_then(|atom| self.own_property(value, atom))
-                {
-                    return Ok(Some(D::Primitive {
-                        brand,
-                        value: payload,
-                    }));
-                }
-            }
-            return Ok(None);
+            return Ok(self
+                .boxed_primitive_data(value)
+                .map(|(brand, value)| D::Primitive { brand, value }));
         }
         let data = match self.heap.get(value) {
             Some(Cell::Date { milliseconds, .. }) => D::Primitive {
@@ -387,18 +389,9 @@ impl<H: Host> Vm<H> {
             Some(Cell::WeakMap { .. } | Cell::WeakSet { .. }) => D::Opaque,
             Some(Cell::Error(_)) => D::Error,
             Some(Cell::Object(_)) => {
-                for &(brand, marker) in BOXED_MARKERS {
-                    if let Some(payload) = self
-                        .lookup_atom(marker)
-                        .and_then(|atom| self.own_property(value, atom))
-                    {
-                        return Ok(Some(D::Primitive {
-                            brand,
-                            value: payload,
-                        }));
-                    }
-                }
-                return Ok(None);
+                return Ok(self
+                    .boxed_primitive_data(value)
+                    .map(|(brand, value)| D::Primitive { brand, value }));
             }
             _ => return Ok(None),
         };
@@ -666,6 +659,25 @@ impl<H: Host> Vm<H> {
         self.embedding_has_builtin_brand(root, crate::BuiltinBrand::Promise)
     }
 
+    pub(crate) fn embedding_promise_snapshot(&self, root: RootId) -> Result<Option<crate::PromiseSnapshot<Value>>, JsError> {
+        use crate::PromiseSnapshot as Snapshot;
+        let value = self.embedding_value(root)?;
+        Ok(self.realm.promise.records.get(&value).map(|record| match record.state {
+            super::promise::PromiseState::Pending => Snapshot::Pending,
+            super::promise::PromiseState::Fulfilled => Snapshot::Fulfilled(record.result),
+            super::promise::PromiseState::Rejected => Snapshot::Rejected(record.result),
+        }))
+    }
+
+    pub(crate) fn embedding_mark_promise_handled(&mut self, root: RootId) -> Result<(), JsError> {
+        let promise = self.embedding_value(root)?;
+        if !self.realm.promise.records.contains_key(&promise) {
+            return Err(JsError("value does not have Promise internal slots".into()));
+        }
+        self.observe_promise_rejection(promise);
+        Ok(())
+    }
+
     pub(crate) fn embedding_to_string(&mut self, root: RootId) -> Result<String, JsError> {
         let value = self.embedding_value(root)?;
         let program = self.embedding_program()?;
@@ -893,7 +905,13 @@ impl<H: Host> Vm<H> {
     }
 
     pub(crate) fn string_rooted(&mut self, text: &str) -> RootId {
-        let value = self.heap.alloc(Cell::String(JsString::from_str(text)));
+        // Host strings mostly spell property keys already interned; such a string shares the
+        // atom's storage instead of copying the text.
+        let string = match self.lookup_atom(text) {
+            Some(atom) => self.atom_value(atom),
+            None => JsString::from_str(text),
+        };
+        let value = self.heap.alloc(Cell::String(string));
         self.root(value)
     }
 

@@ -112,6 +112,7 @@ impl<H: Host> Vm<H> {
             length_atom: u32::MAX,
             prototype_atom: super::builtins::NO_CACHED_ATOM,
             instanceof_constructor_layout: None,
+            closure_shapes: [None; 2],
             regexp_last_index_layout: None,
             regexp_builtin_layout: None,
             instanceof_has_instance_holder: Value::NULL,

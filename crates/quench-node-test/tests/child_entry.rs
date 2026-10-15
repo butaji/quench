@@ -1478,9 +1478,13 @@ next();
 }
 
 fn compare_node_stream_source(source: &str) {
+    compare_node_source_with_args(source, &[]);
+}
+
+fn compare_node_source_with_args(source: &str, flags: &[&str]) {
     let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
         let mut command = Command::new(executable);
-        command.args(["-e", source]);
+        command.args(flags).args(["-e", source]);
         if executable != "node" {
             command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
         }
@@ -1903,6 +1907,63 @@ assert.notStrictEqual(clone[1],shared);
 assert.deepStrictEqual(Object.getOwnPropertyDescriptor(clone,'1'),{value:clone[1],writable:true,enumerable:true,configurable:true});
 console.log(JSON.stringify([Object.keys(clone),clone.length,clone[1],reads]));
 "#);
+}
+
+#[test]
+fn structured_clone_errors_preserve_intrinsics_descriptors_snapshots_and_cycles() {
+    compare_node_stream_source(
+        r#"
+const assert=require('node:assert'),types=require('node:util').types,out=[];
+for(const Type of [Error,EvalError,RangeError,ReferenceError,SyntaxError,TypeError,URIError,AggregateError]) {
+ const source=Type===AggregateError?new Type([], 'message'):new Type('message');
+ source.stack='saved stack';source.extra=42;source.cause=source;
+ const copy=structuredClone([source,source]),clone=copy[0];
+ assert.strictEqual(clone,copy[1]);assert.strictEqual(clone.cause,clone);assert.notStrictEqual(clone,source);
+ assert.strictEqual(Object.getPrototypeOf(clone),Type===AggregateError?Error.prototype:Type.prototype);
+ assert.strictEqual(types.isNativeError(clone),true);assert.strictEqual(clone.stack,'saved stack');
+ assert.deepStrictEqual(Object.keys(clone),[]);assert.strictEqual(Object.hasOwn(clone,'extra'),false);
+ assert.deepStrictEqual(Object.getOwnPropertyDescriptor(clone,'message'),{value:'message',writable:true,enumerable:false,configurable:true});
+ const descriptor=Object.getOwnPropertyDescriptor(clone,'cause');assert.strictEqual(descriptor.enumerable,false);assert.strictEqual(descriptor.writable,true);assert.strictEqual(descriptor.configurable,true);
+ const stack=Object.getOwnPropertyDescriptor(clone,'stack');out.push([clone.name,typeof stack.get,typeof stack.set,stack.enumerable,stack.configurable]);
+ clone.stack='changed';assert.strictEqual(clone.stack,'changed');
+}
+
+const unicodeError=new Error();unicodeError.message={toString(){return '\ud800message\udfff'}};unicodeError.stack='fixed';assert.strictEqual(structuredClone(unicodeError).message,'\ud800message\udfff');
+const trace=[],oldCause={old:true},source=new Error();
+Object.defineProperties(source,{
+ message:{configurable:true,value:{toString(){trace.push('message');return 'snapshot message'}}},
+ cause:{configurable:true,value:oldCause},
+ name:{get(){trace.push('name');Object.defineProperty(source,'message',{value:'mutated'});Object.defineProperty(source,'cause',{value:null});const garbage=[];for(let i=0;i<20000;i++)garbage.push({i});return {toString(){trace.push('name coercion');return 'TypeError'}}}},
+ stack:{configurable:true,get(){trace.push('stack');return 'snapshot stack'}}
+});
+const clone=structuredClone(source);assert.strictEqual(clone.message,'snapshot message');assert.deepStrictEqual(clone.cause,{old:true});assert.notStrictEqual(clone.cause,oldCause);assert.strictEqual(Object.getPrototypeOf(clone),TypeError.prototype);assert.deepStrictEqual(trace,['name','name coercion','message','stack']);out.push(trace);
+for(const stack of [undefined,42,null,{}]){const source=new Error();Object.defineProperty(source,'stack',{value:stack});Object.defineProperty(source,'message',{get(){throw 'message accessor'}});Object.defineProperty(source,'cause',{get(){throw 'cause accessor'}});const c=structuredClone(source);assert.strictEqual(Object.hasOwn(c,'message'),false);assert.strictEqual(Object.hasOwn(c,'cause'),false);assert.strictEqual(c.stack,undefined);}
+for(const property of ['name','stack']){const marker={};const e=new Error();Object.defineProperty(e,property,{get(){throw marker}});assert.throws(()=>structuredClone(e),e=>e===marker);}
+for(const property of ['name','message']){const e=new Error();Object.defineProperty(e,'stack',{value:'fixed'});Object.defineProperty(e,property,{value:Symbol('bad')});assert.throws(()=>structuredClone(e),TypeError);}
+const original=TypeError,e=new original('intrinsic');e.stack='fixed';globalThis.TypeError=function(){throw 'replacement'};const c=structuredClone(e);assert.strictEqual(Object.getPrototypeOf(c),original.prototype);globalThis.TypeError=original;
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[test]
+fn structured_clone_builtin_graphs_preserve_snapshots_and_ignore_public_hooks() {
+    compare_node_stream_source(
+        r#"
+const assert=require('node:assert'),out=[];
+const key={key:1},map=new Map(),set=new Set();map.set(key,set);map.set(map,map);set.add(key);set.add(map);set.add(set);
+for(const value of [map,set]){Object.defineProperty(value,Symbol.iterator,{get(){throw 'iterator'}});Object.defineProperty(value,'extra',{enumerable:true,get(){throw 'extra'}});Object.setPrototypeOf(value,Object.create(Object.getPrototypeOf(value)));}
+const oldSet=Map.prototype.set,oldAdd=Set.prototype.add;Map.prototype.set=Set.prototype.add=function(){throw 'public insertion'};
+const graph=structuredClone([map,set,key,map]);Map.prototype.set=oldSet;Set.prototype.add=oldAdd;
+const [m,s,k]=graph;assert.strictEqual(graph[3],m);assert.strictEqual(m.get(k),s);assert.strictEqual(m.get(m),m);assert.deepStrictEqual([...s],[k,m,s]);assert.strictEqual(Object.getPrototypeOf(m),Map.prototype);assert.strictEqual(Object.getPrototypeOf(s),Set.prototype);assert.deepStrictEqual(Object.keys(m),[]);
+const snapshot=new Map(),first={get value(){snapshot.clear();return 'first'}},last={last:true};snapshot.set(first,last);snapshot.set(last,first);const copied=structuredClone(snapshot);const pairs=[...copied];assert.strictEqual(pairs.length,2);assert.strictEqual(pairs[0][0],pairs[1][1]);assert.strictEqual(pairs[0][1],pairs[1][0]);assert.strictEqual(pairs[0][0].value,'first');
+const members=new Set(),element={get value(){members.clear();members.add('late');return 'first'}};members.add(element);members.add(last);assert.deepStrictEqual([...structuredClone(members)],[{value:'first'},{last:true}]);
+for(const time of [0,-1,1700000000123,NaN]){const date=new Date(time);Object.defineProperty(date,'getTime',{get(){throw 'date hook'}});Object.defineProperty(date,'extra',{enumerable:true,get(){throw 'date extra'}});const pair=structuredClone([date,date]);assert.strictEqual(pair[0],pair[1]);assert(Object.is(pair[0].getTime(),time));assert.strictEqual(Object.getPrototypeOf(pair[0]),Date.prototype);assert.deepStrictEqual(Object.keys(pair[0]),[]);}
+const regexp=/a(b)/dgimsuy;regexp.lastIndex=99;for(const name of ['source','flags','extra'])Object.defineProperty(regexp,name,{enumerable:true,get(){throw 'regexp hook'}});const pair=structuredClone([regexp,regexp]);assert.strictEqual(pair[0],pair[1]);assert.strictEqual(pair[0].source,'a(b)');assert.strictEqual(pair[0].flags,'dgimsuy');assert.strictEqual(pair[0].lastIndex,0);assert.strictEqual(Object.getPrototypeOf(pair[0]),RegExp.prototype);assert.deepStrictEqual(Object.keys(pair[0]),[]);
+for(const [name,value] of [['Map',new Map([[1,2]])],['Set',new Set([1])],['Date',new Date(42)],['RegExp',/x/g]]){const original=globalThis[name],prototype=original.prototype;globalThis[name]=function(){throw 'public constructor'};const clone=structuredClone(value);assert.strictEqual(Object.getPrototypeOf(clone),prototype);globalThis[name]=original;out.push([name,Object.prototype.toString.call(clone)]);}
+console.log(JSON.stringify(out));
+"#,
+    );
 }
 
 #[test]
@@ -5937,6 +5998,8 @@ console.log(tls.createSecureContext().context.getMinProto(),creations);console.l
 fn native_internal_key_filters_and_raw_engine_binding_match_node() {
     const SOURCE: &str = r#"
 const {internalBinding}=require('internal/test/binding');const u=internalBinding('util'),c=internalBinding('crypto');
+const fs=require('fs'),fc=internalBinding('constants').fs,fd=Object.getOwnPropertyDescriptor(fs,'constants');
+console.log(JSON.stringify(['fs-constants',fs.constants===fc,[fd.writable,fd.enumerable,fd.configurable],['UNKNOWN','FILE','DIR','LINK','FIFO','SOCKET','CHAR','BLOCK'].map(k=>[k,Object.getOwnPropertyDescriptor(fc,'UV_DIRENT_'+k)])]));
 console.log(JSON.stringify([c.setEngine.name,c.setEngine.length,u.getOwnNonIndexProperties.name,u.getOwnNonIndexProperties.length,u===internalBinding('util'),Object.entries(u.constants)]));
 for(const flags of [0,1,65535])console.log(JSON.stringify(['dynamic',flags,c.setEngine('dynamic',flags)]));
 const a=[1,2];a.extra=3;Object.defineProperty(a,'hidden',{value:4});a[Symbol('x')]=5;a['01']=6;a['4294967295']=7;
@@ -7535,4 +7598,688 @@ fn util_parse_args_default_argv_matches_eval_print_and_file_entry_forms() {
         }
         assert_eq!(observations[0].stdout,observations[1].stdout,"{args:?}");
     }
+}
+
+#[test]
+fn structured_clone_views_preserve_backing_aliases_transfers_and_resize_modes() {
+    compare_node_stream_source(
+        r#"
+const assert=require('node:assert'),out=[];
+for(const Type of [Uint8Array,Uint8ClampedArray,Uint16Array,Uint32Array,Int8Array,Int16Array,Int32Array,BigInt64Array,BigUint64Array,Float16Array,Float32Array,Float64Array]){
+ const buffer=new ArrayBuffer(64),bytes=new Uint8Array(buffer);for(let i=0;i<64;i++)bytes[i]=i;
+ const view=new Type(buffer,16,2),data=new DataView(buffer,8,24);Object.defineProperty(view,'buffer',{get(){throw 'buffer hook'}});Object.defineProperty(view,'extra',{enumerable:true,get(){throw 'extra'}});
+ const [copy,v,d,alias]=structuredClone([buffer,view,data,view]);assert.notStrictEqual(copy,buffer);assert.strictEqual(v.buffer,copy);assert.strictEqual(d.buffer,copy);assert.strictEqual(alias,v);assert.strictEqual(Object.getPrototypeOf(v),Type.prototype);assert.strictEqual(v.byteOffset,16);assert.strictEqual(v.length,2);assert.strictEqual(d.byteOffset,8);assert.strictEqual(d.byteLength,24);assert.deepStrictEqual([...new Uint8Array(copy)],[...bytes]);new Uint8Array(copy)[0]=255;assert.strictEqual(bytes[0],0);out.push([Type.name,v.byteOffset,v.length]);
+}
+for(const transfer of [false,true]){const b=new ArrayBuffer(16,{maxByteLength:32}),fixed=new Uint16Array(b,4,2),tracking=new Uint16Array(b,4),dataFixed=new DataView(b,4,4),dataTracking=new DataView(b,4);const [c,f,t,df,dt]=structuredClone([b,fixed,tracking,dataFixed,dataTracking],transfer?{transfer:[b]}:{});assert.strictEqual(b.byteLength,transfer?0:16);assert.strictEqual(c.resizable,true);assert.strictEqual(c.maxByteLength,32);for(const view of [f,t,df,dt])assert.strictEqual(view.buffer,c);c.resize(24);assert.strictEqual(f.length,2);assert.strictEqual(t.length,10);assert.strictEqual(df.byteLength,4);assert.strictEqual(dt.byteLength,20);}
+for(const kind of ['typed','data','buffer']){const b=new ArrayBuffer(8),v=kind==='typed'?new Uint16Array(b):kind==='data'?new DataView(b):b;structuredClone(b,{transfer:[b]});assert.throws(()=>structuredClone(v),e=>e.name==='DataCloneError'&&e.code===25&&e.message==='An ArrayBuffer is detached and could not be cloned.');}
+for(const kind of ['typed','data']){const b=new ArrayBuffer(8,{maxByteLength:16}),v=kind==='typed'?new Uint16Array(b,4,2):new DataView(b,4,4);b.resize(2);assert.throws(()=>structuredClone(v),e=>e.name==='DataCloneError'&&e.code===25&&e.message===(kind==='typed'?'[object Object] could not be cloned.':'#<DataView> could not be cloned.'));}
+const b=new ArrayBuffer(8),view=new Uint8Array(b);assert.throws(()=>structuredClone({view,bad:()=>{}},{transfer:[b]}),e=>e.name==='DataCloneError');assert.strictEqual(b.byteLength,8);
+const original=Uint16Array;globalThis.Uint16Array=function(){throw 'replacement'};const copy=structuredClone(new original([42]));assert.strictEqual(Object.getPrototypeOf(copy),original.prototype);globalThis.Uint16Array=original;
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[test]
+fn structured_clone_boxed_values_and_rejected_brands_match_node() {
+    compare_node_stream_source(
+        r#"
+const assert=require('node:assert'),out=[];
+for(const value of [true,false,0,-0,NaN,Infinity,42n,'a\ud800b']) {
+ const source=Object(value),prototype=Object.getPrototypeOf(source);
+ Object.defineProperty(source,'valueOf',{get(){throw 'valueOf hook'}});Object.defineProperty(source,Symbol.toPrimitive,{get(){throw 'primitive hook'}});Object.defineProperty(source,'extra',{enumerable:true,get(){throw 'extra hook'}});
+ const [copy,alias]=structuredClone([source,source]);assert.strictEqual(copy,alias);assert.notStrictEqual(copy,source);assert.strictEqual(Object.getPrototypeOf(copy),prototype);assert(Object.is(prototype.valueOf.call(copy),value));assert.strictEqual(Object.hasOwn(copy,'extra'),false);out.push([typeof value,Object.keys(copy)]);
+}
+for(const Type of [Boolean,Number,String]){const copy=structuredClone(Type.prototype);assert.strictEqual(Object.getPrototypeOf(copy),Type.prototype);assert(Object.is(copy.valueOf(),Type.prototype.valueOf()));}
+for(const [value,message] of [[Object(Symbol('x')),'[object Symbol] could not be cloned.'],[Promise.resolve(),'#<Promise> could not be cloned.'],[(function(){return arguments})(1),'#<Object> could not be cloned.']]){Object.defineProperty(value,'extra',{enumerable:true,get(){throw 'rejected getter'}});assert.throws(()=>structuredClone(value),e=>e.name==='DataCloneError'&&e.code===25&&e.message===message);}
+const source=Object(12n),original=BigInt;globalThis.BigInt=function(){throw 'replacement'};const copy=structuredClone(source);assert.strictEqual(Object.getPrototypeOf(copy),original.prototype);globalThis.BigInt=original;
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[test]
+fn structured_clone_webidl_options_preserve_errors_iteration_and_original_intrinsics() {
+    compare_node_stream_source(
+        r#"
+const assert=require('node:assert'),out=[];
+try{structuredClone()}catch(e){out.push([e.name,e.code,e.message]);}
+for(const options of ['',1,true,1n,Symbol('x'),{transfer:null},{transfer:''},{transfer:1},{transfer:[1]},{transfer:[null]},{transfer:{[Symbol.iterator]:1}}]){
+ try{structuredClone(undefined,options);throw 'accepted invalid options'}catch(e){assert.strictEqual(e.code,'ERR_INVALID_ARG_TYPE');out.push([e.name,e.code,e.message]);}
+}
+assert.strictEqual(structuredClone(undefined,null),undefined);assert.strictEqual(structuredClone(undefined,{transfer:undefined}),undefined);
+const trace=[],buffer=new ArrayBuffer(8),options={get transfer(){trace.push('transfer');return {get [Symbol.iterator](){trace.push('iterator');return function(){trace.push('call');let done=false;return {get next(){trace.push('next');return function(){trace.push('step');if(done)return {done:true};done=true;return {get done(){trace.push('done');return false},get value(){trace.push('value');return buffer}}}}}}}}}};
+const copy=structuredClone(buffer,options);assert.strictEqual(copy.byteLength,8);assert.strictEqual(buffer.byteLength,0);out.push(trace);
+const marker={};assert.throws(()=>structuredClone({}, {get transfer(){throw marker}}),e=>e===marker);
+const original=Array.prototype[Symbol.iterator];Array.prototype[Symbol.iterator]=function(){throw 'public array iterator'};const b=new ArrayBuffer(1);const cloned=structuredClone(b,{transfer:{[Symbol.iterator](){let done=false;return {next(){if(done)return {done:true};done=true;return {value:b,done:false}}}}}});Array.prototype[Symbol.iterator]=original;assert.strictEqual(cloned.byteLength,1);assert.strictEqual(b.byteLength,0);
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[test]
+fn filesystem_relative_paths_follow_chdir_without_repository_aliases() {
+    compare_node_stream_source(
+        r#"
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),assert=require('node:assert');
+const original=process.cwd(),dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-relative-paths-')),out=[];
+try {
+ for(const relative of ['test/common/index.js','tests/node/test/common/index.js']){const file=path.join(dir,relative);fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,'application-owned:'+relative);}
+ process.chdir(dir);
+ for(const relative of ['test/common/index.js','tests/node/test/common/index.js']){const content='application-owned:'+relative;assert.strictEqual(fs.readFileSync(relative,'utf8'),content);assert.strictEqual(fs.statSync(relative).size,Buffer.byteLength(content));out.push([relative,fs.readFileSync(relative,'utf8')]);}
+} finally {process.chdir(original);fs.rmSync(dir,{recursive:true,force:true});}
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[test]
+fn structured_clone_transfer_markers_and_commit_order_match_node() {
+    compare_node_stream_source(
+        r#"
+const assert=require('node:assert'),w=require('node:worker_threads'),out=[];
+for(const name of ['markAsUncloneable','markAsUntransferable','isMarkedAsUntransferable']){const f=w[name],d=Object.getOwnPropertyDescriptor(f,'prototype');out.push([f.name,f.length,Object.hasOwn(f,'prototype'),d.writable,d.enumerable,d.configurable,f.prototype.constructor===f]);}
+for(const primitive of [undefined,null,1,1n,'x',Symbol('x')]){assert.strictEqual(w.markAsUntransferable(primitive),undefined);assert.strictEqual(w.isMarkedAsUntransferable(primitive),false);}
+for(const value of [{},[],new Map(),new Set(),new Date(),new Error(),new Uint8Array(2),new ArrayBuffer(2),function(){}]){assert.strictEqual(w.isMarkedAsUntransferable(value),false);assert.strictEqual(w.markAsUntransferable(value),undefined);assert.strictEqual(w.isMarkedAsUntransferable(value),true);w.markAsUntransferable(value);assert.throws(()=>structuredClone(1,{transfer:[value]}),e=>e.name==='DataCloneError'&&e.code===25&&e.message==='Cannot transfer object of unsupported type.');}
+for(const revoked of [false,true]){const trace=[],{proxy,revoke}=Proxy.revocable({},{get(){trace.push('get')},set(){trace.push('set');return true}});if(revoked)revoke();assert.strictEqual(w.isMarkedAsUntransferable(proxy),false);for(const name of ['markAsUntransferable','markAsUncloneable'])assert.throws(()=>w[name](proxy),e=>e.name==='TypeError'&&e.message==='Cannot pass private property name to proxy trap');assert.deepStrictEqual(trace,[]);}
+const marked=new ArrayBuffer(2),keys=Reflect.ownKeys(marked);w.markAsUntransferable(marked);assert.deepStrictEqual(Reflect.ownKeys(marked),keys);const unmarkedCopy=structuredClone(marked);assert.strictEqual(w.isMarkedAsUntransferable(unmarkedCopy),false);for(const method of ['transfer','transferToFixedLength'])assert.throws(()=>marked[method](),e=>e.name==='TypeError'&&e.message==='ArrayBuffer is not detachable and could not be cloned.');assert.strictEqual(marked.byteLength,2);
+function error(operation){try{operation();return null}catch(e){return [e.name,e.code??null,e.message]}}
+const b=new ArrayBuffer(2),detached=new ArrayBuffer(2);detached.transfer();out.push(error(()=>structuredClone(1,{transfer:[b,b]})));out.push(error(()=>structuredClone(1,{transfer:[{}]})));out.push(error(()=>structuredClone(1,{transfer:[detached]})));out.push(error(()=>structuredClone(1,{transfer:[new WebAssembly.Memory({initial:1}).buffer]})));
+for(const action of ['resize','detach','write']){const b=new ArrayBuffer(4,{maxByteLength:16});const c=structuredClone({b,get x(){if(action==='resize')b.resize(8);else if(action==='detach')b.transfer();else new Uint8Array(b)[0]=7;return 1}},{transfer:[b]});out.push([action,c.b.byteLength,c.b.resizable,c.b.maxByteLength,Array.from(new Uint8Array(c.b))]);assert.strictEqual(b.byteLength,0);}
+for(const first of [true,false]){const b=new ArrayBuffer(8,{maxByteLength:16}),v=new Uint8Array(b,4,4);const source=first?{v,get x(){b.resize(2);return 1}}:{get x(){b.resize(2);return 1},v};const result=error(()=>structuredClone(source,{transfer:[b]}));out.push(['view-order',first,result,b.byteLength]);}
+{const b=new ArrayBuffer(4,{maxByteLength:16});const result=error(()=>structuredClone({b,get v(){b.resize(8);return new Uint8Array(b,4,4)}}));out.push(['copied-view',result,b.byteLength]);}
+{const a=new ArrayBuffer(2),b=new ArrayBuffer(2);const result=error(()=>structuredClone({get x(){w.markAsUntransferable(b);return 1}},{transfer:[a,b]}));out.push(['detach-key',result,a.byteLength,b.byteLength]);assert.strictEqual(a.byteLength,0);assert.strictEqual(b.byteLength,2);}
+{const b=new ArrayBuffer(2),marker={};assert.throws(()=>structuredClone({b,get x(){throw marker}},{transfer:[b]}),e=>e===marker);assert.strictEqual(b.byteLength,2);}
+for(const transfer of [false,true])for(const rab of [false,true])for(const type of ['typed','data']){const b=rab?new ArrayBuffer(8,{maxByteLength:16}):new ArrayBuffer(8),v=type==='typed'?new Uint8Array(b,0,2):new DataView(b,0,2);let copy;const failure=error(()=>{copy=structuredClone({b,get x(){b.transfer();return 1},v},transfer?{transfer:[b]}:{})});out.push(['detached-view',transfer,rab,type,failure,copy?[copy.v.byteOffset,copy.v.byteLength,copy.b.byteLength]:null]);}
+for(const type of ['typed','data']){const b=new ArrayBuffer(4,{maxByteLength:16}),v=type==='typed'?new Uint8Array(b):new DataView(b);const c=structuredClone({b,get x(){b.resize(8);return 1},v});assert.strictEqual(c.v.byteLength,4);assert.strictEqual(c.b.byteLength,4);}
+
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[test]
+fn filesystem_metadata_file_urls_validate_scheme_host_and_encoded_separators() {
+    compare_node_stream_source(
+        r#"
+const fs=require('node:fs'),assert=require('node:assert'),out=[];
+const cases=[['https://example.org/','ERR_INVALID_URL_SCHEME'],['file://example.org/','ERR_INVALID_FILE_URL_HOST'],['file:///a%2Fb','ERR_INVALID_FILE_URL_PATH']];
+for(const [input,code] of cases){
+ const path=new URL(input);assert.strictEqual(fs.existsSync(path),false);
+ for(const name of ['statSync','lstatSync','statfsSync']){assert.throws(()=>fs[name](path),e=>{out.push([name,e.name,e.code,e.message]);return e.code===code});}
+ for(const name of ['stat','lstat','statfs']){let called=false;assert.throws(()=>fs[name](path,()=>{called=true}),e=>{out.push([name,e.name,e.code,e.message]);return e.code===code});assert.strictEqual(called,false);}
+}
+for(const name of ['statSync','lstatSync'])assert.strictEqual(fs[name](new URL('file:///')).isDirectory(),true);
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[test]
+fn filesystem_metadata_callback_exceptions_escape_without_second_delivery() {
+    for method in ["stat", "lstat", "statfs"] {
+        for missing in [false, true] {
+            let source = format!(
+                r#"
+const fs=require('node:fs');
+const marker={{}},method={method:?};let count=0;
+process.on('uncaughtException',error=>console.log('uncaught',error===marker,count));
+fs[method]({path},function(error,stats){{count++;console.log('callback',count,error===null,!!stats);throw marker;}});
+"#,
+                path = if missing {
+                    "'/quench-metadata-missing-'+process.pid"
+                } else {
+                    "'/'"
+                },
+            );
+            compare_node_stream_source(&source);
+        }
+    }
+}
+
+#[test]
+fn file_url_conversion_observes_url_like_getters_options_and_primordials() {
+    compare_node_stream_source(
+        r#"
+const {fileURLToPath}=require('node:url'),assert=require('node:assert'),fs=require('node:fs'),out=[];
+function result(f){try{return ['value',f()]}catch(e){return ['error',e.name,e.code??null,e.message]}}
+for(const input of [undefined,null,1,true,{},[],Symbol('x')])out.push(result(()=>fileURLToPath(input)));
+for(const input of ['file:///tmp/a%20b','file://localhost/tmp/a','file://host/tmp','https://example.org/','file:///a%2fb','file:///a%5cb','file:///%FF','file:///%ZZ','file:///C:/foo','file://xn--bcher-kva/share'])for(const windows of [false,true,null])out.push([input,windows,result(()=>fileURLToPath(input,{windows}))]);
+for(const input of [new URL('file:///a%2Fb'),{href:'file:///',protocol:'file:',hostname:'',pathname:'/a%2Fb'}])assert.throws(()=>fileURLToPath(input),e=>{assert.strictEqual(e.input,input);const d=Object.getOwnPropertyDescriptor(e,'input');assert.deepStrictEqual([d.writable,d.enumerable,d.configurable],[true,true,true]);out.push([String(e),Reflect.ownKeys(e).filter(k=>k!=='stack')]);return true});
+const trace=[],u={};for(const [name,value] of Object.entries({href:'file:///',protocol:'file:',auth:undefined,path:undefined,hostname:'',pathname:'/tmp/a%20b'}))Object.defineProperty(u,name,{get(){trace.push(name);return value}});
+const options={get windows(){trace.push('windows');return false}};assert.strictEqual(fileURLToPath(u,options),'/tmp/a b');out.push(['order',trace]);
+const marker={};assert.throws(()=>fileURLToPath(null,{get windows(){throw marker}}),e=>e===marker);
+for(const name of ['href','protocol','auth','path','hostname','pathname']){const u=new URL('file:///');Object.defineProperty(u,name,{get(){throw marker}});assert.throws(()=>fileURLToPath(u),e=>e===marker);assert.throws(()=>fs.statSync(u),e=>e===marker);}
+{const pathname={length:0,toString(){return '/object-path'}},u={href:'file:///',protocol:'file:',hostname:'',pathname};assert.strictEqual(fileURLToPath(u),pathname);}
+{const pathname='\ud800',u={href:'file:///',protocol:'file:',hostname:'',pathname};assert.strictEqual(fileURLToPath(u),pathname);}
+const originalURL=globalThis.URL,originalIncludes=String.prototype.includes,originalDecode=globalThis.decodeURIComponent;
+try{globalThis.URL=function(){throw marker};String.prototype.includes=function(){throw marker};globalThis.decodeURIComponent=function(){throw marker};assert.strictEqual(fileURLToPath('file:///tmp/a%20b'),'/tmp/a b');}finally{globalThis.URL=originalURL;String.prototype.includes=originalIncludes;globalThis.decodeURIComponent=originalDecode;}
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[test]
+fn uri_globals_preserve_node_error_messages_and_utf16() {
+    compare_node_stream_source(
+        r#"
+const assert=require('node:assert'),out=[];
+for(const name of ['encodeURI','encodeURIComponent'])for(const value of ['\ud800','\udfff','a\ud800b'])assert.throws(()=>globalThis[name](value),e=>{out.push([name,e.name,e.message,e.code??null]);return e instanceof URIError&&e.message==='URI malformed'});
+for(const name of ['decodeURI','decodeURIComponent'])for(const value of ['%','%0','%ZZ','%FF','%C0%80','%ED%A0%80','%F4%90%80%80','%E2%82','%E2x%82%AC'])assert.throws(()=>globalThis[name](value),e=>{out.push([name,e.name,e.message,e.code??null]);return e instanceof URIError&&e.message==='URI malformed'});
+assert.strictEqual(decodeURIComponent('\ud800'),'\ud800');assert.strictEqual(decodeURIComponent('%F0%90%80%80'),'𐀀');assert.strictEqual(decodeURI('%2f'),'%2f');assert.strictEqual(decodeURIComponent('%2f'),'/');
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[test]
+fn file_url_byte_conversion_preserves_raw_paths_forgiving_escapes_and_hooks() {
+    compare_node_stream_source(
+        r#"
+const url=require('node:url'),assert=require('node:assert'),B=Buffer,out=[];
+function result(f){try{const b=f();assert(B.isBuffer(b));return ['bytes',Array.from(b)]}catch(e){return ['error',e.name,e.code??null,e.message]}}
+for(const path of ['file:///tmp/a%20b','file:///%82%A0%82%A2','file:///a%2Fb','file:///a%5Cb','file:///%ZZ%2%','file:///C:/%FF%2F%5C','file://xn--bcher-kva/share%FF','https://example.org/'])for(const windows of [false,true,null])out.push([path,windows,result(()=>url.fileURLToPathBuffer(path,{windows}))]);
+const trace=[],u={};for(const [name,value] of Object.entries({href:'file:///',protocol:'file:',auth:undefined,path:undefined,hostname:'',pathname:'/a%FF%2Fb'}))Object.defineProperty(u,name,{get(){trace.push(name);return value}});out.push(result(()=>url.fileURLToPathBuffer(u,{get windows(){trace.push('windows');return false}})),trace);
+for(const path of ['https://example.org/','file://remote/']){try{url.fileURLToPath(path)}catch(e){out.push([String(e),Reflect.ownKeys(e).filter(k=>k!=='stack')])}}
+const marker={};assert.throws(()=>url.fileURLToPathBuffer(null,{get windows(){throw marker}}),e=>e===marker);
+for(const name of ['href','protocol','auth','path','hostname','pathname']){const u=new URL('file:///');Object.defineProperty(u,name,{get(){throw marker}});assert.throws(()=>url.fileURLToPathBuffer(u),e=>e===marker);}
+const originalFrom=Buffer.from,originalGlobal=globalThis.Buffer,calls=[];
+try{Buffer.from=function(...args){calls.push([typeof args[0],args[0] instanceof ArrayBuffer,args.length,args[1]??null,args[2]??null]);return Reflect.apply(originalFrom,this,args)};globalThis.Buffer=function(){throw marker};out.push(result(()=>url.fileURLToPathBuffer('file:///tmp/a%FF',{windows:false})));}finally{globalThis.Buffer=originalGlobal;Buffer.from=originalFrom;}
+out.push(calls);console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn filesystem_metadata_paths_preserve_bytes_validation_and_option_getter_order() {
+    use std::os::unix::ffi::OsStringExt;
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory
+            .path()
+            .join(std::ffi::OsString::from_vec(vec![0xff])),
+        b"raw",
+    )
+    .unwrap();
+    std::fs::write(directory.path().join("x"), b"xxx").unwrap();
+    std::fs::write(directory.path().join("y"), b"yyyyyyy").unwrap();
+    let source = format!(
+        "const directory={:?};\n",
+        directory.path().to_str().unwrap()
+    ) + r#"
+const fs=require('node:fs'),assert=require('node:assert'),out=[];
+for(const detached of [false,true]){const b=new ArrayBuffer(8,{maxByteLength:16}),v=new Uint8Array(b,4,2);if(detached)b.transfer();else b.resize(2);for(const method of ['statSync','lstatSync','statfsSync']){try{fs[method](v);assert.fail('accepted unavailable backing bytes')}catch(e){assert(e instanceof TypeError);out.push([method,detached,e.name,e.message,e.code??null]);}}}
+const raw=Buffer.concat([Buffer.from(directory+'/'),Buffer.from([255])]);
+const rawLength=raw.length;raw.toString=raw.includes=()=>{throw 'public-conversion'};for(const key of ['length','byteLength','byteOffset','buffer'])Object.defineProperty(raw,key,{get(){throw 'public-view-metadata'}});
+for(const method of ['statSync','lstatSync','statfsSync']){
+ const b=new Uint8Array(rawLength+2);b.set(raw,1);const view=b.subarray(1,-1);
+ for(const path of [raw,view]){const value=fs[method](path);assert(value);if(method!=='statfsSync')assert.strictEqual(value.size,3);out.push([method,typeof value.size,typeof value.bsize]);}
+ for(const path of ['a\0b',Buffer.from([97,0,98]),new Uint8Array([97,0,98]),new Uint8ClampedArray([47]),new Int8Array([47]),new DataView(new ArrayBuffer(1)),{},null,undefined]){
+  try{fs[method](path);assert.fail('accepted invalid path')}catch(e){assert(e instanceof TypeError);out.push([method,e.name,e.code,e.message,Reflect.ownKeys(e).filter(k=>k!=='stack')]);}
+ }
+ try{fs[method]('')}catch(e){out.push([method,e.code,e.syscall,e.path,e.message,Reflect.ownKeys(e).filter(k=>k!=='stack')]);}
+ const path=Buffer.from(directory+'/x'),trace=[];
+ const options={get bigint(){trace.push('bigint');path[path.length-1]=121;return false},get throwIfNoEntry(){trace.push('throwIfNoEntry');return true}};
+ const stats=fs[method](path,options);if(method!=='statfsSync')assert.strictEqual(stats.size,7);out.push([method,trace]);
+}
+for(const method of ['statSync','lstatSync'])for(const path of ['',directory+'/missing',directory+'/x/missing']){
+ try{out.push([method,path.endsWith('/x/missing')?'not-directory':path?'missing':'empty',fs[method](path,{throwIfNoEntry:false})===undefined])}catch(e){out.push([method,'not-directory',e.code,e.syscall]);}
+}
+console.log(JSON.stringify(out));
+"#;
+    compare_node_stream_source(&source);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn filesystem_metadata_relative_paths_follow_directory_identity_after_rename_and_unlink() {
+    compare_node_stream_source(
+        r#"
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),assert=require('node:assert');
+const original=process.cwd(),base=fs.mkdtempSync(path.join(os.tmpdir(),'quench-metadata-cwd-')),old=path.join(base,'old'),renamed=path.join(base,'renamed');
+try{fs.mkdirSync(old);fs.writeFileSync(path.join(old,'x'),'data');process.chdir(old);fs.renameSync(old,renamed);assert.strictEqual(fs.statSync('x').size,4);assert.strictEqual(fs.lstatSync('x').size,4);assert(fs.statfsSync('.'));fs.unlinkSync(path.join(renamed,'x'));fs.rmdirSync(renamed);assert(fs.statSync('.').isDirectory());assert(fs.lstatSync('.').isDirectory());assert(fs.statfsSync('.'));console.log('renamed and unlinked directory identity');}finally{process.chdir(original);fs.rmSync(base,{recursive:true,force:true});}
+"#,
+    );
+}
+
+#[test]
+fn typed_array_base_method_receiver_failures_match_node() {
+    compare_node_stream_source(
+        r#"
+const out=[],assert=require('node:assert');
+for(const name of ['includes','indexOf','join','reverse','fill','copyWithin','slice','keys','values','entries']){
+ for(const kind of ['brand','detached','out-of-bounds']){
+  let value={toString(){throw Error('public conversion')}};
+  if(kind!=='brand'){const b=new ArrayBuffer(8,{maxByteLength:16});value=new Uint8Array(b,4,2);if(kind==='detached')b.transfer();else b.resize(2);}
+  let called=false;const arg={valueOf(){called=true;throw Error('converted argument')},toString(){called=true;throw Error('converted argument')}};
+  assert.throws(()=>Uint8Array.prototype[name].call(value,arg),e=>{out.push([name,kind,e.name,e.message,e.code??null]);return e instanceof TypeError});assert.strictEqual(called,false);
+ }
+}
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[test]
+fn filesystem_statfs_results_share_node_constructor_prototypes_and_field_descriptors() {
+    compare_node_stream_source(
+        r#"
+const fs=require('node:fs'),assert=require('node:assert'),out=[];
+const numeric=fs.statfsSync('/'),big=fs.statfsSync('/',{bigint:true}),C=numeric.constructor;
+assert.strictEqual(C,big.constructor);assert.strictEqual(C.name,'StatFs');assert.strictEqual(C.length,8);
+assert.strictEqual(Object.getPrototypeOf(numeric),C.prototype);assert.strictEqual(Object.getPrototypeOf(big),C.prototype);
+for(const value of [numeric,big]){out.push([value.constructor.name,Reflect.ownKeys(Object.getPrototypeOf(value)),Object.entries(Object.getOwnPropertyDescriptors(value)).map(([k,d])=>[k,typeof d.value,d.writable,d.enumerable,d.configurable])]);}
+const made=new C(1,2,3,4,5,6,7,8);out.push(Object.entries(made));assert.throws(()=>C(),TypeError);
+C.prototype.marker='shared-statfs';assert.strictEqual(fs.statfsSync('/').marker,'shared-statfs');delete C.prototype.marker;
+const marker={},seen=[];Object.defineProperty(C.prototype,'blocks',{configurable:true,set(value){seen.push(typeof value);throw marker}});for(const bigint of [false,true])assert.throws(()=>fs.statfsSync('/',{bigint}),e=>e===marker);delete C.prototype.blocks;out.push(seen);
+const callback=new Promise(resolve=>fs.statfs('/',(error,value)=>{assert.strictEqual(error,null);assert.strictEqual(value.constructor,C);resolve(['callback',value.constructor.name]);}));
+const promise=fs.promises.statfs('/',{bigint:true}).then(value=>{assert.strictEqual(value.constructor,C);assert.strictEqual(typeof value.blocks,'bigint');return ['promise',value.constructor.name]});
+Promise.all([callback,promise]).then(results=>{out.push(...results);console.log(JSON.stringify(out));});
+"#,
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn read_file_preserves_raw_paths_descriptor_positions_and_utf8_conversion_boundaries() {
+    use std::os::unix::ffi::OsStringExt;
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory
+            .path()
+            .join(std::ffi::OsString::from_vec(vec![0xff])),
+        b"raw-\xff-text",
+    )
+    .unwrap();
+    std::fs::write(directory.path().join("plain"), b"plain-data").unwrap();
+    let source = format!(
+        "const directory={:?};\n",
+        directory.path().to_str().unwrap()
+    ) + r#"
+const fs=require('node:fs'),assert=require('node:assert'),out=[];
+const raw=Buffer.concat([Buffer.from(directory+'/'),Buffer.from([255])]),n=raw.length;
+const pathMarker={};raw.toString=()=>{throw pathMarker};for(const encoding of [undefined,'utf8'])assert.throws(()=>fs.readFileSync(raw,encoding),e=>e===pathMarker);delete raw.toString;
+for(const path of [raw,(()=>{const b=new Uint8Array(n+2);b.set(raw,1);return b.subarray(1,-1)})()]){out.push(Array.from(fs.readFileSync(path)),fs.readFileSync(path,'utf8'));}
+for(const encoding of ['',null,'buffer']){try{const value=fs.readFileSync(directory+'/plain',encoding);out.push([encoding,Buffer.isBuffer(value),typeof value])}catch(e){out.push([encoding,e.name,e.code,e.message])}}
+const original=Buffer.prototype.toString;
+try{Buffer.prototype.toString=function(encoding){return 'public-buffer-hook:'+encoding};out.push(fs.readFileSync(raw,'utf8'),fs.readFileSync(raw,'utf-8'),fs.readFileSync(raw,'UTF8'));}finally{Buffer.prototype.toString=original;}
+const fd=fs.openSync(directory+'/plain','r');try{const b=Buffer.alloc(1);assert.strictEqual(fs.readSync(fd,b,0,1,null),1);out.push(fs.readFileSync(fd,'utf8'),Array.from(fs.readFileSync(fd)),fs.fstatSync(fd).size);assert.strictEqual(fs.readSync(fd,b,0,1,0),1);assert.strictEqual(b[0],112);}finally{fs.closeSync(fd);}
+for(const input of [-1,fd,2147483648,1.5])for(const encoding of [undefined,'utf8']){try{fs.readFileSync(input,encoding);assert.fail('accepted invalid input')}catch(e){out.push([input===fd?'closed':input,encoding??null,e.name,e.code,e.syscall??null,e.message,Reflect.ownKeys(e).filter(k=>k!=='stack')]);}}
+for(const path of ['a\0b',Buffer.from([97,0,98]),new Uint8ClampedArray([47]),'']){try{fs.readFileSync(path)}catch(e){out.push([e.name,e.code,e.syscall??null,e.path??null,e.message]);}}
+console.log(JSON.stringify(out));
+"#;
+    compare_node_stream_source(&source);
+}
+
+#[test]
+fn application_fs_utility_names_do_not_adopt_node_library_types_or_state() {
+    compare_node_stream_source(
+        r#"
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),assert=require('node:assert'),out=[];
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-fs-library-identity-'));
+try{
+ let C;
+ for(const phase of ['before','after']){
+  const root=path.join(dir,phase,'internal/fs');fs.mkdirSync(root,{recursive:true});const file=path.join(root,'utils.js');
+  fs.writeFileSync(file,`module.exports={applicationValue:17,get BigIntStats(){throw Error('application getter')},get getStatFsFromBinding(){throw Error('application getter')},get vfsState(){throw Error('application getter')}};`);
+  const value=require(file);assert.strictEqual(value.applicationValue,17);
+  const stats=fs.statSync(dir,{bigint:true}),statfs=fs.statfsSync('/');assert.strictEqual(typeof stats.size,'bigint');assert.strictEqual(statfs.constructor.name,'StatFs');
+  if(C)assert.strictEqual(statfs.constructor,C);C=statfs.constructor;out.push([phase,value.applicationValue,typeof stats.size,C.name]);
+ }
+}finally{fs.rmSync(dir,{recursive:true,force:true});}
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[test]
+fn read_file_options_flags_and_getter_order_match_node_policy() {
+    compare_node_stream_source(
+        r#"
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),assert=require('node:assert'),out=[];
+const original=process.cwd(),dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-read-options-'));
+function capture(options,file='plain'){fs.writeFileSync('plain','data');try{const value=fs.readFileSync(file,options);return ['value',Buffer.isBuffer(value)?Array.from(value):value]}catch(e){return ['error',e.name,e.code??null,e.syscall??null,e.message]}}
+try{process.chdir(dir);
+ for(const options of [undefined,null,false,true,0,42,Symbol('x'),[],{},function(){},'utf8','UTF8','','buffer','bad',{encoding:'bad'},{encoding:1},{encoding:false},{flag:'bad'},{flag:1.5},{flag:'r+'},{flag:'sr'},{flag:0},{flag:null},{signal:1},{buffer:null},{buffer:1},{buffer:{}},{buffer:[]}])out.push(capture(options));
+ const fn=function(){};Object.defineProperty(fn,'encoding',{get(){throw Error('ignored function options')}});out.push(capture(fn));
+ for(const encoding of [undefined,'utf8']){
+  const trace=[],marker={},input=Buffer.from('plain');input.valueOf=function(){trace.push('valueOf');return this};input.toString=function(){trace.push('toString');return 'plain'};
+  const options={get encoding(){trace.push('encoding');return encoding},get signal(){trace.push('signal');return undefined},get buffer(){trace.push('buffer');return undefined},get flag(){trace.push('flag');throw marker}};
+  assert.throws(()=>fs.readFileSync(input,options),e=>e===marker);out.push([encoding??null,trace]);
+ }
+ for(const encoding of [undefined,'utf8']){const trace=[],options={encoding,get flag(){trace.push('flag');return 'bad'}};out.push([encoding??null,capture(options,'a\0b'),trace]);}
+ fs.writeFileSync('plain','data');const fd=fs.openSync('plain','r');try{const marker={};out.push(fs.readFileSync(fd,{encoding:'ascii',get flag(){throw marker}}));assert.throws(()=>fs.readFileSync(fd,{encoding:'utf8',get flag(){throw marker}}),e=>e===marker);}finally{fs.closeSync(fd);}
+ const isEncoding=Buffer.isEncoding,calls=[];try{Buffer.isEncoding=function(value){calls.push(value);return true};out.push(capture({encoding:'bad'},'missing'));}finally{Buffer.isEncoding=isEncoding;}out.push(calls);
+}finally{process.chdir(original);fs.rmSync(dir,{recursive:true,force:true});}
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[test]
+fn read_file_supplied_buffers_factories_aliases_and_cleanup_match_node() {
+    compare_node_stream_source(
+        r#"
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),assert=require('node:assert'),out=[];
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-read-buffers-')),file=path.join(dir,'file'),empty=path.join(dir,'empty');
+fs.writeFileSync(file,'abcdef');fs.writeFileSync(empty,'');
+function capture(operation){try{const value=operation();return ['value',Buffer.isBuffer(value),typeof value==='string'?value:Array.from(value)]}catch(e){return ['error',e.name,e.code??null,e.syscall??null,e.message]}}
+try{
+ for(const kind of ['Buffer','Uint8Array','Uint16Array','DataView']){
+  const backing=new ArrayBuffer(20),view=kind==='Buffer'?Buffer.from(backing,2,12):kind==='Uint8Array'?new Uint8Array(backing,2,12):kind==='Uint16Array'?new Uint16Array(backing,2,6):new DataView(backing,2,12);
+  const result=fs.readFileSync(file,{buffer:view});assert(Buffer.isBuffer(result));assert.strictEqual(result.buffer,backing);assert.strictEqual(result.byteOffset,2);assert.strictEqual(result.length,6);assert.strictEqual(result.toString(),'abcdef');out.push([kind,Array.from(new Uint8Array(backing)),result.length]);
+ }
+ const options={buffer(size){assert.strictEqual(this,options);out.push(['factory',size]);fs.writeFileSync(file,'UVWXYZmore');return new Uint8Array(12)}};out.push(capture(()=>fs.readFileSync(file,options)));fs.writeFileSync(file,'abcdef');
+ for(const buffer of [Buffer.alloc(3),new Uint8Array(3),()=>Buffer.alloc(3),()=>null,()=>({}),()=>{throw 'factory-marker'}])out.push(capture(()=>fs.readFileSync(file,{buffer})));
+ for(const size of [0,2])out.push(capture(()=>fs.readFileSync(empty,{buffer:Buffer.alloc(size)})));
+ out.push(capture(()=>fs.readFileSync(file,{encoding:'utf8',buffer:Buffer.alloc(8)})));
+ const originalOpen=fs.openSync,originalRead=fs.readSync,originalClose=fs.closeSync,trace=[];let opened;
+ try{
+  fs.openSync=function(...args){trace.push('open');opened=Reflect.apply(originalOpen,this,args);return opened};
+  fs.readSync=function(...args){trace.push('read');return Reflect.apply(originalRead,this,args)};
+  fs.closeSync=function(...args){trace.push('close');return Reflect.apply(originalClose,this,args)};
+  out.push(capture(()=>fs.readFileSync(file,{buffer(size){trace.push('factory:'+size);return Buffer.alloc(8)}})));assert.throws(()=>fs.fstatSync(opened),e=>e.code==='EBADF');out.push(trace.splice(0));
+  const marker={};assert.throws(()=>fs.readFileSync(file,{buffer(){throw marker}}),e=>e===marker);assert.throws(()=>fs.fstatSync(opened),e=>e.code==='EBADF');out.push(trace.splice(0));
+ }finally{fs.openSync=originalOpen;fs.readSync=originalRead;fs.closeSync=originalClose;}
+ const fd=fs.openSync(file,'r');try{const marker={};assert.throws(()=>fs.readFileSync(fd,{buffer(){throw marker}}),e=>e===marker);assert.strictEqual(fs.fstatSync(fd).size,6);out.push(capture(()=>fs.readFileSync(fd,{buffer:Buffer.alloc(8)})));}finally{fs.closeSync(fd);}
+ out.push(capture(()=>fs.readFileSync(dir,{buffer:Buffer.alloc(8)})));
+}finally{fs.rmSync(dir,{recursive:true,force:true});}
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[test]
+fn read_sync_copies_raw_bytes_without_public_set_or_metadata_hooks() {
+    compare_node_stream_source(
+        r#"
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),assert=require('node:assert');
+const directory=fs.mkdtempSync(path.join(os.tmpdir(),'quench-read-copy-')),file=path.join(directory,'file'),output=[];
+fs.writeFileSync(file,'abcdef');
+try {
+ for (const kind of ['Uint8Array','Uint16Array','Int32Array','Float64Array','BigInt64Array','DataView']) {
+  const backing=new ArrayBuffer(32),view=kind==='DataView'?new DataView(backing,8,16):new globalThis[kind](backing,8,16/globalThis[kind].BYTES_PER_ELEMENT);
+  for(const name of ['buffer','byteOffset','set']) Object.defineProperty(view,name,{get(){throw new Error('public '+name)}});
+  const fd=fs.openSync(file,'r');try {
+   const count=fs.readSync(fd,view,2,4,0);assert.strictEqual(count,4);output.push([kind,Array.from(new Uint8Array(backing)),fs.readSync(fd,view,0,2,6)]);
+  }finally{fs.closeSync(fd)}
+ }
+ const fd=fs.openSync(file,'r'),buffer=Buffer.alloc(8);try {
+  Object.defineProperty(buffer,'set',{value(){throw new Error('public Buffer.set')}});
+  output.push(['buffer',fs.readSync(fd,buffer,1,6,0),Array.from(buffer)]);
+ }finally{fs.closeSync(fd)}
+}finally{fs.rmSync(directory,{recursive:true,force:true})}
+console.log(JSON.stringify(output));
+"#,
+    );
+}
+
+#[test]
+fn error_capture_stack_trace_primitive_targets_match_node() {
+    compare_node_stream_source(
+        r#"
+const out=[];for(const target of [undefined,null,1,'x',true,1n,Symbol('x')]){
+ try{Error.captureStackTrace(target);out.push('accepted')}catch(error){out.push([error.name,error.message,Reflect.ownKeys(error).filter(k=>k!=='stack')])}
+}console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[test]
+fn native_builtin_setup_preserves_regexp_and_crypto_uses_canonical_streams() {
+    compare_node_stream_source(r#"
+const state=()=>[RegExp.input,RegExp.lastMatch,RegExp.lastParen,RegExp.leftContext,RegExp.rightContext,RegExp.$1,RegExp.$2,RegExp.$9];
+/(before)-(after)/.exec('leftbefore-afterright');RegExp.input='caller input';const before=JSON.stringify(state());
+const crypto=require('crypto');const after=JSON.stringify(state());
+const stream=require('stream');const promises=require('stream/promises');
+console.log(before===after,stream.promises===promises,stream.Stream===stream);
+const hash=crypto.createHash('sha256');console.log(hash instanceof stream.Transform);
+hash.on('data',chunk=>console.log(chunk.toString('hex')));hash.end('abc');
+"#);
+}
+
+#[test]
+fn native_internal_microtask_queue_keeps_original_identity_and_job_order() {
+    const SOURCE: &str = r#"
+const original=queueMicrotask;
+Object.defineProperty(globalThis,'queueMicrotask',{value(){throw Error('public queue consulted')},writable:false,configurable:false});
+const internal=require('internal/process/task_queues');
+console.log(internal.queueMicrotask===original,internal.queueMicrotask.name,internal.queueMicrotask.length);
+const trace=[];process.nextTick(()=>trace.push('tick'));
+internal.queueMicrotask(()=>{trace.push('microtask');console.log(trace.join(','))});trace.push('sync');
+"#;
+    compare_node_source_with_args(SOURCE, &["--no-warnings", "--expose-internals"]);
+}
+
+#[test]
+fn native_promise_inspection_preserves_slots_identity_and_rejection_handling() {
+    const SOURCE: &str = r#"
+const {internalBinding}=require('internal/test/binding');const u=internalBinding('util');
+const value={answer:42},pending=new Promise(()=>{}),fulfilled=Promise.resolve(value),rejected=Promise.reject(value);
+for(const p of [pending,fulfilled,rejected])for(const key of ['then','constructor'])Object.defineProperty(p,key,{get(){throw Error(key)}});
+console.log(u.getPromiseDetails(pending).length,u.getPromiseDetails(pending)[0],u.getPromiseDetails(fulfilled)[0],u.getPromiseDetails(rejected)[0]);
+console.log(u.getPromiseDetails(fulfilled)[1]===value,u.getPromiseDetails(rejected)[1]===value,u.getPromiseDetails({}));
+u.markPromiseAsHandled(rejected);u.markPromiseAsHandled(pending);
+const events=[];process.on('unhandledRejection',()=>events.push('unhandled'));process.on('rejectionHandled',()=>events.push('handled'));
+setImmediate(()=>console.log(JSON.stringify(events)));
+"#;
+    compare_node_source_with_args(SOURCE, &["--no-warnings", "--expose-internals"]);
+}
+
+#[test]
+fn canonical_web_streams_share_globals_and_preserve_byte_and_abort_algorithms() {
+    compare_node_stream_source(r#"
+const web=require('stream/web');
+console.log(['ReadableStream','WritableStream','TransformStream','TextEncoderStream','TextDecoderStream'].every(name=>web[name]===globalThis[name]));
+(async()=>{
+ const bytes=new web.ReadableStream({type:'bytes',start(c){c.enqueue(new Uint8Array([1,2,3]));c.close()}});
+ const reader=bytes.getReader({mode:'byob'});const buffer=new Uint8Array(8);const first=await reader.read(buffer);
+ console.log(first.done,JSON.stringify([...first.value]),buffer.byteLength);
+ const final=await reader.read(new Uint8Array(2));console.log(final.done,final.value.byteLength);
+ const reason={reason:42};await new web.ReadableStream({cancel(value){console.log('cancel',value===reason)}}).cancel(reason);
+ const writable=new web.WritableStream({abort(value){console.log('abort',value===reason)}});await writable.abort(reason);
+ const encoder=new web.TextEncoderStream(),r=encoder.readable.getReader(),w=encoder.writable.getWriter();
+ const read=r.read();await w.write('\ud83d');await w.write('\ude00');console.log('encoded',JSON.stringify([...(await read).value]));
+ await w.close();console.log('closed',(await r.read()).done);
+})().catch(error=>{console.error(error);process.exitCode=1});
+"#);
+}
+
+#[test]
+fn native_encoding_and_array_buffer_copy_match_stable_slots_and_byte_ranges() {
+    compare_node_source_with_args(
+        include_str!("../node-tests/test-native-encoding-bytes.js"),
+        &["--no-warnings", "--expose-internals"],
+    );
+}
+
+#[test]
+fn read_sync_overloads_validation_order_and_bigint_positions_match_node() {
+    compare_node_stream_source(
+        r#"
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),assert=require('node:assert'),out=[];
+const directory=fs.mkdtempSync(path.join(os.tmpdir(),'quench-read-policy-')),file=path.join(directory,'file');fs.writeFileSync(file,'abcdef');
+function capture(args){try{return ['value',fs.readSync(...args)]}catch(e){return ['error',e.name,e.code??null,e.message,Reflect.ownKeys(e).filter(k=>k!=='stack').map(String),Reflect.ownKeys(Object.getPrototypeOf(e)).map(String)]}}
+try {
+ for(const fd of [-1,999999,{},'1',null,1.5])for(const buffer of [{},Buffer.alloc(1)])for(const length of [0,1,undefined])out.push(capture([fd,buffer,0,length,0]));
+ for(const offset of [undefined,null,0,-1,1.5,'0',{},[],()=>0])out.push(capture([-1,Buffer.alloc(2),offset]));
+ for(const length of [undefined,null,0,-1,1.5,'1',NaN,Infinity,2**32,2**32+1,1n,Symbol('length')])out.push(capture([-1,Buffer.alloc(2),0,length,0]));
+ for(const position of [undefined,null,-1,0,-2,1.5,'0',0n,-1n,3n,2n**63n-1n,2n**63n]){
+  const fd=fs.openSync(file,'r'),buffer=Buffer.alloc(2);try{out.push([capture([fd,buffer,0,2,position]),Array.from(buffer),fs.readFileSync(fd,'utf8')])}finally{fs.closeSync(fd)}
+ }
+ const trace=[],marker={};let buffer=Buffer.alloc(2);
+ let options={get offset(){trace.push('offset');return -1},get length(){trace.push('length');throw marker},get position(){trace.push('position');return 0}};
+ assert.throws(()=>fs.readSync(-1,buffer,options),e=>e===marker);out.push(trace.splice(0));
+ options={get offset(){trace.push('offset');return 0},get length(){trace.push('length');return {valueOf(){trace.push('coerce length');return 0}}},get position(){trace.push('position');return null}};
+ out.push(capture([{},buffer,options]),trace.splice(0));
+ for(const name of ['byteLength'])Object.defineProperty(buffer,name,{get(){trace.push(name);return 2}});
+ out.push(capture([-1,buffer,{offset:0,length:0}]),trace.splice(0));
+ out.push(capture([-1,buffer,{offset:0,length:1}]),trace.splice(0));
+}finally{fs.rmSync(directory,{recursive:true,force:true})}
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[test]
+fn read_file_unknown_size_supplied_buffer_errors_preserve_node_prototypes() {
+    compare_node_stream_source(
+        r#"
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),out=[];
+const directory=fs.mkdtempSync(path.join(os.tmpdir(),'quench-read-unknown-')),file=path.join(directory,'empty');fs.writeFileSync(file,'');
+try{for(const size of [0,3,6,7]){
+ const fd=fs.openSync(file,'r'),original=fs.readSync,source=Buffer.from('abcdef');let pos=0;
+ fs.readSync=function(fd,buffer,offset,length){const n=Math.min(length,source.length-pos);buffer.set(source.subarray(pos,pos+n),offset);pos+=n;return n};
+ try{const b=fs.readFileSync(fd,{buffer:Buffer.alloc(size)});out.push(['value',b.toString(),pos])}catch(e){out.push(['error',e.name,e.code,e.message,Reflect.ownKeys(e).filter(k=>k!=='stack'),Object.getPrototypeOf(e).constructor.name,Reflect.ownKeys(Object.getPrototypeOf(e)),pos])}finally{fs.readSync=original;fs.closeSync(fd)}
+}}finally{fs.rmSync(directory,{recursive:true,force:true})}console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn read_sync_positional_directory_errors_preserve_kernel_errno() {
+    compare_node_stream_source(
+        r#"
+const fs=require('node:fs'),out=[],fd=fs.openSync('/tmp','r');try{for(const position of [null,0,2**32,2n**40n])try{out.push(['value',fs.readSync(fd,Buffer.alloc(1),0,1,position)])}catch(e){out.push([e.name,e.code,e.syscall,e.message])}}finally{fs.closeSync(fd)}console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[test]
+fn application_internal_module_names_do_not_receive_node_bootstrap_transforms() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("package.json"),
+        r#"{"type":"commonjs"}"#,
+    )
+    .unwrap();
+    for (name, source) in [
+        ("crypto/util.js", "const kHandle = Symbol('kHandle'); module.exports=[kHandle.description,Symbol.keyFor(kHandle)===undefined];"),
+        ("per_context/primordials.js", "module.exports='application-primordials';"),
+        ("bootstrap/realm.js", "module.exports=[typeof getInternalBinding,typeof getLinkedBinding];"),
+    ] {
+        let file=directory.path().join("internal").join(name);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file,source).unwrap();
+    }
+    let source=format!("const p={};console.log(JSON.stringify(['crypto/util','per_context/primordials','bootstrap/realm'].map(name=>require(p+'/internal/'+name+'.js'))));",serde_json::to_string(&directory.path().to_string_lossy()).unwrap());
+    compare_node_stream_source(&source);
+}
+
+#[test]
+fn crypto_hash_handle_symbols_are_private_canonical_and_not_public_registry_keys() {
+    compare_node_source_with_args(
+        r#"
+const assert=require('node:assert'),crypto=require('node:crypto'),utility=require('internal/crypto/util'),key=utility.kHandle;
+assert.strictEqual(key.description,'kHandle');assert.strictEqual(Symbol.keyFor(key),undefined);
+const first=crypto.createHash('sha256');assert(Object.getOwnPropertySymbols(first).includes(key));
+const replacement=Symbol('replacement');utility.kHandle=replacement;
+try {
+ const second=crypto.createHash('sha256');assert(Object.getOwnPropertySymbols(second).includes(key));assert(!Object.getOwnPropertySymbols(second).includes(replacement));
+ assert.strictEqual(first.update('abc').digest('hex'),second.update('abc').digest('hex'));
+ console.log(key.description,Symbol.keyFor(key)===undefined,first instanceof crypto.Hash);
+}finally{utility.kHandle=key;}
+"#,
+        &["--expose-internals"],
+    );
+}
+
+#[test]
+fn write_sync_raw_views_positions_encoding_fallbacks_and_native_errors_match_node() {
+    compare_node_stream_source(
+        r#"
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),out=[];
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-write-policy-')),file=path.join(dir,'file');
+function error(e){return ['error',e.name,e.code??null,e.syscall??null,e.message,Reflect.ownKeys(e).filter(k=>k!=='stack').map(String),Reflect.ownKeys(Object.getPrototypeOf(e)).map(String)]}
+try{
+ for(const kind of ['Uint8Array','Uint16Array','Int32Array','DataView']){
+  fs.writeFileSync(file,'--------');const fd=fs.openSync(file,'r+'),backing=new ArrayBuffer(12),view=kind==='DataView'?new DataView(backing,4,8):new globalThis[kind](backing,4,8/globalThis[kind].BYTES_PER_ELEMENT);new Uint8Array(backing).set([65,66,67,68,69,70,71,72],4);
+  for(const name of ['buffer','byteOffset','subarray'])Object.defineProperty(view,name,{get(){throw new Error('public '+name)}});
+  try{out.push([kind,fs.writeSync(fd,view,2,4,1),fs.readFileSync(file,'utf8')])}catch(e){out.push([kind,error(e)])}finally{fs.closeSync(fd)}
+ }
+ for(const position of [undefined,null,-1,-2,0,1,1.5,NaN,Infinity,Number.MAX_SAFE_INTEGER+1,'2',2n,{}]){
+  fs.writeFileSync(file,'abcdef');const fd=fs.openSync(file,'r+');try{fs.readSync(fd,Buffer.alloc(3),0,3,null);out.push(['position',typeof position,(()=>{try{return fs.writeSync(fd,'X',position,'utf8')}catch(e){return error(e)}})(),fs.readFileSync(file,'utf8'),fs.readFileSync(fd,'utf8')])}finally{fs.closeSync(fd)}
+ }
+ for(const data of [{},null,1,new Uint8Array(0),'x'])for(const fd of [-1,{},999999])try{out.push(['fd',fs.writeSync(fd,data,0,0,0)])}catch(e){out.push(error(e))}
+ for(const encoding of [undefined,null,'','bad','buffer','hex','HEX',1,{},Symbol('encoding')]){
+  fs.writeFileSync(file,'');const fd=fs.openSync(file,'r+');try{out.push(['encoding',(()=>{try{return fs.writeSync(fd,'éA',null,encoding)}catch(e){return error(e)}})(),Array.from(fs.readFileSync(file))])}finally{fs.closeSync(fd)}
+ }
+}finally{fs.rmSync(dir,{recursive:true,force:true})}console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn write_sync_reports_partial_nonblocking_pipe_progress_and_kernel_errors() {
+    let directory = tempfile::tempdir().unwrap();
+    let fifo = directory.path().join("pipe");
+    assert!(std::process::Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .unwrap()
+        .success());
+    let source = format!(
+        r#"
+const fs=require('node:fs'),assert=require('node:assert'),fd=fs.openSync({},fs.constants.O_RDWR|fs.constants.O_NONBLOCK);
+try {{
+ const buffer=Buffer.alloc(1024*1024,90),count=fs.writeSync(fd,buffer);
+ assert(count>0&&count<buffer.length);
+ let failure;try{{fs.writeSync(fd,buffer)}}catch(error){{failure=error;}}
+ assert.strictEqual(failure.code,'EAGAIN');assert.strictEqual(failure.syscall,'write');assert.strictEqual(failure.path,undefined);
+ const result=Buffer.alloc(count);assert.strictEqual(fs.readSync(fd,result,0,count,null),count);assert(result.every(value=>value===90));
+ console.log('partial',typeof count,failure.code,failure.syscall,result.length===count);
+}}finally{{fs.closeSync(fd)}}
+"#,
+        serde_json::to_string(&fifo.to_string_lossy()).unwrap()
+    );
+    compare_node_stream_source(&source);
+}
+
+#[cfg(unix)]
+#[test]
+fn filesystem_errors_use_platform_errno_names_for_loops_long_names_and_empty_pipes() {
+    let directory = tempfile::tempdir().unwrap();
+    let loop_path = directory.path().join("loop");
+    std::os::unix::fs::symlink("loop", &loop_path).unwrap();
+    let fifo = directory.path().join("pipe");
+    assert!(std::process::Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .unwrap()
+        .success());
+    let source = format!(
+        r#"
+const fs=require('node:fs'),path=require('node:path'),out=[];
+const directory={},loopPath=path.join(directory,'loop'),longPath=path.join(directory,'x'.repeat(300));
+for(const file of [loopPath,longPath])for(const operation of [()=>fs.statSync(file),()=>fs.openSync(file,'r'),()=>fs.readFileSync(file,'utf8')]){{
+ try{{operation();out.push('unexpected')}}catch(error){{out.push([error.name,error.code,error.errno,error.syscall,error.message.replaceAll(directory,'<directory>')]);}}
+}}
+const fd=fs.openSync(path.join(directory,'pipe'),fs.constants.O_RDWR|fs.constants.O_NONBLOCK);
+try {{try{{fs.readSync(fd,Buffer.alloc(1),0,1,null)}}catch(error){{out.push([error.name,error.code,error.errno,error.syscall,error.message]);}}}}finally{{fs.closeSync(fd)}}
+console.log(JSON.stringify(out));
+"#,
+        serde_json::to_string(&directory.path().to_string_lossy()).unwrap()
+    );
+    compare_node_stream_source(&source);
+}
+
+#[test]
+fn descriptor_read_write_forwarding_does_not_invoke_public_argument_iterators() {
+    compare_node_stream_source(
+        r#"
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path');const directory=fs.mkdtempSync(path.join(os.tmpdir(),'quench-fs-iterator-')),file=path.join(directory,'file');fs.writeFileSync(file,'---');
+const fd=fs.openSync(file,'r+'),source=Buffer.from('Q'),target=Buffer.alloc(1),prototype=Object.getPrototypeOf([][Symbol.iterator]()),descriptor=Object.getOwnPropertyDescriptor(prototype,'next'),marker={},out=[],poison=function(){throw marker};
+try {
+ Object.defineProperty(prototype,'next',{...descriptor,value:poison});
+ try{out[0]=fs.writeSync(fd,source,0,1,0)}catch(error){out[0]=error===marker?'iterator-marker':error.message}
+ out[3]=prototype.next===poison;
+ try{out[1]=fs.readSync(fd,target,0,1,0)}catch(error){out[1]=error===marker?'iterator-marker':error.message}
+ out[4]=prototype.next===poison;
+}finally{Object.defineProperty(prototype,'next',descriptor);fs.closeSync(fd);fs.rmSync(directory,{recursive:true,force:true})}
+out[2]=target[0];console.log(JSON.stringify(out));
+"#,
+    );
 }
