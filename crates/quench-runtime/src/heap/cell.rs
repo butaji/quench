@@ -623,14 +623,19 @@ pub(crate) struct WasmMemoryHeader {
 pub(crate) enum WasmObjectSlot {
     Module(Box<crate::WasmModule>),
     /// The frozen exports object of an instance; its bindings stay alive through it.
-    Instance { exports: Value },
+    Instance {
+        exports: Value,
+    },
 }
 
 impl std::fmt::Debug for WasmObjectSlot {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Module(_) => f.write_str("Module"),
-            Self::Instance { exports } => f.debug_struct("Instance").field("exports", exports).finish(),
+            Self::Instance { exports } => f
+                .debug_struct("Instance")
+                .field("exports", exports)
+                .finish(),
         }
     }
 }
@@ -949,11 +954,7 @@ impl IteratorKind {
     pub(crate) fn is_collection_iterator(self) -> bool {
         matches!(
             self,
-            Self::MapKeys
-                | Self::MapValues
-                | Self::MapEntries
-                | Self::SetValues
-                | Self::SetEntries
+            Self::MapKeys | Self::MapValues | Self::MapEntries | Self::SetValues | Self::SetEntries
         )
     }
 }
@@ -2213,6 +2214,7 @@ impl Cell {
             Self::WasmGlobal { .. } => "wasm_global",
             Self::WasmMemory { .. } => "wasm_memory",
             Self::WasmTable { .. } => "wasm_table",
+            Self::WasmObject { .. } => "wasm_object",
             Self::String(_) => "string",
             Self::BigInt(_) => "bigint",
             Self::Symbol(_) => "symbol",
