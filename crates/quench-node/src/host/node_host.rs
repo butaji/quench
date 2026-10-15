@@ -57,6 +57,7 @@ pub(crate) struct SharedNodeState {
     pub(crate) fs_watch: crate::modules::fs_watch_shared_vm::State,
     pub(crate) tls_contexts: crate::modules::tls_shared_vm::contexts::State,
     pub(crate) fs_stats: crate::modules::fs_shared_vm::stat::types::State,
+    pub(crate) fs_policy: crate::modules::fs_policy_shared_vm::State,
     pub(crate) fs_stat_watch: crate::modules::fs_stat_watch_shared_vm::State,
     pub(crate) cwd: crate::modules::process_state::ProcessCwd,
     pub(crate) buffer_prototype: Option<quench_runtime::RootId>,
@@ -183,6 +184,7 @@ impl SharedNodeState {
         self.fs_watch = crate::modules::fs_watch_shared_vm::State::default();
         self.tls_contexts = crate::modules::tls_shared_vm::contexts::State::default();
         self.fs_stats = crate::modules::fs_shared_vm::stat::types::State::default();
+        self.fs_policy = crate::modules::fs_policy_shared_vm::State::default();
         self.fs_stat_watch = crate::modules::fs_stat_watch_shared_vm::State::default();
     }
 
@@ -202,6 +204,7 @@ impl SharedNodeState {
             fs_watch: crate::modules::fs_watch_shared_vm::State::default(),
             tls_contexts: crate::modules::tls_shared_vm::contexts::State::default(),
             fs_stats: crate::modules::fs_shared_vm::stat::types::State::default(),
+            fs_policy: crate::modules::fs_policy_shared_vm::State::default(),
             fs_stat_watch: crate::modules::fs_stat_watch_shared_vm::State::default(),
             cwd,
             buffer_prototype: None,

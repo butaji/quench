@@ -1203,6 +1203,10 @@ pub(crate) fn http2_binding(context: &mut Context<'_>) -> Result<RootId, RootedE
     cached_builtin(context, BuiltinModule::Http2Binding)
 }
 
+pub(crate) fn fs_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    cached_builtin(context, BuiltinModule::Fs)
+}
+
 pub(crate) fn buffer_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     cached_builtin(context, BuiltinModule::Buffer)
 }
@@ -1921,7 +1925,7 @@ const getLinkedBinding = () => ({});
         .is_ok_and(|relative| relative == Path::new("lib/internal/fs/utils.js"));
     if is_fs_utilities {
         if let Ok(exports) = &result {
-            crate::modules::fs_shared_vm::stat::types::adopt_binding_types(context, *exports)?;
+            crate::modules::fs_policy_shared_vm::adopt(context, *exports)?;
             let state = get(context, *exports, "vfsState")?;
             let global = context.global_root()?;
             set(context, global, "\0quench:vfsState", state)?;

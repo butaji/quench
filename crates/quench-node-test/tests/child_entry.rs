@@ -7926,3 +7926,96 @@ console.log(JSON.stringify(out));
 "#,
     );
 }
+
+#[test]
+fn read_file_options_flags_and_getter_order_match_node_policy() {
+    compare_node_stream_source(
+        r#"
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),assert=require('node:assert'),out=[];
+const original=process.cwd(),dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-read-options-'));
+function capture(options,file='plain'){fs.writeFileSync('plain','data');try{const value=fs.readFileSync(file,options);return ['value',Buffer.isBuffer(value)?Array.from(value):value]}catch(e){return ['error',e.name,e.code??null,e.syscall??null,e.message]}}
+try{process.chdir(dir);
+ for(const options of [undefined,null,false,true,0,42,Symbol('x'),[],{},function(){},'utf8','UTF8','','buffer','bad',{encoding:'bad'},{encoding:1},{encoding:false},{flag:'bad'},{flag:1.5},{flag:'r+'},{flag:'sr'},{flag:0},{flag:null},{signal:1},{buffer:null},{buffer:1},{buffer:{}},{buffer:[]}])out.push(capture(options));
+ const fn=function(){};Object.defineProperty(fn,'encoding',{get(){throw Error('ignored function options')}});out.push(capture(fn));
+ for(const encoding of [undefined,'utf8']){
+  const trace=[],marker={},input=Buffer.from('plain');input.valueOf=function(){trace.push('valueOf');return this};input.toString=function(){trace.push('toString');return 'plain'};
+  const options={get encoding(){trace.push('encoding');return encoding},get signal(){trace.push('signal');return undefined},get buffer(){trace.push('buffer');return undefined},get flag(){trace.push('flag');throw marker}};
+  assert.throws(()=>fs.readFileSync(input,options),e=>e===marker);out.push([encoding??null,trace]);
+ }
+ for(const encoding of [undefined,'utf8']){const trace=[],options={encoding,get flag(){trace.push('flag');return 'bad'}};out.push([encoding??null,capture(options,'a\0b'),trace]);}
+ fs.writeFileSync('plain','data');const fd=fs.openSync('plain','r');try{const marker={};out.push(fs.readFileSync(fd,{encoding:'ascii',get flag(){throw marker}}));assert.throws(()=>fs.readFileSync(fd,{encoding:'utf8',get flag(){throw marker}}),e=>e===marker);}finally{fs.closeSync(fd);}
+ const isEncoding=Buffer.isEncoding,calls=[];try{Buffer.isEncoding=function(value){calls.push(value);return true};out.push(capture({encoding:'bad'},'missing'));}finally{Buffer.isEncoding=isEncoding;}out.push(calls);
+}finally{process.chdir(original);fs.rmSync(dir,{recursive:true,force:true});}
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[test]
+fn read_file_supplied_buffers_factories_aliases_and_cleanup_match_node() {
+    compare_node_stream_source(
+        r#"
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),assert=require('node:assert'),out=[];
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-read-buffers-')),file=path.join(dir,'file'),empty=path.join(dir,'empty');
+fs.writeFileSync(file,'abcdef');fs.writeFileSync(empty,'');
+function capture(operation){try{const value=operation();return ['value',Buffer.isBuffer(value),typeof value==='string'?value:Array.from(value)]}catch(e){return ['error',e.name,e.code??null,e.syscall??null,e.message]}}
+try{
+ for(const kind of ['Buffer','Uint8Array','Uint16Array','DataView']){
+  const backing=new ArrayBuffer(20),view=kind==='Buffer'?Buffer.from(backing,2,12):kind==='Uint8Array'?new Uint8Array(backing,2,12):kind==='Uint16Array'?new Uint16Array(backing,2,6):new DataView(backing,2,12);
+  const result=fs.readFileSync(file,{buffer:view});assert(Buffer.isBuffer(result));assert.strictEqual(result.buffer,backing);assert.strictEqual(result.byteOffset,2);assert.strictEqual(result.length,6);assert.strictEqual(result.toString(),'abcdef');out.push([kind,Array.from(new Uint8Array(backing)),result.length]);
+ }
+ const options={buffer(size){assert.strictEqual(this,options);out.push(['factory',size]);fs.writeFileSync(file,'UVWXYZmore');return new Uint8Array(12)}};out.push(capture(()=>fs.readFileSync(file,options)));fs.writeFileSync(file,'abcdef');
+ for(const buffer of [Buffer.alloc(3),new Uint8Array(3),()=>Buffer.alloc(3),()=>null,()=>({}),()=>{throw 'factory-marker'}])out.push(capture(()=>fs.readFileSync(file,{buffer})));
+ for(const size of [0,2])out.push(capture(()=>fs.readFileSync(empty,{buffer:Buffer.alloc(size)})));
+ out.push(capture(()=>fs.readFileSync(file,{encoding:'utf8',buffer:Buffer.alloc(8)})));
+ const originalOpen=fs.openSync,originalRead=fs.readSync,originalClose=fs.closeSync,trace=[];let opened;
+ try{
+  fs.openSync=function(...args){trace.push('open');opened=Reflect.apply(originalOpen,this,args);return opened};
+  fs.readSync=function(...args){trace.push('read');return Reflect.apply(originalRead,this,args)};
+  fs.closeSync=function(...args){trace.push('close');return Reflect.apply(originalClose,this,args)};
+  out.push(capture(()=>fs.readFileSync(file,{buffer(size){trace.push('factory:'+size);return Buffer.alloc(8)}})));assert.throws(()=>fs.fstatSync(opened),e=>e.code==='EBADF');out.push(trace.splice(0));
+  const marker={};assert.throws(()=>fs.readFileSync(file,{buffer(){throw marker}}),e=>e===marker);assert.throws(()=>fs.fstatSync(opened),e=>e.code==='EBADF');out.push(trace.splice(0));
+ }finally{fs.openSync=originalOpen;fs.readSync=originalRead;fs.closeSync=originalClose;}
+ const fd=fs.openSync(file,'r');try{const marker={};assert.throws(()=>fs.readFileSync(fd,{buffer(){throw marker}}),e=>e===marker);assert.strictEqual(fs.fstatSync(fd).size,6);out.push(capture(()=>fs.readFileSync(fd,{buffer:Buffer.alloc(8)})));}finally{fs.closeSync(fd);}
+ out.push(capture(()=>fs.readFileSync(dir,{buffer:Buffer.alloc(8)})));
+}finally{fs.rmSync(dir,{recursive:true,force:true});}
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[test]
+fn read_sync_copies_raw_bytes_without_public_set_or_metadata_hooks() {
+    compare_node_stream_source(
+        r#"
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),assert=require('node:assert');
+const directory=fs.mkdtempSync(path.join(os.tmpdir(),'quench-read-copy-')),file=path.join(directory,'file'),output=[];
+fs.writeFileSync(file,'abcdef');
+try {
+ for (const kind of ['Uint8Array','Uint16Array','Int32Array','Float64Array','BigInt64Array','DataView']) {
+  const backing=new ArrayBuffer(32),view=kind==='DataView'?new DataView(backing,8,16):new globalThis[kind](backing,8,16/globalThis[kind].BYTES_PER_ELEMENT);
+  for(const name of ['buffer','byteOffset','set']) Object.defineProperty(view,name,{get(){throw new Error('public '+name)}});
+  const fd=fs.openSync(file,'r');try {
+   const count=fs.readSync(fd,view,2,4,0);assert.strictEqual(count,4);output.push([kind,Array.from(new Uint8Array(backing)),fs.readSync(fd,view,0,2,6)]);
+  }finally{fs.closeSync(fd)}
+ }
+ const fd=fs.openSync(file,'r'),buffer=Buffer.alloc(8);try {
+  Object.defineProperty(buffer,'set',{value(){throw new Error('public Buffer.set')}});
+  output.push(['buffer',fs.readSync(fd,buffer,1,6,0),Array.from(buffer)]);
+ }finally{fs.closeSync(fd)}
+}finally{fs.rmSync(directory,{recursive:true,force:true})}
+console.log(JSON.stringify(output));
+"#,
+    );
+}
+
+#[test]
+fn error_capture_stack_trace_primitive_targets_match_node() {
+    compare_node_stream_source(
+        r#"
+const out=[];for(const target of [undefined,null,1,'x',true,1n,Symbol('x')]){
+ try{Error.captureStackTrace(target);out.push('accepted')}catch(error){out.push([error.name,error.message,Reflect.ownKeys(error).filter(k=>k!=='stack')])}
+}console.log(JSON.stringify(out));
+"#,
+    );
+}
