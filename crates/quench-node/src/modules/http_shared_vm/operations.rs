@@ -98,7 +98,6 @@ const RESPONSE_FACTORY: &str = r#"((Writable, setHeaderOperation, getHeaderOpera
     Object.setPrototypeOf(response, ServerResponse.prototype);
     response.finished = false;
     response.statusCode = statusCode;
-    response.statusMessage = "OK";
     const writeStream = response.write.bind(response);
     response.write = (chunk, encoding, callback) => {
       const result = writeStream(chunk, encoding, callback);
@@ -143,9 +142,7 @@ const RESPONSE_FACTORY: &str = r#"((Writable, setHeaderOperation, getHeaderOpera
           invalid = true;
         }
       }
-      const message = writeHeadOperation(id, status, reason, entries, invalid, response);
-      response.statusCode = status;
-      response.statusMessage = message;
+      writeHeadOperation(id, status, reason, entries, invalid, response);
       response.headersSent = true;
       return response;
     };
@@ -186,6 +183,7 @@ const INCOMING_FACTORY: &str = r#"((Readable, Buffer, EventEmitter, destroyClien
 })"#;
 
 pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    let status_codes = crate::modules::http_status_shared_vm::codes(context)?;
     let set_header =
         context.host_function(crate::host::shared_vm::operation("httpResponseSetHeader"))?;
     let get_header =
@@ -193,10 +191,18 @@ pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     let remove_header = context.host_function(crate::host::shared_vm::operation(
         "httpResponseRemoveHeader",
     ))?;
-    let write = context.host_function(crate::host::shared_vm::operation("httpResponseWrite"))?;
-    let finish = context.host_function(crate::host::shared_vm::operation("httpResponseFinish"))?;
-    let write_head =
-        context.host_function(crate::host::shared_vm::operation("httpResponseWriteHead"))?;
+    let write = context.host_function_with_data(
+        crate::host::shared_vm::operation("httpResponseWrite"),
+        status_codes,
+    )?;
+    let finish = context.host_function_with_data(
+        crate::host::shared_vm::operation("httpResponseFinish"),
+        status_codes,
+    )?;
+    let write_head = context.host_function_with_data(
+        crate::host::shared_vm::operation("httpResponseWriteHead"),
+        status_codes,
+    )?;
     let destroy_response =
         context.host_function(crate::host::shared_vm::operation("httpResponseDestroy"))?;
     // Core owns the weak response-to-transport identity. Keeping the method on
@@ -293,6 +299,7 @@ pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
             response_factory,
         ],
     )?;
+    set(context, module, "STATUS_CODES", status_codes)?;
     let key = context.string_rooted("Agent");
     let agent = context.get_property_rooted(module, key)?;
     let key = context.string_rooted("prototype");
@@ -884,6 +891,8 @@ pub(crate) fn response_initialize(
     context.call_rooted(map_set, responses, &[response, id])?;
     let yes = context.boolean(true);
     set(context, response, "sendDate", yes)?;
+    let undefined = context.undefined();
+    set(context, response, "statusMessage", undefined)?;
     Ok(context.undefined())
 }
 
@@ -968,6 +977,37 @@ fn response_send_date(
     Ok(())
 }
 
+fn response_status(
+    context: &mut Context<'_>,
+    id: u64,
+    response: Option<RootId>,
+    status: Option<RootId>,
+    reason: Option<RootId>,
+) -> Result<(u16, Vec<u8>), RootedError> {
+    let open = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .http
+        .responses
+        .get(&id)
+        .is_some_and(|response| response.lifecycle == super::state::ResponseLifecycle::Open);
+    if !open {
+        return Ok((200, Vec::new()));
+    }
+    let response = argument(context, response);
+    let status = argument(context, status);
+    let reason = argument(context, reason);
+    let status = crate::modules::http_status_shared_vm::prepare(
+        context,
+        response,
+        status,
+        crate::modules::http_status_shared_vm::Reason::Existing(reason),
+    )?;
+    let reason = crate::modules::http_status_shared_vm::encode(context, response)?;
+    Ok((status, reason))
+}
+
 pub(crate) fn response_write(
     context: &mut Context<'_>,
     _: RootId,
@@ -1001,22 +1041,14 @@ pub(crate) fn response_write(
         response.body.push(chunk, false);
         return Ok(context.boolean(true));
     }
+    let (status, status_message) = response_status(
+        context,
+        id,
+        args.get(5).copied(),
+        args.get(3).copied(),
+        args.get(4).copied(),
+    )?;
     response_send_date(context, id, args.get(5).copied())?;
-    let status = args
-        .get(3)
-        .and_then(|root| context.rooted_value(*root))
-        .and_then(Value::as_number)
-        .and_then(crate::modules::http_protocol::valid_status_number)
-        .unwrap_or(200);
-    let status_message = args
-        .get(4)
-        .copied()
-        .map(|root| context.string_text(root))
-        .transpose()?
-        .flatten()
-        .unwrap_or_else(|| {
-            crate::modules::http_protocol::default_status_message(status).to_owned()
-        });
     let state = context.host_mut().shared_state();
     let (socket, bytes) = {
         let mut host = state.borrow_mut();
@@ -1090,18 +1122,14 @@ pub(crate) fn response_write_head(
         );
     }
     let status_root = argument(context, args.get(1).copied());
-    let status_number = context
-        .rooted_value(status_root)
-        .and_then(Value::as_number)
-        .unwrap_or(f64::NAN);
-    let Some(status) = crate::modules::http_protocol::valid_status_number(status_number) else {
-        let value = context.to_string(status_root)?;
-        return throw_range_error(
-            context,
-            "ERR_HTTP_INVALID_STATUS_CODE",
-            &format!("Invalid status code: {value}"),
-        );
-    };
+    let message_root = argument(context, args.get(2).copied());
+    let response_root = argument(context, args.get(5).copied());
+    let status = crate::modules::http_status_shared_vm::prepare(
+        context,
+        response_root,
+        status_root,
+        crate::modules::http_status_shared_vm::Reason::WriteHead(message_root),
+    )?;
     let invalid_headers = args
         .get(4)
         .and_then(|root| context.rooted_value(*root))
@@ -1115,12 +1143,9 @@ pub(crate) fn response_write_head(
             "The argument 'headers' is invalid",
         );
     }
-    let message_root = argument(context, args.get(2).copied());
-    let status_message = context.string_text(message_root)?.unwrap_or_else(|| {
-        crate::modules::http_protocol::default_status_message(status).to_owned()
-    });
     let entry_root = argument(context, args.get(3).copied());
     let entries = write_head_entries(context, entry_root)?;
+    let status_message = crate::modules::http_status_shared_vm::encode(context, response_root)?;
 
     response_send_date(context, id, args.get(5).copied())?;
     let state = context.host_mut().shared_state();
@@ -1163,7 +1188,7 @@ pub(crate) fn response_write_head(
         &bytes,
     )
     .map_err(RootedError::host)?;
-    Ok(context.string_rooted(&status_message))
+    Ok(context.undefined())
 }
 
 pub(crate) fn response_finish(
@@ -1172,19 +1197,14 @@ pub(crate) fn response_finish(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let id = argument_id(context, args.first().copied())?;
+    let (status, status_message) = response_status(
+        context,
+        id,
+        args.get(4).copied(),
+        args.get(1).copied(),
+        args.get(2).copied(),
+    )?;
     response_send_date(context, id, args.get(4).copied())?;
-    let status = args
-        .get(1)
-        .and_then(|root| context.rooted_value(*root))
-        .and_then(Value::as_number)
-        .and_then(crate::modules::http_protocol::valid_status_number)
-        .unwrap_or(200);
-    let status_message = args
-        .get(2)
-        .copied()
-        .map(|root| context.string_text(root))
-        .transpose()?
-        .flatten();
     let response = {
         let state = context.host_mut().shared_state();
         let mut host = state.borrow_mut();
@@ -1202,9 +1222,7 @@ pub(crate) fn response_finish(
                 response.socket,
                 response.async_id,
                 status,
-                status_message.clone().unwrap_or_else(|| {
-                    crate::modules::http_protocol::default_status_message(status).to_owned()
-                }),
+                status_message.clone(),
                 response.headers.clone(),
                 headers_sent,
                 response.body.bytes(),
@@ -1546,17 +1564,6 @@ fn throw_response_error(
     message: &str,
 ) -> Result<RootId, RootedError> {
     let error = coded_error_rooted(context, type_error, code, message)?;
-    Err(context.throw(error))
-}
-
-fn throw_range_error(
-    context: &mut Context<'_>,
-    code: &str,
-    message: &str,
-) -> Result<RootId, RootedError> {
-    let error = context.range_error_rooted(message)?;
-    let code_value = context.string_rooted(code);
-    set(context, error, "code", code_value)?;
     Err(context.throw(error))
 }
 
