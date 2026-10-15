@@ -16,6 +16,9 @@ const EXPORTS: &[&str] = &[
     "getReadFileBufferByteLengthName",
     "validatePosition",
     "validateOffsetLengthRead",
+    "validateOffsetLengthWrite",
+    "validateStringAfterArrayBufferView",
+    "handleErrorFromBinding",
 ];
 fn get(
     context: &mut NativeContext<'_, NodeHost>,
@@ -50,6 +53,7 @@ pub(crate) fn adopt(
         "validateBuffer",
         "validateObject",
         "validateInteger",
+        "validateEncoding",
         "kValidateObjectAllowNullable",
     ] {
         let value = crate::host::shared_vm::commonjs::node_library_export(
