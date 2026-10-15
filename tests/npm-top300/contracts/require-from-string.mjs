@@ -21,6 +21,6 @@ export function exercise(requireFromString) {
   throws(() => requireFromString(1), /code must be a string, not number/);
   throws(() => requireFromString('const ='), SyntaxError);
   throws(() => requireFromString('throw new RangeError("compile failure")'), RangeError);
-  return { package: 'require-from-string', assertions, checks: { default: assertions },
+  return { package: 'require-from-string', assertions, checks: { '': assertions },
     scope: 'Default function: compilation, exports, filename, builtin/relative require, shebang/BOM and errors; custom lookup paths remain unqualified' };
 }
