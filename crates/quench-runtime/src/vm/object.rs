@@ -728,6 +728,33 @@ impl<H: Host> Vm<H> {
         Some(unsafe { self.heap.property_get_unchecked(receiver, usize::from(slot)) })
     }
 
+    /// `get_field_polymorphic` for an ordinary record receiver up to the point where it
+    /// would run guest code: hashed megamorphic and prototype-holder entries, then the data
+    /// lookup of `get_field_miss`. `None` leaves the read to `get_property`.
+    pub(super) fn cached_field_polymorphic_hit(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        atom: Atom,
+        site: u16,
+    ) -> Option<Value> {
+        if !(self.specialized && p.specialized) {
+            return None;
+        }
+        let index = self.field_cache_index(site);
+        let receiver = self.heap.record_object(object.heap_reference()?)?;
+        if let Some(hit) = self
+            .cached_field_value(index, receiver)
+            .or_else(|| self.cached_holder_field_value(index, receiver, atom))
+        {
+            self.profile
+                .field_cache_hit(usize::from(hit.tier), hit.depth);
+            return Some(hit.value);
+        }
+        self.profile.field_cache(false);
+        self.field_miss_data_value(object, atom, index)
+    }
+
     /// Whether the site's shapes moved to inline megamorphic entries without an overflow:
     /// `polymorphic_own_field_hit` then sees every own entry the site has recorded.
     pub(super) fn field_site_polymorphic(&self, site: u16) -> bool {
@@ -1025,19 +1052,32 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         site: usize,
     ) -> Result<Value, JsError> {
-        let Some(receiver) = self.shape_property_lookup(object, atom) else {
-            return self.get_property(p, object, atom);
-        };
+        match self.field_miss_data_value(object, atom, site) {
+            Some(value) => Ok(value),
+            None => self.get_property(p, object, atom),
+        }
+    }
+
+    /// The part of `get_field_miss` that reads a data property of a shaped receiver or its
+    /// ordinary prototypes, recording the cache entry that answers it next time; it runs no
+    /// guest code. `None` leaves the read to `get_property`.
+    pub(super) fn field_miss_data_value(
+        &mut self,
+        object: Value,
+        atom: Atom,
+        site: usize,
+    ) -> Option<Value> {
+        let receiver = self.shape_property_lookup(object, atom)?;
         if let Some(hit) = self.cached_inherited_field_value(site, receiver) {
             self.profile
                 .field_cache_hit(usize::from(hit.tier), hit.depth);
-            return Ok(hit.value);
+            return Some(hit.value);
         }
         if self
             .property_attributes(object, PropertyKey::string(atom))
             .is_some_and(|attributes| attributes.accessor)
         {
-            return self.get_property(p, object, atom);
+            return None;
         }
         if let Some(slot) = self.shape_slot(receiver.shape(), atom)
             && let Some(value) = self.heap.property_get(receiver, slot)
@@ -1052,7 +1092,7 @@ impl<H: Host> Vm<H> {
                     },
                 );
             }
-            return Ok(value);
+            return Some(value);
         }
         if let Some((holder_shape, slot, value)) = self.immediate_prototype_data_field(object, atom)
             && slot < FIELD_CACHE_SLOT_CAPACITY
@@ -1065,15 +1105,13 @@ impl<H: Host> Vm<H> {
                     slot: slot as u16,
                 },
             );
-            return Ok(value);
+            return Some(value);
         }
-        if let Some((cache, value)) = self.inherited_field(receiver, atom) {
-            if self.field_cache_records(site) {
-                self.inherited_field_caches.insert(site, cache);
-            }
-            return Ok(value);
+        let (cache, value) = self.inherited_field(receiver, atom)?;
+        if self.field_cache_records(site) {
+            self.inherited_field_caches.insert(site, cache);
         }
-        self.get_property(p, object, atom)
+        Some(value)
     }
 
     /// An inherited data field cached by `inherited_field`: the receiver keeps its shape and
