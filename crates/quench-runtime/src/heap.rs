@@ -1128,6 +1128,7 @@ impl Heap {
             if !full {
                 let properties = &self.properties;
                 let remembered = &self.remembered;
+                let mut last_proto = Value::UNDEFINED;
                 for index in remembered.iter().copied() {
                     let value = Value::heap(index);
                     if let Some(cell) = self.get(value) {
@@ -1138,6 +1139,7 @@ impl Heap {
                             &mut work,
                             &mut object_roots,
                             GcTraceKind::Collection,
+                            &mut last_proto,
                         );
                         if let Some(arrays) = &self.sparse_arrays
                             && let Some(elements) = arrays.get(&Value::heap(index))
@@ -1576,6 +1578,7 @@ impl Heap {
     ) {
         let mut batch = ParallelMarkBatch::default();
         batch.max_worklist = work.len();
+        let mut last_proto = Value::UNDEFINED;
         while let Some(value) = work.pop() {
             batch.work_items += 1;
             let Some(index) = value.legacy_heap_index().map(|value| value as usize) else {
@@ -1603,6 +1606,7 @@ impl Heap {
                 &mut work,
                 &mut trace_object_root,
                 trace_kind,
+                &mut last_proto,
             );
             if matches!(cell, Cell::Array { .. })
                 && let Some(elements) = view
@@ -1741,6 +1745,7 @@ impl Heap {
         ephemerons: &mut weak::EphemeronWork,
         trace_kind: GcTraceKind,
     ) {
+        let mut last_proto = Value::UNDEFINED;
         while let Some(value) = work.pop() {
             #[cfg(feature = "profile-aggregate")]
             {
@@ -1764,6 +1769,7 @@ impl Heap {
                     work,
                     object_roots,
                     trace_kind,
+                    &mut last_proto,
                 );
                 let (object_records, array_records, marks) =
                     (&self.object_records, &self.array_records, &self.marks);
@@ -1791,6 +1797,7 @@ impl Heap {
                     work,
                     object_roots,
                     trace_kind,
+                    &mut last_proto,
                 );
                 if let Some(arrays) = self.sparse_arrays.as_ref()
                     && let Some(elements) = arrays.get(&value)
@@ -1828,6 +1835,7 @@ impl Heap {
                     work,
                     object_roots,
                     trace_kind,
+                    &mut last_proto,
                 );
                 let object_records = &self.object_records;
                 let array_records = &self.array_records;
@@ -2113,6 +2121,10 @@ impl Heap {
     fn note_object_slots(&mut self, object: Value, slots: usize) {
         self.memory_profile.object_slots_changed(object, slots);
     }
+    /// Push the values `object` keeps alive. Objects that share a prototype push it once:
+    /// `last_proto`, the prototype pushed last in this walk, is already on the work list or
+    /// marked, so a second push would only be popped again.
+    #[inline(always)]
     fn object_children(
         owner: Value,
         object: &Object,
@@ -2120,21 +2132,26 @@ impl Heap {
         work: &mut Vec<Value>,
         object_roots: &mut impl FnMut(GcTraceKind, Value, u32, &mut Vec<Value>),
         trace_kind: GcTraceKind,
+        last_proto: &mut Value,
     ) {
-        work.push(object.proto());
+        let proto = object.proto();
+        if proto != *last_proto {
+            *last_proto = proto;
+            if proto.is_heap() {
+                work.push(proto);
+            }
+        }
         object_roots(trace_kind, owner, object.shape(), work);
-        work.extend(object.private_names().iter().map(|brand| brand.home));
+        object.visit_extras_roots(|value| work.push(value));
         if let Some(values) = object.inline_properties() {
-            work.extend(
-                values
-                    .iter()
-                    .copied()
-                    .filter(|value| value.is_heap() && !value.is_deleted()),
-            );
+            for &value in values {
+                if value.is_heap() && !value.is_deleted() {
+                    work.push(value);
+                }
+            }
         } else {
             properties.append_heap_references(object.properties(), work);
         }
-        object.visit_stack_data_roots(|value| work.push(value));
     }
 
     fn children(
@@ -2144,9 +2161,18 @@ impl Heap {
         work: &mut Vec<Value>,
         object_roots: &mut impl FnMut(GcTraceKind, Value, u32, &mut Vec<Value>),
         trace_kind: GcTraceKind,
+        last_proto: &mut Value,
     ) {
         let mut object = |object: &Object| {
-            Self::object_children(owner, object, properties, work, object_roots, trace_kind);
+            Self::object_children(
+                owner,
+                object,
+                properties,
+                work,
+                object_roots,
+                trace_kind,
+                last_proto,
+            );
         };
         if let Some((value, buffer)) = cell.typed_array_backing() {
             object(value);
@@ -2389,8 +2415,17 @@ impl Heap {
         work: &mut Vec<Value>,
         object_roots: &mut impl FnMut(GcTraceKind, Value, u32, &mut Vec<Value>),
         trace_kind: GcTraceKind,
+        last_proto: &mut Value,
     ) {
-        Self::object_children(owner, array, properties, work, object_roots, trace_kind);
+        Self::object_children(
+            owner,
+            array,
+            properties,
+            work,
+            object_roots,
+            trace_kind,
+            last_proto,
+        );
         work.extend(
             array
                 .elements()
