@@ -2698,9 +2698,8 @@ pub(crate) fn resolve_shared_path(
     context: &mut NativeContext<'_, NodeHost>,
     path: String,
 ) -> String {
-    let path = crate::modules::fs_path::resolve_fixture_path(path);
     let candidate = std::path::Path::new(&path);
-    if candidate.is_absolute() || path.starts_with("tests/node/test/") {
+    if candidate.is_absolute() {
         return path;
     }
     let cwd = context.host_mut().shared_state().borrow().cwd.clone();
