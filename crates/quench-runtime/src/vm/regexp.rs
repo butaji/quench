@@ -417,7 +417,8 @@ impl<H: Host> Vm<H> {
                 } else {
                     Some(vm.coerce_js_string(p, replacement)?)
                 };
-                let input_value = vm.heap.alloc(Cell::String(input.clone()));
+                let input_value =
+                    vm.string_value_from(args.first().copied().unwrap_or(Value::UNDEFINED), &input);
                 vm.with_call_roots([input_value], |vm| {
                     if let Some((matcher, flags)) = vm.regexp_replace_fast_matcher(receiver) {
                         let replacement = match template.as_ref() {
@@ -1097,7 +1098,10 @@ impl<H: Host> Vm<H> {
                             true,
                         )?;
                     }
-                    let input = vm.heap.alloc(Cell::String(input));
+                    let input = vm.string_value_from(
+                        args.first().copied().unwrap_or(Value::UNDEFINED),
+                        &input,
+                    );
                     let result = vm.regexp_exec_value(p, receiver, input)?;
                     vm.with_call_roots([result], |vm| {
                         let current = vm.get_property(p, receiver, atom)?;
@@ -1147,7 +1151,8 @@ impl<H: Host> Vm<H> {
                     Ok::<_, JsError>((unicode, splitter))
                 })?;
                 let array = vm.new_array(Vec::new());
-                let input_value = vm.heap.alloc(Cell::String(input.clone()));
+                let input_value =
+                    vm.string_value_from(args.first().copied().unwrap_or(Value::UNDEFINED), &input);
                 vm.with_call_roots([splitter, array, input_value], |vm| {
                     let limit = vm.regexp_split_limit(p, args.get(1).copied())?;
                     if limit == 0 {
@@ -1488,7 +1493,10 @@ impl<H: Host> Vm<H> {
                 let value = vm.get_property(p, receiver, atom)?;
                 let flags = vm.coerce_js_string(p, value)?;
                 if !flags.host_string().contains('g') {
-                    let input = vm.heap.alloc(Cell::String(input));
+                    let input = vm.string_value_from(
+                        args.first().copied().unwrap_or(Value::UNDEFINED),
+                        &input,
+                    );
                     return vm.regexp_exec_value(p, receiver, input);
                 }
                 let unicode =
@@ -1502,7 +1510,8 @@ impl<H: Host> Vm<H> {
                     true,
                 )?;
                 let array = vm.new_array(Vec::new());
-                let input_value = vm.heap.alloc(Cell::String(input.clone()));
+                let input_value =
+                    vm.string_value_from(args.first().copied().unwrap_or(Value::UNDEFINED), &input);
                 vm.with_call_roots([array, input_value], |vm| {
                     loop {
                         let result = vm.regexp_exec_value(p, receiver, input_value)?;
@@ -2069,7 +2078,8 @@ impl<H: Host> Vm<H> {
                 }
                 let input =
                     vm.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-                let input = vm.heap.alloc(Cell::String(input));
+                let input =
+                    vm.string_value_from(args.first().copied().unwrap_or(Value::UNDEFINED), &input);
                 let result = vm.regexp_exec_value(p, receiver, input)?;
                 Ok(if result.is_null() {
                     Value::FALSE
@@ -2152,7 +2162,8 @@ impl<H: Host> Vm<H> {
             let named = regexp_named_capture_ranges(&matched);
             let groups = vm.regexp_groups_object(&named, input.units())?;
             let index = Value::number(matched.range.start as f64);
-            let input_value = vm.heap.alloc(Cell::String(input.clone()));
+            let input_value =
+                vm.string_value_from(args.first().copied().unwrap_or(Value::UNDEFINED), &input);
             vm.initialize_regexp_result(result, index, input_value, groups)?;
             if flags.contains('d') {
                 let indices = vm.regexp_indices_array(&matched, &named)?;
