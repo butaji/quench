@@ -15,12 +15,12 @@ fn shape_reclaim_threshold_met(shape_count: usize, unreachable: usize) -> bool {
 fn active_shape_attributes(
     shapes: &[Shape],
     shape: u32,
-) -> Vec<Option<(property_key::PropertyKey, PropertyAttributes)>> {
+) -> Vec<Option<(property_key::PropertyKey, ShapeAttributes)>> {
     let mut chain = Vec::new();
     let mut current = Some(shape);
     while let Some(id) = current {
         chain.push(id);
-        current = shapes[id as usize].parent;
+        current = shapes[id as usize].parent();
     }
     chain.reverse();
 
@@ -28,7 +28,7 @@ fn active_shape_attributes(
     for id in chain {
         match shapes[id as usize].transition {
             ShapeTransition::Add { key, .. } => {
-                entries.push(Some((key, DEFAULT_PROPERTY_ATTRIBUTES)));
+                entries.push(Some((key, DEFAULT_SHAPE_ATTRIBUTES)));
             }
             ShapeTransition::Delete { slot, .. } => {
                 if let Some(entry) = entries.get_mut(slot as usize) {
@@ -47,15 +47,21 @@ fn active_shape_attributes(
     entries
 }
 
-fn append_shape_roots(shapes: &[Shape], shape: u32, roots: &mut Vec<Value>) {
+fn append_shape_roots(
+    shapes: &[Shape],
+    accessors: &[ShapeAccessors],
+    shape: u32,
+    roots: &mut Vec<Value>,
+) {
     roots.extend(
         active_shape_attributes(shapes, shape)
             .into_iter()
             .flatten()
             .flat_map(|(key, attributes)| {
+                let (getter, setter) = attributes.functions(accessors);
                 key.symbol_value()
                     .into_iter()
-                    .chain([attributes.getter, attributes.setter].into_iter().flatten())
+                    .chain([getter, setter].into_iter().flatten())
             }),
     );
 }
@@ -66,6 +72,7 @@ fn append_shape_roots(shapes: &[Shape], shape: u32, roots: &mut Vec<Value>) {
 struct ParallelShapeTrace<'a> {
     shapes: *const Shape,
     shape_count: usize,
+    accessors: &'a [ShapeAccessors],
     marked_shapes: &'a [AtomicU64],
     owned_roots: &'a FxHashMap<Value, Vec<Value>>,
     _shape_borrow: std::marker::PhantomData<&'a [Shape]>,
@@ -106,13 +113,13 @@ impl ParallelShapeTrace<'_> {
         let mask = 1_u64 << (shape_index % u64::BITS as usize);
         if trace_kind == GcTraceKind::VerifyFull {
             if shapes[shape_index].may_have_gc_roots {
-                append_shape_roots(shapes, shape, roots);
+                append_shape_roots(shapes, self.accessors, shape, roots);
             }
         } else if self.marked_shapes[word].load(Ordering::Relaxed) & mask == 0
             && self.marked_shapes[word].fetch_or(mask, Ordering::Relaxed) & mask == 0
             && shapes[shape_index].may_have_gc_roots
         {
-            append_shape_roots(shapes, shape, roots);
+            append_shape_roots(shapes, self.accessors, shape, roots);
         }
         if let Some(edges) = self.owned_roots.get(&owner) {
             roots.extend(edges.iter().copied());
@@ -152,10 +159,14 @@ fn append_compacted_shape(
     shape
 }
 
+/// Rebuilds `old_shape`'s live chain into `shapes`, recording its accessor functions anew in
+/// `accessors`, so compaction drops the dead shapes' accessors too.
 fn rebuild_shape(
     old_shapes: &[Shape],
+    old_accessors: &[ShapeAccessors],
     old_shape: u32,
     shapes: &mut Vec<Shape>,
+    accessors: &mut Vec<ShapeAccessors>,
     transitions: &mut FxHashMap<(u32, ShapeTransitionKey), u32>,
 ) -> u32 {
     let mut parent = 0;
@@ -171,8 +182,9 @@ fn rebuild_shape(
         };
         parent = append_compacted_shape(shapes, transitions, parent, transition, storage_len);
         if let Some((_, attributes)) = entry
-            && attributes != DEFAULT_PROPERTY_ATTRIBUTES
+            && attributes != DEFAULT_SHAPE_ATTRIBUTES
         {
+            let attributes = ShapeAttributes::record(attributes.attributes(old_accessors), accessors);
             parent = append_compacted_shape(
                 shapes,
                 transitions,
@@ -188,7 +200,7 @@ fn rebuild_shape(
             transitions,
             parent,
             ShapeTransition::Dictionary { trigger },
-            old_shapes[old_shape as usize].storage_len,
+            old_shapes[old_shape as usize].storage_len(),
         );
     }
     parent
@@ -658,6 +670,7 @@ impl<H: Host> Vm<H> {
         let shape_trace = ParallelShapeTrace {
             shapes: self.shapes.as_ptr(),
             shape_count,
+            accessors: &self.shape_accessors,
             marked_shapes: &marked_shape_bits,
             owned_roots: &owned_roots,
             _shape_borrow: std::marker::PhantomData,
@@ -799,7 +812,7 @@ impl<H: Host> Vm<H> {
                     break;
                 }
                 reachable[index] = true;
-                current = self.shapes[index].parent;
+                current = self.shapes[index].parent();
             }
         }
         let unreachable = reachable.iter().filter(|live| !**live).count();
@@ -815,16 +828,25 @@ impl<H: Host> Vm<H> {
         let mut mapping = vec![u32::MAX; old_shapes.len()];
         let mut shapes = vec![Shape::root()];
         let mut transitions = FxHashMap::default();
+        let old_accessors = std::mem::take(&mut self.shape_accessors);
+        let mut accessors = Vec::new();
         for old_shape in live_shapes {
             let mapping_entry = &mut mapping[old_shape as usize];
             if *mapping_entry == u32::MAX {
-                *mapping_entry =
-                    rebuild_shape(&old_shapes, old_shape, &mut shapes, &mut transitions);
+                *mapping_entry = rebuild_shape(
+                    &old_shapes,
+                    &old_accessors,
+                    old_shape,
+                    &mut shapes,
+                    &mut accessors,
+                    &mut transitions,
+                );
             }
         }
+        self.shape_accessors = accessors;
         let lengths = shapes
             .iter()
-            .map(|shape| shape.storage_len)
+            .map(|shape| shape.storage_len())
             .collect::<Vec<_>>();
         self.heap.remap_live_object_shapes(&mapping, &lengths);
         self.shapes = shapes;
@@ -928,7 +950,8 @@ mod tests {
     use super::shape_reclaim_threshold_met;
     use crate::value::Value;
     use crate::vm::{
-        DEFAULT_PROPERTY_ATTRIBUTES, DictionaryTrigger, PropertyAttributes, Shape, ShapeTransition,
+        DEFAULT_PROPERTY_ATTRIBUTES, DictionaryTrigger, PropertyAttributes, Shape, ShapeAttributes,
+        ShapeTransition,
         property_key::PropertyKey,
     };
 
@@ -980,10 +1003,13 @@ mod tests {
         );
         assert!(deleted_symbol_shape.may_have_gc_roots);
 
-        let attributes = PropertyAttributes {
-            getter: Some(Value::heap(2)),
-            ..DEFAULT_PROPERTY_ATTRIBUTES
-        };
+        let attributes = ShapeAttributes::record(
+            PropertyAttributes {
+                getter: Some(Value::heap(2)),
+                ..DEFAULT_PROPERTY_ATTRIBUTES
+            },
+            &mut Vec::new(),
+        );
         let accessor_shape = Shape::child(
             Some(1),
             ShapeTransition::Descriptor {

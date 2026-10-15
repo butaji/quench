@@ -77,7 +77,7 @@ fn derive_shape_lookup_index(shapes: &[Shape], shape: u32) -> ShapeLookupIndex {
                 slot,
                 attributes: value,
             } => {
-                if seen_slots.insert(slot) && value != DEFAULT_PROPERTY_ATTRIBUTES {
+                if seen_slots.insert(slot) && value != DEFAULT_SHAPE_ATTRIBUTES {
                     attributes.insert(slot, value);
                 }
             }
@@ -85,7 +85,7 @@ fn derive_shape_lookup_index(shapes: &[Shape], shape: u32) -> ShapeLookupIndex {
             | ShapeTransition::Vacant
             | ShapeTransition::Dictionary { .. } => {}
         }
-        current = shape.parent;
+        current = shape.parent();
     }
     entries.reverse();
     let slots = entries.iter().copied().collect();
@@ -190,7 +190,7 @@ impl<H: Host> Vm<H> {
                 | ShapeTransition::Delete { .. }
                 | ShapeTransition::Vacant
                 | ShapeTransition::Descriptor { .. }
-                | ShapeTransition::Dictionary { .. } => current = shape.parent,
+                | ShapeTransition::Dictionary { .. } => current = shape.parent(),
             }
             distance += 1;
         };
@@ -230,8 +230,9 @@ impl<H: Host> Vm<H> {
                 index
                     .attributes
                     .get(&(slot as u32))
-                    .copied()
-                    .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES),
+                    .map_or(DEFAULT_PROPERTY_ATTRIBUTES, |attributes| {
+                        attributes.attributes(&self.shape_accessors)
+                    }),
             );
         }
         let mut current = Some(shape);
@@ -241,7 +242,9 @@ impl<H: Host> Vm<H> {
                 ShapeTransition::Descriptor {
                     slot: candidate,
                     attributes,
-                } if candidate as usize == slot => return Some(attributes),
+                } if candidate as usize == slot => {
+                    return Some(attributes.attributes(&self.shape_accessors));
+                }
                 ShapeTransition::Add {
                     slot: candidate, ..
                 } if candidate as usize == slot => return Some(DEFAULT_PROPERTY_ATTRIBUTES),
@@ -253,7 +256,7 @@ impl<H: Host> Vm<H> {
                 | ShapeTransition::Delete { .. }
                 | ShapeTransition::Vacant
                 | ShapeTransition::Descriptor { .. }
-                | ShapeTransition::Dictionary { .. } => current = shape.parent,
+                | ShapeTransition::Dictionary { .. } => current = shape.parent(),
             }
         }
         None
@@ -307,7 +310,7 @@ impl<H: Host> Vm<H> {
         if self.shape_is_dictionary(shape) {
             return;
         }
-        let storage_len = self.shapes[shape as usize].storage_len;
+        let storage_len = self.shapes[shape as usize].storage_len();
         let dictionary_shape =
             self.append_shape(shape, ShapeTransition::Dictionary { trigger }, storage_len);
         self.object_data_mut(object)
@@ -362,6 +365,7 @@ impl<H: Host> Vm<H> {
             if self.shape_attribute(shape, slot) == Some(attributes) {
                 return;
             }
+            let attributes = ShapeAttributes::record(attributes, &mut self.shape_accessors);
             let next_id = self.append_cached_shape_transition(
                 shape,
                 ShapeTransition::Descriptor {
@@ -385,7 +389,7 @@ impl<H: Host> Vm<H> {
                 shape,
                 ShapeTransition::Descriptor {
                     slot: slot as u32,
-                    attributes: DEFAULT_PROPERTY_ATTRIBUTES,
+                    attributes: DEFAULT_SHAPE_ATTRIBUTES,
                 },
             );
             self.object_data_mut(object)
@@ -1800,7 +1804,7 @@ impl<H: Host> Vm<H> {
         if slot <= u16::MAX as usize && !self.shape_is_dictionary(data_shape) {
             if existing.is_none()
                 && data_shape != shape
-                && slot == self.shapes[shape as usize].storage_len
+                && slot == self.shapes[shape as usize].storage_len()
                 && !self.shape_is_dictionary(shape)
                 && let Some(prototype_guard) = add_prototype_guard
             {
@@ -1868,7 +1872,7 @@ impl<H: Host> Vm<H> {
         if !self.field_add_prototype_chain_matches(proto, cache.prototype_shapes()) {
             return false;
         }
-        debug_assert_eq!(cache.slot as usize, self.shapes[shape as usize].storage_len);
+        debug_assert_eq!(cache.slot as usize, self.shapes[shape as usize].storage_len());
         self.heap.property_add(object, value, cache.target_shape);
         if self.method_caches_may_name(atom) {
             self.invalidate_method_caches_for_prototype_add(object, atom);
@@ -2181,7 +2185,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn transition_property_shape(&mut self, shape: u32, key: PropertyKey) -> u32 {
         let transition = ShapeTransition::Add {
             key,
-            slot: u32::try_from(self.shapes[shape as usize].storage_len)
+            slot: u32::try_from(self.shapes[shape as usize].storage_len())
                 .expect("object property index exceeds u32"),
         };
         self.append_cached_shape_transition(shape, transition)
@@ -2197,7 +2201,7 @@ impl<H: Host> Vm<H> {
         if key.is_some() || matches!(transition, ShapeTransition::Add { .. }) {
             self.profile.shape_transition(false);
         }
-        let storage_len = self.shapes[shape as usize].storage_len;
+        let storage_len = self.shapes[shape as usize].storage_len();
         let next_storage_len = match transition {
             ShapeTransition::Add { .. } => storage_len
                 .checked_add(1)
@@ -2238,7 +2242,7 @@ impl<H: Host> Vm<H> {
         let Some(slot) = self.property_shape_slot(shape, key) else {
             return;
         };
-        let storage_len = self.shapes[shape as usize].storage_len;
+        let storage_len = self.shapes[shape as usize].storage_len();
         let next_id = self.append_shape(
             shape,
             ShapeTransition::Delete {
