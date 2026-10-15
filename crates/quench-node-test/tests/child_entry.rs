@@ -7905,3 +7905,24 @@ console.log(JSON.stringify(out));
 "#;
     compare_node_stream_source(&source);
 }
+
+#[test]
+fn application_fs_utility_names_do_not_adopt_node_library_types_or_state() {
+    compare_node_stream_source(
+        r#"
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),assert=require('node:assert'),out=[];
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-fs-library-identity-'));
+try{
+ let C;
+ for(const phase of ['before','after']){
+  const root=path.join(dir,phase,'internal/fs');fs.mkdirSync(root,{recursive:true});const file=path.join(root,'utils.js');
+  fs.writeFileSync(file,`module.exports={applicationValue:17,get BigIntStats(){throw Error('application getter')},get getStatFsFromBinding(){throw Error('application getter')},get vfsState(){throw Error('application getter')}};`);
+  const value=require(file);assert.strictEqual(value.applicationValue,17);
+  const stats=fs.statSync(dir,{bigint:true}),statfs=fs.statfsSync('/');assert.strictEqual(typeof stats.size,'bigint');assert.strictEqual(statfs.constructor.name,'StatFs');
+  if(C)assert.strictEqual(statfs.constructor,C);C=statfs.constructor;out.push([phase,value.applicationValue,typeof stats.size,C.name]);
+ }
+}finally{fs.rmSync(dir,{recursive:true,force:true});}
+console.log(JSON.stringify(out));
+"#,
+    );
+}
