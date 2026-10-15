@@ -12,17 +12,9 @@ impl<H: Host> Vm<H> {
         let Some(argument_slot) = mapped_arguments_slot(function, slot) else {
             return fallback;
         };
-        let arguments = if self.local_slot_is_environment_owned(p, frame, argument_slot) {
-            self.heap
-                .environment_slot(self.frames[frame].env, argument_slot)
-                .unwrap_or(Value::UNDEFINED)
-        } else {
-            self.frames[frame]
-                .locals
-                .get(argument_slot)
-                .copied()
-                .unwrap_or(Value::UNDEFINED)
-        };
+        let arguments = self
+            .frame_binding(p, frame, argument_slot)
+            .unwrap_or(Value::UNDEFINED);
         let Some(index) = self.mapped_argument_index(arguments, slot) else {
             return fallback;
         };
@@ -44,17 +36,9 @@ impl<H: Host> Vm<H> {
         let Some(argument_slot) = mapped_arguments_slot(function, slot) else {
             return;
         };
-        let arguments = if self.local_slot_is_environment_owned(p, frame, argument_slot) {
-            self.heap
-                .environment_slot(self.frames[frame].env, argument_slot)
-                .unwrap_or(Value::UNDEFINED)
-        } else {
-            self.frames[frame]
-                .locals
-                .get(argument_slot)
-                .copied()
-                .unwrap_or(Value::UNDEFINED)
-        };
+        let arguments = self
+            .frame_binding(p, frame, argument_slot)
+            .unwrap_or(Value::UNDEFINED);
         self.store_mapped_argument(arguments, slot, value);
     }
 
