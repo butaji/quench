@@ -1894,7 +1894,7 @@ fn is_odd_integer(value: f64) -> bool {
 
 /// Whether an equality operator is strict and whether it is negated; `None` for any other.
 #[inline(always)]
-fn equality_operator(op: u32) -> Option<(bool, bool)> {
+pub(super) fn equality_operator(op: u32) -> Option<(bool, bool)> {
     const EQUALITY: u32 = BinaryOperator::Equality as u32;
     const INEQUALITY: u32 = BinaryOperator::Inequality as u32;
     const STRICT_EQUALITY: u32 = BinaryOperator::StrictEquality as u32;

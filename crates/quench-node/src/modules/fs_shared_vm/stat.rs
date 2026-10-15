@@ -182,21 +182,22 @@ pub(crate) fn stat_sync(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    sync_metadata(context, args, false)
+    sync_metadata(context, args, MetadataOperation::Stat)
 }
+
+// libuv statfs counters in the order consumed by Node getStatFsFromBinding.
+#[cfg(not(target_os = "linux"))]
+const STATFS_FIELD_COUNT: usize = 8;
 
 pub(crate) fn statfs_sync(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let path = args
-        .first()
-        .copied()
-        .map(|path| context.to_string(path))
-        .transpose()?
-        .unwrap_or_else(|| "undefined".to_owned());
-    let path = super::resolve_shared_path(context, path);
+    let value = args.first().copied().unwrap_or_else(|| context.undefined());
+    let value = super::super::fs_path::validate(context, value, "path")?;
+    let bigint = bigint_option(context, args.get(1).copied())?;
+    let path = super::super::fs_path::resolve(context, value)?;
     #[cfg(target_os = "linux")]
     let result = {
         let c_path = CString::new(std::path::Path::new(&path).as_os_str().as_bytes());
@@ -207,14 +208,14 @@ pub(crate) fn statfs_sync(
                 if status == 0 {
                     let stats = unsafe { stats.assume_init() };
                     Ok([
-                        ("type", stats.f_type as f64),
-                        ("bsize", stats.f_bsize as f64),
-                        ("frsize", stats.f_frsize as f64),
-                        ("blocks", stats.f_blocks as f64),
-                        ("bfree", stats.f_bfree as f64),
-                        ("bavail", stats.f_bavail as f64),
-                        ("files", stats.f_files as f64),
-                        ("ffree", stats.f_ffree as f64),
+                        stats.f_type as i128,
+                        stats.f_bsize as i128,
+                        stats.f_frsize as i128,
+                        stats.f_blocks as i128,
+                        stats.f_bfree as i128,
+                        stats.f_bavail as i128,
+                        stats.f_files as i128,
+                        stats.f_ffree as i128,
                     ])
                 } else {
                     Err(io::Error::last_os_error())
@@ -224,17 +225,26 @@ pub(crate) fn statfs_sync(
         }
     };
     #[cfg(not(target_os = "linux"))]
-    let result: Result<[(&str, f64); 8], io::Error> =
+    let result: Result<[i128; STATFS_FIELD_COUNT], io::Error> =
         Err(io::Error::from_raw_os_error(libc::ENOSYS));
     match result {
         Ok(values) => {
-            let object = context.object_rooted()?;
-            for (name, value) in values {
-                set_number(context, object, name, value)?;
-            }
-            Ok(object)
+            let values = values
+                .into_iter()
+                .map(|value| {
+                    if bigint {
+                        context.bigint_rooted(value)
+                    } else {
+                        context.number(value as f64)
+                    }
+                })
+                .collect::<Vec<_>>();
+            types::statfs_from_values(context, &values)
         }
-        Err(error) => Err(path_error(context, error, &path, "statfs")?),
+        Err(error) => {
+            let path = super::super::fs_path::display(context, value)?;
+            Err(path_error(context, error, &path, "statfs")?)
+        }
     }
 }
 
@@ -515,30 +525,62 @@ pub(crate) fn lstat_sync(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    sync_metadata(context, args, true)
+    sync_metadata(context, args, MetadataOperation::Lstat)
+}
+
+#[derive(Clone, Copy)]
+enum MetadataOperation {
+    Stat,
+    Lstat,
+}
+impl MetadataOperation {
+    fn syscall(self) -> &'static str {
+        match self {
+            Self::Stat => "stat",
+            Self::Lstat => "lstat",
+        }
+    }
+    fn missing(self, error: &io::Error) -> bool {
+        error.kind() == io::ErrorKind::NotFound
+            || (matches!(self, Self::Stat) && error.kind() == io::ErrorKind::NotADirectory)
+    }
 }
 
 fn sync_metadata(
     context: &mut NativeContext<'_, NodeHost>,
     args: &[RootId],
-    follow_links: bool,
+    operation: MetadataOperation,
 ) -> Result<RootId, RootedError> {
-    let path = args
-        .first()
-        .copied()
-        .map(|path| context.to_string(path))
-        .transpose()?
-        .unwrap_or_else(|| "undefined".to_owned());
-    let path = super::resolve_shared_path(context, path);
-    let bigint = bigint_option(context, args.get(1).copied())?;
-    let result = if follow_links {
-        std::fs::symlink_metadata(&path)
-    } else {
-        std::fs::metadata(&path)
+    let value = args.first().copied().unwrap_or_else(|| context.undefined());
+    let value = super::super::fs_path::validate(context, value, "path")?;
+    let options = args.get(1).copied();
+    let bigint = bigint_option(context, options)?;
+    let throw_if_missing = match options {
+        Some(options)
+            if !context
+                .rooted_value(options)
+                .is_some_and(|value| value.is_undefined()) =>
+        {
+            let key = context.string_rooted("throwIfNoEntry");
+            let value = context.get_property_rooted(options, key)?;
+            !context
+                .rooted_value(value)
+                .is_some_and(|value| value.as_bool() == Some(false))
+        }
+        _ => true,
+    };
+    let path = super::super::fs_path::resolve(context, value)?;
+    let result = match operation {
+        MetadataOperation::Stat => std::fs::metadata(&path),
+        MetadataOperation::Lstat => std::fs::symlink_metadata(&path),
     };
     match result {
         Ok(metadata) => metadata_stats(context, Some(&metadata), bigint),
-        Err(error) => Err(stat_error(context, error, &path)?),
+        Err(error) if !throw_if_missing && operation.missing(&error) => Ok(context.undefined()),
+        Err(error) => {
+            let path = super::super::fs_path::display(context, value)?;
+            Err(path_error(context, error, &path, operation.syscall())?)
+        }
     }
 }
 
@@ -745,16 +787,8 @@ fn stat_error(
     error: io::Error,
     path: &str,
 ) -> Result<RootedError, RootedError> {
-    let code = error_code(&error);
-    let description = match error.kind() {
-        io::ErrorKind::NotFound => "no such file or directory",
-        io::ErrorKind::PermissionDenied => "permission denied",
-        io::ErrorKind::NotADirectory => "not a directory",
-        io::ErrorKind::IsADirectory => "illegal operation on a directory",
-        _ if error.raw_os_error() == Some(libc::ELOOP) => "too many symbolic links encountered",
-        _ if error.raw_os_error() == Some(libc::EBADF) => "bad file descriptor",
-        _ => "input/output error",
-    };
+    let (code, _) = crate::modules::fs_error_codes::code_for(&error);
+    let description = crate::modules::fs_error_codes::strerror(code);
     let exception = context.error_rooted(&format!("{code}: {description}, stat '{path}'"))?;
     set_string(context, exception, "code", code)?;
     set_string(context, exception, "syscall", "stat")?;
@@ -771,40 +805,16 @@ fn path_error(
     path: &str,
     syscall: &str,
 ) -> Result<RootedError, RootedError> {
-    let code = error_code(&error);
-    let description = match error.kind() {
-        io::ErrorKind::NotFound => "no such file or directory",
-        io::ErrorKind::PermissionDenied => "permission denied",
-        io::ErrorKind::NotADirectory => "not a directory",
-        _ => "input/output error",
-    };
+    let (code, _) = crate::modules::fs_error_codes::code_for(&error);
+    let description = crate::modules::fs_error_codes::strerror(code);
     let exception = context.error_rooted(&format!("{code}: {description}, {syscall} '{path}'"))?;
-    set_string(context, exception, "code", code)?;
-    set_string(context, exception, "syscall", syscall)?;
-    set_string(context, exception, "path", path)?;
     if let Some(errno) = error.raw_os_error() {
         set_number(context, exception, "errno", -f64::from(errno))?;
     }
+    set_string(context, exception, "code", code)?;
+    set_string(context, exception, "syscall", syscall)?;
+    set_string(context, exception, "path", path)?;
     Ok(context.throw(exception))
-}
-
-fn error_code(error: &io::Error) -> &'static str {
-    match error.raw_os_error() {
-        Some(libc::EACCES) => "EACCES",
-        Some(libc::EBADF) => "EBADF",
-        Some(libc::EEXIST) => "EEXIST",
-        Some(libc::EISDIR) => "EISDIR",
-        Some(libc::EINVAL) => "EINVAL",
-        Some(libc::ENOTDIR) => "ENOTDIR",
-        Some(libc::ENOENT) => "ENOENT",
-        Some(libc::ELOOP) => "ELOOP",
-        _ => match error.kind() {
-            io::ErrorKind::NotFound => "ENOENT",
-            io::ErrorKind::PermissionDenied => "EACCES",
-            io::ErrorKind::NotADirectory => "ENOTDIR",
-            _ => "EIO",
-        },
-    }
 }
 
 fn set(

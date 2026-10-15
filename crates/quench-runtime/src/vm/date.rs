@@ -189,6 +189,10 @@ impl<H: Host> Vm<H> {
         prototype: Value,
     ) -> Result<(), JsError> {
         self.set_builtin_function_name(constructor, "Date")?;
+        self.realm
+            .intrinsics
+            .builtin_prototypes
+            .insert((global, Native::Date), prototype);
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
         let prototype_atom = self.prototype_atom();
         self.set_property_attributes(

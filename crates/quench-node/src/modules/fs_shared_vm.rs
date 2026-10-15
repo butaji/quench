@@ -1,15 +1,11 @@
 use crate::host::NodeHost;
 use crate::modules::fs_ops;
 use quench_runtime::{NativeContext, RootId, RootedError};
-use std::io::Read;
 
 // Node's internal fs readFile limit, independent of Buffer's larger capacity.
-const MAX_READ_FILE_BYTES: u64 = i32::MAX as u64;
+pub(super) const MAX_READ_FILE_BYTES: u64 = i32::MAX as u64;
 
-enum ReadFileFailure {
-    Io(std::io::Error),
-    TooLarge(u64),
-}
+use fs_ops::ReadFileFailure;
 
 #[path = "fs_shared_vm/stat.rs"]
 pub(crate) mod stat;
@@ -1770,7 +1766,7 @@ const ASYNC_OWNER_API: &str = r#"(ownerSync, descriptor) => {
   };
 }"#;
 
-const ASYNC_LSTAT_API: &str = r#"(lstatSync) => {
+const ASYNC_LSTAT_API: &str = r#"(lstatSync, toPathIfFileURL) => {
   return function lstat(path, options, callback) {
     if (typeof options === 'function') {
       callback = options;
@@ -1781,21 +1777,23 @@ const ASYNC_LSTAT_API: &str = r#"(lstatSync) => {
       error.code = 'ERR_INVALID_ARG_TYPE';
       throw error;
     }
-    if (typeof path !== 'string' && !Buffer.isBuffer(path) && !(path instanceof URL)) {
+    path = toPathIfFileURL(path);
+    if (typeof path !== 'string' && !Buffer.isBuffer(path)) {
       const error = new TypeError(`The "path" argument must be of type string, Buffer, or URL. Received ${path === null || path === undefined ? path : typeof path === 'object' ? `an instance of ${Array.isArray(path) ? 'Array' : 'Object'}` : `type ${typeof path} (${String(path)})`}`);
       error.code = 'ERR_INVALID_ARG_TYPE';
       throw error;
     }
     if (Buffer.isBuffer(path)) path = path.toString();
-    else if (path instanceof URL) path = decodeURIComponent(path.pathname);
     queueMicrotask(() => {
-      try { Reflect.apply(callback, undefined, [null, lstatSync(path, options)]); }
-      catch (error) { Reflect.apply(callback, undefined, [error]); }
+      let stats;
+      try { stats = lstatSync(path, options); }
+      catch (error) { Reflect.apply(callback, undefined, [error]); return; }
+      Reflect.apply(callback, undefined, [null, stats]);
     });
   };
 }"#;
 
-const ASYNC_STAT_API: &str = r#"(statSync) => {
+const ASYNC_STAT_API: &str = r#"(statSync, toPathIfFileURL) => {
   return function stat(path, options, callback) {
     if (typeof options === 'function') {
       callback = options;
@@ -1806,56 +1804,31 @@ const ASYNC_STAT_API: &str = r#"(statSync) => {
       error.code = 'ERR_INVALID_ARG_TYPE';
       throw error;
     }
-    if (typeof path !== 'string' && !Buffer.isBuffer(path) && !(path instanceof URL)) {
+    path = toPathIfFileURL(path);
+    if (typeof path !== 'string' && !Buffer.isBuffer(path)) {
       const error = new TypeError(`The "path" argument must be of type string, Buffer, or URL. Received ${path === null || path === undefined ? path : typeof path === 'object' ? `an instance of ${Array.isArray(path) ? 'Array' : 'Object'}` : `type ${typeof path} (${String(path)})`}`);
       error.code = 'ERR_INVALID_ARG_TYPE';
       throw error;
     }
     if (Buffer.isBuffer(path)) path = path.toString();
-    else if (path instanceof URL) path = decodeURIComponent(path.pathname);
     queueMicrotask(() => {
-      try {
-        const stats = statSync(path, options);
-        Reflect.apply(callback, undefined, [null, stats]);
-      }
-      catch (error) { Reflect.apply(callback, undefined, [error]); }
+      let stats;
+      try { stats = statSync(path, options); }
+      catch (error) { Reflect.apply(callback, undefined, [error]); return; }
+      Reflect.apply(callback, undefined, [null, stats]);
     });
   };
 }"#;
 
-const STAT_SYNC_API: &str = r#"(hostStatSync) => function wrappedStatSync(path, options) {
-  if (typeof path !== 'string' && !Buffer.isBuffer(path) && !(path instanceof URL)) {
-    const error = new TypeError(`The "path" argument must be of type string, Buffer, or URL. Received ${path === null || path === undefined ? path : typeof path === 'object' ? `an instance of ${Array.isArray(path) ? 'Array' : 'Object'}` : `type ${typeof path} (${String(path)})`}`);
-    error.code = 'ERR_INVALID_ARG_TYPE';
-    throw error;
-  }
-  if (Buffer.isBuffer(path)) path = path.toString();
-  else if (path instanceof URL) path = decodeURIComponent(path.pathname);
-  try { return hostStatSync(path, options); }
-  catch (error) {
-    if (options?.throwIfNoEntry === false && error?.code === 'ENOENT') return undefined;
-    throw error;
-  }
+const STAT_SYNC_API: &str = r#"(hostStatSync) => function wrappedStatSync(path, options = undefined) {
+  return hostStatSync(path, options);
 }"#;
 
-const STATFS_SYNC_API: &str = r#"(hostStatfsSync) => function statfsSync(path, options) {
-  if (typeof path !== 'string' && !Buffer.isBuffer(path) && !(path instanceof URL)) {
-    const error = new TypeError(`The "path" argument must be of type string, Buffer, or URL. Received ${path === null || path === undefined ? path : typeof path === 'object' ? `an instance of ${Array.isArray(path) ? 'Array' : 'Object'}` : `type ${typeof path} (${String(path)})`}`);
-    error.code = 'ERR_INVALID_ARG_TYPE';
-    throw error;
-  }
-  if (Buffer.isBuffer(path)) path = path.toString();
-  else if (path instanceof URL) path = decodeURIComponent(path.pathname);
-  const stats = hostStatfsSync(path);
-  if (options?.bigint === true) {
-    for (const name of ['type', 'bsize', 'frsize', 'blocks', 'bfree', 'bavail', 'files', 'ffree']) {
-      stats[name] = BigInt(stats[name]);
-    }
-  }
-  return stats;
+const STATFS_SYNC_API: &str = r#"(hostStatfsSync) => function statfsSync(path, options = undefined) {
+  return hostStatfsSync(path, options);
 }"#;
 
-const ASYNC_STATFS_API: &str = r#"(statfsSync) => function statfs(path, options, callback) {
+const ASYNC_STATFS_API: &str = r#"(statfsSync, toPathIfFileURL) => function statfs(path, options, callback) {
   if (typeof options === 'function') {
     callback = options;
     options = undefined;
@@ -1865,16 +1838,18 @@ const ASYNC_STATFS_API: &str = r#"(statfsSync) => function statfs(path, options,
     error.code = 'ERR_INVALID_ARG_TYPE';
     throw error;
   }
-  if (typeof path !== 'string' && !Buffer.isBuffer(path) && !(path instanceof URL)) {
+  path = toPathIfFileURL(path);
+  if (typeof path !== 'string' && !Buffer.isBuffer(path)) {
     const error = new TypeError(`The "path" argument must be of type string, Buffer, or URL. Received ${path === null || path === undefined ? path : typeof path === 'object' ? `an instance of ${Array.isArray(path) ? 'Array' : 'Object'}` : `type ${typeof path} (${String(path)})`}`);
     error.code = 'ERR_INVALID_ARG_TYPE';
     throw error;
   }
   if (Buffer.isBuffer(path)) path = path.toString();
-  else if (path instanceof URL) path = decodeURIComponent(path.pathname);
   queueMicrotask(() => {
-    try { Reflect.apply(callback, undefined, [null, statfsSync(path, options)]); }
-    catch (error) { Reflect.apply(callback, undefined, [error]); }
+    let stats;
+    try { stats = statfsSync(path, options); }
+    catch (error) { Reflect.apply(callback, undefined, [error]); return; }
+    Reflect.apply(callback, undefined, [null, stats]);
   });
 }"#;
 
@@ -2097,19 +2072,23 @@ const FS_CONSTANT_VALUES: &[(&str, i32)] = &[
     ("COPYFILE_FICLONE_FORCE", UV_FS_COPYFILE_FICLONE_FORCE),
 ];
 
-fn fs_constants(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    let global = context.global_root()?;
-    let object = get(context, global, "Object")?;
-    let create = get(context, object, "create")?;
-    let null = context.null();
-    let constants = context.call_rooted(create, object, &[null])?;
-    for &(name, value) in FS_CONSTANT_VALUES {
+pub(crate) fn fs_constants(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    const CACHE_KEY: &str = "\0builtin:fs/constants";
+    const DIRENT_TYPES: &[(&str, i32)] = &[
+        ("UV_DIRENT_UNKNOWN", 0), ("UV_DIRENT_FILE", 1), ("UV_DIRENT_DIR", 2),
+        ("UV_DIRENT_LINK", 3), ("UV_DIRENT_FIFO", 4), ("UV_DIRENT_SOCKET", 5),
+        ("UV_DIRENT_CHAR", 6), ("UV_DIRENT_BLOCK", 7),
+    ];
+    let shared = context.host_mut().shared_state();
+    if let Some(constants) = shared.borrow().module_cache.get(CACHE_KEY).copied() { return Ok(constants); }
+    let constants = context.null_object_rooted()?;
+    for &(name, value) in FS_CONSTANT_VALUES.iter().chain(DIRENT_TYPES.iter()) {
         let key = context.string_rooted(name);
         let value = context.number(value as f64);
-        if !context.set_property_rooted(constants, key, value, constants)? {
-            return Err(RootedError::host("cannot set fs.constants property"));
-        }
+        context.define_data_property_rooted(constants, key, value, false, true, false)?;
     }
+    let retained = context.retain(constants)?;
+    shared.borrow_mut().module_cache.insert(CACHE_KEY.to_owned(), retained);
     Ok(constants)
 }
 
@@ -2150,12 +2129,13 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         &[read_file, validate, complete],
     )?;
     set(context, module, "readFile", read_file_async)?;
+    let to_path_if_file_url =
+        context.host_function(crate::host::shared_vm::operation("toPathIfFileURL"))?;
     let stat_host = context.host_function(crate::host::shared_vm::operation("fsStatSync"))?;
     let stat_factory =
         context.evaluate_script_rooted(STAT_SYNC_API, "node:fs/shared-stat-sync.js")?;
     let undefined = context.undefined();
-    let stat_sync =
-        context.call_rooted(stat_factory, undefined, &[stat_host])?;
+    let stat_sync = context.call_rooted(stat_factory, undefined, &[stat_host])?;
     set(context, module, "statSync", stat_sync)?;
     let statfs_host = context.host_function(crate::host::shared_vm::operation("fsStatfsSync"))?;
     let statfs_factory =
@@ -2164,7 +2144,11 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     set(context, module, "statfsSync", statfs_sync)?;
     let statfs_factory =
         context.evaluate_script_rooted(ASYNC_STATFS_API, "node:fs/shared-async-statfs.js")?;
-    let statfs = context.call_rooted(statfs_factory, undefined, &[statfs_sync])?;
+    let statfs = context.call_rooted(
+        statfs_factory,
+        undefined,
+        &[statfs_sync, to_path_if_file_url],
+    )?;
     set(context, module, "statfs", statfs)?;
     let exists_factory = context.evaluate_script_rooted(EXISTS_API, "node:fs/shared-exists.js")?;
     let undefined = context.undefined();
@@ -2196,15 +2180,12 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let lstat_factory =
         context.evaluate_script_rooted(STAT_SYNC_API, "node:fs/shared-lstat-sync.js")?;
     let undefined = context.undefined();
-    let lstat_sync = context.call_rooted(
-        lstat_factory,
-        undefined,
-        &[lstat_host],
-    )?;
+    let lstat_sync = context.call_rooted(lstat_factory, undefined, &[lstat_host])?;
     set(context, module, "lstatSync", lstat_sync)?;
     let lstat_factory =
         context.evaluate_script_rooted(ASYNC_LSTAT_API, "node:fs/shared-async-lstat.js")?;
-    let lstat = context.call_rooted(lstat_factory, undefined, &[lstat_sync])?;
+    let lstat =
+        context.call_rooted(lstat_factory, undefined, &[lstat_sync, to_path_if_file_url])?;
     set(context, module, "lstat", lstat)?;
     let readdir_sync = make_readdir_sync(context)?;
     set(context, module, "readdirSync", readdir_sync)?;
@@ -2250,7 +2231,8 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let realpath = context.call_rooted(realpath_factory, undefined, &[realpath_sync])?;
     set(context, module, "realpath", realpath)?;
     let constants = fs_constants(context)?;
-    set(context, module, "constants", constants)?;
+    let key = context.string_rooted("constants");
+    context.define_data_property_rooted(module, key, constants, false, true, false)?;
     stat::install(context, module)?;
     super::fs_stat_watch_shared_vm::install(context, module)?;
     let rm = context.host_function(crate::host::shared_vm::operation("fsRm"))?;
@@ -2296,7 +2278,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let stat_factory =
         context.evaluate_script_rooted(ASYNC_STAT_API, "node:fs/shared-async-stat.js")?;
     let undefined = context.undefined();
-    let stat = context.call_rooted(stat_factory, undefined, &[stat_sync])?;
+    let stat = context.call_rooted(stat_factory, undefined, &[stat_sync, to_path_if_file_url])?;
     set(context, module, "stat", stat)?;
     let mkdir_sync = get(context, module, "mkdirSync")?;
     let mkdir_factory =
@@ -2698,9 +2680,8 @@ pub(crate) fn resolve_shared_path(
     context: &mut NativeContext<'_, NodeHost>,
     path: String,
 ) -> String {
-    let path = crate::modules::fs_path::resolve_fixture_path(path);
     let candidate = std::path::Path::new(&path);
-    if candidate.is_absolute() || path.starts_with("tests/node/test/") {
+    if candidate.is_absolute() {
         return path;
     }
     let cwd = context.host_mut().shared_state().borrow().cwd.clone();
@@ -2781,72 +2762,97 @@ pub(crate) fn read_file_sync(
 ) -> Result<RootId, RootedError> {
     let input = args.first().copied().unwrap_or_else(|| context.undefined());
     let undefined = context.undefined();
-    let input = crate::modules::url_shared_vm::to_path_if_file_url(context, undefined, &[input])?;
-    let path = context.to_string(input)?;
-    let path = resolve_shared_path(context, path);
-    let (encoding, flag) = if let Some(options) = args.get(1).copied().filter(|options| {
-        context
-            .rooted_value(*options)
-            .is_none_or(|value| !value.is_undefined() && !value.is_null())
-    }) {
-        if let Some(encoding) = context.string_text(options)? {
-            (Some(encoding), None)
-        } else {
-            let encoding_key = context.string_rooted("encoding");
-            let encoding = context.get_property_rooted(options, encoding_key)?;
-            let encoding = context.string_text(encoding)?;
-            let flag_key = context.string_rooted("flag");
-            let flag = context.get_property_rooted(options, flag_key)?;
-            let flag = context.string_text(flag)?;
-            (encoding, flag)
-        }
+    let provided_options = args.get(1).copied().unwrap_or(undefined);
+    let defaults = context.object_rooted()?;
+    let key = context.string_rooted("flag");
+    let read_flag = context.string_rooted("r");
+    context.define_data_property_rooted(defaults, key, read_flag, true, true, true)?;
+    let options =
+        super::fs_policy_shared_vm::call(context, "getOptions", &[provided_options, defaults])?;
+    super::fs_policy_shared_vm::call(context, "validateReadFileBufferOptions", &[options])?;
+    let user_buffer = get(context, options, "buffer")?;
+    let has_user_buffer = !context
+        .rooted_value(user_buffer)
+        .is_some_and(|value| value.is_undefined());
+    let encoding = get(context, options, "encoding")?;
+    let utf8 = if context.string_text(encoding)?.as_deref() == Some("utf8") {
+        true
     } else {
-        (None, None)
+        let encoding = get(context, options, "encoding")?;
+        context.string_text(encoding)?.as_deref() == Some("utf-8")
     };
-    let bytes = (|| -> Result<Vec<u8>, ReadFileFailure> {
-        let file = fs_ops::open(&path, flag.as_deref(), None).map_err(ReadFileFailure::Io)?;
-        let size = file.metadata().map_err(ReadFileFailure::Io)?.len();
-        if size > MAX_READ_FILE_BYTES {
-            return Err(ReadFileFailure::TooLarge(size));
+    let fast_utf8 = utf8 && !has_user_buffer;
+    // Node's isInt32 intentionally performs ToInt32 before strict equality,
+    // including observable valueOf/toString on non-numeric paths.
+    let zero = context.number(0.0);
+    let integer = context.bitwise_or_rooted(input, zero)?;
+    let fd = if context.strict_equal_rooted(input, integer)? {
+        Some(context.to_number(integer)? as i32)
+    } else {
+        None
+    };
+    if !fast_utf8 {
+        return super::fs_read_file_shared_vm::read_general(
+            context,
+            input,
+            options,
+            fd.is_some(),
+            has_user_buffer,
+        );
+    }
+    let mut filename = None;
+    let bytes = if let Some(fd) = fd {
+        let flag = get(context, options, "flag")?;
+        super::fs_policy_shared_vm::call(context, "stringToFlags", &[flag])?;
+        let fs = context.host_mut().shared_state().borrow().fs.clone();
+        fs.with_descriptor(fd, |file| Ok(fs_ops::read_file(file, MAX_READ_FILE_BYTES)))
+            .unwrap_or_else(|error| {
+                Err(ReadFileFailure::Io {
+                    syscall: "read",
+                    error,
+                })
+            })
+    } else {
+        let input = super::fs_path::validate(context, input, "path")?;
+        let flag = get(context, options, "flag")?;
+        let flags = super::fs_policy_shared_vm::call(context, "stringToFlags", &[flag])?;
+        let flags = context.to_number(flags)? as i32;
+        let path = super::fs_path::resolve(context, input)?;
+        filename = Some(super::fs_path::display(context, input)?);
+        #[cfg(unix)]
+        let opened = fs_ops::open_numeric(&path, flags, None);
+        #[cfg(not(unix))]
+        let opened = {
+            let _ = flags;
+            fs_ops::open(&path, context.string_text(flag)?.as_deref(), None)
+        };
+        match opened {
+            Ok(mut file) => fs_ops::read_file(&mut file, MAX_READ_FILE_BYTES),
+            Err(error) => Err(ReadFileFailure::Io {
+                syscall: "open",
+                error,
+            }),
         }
-        let mut bytes = Vec::new();
-        file.take(MAX_READ_FILE_BYTES + 1)
-            .read_to_end(&mut bytes)
-            .map_err(ReadFileFailure::Io)?;
-        if bytes.len() as u64 > MAX_READ_FILE_BYTES {
-            return Err(ReadFileFailure::TooLarge(bytes.len() as u64));
-        }
-        Ok(bytes)
-    })();
+    };
     match bytes {
-        Ok(bytes) => match encoding.as_deref() {
-            None | Some("buffer") => crate::modules::buffer_shared_vm::from_bytes(context, &bytes),
-            Some(encoding) => {
-                let buffer = crate::modules::buffer_shared_vm::from_bytes(context, &bytes)?;
-                let to_string = get(context, buffer, "toString")?;
-                let encoding = context.string_rooted(encoding);
-                context.call_rooted(to_string, buffer, &[encoding])
-            }
-        },
+        Ok(bytes) => super::buffer_string_shared_vm::decode_bytes(context, &bytes, "utf8"),
         Err(ReadFileFailure::TooLarge(size)) => {
             let error =
                 context.range_error_rooted(&format!("File size ({size}) is greater than 2 GiB"))?;
-            let code = context.string_rooted("ERR_FS_FILE_TOO_LARGE");
-            set(context, error, "code", code)?;
+            super::node_errors_shared_vm::decorate_formatted_range_error(
+                context,
+                error,
+                "ERR_FS_FILE_TOO_LARGE",
+            )?;
             Err(context.throw(error))
         }
-        Err(ReadFileFailure::Io(error)) => {
-            let code = fs_error_code(error.kind());
-            let error = context.error_rooted(&format!(
-                "{code}: {}, open '{path}'",
-                std::io::Error::from_raw_os_error(error.raw_os_error().unwrap_or(5))
-            ))?;
-            let code_value = context.string_rooted(code);
-            let property = context.string_rooted("code");
-            if !context.set_property_rooted(error, property, code_value, error)? {
-                return Err(RootedError::host("cannot set fs error code"));
-            }
-            Err(context.throw(error))
+        Err(ReadFileFailure::Io { syscall, error }) => {
+            let path = if syscall == "open" {
+                filename.as_deref()
+            } else {
+                None
+            };
+            sync::throw_io_error(context, syscall, path, &error)
         }
     }
 }
@@ -2949,21 +2955,8 @@ pub(super) fn stream_io_error(
     syscall: &str,
     path: &str,
 ) -> Result<RootedError, RootedError> {
-    let code = if error.raw_os_error() == Some(libc::EBADF) {
-        "EBADF"
-    } else if error.raw_os_error() == Some(libc::EFBIG) {
-        "EFBIG"
-    } else {
-        fs_error_code(error.kind())
-    };
-    let description = match error.kind() {
-        std::io::ErrorKind::NotFound => "no such file or directory",
-        std::io::ErrorKind::PermissionDenied => "permission denied",
-        std::io::ErrorKind::IsADirectory => "illegal operation on a directory",
-        std::io::ErrorKind::NotADirectory => "not a directory",
-        _ if error.raw_os_error() == Some(libc::EBADF) => "bad file descriptor",
-        _ => "input/output error",
-    };
+    let (code, _) = super::fs_error_codes::code_for(&error);
+    let description = super::fs_error_codes::strerror(code);
     let message = format!("{code}: {description}, {syscall} '{path}'");
     let exception = context.error_rooted(&message)?;
     let code_value = context.string_rooted(code);
@@ -2977,14 +2970,4 @@ pub(super) fn stream_io_error(
         set(context, exception, "errno", errno_value)?;
     }
     Ok(context.throw(exception))
-}
-
-fn fs_error_code(kind: std::io::ErrorKind) -> &'static str {
-    match kind {
-        std::io::ErrorKind::NotFound => "ENOENT",
-        std::io::ErrorKind::PermissionDenied => "EACCES",
-        std::io::ErrorKind::IsADirectory => "EISDIR",
-        std::io::ErrorKind::NotADirectory => "ENOTDIR",
-        _ => "EIO",
-    }
 }

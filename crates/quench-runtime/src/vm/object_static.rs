@@ -5,6 +5,20 @@ use super::property_key::PropertyKey;
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(super) fn intrinsic_builtin_prototype(&mut self, native: Native) -> Value {
+        self.realm
+            .intrinsics
+            .builtin_prototypes
+            .get(&(self.realm.globals, native))
+            .copied()
+            .unwrap_or_else(|| {
+                let constructor = self.native_value(native);
+                let atom = self.prototype_atom();
+                self.own_property(constructor, atom)
+                    .unwrap_or(self.object_proto)
+            })
+    }
+
     pub(super) fn object_prototype_define_accessor(
         &mut self,
         p: &ResidualProgram,
