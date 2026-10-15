@@ -1,0 +1,13 @@
+   Compiling quench-runtime v0.1.0 (/workspace/quench/crates/quench-runtime)
+   Compiling quench-wasm v0.1.0 (/workspace/quench/crates/quench-wasm)
+   Compiling quench-node v0.1.0 (/workspace/quench/crates/quench-node)
+   Compiling quench-node-test v0.1.0 (/workspace/quench/crates/quench-node-test)
+    Finished `iteration` profile [optimized] target(s) in 50.46s
+     Running tests/child_entry.rs (work/host-build/iteration/deps/child_entry-0c4d472d0248eb46)
+
+running 2 tests
+test process_memory_reports_kernel_constraints_and_native_function_metadata ... ok
+test process_memory_constraints_respect_inherited_data_limits ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 288 filtered out; finished in 0.52s
+
