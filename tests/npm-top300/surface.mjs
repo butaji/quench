@@ -17,15 +17,18 @@ const limitations = ['Returned objects/functions and dynamically installed metho
 const failures = [];
 const cliEntrypoints = [];
 const seen = new Map();
+const wellKnownSymbols = new Map(Object.getOwnPropertyNames(Symbol)
+  .map(name => [Symbol[name], name]).filter(([key]) => typeof key === 'symbol'));
 const intrinsic = new Set([Object.prototype, Function.prototype, Array.prototype,
   String.prototype, Number.prototype, Boolean.prototype, RegExp.prototype,
   Date.prototype, Map.prototype, Set.prototype, Promise.prototype, Error.prototype]);
 const keyName = key => typeof key === 'symbol' ? `[${String(key)}]` : JSON.stringify(key);
 
-function walk(value, location) {
+function walk(value, location, wellKnownSymbol) {
   if (value === null || !['function', 'object'].includes(typeof value) || intrinsic.has(value)) return;
   if (typeof value === 'function') {
-    functions.push({ path: location, kind: 'call', name: value.name, length: value.length });
+    functions.push({ path: location, kind: 'call', name: value.name, length: value.length,
+      ...(wellKnownSymbol === undefined ? {} : {well_known_symbol: wellKnownSymbol}) });
   }
   if (seen.has(value)) { aliases.push({ path: location, target: seen.get(value) }); return; }
   seen.set(value, location);
@@ -33,12 +36,14 @@ function walk(value, location) {
     if (typeof value === 'function' && ['caller', 'arguments', 'name', 'length'].includes(key)) continue;
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     const child = `${location}[${keyName(key)}]`;
+    const symbol = typeof key === 'symbol' ? wellKnownSymbols.get(key) : undefined;
     for (const kind of ['get', 'set']) if (typeof descriptor[kind] === 'function') {
       const fn = descriptor[kind];
-      functions.push({ path: child, kind, name: fn.name, length: fn.length });
+      functions.push({ path: child, kind, name: fn.name, length: fn.length,
+        ...(symbol === undefined ? {} : {well_known_symbol: symbol}) });
       if (kind === 'get') limitations.push(`Getter result not traversed: ${child}`);
     }
-    if ('value' in descriptor) walk(descriptor.value, child);
+    if ('value' in descriptor) walk(descriptor.value, child, symbol);
   }
   const prototype = Object.getPrototypeOf(value);
   if (prototype && !intrinsic.has(prototype)) walk(prototype, `${location}.[[Prototype]]`);
