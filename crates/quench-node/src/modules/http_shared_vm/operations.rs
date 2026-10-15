@@ -162,32 +162,6 @@ const RESPONSE_FACTORY: &str = r#"((Writable, setHeaderOperation, getHeaderOpera
   return ServerResponse;
 })"#;
 
-const INCOMING_FACTORY: &str = r#"((Readable, Buffer, EventEmitter, destroyClientResponse) => {
-  function IncomingMessage(message = {}, body = "", open = false, exchangeId) {
-    const options = { read() {} };
-    if (open && exchangeId !== undefined) {
-      options.destroy = (error, callback) => {
-        try { destroyClientResponse(exchangeId); callback(error); }
-        catch (failure) { callback(failure); }
-      };
-    }
-    const stream = new Readable(options);
-    Object.setPrototypeOf(stream, IncomingMessage.prototype);
-    Object.assign(stream, message);
-    if (stream.socket && typeof stream.socket.on !== "function") {
-      Object.setPrototypeOf(stream.socket, EventEmitter.prototype);
-    }
-    if (body.length) stream.push(Buffer.from(body, "latin1"));
-    if (!open) stream.push(null);
-    return stream;
-  }
-  IncomingMessage.prototype = Object.create(Readable.prototype);
-  Object.defineProperty(IncomingMessage.prototype, "constructor", {
-    value: IncomingMessage, writable: true, configurable: true,
-  });
-  return IncomingMessage;
-})"#;
-
 pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     let status_codes = crate::modules::http_status_shared_vm::codes(context)?;
     let set_header =
@@ -261,26 +235,14 @@ pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     set(context, prototype, "_send", send)?;
     let response_factory = context.retain(response_factory)?;
     let global = context.global_root()?;
-    let buffer_key = context.string_rooted("Buffer");
-    let buffer_constructor = context.get_property_rooted(global, buffer_key)?;
     let emitter_key = context.string_rooted("__nodeEventEmitter");
     let emitter = context.get_property_rooted(global, emitter_key)?;
-    let destroy_client_response = context.host_function(crate::host::shared_vm::operation(
-        "httpClientResponseDestroy",
-    ))?;
-    let readable_key = context.string_rooted("Readable");
-    let readable = context.get_property_rooted(stream, readable_key)?;
-    let incoming_factory =
-        context.evaluate_script_rooted(INCOMING_FACTORY, "node:http/incoming-message.js")?;
-    let incoming_factory = context.call_rooted(
-        incoming_factory,
-        undefined,
-        &[
-            readable,
-            buffer_constructor,
-            emitter,
-            destroy_client_response,
-        ],
+    let incoming_constructor = crate::host::shared_vm::commonjs::node_library_export(
+        context, "http.js", "_http_incoming.js", "IncomingMessage",
+    )?;
+    let incoming_data = context.array_rooted(&[incoming_constructor, emitter])?;
+    let incoming_factory = context.host_function_with_data(
+        crate::host::shared_vm::operation("httpIncomingCreate"), incoming_data,
     )?;
     let incoming_factory = context.retain(incoming_factory)?;
 
@@ -301,7 +263,7 @@ pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
             request,
             create_agent,
             destroy_agent,
-            incoming_factory,
+            incoming_constructor,
             response_factory,
         ],
     )?;
