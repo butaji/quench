@@ -11,11 +11,11 @@ const EXPORTS: &[&str] = &[
     "getStatFsFromBinding",
     "getOptions",
     "stringToFlags",
-    "getValidatedFd",
     "validateReadFileBufferOptions",
     "getReadFileBuffer",
     "getReadFileBufferByteLengthName",
-    "createReadFileBufferTooSmallError",
+    "validatePosition",
+    "validateOffsetLengthRead",
 ];
 fn get(
     context: &mut NativeContext<'_, NodeHost>,
@@ -45,14 +45,31 @@ pub(crate) fn adopt(
     let buffer = get(context, buffer_module, "Buffer")?;
     let key = context.string_rooted("Buffer");
     context.define_data_property_rooted(utilities, key, buffer, false, false, false)?;
-    let mode = crate::host::shared_vm::commonjs::node_library_export(
+    for name in [
+        "parseFileMode",
+        "validateBuffer",
+        "validateObject",
+        "validateInteger",
+        "kValidateObjectAllowNullable",
+    ] {
+        let value = crate::host::shared_vm::commonjs::node_library_export(
+            context,
+            "fs.js",
+            "internal/validators.js",
+            name,
+        )?;
+        let key = context.string_rooted(name);
+        context.define_data_property_rooted(utilities, key, value, false, false, false)?;
+    }
+    let codes = crate::host::shared_vm::commonjs::node_library_export(
         context,
         "fs.js",
-        "internal/validators.js",
-        "parseFileMode",
+        "internal/errors.js",
+        "codes",
     )?;
-    let key = context.string_rooted("parseFileMode");
-    context.define_data_property_rooted(utilities, key, mode, false, false, false)?;
+    let constructor = get(context, codes, "ERR_INVALID_ARG_VALUE")?;
+    let key = context.string_rooted("ERR_INVALID_ARG_VALUE");
+    context.define_data_property_rooted(utilities, key, constructor, false, false, false)?;
     let utilities = context.retain(utilities)?;
     shared.borrow_mut().fs_policy.utilities = Some(utilities);
     let constructor = get(context, utilities, "BigIntStats")?;
@@ -101,4 +118,16 @@ pub(super) fn call(
     let function = export(context, name)?;
     let undefined = context.undefined();
     context.call_rooted(function, undefined, args)
+}
+
+/// Construct the configured Node error class, preserving its public prototype.
+pub(super) fn invalid_value(
+    context: &mut NativeContext<'_, NodeHost>,
+    name: RootId,
+    value: RootId,
+    reason: RootId,
+) -> Result<RootedError, RootedError> {
+    let constructor = export(context, "ERR_INVALID_ARG_VALUE")?;
+    let error = context.construct_rooted(constructor, constructor, &[name, value, reason])?;
+    Ok(context.throw(error))
 }

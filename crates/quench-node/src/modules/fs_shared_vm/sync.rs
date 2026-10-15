@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_TEMP_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
-const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSync, symlinkSync, linkSync, renameSync, unlinkSync, chownSync, lchownSync, fchownSync, truncateSync, ftruncateSync, writeFileSync, openSync, closeSync, fstatSync, readInto, writeDescriptor, syncDescriptor) => {
+const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSync, symlinkSync, linkSync, renameSync, unlinkSync, chownSync, lchownSync, fchownSync, truncateSync, ftruncateSync, writeFileSync, openSync, closeSync, fstatSync, readSyncNative, writeDescriptor, syncDescriptor) => {
   let warnedMkdtempX = false;
   const normalizePath = (path) =>
     typeof path === 'string' ? path : Buffer.isBuffer(path) ? path.toString() : ArrayBuffer.isView(path) && !(path instanceof DataView) ? Buffer.from(path).toString() : path instanceof URL ? decodeURIComponent(path.pathname) : path;
@@ -290,54 +290,8 @@ const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSy
       validateFd(fd);
       return fstatSync(fd, options);
     },
-    readSync(fd, buffer, offset = 0, length, position = null) {
-      validateFd(fd);
-      if (typeof position === "bigint") {
-        if (position > BigInt(Number.MAX_SAFE_INTEGER)) {
-          const error = new RangeError(`The value of "position" is out of range. Received ${String(position)}`);
-          error.code = "ERR_OUT_OF_RANGE";
-          throw error;
-        }
-        position = Number(position);
-      }
-      if (position != null && typeof position !== "number") {
-        const error = new TypeError('The "position" argument must be of type number or bigint.');
-        error.code = "ERR_INVALID_ARG_TYPE";
-        throw error;
-      }
-      if (typeof position === "number" &&
-          (!Number.isInteger(position) || position < 0 || position > Number.MAX_SAFE_INTEGER)) {
-        const error = new RangeError(`The value of "position" is out of range. Received ${String(position)}`);
-        error.code = "ERR_OUT_OF_RANGE";
-        throw error;
-      }
-      if (offset && typeof offset === "object") {
-        const options = offset;
-        offset = options.offset ?? 0;
-        length = options.length;
-        position = options.position ?? null;
-      }
-      if (!ArrayBuffer.isView(buffer)) {
-        const received = buffer === null || buffer === undefined
-          ? ` Received ${buffer}`
-          : typeof buffer === "number" || typeof buffer === "boolean" || typeof buffer === "string"
-            ? ` Received type ${typeof buffer} (${typeof buffer === "string" ? `'${buffer}'` : String(buffer)})`
-            : ` Received an instance of ${Array.isArray(buffer) ? "Array" : "Object"}`;
-        const error = new TypeError(`The "buffer" argument must be an instance of Buffer, TypedArray, or DataView.${received}`);
-        error.code = "ERR_INVALID_ARG_TYPE";
-        throw error;
-      }
-      offset ??= 0;
-      length ??= buffer.byteLength - offset;
-      if (buffer.byteLength === 0 && length > 0) {
-        const name = buffer.constructor?.name || "TypedArray";
-        const error = new TypeError(`The argument 'buffer' is empty and cannot be written. Received ${name}(0) []`);
-        error.code = "ERR_INVALID_ARG_VALUE";
-        throw error;
-      }
-      [offset, length] = validateReadWriteRange(buffer, offset, length);
-      if (length === 0) return 0;
-      return readInto(fd, buffer, offset, length, position);
+    readSync(fd, buffer, offset, length, position) {
+      return readSyncNative(...arguments);
     },
     writeSync(fd, data, offset, length, position) {
       validateFd(fd);
@@ -383,7 +337,7 @@ pub(crate) fn install(
     let open = context.host_function(crate::host::shared_vm::operation("fsOpenSync"))?;
     let close = context.host_function(crate::host::shared_vm::operation("fsCloseSync"))?;
     let fstat = context.host_function(crate::host::shared_vm::operation("fsFstatSync"))?;
-    let read_descriptor = context.host_function(crate::host::shared_vm::operation("fsReadInto"))?;
+    let read_sync = context.host_function(crate::host::shared_vm::operation("fsReadSync"))?;
     let write_descriptor =
         context.host_function(crate::host::shared_vm::operation("fsWriteDescriptor"))?;
     let sync_descriptor =
@@ -412,7 +366,7 @@ pub(crate) fn install(
             open,
             close,
             fstat,
-            read_descriptor,
+            read_sync,
             write_descriptor,
             sync_descriptor,
         ],
@@ -513,7 +467,113 @@ pub(crate) fn close_sync(
     }
 }
 
-pub(crate) fn read_into(
+/// Release-specific overload and validation policy executes through the configured
+/// Node validators; the actual byte copy remains a native/Core operation.
+pub(crate) fn read_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    use crate::modules::fs_policy_shared_vm as policy;
+    let undefined = context.undefined();
+    let zero = context.number(0.0);
+    let fd = args.first().copied().unwrap_or(undefined);
+    let buffer = args.get(1).copied().unwrap_or(undefined);
+    policy::call(context, "validateBuffer", &[buffer])?;
+    let mut offset = args.get(2).copied().unwrap_or(undefined);
+    let mut length = args.get(3).copied().unwrap_or(undefined);
+    let mut position = args.get(4).copied().unwrap_or(undefined);
+    if args.len() <= 3
+        || context.rooted_value(offset).is_some_and(Value::is_null)
+        || context.is_object_rooted(offset)?
+    {
+        let options = offset;
+        if !context
+            .rooted_value(options)
+            .is_some_and(Value::is_undefined)
+        {
+            let name = context.string_rooted("options");
+            let nullable = policy::export(context, "kValidateObjectAllowNullable")?;
+            policy::call(context, "validateObject", &[options, name, nullable])?;
+        }
+        let empty = context
+            .rooted_value(options)
+            .is_some_and(|v| v.is_null() || v.is_undefined());
+        offset = if empty {
+            undefined
+        } else {
+            get(context, options, "offset")?
+        };
+        if context
+            .rooted_value(offset)
+            .is_some_and(Value::is_undefined)
+        {
+            offset = zero;
+        }
+        length = if empty {
+            undefined
+        } else {
+            get(context, options, "length")?
+        };
+        if context
+            .rooted_value(length)
+            .is_some_and(Value::is_undefined)
+        {
+            let capacity = get(context, buffer, "byteLength")?;
+            length = context.subtract_rooted(capacity, offset)?;
+        }
+        position = if empty {
+            undefined
+        } else {
+            get(context, options, "position")?
+        };
+        if context
+            .rooted_value(position)
+            .is_some_and(Value::is_undefined)
+        {
+            position = context.null();
+        }
+    }
+    if context
+        .rooted_value(offset)
+        .is_some_and(Value::is_undefined)
+    {
+        offset = zero;
+    } else {
+        let name = context.string_rooted("offset");
+        policy::call(context, "validateInteger", &[offset, name, zero])?;
+    }
+    length = context.bitwise_or_rooted(length, zero)?;
+    if context
+        .rooted_value(position)
+        .is_some_and(|v| v.is_null() || v.is_undefined())
+    {
+        position = context.number(-1.0);
+    } else {
+        let name = context.string_rooted("position");
+        policy::call(context, "validatePosition", &[position, name, length])?;
+    }
+    if context.strict_equal_rooted(length, zero)? {
+        return Ok(zero);
+    }
+    let capacity = get(context, buffer, "byteLength")?;
+    if context.strict_equal_rooted(capacity, zero)? {
+        let name = context.string_rooted("buffer");
+        let reason = context.string_rooted("is empty and cannot be written");
+        return Err(policy::invalid_value(context, name, buffer, reason)?);
+    }
+    let capacity = get(context, buffer, "byteLength")?;
+    policy::call(
+        context,
+        "validateOffsetLengthRead",
+        &[offset, length, capacity],
+    )?;
+    let maximum = context.number(i32::MAX as f64);
+    crate::modules::util_shared_vm::validate_binding_integer(context, fd, "fd", 0.0, maximum)?;
+    read_into(context, undefined, &[fd, buffer, offset, length, position])
+}
+
+fn read_into(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
     args: &[RootId],
@@ -522,7 +582,20 @@ pub(crate) fn read_into(
     let buffer = args.get(1).copied().unwrap_or_else(|| context.undefined());
     let offset = super::integer_arg(context, args.get(2).copied(), "offset")? as usize;
     let size = super::integer_arg(context, args.get(3).copied(), "length")? as usize;
-    let position = descriptor_position(context, args.get(4).copied());
+    let position_value = args[4];
+    let position = if let Some(number) = context
+        .rooted_value(position_value)
+        .and_then(Value::as_number)
+    {
+        (number >= 0.0).then_some(number as u64)
+    } else {
+        // validatePosition has already established an in-range BigInt primitive.
+        let integer = context
+            .to_string(position_value)?
+            .parse::<i128>()
+            .map_err(|_| RootedError::host("validated file position is not an integer"))?;
+        (integer >= 0).then_some(integer as u64)
+    };
     let data_view =
         context.has_builtin_brand_rooted(buffer, quench_runtime::BuiltinBrand::DataView)?;
     if !data_view
