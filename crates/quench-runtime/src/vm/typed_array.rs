@@ -323,7 +323,7 @@ impl<H: Host> Vm<H> {
                     let to = offset + target * width;
                     // Copy backing bytes directly to preserve NaN payloads and overlap.
                     if count > 0 {
-                        Rc::make_mut(bytes).copy_within(from..from + count * width, to);
+                        bytes.make_mut().copy_within(from..from + count * width, to);
                     }
                 }
                 Ok(this)
@@ -360,7 +360,7 @@ impl<H: Host> Vm<H> {
                         else {
                             unreachable!("validated typed array backing buffer");
                         };
-                        let bytes = Rc::make_mut(bytes);
+                        let bytes = bytes.make_mut();
                         // Slice copies forward even when species returns an overlapping view.
                         for index in 0..byte_count {
                             bytes[target_offset + index] = bytes[source_offset + index];
@@ -369,13 +369,13 @@ impl<H: Host> Vm<H> {
                         let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get(buffer) else {
                             unreachable!("validated typed array backing buffer");
                         };
-                        let source_bytes = Rc::clone(bytes);
+                        let source_bytes = bytes.clone();
                         let Some(Cell::ArrayBuffer { bytes, .. }) =
                             self.heap.get_mut(target_buffer)
                         else {
                             unreachable!("validated species backing buffer");
                         };
-                        Rc::make_mut(bytes)[target_offset..target_offset + byte_count]
+                        bytes.make_mut()[target_offset..target_offset + byte_count]
                             .copy_from_slice(
                                 &source_bytes[source_offset..source_offset + byte_count],
                             );
