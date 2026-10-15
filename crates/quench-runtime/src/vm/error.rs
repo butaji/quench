@@ -761,6 +761,20 @@ impl<H: Host> Vm<H> {
         if let Some(value) = error.thrown_value() {
             return value;
         }
+        // Traps and link failures surface as the `WebAssembly` namespace's errors.
+        let wasm_error = if error.wasm_trap().is_some() {
+            Some(Native::WasmRuntimeError)
+        } else if error.wasm_link_error().is_some() {
+            Some(Native::WasmLinkError)
+        } else {
+            None
+        };
+        if let Some(native) = wasm_error {
+            return self
+                .wasm_js_error(program, native, error.into_message())
+                .thrown_value()
+                .unwrap_or(Value::UNDEFINED);
+        }
         let text = error.into_message();
         let normalized = text.to_ascii_lowercase();
         let native = if normalized.contains("typeerror")
@@ -1788,7 +1802,7 @@ impl<H: Host> Vm<H> {
             };
             self.set_builtin_value_named(global, name, value)?;
         }
-        for name in ["Atomics", "Math", "Reflect"] {
+        for name in ["Atomics", "Math", "Reflect", "WebAssembly"] {
             let atom = self.intern_atom(name);
             if self.own_property(global, atom).is_none()
                 && let Some(value) = self.own_property(source_global, atom)
@@ -1928,46 +1942,14 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
     ) -> Result<(), JsError> {
         let error_prototype = self.object();
-        for (index, (name, native)) in ERROR_CONSTRUCTORS.iter().enumerate() {
-            let constructor = self.native_value(*native);
+        for (index, &(name, native)) in ERROR_CONSTRUCTORS.iter().enumerate() {
             let prototype = if index == 0 {
                 error_prototype
             } else {
                 self.heap
                     .alloc(Cell::Object(Self::empty_object(error_prototype)))
             };
-            self.realm
-                .intrinsics
-                .builtin_prototypes
-                .insert((self.realm.globals, *native), prototype);
-            self.set_named_constant(program, constructor, "prototype", prototype)?;
-            self.set_builtin_value_named(prototype, "constructor", constructor)?;
-            let constructor_name = self.heap.alloc(Cell::String(JsString::from_str(name)));
-            self.set_named(program, constructor, "name", constructor_name)?;
-            let name_atom = self.intern_atom("name");
-            self.set_property_attributes(
-                constructor,
-                PropertyKey::string(name_atom),
-                PropertyAttributes {
-                    writable: false,
-                    enumerable: false,
-                    configurable: true,
-                    accessor: false,
-                    getter: None,
-                    setter: None,
-                },
-            );
-            let name_value = self.heap.alloc(Cell::String(JsString::from_str(name)));
-            self.set_builtin_value_named(prototype, "name", name_value)?;
-            let empty_message = self.heap.alloc(Cell::String(JsString::from_str("")));
-            self.set_builtin_value_named(prototype, "message", empty_message)?;
-        }
-        let error_constructor = self.native_value(Native::Error);
-        for (_, native) in ERROR_CONSTRUCTORS.iter().skip(1) {
-            let constructor = self.native_value(*native);
-            if let Some(function) = self.object_data_mut(constructor) {
-                function.set_proto(error_constructor);
-            }
+            self.install_error_class(program, native, name, prototype)?;
         }
         self.set_builtin_named(program, error_prototype, "toString", Native::ErrorToString)?;
         let error_constructor = self.native_value(Native::Error);
@@ -1983,6 +1965,50 @@ impl<H: Host> Vm<H> {
             .heap
             .alloc(Cell::String(JsString::from_str("TypeError")));
         self.set_named(program, realm_prototype, "name", realm_name)?;
+        Ok(())
+    }
+
+    /// Installs error constructor `native` named `name` with `prototype` as its intrinsic
+    /// prototype; every class but `Error` itself inherits from the `Error` constructor.
+    pub(super) fn install_error_class(
+        &mut self,
+        program: &ResidualProgram,
+        native: Native,
+        name: &str,
+        prototype: Value,
+    ) -> Result<(), JsError> {
+        let constructor = self.native_value(native);
+        self.realm
+            .intrinsics
+            .builtin_prototypes
+            .insert((self.realm.globals, native), prototype);
+        self.set_named_constant(program, constructor, "prototype", prototype)?;
+        self.set_builtin_value_named(prototype, "constructor", constructor)?;
+        let constructor_name = self.heap.alloc(Cell::String(JsString::from_str(name)));
+        self.set_named(program, constructor, "name", constructor_name)?;
+        let name_atom = self.intern_atom("name");
+        self.set_property_attributes(
+            constructor,
+            PropertyKey::string(name_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        let name_value = self.heap.alloc(Cell::String(JsString::from_str(name)));
+        self.set_builtin_value_named(prototype, "name", name_value)?;
+        let empty_message = self.heap.alloc(Cell::String(JsString::from_str("")));
+        self.set_builtin_value_named(prototype, "message", empty_message)?;
+        if native != Native::Error {
+            let error_constructor = self.native_value(Native::Error);
+            if let Some(function) = self.object_data_mut(constructor) {
+                function.set_proto(error_constructor);
+            }
+        }
         Ok(())
     }
 

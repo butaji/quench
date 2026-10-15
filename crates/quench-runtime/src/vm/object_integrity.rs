@@ -538,7 +538,7 @@ impl<H: Host> Vm<H> {
         ))
     }
 
-    fn set_integrity_level(
+    pub(super) fn set_integrity_level(
         &mut self,
         p: &ResidualProgram,
         object: Value,

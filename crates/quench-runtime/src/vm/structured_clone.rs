@@ -107,11 +107,12 @@ impl<H: Host> Vm<H> {
             let valid = matches!(
                 self.heap.get(value),
                 Some(Cell::ArrayBuffer {
+                    bytes,
                     shared: false,
                     detached: false,
                     immutable: false,
                     ..
-                })
+                }) if !bytes.is_wasm_view()
             );
             if !valid {
                 return Err(self.data_clone_error(
@@ -193,7 +194,7 @@ impl<H: Host> Vm<H> {
                 let prototype = self.array_buffer_clone_prototype();
                 let target = self.heap.alloc(Cell::ArrayBuffer {
                     object: Box::new(Self::empty_object(prototype)),
-                    bytes: Rc::new(copied_bytes),
+                    bytes: copied_bytes.into(),
                     shared: false,
                     detached: false,
                     max_byte_length: if resizable {

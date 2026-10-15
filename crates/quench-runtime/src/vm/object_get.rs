@@ -543,7 +543,10 @@ impl<H: Host> Vm<H> {
                     Some(Cell::FinalizationRegistry { object: x, .. }) => object = x.proto(),
                     Some(Cell::Iterator { object: x, .. }) => object = x.proto(),
                     Some(Cell::Function { object: x, .. }) => object = x.proto(),
-                    _ => return Ok(Value::UNDEFINED),
+                    _ => match self.heap.object(object) {
+                        Some(x) => object = x.proto(),
+                        None => return Ok(Value::UNDEFINED),
+                    },
                 }
             }
             if object.is_null() {
