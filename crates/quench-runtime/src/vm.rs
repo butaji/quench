@@ -1769,6 +1769,8 @@ impl<H: Host> Vm<H> {
         self.realm.promise = Default::default();
         self.shapes.truncate(1);
         self.transitions.clear();
+        // The sealed holders and their shapes belong to the discarded heap.
+        self.startup_intrinsics = Default::default();
         self.atom_text = program.atoms.clone();
         self.atom_sequence = Rc::new(crate::bytecode::AtomSequence::new(self.atom_text.clone()));
         self.atoms.clear();
