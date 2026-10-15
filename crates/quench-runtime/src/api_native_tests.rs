@@ -714,3 +714,48 @@ fn native_number_conversion_uses_original_hooks_and_shared_language_errors() {
         Engine::specialize(source,"native-number.js").unwrap(),
     ] { Runtime::new(NumberCoercionHost).execute(&program).unwrap(); }
 }
+
+#[derive(Default)]
+struct InstanceOfHost;
+impl Host for InstanceOfHost {
+    fn write_line(&mut self, _: &str) {}
+    fn clock_millis(&mut self) -> f64 {
+        0.0
+    }
+    fn functions(&self) -> &[HostFunction<Self>] {
+        crate::host_functions![global "nativeInstanceOf" (2) => native_instanceof]
+    }
+}
+fn native_instanceof(
+    context: &mut NativeContext<'_, InstanceOfHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    context.collect()?;
+    let yes = context.instance_of_rooted(args[0], args[1])?;
+    Ok(context.boolean(yes))
+}
+#[test]
+fn native_instanceof_preserves_original_hooks_proxy_effects_and_abrupt_completions() {
+    let source = r#"
+    function C(){};const object=new C(),marker={},log=[];
+    if(!nativeInstanceOf(object,C)||nativeInstanceOf({},C)||nativeInstanceOf(null,C))throw Error('ordinary membership');
+    const constructor={get [Symbol.hasInstance](){log.push('get');return function(value){log.push(this===constructor,value===object);return marker;};}};
+    if(!nativeInstanceOf(object,constructor)||JSON.stringify(log)!=='["get",true,true]')throw Error('original hook');
+    const proxy=new Proxy(object,{getPrototypeOf(){throw marker;}});
+    try{nativeInstanceOf(proxy,C);throw Error('missing proxy error');}catch(error){if(error!==marker)throw error;}
+    try{nativeInstanceOf(object,{[Symbol.hasInstance](){throw marker;}});throw Error('missing hook error');}catch(error){if(error!==marker)throw error;}
+    for(const constructor of [null,{}, {[Symbol.hasInstance]:1}]){try{nativeInstanceOf(object,constructor);throw Error('missing type error');}catch(error){if(!(error instanceof TypeError))throw error;}}
+    "#;
+    for program in [
+        Engine::compile(crate::ExecutionRequest {
+            source,
+            name: "native-instanceof.js",
+            kind: crate::SourceKind::Script,
+        })
+        .unwrap(),
+        Engine::specialize(source, "native-instanceof.js").unwrap(),
+    ] {
+        Runtime::new(InstanceOfHost).execute(&program).unwrap();
+    }
+}

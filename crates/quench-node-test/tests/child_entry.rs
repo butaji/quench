@@ -6548,3 +6548,24 @@ for(const name of ['indexOf','lastIndexOf','includes']) {
 console.log(JSON.stringify(out));
 "#);
 }
+
+#[test]
+fn native_buffer_backing_getters_preserve_descriptors_membership_and_original_hooks() {
+    compare_node_stream_source(r#"
+"use strict";
+const out=[];
+for(const key of ['parent','offset']){
+ const d=Object.getOwnPropertyDescriptor(Buffer.prototype,key),get=d.get;
+ out.push([key,d.enumerable,d.configurable,d.set===undefined,get.name,get.length,Object.hasOwn(get,'prototype')]);
+ const b=Buffer.from(new ArrayBuffer(12),3,5);
+ out.push(key==='parent'?get.call(b)===b.buffer:get.call(b));
+ for(const value of [Buffer.prototype,new Uint8Array(3),new DataView(new ArrayBuffer(4)),{},null,undefined]){try{out.push(get.call(value)===undefined);}catch(e){out.push([e.name,e.message]);}}
+ const log=[],marker={};Object.defineProperty(b,key==='parent'?'buffer':'byteOffset',{get(){log.push('get');return marker;}});out.push(get.call(b)===marker,log);
+ const fake=Object.create(Buffer.prototype);Object.defineProperty(fake,key==='parent'?'buffer':'byteOffset',{value:marker});out.push(get.call(fake)===marker);
+}
+const get=Object.getOwnPropertyDescriptor(Buffer.prototype,'parent').get,log=[],marker={},target={buffer:marker};
+Object.defineProperty(Buffer,Symbol.hasInstance,{configurable:true,value(value){log.push(this===Buffer,value===target);return true;}});out.push(get.call(target)===marker,log);
+Object.defineProperty(Buffer,Symbol.hasInstance,{configurable:true,value(){throw marker;}});try{get.call(target);out.push('accepted');}catch(e){out.push(e===marker);}delete Buffer[Symbol.hasInstance];
+console.log(JSON.stringify(out));
+"#);
+}
