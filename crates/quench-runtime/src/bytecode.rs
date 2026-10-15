@@ -1082,6 +1082,11 @@ pub(crate) struct CallPlan {
     /// `CallForwardingArguments` calls, so it keeps the argument values instead of an
     /// `arguments` object until a call needs one (`Function::forwards_arguments_only`).
     pub(crate) forwards_arguments: bool,
+    /// The activation's whole state is its registers, plus the values it was passed when it
+    /// forwards them: it reaches no local but a forwarded `arguments` binding, and legacy
+    /// reflection, if any, reads its parameter registers or the forwarded values. A lane
+    /// may run such a body without a frame.
+    pub(crate) registers_only: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1364,32 +1369,52 @@ impl Function {
                 .iter()
                 .filter(|entry| entry.local < self.params)
                 .count();
+            // Plain but for an `arguments` binding.
+            let ordinary = self.parent.is_some()
+                && !self.is_arrow
+                && !self.derived_constructor
+                && !self.rest
+                && self.self_binding_slot.is_none()
+                && !self.parameter_eval_arguments_error
+                && !self.inherited_with_scope
+                && !self.is_generator
+                && !self.is_async
+                && promoted_parameters == usize::from(self.params)
+                && !self.activation_bindings_observable(atoms);
+            let in_loop = !self.is_async
+                && !self.is_generator
+                && !self.is_class_constructor
+                && !self.derived_constructor
+                && !self.class_field_initializer
+                && !self.parameter_eval_arguments_error;
+            let legacy_reflection = !self.has_restricted_legacy_caller_access();
+            let live_parameters = self.reflects_live_parameters(atoms);
+            let forwards_arguments = self.forwards_arguments_only();
+            let addresses_locals = self.instructions().any(|instruction| {
+                matches!(instruction.op(), Op::MakeClosure | Op::CloneEnv)
+                    || instruction.addressed_local_slots().next().is_some()
+            });
+            let reaches_only_forwarded_arguments = forwards_arguments
+                && self.instructions().all(|instruction| {
+                    instruction
+                        .addressed_local_slots()
+                        .all(|slot| Some(slot) == self.arguments_slot)
+                });
             CallPlan {
-                plain: self.parent.is_some()
-                    && !self.is_arrow
-                    && !self.derived_constructor
-                    && !self.rest
-                    && self.self_binding_slot.is_none()
-                    && self.arguments_slot.is_none()
-                    && !self.parameter_eval_arguments_error
-                    && !self.inherited_with_scope
-                    && !self.is_generator
-                    && !self.is_async
-                    && promoted_parameters == usize::from(self.params)
-                    && !self.activation_bindings_observable(atoms),
-                in_loop: !self.is_async
-                    && !self.is_generator
-                    && !self.is_class_constructor
-                    && !self.derived_constructor
-                    && !self.class_field_initializer
-                    && !self.parameter_eval_arguments_error,
-                legacy_reflection: !self.has_restricted_legacy_caller_access(),
-                live_parameters: self.reflects_live_parameters(atoms),
-                addresses_locals: self.instructions().any(|instruction| {
-                    matches!(instruction.op(), Op::MakeClosure | Op::CloneEnv)
-                        || instruction.addressed_local_slots().next().is_some()
-                }),
-                forwards_arguments: self.forwards_arguments_only(),
+                plain: ordinary && self.arguments_slot.is_none(),
+                in_loop,
+                legacy_reflection,
+                live_parameters,
+                addresses_locals,
+                forwards_arguments,
+                registers_only: ordinary
+                    && in_loop
+                    && self.initial_register == InitialRegister::Undefined
+                    && if self.arguments_slot.is_none() {
+                        !addresses_locals && (!legacy_reflection || live_parameters)
+                    } else {
+                        reaches_only_forwarded_arguments
+                    },
             }
         })
     }
@@ -1399,7 +1424,7 @@ impl Function {
     /// closure, environment clone, dynamic scope access or promoted register, and no
     /// suspension. An object it later materializes must equal one made on entry: unmapped,
     /// or mapped onto no parameters.
-    fn forwards_arguments_only(&self) -> bool {
+    pub(crate) fn forwards_arguments_only(&self) -> bool {
         let Some(slot) = self.arguments_slot else {
             return false;
         };
