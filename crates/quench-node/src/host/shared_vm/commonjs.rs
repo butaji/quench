@@ -1246,8 +1246,12 @@ fn cached_builtin(
     let module = context.with_startup_intrinsics(|context| build_builtin(context, builtin))?;
     let retained = context.retain(module)?;
     roots.borrow_mut().builtin_cache.insert(key.clone(), retained);
-    if matches!(builtin, BuiltinModule::Crypto) {
+    if matches!(builtin, BuiltinModule::Crypto | BuiltinModule::Events) {
         let policy = context.with_startup_intrinsics(|context| {
+            if matches!(builtin, BuiltinModule::Events) {
+                let on = node_library_export(context, "events.js", "events.js", "on")?;
+                return set(context, module, "on", on);
+            }
             let setter = node_library_export(context, "crypto.js", "internal/crypto/util.js", "setEngine")?;
             set(context, module, "setEngine", setter)
         });

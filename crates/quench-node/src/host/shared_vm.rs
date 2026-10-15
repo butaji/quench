@@ -174,6 +174,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "childProcessWrite" (3) => crate::modules::child_process_shared_vm::write_child,
         method "childProcessInputComplete" (2) => crate::modules::child_process_input_shared_vm::complete,
         method "childProcessEnd" (2) => crate::modules::child_process_shared_vm::end_child,
+        method "childProcessDestroyInput" (3) => crate::modules::child_process_shared_vm::destroy_input,
+        method "childProcessPrepareExit" (3) => crate::modules::child_process_shared_vm::prepare_exit,
         method "fail" (1) => crate::modules::assert_shared_vm::fail,
         method "throws" (3) => crate::modules::assert_shared_vm::throws,
         method "doesNotThrow" (2) => crate::modules::assert_shared_vm::does_not_throw,
