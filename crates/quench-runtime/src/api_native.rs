@@ -551,6 +551,19 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.completion(result)
     }
 
+    /// Clone with an already-converted transfer sequence. Host Web IDL conversion
+    /// owns iteration; the VM must not consult the public iterator a second time.
+    pub fn structured_clone_with_transfers_rooted(
+        &mut self,
+        value: RootId,
+        transfers: &[RootId],
+    ) -> Result<RootId, RootedError> {
+        let result = self
+            .vm
+            .embedding_structured_clone_with_transfers(value, transfers);
+        self.completion(result)
+    }
+
     pub fn array_rooted(&mut self, values: &[RootId]) -> Result<RootId, RootedError> {
         let result = self.vm.create_embedding_array(values);
         self.completion(result)
