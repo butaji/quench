@@ -73,6 +73,33 @@ impl RegExpIntrinsics {
     }
 }
 
+/// Legacy match data belongs to the embedding caller, not host builtin setup.
+/// These owned strings/match ranges contain no heap references and survive GC.
+pub(super) struct LegacyRegExpSnapshot {
+    input: Option<JsString>,
+    matched: LegacyRegExpMatch,
+}
+
+impl<H: Host> Vm<H> {
+    pub(super) fn snapshot_regexp_legacy(&self) -> LegacyRegExpSnapshot {
+        match self.realm.intrinsics.regexp_intrinsics.get(&self.realm.globals) {
+            Some(state) => LegacyRegExpSnapshot {
+                input: state.legacy_input.clone(), matched: state.legacy_match.clone(),
+            },
+            None => LegacyRegExpSnapshot {
+                input: Some(JsString::from_units(&[])), matched: LegacyRegExpMatch::Empty,
+            },
+        }
+    }
+
+    pub(super) fn restore_regexp_legacy(&mut self, snapshot: LegacyRegExpSnapshot) {
+        if let Some(state) = self.realm.intrinsics.regexp_intrinsics.get_mut(&self.realm.globals) {
+            state.legacy_input = snapshot.input;
+            state.legacy_match = snapshot.matched;
+        }
+    }
+}
+
 enum RegExpConstructorInput {
     Internal {
         source: JsString,

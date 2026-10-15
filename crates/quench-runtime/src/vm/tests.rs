@@ -973,6 +973,20 @@ fn string_indices_are_canonical_and_iterator_results_define_data_properties() {
 }
 
 #[test]
+fn typed_array_index_stores_convert_and_ignore_out_of_range_indices() {
+    // Integer-indexed stores go straight to TypedArraySetElement: values convert by kind,
+    // out-of-range indices and prototype setters are never reached, and a non-typed
+    // receiver inheriting from a typed array gets an ordinary own property.
+    let source = "var u = new Uint8Array(4), c = new Uint8ClampedArray(1), seen = 0;\n\
+         Object.defineProperty(Object.getPrototypeOf(Uint8Array.prototype), 5, { set: function () { seen++; }, configurable: true });\n\
+         u[0] = 300; u[1] = -1; u[2] = { valueOf: function () { return 7; } }; u[5] = 1; c[0] = 300;\n\
+         var o = Object.create(u); o[0] = 42;\n\
+         delete Object.getPrototypeOf(Uint8Array.prototype)[5];\n\
+         var result = [Array.from(u).join(), c[0], seen, u[5], u[0], Object.keys(o).join()].join('|');";
+    assert_eq!(global_text(source, "result"), "44,255,7,0|255|0||44|0");
+}
+
+#[test]
 fn promise_record_edges_follow_promise_and_resolver_lifetime() {
     let mut vm = Vm::new(SilentHost);
     let promise = vm.promise_object();
@@ -9933,5 +9947,42 @@ check('setter-original',()=>field({set x(v){throw marker}}));const hostile={get 
         let mut vm = Vm::new(RecordingHost(output.clone()));
         vm.execute(&program).unwrap();
         assert_eq!(output.borrow().as_slice(), [r#"[["undefined","TypeError","Cannot set properties of undefined (setting 'x')",false],["undefined","TypeError","Cannot set properties of undefined (setting 'x')",false],["null","TypeError","Cannot set properties of null (setting 'x')",false],["null","TypeError","Cannot set properties of null (setting 'x')",false],["boolean","TypeError","Cannot create property 'x' on boolean 'false'",false],["boolean","TypeError","Cannot create property 'x' on boolean 'false'",false],["number","TypeError","Cannot create property 'x' on number '1'",false],["number","TypeError","Cannot create property 'x' on number '1'",false],["string","TypeError","Cannot create property 'x' on string 'abc'",false],["string","TypeError","Cannot create property 'x' on string 'abc'",false],["symbol","TypeError","Cannot create property 'x' on symbol 'Symbol(s)'",false],["symbol","TypeError","Cannot create property 'x' on symbol 'Symbol(s)'",false],["bigint","TypeError","Cannot create property 'x' on bigint '1'",false],["bigint","TypeError","Cannot create property 'x' on bigint '1'",false],["frozen","TypeError","Cannot assign to read only property 'x' of object '#<Object>'",false],["frozen","TypeError","Cannot assign to read only property 'x' of object '#<Object>'",false],["sealed","TypeError","Cannot add property x, object is not extensible",false],["sealed","TypeError","Cannot add property x, object is not extensible",false],["getter","TypeError","Cannot set property x of #<Object> which has only a getter",false],["getter","TypeError","Cannot set property x of #<Object> which has only a getter",false],["proxy","TypeError","'set' on proxy: trap returned falsish for property 'x'",false],["proxy-readonly","TypeError","Cannot assign to read only property 'x' of object '#<Object>'",false],["proxy-extend","TypeError","Cannot define property x, object is not extensible",false],["nested","TypeError","'set' on proxy: trap returned falsish for property 'x'",false],["setter-original",null,null,true],["hostile","TypeError","Cannot assign to read only property 'x' of object '[object Object]'",false],[["string","0"],"TypeError","Cannot assign to read only property '0' of string 'abc'",false],[["string","length"],"TypeError","Cannot assign to read only property 'length' of string 'abc'",false],[["string","5"],"TypeError","Cannot create property '5' on string 'abc'",false],["primitive-getter","TypeError","Cannot set property x of [object Boolean] which has only a getter",false],["reflect",false],["trap-get","trap-call","inner"]]"#]);
+    }
+}
+
+#[test]
+fn typed_array_base_methods_validate_backing_before_arguments_with_node_diagnostics() {
+    let source = r#"
+      for(const name of ['includes','indexOf','join','reverse','fill','copyWithin','slice','keys','values','entries']) {
+        for(const detached of [false,true]) {
+          const buffer=new ArrayBuffer(8,{maxByteLength:16}),view=new Uint8Array(buffer,4,2);
+          if(detached)buffer.transfer();else buffer.resize(2);
+          let called=false;
+          const argument={valueOf(){called=true;throw Error('argument coercion');},toString(){called=true;throw Error('argument coercion');}};
+          try{Uint8Array.prototype[name].call(view,argument);throw Error('accepted invalid backing');}
+          catch(error){
+            const state=name==='keys'?'detached':'detached or out-of-bounds';
+            if(!(error instanceof TypeError)||error.message!==`Cannot perform %TypedArray%.prototype.${name} on a ${state} ArrayBuffer`)throw error;
+          }
+          if(called)throw Error('converted argument before validating receiver');
+        }
+        const value={toString(){throw Error('public conversion');}};
+        try{Uint8Array.prototype[name].call(value);throw Error('accepted invalid brand');}
+        catch(error){
+          const expected=name==='join'||name==='slice'?`Method %TypedArray%.prototype.${name} called on incompatible receiver [object Object]`:'this is not a typed array.';
+          if(!(error instanceof TypeError)||error.message!==expected)throw error;
+        }
+      }
+    "#;
+    for program in [
+        Engine::compile(crate::ExecutionRequest {
+            source,
+            name: "typed-method-diagnostics.js",
+            kind: crate::SourceKind::Script,
+        })
+        .unwrap(),
+        Engine::specialize(source, "typed-method-diagnostics.js").unwrap(),
+    ] {
+        Vm::new(SilentHost).execute(&program).unwrap();
     }
 }
