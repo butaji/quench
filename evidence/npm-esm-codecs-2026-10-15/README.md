@@ -1,21 +1,35 @@
 # npm module, codec, stream and lifecycle repair evidence
 
-Total Node/package/function parity is **not reached**. This packet is not yet
-published: source `71db80153` has completed its retained checks, and the new
-canonical stream integration is awaiting fresh combined qualification. The performance phase requested after parity has not started.
-Instruction screens and load diagnostics never establish package speed wins.
+Total Node/package/function parity is **not reached**. The latest completed
+qualification cut is production source `faa120035a332d3b5eb232eaadcad1399f306d7d`,
+with fixture-only IPC handshake repair `0cc26891e`. Its executable SHA256 is
+`d6482c1dbf34b2d0045f033404c6e469c916e893b7ceb8c205a610a7ce0681ff`.
+It passes **632 fast and 632 optimized Core tests**, **285 selected Node API
+fixtures against explicitly resolved/hashed Node 26.12.0**, all **four** host
+lifecycle tests, and workspace/all-target checks. The complete-buffer decoder
+and WPT URL corpora match on this exact binary. An earlier API run without a
+retained resolved-oracle receipt is preserved separately from the explicit run.
 
-The current frozen source is `71db8015352e6056208f091a67645620226267e7`, executable
-SHA256 `90b02c0002b101b2a93706bb27423e80630fac4ff42b372100799d68921ef01d`.
-It passes **629 fast and 629 optimized Core tests**, **279 selected Node API
-fixtures**, three focused event-iterator fixtures, all four Node host-library
-lifecycle tests, and workspace/all-target checks. The decoder and URL corpora
-also match on this exact binary. The integration baseline is `791776ba4`,
-SHA256 `37a6b7ff031dbcf65c5dd7daf0fbb34fc351811bf3b3af177790526fd2888f60`.
+The exact integration baseline is `fcc81c6a09b8ff4fd68e923885c62cdc9542b6bc`,
+executable SHA256
+`f9fd7eb0579feaf22def17d914847423593eaa19f8802f45841de1c4f8597a8c`.
+All 300 package outcomes are retained: candidate **273 API / 13 declaration
+passes, 13 Quench failures and one platform oracle failure**, versus baseline
+**268 / 13 / 18 / one**. Five gains, no scenario regressions. All eight matched
+instruction workloads and **32 independent exact completions** pass; maximum
+per-run increase is **+0.0256% (regexp)**, with no >1% finding. This compares
+Quench cuts and establishes no package speed win. The requested performance
+phase after parity has not started.
+
+`npm-canonical-sync-summary.json` binds these results. Newer integration
+`f0dc38338` contains filesystem/provenance/crypto changes and is awaiting a
+combined merge and fresh qualification; these results do not qualify it.
+Prior `71db80153` results below remain historical/source-specific.
 
 The repair includes module identity/require/cache/parse goals and codecs below,
 collection-constructor roots across guest callbacks, callable stream constructor
-receivers, child stdin destruction, counted IPC references, and pinned Node
+receivers (now supplied by canonical Node streams), child stdin destruction,
+counted IPC references, and pinned Node
 `events.on` policy over Quench's native abort helper. Policy materializes through
 the shared lazy data-property mechanism. Ordinary and indexed lazy properties
 use the shared integrity operation; array definitions and assignments share
@@ -44,13 +58,16 @@ and distinguishes the earlier fully measured cut from current pending checks.
 
 ## Current scenario and callable results
 
-The final candidate has **273 API / 13 declaration passes, 13 Quench failures
-and one platform oracle failure**. The exact baseline has **267 / 13 / 19 / one**.
-Gains are whatwg-url, execa, scope-manager, loose-envify, jsdom and Testing
-Library; there are no scenario regressions. Both retain Lucide-react's 30-second
+The canonical candidate has **273 API / 13 declaration passes, 13 Quench failures
+and one platform oracle failure**. The exact fcc baseline has **268 / 13 / 18 / one**.
+Gains are whatwg-url, execa, scope-manager, jsdom and Testing Library; there are
+no scenario regressions. Both retain Lucide-react's 30-second
 miss. Surface discovery is **218 unqualified matches / 73 differences / nine
 oracle failures**. The callable ledger has **464/70,236 checked paths**,
 **69,772 uncovered**, qualified=false. These are finite contract projections.
+The audit in `followup/` identifies
+29 Jackspeak require paths projected from an import-only corpus; explicit branch
+receipts are required before treating them as independently tested paths.
 
 The current surfaces include a retained generic missing-JSON-import-attribute
 error mismatch; it remains in the next repair queue. Node-API addons, Workers,
@@ -172,4 +189,16 @@ and runtime/encoding changes. Merge `2632a993e` retains the owner's canonical
 implementation, removes the superseded draft constructor adapter, preserves
 both API exports and error helpers, and keeps the private Node-library cache
 authoritative while retaining live module.exports behavior. Its fresh combined
-checks remain pending. Results on `71db80153` do not qualify this new merge.
+checks are now complete on `faa120035` as recorded above. Results on
+`71db80153` did not qualify this merge; the new frozen binary has its own
+corpus, package, coverage and instruction receipts. Newer `f0dc38338` remains
+outside this qualification cut.
+
+The initial IPC lifetime fixture let its child exit after 300 ms while the parent
+loaded canonical streams before scheduling an unreferenced timer. The corrected
+fixture waits for a parent/child message handshake; no production reference
+logic or deadlines changed. The original failure and timing diagnostics remain.
+
+Open follow-up findings and staged contracts are in `followup/`. They expose
+streaming decoder, import-attribute, implicit constructor metadata and exact math
+gaps. Passing complete-buffer corpora or scenarios do not close these findings.
