@@ -16,7 +16,7 @@ use std::{
 static NEXT_CHILD_PROCESS_ID: AtomicU64 = AtomicU64::new(1);
 
 const FACTORY: &str = quench_js_check::checked_js!(
-    r#"(spawnSync, spawnNative, register, write, end, Buffer, warnShellArgs, forkPlan, requestRead, flushStdio, prepareOptions, validateFile, syncOptions, disposeNative, disposeKey, referenceNative) => {
+    r#"(spawnSync, spawnNative, register, write, end, Buffer, warnShellArgs, forkPlan, requestRead, flushStdio, prepareOptions, validateFile, syncOptions, disposeNative, disposeKey, referenceNative, destroyInput, prepareExit) => {
     const { EventEmitter } = globalThis.process.getBuiltinModule("events");
     class ChildProcess extends EventEmitter {
       constructor(file, args, started, options) {
@@ -47,7 +47,8 @@ const FACTORY: &str = quench_js_check::checked_js!(
           try { completed=end(id,callback); }
           catch(error) { callback(error); return; }
           if(completed)callback();
-        }
+        },
+        destroy(error, callback) { return destroyInput(id, error, callback); }
       }) : null;
       this.stdio = [this.stdin, this.stdout, this.stderr, ...started.piped.slice(3).map(() => null)];
       this.__quenchDispatch = (type, value, value2) => {
@@ -56,14 +57,12 @@ const FACTORY: &str = quench_js_check::checked_js!(
         else if (type === "stdoutEnd") this.stdout?.push(null);
         else if (type === "stderrEnd") this.stderr?.push(null);
         else if (type === "exit") {
-          this._handle = null;
-          this.exitCode = value;
-          this.signalCode = value2;
+          prepareExit(this, value, value2);
           if (this.__quenchTimeout !== undefined) clearTimeout(this.__quenchTimeout);
           if (this.__quenchAbortSignal && this.__quenchAbortHandler) {
             this.__quenchAbortSignal.removeEventListener("abort", this.__quenchAbortHandler);
           }
-          this.emit("exit", value, value2);
+          this.emit("exit", this.exitCode, this.signalCode);
           flushStdio(id);
         } else if (type === "close") {
           this.emit("close", value, value2);
@@ -296,6 +295,8 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let dispose_key = property(context, operations, "disposeKey")?;
     let reference =
         context.host_function(crate::host::shared_vm::operation("childProcessReference"))?;
+    let destroy_input = context.host_function(crate::host::shared_vm::operation("childProcessDestroyInput"))?;
+    let prepare_exit = context.host_function(crate::host::shared_vm::operation("childProcessPrepareExit"))?;
     let factory = context.evaluate_script_rooted(FACTORY, "node:child_process/shared.js")?;
     let undefined = context.undefined();
     let module = context.call_rooted(
@@ -318,6 +319,8 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
             dispose,
             dispose_key,
             reference,
+            destroy_input,
+            prepare_exit,
         ],
     )?;
     let key = context.string_rooted("spawn");
@@ -836,6 +839,65 @@ pub(crate) fn end_child(
         context.release_root(callback);
     }
     Ok(context.boolean(completed))
+}
+
+/// Node closes the child's input at exit, before notifying exit observers.
+/// The stream owns its destruction callback and public hook dispatch.
+pub(crate) fn prepare_exit(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let child = args
+        .first()
+        .copied()
+        .ok_or_else(|| RootedError::host("child exit receiver missing"))?;
+    let code = args.get(1).copied().unwrap_or_else(|| context.null());
+    let signal = args.get(2).copied().unwrap_or_else(|| context.null());
+    if context.truthy_rooted(signal)? {
+        context.assign_named_property_rooted(child, "signalCode", signal)?;
+    } else {
+        context.assign_named_property_rooted(child, "exitCode", code)?;
+    }
+    let stdin = property(context, child, "stdin")?;
+    if context.truthy_rooted(stdin)? {
+        let destroy = property(context, stdin, "destroy")?;
+        context.call_rooted(destroy, stdin, &[])?;
+    }
+    // The poller has already moved the native process handle to Closing.
+    // Clear its guest projection after input destruction, as Node does.
+    let null = context.null();
+    context.assign_named_property_rooted(child, "_handle", null)?;
+    Ok(context.undefined())
+}
+
+pub(crate) fn destroy_input(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let id = args
+        .first()
+        .and_then(|root| context.rooted_value(*root))
+        .and_then(quench_runtime::Value::as_number)
+        .ok_or_else(|| RootedError::host("child stdin destroy id missing"))? as u64;
+    if let Some(process) = context
+        .host_mut()
+        .shared_state()
+        .borrow_mut()
+        .child_processes
+        .get_mut(&id)
+    {
+        process.stdin.close();
+    }
+    let error = args.get(1).copied().unwrap_or_else(|| context.null());
+    let callback = args
+        .get(2)
+        .copied()
+        .ok_or_else(|| RootedError::host("child stdin destroy callback missing"))?;
+    let undefined = context.undefined();
+    context.call_rooted(callback, undefined, &[error])?;
+    Ok(undefined)
 }
 
 pub(crate) fn poll(

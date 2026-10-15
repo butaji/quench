@@ -1480,6 +1480,56 @@ next();
     compare_node_stream_source(source);
 }
 
+#[test]
+fn events_async_iterator_preserves_queues_cleanup_abort_and_watermarks() {
+    let observations = compare_node_stream_source(r#"
+const assert=require('assert'),{EventEmitter,on}=require('events');
+(async()=>{
+ const e=new EventEmitter(),flow=[];
+ e.pause=()=>flow.push('pause');e.resume=()=>flow.push('resume');
+ const iterator=on(e,'data',{close:['end'],highWaterMark:1,lowWaterMark:1});
+ assert.strictEqual(iterator[Symbol.asyncIterator](),iterator);
+ e.emit('data',1,'a');e.emit('data',2,'b');
+ assert.deepStrictEqual(flow,['pause']);
+ assert.deepStrictEqual(await iterator.next(),{value:[1,'a'],done:false});
+ assert.deepStrictEqual(await iterator.next(),{value:[2,'b'],done:false});
+ assert.deepStrictEqual(flow,['pause','resume']);
+ const pending=iterator.next();e.emit('end');assert.strictEqual((await pending).done,true);
+ assert.strictEqual(e.listenerCount('data')+e.listenerCount('error')+e.listenerCount('end'),0);
+ const controller=new AbortController(),aborted=on(e,'data',{signal:controller.signal});
+ const wait=aborted.next();controller.abort('reason');
+ await assert.rejects(wait,error=>error.code==='ABORT_ERR'&&error.cause==='reason');
+ assert.strictEqual((await aborted.next()).done,true);
+ const failed=on(e,'data'),first=failed.next(),second=failed.next(),error=new Error('failure');
+ e.emit('error',error);await assert.rejects(first,err=>err===error);
+ assert.strictEqual((await second).done,true);
+ const returned=on(e,'data');assert.strictEqual((await returned.return()).done,true);
+ const thrown=on(e,'data');assert.strictEqual(thrown.throw(error),undefined);
+ await assert.rejects(thrown.next(),err=>err===error);
+ for(const options of [null,1,{highWaterMark:0},{lowWatermark:0}])assert.throws(()=>on(e,'data',options));
+ controller.abort();assert.throws(()=>on(e,'data',{signal:controller.signal}),error=>error.code==='ABORT_ERR');
+ assert.strictEqual(e.listenerCount('data')+e.listenerCount('error'),0);
+ console.log(JSON.stringify({complete:true}));
+})().catch(error=>{console.error(error);process.exitCode=1});
+"#);
+    assert_eq!(String::from_utf8_lossy(&observations[1].stdout).trim(), r#"{"complete":true}"#);
+}
+
+#[test]
+fn child_stdin_destruction_closes_pipe_and_precedes_exit_observers() {
+    let observations = compare_node_stream_source(r#"
+const assert=require('assert'),{spawn}=require('child_process');
+const child=spawn(process.execPath,['-e',`process.stdin.resume();process.stdin.on('end',()=>process.exit(0));`]);
+const original=child.stdin.destroy;let calls=0,exited=false;
+child.stdin.destroy=function(...args){calls++;return Reflect.apply(original,this,args)};
+child.on('error',error=>{throw error});
+child.on('spawn',()=>child.stdin.destroy());
+child.on('exit',(code,signal)=>{assert.strictEqual(code,0);assert.strictEqual(signal,null);assert(child.stdin.destroyed);assert(calls>=2);assert.strictEqual(child._handle,null);exited=true});
+child.on('close',()=>{assert(exited);console.log(JSON.stringify({complete:true}))});
+"#);
+    assert_eq!(String::from_utf8_lossy(&observations[1].stdout).trim(), r#"{"complete":true}"#);
+}
+
 fn compare_node_stream_source(source: &str) -> [quench_node_test::case_process::CaseObservation; 2] {
     let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
         let mut command = Command::new(executable);
