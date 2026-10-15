@@ -1727,10 +1727,11 @@ impl<H: Host> Vm<H> {
     }
 
     /// `==`, `!=`, `===` or `!==` of non-number operands when no conversion can decide it:
-    /// equal bits are the same value; distinct strict operands differ unless both carry
-    /// contents (strings, BigInts); a loose null or undefined equals only null, undefined and
-    /// [[IsHTMLDDA]] objects; two distinct objects are loosely unequal. `None` leaves numbers
-    /// and every comparison that may coerce to the full algorithm.
+    /// equal bits are the same value; distinct strict operands are equal only as strings or
+    /// BigInts of equal contents, as are loose operands of one of those types; a loose null or
+    /// undefined equals only null, undefined and [[IsHTMLDDA]] objects; two distinct objects
+    /// are loosely unequal. `None` leaves numbers and every comparison that may coerce to the
+    /// full algorithm.
     #[inline(always)]
     pub(super) fn identity_equality(&self, op: u32, left: Value, right: Value) -> Option<bool> {
         let (strict, negated) = equality_operator(op)?;
@@ -1740,24 +1741,21 @@ impl<H: Host> Vm<H> {
         let equal = if left == right {
             true
         } else if strict {
-            let has_contents = |value: Value| {
-                matches!(
-                    self.heap.get(value),
-                    Some(Cell::String(_) | Cell::BigInt(_))
-                )
-            };
-            if has_contents(left) && has_contents(right) {
-                return None;
-            }
-            false
+            // Distinct words are equal only as strings or BigInts of equal contents.
+            self.strict_equal(left, right)
         } else {
             let nullish = |value: Value| value.is_null() || value.is_undefined();
             match (nullish(left), nullish(right)) {
                 (true, true) => true,
                 (true, false) => self.is_html_dda(right),
                 (false, true) => self.is_html_dda(left),
-                (false, false) if self.is_object_like(left) && self.is_object_like(right) => false,
-                (false, false) => return None,
+                (false, false) => match (self.heap.get(left), self.heap.get(right)) {
+                    // Operands of one type compare as `===` does.
+                    (Some(Cell::String(left)), Some(Cell::String(right))) => left == right,
+                    (Some(Cell::BigInt(left)), Some(Cell::BigInt(right))) => left == right,
+                    _ if self.is_object_like(left) && self.is_object_like(right) => false,
+                    _ => return None,
+                },
             }
         };
         Some(equal != negated)
