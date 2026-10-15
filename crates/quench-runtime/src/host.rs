@@ -141,6 +141,12 @@ pub trait Host {
         source_name.to_owned()
     }
 
+    /// Display identity for source locations in captured stacks. This must not
+    /// change the identity used to resolve imports or look up compiled programs.
+    fn stack_source_name(&mut self, source_name: &str, _is_module: bool) -> String {
+        source_name.to_owned()
+    }
+
     /// Whether this host-resolved unit has a host-defined Module Source Object.
     /// JavaScript text and ordinary synthetic imports have no source representation.
     fn has_module_source(&self, _module: &ModuleSource) -> bool {

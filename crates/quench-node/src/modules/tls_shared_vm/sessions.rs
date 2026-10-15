@@ -52,6 +52,14 @@ pub(crate) fn owner(
     context: &mut NativeContext<'_, NodeHost>,
     socket: RootId,
 ) -> Result<usize, RootedError> {
+    if let Some(index) = find_owner(context, socket)? { return Ok(index); }
+    let error = context.type_error_rooted("Illegal invocation")?;
+    Err(context.throw(error))
+}
+pub(crate) fn find_owner(
+    context: &mut NativeContext<'_, NodeHost>,
+    socket: RootId,
+) -> Result<Option<usize>, RootedError> {
     let identities = context
         .host_mut()
         .shared_state()
@@ -65,12 +73,11 @@ pub(crate) fn owner(
     for (index, identity) in identities.into_iter().enumerate() {
         if let Some(candidate) = context.resolve_host_weak_root(identity) {
             if context.strict_equal_rooted(candidate, socket)? {
-                return Ok(index);
+                return Ok(Some(index));
             }
         }
     }
-    let error = context.type_error_rooted("Illegal invocation")?;
-    Err(context.throw(error))
+    Ok(None)
 }
 pub(crate) fn set_purpose(
     context: &mut NativeContext<'_, NodeHost>,
