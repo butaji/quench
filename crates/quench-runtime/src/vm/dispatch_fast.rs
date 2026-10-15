@@ -812,11 +812,20 @@ unsafe fn lane_binary_value<H: Host>(
     let left = lane_operand_value(cx, r, i.b)?;
     let right = lane_operand_value(cx, r, i.c)?;
     let operator = i.imm();
-    unsafe { vm(cx) }.number_binary(operator, left, right).or_else(|| {
-        super::operations::number_relation(operator, left, right)
-            .or_else(|| lane_relation_other::<H>(operator, left, right))
-            .map(|holds| if holds { Value::TRUE } else { Value::FALSE })
-    })
+    match unsafe { vm(cx) }.number_binary(operator, left, right) {
+        Some(value) => Some(value),
+        None => lane_relation_value::<H>(operator, left, right),
+    }
+}
+
+/// `lane_binary_value` past Number arithmetic: a relation's Boolean. Out of line, taking
+/// its operands by value, so the handlers inlining that value keep no stack locals a
+/// callee could reach, which would cost them the tail call to the next record.
+#[inline(never)]
+fn lane_relation_value<H: Host>(operator: u32, left: Value, right: Value) -> Option<Value> {
+    super::operations::number_relation(operator, left, right)
+        .or_else(|| lane_relation_other::<H>(operator, left, right))
+        .map(|holds| if holds { Value::TRUE } else { Value::FALSE })
 }
 
 /// Runs `handler` for the record at `ip` as a sibling call: the calling handler's fast path
@@ -1112,9 +1121,12 @@ lane_handler! {
 /// register as the general path leaves it. `None` before any guest code could run: an
 /// operation on an object, or one that throws.
 ///
+/// Out of line: its general binary result returns through a stack slot, which would cost a
+/// handler inlining it the tail call to the next record.
+///
 /// # Safety
 /// `cx` is the running lane's context and `r` its registers.
-#[inline(always)]
+#[inline(never)]
 unsafe fn lane_literal_value<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
@@ -1154,25 +1166,32 @@ unsafe fn lane_literal_value<H: Host>(
     Some(value)
 }
 
-/// The register a field record's base field names; `None` for `this` and a nested base.
+/// The object a non-nested field record's base names: a register, or `this` where the lane
+/// knows it. `None` for a nested site, whose record names no single base.
+///
+/// # Safety
+/// As for `lane_field_value`.
 #[inline(always)]
-fn field_register(base: u16) -> Option<u16> {
+unsafe fn lane_single_field_base<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    base: u16,
+) -> Option<Value> {
     if base == crate::bytecode::FieldBase::NESTED {
         return None;
     }
-    crate::bytecode::FieldBase(base).register_index()
+    unsafe { lane_field_base(cx, r, crate::bytecode::FieldBase(base)) }
 }
 
 lane_handler! {
-    /// `GetField` of a register: the site's primary own entry inline. Any other read goes
-    /// through `lane_get_field_miss`, which may move the record to a fitting handler.
+    /// `GetField` of a register or `this`: the site's primary own entry inline. Any other
+    /// read goes through `lane_get_field_miss`, which may move the record to a fitting
+    /// handler.
     fn lane_get_field_own<>(cx, r, ip, i, view) {
-        let Some(register) = field_register(i.b) else {
-            sibling!(lane_get_field_miss::<H>, r, ip, Carried::SCRIPT)
-        };
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        let Some(value) = (unsafe { vm(cx) }).primary_own_field_hit(code, r.get(register), i.c)
+        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) })
+            .and_then(|object| (unsafe { vm(cx) }).primary_own_field_hit(code, object, i.c))
         else {
             sibling!(lane_get_field_miss::<H>, r, ip, Carried::SCRIPT)
         };
@@ -1182,15 +1201,15 @@ lane_handler! {
 }
 
 lane_handler! {
-    /// `GetField` of a register at a site past one shape (`Vm::field_site_polymorphic`):
-    /// its inline own entries; any other read takes `lane_get_field`.
+    /// `GetField` of a register or `this` at a site past one shape
+    /// (`Vm::field_site_polymorphic`): its inline own entries; any other read takes
+    /// `lane_get_field`.
     fn lane_get_field_polymorphic<>(cx, r, ip, i, view) {
-        let register = field_register(i.b);
-        debug_assert!(register.is_some());
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        let object = r.get(register.unwrap_or_default());
-        let Some(value) = (unsafe { vm(cx) }).polymorphic_own_field_hit(code, object, i.c) else {
+        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) })
+            .and_then(|object| (unsafe { vm(cx) }).polymorphic_own_field_hit(code, object, i.c))
+        else {
             sibling!(lane_get_field::<H>, r, ip, Carried::SCRIPT)
         };
         r.set(i.a, value);
@@ -1199,12 +1218,12 @@ lane_handler! {
 }
 
 lane_handler! {
-    /// A primary-entry miss of `lane_get_field_own`: a record whose base is no register
-    /// moves to `lane_get_field`, one whose site went polymorphic to
-    /// `lane_get_field_polymorphic`; the read itself takes `lane_get_field`.
+    /// A primary-entry miss of `lane_get_field_own`: a nested record moves to
+    /// `lane_get_field`, one whose site went polymorphic to `lane_get_field_polymorphic`;
+    /// the read itself takes `lane_get_field`.
     #[inline(never)]
     fn lane_get_field_miss<>(cx, r, ip, i, view) {
-        if field_register(i.b).is_none() {
+        if i.b == crate::bytecode::FieldBase::NESTED {
             requicken(ip, lane_get_field::<H>);
         } else if (unsafe { vm(cx) }).field_site_polymorphic(i.c) {
             requicken(ip, lane_get_field_polymorphic::<H>);
@@ -1282,6 +1301,23 @@ fn lane_cached_field<H: Host>(
 ) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     match vm.cached_field_hit(code, object, site) {
+        super::object::FieldCacheProbe::Hit(value) => Some(value),
+        probe => lane_cached_field_miss(vm, code, object, atom, site, probe),
+    }
+}
+
+/// `lane_cached_field` past its probe. Out of line so that no handler inlining the probe
+/// keeps the lookups' stack locals, which would cost it the tail call to the next record.
+#[inline(never)]
+fn lane_cached_field_miss<H: Host>(
+    vm: &mut Vm<H>,
+    code: &ResidualProgram,
+    object: Value,
+    atom: crate::bytecode::Atom,
+    site: u16,
+    probe: super::object::FieldCacheProbe,
+) -> Option<Value> {
+    match probe {
         super::object::FieldCacheProbe::Hit(value) => Some(value),
         // The order `Vm::get_field_cached` takes: an array's `length` before the lookups.
         super::object::FieldCacheProbe::OrdinaryMiss => vm
