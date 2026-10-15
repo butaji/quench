@@ -137,6 +137,14 @@ impl<H: Host> Vm<H> {
         include_symbols: bool,
         include_indices: bool,
     ) -> Result<Vec<RootId>, JsError> {
+        self.embedding_filtered_own_keys(root, include_symbols, include_indices, true)
+    }
+
+    pub(crate) fn embedding_non_index_own_keys(&mut self, root: RootId, enumerable_only: bool) -> Result<Vec<RootId>, JsError> {
+        self.embedding_filtered_own_keys(root, true, false, enumerable_only)
+    }
+
+    fn embedding_filtered_own_keys(&mut self, root: RootId, include_symbols: bool, include_indices: bool, enumerable_only: bool) -> Result<Vec<RootId>, JsError> {
         let value = self.embedding_value(root)?;
         let program = self.embedding_program()?;
         let keys = if !include_indices && !matches!(self.heap.get(value), Some(Cell::Proxy { .. }))
@@ -165,7 +173,7 @@ impl<H: Host> Vm<H> {
                 }
                 let descriptor =
                     self.object_get_own_property_descriptor(&program, &[value, property])?;
-                if !descriptor.is_undefined() && self.descriptor_flag(descriptor, "enumerable") {
+                if !descriptor.is_undefined() && (!enumerable_only || self.descriptor_flag(descriptor, "enumerable")) {
                     enumerable.push(*key);
                     retained[index] = true;
                 }
@@ -309,6 +317,11 @@ impl<H: Host> Vm<H> {
         let constructor = self.embedding_value(constructor)?;
         let program = self.embedding_program()?;
         self.instanceof(&program, value, constructor)
+    }
+
+    pub(crate) fn embedding_proxy_target(&self, root: RootId) -> Result<Option<Value>, JsError> {
+        let value = self.embedding_value(root)?;
+        Ok(match self.heap.get(value) { Some(Cell::Proxy { target, .. }) => Some(*target), _ => None })
     }
 
     pub(crate) fn embedding_builtin_data(

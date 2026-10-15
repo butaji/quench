@@ -86,14 +86,16 @@ Box.prototype.walk = function (n, acc) {
 };
 let caught = false;
 try {
-  new Box().walk(8000, 0);
+  new Box().walk(__GUEST_DEPTH__, 0);
 } catch (error) {
   caught = error instanceof RangeError && error.message === "Maximum call stack size exceeded";
 }
 if (!caught) throw new Error("deep call did not throw the stack RangeError");
 if (new Box().walk(2, 0) !== 2) throw new Error("runtime did not recover after deep call");
 "#;
-    let observation = observe_source(source);
+    // Exercise the actual shared resource boundary, not a depth below its limit.
+    let source = source.replace("__GUEST_DEPTH__", &(quench_stack::MAX_GUEST_CALL_DEPTH + 1).to_string());
+    let observation = observe_source(&source);
     assert_eq!(
         observation.outcome(),
         RunResult::Pass,

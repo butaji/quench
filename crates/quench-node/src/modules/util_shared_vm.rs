@@ -52,7 +52,7 @@ const TYPE_PREDICATES: &[(&str, BuiltinBrand)] = &[
 pub(crate) const MAX_SAFE_INTEGER: f64 = ((1_u64 << f64::MANTISSA_DIGITS) - 1) as f64;
 
 const UTIL: &str = quench_js_check::checked_js!(
-    r#"((quote, shallowLabel, customHook) => {
+    r#"((quote, shallowLabel, customHook, formatString, builtinHook) => {
   const propertyName = (key) => /^[A-Za-z_$][\w$]*$/.test(key) ? key : quote(key);
 
   function inspect(value, options = {}) {
@@ -106,13 +106,16 @@ const UTIL: &str = quench_js_check::checked_js!(
       if (seen.has(current)) return "[Circular]";
       seen.add(current);
       let result;
-      if (Array.isArray(current)) {
+      const builtin = builtinHook(current, settings, depth, render, propertyName);
+      if (builtin !== undefined) {
+        result = builtin;
+      } else if (Array.isArray(current)) {
         const items = [];
         for (let index = 0; index < current.length; index++) {
           items.push(index in current ? render(current[index], depth + 1) : "<empty>");
         }
         result = items.length ? `[ ${items.join(", ")} ]` : "[]";
-      } else if (current instanceof RegExp || current instanceof Date) {
+      } else if (current instanceof RegExp) {
         result = String(current);
       } else if (current instanceof Map) {
         const entries = [];
@@ -164,7 +167,7 @@ const UTIL: &str = quench_js_check::checked_js!(
       if (index >= args.length) return token;
       const value = args[index++];
       switch (token) {
-        case "%s": return String(value);
+        case "%s": return formatString(value, inspect);
         case "%d": return String(Number(value));
         case "%i": return String(Number.parseInt(value, 10));
         case "%f": return String(Number.parseFloat(value));
@@ -409,9 +412,14 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         crate::host::shared_vm::operation("utilInspectCustom"),
         custom_key,
     )?;
-    let module = context.call_rooted(factory, undefined, &[quote, shallow, custom])?;
+    let format_string = super::util_format_string_shared_vm::function(context)?;
+    let builtin = super::util_inspect_builtin_shared_vm::function(context)?;
+    let module = context.call_rooted(factory, undefined, &[quote, shallow, custom, format_string, builtin])?;
     let inspect_key = context.string_rooted("inspect");
     let inspect = context.get_property_rooted(module, inspect_key)?;
+    let defaults_key=context.string_rooted("defaultOptions");let defaults=context.get_property_rooted(inspect,defaults_key)?;
+    for(name,value)in[("maxArrayLength",super::util_inspect_builtin_shared_vm::DEFAULT_MAX_ARRAY_LENGTH),("breakLength",super::util_inspect_builtin_shared_vm::DEFAULT_BREAK_LENGTH)]{let key=context.string_rooted(name);let value=context.number(value);context.define_data_property_rooted(defaults,key,value,true,true,true)?;}
+
     super::util_style_shared_vm::install(context, module, inspect)?;
     let compare = context.host_function(crate::host::shared_vm::operation("isDeepStrictEqual"))?;
     let compare_key = context.string_rooted("isDeepStrictEqual");
@@ -878,4 +886,29 @@ pub(crate) fn inspect_custom(
     } else {
         context.array_rooted(&[result])
     }
+}
+
+/// Node integer validators reject coercion of the value, then compare original bounds.
+pub(crate) fn validate_integer(context: &mut NativeContext<'_, NodeHost>, value: RootId, name: &str, minimum: f64, maximum: RootId) -> Result<f64, RootedError> {
+    let Some(number) = context.rooted_value(value).and_then(|v| v.as_number()) else {
+        return Err(argument_type_error(context, value, name, "number")?);
+    };
+    let requirement = if !number.is_finite() || number.fract() != 0.0 { Some("an integer".to_owned()) }
+        else if number < minimum || context.greater_than_rooted(value, maximum)? {
+            Some(format!(">= {minimum} && <= {}", context.to_string(maximum)?))
+        } else { None };
+    if let Some(requirement) = requirement {
+        let received = range_error_received(context, value)?;
+        let error = context.range_error_rooted(&format!("The value of \"{name}\" is out of range. It must be {requirement}. Received {received}"))?;
+        let key = context.string_rooted("code");let code=context.string_rooted("ERR_OUT_OF_RANGE");context.set_property_rooted(error,key,code,error)?;
+        return Err(context.throw(error));
+    }
+    Ok(number)
+}
+
+pub(crate) fn typed_array_name(context: &mut NativeContext<'_, NodeHost>, value: RootId) -> Result<&'static str, RootedError> {
+    for &(name,brand) in TYPE_PREDICATES {
+        if brand != BuiltinBrand::TypedArray && name.ends_with("Array") && context.has_builtin_brand_rooted(value,brand)? { return Ok(name.strip_prefix("is").expect("type predicate prefix")); }
+    }
+    Err(RootedError::host("typed array brand has no display name"))
 }
