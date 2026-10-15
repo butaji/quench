@@ -1930,7 +1930,7 @@ impl<H: Host> Vm<H> {
         )
     }
 
-    fn regexp_from_matcher(
+    pub(super) fn regexp_from_matcher(
         &mut self,
         prototype: Value,
         source: JsString,

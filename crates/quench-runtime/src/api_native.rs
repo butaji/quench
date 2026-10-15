@@ -542,12 +542,37 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.vm.embedding_mark_uncloneable(value).map_err(|error| self.error(error))
     }
 
+    pub fn mark_untransferable_rooted(&mut self, value: RootId) -> Result<(), RootedError> {
+        self.vm
+            .embedding_mark_untransferable(value)
+            .map_err(|error| self.error(error))
+    }
+
+    pub fn is_marked_untransferable_rooted(&mut self, value: RootId) -> Result<bool, RootedError> {
+        self.vm
+            .embedding_is_marked_untransferable(value)
+            .map_err(|error| self.error(error))
+    }
+
     pub fn structured_clone_rooted(
         &mut self,
         value: RootId,
         options: Option<RootId>,
     ) -> Result<RootId, RootedError> {
         let result = self.vm.embedding_structured_clone(value, options);
+        self.completion(result)
+    }
+
+    /// Clone with an already-converted transfer sequence. Host Web IDL conversion
+    /// owns iteration; the VM must not consult the public iterator a second time.
+    pub fn structured_clone_with_transfers_rooted(
+        &mut self,
+        value: RootId,
+        transfers: &[RootId],
+    ) -> Result<RootId, RootedError> {
+        let result = self
+            .vm
+            .embedding_structured_clone_with_transfers(value, transfers);
         self.completion(result)
     }
 

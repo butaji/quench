@@ -1,0 +1,90 @@
+{
+  "candidate": "3e503bc169b0e65eef3296ec5bd7f5a5187f638e",
+  "baseline": "03ea582d2f4f8f2c2788c08d7d929c24861cb66c",
+  "qualification": "iteration instruction counts, includes shared-lane changes; not isolated attribution, production throughput or RSS",
+  "baseline_reuse": true,
+  "identical_baseline_binary_and_input_paths": true,
+  "limit_percent": 1,
+  "rows": [
+    {
+      "fixture": "crypto",
+      "runs": 1,
+      "base_startup": 1118683085,
+      "candidate_startup": 1118428544,
+      "base_per_run": 1837517914.0,
+      "candidate_per_run": 1837520177.0,
+      "delta_percent": 0.000123155261921859,
+      "within_limit": true
+    },
+    {
+      "fixture": "deltablue",
+      "runs": 10,
+      "base_startup": 1040493842,
+      "candidate_startup": 1040307229,
+      "base_per_run": 271859168.0,
+      "candidate_per_run": 271800293.8,
+      "delta_percent": -0.021656139255155082,
+      "within_limit": true
+    },
+    {
+      "fixture": "earley-boyer",
+      "runs": 1,
+      "base_startup": 1306810671,
+      "candidate_startup": 1306936036,
+      "base_per_run": 3354021925.0,
+      "candidate_per_run": 3354100959.0,
+      "delta_percent": 0.002356394852731647,
+      "within_limit": true
+    },
+    {
+      "fixture": "navier-stokes",
+      "runs": 1,
+      "base_startup": 1672276165,
+      "candidate_startup": 1672307698,
+      "base_per_run": 1517523834.0,
+      "candidate_per_run": 1517524643.0,
+      "delta_percent": 5.331053007928688e-05,
+      "within_limit": true
+    },
+    {
+      "fixture": "raytrace",
+      "runs": 3,
+      "base_startup": 1055617669,
+      "candidate_startup": 1055528831,
+      "base_per_run": 1014872100.0,
+      "candidate_per_run": 1015113807.3333334,
+      "delta_percent": 0.023816531495279847,
+      "within_limit": true
+    },
+    {
+      "fixture": "regexp",
+      "runs": 1,
+      "base_startup": 4606133128,
+      "candidate_startup": 4605745820,
+      "base_per_run": 2018009371.0,
+      "candidate_per_run": 2017813998.0,
+      "delta_percent": -0.009681471394906715,
+      "within_limit": true
+    },
+    {
+      "fixture": "richards",
+      "runs": 25,
+      "base_startup": 1025002683,
+      "candidate_startup": 1025586475,
+      "base_per_run": 127393392.48,
+      "candidate_per_run": 127393456.04,
+      "delta_percent": 4.989269755117931e-05,
+      "within_limit": true
+    },
+    {
+      "fixture": "splay",
+      "runs": 75,
+      "base_startup": 3496444392,
+      "candidate_startup": 3496620822,
+      "base_per_run": 27824311.613333333,
+      "candidate_per_run": 27823193.733333334,
+      "delta_percent": -0.004017637580877587,
+      "within_limit": true
+    }
+  ]
+}
