@@ -1553,8 +1553,10 @@ dependencies = [
  "oxc_ast_visit",
  "oxc_parser",
  "oxc_resolver",
+ "oxc_semantic",
  "oxc_span",
  "oxc_syntax",
+ "pkg-config",
  "quench-js-check",
  "quench-runtime",
  "quench-stack",
@@ -1580,6 +1582,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+ "url",
  "wait-timeout",
 ]
 

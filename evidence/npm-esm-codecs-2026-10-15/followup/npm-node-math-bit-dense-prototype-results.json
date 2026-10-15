@@ -1,0 +1,7 @@
+{
+  "standalone_only": true,
+  "opt_level": 1,
+  "cases": 36065,
+  "differences": [],
+  "fully_integrated": false
+}

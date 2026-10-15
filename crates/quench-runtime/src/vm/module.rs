@@ -1,10 +1,12 @@
 use crate::Value;
-use std::path::{Path, PathBuf};
+use crate::module_identity::ModuleIdentity;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ModulePhase {
     Loading,
     Linking,
+    /// Linked graph retained after a synchronous host declined async evaluation.
+    Instantiated,
     Deferred,
     Evaluating,
     EvaluatingAsync,
@@ -32,7 +34,7 @@ pub(crate) struct ModuleRecord {
     evaluation_promise: Option<Value>,
     waiters: Vec<Value>,
     pending_namespace: Option<Value>,
-    async_cycle_root: Option<PathBuf>,
+    async_cycle_root: Option<ModuleIdentity>,
 }
 
 impl ModuleRecord {
@@ -127,8 +129,13 @@ impl ModuleRecord {
         self.transition(ModulePhase::Loading, ModulePhase::Linking)
     }
 
+    pub(crate) fn retain_instantiation(&mut self) {
+        self.transition(ModulePhase::Linking, ModulePhase::Instantiated);
+    }
+
     pub(crate) fn begin_evaluation(&mut self) -> bool {
         self.transition(ModulePhase::Linking, ModulePhase::Evaluating)
+            || self.transition(ModulePhase::Instantiated, ModulePhase::Evaluating)
     }
 
     pub(crate) fn begin_deferred_evaluation(&mut self) -> Option<Value> {
@@ -160,11 +167,11 @@ impl ModuleRecord {
         self.pending_namespace
     }
 
-    pub(crate) fn async_cycle_root(&self) -> Option<&PathBuf> {
+    pub(crate) fn async_cycle_root(&self) -> Option<&ModuleIdentity> {
         self.async_cycle_root.as_ref()
     }
 
-    pub(crate) fn set_async_cycle_root(&mut self, root: PathBuf) {
+    pub(crate) fn set_async_cycle_root(&mut self, root: ModuleIdentity) {
         self.async_cycle_root = Some(root);
     }
 
@@ -261,31 +268,31 @@ impl ModuleRecord {
 }
 
 #[derive(Default)]
-pub(crate) struct ModuleEvaluationStack(Vec<PathBuf>);
+pub(crate) struct ModuleEvaluationStack(Vec<ModuleIdentity>);
 
 impl ModuleEvaluationStack {
-    pub(crate) fn members(&self) -> &[PathBuf] {
+    pub(crate) fn members(&self) -> &[ModuleIdentity] {
         &self.0
     }
 
-    pub(crate) fn contains(&self, module: &Path) -> bool {
-        self.0.iter().any(|active| active.as_path() == module)
+    pub(crate) fn contains(&self, module: &ModuleIdentity) -> bool {
+        self.0.iter().any(|active| active == module)
     }
 
-    pub(crate) fn enter(&mut self, module: PathBuf) {
+    pub(crate) fn enter(&mut self, module: ModuleIdentity) {
         self.0.push(module);
     }
 
-    pub(crate) fn leave(&mut self, module: &PathBuf) {
+    pub(crate) fn leave(&mut self, module: &ModuleIdentity) {
         debug_assert_eq!(self.0.last(), Some(module));
         self.0.pop();
     }
 
-    pub(crate) fn cycle_to(&self, module: &Path) -> Option<&[PathBuf]> {
+    pub(crate) fn cycle_to(&self, module: &ModuleIdentity) -> Option<&[ModuleIdentity]> {
         let start = self
             .0
             .iter()
-            .position(|active| active.as_path() == module)?;
+            .position(|active| active == module)?;
         Some(&self.0[start..])
     }
 }
