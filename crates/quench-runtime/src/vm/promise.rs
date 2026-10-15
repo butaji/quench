@@ -4693,7 +4693,7 @@ impl<H: Host> Vm<H> {
         Ok(next)
     }
 
-    fn perform_promise_then(
+    pub(super) fn perform_promise_then(
         &mut self,
         p: &ResidualProgram,
         promise: Value,
@@ -4727,11 +4727,11 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn intrinsic_promise_constructor(&self) -> Value {
+    pub(super) fn intrinsic_promise_constructor(&self) -> Value {
         self.realm.intrinsics.promise_constructors[&self.realm.globals]
     }
 
-    fn promise_species_constructor(
+    pub(super) fn promise_species_constructor(
         &mut self,
         p: &ResidualProgram,
         promise: Value,
