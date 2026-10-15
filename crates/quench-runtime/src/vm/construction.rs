@@ -639,27 +639,33 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        let function = p.functions.get(id as usize)?;
-        if function.dispatch != DispatchClass::General
-            || !function.constructible
-            || function.is_async
-            || function.is_generator
-            || function.is_class_constructor
-            || function.derived_constructor
-            || function.class_field_initializer
-            || function.parameter_eval_arguments_error
-            || function.instance_initializer.is_some()
-        {
+        if !Self::inline_constructible(p.functions.get(id as usize)?) {
             return None;
         }
+        Some((id, env, self.inline_construct_receiver(callee)?))
+    }
+
+    /// A body whose [[Construct]] the dispatch loop may push in place: an ordinary
+    /// constructible function that binds its receiver itself, with no class semantics.
+    pub(super) fn inline_constructible(function: &crate::bytecode::Function) -> bool {
+        function.dispatch == DispatchClass::General
+            && function.constructible
+            && !function.is_async
+            && !function.is_generator
+            && !function.is_class_constructor
+            && !function.derived_constructor
+            && !function.class_field_initializer
+            && !function.parameter_eval_arguments_error
+            && function.instance_initializer.is_none()
+    }
+
+    /// The receiver an in-place [[Construct]] of `callee` allocates: an ordinary object
+    /// whose prototype is the callee's own data `prototype`, when that is an object.
+    pub(super) fn inline_construct_receiver(&mut self, callee: Value) -> Option<Value> {
         let prototype_atom = self.prototype_atom();
         let prototype = self.own_function_prototype_data(callee, prototype_atom)?;
         self.object_data(prototype)?;
-        Some((
-            id,
-            env,
-            self.heap.alloc(Cell::Object(Self::empty_object(prototype))),
-        ))
+        Some(self.heap.alloc(Cell::Object(Self::empty_object(prototype))))
     }
 
     pub(super) fn own_function_prototype_data(
