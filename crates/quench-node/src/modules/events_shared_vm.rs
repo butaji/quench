@@ -323,6 +323,7 @@ pub(crate) fn initialize_event_globals(
         &[records_key, max_key, warned_key, max_default],
     )?;
     let event = get(context, global, "Event")?;
+    set(context, data, "eventCtor", event)?;
     // Node exposes immutable DOM event phase constants on the constructor.
     for (name, phase) in [
         ("NONE", 0.0),

@@ -30,6 +30,9 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn module_binding_value(&self, object: Value, atom: Atom) -> Option<Value> {
         let (program, slot) = self.object_data(object)?.module_binding(atom)?;
+        if let Some(value) = self.module_import_value(program, super::ROOT_FUNCTION_ID, usize::from(slot)) {
+            return Some(value);
+        }
         let environment = self.programs.module_environment(program)?;
         self.heap.environment_slot(environment, slot as usize)
     }

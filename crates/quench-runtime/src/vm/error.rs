@@ -459,7 +459,10 @@ impl<H: Host> Vm<H> {
                 .filter(|name| !name.starts_with('\0'));
             records.push(CallSiteRecord {
                 location: CallSiteLocation::Source {
-                    file_name: residual.source_name.clone(),
+                    file_name: self.host.stack_source_name(
+                        &residual.source_name,
+                        residual.kind == crate::bytecode::ProgramKind::Module,
+                    ),
                     line: position.line,
                     column: position.column,
                 },

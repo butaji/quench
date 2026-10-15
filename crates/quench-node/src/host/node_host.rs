@@ -53,7 +53,6 @@ pub(crate) struct SharedNodeState {
     pub(crate) scheduler: crate::modules::shared_event_loop::SharedEventLoop,
     pub(crate) fs: crate::modules::fs_state::FsState,
     pub(crate) fs_watch: crate::modules::fs_watch_shared_vm::State,
-    pub(crate) crypto_engines: crate::modules::crypto_engine_shared_vm::State,
     pub(crate) tls_contexts: crate::modules::tls_shared_vm::contexts::State,
     pub(crate) fs_stats: crate::modules::fs_shared_vm::stat::types::State,
     pub(crate) fs_stat_watch: crate::modules::fs_stat_watch_shared_vm::State,
@@ -180,7 +179,6 @@ impl SharedNodeState {
         self.net_handle_identities.clear();
         self.net_handle_close_callbacks.clear();
         self.fs_watch = crate::modules::fs_watch_shared_vm::State::default();
-        self.crypto_engines = crate::modules::crypto_engine_shared_vm::State::default();
         self.tls_contexts = crate::modules::tls_shared_vm::contexts::State::default();
         self.fs_stats = crate::modules::fs_shared_vm::stat::types::State::default();
         self.fs_stat_watch = crate::modules::fs_stat_watch_shared_vm::State::default();
@@ -200,7 +198,6 @@ impl SharedNodeState {
             scheduler: crate::modules::shared_event_loop::SharedEventLoop::new(),
             fs,
             fs_watch: crate::modules::fs_watch_shared_vm::State::default(),
-            crypto_engines: crate::modules::crypto_engine_shared_vm::State::default(),
             tls_contexts: crate::modules::tls_shared_vm::contexts::State::default(),
             fs_stats: crate::modules::fs_shared_vm::stat::types::State::default(),
             fs_stat_watch: crate::modules::fs_stat_watch_shared_vm::State::default(),
