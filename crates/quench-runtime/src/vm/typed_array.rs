@@ -912,7 +912,28 @@ impl<H: Host> Vm<H> {
             ..
         }) = self.heap.get(this)
         else {
-            return Err(self.type_error(p, "typed array receiver is invalid".into()));
+            let property = match native {
+                Native::TypedArrayBufferGetter => "buffer",
+                Native::TypedArrayByteLengthGetter => "byteLength",
+                Native::TypedArrayByteOffsetGetter => "byteOffset",
+                Native::TypedArrayLengthGetter => "length",
+                _ => unreachable!(),
+            };
+            let receiver = if this.is_null() { "null".to_owned() }
+                else if this.is_undefined() { "undefined".to_owned() }
+                else if self.is_function(this) {
+                    self.function_source_value(this).and_then(|source| match self.heap.get(source) { Some(Cell::String(s)) => Some(s.host_string().to_owned()), _ => None })
+                        .unwrap_or_else(|| "function () { [native code] }".to_owned())
+                } else if this.direct_array_index().is_some() { "[object Array]".to_owned() }
+                else { match self.heap.get(this) {
+                    Some(Cell::DataView { .. }) => "#<DataView>".to_owned(),
+                    Some(Cell::Date { .. }) => "[object Date]".to_owned(),
+                    Some(Cell::Symbol(description)) => format!("Symbol({})", description.as_deref().unwrap_or("")),
+                    Some(Cell::String(_) | Cell::BigInt(_)) => self.to_string(p, this)?,
+                    _ if this.as_number().is_some() || this.as_bool().is_some() => self.to_string(p, this)?,
+                    _ => "#<Object>".to_owned(),
+                }};
+            return Err(self.type_error(p, format!("Method get TypedArray.prototype.{property} called on incompatible receiver {receiver}")));
         };
         let (buffer, offset, length, length_tracking, kind) =
             (*buffer, object.offset, *length, *length_tracking, *kind);
