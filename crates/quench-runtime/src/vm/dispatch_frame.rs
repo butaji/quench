@@ -81,7 +81,7 @@ impl GeneralCodeCursor {
 }
 
 impl<H: Host> Vm<H> {
-    /// A code cursor for `function`, with its lane view where the lane runs (`LaneView::enters`).
+    /// A code cursor for `function`, with its lane view where the lane runs.
     pub(super) fn general_cursor(
         &self,
         program_id: ProgramId,

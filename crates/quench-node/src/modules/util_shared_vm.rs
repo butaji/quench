@@ -495,6 +495,14 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     // Retain original identities before publishing mutable util exports. Console
     // can request these lazily without observing later public export replacement.
     let formatters = context.null_object_rooted()?;
+    let native_types = context.object_rooted()?;
+    for &(name, _) in TYPE_PREDICATES {
+        let key = context.string_rooted(name);
+        let predicate = context.get_property_rooted(types, key)?;
+        context.define_data_property_rooted(native_types, key, predicate, true, true, true)?;
+    }
+    let key = context.string_rooted("nativeTypes");
+    context.define_data_property_rooted(formatters, key, native_types, false, false, false)?;
     for name in ["format", "formatWithOptions"] {
         let key = context.string_rooted(name);
         let function = context.get_property_rooted(module, key)?;
@@ -975,9 +983,52 @@ pub(crate) fn validate_integer(context: &mut NativeContext<'_, NodeHost>, value:
     Ok(number)
 }
 
-pub(crate) fn typed_array_name(context: &mut NativeContext<'_, NodeHost>, value: RootId) -> Result<&'static str, RootedError> {
-    for &(name,brand) in TYPE_PREDICATES {
-        if brand != BuiltinBrand::TypedArray && name.ends_with("Array") && context.has_builtin_brand_rooted(value,brand)? { return Ok(name.strip_prefix("is").expect("type predicate prefix")); }
+/// C++ binding validators use intrinsic errors with message before enumerable code,
+/// unlike the coded subclasses exposed by Node's JavaScript validators.
+pub(crate) fn validate_binding_integer(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: RootId,
+    name: &str,
+    minimum: f64,
+    maximum: RootId,
+) -> Result<f64, RootedError> {
+    match validate_integer(context, value, name, minimum, maximum) {
+        Ok(number) => Ok(number),
+        Err(original) => {
+            let Some(exception) = original.exception else {
+                return Err(original);
+            };
+            let key = context.string_rooted("message");
+            let message = context.get_property_rooted(exception, key)?;
+            let message = context.to_string(message)?;
+            let (error, code) = if context
+                .rooted_value(value)
+                .and_then(|value| value.as_number())
+                .is_some()
+            {
+                (context.range_error_rooted(&message)?, "ERR_OUT_OF_RANGE")
+            } else {
+                (context.type_error_rooted(&message)?, "ERR_INVALID_ARG_TYPE")
+            };
+            let key = context.string_rooted("code");
+            let code = context.string_rooted(code);
+            context.define_data_property_rooted(error, key, code, true, true, true)?;
+            Err(context.throw(error))
+        }
+    }
+}
+
+pub(crate) fn typed_array_name(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: RootId,
+) -> Result<&'static str, RootedError> {
+    for &(name, brand) in TYPE_PREDICATES {
+        if brand != BuiltinBrand::TypedArray
+            && name.ends_with("Array")
+            && context.has_builtin_brand_rooted(value, brand)?
+        {
+            return Ok(name.strip_prefix("is").expect("type predicate prefix"));
+        }
     }
     Err(RootedError::host("typed array brand has no display name"))
 }
@@ -1048,6 +1099,33 @@ pub(crate) fn own_non_index_properties(
     context.array_rooted(&keys)
 }
 
+/// Inspect Core's promise slots without invoking guest properties or reactions.
+pub(crate) fn promise_details(
+    context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId],
+) -> Result<RootId, RootedError> {
+    use quench_runtime::PromiseSnapshot;
+    let promise = args.first().copied().unwrap_or_else(|| context.undefined());
+    let Some(snapshot) = context.promise_snapshot_rooted(promise)? else { return Ok(context.undefined()); };
+    let (state, result) = match snapshot {
+        PromiseSnapshot::Pending => {
+            let state = context.number(0.0);
+            return context.array_rooted(&[state]);
+        },
+        PromiseSnapshot::Fulfilled(value) => (1, value),
+        PromiseSnapshot::Rejected(value) => (2, value),
+    };
+    let state = context.number(f64::from(state));
+    context.array_rooted(&[state, result])
+}
+
+pub(crate) fn mark_promise_handled(
+    context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let promise = args.first().copied().unwrap_or_else(|| context.undefined());
+    context.mark_promise_handled_rooted(promise)?;
+    Ok(context.undefined())
+}
+
 /// Cache the genuine internal key binding in Core-owned private formatter data.
 pub(crate) fn key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let data = internal_formatters(context)?;
@@ -1061,6 +1139,29 @@ pub(crate) fn key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<R
     context.define_data_property_rooted(function, key, name, false, false, true)?;
     let key = context.string_rooted("getOwnNonIndexProperties");
     context.define_data_property_rooted(binding, key, function, true, true, true)?;
+    for (name, operation) in [
+        ("getPromiseDetails", "utilPromiseDetails"),
+        ("markPromiseAsHandled", "utilMarkPromiseHandled"),
+    ] {
+        let function = context.host_function(crate::host::shared_vm::operation(operation))?;
+        let key = context.string_rooted("name");
+        let value = context.string_rooted(name);
+        context.define_data_property_rooted(function, key, value, false, false, true)?;
+        let key = context.string_rooted(name);
+        context.define_data_property_rooted(binding, key, function, true, true, true)?;
+    }
+    let symbols = context.object_rooted()?;
+    for (name, description) in [
+        ("arrow_message_private_symbol", "node:arrowMessage"),
+        ("decorated_private_symbol", "node:decorated"),
+        ("transfer_mode_private_symbol", "node:transfer_mode"),
+    ] {
+        let key = context.string_rooted(name);
+        let symbol = context.symbol_rooted(Some(description));
+        context.define_data_property_rooted(symbols, key, symbol, true, true, true)?;
+    }
+    let key = context.string_rooted("privateSymbols");
+    context.define_data_property_rooted(binding, key, symbols, true, true, true)?;
     let constants = context.object_rooted()?;
     for (name, number) in [
         ("kPending",0),("kFulfilled",1),("kRejected",2),
@@ -1078,4 +1179,25 @@ pub(crate) fn key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<R
     context.define_data_property_rooted(binding, key, constants, true, true, true)?;
     context.define_data_property_rooted(data, cache_key, binding, false, false, false)?;
     Ok(binding)
+}
+
+/// Messaging hooks use realm-owned unique symbols, never registry aliases.
+pub(crate) fn symbols_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    let data = internal_formatters(context)?;
+    let key = context.string_rooted("nativeSymbolsBinding");
+    let cached = context.own_property_descriptor_rooted(data, key)?;
+    if context.is_object_rooted(cached)? { return get(context, cached, "value"); }
+    let binding = context.object_rooted()?;
+    for name in ["messaging_deserialize_symbol", "messaging_transfer_symbol", "messaging_clone_symbol", "messaging_transfer_list_symbol"] {
+        let key = context.string_rooted(name);
+        let symbol = context.symbol_rooted(Some(name));
+        context.define_data_property_rooted(binding, key, symbol, true, true, true)?;
+    }
+    context.define_data_property_rooted(data, key, binding, false, false, false)?;
+    Ok(binding)
+}
+
+pub(crate) fn types_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    let data = internal_formatters(context)?;
+    get(context, data, "nativeTypes")
 }

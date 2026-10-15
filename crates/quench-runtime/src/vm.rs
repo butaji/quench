@@ -1109,6 +1109,10 @@ pub(crate) struct Vm<H> {
     /// data `prototype` at the paired slot; derived from shapes, so field-cache invalidation
     /// clears it.
     instanceof_constructor_layout: Option<(u32, usize)>,
+    /// The shapes an ordinary closure's own properties step through, without and with a
+    /// `prototype` (`construction::ClosureShapes`); derived from shapes, so field-cache
+    /// invalidation clears it.
+    closure_shapes: [Option<construction::ClosureShapes>; 2],
     /// A RegExp receiver shape verified to hold an own writable data `lastIndex` at the paired
     /// slot; derived from shapes, so field-cache invalidation clears it.
     regexp_last_index_layout: Option<(u32, u32)>,
@@ -1765,6 +1769,8 @@ impl<H: Host> Vm<H> {
         self.realm.promise = Default::default();
         self.shapes.truncate(1);
         self.transitions.clear();
+        // The sealed holders and their shapes belong to the discarded heap.
+        self.startup_intrinsics = Default::default();
         self.atom_text = program.atoms.clone();
         self.atom_sequence = Rc::new(crate::bytecode::AtomSequence::new(self.atom_text.clone()));
         self.atoms.clear();
@@ -1821,6 +1827,7 @@ impl<H: Host> Vm<H> {
         self.private_homes.clear();
         self.programs.reset(program.clone());
         self.instanceof_constructor_layout = None;
+        self.closure_shapes = [None; 2];
         self.regexp_last_index_layout = None;
         self.regexp_builtin_layout = None;
         self.instanceof_has_instance_holder = Value::NULL;

@@ -418,9 +418,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let target = args.first().copied().unwrap_or(Value::UNDEFINED);
         if !self.is_object_like(target) {
-            return Err(
-                self.type_error(program, "Error.captureStackTrace requires an object".into())
-            );
+            return Err(self.type_error(program, "invalid_argument".into()));
         }
         let constructor_opt = args.get(1).copied().unwrap_or(Value::UNDEFINED);
         let trim_constructor =
@@ -512,34 +510,47 @@ impl<H: Host> Vm<H> {
                     "Error.captureStackTrace target must be an object".into(),
                 ));
             }
-            let intrinsics = self.realm.intrinsics.error_intrinsics[&self.realm.globals];
-            let getter = intrinsics.stack_getter;
-            let setter = intrinsics.stack_setter;
-            let target = self.heap.root_value(target_root).unwrap();
-            let key = self.heap.alloc(Cell::String("stack".into()));
-            self.define_property_or_throw(
+            self.install_error_stack(
                 program,
                 target,
-                key,
-                PropertyDescriptorRecord {
-                    value: None,
-                    writable: None,
-                    enumerable: Some(false),
-                    configurable: Some(true),
-                    getter: Some(getter),
-                    setter: Some(setter),
-                },
-            )?;
-            self.object_data_mut(target)
-                .expect("captureStackTrace target remains object-like")
-                .set_stack_data(match capture_limit {
+                match capture_limit {
                     Some(_) => StackData::Captured(records),
                     None => StackData::Formatted(Value::UNDEFINED),
-                });
+                },
+            )?;
             Ok(Value::UNDEFINED)
         })();
         self.heap.release_root(target_root);
         result
+    }
+
+    pub(super) fn install_error_stack(
+        &mut self,
+        program: &ResidualProgram,
+        target: Value,
+        data: StackData,
+    ) -> Result<(), JsError> {
+        let intrinsics = self.realm.intrinsics.error_intrinsics[&self.realm.globals];
+        let getter = intrinsics.stack_getter;
+        let setter = intrinsics.stack_setter;
+        let key = self.heap.alloc(Cell::String("stack".into()));
+        self.define_property_or_throw(
+            program,
+            target,
+            key,
+            PropertyDescriptorRecord {
+                value: None,
+                writable: None,
+                enumerable: Some(false),
+                configurable: Some(true),
+                getter: Some(getter),
+                setter: Some(setter),
+            },
+        )?;
+        self.object_data_mut(target)
+            .expect("stack target remains object-like")
+            .set_stack_data(data);
+        Ok(())
     }
 
     fn error_stack_trace_limit(&mut self) -> Option<usize> {
@@ -2091,18 +2102,7 @@ impl<H: Host> Vm<H> {
         native: Native,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let prototype = self
-            .realm
-            .intrinsics
-            .builtin_prototypes
-            .get(&(self.realm.globals, native))
-            .copied()
-            .unwrap_or_else(|| {
-                let constructor = self.native_value(native);
-                let atom = self.prototype_atom();
-                self.own_property(constructor, atom)
-                    .unwrap_or(self.object_proto)
-            });
+        let prototype = self.intrinsic_builtin_prototype(native);
         self.construct_error_with_prototype(program, native, args, prototype)
     }
 
