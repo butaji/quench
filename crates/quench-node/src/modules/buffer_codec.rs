@@ -28,6 +28,7 @@ pub(crate) fn encode_str(input: &str, encoding: &str) -> Vec<u8> {
 pub(crate) fn encode_units(input: &[u16], encoding: &str) -> Vec<u8> {
     match encoding {
         "latin1" | "ascii" | "utf16le" => encode_fixed_width_units(input.iter().copied(), encoding),
+        "base64" | "base64url" => base64_decode(&input.iter().map(|unit| *unit as u8).collect::<Vec<_>>()),
         _ => encode_str(&String::from_utf16_lossy(input), encoding),
     }
 }
