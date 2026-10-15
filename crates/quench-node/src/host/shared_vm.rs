@@ -326,6 +326,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "httpResponseInitialize" (2) => crate::modules::http_shared_vm::response_initialize,
         method "httpResponseSend" (4) => crate::modules::http_shared_vm::response_send,
         method "bufferToString" (3) => crate::modules::buffer_string_shared_vm::to_string,
+        method "bufferCompare" (2) => crate::modules::buffer_compare_shared_vm::compare,
+        method "bufferEquals" (1) => crate::modules::buffer_compare_shared_vm::equals,
         method "bufferStringSlice" (2) => crate::modules::buffer_string_shared_vm::string_slice,
         method "bufferFrom" (3) => crate::modules::buffer_from_shared_vm::from,
         method "bufferCopyBytesFrom" (3) => crate::modules::buffer_from_shared_vm::copy_bytes,
