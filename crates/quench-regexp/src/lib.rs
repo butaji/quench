@@ -197,9 +197,24 @@ enum ClassItem {
         negative: bool,
         name: String,
         value: Option<String>,
+        /// The ICU matcher `name`/`value` resolve to, looked up once at lowering.
+        matcher: Option<PropertyMatcher>,
     },
     Nested(ClassExpr),
     String(Vec<u32>),
+}
+
+impl ClassItem {
+    fn property(property: &ast::UnicodePropertyEscape) -> Self {
+        let name = property.name.to_string();
+        let value = property.value.as_ref().map(ToString::to_string);
+        Self::Property {
+            negative: property.negative,
+            matcher: compile_property_matcher(&name, value.as_deref()),
+            name,
+            value,
+        }
+    }
 }
 
 struct Lowering<'a> {
@@ -1282,11 +1297,7 @@ fn lower_term(term: &ast::Term<'_>, lowering: &mut Lowering) -> Expr {
         ast::Term::UnicodePropertyEscape(property) => Expr::Class(ClassExpr {
             negative: false,
             kind: ClassKind::Union,
-            items: vec![ClassItem::Property {
-                negative: property.negative,
-                name: property.name.to_string(),
-                value: property.value.as_ref().map(ToString::to_string),
-            }],
+            items: vec![ClassItem::property(property)],
         }),
         ast::Term::CharacterClass(class) => Expr::Class(lower_class(class, &lowering.source)),
         ast::Term::CapturingGroup(group) => {
@@ -1491,11 +1502,7 @@ fn lower_class(class: &ast::CharacterClass<'_>, source: &str) -> ClassExpr {
                 vec![ClassItem::Escape(escape.kind)]
             }
             ast::CharacterClassContents::UnicodePropertyEscape(property) => {
-                vec![ClassItem::Property {
-                    negative: property.negative,
-                    name: property.name.to_string(),
-                    value: property.value.as_ref().map(ToString::to_string),
-                }]
+                vec![ClassItem::property(property)]
             }
             ast::CharacterClassContents::Character(character) => {
                 let value = if character.kind == ast::CharacterKind::ControlLetter {
@@ -2178,6 +2185,7 @@ fn class_item_matches(item: &ClassItem, value: u32, ignore_case: bool, unicode: 
             negative,
             name,
             value: property,
+            matcher,
         } => {
             if ignore_case
                 && *negative
@@ -2191,14 +2199,17 @@ fn class_item_matches(item: &ClassItem, value: u32, ignore_case: bool, unicode: 
             {
                 return true;
             }
-            let matches = property_matches(name, property.as_deref(), value)
+            let property_matches = |character| {
+                resolved_property_matches(*matcher, name, property.as_deref(), character)
+            };
+            let matches = property_matches(value)
                 || (ignore_case
                     && char::from_u32(value).is_some_and(|character| {
                         character
                             .to_uppercase()
                             .chain(character.to_lowercase())
                             .map(u32::from)
-                            .any(|variant| property_matches(name, property.as_deref(), variant))
+                            .any(property_matches)
                     }));
             matches != *negative
         }
@@ -2488,14 +2499,24 @@ fn escape_matches(
 }
 
 pub fn property_matches(name: &str, value: Option<&str>, character: u32) -> bool {
+    resolved_property_matches(compile_property_matcher(name, value), name, value, character)
+}
+
+/// `property_matches` with the ICU matcher for `name`/`value` already resolved.
+fn resolved_property_matches(
+    matcher: Option<PropertyMatcher>,
+    name: &str,
+    value: Option<&str>,
+    character: u32,
+) -> bool {
     if (0xD800..=0xDFFF).contains(&character) {
         return surrogate_property_matches(name, value);
     }
     let Some(character) = char::from_u32(character) else {
         return false;
     };
-    if let Some(result) = icu_property_matches(name, value, character) {
-        return result;
+    if let Some(matcher) = matcher {
+        return matcher.matches(character);
     }
     match (name, value) {
         ("ASCII", _) => character.is_ascii(),
@@ -2698,10 +2719,6 @@ pub fn compile_property_matcher(name: &str, value: Option<&str>) -> Option<Prope
         )
     };
     Some(PropertyMatcher { kind })
-}
-
-fn icu_property_matches(name: &str, value: Option<&str>, character: char) -> Option<bool> {
-    Some(compile_property_matcher(name, value)?.matches(character))
 }
 
 fn equal(left: u32, right: u32, ignore_case: bool, unicode: bool) -> bool {

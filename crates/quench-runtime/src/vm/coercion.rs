@@ -106,6 +106,16 @@ impl<H: Host> Vm<H> {
         Ok(self.heap.alloc(Cell::String(text)))
     }
 
+    /// The string value of `text`, which ToString produced from `argument`. ToString is the
+    /// identity on strings, so a string argument is reused rather than copied into a new cell.
+    pub(super) fn string_value_from(&mut self, argument: Value, text: &JsString) -> Value {
+        if matches!(self.heap.get(argument), Some(Cell::String(_))) {
+            argument
+        } else {
+            self.heap.alloc(Cell::String(text.clone()))
+        }
+    }
+
     pub(super) fn coerce_js_string(
         &mut self,
         program: &ResidualProgram,
