@@ -6775,6 +6775,20 @@ process.emitWarning=originalWarning;out.push(warnings);console.log(JSON.stringif
 }
 
 #[test]
+fn buffer_pool_size_preserves_public_configuration_and_legacy_numeric_construction() {
+    compare_node_stream_source(r#"
+const B=require('buffer').Buffer,out=[];
+const d=Object.getOwnPropertyDescriptor(B,'poolSize');
+out.push([d.value,d.writable,d.enumerable,d.configurable]);
+const emit=process.emitWarning;process.emitWarning=()=>{};
+const b=new B(B.poolSize);out.push([b.length,b.parent instanceof ArrayBuffer]);
+B.poolSize=128;out.push(B.poolSize);delete B.poolSize;out.push(Object.hasOwn(B,'poolSize'));
+Object.defineProperty(B,'poolSize',d);out.push(B.poolSize);
+process.emitWarning=emit;console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
 fn native_buffer_constructor_deprecation_follows_original_vm_filenames_and_process_flags() {
     compare_node_stream_source(r#"
 'use strict';
