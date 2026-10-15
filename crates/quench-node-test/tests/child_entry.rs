@@ -1520,6 +1520,42 @@ const assert=require('assert'),{EventEmitter,on}=require('events');
 }
 
 #[test]
+fn events_async_iterator_descriptor_initialization_captures_original_abort_helper() {
+    let observations=compare_node_stream_source(r#"
+const assert=require('assert'),events=require('events');
+const marker={};events.addAbortListener=()=>{throw marker};
+const originalPromise=globalThis.Promise,originalApply=Reflect.apply;
+globalThis.Promise=function(){throw marker};Reflect.apply=()=>{throw marker};
+let descriptor;
+try{descriptor=Object.getOwnPropertyDescriptor(events,'on')}finally{globalThis.Promise=originalPromise;Reflect.apply=originalApply}
+assert.strictEqual(typeof descriptor.value,'function');assert.strictEqual(descriptor.get,undefined);
+assert.strictEqual(descriptor.writable,true);assert.strictEqual(descriptor.enumerable,true);assert.strictEqual(descriptor.configurable,true);
+assert.strictEqual(descriptor.value.name,'on');assert.strictEqual(descriptor.value.length,2);
+assert.strictEqual(events.on,descriptor.value);Object.freeze(events);assert.strictEqual(events.on,descriptor.value);
+(async()=>{
+ const controller=new AbortController();controller.signal.addEventListener('abort',event=>event.stopImmediatePropagation());
+ const iterator=events.on(new events.EventEmitter(),'data',{signal:controller.signal});
+ const pending=iterator.next();controller.abort('reason');
+ await assert.rejects(pending,error=>error.code==='ABORT_ERR'&&error.cause==='reason');
+ console.log(JSON.stringify({complete:true}));
+})().catch(error=>{console.error(error);process.exitCode=1});
+"#);
+    assert_eq!(String::from_utf8_lossy(&observations[1].stdout).trim(),r#"{"complete":true}"#);
+}
+
+#[test]
+fn events_async_iterator_initialization_preserves_freeze_before_observation() {
+    let observations=compare_node_stream_source(r#"
+const assert=require('assert'),events=require('events');Object.freeze(events);
+const descriptor=Object.getOwnPropertyDescriptor(events,'on');assert.strictEqual(typeof descriptor.value,'function');
+assert.strictEqual(descriptor.writable,false);assert.strictEqual(descriptor.configurable,false);assert.strictEqual(descriptor.enumerable,true);
+assert.strictEqual(events.on,descriptor.value);
+(async()=>{const emitter=new events.EventEmitter(),iterator=events.on(emitter,'data');emitter.emit('data',42);assert.deepStrictEqual((await iterator.next()).value,[42]);await iterator.return();console.log(JSON.stringify({complete:true}));})().catch(error=>{console.error(error);process.exitCode=1});
+"#);
+    assert_eq!(String::from_utf8_lossy(&observations[1].stdout).trim(),r#"{"complete":true}"#);
+}
+
+#[test]
 fn child_stdin_destruction_closes_pipe_and_precedes_exit_observers() {
     let observations = compare_node_stream_source(r#"
 const assert=require('assert'),{spawn}=require('child_process');
