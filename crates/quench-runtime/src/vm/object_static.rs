@@ -750,6 +750,15 @@ impl<H: Host> Vm<H> {
                 PropertyKey::Symbol(_) | PropertyKey::Private(_) => None,
             })
             .collect::<Vec<_>>();
+        // Shape entries are already in insertion order; only integer indices and module
+        // namespaces (code-unit order) reorder.
+        if !data.is_module_namespace()
+            && !entries
+                .iter()
+                .any(|(atom, _)| self.atom_class(*atom).contains(AtomClass::ARRAY_INDEX))
+        {
+            return entries;
+        }
         entries.sort_by(|(left, _), (right, _)| {
             if data.is_module_namespace() {
                 return self
