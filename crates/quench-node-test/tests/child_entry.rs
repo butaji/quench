@@ -7705,3 +7705,66 @@ console.log(JSON.stringify({complete:true,out}));
     }
     assert_eq!(observations[0].stdout, observations[1].stdout);
 }
+
+
+#[test]
+fn ambiguous_commonjs_sources_detect_esm_syntax_await_and_wrapper_bindings() {
+    let directory = tempfile::tempdir().unwrap();
+    for (name, source) in [
+        ("esm.js", "export const n=42;"),
+        ("meta.js", "globalThis.detectedMeta=import.meta.url;"),
+        ("lexical.js", "const require=42;globalThis.detectedLexical=require;"),
+        ("destructure.js", "const {x:exports}={x:42};globalThis.detectedDestructure=exports;"),
+        ("script.js", "var require;module.exports=42;return;"),
+        ("string.js", "module.exports='export { imaginary }';"),
+        ("await-name.js", "var await=8;module.exports=await/2/2;"),
+        ("dynamic.js", "module.exports=()=>import('./esm.js');"),
+        ("async.js", "globalThis.detectedStarted=true;await 0;globalThis.detectedFinished=true;"),
+        ("hashbang.js", "#!/usr/bin/env node\nexport const n=42;"),
+        ("bom.js", "\u{feff}export const n=42;"),
+        ("common/package.json", "{\"type\":\"commonjs\"}"),
+        ("common/value.js", "module.exports=42;"),
+        ("common/explicit.mjs", "export const n=42;"),
+        ("common/no-extension", "module.exports=42;"),
+        ("module/package.json", "{\"type\":\"module\"}"),
+        ("module/value.js", "export const n=42;"),
+        ("module/explicit.cjs", "module.exports=42;"),
+        ("module/no-extension", "export const n=42;"),
+        ("module/unregistered.txt", "module.exports=42;"),
+        ("unknown/package.json", "{\"type\":\"other\"}"),
+        ("unknown/value.js", "export const n=42;"),
+        ("node_modules/pkg/package.json", "{}"),
+        ("node_modules/pkg/index.js", "export const n=42;"),
+    ] {
+        let path = directory.path().join(name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, source).unwrap();
+    }
+    let entry = directory.path().join("entry.cjs");
+    std::fs::write(&entry, r#"
+(async()=>{
+const out=[];
+for(const file of ['esm.js','meta.js','lexical.js','destructure.js','script.js','string.js','await-name.js','hashbang.js','bom.js','common/value.js','common/explicit.mjs','common/no-extension','module/value.js','module/explicit.cjs','module/no-extension','module/unregistered.txt','unknown/value.js','node_modules/pkg/index.js']){
+ const value=require('./'+file);out.push([file,typeof value,typeof value==='object'?Object.keys(value):value,typeof value==='object'?value.n:null]);
+}
+out.push(['effects',detectedMeta.endsWith('/meta.js'),detectedLexical,detectedDestructure]);
+out.push(['dynamic',(await require('./dynamic.js')()).n]);
+try{require('./async.js');throw Error('unexpected success')}catch(e){out.push(['async',e.name,e.code,globalThis.detectedStarted===undefined]);}
+await import('./async.js');out.push(['later',detectedStarted,detectedFinished]);
+console.log(JSON.stringify({complete:true,out}));
+})().catch(e=>{console.error(e.stack);process.exitCode=1});
+"#).unwrap();
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable); command.arg(&entry);
+        if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(20)).unwrap()
+    });
+    for result in &observations {
+        assert!(!result.timed_out);
+        assert_eq!(result.exit_code, Some(0), "{}", String::from_utf8_lossy(&result.stderr));
+        assert!(result.stderr.is_empty(), "{}", String::from_utf8_lossy(&result.stderr));
+        let value: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+        assert_eq!(value["complete"], true);
+    }
+    assert_eq!(String::from_utf8_lossy(&observations[0].stdout), String::from_utf8_lossy(&observations[1].stdout));
+}
