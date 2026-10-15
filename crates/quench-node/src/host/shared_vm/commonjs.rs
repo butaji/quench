@@ -1238,14 +1238,12 @@ fn cached_builtin(
     if matches!(builtin, BuiltinModule::Crypto | BuiltinModule::Events) {
         let policy = context.with_startup_intrinsics(|context| {
             if matches!(builtin, BuiltinModule::Events) {
-                // Node's public and internal abort helpers share one authority.
-                // In this host the native helper owns dispatch resistance and
-                // disposal for the actual AbortSignal implementation.
-                let abort = node_library_module(context, "events.js", "internal/events/abort_listener.js")?;
                 let listener = get(context, module, "addAbortListener")?;
-                set(context, abort, "addAbortListener", listener)?;
-                let on = node_library_export(context, "events.js", "events.js", "on")?;
-                return set(context, module, "on", on);
+                let data = context.array_rooted(&[module, listener])?;
+                let initialize = context.host_function_with_data(
+                    crate::host::shared_vm::operation("eventsOnInitialize"), data,
+                )?;
+                return context.define_lazy_data_properties_rooted(module, &["on"], true, initialize);
             }
             let setter = node_library_export(context, "crypto.js", "internal/crypto/util.js", "setEngine")?;
             set(context, module, "setEngine", setter)
@@ -1257,6 +1255,22 @@ fn cached_builtin(
         }
     }
     Ok(module)
+}
+
+pub(crate) fn events_on_initialize(
+    context: &mut Context<'_>, _: RootId, _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let data = context.host_function_data()?;
+    let module = get(context, data, "0")?;
+    let listener = get(context, data, "1")?;
+    // The pinned public policy uses the same native abort authority as events.
+    // Capture it before guest replacement of the public alias, and load policy
+    // only when `on` is observed, through the VM's ordinary data-property model.
+    let abort = node_library_module(context, "events.js", "internal/events/abort_listener.js")?;
+    set(context, abort, "addAbortListener", listener)?;
+    let on = node_library_export(context, "events.js", "events.js", "on")?;
+    set(context, module, "on", on)?;
+    Ok(context.undefined())
 }
 
 /// Load a real configured standard-library export over this VM's native bindings.
