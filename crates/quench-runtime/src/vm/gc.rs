@@ -697,6 +697,11 @@ impl<H: Host> Vm<H> {
         // into newly freed slots.
         self.prune_function_values();
         self.prune_wasm_exported_functions();
+        // A home stays reachable through its environment; entries of swept environments go
+        // before their slots can name new cells.
+        let heap = &self.heap;
+        self.private_homes
+            .retain(|key, _| heap.is_live(key.environment));
         if full && self.programs.has_unchecked_reclaimable() {
             self.reclaim_unreferenced_programs();
         }
