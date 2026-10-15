@@ -178,13 +178,13 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let buffer = args.first().copied().unwrap_or(Value::UNDEFINED);
-        let (shared, detached, before) = match self.heap.get(buffer) {
+        let (shared, detached, wasm_view) = match self.heap.get(buffer) {
             Some(Cell::ArrayBuffer {
                 shared,
                 bytes,
                 detached,
                 ..
-            }) => (*shared, *detached, bytes.capacity()),
+            }) => (*shared, *detached, bytes.is_wasm_view()),
             _ => {
                 return Err(self.type_error(p, "detachArrayBuffer requires an ArrayBuffer".into()));
             }
@@ -192,17 +192,12 @@ impl<H: Host> Vm<H> {
         if shared {
             return Err(self.type_error(p, "cannot detach a SharedArrayBuffer".into()));
         }
-        if detached {
-            return Ok(Value::UNDEFINED);
+        if wasm_view {
+            return Err(self.type_error(p, "cannot detach a WebAssembly.Memory buffer".into()));
         }
-        if let Some(Cell::ArrayBuffer {
-            bytes, detached, ..
-        }) = self.heap.get_mut(buffer)
-        {
-            *bytes = Rc::new(Vec::new());
-            *detached = true;
+        if !detached {
+            self.detach_array_buffer(buffer);
         }
-        self.heap.adjust_external_bytes(before, 0);
         Ok(Value::UNDEFINED)
     }
 
@@ -478,7 +473,7 @@ impl<H: Host> Vm<H> {
         let bytes = self.array_buffer_zeroed_bytes(p, length)?;
         let buffer = self.heap.alloc(Cell::ArrayBuffer {
             object: Box::new(Self::empty_object(prototype)),
-            bytes,
+            bytes: bytes.into(),
             shared,
             detached: false,
             max_byte_length,
@@ -547,7 +542,7 @@ impl<H: Host> Vm<H> {
         let bytes = self.array_buffer_zeroed_bytes(p, length)?;
         Ok(self.heap.alloc(Cell::ArrayBuffer {
             object: Box::new(Self::empty_object(prototype)),
-            bytes,
+            bytes: bytes.into(),
             shared,
             detached: false,
             max_byte_length: length,
@@ -635,7 +630,7 @@ impl<H: Host> Vm<H> {
                     detached,
                     immutable,
                     ..
-                }) => (Rc::clone(bytes), *shared, *detached, *immutable),
+                }) => (bytes.clone(), *shared, *detached, *immutable),
                 _ => {
                     return Err(
                         self.type_error(p, "ArrayBuffer species must return an ArrayBuffer".into())
@@ -655,7 +650,7 @@ impl<H: Host> Vm<H> {
                 bytes,
                 detached: false,
                 ..
-            }) => Rc::clone(bytes),
+            }) => bytes.clone(),
             _ => return Err(self.type_error(p, "ArrayBuffer was detached during slice".into())),
         };
         let copy_count = count.min(source_bytes.len().saturating_sub(start));
@@ -664,7 +659,7 @@ impl<H: Host> Vm<H> {
                 bytes: destination, ..
             }) = self.heap.get_mut(result)
         {
-            Rc::make_mut(destination)[..copy_count]
+            destination.make_mut()[..copy_count]
                 .copy_from_slice(&source_bytes[start..start + copy_count]);
         }
         Ok(result)
@@ -685,7 +680,7 @@ impl<H: Host> Vm<H> {
                 max_byte_length,
                 resizable,
                 ..
-            }) => (Rc::clone(bytes), *shared, *max_byte_length, *resizable),
+            }) => (bytes.clone(), *shared, *max_byte_length, *resizable),
             _ => return Err(self.type_error(p, "ArrayBuffer.transfer receiver is invalid".into())),
         };
         if shared {
@@ -704,10 +699,10 @@ impl<H: Host> Vm<H> {
                 detached,
                 immutable,
                 ..
-            }) => (*detached, *immutable, Rc::clone(bytes)),
-            _ => (true, true, Rc::new(Vec::new())),
+            }) => (*detached, *immutable, bytes.clone()),
+            _ => (true, true, Default::default()),
         };
-        if detached || immutable {
+        if detached || immutable || bytes.is_wasm_view() {
             return Err(self.type_error(p, "ArrayBuffer is not transferable".into()));
         }
         if preserve_resizability && resizable && length > max_byte_length {
@@ -729,28 +724,27 @@ impl<H: Host> Vm<H> {
             object: Box::new(Self::empty_object(
                 self.array_buffer_intrinsic_prototype(false),
             )),
-            bytes: Rc::new(copied_bytes),
+            bytes: copied_bytes.into(),
             shared: false,
             detached: false,
             max_byte_length: result_max_byte_length,
             resizable: preserve_resizability && resizable,
             immutable: immutable_result,
         });
-        let (released, before) = if let Some(Cell::ArrayBuffer {
+        self.detach_array_buffer(this);
+        Ok(result)
+    }
+
+    /// DetachArrayBuffer once the caller has checked the detach key: releases the bytes.
+    pub(super) fn detach_array_buffer(&mut self, buffer: Value) {
+        if let Some(Cell::ArrayBuffer {
             bytes, detached, ..
-        }) = self.heap.get_mut(this)
+        }) = self.heap.get_mut(buffer)
         {
-            let before = bytes.capacity();
-            *bytes = Rc::new(Vec::new());
+            let before = std::mem::take(bytes).capacity();
             *detached = true;
-            (true, before)
-        } else {
-            (false, 0)
-        };
-        if released {
             self.heap.adjust_external_bytes(before, 0);
         }
-        Ok(result)
     }
 
     pub(super) fn array_buffer_to_index(
@@ -814,7 +808,7 @@ impl<H: Host> Vm<H> {
         let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get(this) else {
             unreachable!("receiver validated before mutation");
         };
-        let previous = Rc::clone(bytes);
+        let previous = bytes.clone();
         let before = previous.capacity();
         let mut resized = self.array_buffer_zeroed_bytes(p, requested)?;
         let copy_length = previous.len().min(requested);
@@ -823,7 +817,7 @@ impl<H: Host> Vm<H> {
         let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(this) else {
             unreachable!("receiver validated before mutation");
         };
-        *bytes = resized;
+        *bytes = resized.into();
         self.heap.adjust_external_bytes(before, after);
         Ok(Value::UNDEFINED)
     }
@@ -866,7 +860,7 @@ impl<H: Host> Vm<H> {
                 unreachable!("grow receiver validated before mutation");
             };
             let before = bytes.capacity();
-            Rc::make_mut(bytes).resize(requested, 0);
+            bytes.owned_mut().resize(requested, 0);
             (before, bytes.capacity())
         };
         self.heap.adjust_external_bytes(before, after);
@@ -910,8 +904,8 @@ impl<H: Host> Vm<H> {
         let (source_bytes, detached) = match self.heap.get(this) {
             Some(Cell::ArrayBuffer {
                 bytes, detached, ..
-            }) => (Rc::clone(bytes), *detached),
-            _ => (Rc::new(Vec::new()), true),
+            }) => (bytes.clone(), *detached),
+            _ => (Default::default(), true),
         };
         if detached {
             return Err(self.type_error(p, "ArrayBuffer was detached during coercion".into()));
@@ -928,7 +922,7 @@ impl<H: Host> Vm<H> {
             object: Box::new(Self::empty_object(
                 self.array_buffer_intrinsic_prototype(false),
             )),
-            bytes,
+            bytes: bytes.into(),
             shared: false,
             detached: false,
             max_byte_length: count,
