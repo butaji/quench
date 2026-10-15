@@ -10,8 +10,6 @@ pub(crate) const TIME_FIELDS: [&str; 4] = ["atime", "mtime", "ctime", "birthtime
 pub(crate) struct State {
     api: Option<RootId>,
     stats_warning_emitted: bool,
-    canonical_bigint_stats: Option<RootId>,
-    statfs_projection: Option<RootId>,
 }
 const FACTORY: &str = quench_js_check::checked_js!(
     r#"(statsConstruct, mode, checkMode, date, DateConstructor, NumberConstructor, round, emitWarning) => {
@@ -95,7 +93,7 @@ pub(crate) fn install(
     let undefined = context.undefined();
     let api = context.call_rooted(factory, undefined, &arguments)?;
     let shared = context.host_mut().shared_state();
-    let canonical = shared.borrow().fs_stats.canonical_bigint_stats;
+    let canonical = crate::modules::fs_policy_shared_vm::cached(context, "BigIntStats")?;
     if let Some(constructor) = canonical {
         set(context, api, "BigIntStats", constructor)?;
     }
@@ -116,27 +114,11 @@ pub(crate) fn install(
 }
 /// Internal fs utilities export the same public stat type used by their
 /// binding projection. Preserve that identity when the module is available.
-pub(crate) fn adopt_binding_types(
+pub(crate) fn adopt_bigint_stats(
     context: &mut NativeContext<'_, NodeHost>,
-    exports: RootId,
+    constructor: RootId,
 ) -> Result<(), RootedError> {
-    let constructor = get(context, exports, "BigIntStats")?;
-    let constructor = context.retain(constructor)?;
-    let shared = context.host_mut().shared_state();
-    let old = shared
-        .borrow_mut()
-        .fs_stats
-        .canonical_bigint_stats
-        .replace(constructor);
-    if let Some(old) = old {
-        context.release_root(old);
-    }
-    if shared.borrow().fs_stats.statfs_projection.is_none() {
-        let projection = get(context, exports, "getStatFsFromBinding")?;
-        let projection = context.retain(projection)?;
-        shared.borrow_mut().fs_stats.statfs_projection = Some(projection);
-    }
-    let api = shared.borrow().fs_stats.api;
+    let api = context.host_mut().shared_state().borrow().fs_stats.api;
     if let Some(api) = api {
         set(context, api, "BigIntStats", constructor)?;
     }
@@ -148,25 +130,8 @@ pub(crate) fn statfs_from_values(
     context: &mut NativeContext<'_, NodeHost>,
     values: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let shared = context.host_mut().shared_state();
-    if shared.borrow().fs_stats.statfs_projection.is_none() {
-        context.with_startup_intrinsics(|context| {
-            crate::host::shared_vm::commonjs::node_library_export(
-                context,
-                "fs.js",
-                "internal/fs/utils.js",
-                "getStatFsFromBinding",
-            )
-        })?;
-    }
-    let projection = shared
-        .borrow()
-        .fs_stats
-        .statfs_projection
-        .ok_or_else(|| RootedError::host("Node statfs binding projection missing"))?;
     let values = context.array_rooted(values)?;
-    let undefined = context.undefined();
-    context.call_rooted(projection, undefined, &[values])
+    crate::modules::fs_policy_shared_vm::call(context, "getStatFsFromBinding", &[values])
 }
 
 pub(crate) fn decorate_stats(
