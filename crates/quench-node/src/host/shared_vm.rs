@@ -486,6 +486,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "bufferLegacyConstruct" (3) => crate::modules::buffer_constructor_shared_vm::construct,
         method "bufferIsBuffer" (1) => crate::modules::buffer_constructor_shared_vm::is_buffer,
         method "bufferSpeciesGet" (0) => crate::modules::buffer_constructor_shared_vm::species,
+        method "bufferOf" (0) => crate::modules::buffer_constructor_shared_vm::of,
         method "bufferSwap" (0) => crate::modules::buffer_swap_shared_vm::operation,
         method "bufferBigInt" (3) => crate::modules::buffer_bigint_shared_vm::operation,
         method "bufferBackingGet" (0) => crate::modules::buffer_shared_vm::backing_get,

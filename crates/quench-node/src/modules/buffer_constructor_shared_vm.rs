@@ -73,6 +73,12 @@ pub(crate) fn install(context: &mut Context<'_>, fast: RootId) -> Result<RootId,
     name(context, is_buffer, "isBuffer")?;
     let key = context.string_rooted("isBuffer");
     context.define_data_property_rooted(constructor, key, is_buffer, true, true, true)?;
+    let of = context.host_function_with_data(
+        crate::host::shared_vm::operation("bufferOf"), fast,
+    )?;
+    name(context, of, "of")?;
+    let key = context.string_rooted("of");
+    context.define_data_property_rooted(constructor, key, of, true, true, true)?;
     let symbol = get(context, global, "Symbol")?;
     let species = get(context, symbol, "species")?;
     let getter = context
@@ -174,4 +180,20 @@ pub(crate) fn species(
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     context.host_function_data()
+}
+
+/// Node's own `of` allocates through FastBuffer without invoking legacy warnings.
+pub(crate) fn of(
+    context: &mut Context<'_>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let fast = context.host_function_data()?;
+    let length = context.number(args.len() as f64);
+    let result = context.construct_rooted(fast, fast, &[length])?;
+    for (index, value) in args.iter().copied().enumerate() {
+        let key = context.string_rooted(&index.to_string());
+        context.set_property_rooted(result, key, value, result)?;
+    }
+    Ok(result)
 }
