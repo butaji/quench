@@ -141,35 +141,49 @@ impl FsState {
         position: Option<u64>,
     ) -> std::io::Result<Vec<u8>> {
         self.with_descriptor(fd, |file| {
-            let original = if position.is_some() {
-                Some(file.stream_position()?)
-            } else {
-                None
-            };
-            if let Some(position) = position {
-                if let Err(error) = file.seek(SeekFrom::Start(position)) {
-                    return Err(if position > i32::MAX as u64 {
-                        std::io::Error::from_raw_os_error(libc::EFBIG)
-                    } else {
-                        error
-                    });
-                }
-            }
-            let mut bytes = vec![0; size];
-            let result = file.read(&mut bytes).map(|read| {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::FileExt;
+                let mut bytes = vec![0; size];
+                let read = match position {
+                    Some(position) => file.read_at(&mut bytes, position),
+                    None => file.read(&mut bytes),
+                }?;
                 bytes.truncate(read);
-                bytes
-            });
-            let result = match (result, position) {
-                (Err(_), Some(position)) if position > i32::MAX as u64 => {
-                    Err(std::io::Error::from_raw_os_error(libc::EFBIG))
-                }
-                (result, _) => result,
-            };
-            if let Some(original) = original {
-                file.seek(SeekFrom::Start(original))?;
+                Ok(bytes)
             }
-            result
+            #[cfg(not(unix))]
+            {
+                let original = if position.is_some() {
+                    Some(file.stream_position()?)
+                } else {
+                    None
+                };
+                if let Some(position) = position {
+                    if let Err(error) = file.seek(SeekFrom::Start(position)) {
+                        return Err(if position > i32::MAX as u64 {
+                            std::io::Error::from_raw_os_error(libc::EFBIG)
+                        } else {
+                            error
+                        });
+                    }
+                }
+                let mut bytes = vec![0; size];
+                let result = file.read(&mut bytes).map(|read| {
+                    bytes.truncate(read);
+                    bytes
+                });
+                let result = match (result, position) {
+                    (Err(_), Some(position)) if position > i32::MAX as u64 => {
+                        Err(std::io::Error::from_raw_os_error(libc::EFBIG))
+                    }
+                    (result, _) => result,
+                };
+                if let Some(original) = original {
+                    file.seek(SeekFrom::Start(original))?;
+                }
+                result
+            }
         })
     }
 

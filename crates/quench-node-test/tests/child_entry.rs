@@ -8088,5 +8088,61 @@ console.log(['ReadableStream','WritableStream','TransformStream','TextEncoderStr
 
 #[test]
 fn native_encoding_and_array_buffer_copy_match_stable_slots_and_byte_ranges() {
-    compare_node_source_with_args(include_str!("../node-tests/test-native-encoding-bytes.js"), &["--no-warnings", "--expose-internals"]);
+    compare_node_source_with_args(
+        include_str!("../node-tests/test-native-encoding-bytes.js"),
+        &["--no-warnings", "--expose-internals"],
+    );
+}
+
+#[test]
+fn read_sync_overloads_validation_order_and_bigint_positions_match_node() {
+    compare_node_stream_source(
+        r#"
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),assert=require('node:assert'),out=[];
+const directory=fs.mkdtempSync(path.join(os.tmpdir(),'quench-read-policy-')),file=path.join(directory,'file');fs.writeFileSync(file,'abcdef');
+function capture(args){try{return ['value',fs.readSync(...args)]}catch(e){return ['error',e.name,e.code??null,e.message,Reflect.ownKeys(e).filter(k=>k!=='stack').map(String),Reflect.ownKeys(Object.getPrototypeOf(e)).map(String)]}}
+try {
+ for(const fd of [-1,999999,{},'1',null,1.5])for(const buffer of [{},Buffer.alloc(1)])for(const length of [0,1,undefined])out.push(capture([fd,buffer,0,length,0]));
+ for(const offset of [undefined,null,0,-1,1.5,'0',{},[],()=>0])out.push(capture([-1,Buffer.alloc(2),offset]));
+ for(const length of [undefined,null,0,-1,1.5,'1',NaN,Infinity,2**32,2**32+1,1n,Symbol('length')])out.push(capture([-1,Buffer.alloc(2),0,length,0]));
+ for(const position of [undefined,null,-1,0,-2,1.5,'0',0n,-1n,3n,2n**63n-1n,2n**63n]){
+  const fd=fs.openSync(file,'r'),buffer=Buffer.alloc(2);try{out.push([capture([fd,buffer,0,2,position]),Array.from(buffer),fs.readFileSync(fd,'utf8')])}finally{fs.closeSync(fd)}
+ }
+ const trace=[],marker={};let buffer=Buffer.alloc(2);
+ let options={get offset(){trace.push('offset');return -1},get length(){trace.push('length');throw marker},get position(){trace.push('position');return 0}};
+ assert.throws(()=>fs.readSync(-1,buffer,options),e=>e===marker);out.push(trace.splice(0));
+ options={get offset(){trace.push('offset');return 0},get length(){trace.push('length');return {valueOf(){trace.push('coerce length');return 0}}},get position(){trace.push('position');return null}};
+ out.push(capture([{},buffer,options]),trace.splice(0));
+ for(const name of ['byteLength'])Object.defineProperty(buffer,name,{get(){trace.push(name);return 2}});
+ out.push(capture([-1,buffer,{offset:0,length:0}]),trace.splice(0));
+ out.push(capture([-1,buffer,{offset:0,length:1}]),trace.splice(0));
+}finally{fs.rmSync(directory,{recursive:true,force:true})}
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[test]
+fn read_file_unknown_size_supplied_buffer_errors_preserve_node_prototypes() {
+    compare_node_stream_source(
+        r#"
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),out=[];
+const directory=fs.mkdtempSync(path.join(os.tmpdir(),'quench-read-unknown-')),file=path.join(directory,'empty');fs.writeFileSync(file,'');
+try{for(const size of [0,3,6,7]){
+ const fd=fs.openSync(file,'r'),original=fs.readSync,source=Buffer.from('abcdef');let pos=0;
+ fs.readSync=function(fd,buffer,offset,length){const n=Math.min(length,source.length-pos);buffer.set(source.subarray(pos,pos+n),offset);pos+=n;return n};
+ try{const b=fs.readFileSync(fd,{buffer:Buffer.alloc(size)});out.push(['value',b.toString(),pos])}catch(e){out.push(['error',e.name,e.code,e.message,Reflect.ownKeys(e).filter(k=>k!=='stack'),Object.getPrototypeOf(e).constructor.name,Reflect.ownKeys(Object.getPrototypeOf(e)),pos])}finally{fs.readSync=original;fs.closeSync(fd)}
+}}finally{fs.rmSync(directory,{recursive:true,force:true})}console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn read_sync_positional_directory_errors_preserve_kernel_errno() {
+    compare_node_stream_source(
+        r#"
+const fs=require('node:fs'),out=[],fd=fs.openSync('/tmp','r');try{for(const position of [null,0,2**32,2n**40n])try{out.push(['value',fs.readSync(fd,Buffer.alloc(1),0,1,position)])}catch(e){out.push([e.name,e.code,e.syscall,e.message])}}finally{fs.closeSync(fd)}console.log(JSON.stringify(out));
+"#,
+    );
 }
