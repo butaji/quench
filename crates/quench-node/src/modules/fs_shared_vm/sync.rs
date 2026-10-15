@@ -1,3 +1,4 @@
+use super::get;
 use crate::host::NodeHost;
 use crate::modules::{fs_error_details, fs_ops as ops, fs_shared_vm as shared_vm};
 use quench_runtime::{NativeContext, RootId, RootedError, Value};
@@ -5,7 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_TEMP_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
-const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSync, symlinkSync, linkSync, renameSync, unlinkSync, chownSync, lchownSync, fchownSync, truncateSync, ftruncateSync, writeFileSync, openSync, closeSync, fstatSync, readDescriptor, writeDescriptor, syncDescriptor) => {
+const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSync, symlinkSync, linkSync, renameSync, unlinkSync, chownSync, lchownSync, fchownSync, truncateSync, ftruncateSync, writeFileSync, openSync, closeSync, fstatSync, readInto, writeDescriptor, syncDescriptor) => {
   let warnedMkdtempX = false;
   const normalizePath = (path) =>
     typeof path === 'string' ? path : Buffer.isBuffer(path) ? path.toString() : ArrayBuffer.isView(path) && !(path instanceof DataView) ? Buffer.from(path).toString() : path instanceof URL ? decodeURIComponent(path.pathname) : path;
@@ -279,7 +280,7 @@ const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSy
       return writeFileSync(normalizePath(path), writeBytes(data, settings), settings);
     },
     openSync(path, flags, mode) {
-      return openSync(normalizePath(path), flags, normalizeMode(mode));
+      return openSync(path, flags, mode);
     },
     closeSync(fd) {
       validateFd(fd);
@@ -335,12 +336,8 @@ const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSy
         throw error;
       }
       [offset, length] = validateReadWriteRange(buffer, offset, length);
-      const bytes = readDescriptor(fd, length, position);
-      const target = buffer instanceof DataView
-        ? new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
-        : buffer;
-      target.set(bytes, offset);
-      return bytes.byteLength;
+      if (length === 0) return 0;
+      return readInto(fd, buffer, offset, length, position);
     },
     writeSync(fd, data, offset, length, position) {
       validateFd(fd);
@@ -386,8 +383,7 @@ pub(crate) fn install(
     let open = context.host_function(crate::host::shared_vm::operation("fsOpenSync"))?;
     let close = context.host_function(crate::host::shared_vm::operation("fsCloseSync"))?;
     let fstat = context.host_function(crate::host::shared_vm::operation("fsFstatSync"))?;
-    let read_descriptor =
-        context.host_function(crate::host::shared_vm::operation("fsReadDescriptor"))?;
+    let read_descriptor = context.host_function(crate::host::shared_vm::operation("fsReadInto"))?;
     let write_descriptor =
         context.host_function(crate::host::shared_vm::operation("fsWriteDescriptor"))?;
     let sync_descriptor =
@@ -459,61 +455,44 @@ pub(crate) fn open_sync(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let path = path_argument(context, args.first().copied())?;
-    let flags = args.get(1).copied();
-    let mode = args
-        .get(2)
-        .copied()
-        .and_then(|value| context.rooted_value(value))
-        .and_then(Value::as_number)
-        .map(|value| value as u32);
-    let opened = match flags {
-        Some(value) if context.rooted_value(value).is_some_and(Value::is_undefined) => {
-            ops::open(&path, None, mode)
-        }
-        Some(value) if context.string_text(value)?.is_some() => {
-            let flag = context.string_text(value)?.unwrap_or_default();
-            ops::open(&path, Some(&flag), mode)
-        }
-        Some(value)
-            if context
-                .rooted_value(value)
-                .and_then(Value::as_number)
-                .is_some() =>
-        {
-            let flag = context
-                .rooted_value(value)
-                .and_then(Value::as_number)
-                .unwrap_or_default() as i32;
-            ops::open_numeric(&path, flag, mode)
-        }
-        None => ops::open(&path, None, mode),
-        Some(_) => Err(std::io::Error::from(std::io::ErrorKind::InvalidInput)),
+    let undefined = context.undefined();
+    let value = args.first().copied().unwrap_or(undefined);
+    let flag = args.get(1).copied().unwrap_or(undefined);
+    let mode = args.get(2).copied().unwrap_or(undefined);
+    let flags = crate::modules::fs_policy_shared_vm::call(context, "stringToFlags", &[flag])?;
+    let name = context.string_rooted("mode");
+    let default_mode = context.number(0o666 as f64);
+    let mode = crate::modules::fs_policy_shared_vm::call(
+        context,
+        "parseFileMode",
+        &[mode, name, default_mode],
+    )?;
+    let flags = context.to_number(flags)? as i32;
+    let mode = context.to_number(mode)? as u32;
+    let value = crate::modules::fs_path::validate(context, value, "path")?;
+    let path = crate::modules::fs_path::resolve(context, value)?;
+    let display = crate::modules::fs_path::display(context, value)?;
+    #[cfg(unix)]
+    let opened = ops::open_numeric(&path, flags, Some(mode));
+    #[cfg(not(unix))]
+    let opened = {
+        let _ = flags;
+        ops::open(&path, context.string_text(flag)?.as_deref(), Some(mode))
     };
     let file = match opened {
         Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::InvalidInput => {
-            let exception =
-                context.type_error_rooted("The \"flags\" argument must be a valid string")?;
-            let code = context.string_rooted("ERR_INVALID_ARG_VALUE");
-            set(context, exception, "code", code)?;
-            return Err(context.throw(exception));
-        }
-        Err(error) => {
-            return Err(super::stream_io_error(context, error, "open", &path)?);
-        }
+        Err(error) => return throw_io_error(context, "open", Some(&display), &error),
     };
-    let fd = match context
+    let inserted = context
         .host_mut()
         .shared_state()
         .borrow()
         .fs
-        .insert_descriptor(file, path.clone())
-    {
-        Ok(fd) => fd,
-        Err(error) => return Err(super::stream_io_error(context, error, "open", &path)?),
-    };
-    Ok(context.number(fd as f64))
+        .insert_descriptor(file, display.clone());
+    match inserted {
+        Ok(fd) => Ok(context.number(fd as f64)),
+        Err(error) => throw_io_error(context, "open", Some(&display), &error),
+    }
 }
 
 pub(crate) fn close_sync(
@@ -530,39 +509,69 @@ pub(crate) fn close_sync(
         .close_stream(fd);
     match result {
         Ok(_) => Ok(context.undefined()),
-        Err(error) => Err(super::stream_io_error(context, error, "close", "")?),
+        Err(error) => throw_io_error(context, "close", None, &error),
     }
 }
 
-pub(crate) fn read_descriptor(
+pub(crate) fn read_into(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let fd = super::integer_arg(context, args.first().copied(), "file descriptor")?;
-    let size = args
-        .get(1)
-        .and_then(|value| context.rooted_value(*value))
-        .and_then(Value::as_number)
-        .filter(|value| value.is_finite() && *value >= 0.0)
-        .map(|value| value as usize)
-        .unwrap_or(0);
-    let position = descriptor_position(context, args.get(2).copied());
-    let (result, path) = {
-        let shared = context.host_mut().shared_state();
-        let state = shared.borrow();
-        let path = state
-            .fs
-            .descriptors()
-            .get(&fd)
-            .map(|descriptor| descriptor.path.clone())
-            .unwrap_or_default();
-        (state.fs.read_descriptor(fd, size, position), path)
-    };
-    match result {
-        Ok(bytes) => crate::modules::buffer_shared_vm::from_bytes(context, &bytes),
-        Err(error) => Err(super::stream_io_error(context, error, "read", &path)?),
+    let buffer = args.get(1).copied().unwrap_or_else(|| context.undefined());
+    let offset = super::integer_arg(context, args.get(2).copied(), "offset")? as usize;
+    let size = super::integer_arg(context, args.get(3).copied(), "length")? as usize;
+    let position = descriptor_position(context, args.get(4).copied());
+    let data_view =
+        context.has_builtin_brand_rooted(buffer, quench_runtime::BuiltinBrand::DataView)?;
+    if !data_view
+        && !context.has_builtin_brand_rooted(buffer, quench_runtime::BuiltinBrand::TypedArray)?
+    {
+        return Err(
+            crate::modules::util_shared_vm::argument_type_error_with_expected(
+                context,
+                buffer,
+                "buffer",
+                "an instance of Buffer, TypedArray, or DataView",
+            )?,
+        );
     }
+    let (constructor, getters, set) = context.with_startup_intrinsics(|context| {
+        let global = context.global_root()?;
+        let constructor = get(context, global, "Uint8Array")?;
+        let prototype = get(context, constructor, "prototype")?;
+        let typed = context.prototype_rooted(prototype)?;
+        let prototype = if data_view {
+            let constructor = get(context, global, "DataView")?;
+            get(context, constructor, "prototype")?
+        } else {
+            typed
+        };
+        let mut getters = Vec::new();
+        for name in ["buffer", "byteOffset", "byteLength"] {
+            let key = context.string_rooted(name);
+            let descriptor = context.own_property_descriptor_rooted(prototype, key)?;
+            getters.push(get(context, descriptor, "get")?);
+        }
+        Ok((constructor, getters, get(context, typed, "set")?))
+    })?;
+    let mut parts = Vec::new();
+    for getter in getters {
+        parts.push(context.call_rooted(getter, buffer, &[])?);
+    }
+    let target = context.construct_rooted(constructor, constructor, &parts)?;
+    let state = context.host_mut().shared_state().borrow().fs.clone();
+    let bytes = match state.read_descriptor(fd, size, position) {
+        Ok(bytes) => bytes,
+        Err(error) => return throw_io_error(context, "read", None, &error),
+    };
+    if !bytes.is_empty() {
+        let source = context.uint8_array_rooted(&bytes)?;
+        let offset = context.number(offset as f64);
+        context.call_rooted(set, target, &[source, offset])?;
+    }
+    Ok(context.number(bytes.len() as f64))
 }
 
 pub(crate) fn write_descriptor(
@@ -1248,7 +1257,7 @@ fn throw_operation_error(
     throw_error_details(context, details)
 }
 
-pub(super) fn throw_io_error(
+pub(crate) fn throw_io_error(
     context: &mut NativeContext<'_, NodeHost>,
     syscall: &str,
     path: Option<&str>,
