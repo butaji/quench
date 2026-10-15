@@ -734,6 +734,32 @@ impl<H: Host> Vm<H> {
         Some(hit.value)
     }
 
+    /// The data field a direct object inherits from beyond its immediate prototype, at the
+    /// site's inherited entry (`cached_inherited_field_value`): `field_miss_data_value`'s
+    /// cache hit for a site that has one (`field_site_inherited`).
+    #[inline(always)]
+    pub(super) fn inherited_field_hit(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        site: u16,
+    ) -> Option<Value> {
+        if !(self.specialized && p.specialized) {
+            return None;
+        }
+        let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
+        let hit = self.cached_inherited_field_value(self.field_cache_index(site), receiver)?;
+        self.profile
+            .field_cache_hit(usize::from(hit.tier), hit.depth);
+        Some(hit.value)
+    }
+
+    /// Whether the site has an inherited entry (`inherited_field_hit`).
+    pub(super) fn field_site_inherited(&self, site: u16) -> bool {
+        self.inherited_field_caches
+            .contains_key(&self.field_cache_index(site))
+    }
+
     /// Whether the site's primary entry names a prototype holder (`primary_holder_field_hit`).
     pub(super) fn field_site_holder(&self, site: u16) -> bool {
         self.field_caches[self.field_cache_index(site)].holder != NO_FIELD_HOLDER
