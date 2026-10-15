@@ -46,6 +46,36 @@ fn strict_terminal_calls_preserve_catch_and_finally_handlers() {
     );
 }
 
+#[test]
+fn lane_constructions_forward_plain_loaded_arguments() {
+    // A loop the lane runs constructs through a forwarding constructor
+    // (`this.initialize.apply(this, arguments)`): its frameless activation reads the
+    // unmaterialized `arguments`, never a local of the frame the lane runs in.
+    let source = r#"
+      var Class = { create: function () { return function () { this.initialize.apply(this, arguments); }; } };
+      var P = Class.create();
+      P.prototype = { initialize: function (a, b) { this.a = a; this.b = b; } };
+      var Q = Class.create();
+      Q.prototype = { initialize: function () { this.n = arguments.length; this.first = arguments[0]; } };
+      function run() {
+        var s = 0;
+        for (var i = 0; i < 2000; i++) { var p = new P(i, 2); s += p.a + p.b; }
+        return s;
+      }
+      function run2() {
+        var s = 0;
+        for (var i = 0; i < 2000; i++) { var q = new Q(i, 1, 2); s += q.n + q.first; }
+        return s;
+      }
+      print(run() + " " + run2());
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    let program = Engine::specialize(source, "lane-forwarding-construct.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["2003000 2005000"]);
+}
+
 struct RecordingHost(Rc<RefCell<Vec<String>>>);
 
 impl Host for RecordingHost {
