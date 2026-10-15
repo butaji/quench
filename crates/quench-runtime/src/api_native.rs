@@ -633,6 +633,14 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.vm.seal_startup_intrinsics();
     }
 
+    /// Capture an original data property from the sealed startup snapshot.
+    /// Accessors, absent properties and expired holders return `None`.
+    pub fn startup_data_property_rooted(&mut self, holder: RootId, name: &str) -> Option<RootId> {
+        let holder = self.vm.root_value(holder)?;
+        let value = self.vm.startup_data_property(holder, name)?;
+        Some(self.scoped_value(value))
+    }
+
     /// Run `build` with every sealed intrinsic at its startup descriptor, then give the
     /// script's own descriptors back, so builtin loading never observes a script's mutation.
     pub fn with_startup_intrinsics<T>(
@@ -795,6 +803,17 @@ impl<'a, H: Host> NativeContext<'a, H> {
     ) -> Result<RootId, RootedError> {
         let result = self.vm.get_property_rooted(object, key);
         self.completion(result)
+    }
+
+    /// Perform the same strict named assignment as guest JavaScript.
+    pub fn assign_named_property_rooted(
+        &mut self,
+        object: RootId,
+        name: &str,
+        value: RootId,
+    ) -> Result<(), RootedError> {
+        self.vm.assign_named_property_rooted(object, name, value)
+            .map_err(|error| self.error(error))
     }
 
     pub fn set_property_rooted(
