@@ -804,6 +804,7 @@ fn cell_bytes(cell: &Cell) -> usize {
             | Cell::WasmExtern(_)
             | Cell::WasmTag { .. }
             | Cell::WasmGlobal { .. }
+            | Cell::WasmObject { .. }
             | Cell::BindingReference { .. } => 0,
             Cell::WasmHostFunction { .. } | Cell::WasmException { .. } => {
                 Heap::cell_payload_bytes(cell)

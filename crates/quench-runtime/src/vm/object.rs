@@ -33,6 +33,8 @@ impl AtomClass {
         self.0 & bits != 0
     }
 }
+/// The shape of an object without properties, where every literal shape starts.
+const EMPTY_SHAPE: u32 = 0;
 /// Transitions a shape lookup may walk before the walk counts as long.
 const SHAPE_INDEX_WALK_DISTANCE: usize = 32;
 /// Long walks from one shape after which that shape gets a lookup index.
@@ -573,15 +575,19 @@ impl<H: Host> Vm<H> {
     /// shape caches are active.
     #[inline(never)]
     fn derive_object_site_shape(&mut self, program: &ResidualProgram, site: usize) -> u32 {
-        let shape = program.object_sites[site]
-            .atoms
-            .iter()
-            .fold(0, |shape, atom| self.transition_shape(shape, *atom));
+        let shape = self.literal_shape(&program.object_sites[site].atoms);
         if self.specialized && program.specialized {
             let cache_site = self.object_cache_index(site);
             self.object_shapes[cache_site] = shape;
         }
         shape
+    }
+    /// The shape an empty object reaches by adding `atoms` as data properties in order: the
+    /// transitions an object literal with those keys walks.
+    pub(super) fn literal_shape(&mut self, atoms: &[Atom]) -> u32 {
+        atoms
+            .iter()
+            .fold(EMPTY_SHAPE, |shape, atom| self.transition_shape(shape, *atom))
     }
     pub(super) fn own_property(&self, object: Value, atom: Atom) -> Option<Value> {
         if atom == self.length_atom

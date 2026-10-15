@@ -483,15 +483,14 @@ impl<H: Host> Vm<H> {
                     Some(Cell::TypedArray { object: x, .. }) => object = x.proto(),
                     Some(Cell::DataView { object: x, .. }) => object = x.proto(),
                     Some(Cell::String(v)) => {
-                        if let Ok(index) = self.atom_name(atom).parse::<usize>()
-                            && let Some(unit) = v.units().get(index)
+                        let length = v.len();
+                        if let Some(index) = super::object_static::array_index(self.atom_name(atom))
+                            && let Some(unit) = self.string_index_value(object, index as usize)
                         {
-                            return Ok(self
-                                .heap
-                                .alloc(Cell::String(JsString::from_units(&[unit]))));
+                            return Ok(unit);
                         }
                         if atom == self.length_atom {
-                            return Ok(Value::number(v.len() as f64));
+                            return Ok(Value::number(length as f64));
                         }
                         let prototype = self
                             .primitive_prototype(object)
