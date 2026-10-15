@@ -106,6 +106,8 @@ pub(crate) mod url_shared_vm;
 pub(crate) mod url_whatwg_data;
 pub(crate) mod util_callbackify_shared_vm;
 pub(crate) mod util_extend_shared_vm;
+pub(crate) mod stream_duplex_pair_shared_vm;
+pub(crate) mod stream_emitter_shared_vm;
 pub(crate) mod util_env;
 pub(crate) mod util_shared_vm;
 pub mod util_strip;
