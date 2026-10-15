@@ -3,6 +3,10 @@ use super::*;
 use std::ops::Range;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
+/// Recently matched strings whose prepared subjects are kept (`Vm::regexp_subject`): a
+/// scanner's input plus the few short strings it tests between matches.
+const REGEXP_SUBJECT_CACHE_ENTRIES: usize = 4;
+
 const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
 const HIGH_SURROGATE_START: u16 = 0xD800;
 const HIGH_SURROGATE_END: u16 = 0xDBFF;
@@ -771,26 +775,25 @@ impl<H: Host> Vm<H> {
         Ok(matcher)
     }
 
-    /// The prepared form of `input`, rebuilt only when a different string is matched.
+    /// The prepared form of `input`, rebuilt only when it is not among the recently matched
+    /// strings. A scanner alternates matches over its input with checks of short tokens, so
+    /// remembering a few keeps the input's preparation across them.
     fn regexp_subject(&mut self, input: &JsString) -> Rc<quench_regexp::Subject> {
-        match &self.regexp_subject {
-            Some(subject)
-                if match input.flat() {
-                    FlatUnits::Ascii(text) => subject.is_ascii_text_of(text),
-                    FlatUnits::Wide(units) => subject.is_text_of(units),
-                } =>
-            {
-                Rc::clone(subject)
-            }
-            _ => {
-                let subject = Rc::new(match input.flat() {
-                    FlatUnits::Ascii(text) => quench_regexp::Subject::from_ascii(Rc::clone(text)),
-                    FlatUnits::Wide(units) => quench_regexp::Subject::new(Rc::clone(units)),
-                });
-                self.regexp_subject = Some(Rc::clone(&subject));
-                subject
-            }
-        }
+        let flat = input.flat();
+        let cached = self.regexp_subjects.iter().position(|subject| match flat {
+            FlatUnits::Ascii(text) => subject.is_ascii_text_of(text),
+            FlatUnits::Wide(units) => subject.is_text_of(units),
+        });
+        let subject = match cached {
+            Some(position) => self.regexp_subjects.remove(position),
+            None => Rc::new(match flat {
+                FlatUnits::Ascii(text) => quench_regexp::Subject::from_ascii(Rc::clone(text)),
+                FlatUnits::Wide(units) => quench_regexp::Subject::new(Rc::clone(units)),
+            }),
+        };
+        self.regexp_subjects.insert(0, Rc::clone(&subject));
+        self.regexp_subjects.truncate(REGEXP_SUBJECT_CACHE_ENTRIES);
+        subject
     }
 
     /// `RegExp.prototype[@@replace]` for a receiver whose exec, flags and lastIndex are its
@@ -2111,8 +2114,16 @@ impl<H: Host> Vm<H> {
                 return Ok(Value::NULL);
             }
             let subject = vm.regexp_subject(&input);
-            let matched = regex.find_in_subject(&subject, start).next();
-            let matched = matched.filter(|matched| !sticky || matched.range.start == start);
+            let matched = if sticky {
+                // A start inside a surrogate pair resolves to the next code point, which a
+                // sticky match may not move to.
+                regex
+                    .find_sticky_in_subject(&subject, start)
+                    .next()
+                    .filter(|matched| matched.range.start == start)
+            } else {
+                regex.find_in_subject(&subject, start).next()
+            };
             let Some(matched) = matched else {
                 if stateful {
                     vm.store_regexp_last_index(p, this, Value::number(0.0))?;

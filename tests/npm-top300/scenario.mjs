@@ -548,7 +548,7 @@ async function exercise() {
     case '@babel/plugin-syntax-typescript': { const babel = await import('@babel/core'); equal(babel.transformSync('const x: number = 1', { configFile: false, babelrc: false, plugins: [api] }).code, 'const x: number = 1;'); break; }
     case 'execa': { const result = await api.execa(process.execPath, ['-e', 'console.log(42)']); equal(result.stdout, '42'); equal(result.exitCode, 0); break; }
     case 'tinyexec': { const result = await api.exec(process.execPath, ['-e', 'console.log(42)']); equal(result.stdout.trim(), '42'); equal(result.exitCode, 0); break; }
-    case 'eslint': { const linter = new api.Linter(); const messages = linter.verify('missing;', [{ rules: { 'no-undef': 'error' } }]); equal(messages.map(m => m.ruleId), ['no-undef']); break; }
+    case 'eslint': { const coverage = (await import('./contracts/eslint.mjs')).exercise(api); fs.writeFileSync('function-checks.json', JSON.stringify(coverage)); break; }
     case '@typescript-eslint/parser': equal(api.parse('const x: number = 1').body[0].type, 'VariableDeclaration'); break;
     case '@typescript-eslint/typescript-estree': equal(api.parse('const x: number = 1').body[0].type, 'VariableDeclaration'); break;
     case '@typescript-eslint/scope-manager': { const parser = await import('@typescript-eslint/typescript-estree'); const scope = api.analyze(parser.parse('const x = 1')); equal(scope.scopes.some(s => s.variables.some(v => v.name === 'x')), true); break; }
