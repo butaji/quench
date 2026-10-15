@@ -8391,3 +8391,128 @@ console.log(JSON.stringify(out));
 "#,
     );
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn os_canonical_exports_reflection_constants_and_stable_host_values_match_node() {
+    compare_node_stream_source(
+        r#"
+const os=require('node:os'),out=[];
+for(const key of Reflect.ownKeys(os)){
+ const d=Object.getOwnPropertyDescriptor(os,key),v=os[key];
+ out.push([String(key),d.writable,d.enumerable,d.configurable,typeof v]);
+ if(typeof v==='function'){
+  let constructible=true;try{Reflect.construct(Object,[],v)}catch{constructible=false}
+  out.push([v.name,v.length,constructible,Reflect.ownKeys(v).map(String),Object.getOwnPropertyNames(v).map(k=>{const d=Object.getOwnPropertyDescriptor(v,k);return[k,d.writable,d.enumerable,d.configurable]}),Function.prototype.toString.call(v)]);
+  if(v[Symbol.toPrimitive])out.push([v[Symbol.toPrimitive].name,v[Symbol.toPrimitive].length,Function.prototype.toString.call(v[Symbol.toPrimitive])]);
+ }
+}
+out.push(os.constants, Object.getPrototypeOf(os.constants)===null);
+for(const k of ['dlopen','errno','signals','priority'])out.push([k,Object.getPrototypeOf(os.constants[k])===null,Object.isFrozen(os.constants[k])]);
+out.push(os.networkInterfaces(),os.userInfo(),os.homedir(),os.hostname(),os.machine(),os.version(),os.release(),os.type(),os.arch(),os.platform(),os.endianness(),os.availableParallelism());
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn os_user_info_reads_account_records_and_native_encodings_without_public_hooks() {
+    compare_node_stream_source(
+        r#"
+const os=require('node:os'),out=[];
+const original=Buffer.from;Buffer.from=()=>{throw Error('public Buffer.from')};
+try{
+ for(const encoding of [undefined,'utf8','UTF-8','hex','base64','base64url','ascii','latin1','binary','utf16le','ucs2','buffer','BUFFER','not-encoding',null,0,false,{},new String('hex')]){
+  const events=[],value=os.userInfo({get encoding(){events.push('encoding');return encoding}});
+  out.push([events,Object.getPrototypeOf(value)===null,Object.keys(value),value]);
+ }
+ for(const options of [undefined,null,1,'hex',()=>{}])out.push(os.userInfo(options));
+ for(const thrown of [17,'error',Symbol.for('marker'),new Error('getter')]){
+  try{os.userInfo({get encoding(){throw thrown}})}catch(e){out.push(e===thrown)}
+ }
+ const environment=process.env;
+ for(const home of ['', '/different-home','😀///']){process.env.HOME=home;out.push([os.homedir(),os.userInfo().homedir])}
+ delete process.env.HOME;out.push([os.homedir(),os.userInfo().homedir]);
+}finally{Buffer.from=original}
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn os_priority_validation_native_system_errors_and_process_effects_match_node() {
+    compare_node_stream_source(
+        r#"
+const os=require('node:os'),out=[];
+const record=f=>{try{out.push(['ok',f()])}catch(e){out.push([e.name,e.message,e.code,e.info,Reflect.ownKeys(e).map(String),e.constructor.name,Object.getPrototypeOf(e).constructor.name])}};
+for(const pid of [null,true,false,'foo',{},[],/x/,NaN,Infinity,-Infinity,3.14,2**32,-1,2147483647]){
+ record(()=>os.getPriority(pid));record(()=>os.setPriority(pid,0));
+}
+for(const p of [null,true,'foo',{},[],NaN,Infinity,-Infinity,3.14,2**32,-21,20,undefined])record(()=>os.setPriority(0,p));
+const before=os.getPriority();os.setPriority(Math.min(19,before+1));out.push(os.getPriority()===Math.min(19,before+1));
+os.setPriority(process.pid,Math.min(19,before+2));out.push(os.getPriority()===Math.min(19,before+2));
+const child=require('node:child_process').spawnSync(process.execPath,['-e','console.log(require("node:os").getPriority())'],{encoding:'utf8'});out.push([child.status,child.stdout.trim()===String(Math.min(19,before+2)),child.stderr]);
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn os_load_and_uptime_use_kernel_data_and_return_fresh_results() {
+    compare_node_stream_source(
+        r#"
+const assert=require('node:assert'),os=require('node:os'),fs=require('node:fs');
+const before=Number(fs.readFileSync('/proc/uptime','utf8').split(' ')[0]),actual=os.uptime(),after=Number(fs.readFileSync('/proc/uptime','utf8').split(' ')[0]);assert(actual>=before&&actual<=after);
+const first=os.loadavg();assert(Array.isArray(first)&&first.length===3&&first.every(x=>typeof x==='number'&&Number.isFinite(x)&&x>=0));
+first.fill(-1);const current=os.loadavg();assert(current.every(x=>x>=0));assert.notStrictEqual(first,current);
+const kernel=fs.readFileSync('/proc/loadavg','utf8').trim().split(/\s+/).slice(0,3).map(Number);
+assert(current.every((x,i)=>Math.abs(x-kernel[i])<1));
+console.log('live os facts');
+"#,
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn os_priority_changes_are_visible_to_the_kernel_on_the_child_process_pid() {
+    struct RunningChild(std::process::Child);
+    impl Drop for RunningChild {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("ready.json");
+    let child = Command::new(env!("CARGO_BIN_EXE_run-parallel"))
+        .env(quench_node::shared_run::CHILD_RUNNER_ENV, "1")
+        .args(["-e", "const os=require('node:os');const priority=Math.min(19,os.getPriority()+1);os.setPriority(priority);require('node:fs').writeFileSync(process.argv[1],JSON.stringify(priority));setInterval(()=>{},1000)"])
+        .arg(&marker)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut child = RunningChild(child);
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !marker.exists() {
+        assert!(
+            child.0.try_wait().unwrap().is_none(),
+            "priority child exited before readiness"
+        );
+        assert!(
+            std::time::Instant::now() < deadline,
+            "priority child did not become ready"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let expected: i32 = serde_json::from_slice(&std::fs::read(marker).unwrap()).unwrap();
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let actual = unsafe { libc::getpriority(libc::PRIO_PROCESS, child.0.id()) };
+    assert_eq!(unsafe { *libc::__errno_location() }, 0);
+    assert_eq!(actual, expected);
+}

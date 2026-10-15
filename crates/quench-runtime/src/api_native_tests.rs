@@ -212,7 +212,10 @@ impl Host for TestHost {
     }
     fn functions(&self) -> &[HostFunction<Self>] {
         crate::host_functions![
+            #[cfg(not(any()))]
             global "echo" (1) => echo,
+            #[cfg(any())]
+            method "unavailable" (0) => unavailable_platform::callback,
             method "reenter" (1) => reenter,
             method "reject" (1) => reject,
             method "escaped" (0) => escaped,
