@@ -19,6 +19,9 @@
 //! first and the dense family. `--dense PATTERN` places every function whose symbol contains PATTERN
 //! (the interpreter's per-instruction lane handlers, `13dispatch_fast`): a run
 //! reaches whichever handlers its code needs, so the whole family stays packed.
+//! `--foreign-first` moves the code not generated from Rust ahead, keeping its order: in a
+//! link that `llvm-bolt` rewrites, BOLT moves the Rust functions into its own hot text and
+//! leaves that code in place (`bolt-profile`), packed instead of scattered through the gaps.
 
 use std::{collections::HashSet, env, fs, process::Command, process::ExitCode};
 
@@ -41,6 +44,9 @@ const PROCESS_RUNTIME: &[&str] = &[
     "__do_global_dtors_aux",
     "frame_dummy",
 ];
+
+/// The mangling prefix of Rust symbols (v0).
+const RUST_SYMBOL_PREFIX: &str = "_R";
 
 /// `nm` symbol kinds that name code.
 const CODE_KINDS: &[&str] = &["t", "T", "w", "W"];
@@ -148,6 +154,7 @@ fn run(
     profiles: &[String],
     run: &[Vec<String>],
     dense: &[String],
+    foreign_first: bool,
 ) -> Result<(), String> {
     let symbols = code_symbols(binary)?;
     // Profiles may come from an earlier link of the same build: match names
@@ -184,6 +191,9 @@ fn run(
             }
         }
     }
+    if foreign_first {
+        order.sort_by_key(|name| name.starts_with(RUST_SYMBOL_PREFIX));
+    }
     let mut text = order.join("\n");
     text.push('\n');
     fs::write(out, text).map_err(|error| format!("{out}: {error}"))?;
@@ -194,14 +204,16 @@ fn run(
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
     let [binary, out, profiles @ ..] = args.as_slice() else {
-        eprintln!("usage: symbol-order <binary> <out.order> [--dense PATTERN]... <cachegrind.out>... [--run <callgrind.out>...]...");
+        eprintln!("usage: symbol-order <binary> <out.order> [--foreign-first] [--dense PATTERN]... <cachegrind.out>... [--run <callgrind.out>...]...");
         return ExitCode::from(2);
     };
     let mut dense = Vec::new();
+    let mut foreign_first = false;
     let mut rest = Vec::new();
     let mut arguments = profiles.iter();
     while let Some(argument) = arguments.next() {
         match (argument.as_str(), arguments.clone().next()) {
+            ("--foreign-first", _) => foreign_first = true,
             ("--dense", Some(pattern)) => {
                 dense.push(pattern.clone());
                 arguments.next();
@@ -213,7 +225,7 @@ fn main() -> ExitCode {
     let mut groups = rest.split(|arg| arg == "--run");
     let profiles = groups.next().unwrap_or_default().to_vec();
     let run_profiles: Vec<Vec<String>> = groups.map(<[String]>::to_vec).collect();
-    match run(binary, out, &profiles, &run_profiles, &dense) {
+    match run(binary, out, &profiles, &run_profiles, &dense, foreign_first) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("error: {error}");
