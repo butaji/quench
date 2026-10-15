@@ -108,6 +108,12 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         let function = function(c, true)?;
         let key = c.string_rooted("fill");
         c.define_data_property_rooted(result, key, function, true, true, true)?;
+        let compare = c.host_function(crate::host::shared_vm::operation("bufferCompareRaw"))?;
+        let key = c.string_rooted("name");
+        let name = c.string_rooted("compare");
+        c.define_data_property_rooted(compare, key, name, false, false, true)?;
+        let key = c.string_rooted("compare");
+        c.define_data_property_rooted(result, key, compare, true, true, true)?;
         let data = intrinsics(c)?;
         let copy = c.host_function_with_data(crate::host::shared_vm::operation("bufferCopyArrayBuffer"), data)?;
         let key = c.string_rooted("name");

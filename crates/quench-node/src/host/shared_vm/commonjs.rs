@@ -152,9 +152,6 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     crate::host::resident_pages::release_read_only_pages();
     install_shared_web_globals(context)?;
     crate::modules::base64_shared_vm::install(context)?;
-    if context.host_mut().vfs_enabled() {
-        install_vfs_globals(context)?;
-    }
     let console = cached_builtin(context, BuiltinModule::Console)?;
     let global = context.global_root()?;
     set(context, global, "console", console)?;
@@ -189,6 +186,12 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     // Builtins built after this point see the intrinsics as they are now, whatever a
     // preload or the entry script does to them (`cached_builtin`).
     context.seal_startup_intrinsics();
+    if context.host_mut().vfs_enabled() {
+        // Feature bootstrap loads real builtins that capture these originals.
+        // Seal its added globals only after the guarded initialization leaves.
+        context.with_startup_intrinsics(install_vfs_globals)?;
+        context.seal_startup_intrinsics();
+    }
     crate::host::resident_pages::release_read_only_pages();
     preload_modules(context)?;
     #[cfg(feature = "profile-memory")]
@@ -264,6 +267,22 @@ fn install_vfs_globals(context: &mut Context<'_>) -> Result<(), RootedError> {
     )?;
     let undefined = context.undefined();
     context.call_rooted(install, undefined, &[path, stream])?;
+    let global = context.global_root()?;
+    for (name, export) in [("__quenchVfsReadStream", "VirtualReadStream"), ("__quenchVfsWriteStream", "VirtualWriteStream")] {
+        let constructor = node_library_export(context, "internal/vfs/file_system.js", "internal/vfs/streams.js", export)?;
+        let key = context.string_rooted(name);
+        context.define_data_property_rooted(global, key, constructor, false, false, true)?;
+    }
+    let registry = get(context, global, "__quenchVfsFdHandles")?;
+    let map_get = get(context, registry, "get")?;
+    let map_set = get(context, registry, "set")?;
+    let map_methods = context.array_rooted(&[map_get, map_set])?;
+    let bind_position = context.host_function_with_data(super::operation("vfsBindPosition"), map_methods)?;
+    let key = context.string_rooted("__quenchVfsBindPosition");
+    context.define_data_property_rooted(global, key, bind_position, false, false, true)?;
+    let path_projection = context.host_function(super::operation("vfsStreamPath"))?;
+    let key = context.string_rooted("__quenchVfsStreamPath");
+    context.define_data_property_rooted(global, key, path_projection, false, false, true)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_vfs_globals");
 
@@ -277,6 +296,53 @@ fn install_vfs_globals(context: &mut Context<'_>) -> Result<(), RootedError> {
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_vfs_polyfill");
     Ok(())
+}
+
+/// Public fs streams retain the caller's path while provider I/O uses its mount-relative path.
+pub(crate) fn vfs_stream_path(context: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let missing = context.undefined();
+    let stream = args.first().copied().unwrap_or(missing);
+    let path = args.get(1).copied().unwrap_or(missing);
+    let key = context.string_rooted("path");
+    context.define_data_property_rooted(stream, key, path, true, true, true)?;
+    Ok(stream)
+}
+
+/// Project the descriptor position onto the provider's existing offset authority.
+pub(crate) fn vfs_bind_position(context: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let missing = context.undefined();
+    let map = args.first().copied().unwrap_or(missing);
+    let fd = args.get(1).copied().unwrap_or(missing);
+    let entry = args.get(2).copied().unwrap_or(missing);
+    let methods = context.host_function_data()?;
+    let getter = get(context, methods, "0")?;
+    let setter = get(context, methods, "1")?;
+    let data = context.array_rooted(&[map, fd, getter, setter])?;
+    let getter = context.host_function_with_data(super::operation("vfsPositionGet"), data)?;
+    let setter = context.host_function_with_data(super::operation("vfsPositionSet"), data)?;
+    let descriptor = context.object_rooted()?;
+    for (name, value) in [("get", getter), ("set", setter)] { self::set(context, descriptor, name, value)?; }
+    let key = context.string_rooted("position");
+    context.define_property_descriptor_rooted(entry, key, descriptor)?;
+    Ok(entry)
+}
+
+pub(crate) fn vfs_position_get(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let data = context.host_function_data()?;
+    let map = get(context, data, "0")?;
+    let fd = get(context, data, "1")?;
+    let getter = get(context, data, "2")?;
+    context.call_rooted(getter, map, &[fd])
+}
+
+pub(crate) fn vfs_position_set(context: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let data = context.host_function_data()?;
+    let map = get(context, data, "0")?;
+    let fd = get(context, data, "1")?;
+    let setter = get(context, data, "3")?;
+    let value = args.first().copied().unwrap_or_else(|| context.undefined());
+    context.call_rooted(setter, map, &[fd, value])?;
+    Ok(context.undefined())
 }
 
 /// Node's replaceable `performance` global loads `perf_hooks` on first access.
@@ -941,6 +1007,8 @@ pub(crate) fn is_builtin_specifier(specifier: &str) -> bool {
 const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("internal/process/task_queues", BuiltinModule::Internal("internal/process/task_queues")),
     ("internal/buffer", BuiltinModule::Internal("internal/buffer")),
+    ("internal/crypto/keys", BuiltinModule::Internal("internal/crypto/keys")),
+    ("internal/abort_controller", BuiltinModule::Internal("internal/abort_controller")),
     ("internal/worker/io", BuiltinModule::Internal("internal/worker/io")),
     ("constants", BuiltinModule::Internal("constants")),
     ("node:constants", BuiltinModule::Internal("constants")),
@@ -1199,7 +1267,7 @@ pub(crate) fn node_library_export(
     get(context, library, name)
 }
 
-fn node_library_module(context: &mut Context<'_>, owner: &str, relative: &str) -> Result<RootId, RootedError> {
+pub(crate) fn node_library_module(context: &mut Context<'_>, owner: &str, relative: &str) -> Result<RootId, RootedError> {
     let root = context.host_mut().node_library_root.clone();
     let parent = module_record(context, &root.join("lib").join(owner), None, false)?;
     load(context, &root.join("lib").join(relative), Some(parent), EntryGoal::CommonJs)
@@ -1241,28 +1309,37 @@ pub(crate) fn dns_module(context: &mut Context<'_>) -> Result<RootId, RootedErro
     cached_builtin(context, BuiltinModule::Dns)
 }
 
+/// Private namespaces project the same original objects as the public globals.
+fn native_global_namespace(context: &mut Context<'_>, names: &[&str]) -> Result<RootId, RootedError> {
+    context.with_startup_intrinsics(|context| {
+        let global = context.global_root()?;
+        let module = context.object_rooted()?;
+        for name in names {
+            let value = match context.startup_data_property_rooted(global, name) {
+                Some(original) => original,
+                None => get(context, global, name)?,
+            };
+            let key = context.string_rooted(name);
+            context.define_data_property_rooted(module, key, value, true, true, true)?;
+        }
+        Ok(module)
+    })
+}
+
 fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<RootId, RootedError> {
     match builtin {
+        BuiltinModule::Internal("internal/crypto/keys") => {
+            let module = node_library_module(context, "crypto.js", "internal/crypto/keys.js")?;
+            crate::modules::crypto_key_shared_vm::install_provider_accessors(context, module)?;
+            Ok(module)
+        }
         BuiltinModule::Internal("internal/buffer") => crate::modules::buffer_constructor_shared_vm::internal_module(context),
-        BuiltinModule::Internal("internal/worker/io") => {
-            let global = context.global_root()?;
-            let module = context.object_rooted()?;
-            for name in ["MessageChannel", "MessagePort"] {
-                let value = context.with_startup_intrinsics(|context| get(context, global, name))?;
-                let key = context.string_rooted(name);
-                context.define_data_property_rooted(module, key, value, true, true, true)?;
-            }
-            Ok(module)
-        }
-        BuiltinModule::Internal("internal/process/task_queues") => {
-            let global = context.global_root()?;
-            let queue = context.startup_data_property_rooted(global, "queueMicrotask")
-                .ok_or_else(|| RootedError::host("startup microtask queue missing"))?;
-            let module = context.object_rooted()?;
-            let key = context.string_rooted("queueMicrotask");
-            context.define_data_property_rooted(module, key, queue, true, true, true)?;
-            Ok(module)
-        }
+        BuiltinModule::Internal("internal/worker/io") =>
+            native_global_namespace(context, &["MessageChannel", "MessagePort"]),
+        BuiltinModule::Internal("internal/abort_controller") =>
+            native_global_namespace(context, &["AbortController", "AbortSignal"]),
+        BuiltinModule::Internal("internal/process/task_queues") =>
+            native_global_namespace(context, &["queueMicrotask"]),
         BuiltinModule::Internal("_http_incoming") => {
             let root = context.host_mut().node_library_root.clone();
             let parent = module_record(context, &root.join("lib/http.js"), None, false)?;
@@ -1277,6 +1354,11 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
                 let value = context.get_property_rooted(public, key)?;
                 context.define_data_property_rooted(internal, key, value, true, true, true)?;
             }
+            let is_url = context.host_function(crate::host::shared_vm::operation("urlIsURL"))?;
+            let key = context.string_rooted("name");
+            let name = context.string_rooted("isURL");
+            context.define_data_property_rooted(is_url, key, name, false, false, true)?;
+            set(context, internal, "isURL", is_url)?;
             let convert = context.host_function(crate::host::shared_vm::operation("toPathIfFileURL"))?;
             set(context, internal, "toPathIfFileURL", convert)?;
             Ok(internal)
@@ -1815,7 +1897,7 @@ const getLinkedBinding = () => ({});
       getProxyDetails: () => undefined,
       previewEntries: () => undefined,
       getConstructorName: (value) => value?.constructor?.name,
-      getExternalValue: () => undefined,
+      getExternalValue: __nativeInternalBinding("util").getExternalValue,
       constructSharedArrayBuffer: (length) => new SharedArrayBuffer(length),
       guessHandleType: () => "UNKNOWN",
       defineLazyProperties: () => undefined,
@@ -1833,7 +1915,7 @@ const getLinkedBinding = () => ({});
     case "fs": return require("fs");
     case "crypto": {
       const crypto = require("crypto");
-      return Object.assign({}, crypto, {
+      return Object.assign({}, crypto, __nativeInternalBinding("crypto_keys"), {
         setEngine: __nativeInternalBinding("crypto").setEngine,
         getFipsCrypto: () => crypto.getFips(),
         getCachedAliases: () => ({}),

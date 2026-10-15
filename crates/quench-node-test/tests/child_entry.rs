@@ -7974,3 +7974,13 @@ server.listen(0,'127.0.0.1',()=>{
 });
 "#);
 }
+
+#[test]
+fn canonical_assertions_validate_rejections_and_share_success_results() {
+    compare_node_stream_source(include_str!("../node-tests/test-canonical-assertions.js"));
+}
+
+#[test]
+fn native_key_slots_preserve_material_comparison_and_reject_spoofed_brands() {
+    compare_node_stream_source(include_str!("../node-tests/test-native-key-slots.js"));
+}
