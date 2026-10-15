@@ -1,6 +1,6 @@
 use crate::bytecode::{
     ControlFlowLayout, FieldLayout, FieldLookup, FieldSite, Function, ImmediateLayout,
-    ImmediateRole, Instr, InstructionField, Operand, Register, Superinstruction,
+    ImmediateRole, Instr, InstructionField, Operand, Register, Superinstruction, WideInstruction,
 };
 
 pub(super) type MethodSite = (u32, u16, Vec<Register>, Option<(u32, u16)>);
@@ -40,14 +40,13 @@ pub(super) fn transfers(
     fields: &[FieldSite],
     superinstructions: &[Superinstruction],
 ) -> Option<Vec<(u64, u64)>> {
-    if !function.wide.is_empty() || function.registers > 64 {
+    if function.registers > 64 {
         return None;
     }
     Some(
         function
-            .code
-            .iter()
-            .map(|&instruction| {
+            .instructions()
+            .map(|instruction| {
                 (
                     uses(instruction, methods, fields, superinstructions),
                     definitions(instruction, superinstructions),
@@ -60,7 +59,8 @@ pub(super) fn transfers(
 /// Live registers before each instruction. A reverse pass settles every instruction whose
 /// successors all follow it, so only code with a backward successor iterates to a fixed point.
 pub(super) fn analyze_transfers(function: &Function, transfers: &[(u64, u64)]) -> Vec<u64> {
-    let has_backward_successor = function.code.iter().enumerate().any(|(pc, &instruction)| {
+    let decoded = function.instructions().collect::<Vec<_>>();
+    let has_backward_successor = decoded.iter().enumerate().any(|(pc, &instruction)| {
         let mut backward = false;
         for_each_successor(function, pc, instruction, |successor| {
             backward |= successor <= pc
@@ -71,7 +71,7 @@ pub(super) fn analyze_transfers(function: &Function, transfers: &[(u64, u64)]) -
     loop {
         let mut changed = false;
         for pc in (0..function.code.len()).rev() {
-            let output = live_out(function, &live, pc, function.code[pc]);
+            let output = live_out(function, &live, pc, decoded[pc]);
             let (read, written) = transfers[pc];
             let next = read | (output & !written);
             if live[pc] != next {
@@ -92,7 +92,7 @@ pub(super) fn analyze_transfers(function: &Function, transfers: &[(u64, u64)]) -
 fn for_each_successor(
     function: &Function,
     pc: usize,
-    instruction: Instr,
+    instruction: WideInstruction,
     mut successor: impl FnMut(usize),
 ) {
     match instruction.op().control_flow_layout() {
@@ -102,8 +102,7 @@ fn for_each_successor(
             successor(instruction.jump_target() as usize);
         }
         ControlFlowLayout::BranchTable => {
-            crate::bytecode::branch_table_entries(pc, instruction.as_wide())
-                .for_each(&mut successor)
+            crate::bytecode::branch_table_entries(pc, instruction).for_each(&mut successor)
         }
         ControlFlowLayout::Terminal => {}
         ControlFlowLayout::Call | ControlFlowLayout::Fallthrough
@@ -120,7 +119,12 @@ fn for_each_successor(
     }
 }
 
-pub(super) fn live_out(function: &Function, live: &[u64], pc: usize, instruction: Instr) -> u64 {
+pub(super) fn live_out(
+    function: &Function,
+    live: &[u64],
+    pc: usize,
+    instruction: WideInstruction,
+) -> u64 {
     let mut output = 0;
     for_each_successor(function, pc, instruction, |successor| {
         output |= live.get(successor).copied().unwrap_or(0);
@@ -129,7 +133,7 @@ pub(super) fn live_out(function: &Function, live: &[u64], pc: usize, instruction
 }
 
 fn add_suspended_exception_roots(function: &Function, live: &mut [u64]) {
-    for (pc, instruction) in function.code.iter().enumerate() {
+    for (pc, instruction) in function.instructions().enumerate() {
         if instruction.op().control_flow_layout() != ControlFlowLayout::Call {
             continue;
         }
@@ -142,7 +146,7 @@ fn add_suspended_exception_roots(function: &Function, live: &mut [u64]) {
 }
 
 pub(super) fn uses(
-    instruction: Instr,
+    instruction: WideInstruction,
     methods: &[MethodSite],
     fields: &[FieldSite],
     superinstructions: &[Superinstruction],
@@ -178,14 +182,16 @@ pub(super) fn uses(
         .code
         .iter()
         .fold(0, |mask, nested| {
-            mask | uses(*nested, methods, fields, superinstructions)
+            mask | nested_member(*nested).map_or(u64::MAX, |nested| {
+                uses(nested, methods, fields, superinstructions)
+            })
         }),
         _ => 0,
     };
     field_reads | result | packed_uses | indexed_uses
 }
 
-fn field_uses(instruction: Instr, field: InstructionField, fields: &[FieldSite]) -> u64 {
+fn field_uses(instruction: WideInstruction, field: InstructionField, fields: &[FieldSite]) -> u64 {
     let layout = instruction.op().field_layout(field);
     match layout {
         FieldLayout::RegisterWindowBase => {
@@ -212,7 +218,10 @@ fn field_uses(instruction: Instr, field: InstructionField, fields: &[FieldSite])
     }
 }
 
-pub(super) fn definitions(instruction: Instr, superinstructions: &[Superinstruction]) -> u64 {
+pub(super) fn definitions(
+    instruction: WideInstruction,
+    superinstructions: &[Superinstruction],
+) -> u64 {
     let result = if instruction.op().has_result_register()
         && !instruction.returns_from_frame()
         && !instruction.writes_numeric_local()
@@ -240,14 +249,14 @@ pub(super) fn definitions(instruction: Instr, superinstructions: &[Superinstruct
         .code
         .iter()
         .fold(0, |mask, nested| {
-            mask | definitions(*nested, superinstructions)
+            mask | nested_member(*nested).map_or(0, |nested| definitions(nested, superinstructions))
         }),
         _ => 0,
     };
     result | field_writes | packed_definitions | indexed_definitions
 }
 
-fn field_definitions(instruction: Instr, field: InstructionField) -> u64 {
+fn field_definitions(instruction: WideInstruction, field: InstructionField) -> u64 {
     let layout = instruction.op().field_layout(field);
     match layout {
         layout if layout.writes_register() => bit(field_register(instruction, field)),
@@ -259,11 +268,11 @@ fn field_definitions(instruction: Instr, field: InstructionField) -> u64 {
     }
 }
 
-fn field_register(instruction: Instr, field: InstructionField) -> Register {
+fn field_register(instruction: WideInstruction, field: InstructionField) -> Register {
     instruction.field_value(field)
 }
 
-fn field_base(instruction: Instr, fields: &[FieldSite]) -> u64 {
+fn field_base(instruction: WideInstruction, fields: &[FieldSite]) -> u64 {
     match instruction.field_lookup() {
         None => 0,
         Some(FieldLookup::Site(index)) => fields
@@ -288,12 +297,19 @@ fn operand(value: u16, fields: &[FieldSite]) -> u64 {
     0
 }
 
-fn method_arguments(instruction: Instr, methods: &[MethodSite]) -> u64 {
+fn method_arguments(instruction: WideInstruction, methods: &[MethodSite]) -> u64 {
     methods[instruction.method_site_index()]
         .2
         .iter()
         .copied()
         .fold(0, |mask, register| mask | bit(register))
+}
+
+/// A superinstruction member in fixed-width form. Members are packed without a wide table, so
+/// a wide member has no decoding here: it counts as reading every register and writing none,
+/// which only lengthens liveness.
+fn nested_member(member: Instr) -> Option<WideInstruction> {
+    (!member.is_wide()).then(|| member.as_wide())
 }
 
 fn range(base: u16, count: u16) -> u64 {
@@ -394,9 +410,9 @@ mod tests {
             Op::WasmAtomicAccess,
         ] {
             let instruction = Instr::new(op, 0, 1, 3, 0);
-            assert_eq!(uses(instruction, &[], &[], &[]), bit(1) | bit(2) | bit(3));
-            assert_eq!(definitions(instruction, &[]), bit(0));
-            assert_eq!(uses(Instr::new(op, 0, 0, 0, 0), &[], &[], &[]), 0);
+            assert_eq!(uses(instruction.as_wide(), &[], &[], &[]), bit(1) | bit(2) | bit(3));
+            assert_eq!(definitions(instruction.as_wide(), &[]), bit(0));
+            assert_eq!(uses(Instr::new(op, 0, 0, 0, 0).as_wide(), &[], &[], &[]), 0);
         }
     }
 
@@ -409,6 +425,6 @@ mod tests {
             1,
             8,
         );
-        assert_eq!(definitions(instruction, &[]), 0);
+        assert_eq!(definitions(instruction.as_wide(), &[]), 0);
     }
 }

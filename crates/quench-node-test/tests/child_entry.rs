@@ -1874,10 +1874,10 @@ fn console_formats_module_values_without_a_global_require() {
     let entry = directory.path().join("entry.mjs");
     std::fs::write(&entry, r#"
 import util from 'node:util';
-console.log(null,undefined,42);
-console.log('%s:%d:%j','answer',42,{value:null});
 util.format=()=>{throw Error('public formatter replacement was used')};
 util.formatWithOptions=util.format;
+console.log(null,undefined,42);
+console.log('%s:%d:%j','answer',42,{value:null});
 console.log(null,undefined);
 "#).unwrap();
     for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
@@ -1914,6 +1914,80 @@ assert.strictEqual(Module._resolveFilename('./dependency.cjs',parent),path.join(
 assert.strictEqual(Module._resolveFilename('fs',parent),'fs');
 assert.throws(()=>Module._resolveFilename('./missing.cjs',parent),{code:'MODULE_NOT_FOUND'});
 console.log('parent-resolution');fs.rmSync(dir,{recursive:true,force:true});
+"#);
+}
+
+#[test]
+fn module_constructor_and_compile_preserve_receiver_exports_and_parent() {
+    compare_node_stream_source(r#"
+const assert=require('node:assert'),Module=require('node:module');
+assert.strictEqual(typeof Module,'function');assert.strictEqual(Module.Module,Module);
+assert.strictEqual(Module.length,0);assert.strictEqual(Module.name,'Module');
+const parent={children:[]};const m=new Module('/a/b.js',parent);
+assert(m instanceof Module);assert.strictEqual(m.constructor,Module);
+assert.deepStrictEqual(Object.keys(m),['id','path','exports','filename','loaded','children']);
+assert.strictEqual(m.id,'/a/b.js');assert.strictEqual(m.path,'/a');
+assert.strictEqual(m.filename,null);assert.strictEqual(m.loaded,false);
+assert.strictEqual(m.parent,parent);assert.strictEqual(parent.children[0],m);
+const replacement={};m.parent=replacement;assert.strictEqual(m.parent,replacement);
+assert.strictEqual(m.require('node:assert'),assert);
+const result=m._compile('exports.value=42;exports.info=[__filename,__dirname,module.filename,module.loaded,this===exports,arguments.length];','/virtual/file.cjs');
+assert.strictEqual(result,undefined);assert.deepStrictEqual(m.exports,{value:42,info:['/virtual/file.cjs','/virtual',null,false,true,5]});
+assert.strictEqual(m.filename,null);assert.strictEqual(m.loaded,false);
+m._compile('#!/usr/bin/node\nmodule.exports={replacement:true};','virtual.cjs');
+assert.deepStrictEqual(m.exports,{replacement:true});
+m._compile('\uFEFFmodule.exports={bom:true};','virtual.cjs');assert.deepStrictEqual(m.exports,{bom:true});
+const getter=Object.getOwnPropertyDescriptor(Module.prototype,'constructor');
+assert.strictEqual(typeof getter.get,'function');assert.strictEqual(getter.set,undefined);
+assert.strictEqual(getter.enumerable,false);assert.strictEqual(getter.configurable,false);
+assert.throws(()=>new Module(null),e=>e.code==='ERR_INVALID_ARG_TYPE');
+assert.throws(()=>Module('bare'),TypeError);
+console.log(JSON.stringify([m.id,m.path,m.loaded,m.exports,Module.prototype._compile.length]));
+"#);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn os_cpus_reports_online_linux_facts_and_millisecond_times() {
+    compare_node_stream_source(r#"
+const assert=require('node:assert'),fs=require('node:fs'),os=require('node:os');
+function snapshot(){return fs.readFileSync('/proc/stat','utf8').split('\n').filter(s=>/^cpu\d+ /.test(s)).map(s=>s.trim().split(/\s+/).slice(1).map(Number))}
+const before=snapshot(),cpus=os.cpus(),after=snapshot();
+assert.strictEqual(os.cpus.name,'cpus');assert.strictEqual(os.cpus.length,0);
+assert.strictEqual(cpus.length,before.length);assert(Array.isArray(new os.cpus()));
+for(let i=0;i<cpus.length;i++){
+ const cpu=cpus[i];assert.deepStrictEqual(Object.keys(cpu),['model','speed','times']);
+ assert.strictEqual(typeof cpu.model,'string');assert(Number.isInteger(cpu.speed)&&cpu.speed>=0);
+ const keys=['user','nice','sys','idle','irq'],indices=[0,1,2,3,5];
+ assert.deepStrictEqual(Object.keys(cpu.times),keys);
+ for(let j=0;j<keys.length;j++){const value=cpu.times[keys[j]],index=indices[j];assert(Number.isInteger(value));assert(value>=before[i][index]*10&&value<=after[i][index]*10)}
+}
+
+console.log(JSON.stringify([cpus.length,cpus.map(cpu=>cpu.model)]));
+"#);
+}
+
+#[test]
+fn binary_base64_globals_preserve_utf16_coercion_validation_and_identity() {
+    compare_node_stream_source(r#"
+const assert=require('node:assert'),buffer=require('node:buffer');
+assert.strictEqual(buffer.btoa,btoa);assert.strictEqual(buffer.atob,atob);
+assert.strictEqual(btoa.name,'btoa');assert.strictEqual(atob.name,'atob');
+assert.strictEqual(btoa.length,1);assert.strictEqual(atob.length,1);
+const bytes=String.fromCharCode(...Array.from({length:256},(_,i)=>i));
+assert.strictEqual(atob(btoa(bytes)),bytes);
+assert.strictEqual(btoa(undefined),'dW5kZWZpbmVk');assert.strictEqual(btoa(null),'bnVsbA==');
+for(const value of ['\ud800','\udfff','\u0100','💩'])assert.throws(()=>btoa(value),e=>e.name==='InvalidCharacterError'&&e.code===5&&e.message==='Invalid character');
+for(const value of ['-A','_A','AA=','AAAA=','A===','AAAA\v','AAAA\u00a0'])assert.throws(()=>atob(value),e=>e.name==='InvalidCharacterError'&&e.code===5&&e.message==='Invalid character');
+for(const value of ['A','AAAAA',undefined])assert.throws(()=>atob(value),e=>e.message==='The string to be decoded is not correctly encoded.');
+assert.strictEqual(atob(' A A == \n\t\r\f'),'\0');assert.strictEqual(atob('AB'),'\0');
+let calls=0;assert.strictEqual(btoa({[Symbol.toPrimitive](hint){assert.strictEqual(hint,'string');calls++;return 'A'}}),'QQ==');assert.strictEqual(calls,1);
+assert.throws(()=>btoa(Symbol('x')),TypeError);assert.throws(()=>atob(Symbol('x')),TypeError);
+assert.throws(()=>btoa(),e=>e.code==='ERR_MISSING_ARGS');assert.throws(()=>atob(),e=>e.code==='ERR_MISSING_ARGS');
+assert(new btoa('A') instanceof btoa);assert(new atob('QQ==') instanceof atob);
+const original=DOMException;globalThis.DOMException=function(){throw Error('replacement used')};
+assert.throws(()=>atob('!'),e=>e instanceof original&&e.name==='InvalidCharacterError');globalThis.DOMException=original;
+console.log(JSON.stringify([btoa(bytes),atob('SGVsbG8=')]));
 "#);
 }
 
@@ -6196,6 +6270,40 @@ const server=net.createServer({pauseOnConnect:true},socket=>{
 }
 
 #[test]
+fn stream_resume_preserves_readable_listener_buffer_ownership() {
+    compare_node_stream_source(r#"
+'use strict';
+const {Readable}=require('node:stream');
+const out=[];
+const stream=new Readable({read(){}});
+stream.on('readable',()=>{});
+stream.on('data',chunk=>out.push(['data',chunk.toString()]));
+stream.resume();
+stream.push('retained');
+process.nextTick(()=>{
+ out.push(['state',stream.readableFlowing,stream.isPaused(),stream.readableLength]);
+ out.push(['read',stream.read()?.toString()]);
+ console.log(JSON.stringify(out));
+});
+"#);
+}
+
+#[test]
+fn async_process_exit_preserves_requested_status_and_stops_rejection_dispatch() {
+    compare_node_stream_source(r#"
+'use strict';
+const {spawnSync}=require('node:child_process');
+const output=[];
+for(const operation of ['exit','reallyExit'])for(const code of [0,7]) {
+ const source=`process.on('exit',code=>console.log('exit',code));process.on('unhandledRejection',()=>console.log('unexpected rejection'));Promise.resolve().then(async()=>{process.nextTick(()=>console.log('unexpected tick'));process.${operation}(${code});});`;
+ const result=spawnSync(process.execPath,['-e',source],{encoding:'utf8'});
+ output.push([operation,code,result.status,result.signal,result.stdout,result.stderr]);
+}
+console.log(JSON.stringify(output));
+"#);
+}
+
+#[test]
 fn stream_explicit_flowing_false_prevents_automatic_data_resume() {
     compare_node_stream_source(r#"
 'use strict';
@@ -6545,6 +6653,31 @@ for(const name of ['indexOf','lastIndexOf','includes']) {
  const encoding={valueOf(){return 'utf8';}};out.push(buffer[name]('a',0,undefined,encoding));
  const b2=Buffer.from('xxx');out.push(b2[name]('a',{valueOf(){b2[1]=97;return 0;}}));
 }
+const aligned=Buffer.from('aβaβ','utf16le');
+out.push(aligned.indexOf('a',1,undefined,'utf16le'));
+out.push(aligned.indexOf(Buffer.from('a','utf16le'),1,undefined,'utf16le'));
+out.push(aligned.includes('a',5,undefined,'utf16le'));
+console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn native_buffer_backing_getters_preserve_descriptors_membership_and_original_hooks() {
+    compare_node_stream_source(r#"
+"use strict";
+const out=[];
+for(const key of ['parent','offset']){
+ const d=Object.getOwnPropertyDescriptor(Buffer.prototype,key),get=d.get;
+ out.push([key,d.enumerable,d.configurable,d.set===undefined,get.name,get.length,Object.hasOwn(get,'prototype')]);
+ const b=Buffer.from(new ArrayBuffer(12),3,5);
+ out.push(key==='parent'?get.call(b)===b.buffer:get.call(b));
+ for(const value of [Buffer.prototype,new Uint8Array(3),new DataView(new ArrayBuffer(4)),{},null,undefined]){try{out.push(get.call(value)===undefined);}catch(e){out.push([e.name,e.message]);}}
+ const log=[],marker={};Object.defineProperty(b,key==='parent'?'buffer':'byteOffset',{get(){log.push('get');return marker;}});out.push(get.call(b)===marker,log);
+ const fake=Object.create(Buffer.prototype);Object.defineProperty(fake,key==='parent'?'buffer':'byteOffset',{value:marker});out.push(get.call(fake)===marker);
+}
+const get=Object.getOwnPropertyDescriptor(Buffer.prototype,'parent').get,log=[],marker={},target={buffer:marker};
+Object.defineProperty(Buffer,Symbol.hasInstance,{configurable:true,value(value){log.push(this===Buffer,value===target);return true;}});out.push(get.call(target)===marker,log);
+Object.defineProperty(Buffer,Symbol.hasInstance,{configurable:true,value(){throw marker;}});try{get.call(target);out.push('accepted');}catch(e){out.push(e===marker);}delete Buffer[Symbol.hasInstance];
 console.log(JSON.stringify(out));
 "#);
 }
