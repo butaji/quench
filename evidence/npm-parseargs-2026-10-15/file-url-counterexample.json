@@ -1,0 +1,24 @@
+{
+  "source_commit": "88abab792",
+  "scope": "Separate loader counterexample; not a parseArgs failure",
+  "files": {
+    "entry.mjs": "import {value} from \"file:///tmp/npm-file-url-b3r0wgip/dependency.mjs\"; console.log(value);\n",
+    "dependency.mjs": "export const value = 42;\n"
+  },
+  "engines": {
+    "node": {
+      "executable": "/workspace/shared/node-v26.12.0-linux-x64/bin/node",
+      "sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943",
+      "exit": 0,
+      "stdout": "42\n",
+      "stderr": ""
+    },
+    "quench": {
+      "executable": "/workspace/scratch/npm-parseargs-candidate",
+      "sha256": "8e1963c2c615edc8206d9cedf2c72a9201bf9d8d1a741cdfc981a74f07f468d6",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "TypeError: static module request was not resolved\n\nNode.js v22.0.0\n"
+    }
+  }
+}
