@@ -3,6 +3,25 @@ use super::*;
 use crate::heap::PrivateBrand;
 
 impl<H: Host> Vm<H> {
+    /// Inspect data properties for diagnostics without invoking accessors or Proxy traps.
+    pub(super) fn diagnostic_data_property(&self, mut object: Value, key: PropertyKey) -> Option<Value> {
+        loop {
+            if self.proxy_parts(object).is_some() { return None; }
+            let data = self.object_data(object)?;
+            if self.property_attributes(object, key).is_some_and(|attributes| attributes.accessor) {
+                return None;
+            }
+            let value = match key {
+                PropertyKey::String(atom) => self.own_property(object, atom),
+                PropertyKey::Symbol(symbol) => self.symbol_property(object, symbol),
+                PropertyKey::Private(_) => None,
+            };
+            if value.is_some() { return value; }
+            object = data.proto();
+            if object.is_null() { return None; }
+        }
+    }
+
     pub(super) fn nullish_property_error(&mut self, p: &ResidualProgram, object: Value, property: Option<&str>) -> JsError {
         let kind = if object.is_null() { "null" } else { "undefined" };
         let message = match property { Some(property) => format!("Cannot read properties of {kind} (reading '{property}')"), None => format!("Cannot read properties of {kind}") };

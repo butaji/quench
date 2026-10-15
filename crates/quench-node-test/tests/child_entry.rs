@@ -7075,3 +7075,32 @@ for(const value of [empty,visible,hidden,symbol,hiddenSymbol])for(const depth of
 console.log(JSON.stringify(out));
 "#);
 }
+
+#[test]
+fn native_buffer_string_conversion_preserves_bounds_metadata_encodings_and_original_hooks() {
+compare_node_stream_source(r#"
+const B=require('buffer').Buffer,out=[],hooks=[];
+function record(tag,fn){hooks.length=0;try{const value=fn();out.push([tag,'ok',typeof value==='string'?Array.from(value,c=>c.codePointAt(0)):value,hooks.slice()])}catch(e){out.push([tag,e.name,e.code,e.message,hooks.slice()])}}
+for(const n of ['toString','toLocaleString','asciiSlice','base64Slice','base64urlSlice','latin1Slice','hexSlice','ucs2Slice','utf8Slice']){const f=B.prototype[n];record(['shape',n],()=>[f.name,f.length,Object.hasOwn(f,'prototype'),Object.getOwnPropertyDescriptor(B.prototype,n).enumerable])}
+record('alias',()=>B.prototype.toString===B.prototype.toLocaleString);
+const b=B.from([0,65,127,128,195,169,255,0,216]);
+for(const enc of [undefined,'utf8','hex','base64','base64url','latin1','ascii','utf16le','bogus','\ud800',null,false,0,Symbol('enc'),{toString(){hooks.push('encoding');return 'hex'}}])for(const start of [undefined,-1,0,1,1.5,20,NaN,Infinity,'2',1n])record(['toString',typeof enc,String(enc),typeof start,String(start)],()=>b.toString(enc,start));
+for(const start of [undefined,-1,0,2,2.9,20,NaN,Infinity,'2',null,1n,{valueOf(){hooks.push('start');return 2}}])for(const end of [undefined,-1,0,4,4.9,20,NaN,Infinity,'5',null,1n,{valueOf(){hooks.push('end');return 5}}])record(['range',typeof start,String(start),typeof end,String(end)],()=>b.toString('hex',start,end));
+for(const value of [{length:0},Object.create(B.prototype),new Uint8Array([65,66]),new Uint16Array([65,66]),new DataView(new ArrayBuffer(2)),null,undefined])for(const args of [[],['hex'],['hex',20],['bogus',0,0]])record(['receiver',Object.prototype.toString.call(value),args],()=>B.prototype.toString.apply(value,args));
+for(const n of ['asciiSlice','base64Slice','base64urlSlice','latin1Slice','hexSlice','ucs2Slice','utf8Slice'])for(const start of [undefined,-1,-0.5,-1.5,0,1,1.5,20,NaN,Infinity,-Infinity,2**63,2**64,'2',1n,Symbol('index')])for(const end of [undefined,-1,0,4,20,NaN,'5',1n])record([n,typeof start,String(start),typeof end,String(end)],()=>B.prototype[n].call(b,start,end));
+const own=B.from([65,66,67]);Object.defineProperty(own,'length',{get(){hooks.push('length');return 1}});own.subarray=()=>{throw Error('public subarray')};
+for(const args of [[],[undefined],['hex'],['hex',0,2]])record(['original-hooks',args],()=>own.toString(...args));
+console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn native_buffer_string_slices_preserve_detached_views_and_original_conversion_errors() {
+compare_node_stream_source(r#"
+const out=[],marker={},hooks=[];function check(tag,fn){hooks.length=0;try{const v=fn();out.push([tag,'ok',v,hooks.slice()])}catch(e){out.push([tag,e.name,e.code,e.message,e===marker,hooks.slice()])}}
+for(const detach of [false,true]){const ab=new ArrayBuffer(4);new Uint8Array(ab).set([65,66,67,68]);const dv=new DataView(ab);if(detach)structuredClone(ab,{transfer:[ab]});for(const method of ['utf8Slice','hexSlice'])check([method,'dv',detach],()=>Buffer.prototype[method].call(dv,{valueOf(){hooks.push('start');throw marker}}));}
+const rab=new ArrayBuffer(8,{maxByteLength:16}),dv=new DataView(rab,4,4);rab.resize(2);check('oob-dv',()=>Buffer.prototype.hexSlice.call(dv,0,4));
+const b=Buffer.from([65,66,67,68]);check('changing-start',()=>b.toString('hex',{valueOf(){hooks.push('start');return hooks.length}}));
+for(const position of ['start','end','encoding'])check(['throw',position],()=>b.toString(position==='encoding'?{toString(){throw marker}}:'hex',position==='start'?{valueOf(){throw marker}}:0,position==='end'?{valueOf(){throw marker}}:4));
+const constants=require('buffer').constants;check('limit-export-isolation',()=>{try{constants.MAX_STRING_LENGTH=0}catch{}return b.toString('hex')});for(const name of ['MAX_LENGTH','MAX_STRING_LENGTH'])check(['constant',name],()=>Object.getOwnPropertyDescriptor(constants,name));console.log(JSON.stringify(out));"#);
+}
