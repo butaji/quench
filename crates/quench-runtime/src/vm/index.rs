@@ -472,13 +472,20 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn set_array_element(&mut self, object: Value, index: usize, value: Value) -> bool {
+        if self.check_array_element_write(object, index).is_err() {
+            return false;
+        }
+        self.store_validated_array_element(object, index, value)
+    }
+
+    /// Storage after either assignment checks or ValidateAndApplyPropertyDescriptor.
+    /// A compatible definition can replace an accessor hole on a non-extensible
+    /// array, or preserve the same value on a frozen array.
+    pub(super) fn store_validated_array_element(&mut self, object: Value, index: usize, value: Value) -> bool {
         let Some(array_object) = self.heap.array(object) else {
             return false;
         };
         let elements = array_object.elements();
-        if self.check_array_element_write(object, index).is_err() {
-            return false;
-        }
         let dense_len = elements.len();
         if index < dense_len {
             let Some(array_object) = self.heap.array_mut(object) else {

@@ -66,6 +66,28 @@ fn collection_construction_survives_gc_in_iterator_and_entry_callbacks() {
 }
 
 #[test]
+fn array_definitions_reuse_accessor_slots_and_allow_frozen_same_values() {
+    let source = r#"
+      for(const index of [0,100000]) {
+        const array=[];let reads=0;
+        Object.defineProperty(array,index,{get(){reads++;return 7},configurable:true,enumerable:true});
+        Object.preventExtensions(array);
+        Object.defineProperty(array,index,{value:42,writable:true});
+        if(array[index]!==42||reads!==0)throw Error('accessor conversion');
+        Object.freeze(array);
+        if(!Reflect.defineProperty(array,index,{value:42}))throw Error('compatible frozen value');
+        if(Reflect.defineProperty(array,index,{value:43}))throw Error('incompatible frozen value');
+        if(Reflect.set(array,index,42)||Reflect.set(array,index,43))throw Error('frozen assignment');
+        const descriptor=Object.getOwnPropertyDescriptor(array,index);
+        if(descriptor.value!==42||descriptor.writable||descriptor.configurable||!descriptor.enumerable)throw Error('frozen descriptor');
+      }
+    "#;
+    for program in [Engine::compile(crate::ExecutionRequest { source, name: "array-definition-integrity.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source,"array-definition-integrity.js").unwrap()] {
+        Vm::new(SilentHost).execute(&program).unwrap();
+    }
+}
+
+#[test]
 fn strict_terminal_calls_preserve_catch_and_finally_handlers() {
     let source = r#"
       'use strict';
