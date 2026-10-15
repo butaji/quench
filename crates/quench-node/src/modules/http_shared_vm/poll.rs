@@ -1427,7 +1427,7 @@ fn request_object(
     set_number(runtime, request, "httpVersionMajor", major as f64)?;
     set_number(runtime, request, "httpVersionMinor", minor as f64)?;
     let headers_object = runtime
-        .null_object_rooted()
+        .object_rooted()
         .map_err(|error| error.to_string())?;
     for (name, value) in headers {
         set_text(runtime, headers_object, &name, &value)?;
@@ -1497,7 +1497,7 @@ fn response_object(
     set_text(runtime, response, "statusMessage", &message)?;
     set_text(runtime, response, "httpVersion", "1.1")?;
     let headers_object = runtime
-        .null_object_rooted()
+        .object_rooted()
         .map_err(|error| error.to_string())?;
     for (name, value) in headers {
         set_text(runtime, headers_object, &name, &value)?;

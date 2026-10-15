@@ -20,6 +20,22 @@ pub(super) fn commonjs_resolver() -> oxc_resolver::Resolver {
     })
 }
 
+/// An existing explicit filesystem target needs no package or extension search.
+/// URL delimiters and percent escapes stay with the full resolver.
+pub(super) fn exact_file_path(base: &Path, specifier: &str) -> Option<PathBuf> {
+    if specifier
+        .chars()
+        .any(|character| matches!(character, '%' | '?' | '#'))
+        || !(Path::new(specifier).is_absolute()
+            || specifier.starts_with("./")
+            || specifier.starts_with("../"))
+    {
+        return None;
+    }
+    let path = base.join(specifier);
+    path.is_file().then_some(path)
+}
+
 pub(crate) fn entry_path(path: &Path) -> Result<PathBuf, String> {
     let cwd = if path.is_absolute() {
         path.parent()
@@ -33,6 +49,9 @@ pub(crate) fn entry_path(path: &Path) -> Result<PathBuf, String> {
     } else {
         cwd.join(path)
     };
+    if let Some(path) = exact_file_path(&cwd, &path.to_string_lossy()) {
+        return std::fs::canonicalize(path).map_err(|error| error.to_string());
+    }
     commonjs_resolver()
         .resolve(&cwd, &path.to_string_lossy())
         .map(|resolution| resolution.full_path())
@@ -62,24 +81,47 @@ pub(crate) fn source_kind(path: &Path) -> Result<quench_runtime::SourceKind, Str
         _ => {}
     }
     let path = std::fs::canonicalize(path).map_err(|error| error.to_string())?;
-    let resolution = oxc_resolver::Resolver::new(Default::default())
-        .resolve(
-            path.parent().unwrap_or(Path::new(".")),
-            &path.to_string_lossy(),
-        )
-        .map_err(|error| error.to_string())?;
-    let module = resolution
-        .package_json()
-        .and_then(|package| package.r#type.as_ref())
-        .and_then(serde_json::Value::as_str)
-        == Some("module");
-    Ok(
-        if (path.extension().is_none() || path.extension().is_some_and(|extension| extension == "js")) && module {
-            quench_runtime::SourceKind::Module
-        } else {
-            quench_runtime::SourceKind::Script
-        },
-    )
+    // Package scope is a filesystem/JSON question, not another resolution of
+    // this already-resolved file. In particular, do not build a resolver cache
+    // (with parsed exports maps) for every source-kind query.
+    for directory in path.ancestors().skip(1) {
+        if directory
+            .file_name()
+            .is_some_and(|name| name == "node_modules")
+        {
+            break;
+        }
+        let package = directory.join("package.json");
+        let text = match std::fs::read_to_string(&package) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(format!("{}: {error}", package.display())),
+        };
+        let package_json: serde_json::Value =
+            serde_json::from_str(text.strip_prefix('\u{feff}').unwrap_or(&text))
+                .map_err(|_| format!("Invalid package config {}.", package.display()))?;
+        let module = match package_json.get("type") {
+            Some(serde_json::Value::String(kind)) => kind == "module",
+            None => false,
+            Some(_) => {
+                return Err(format!(
+                    "Invalid package config {}. \"type\" key must be a string",
+                    package.display()
+                ))
+            }
+        };
+        return Ok(
+            if (path.extension().is_none()
+                || path.extension().is_some_and(|extension| extension == "js"))
+                && module
+            {
+                quench_runtime::SourceKind::Module
+            } else {
+                quench_runtime::SourceKind::Script
+            },
+        );
+    }
+    Ok(quench_runtime::SourceKind::Script)
 }
 
 pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
@@ -136,7 +178,9 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
         .host_mut()
         .node_library_root
         .join("lib/internal/per_context/primordials.js");
-    if node_primordials.is_file() {
+    if node_primordials.is_file()
+        || crate::node_sources::source(&node_primordials, &context.host_mut().node_library_root).is_some()
+    {
         // Node 24 exposes these well-known disposal symbols before its
         // primordial snapshot is built. The runtime may not provide them yet,
         // so seed stable symbols for Node's internal modules first.
@@ -304,6 +348,8 @@ const WEB_STREAM_GLOBALS: &[&str] = &[
 const WEB_API_GLOBALS: &[&str] = &[
     "__quenchBlobEnsureReadable",
     "Blob",
+    "File",
+    "FormData",
     "Headers",
     "Request",
     "Response",
@@ -367,7 +413,25 @@ pub(super) fn initialize_web_apis(
         context,
         crate::polyfills::bootstrap::globals_extra::web_api_source(),
         "node:bootstrap/shared-vm/web-apis.js",
-    )
+    )?;
+    // Execute Node's pinned implementation in this VM, sharing its WebIDL and
+    // Fetch algorithms rather than maintaining a second partial implementation.
+    let global = context.global_root()?;
+    let buffer = cached_builtin(context, BuiltinModule::Buffer)?;
+    let file = get(context, global, "File")?;
+    set(context, buffer, "File", file)?;
+    let key = context.string_rooted("File");
+    context.define_data_property_rooted(global, key, file, true, false, true)?;
+    let root = context.host_mut().node_library_root.clone();
+    let path = root.join("deps/undici/undici.js");
+    let parent = module_record(context, &root.join("lib/internal/fetch.js"), None, false)?;
+    let undici = load(context, &path, Some(parent), EntryGoal::CommonJs)?;
+    for name in ["Headers", "Request", "Response", "FormData"] {
+        let constructor = get(context, undici, name)?;
+        let key = context.string_rooted(name);
+        context.define_data_property_rooted(global, key, constructor, true, false, true)?;
+    }
+    Ok(context.undefined())
 }
 
 pub(super) fn require(
@@ -483,7 +547,7 @@ pub(crate) fn require_for_module(
                 .host_mut()
                 .node_library_root
                 .join("deps/undici/undici.js");
-            return load(context, &filename, None, EntryGoal::CommonJs);
+            return load(context, &filename, Some(parent), EntryGoal::CommonJs);
         }
         Some(BuiltinModule::InternalDgram) => {
             let dgram = cached_builtin(context, BuiltinModule::Dgram)?;
@@ -656,6 +720,7 @@ pub(crate) fn require_for_module(
             | BuiltinModule::InternalChildProcess
             | BuiltinModule::Https
             | BuiltinModule::Http2
+            | BuiltinModule::Http2Binding
             | BuiltinModule::Inspector
             | BuiltinModule::Repl
             | BuiltinModule::Sea
@@ -774,6 +839,7 @@ enum BuiltinModule {
     InternalSocketAddress,
     Https,
     Http2,
+    Http2Binding,
     Vm,
     Inspector,
     Repl,
@@ -831,6 +897,7 @@ impl BuiltinModule {
             Self::Dgram => Some("dgram"),
             Self::Https => Some("https"),
             Self::Http2 => Some("http2"),
+            Self::Http2Binding => Some("internalBinding/http2"),
             Self::Vm => Some("vm"),
             Self::Inspector => Some("inspector"),
             Self::Repl => Some("repl"),
@@ -1114,6 +1181,10 @@ pub(crate) fn stream_module(context: &mut Context<'_>) -> Result<RootId, RootedE
     cached_builtin(context, BuiltinModule::Stream)
 }
 
+pub(crate) fn http2_binding(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    cached_builtin(context, BuiltinModule::Http2Binding)
+}
+
 pub(crate) fn buffer_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     cached_builtin(context, BuiltinModule::Buffer)
 }
@@ -1195,10 +1266,13 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::NodeTest => crate::modules::test_shared_vm::module(context),
         BuiltinModule::Vm => crate::modules::vm_shared_vm::module(context),
         BuiltinModule::WorkerThreads => {
-            context.evaluate_script_rooted(
+            let module = context.evaluate_script_rooted(
                 "({ isMainThread: true, MessageChannel: globalThis.MessageChannel, MessagePort: globalThis.MessagePort, Worker: class Worker { constructor() { throw Object.assign(new Error('Worker threads are unavailable in this runtime'), { code: 'ERR_WORKER_UNSUPPORTED_OPERATION' }); } } })",
                 "node:worker_threads.js",
-            )
+            )?;
+            let mark = context.host_function(super::operation("markAsUncloneable"))?;
+            set(context, module, "markAsUncloneable", mark)?;
+            Ok(module)
         }
         BuiltinModule::Url => crate::modules::url_shared_vm::module(context),
         BuiltinModule::Querystring => crate::modules::querystring_shared_vm::module(context),
@@ -1262,8 +1336,35 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             "node:https.js",
         ),
         BuiltinModule::TraceEvents => crate::modules::trace_shared_vm::module(context),
-        BuiltinModule::Http2
-        | BuiltinModule::Inspector
+        BuiltinModule::Http2Binding => {
+            let binding = context.object_rooted()?;
+            // Native constant values and attributes from Node v26.12.0's HTTP/2
+            // binding (src/node_http2.cc), shared by public exports and internals.
+            let descriptors = context.parse_json_rooted(include_str!("../../modules/http2_constants.json"))?;
+            let constants = context.object_rooted()?;
+            for key in context.own_keys_rooted(descriptors)? {
+                let descriptor = context.get_property_rooted(descriptors, key)?;
+                context.define_property_descriptor_rooted(constants, key, descriptor)?;
+            }
+            set(context, binding, "constants", constants)?;
+            Ok(binding)
+        }
+        BuiltinModule::Http2 => {
+            let path = context.host_mut().node_library_root.join("lib/internal/http2/compat.js");
+            let parent_path = context.host_mut().node_library_root.join("lib/http2.js");
+            let parent = module_record(context, &parent_path, None, false)?;
+            let compat = load(context, &path, Some(parent), EntryGoal::CommonJs)?;
+            let module = context.object_rooted()?;
+            for name in ["Http2ServerRequest", "Http2ServerResponse"] {
+                let value = get(context, compat, name)?;
+                set(context, module, name, value)?;
+            }
+            let binding = http2_binding(context)?;
+            let constants = get(context, binding, "constants")?;
+            set(context, module, "constants", constants)?;
+            Ok(module)
+        }
+        BuiltinModule::Inspector
         | BuiltinModule::Repl
         | BuiltinModule::Cluster
         | BuiltinModule::Wasi => context.object_rooted(),
@@ -1350,7 +1451,6 @@ fn resolve_filename(
             PathBuf::from(directory)
         }
     };
-    let resolver = commonjs_resolver();
     let node_lib = context.host_mut().node_library_root.join("lib");
     let internal_specifier = specifier.strip_prefix("node:").unwrap_or(specifier);
     let node_internal = (internal_specifier.starts_with("internal/")
@@ -1360,6 +1460,22 @@ fn resolve_filename(
                 .join(internal_specifier)
                 .with_extension("js")
                 .is_file());
+    let virtual_path = if node_internal {
+        Some(node_lib.join(internal_specifier).with_extension("js"))
+    } else if specifier.starts_with("./") || specifier.starts_with("../") {
+        Some(directory.join(specifier).with_extension("js"))
+    } else {
+        None
+    };
+    if let Some(path) = virtual_path {
+        if !path.is_file() {
+            if let Some((canonical, _)) =
+                crate::node_sources::resolve(&path, &context.host_mut().node_library_root)
+            {
+                return Ok(canonical);
+            }
+        }
+    }
     let (base, resolved_specifier) = if node_internal {
         (node_lib.as_path(), format!("./{internal_specifier}"))
     } else {
@@ -1368,7 +1484,10 @@ fn resolve_filename(
             specifier.to_owned(),
         )
     };
-    match resolver.resolve(base, &resolved_specifier) {
+    if let Some(path) = exact_file_path(base, &resolved_specifier) {
+        return std::fs::canonicalize(path).map_err(|error| RootedError::host(error.to_string()));
+    }
+    match commonjs_resolver().resolve(base, &resolved_specifier) {
         Ok(resolution) => Ok(resolution.full_path()),
         Err(oxc_resolver::ResolveError::NotFound(_) | oxc_resolver::ResolveError::Specifier(_)) => {
             let mut stack = Vec::new();
@@ -1505,12 +1624,12 @@ fn load(
         .module_cache
         .insert(key.clone(), retained);
     let result = (|| {
-        let bytes =
-            std::fs::read(filename).map_err(|error| RootedError::host(error.to_string()))?;
-        // The file's text owns the bytes it was read into, so a module's source is held once
-        // until its wrapper is built.
-        let file_text = String::from_utf8(bytes)
-            .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned());
+        let file_text = match std::fs::read(filename) {
+            Ok(bytes) => String::from_utf8(bytes)
+                .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned()),
+            Err(error) => crate::node_sources::source(filename, &context.host_mut().node_library_root)
+                .ok_or_else(|| RootedError::host(error.to_string()))?.to_owned(),
+        };
         let text = file_text.strip_prefix('\u{feff}').unwrap_or(&file_text);
         match filename
             .extension()
@@ -1603,6 +1722,7 @@ const getLinkedBinding = () => ({});
                 } else if in_node_internal {
                     r#"const internalBinding = (name) => {
   switch (String(name)) {
+    case "http2":
     case "fs_event_wrap": return __nativeInternalBinding(name);
     case "util": return Object.assign({}, require("util"), {
       privateSymbols: {
