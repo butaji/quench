@@ -1,0 +1,58 @@
+[
+  {
+    "fixture": "crypto",
+    "runs": 1,
+    "per_run_baseline": 1760192682.0,
+    "per_run_candidate": 1760192502.0,
+    "delta_percent": -1.0226153184290991e-05
+  },
+  {
+    "fixture": "deltablue",
+    "runs": 10,
+    "per_run_baseline": 251058623.6,
+    "per_run_candidate": 251059934.5,
+    "delta_percent": 0.0005221489631419936
+  },
+  {
+    "fixture": "earley-boyer",
+    "runs": 1,
+    "per_run_baseline": 3064691633.0,
+    "per_run_candidate": 3064426048.0,
+    "delta_percent": -0.008665961597579106
+  },
+  {
+    "fixture": "navier-stokes",
+    "runs": 1,
+    "per_run_baseline": 1432543580.0,
+    "per_run_candidate": 1432543589.0,
+    "delta_percent": 6.282531383792177e-07
+  },
+  {
+    "fixture": "raytrace",
+    "runs": 3,
+    "per_run_baseline": 912212914.3333334,
+    "per_run_candidate": 912212915.0,
+    "delta_percent": 7.308234913747657e-08
+  },
+  {
+    "fixture": "regexp",
+    "runs": 1,
+    "per_run_baseline": 1943336376.0,
+    "per_run_candidate": 1943348314.0,
+    "delta_percent": 0.0006143043555111223
+  },
+  {
+    "fixture": "richards",
+    "runs": 25,
+    "per_run_baseline": 110929167.0,
+    "per_run_candidate": 110928985.0,
+    "delta_percent": -0.0001640686619417236
+  },
+  {
+    "fixture": "splay",
+    "runs": 75,
+    "per_run_baseline": 24995389.893333334,
+    "per_run_candidate": 24995747.613333333,
+    "delta_percent": 0.0014311439090382721
+  }
+]
