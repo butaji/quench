@@ -75,9 +75,15 @@ impl<H: Host> Vm<H> {
     /// This also works after a script makes its replacement non-configurable.
     pub(crate) fn startup_data_property(&self, holder: Value, name: &str) -> Option<Value> {
         let key = PropertyKey::string(self.lookup_atom(name)?);
-        let index = self.startup_intrinsics.properties.iter()
-            .position(|property| property.holder == holder && property.key == key)?;
-        let original = self.startup_intrinsics.original(index);
+        let index = self
+            .startup_intrinsics
+            .holders
+            .iter()
+            .position(|sealed| sealed.holder == holder)?;
+        let (_, original) = self
+            .sealed_properties(index)
+            .into_iter()
+            .find(|(sealed_key, _)| *sealed_key == key)?;
         (!original.attributes.accessor).then_some(original.value)
     }
 
