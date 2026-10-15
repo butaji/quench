@@ -1,6 +1,6 @@
 //! Canonical JavaScript source shared by console runtime adapters.
 
-pub(crate) const CONSOLE_CLASS: &str = r#"((initialize, write) => class Console {
+pub(crate) const CONSOLE_CLASS: &str = r#"((initialize, write, format, formatWithOptions) => class Console {
   constructor(stdout, stderr, ignoreErrors) {
     const options = stdout && typeof stdout === "object" &&
       (stdout.stdout || stdout.stderr) ? stdout : null;
@@ -19,11 +19,6 @@ pub(crate) const CONSOLE_CLASS: &str = r#"((initialize, write) => class Console 
     }
   }
   _format(output, args) {
-    const util = (typeof require === "function"
-        ? require("util")
-        : undefined);
-    const format = util?.format;
-    const formatWithOptions = util?.formatWithOptions;
     const configured = this._inspectOptions &&
       typeof this._inspectOptions.get === "function"
       ? this._inspectOptions.get(output)

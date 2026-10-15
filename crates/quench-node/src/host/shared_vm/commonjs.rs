@@ -410,7 +410,7 @@ pub(super) fn require(
         );
         return context.evaluate_script_rooted(&source, "internal/bootstrap/realm.js");
     }
-    match BuiltinModule::from_specifier(&specifier) {
+    match requested_builtin(context, &specifier) {
         Some(BuiltinModule::Process) => {
             return match context.host_mut().shared_state().borrow().process_module {
                 Some(root) => Ok(root),
@@ -610,6 +610,7 @@ pub(super) fn require(
             | BuiltinModule::Stream
             | BuiltinModule::StreamPromises
             | BuiltinModule::Timers
+            | BuiltinModule::InternalTimers
             | BuiltinModule::TimersPromises
             | BuiltinModule::NodeTest
             | BuiltinModule::StringDecoder
@@ -659,7 +660,7 @@ pub(crate) fn resolve_from_parent(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let specifier = specifier(context, args, Request::Resolve)?;
-    if BuiltinModule::from_specifier(&specifier).is_some() {
+    if requested_builtin(context, &specifier).is_some() {
         return Ok(context.string_rooted(&specifier));
     }
     let parent = match args.get(1).copied() {
@@ -677,7 +678,7 @@ fn resolve_request(
     specifier: &str,
     parent: RootId,
 ) -> Result<RootId, RootedError> {
-    if BuiltinModule::from_specifier(specifier).is_some() {
+    if requested_builtin(context, specifier).is_some() {
         return Ok(context.string_rooted(specifier));
     }
     let filename = resolve_filename(context, specifier, parent)?;
@@ -733,6 +734,7 @@ enum BuiltinModule {
     InternalVfsFd,
     InternalUndici,
     InternalTestBinding,
+    InternalTimers,
     InternalBlockList,
     InternalSocketAddress,
     Https,
@@ -773,6 +775,7 @@ impl BuiltinModule {
             Self::Util => Some("util"),
             Self::UtilTypes => Some("util/types"),
             Self::Timers => Some("timers"),
+            Self::InternalTimers => Some("internal/timers"),
             Self::TimersPromises => Some("timers/promises"),
             Self::NodeTest => Some("node:test"),
             Self::ChildProcess => Some("child_process"),
@@ -818,6 +821,18 @@ impl BuiltinModule {
             | Self::InternalSocketAddress => None,
         }
     }
+}
+
+fn internal_timers_exposed(context: &mut Context<'_>) -> bool {
+    context.host_mut().shared_state().borrow().exec_argv.iter()
+        .any(|argument| argument == "--expose-internals")
+}
+
+fn requested_builtin(context: &mut Context<'_>, specifier: &str) -> Option<BuiltinModule> {
+    let builtin = BuiltinModule::from_specifier(specifier)?;
+    if matches!(builtin, BuiltinModule::InternalTimers) && !internal_timers_exposed(context) {
+        None
+    } else { Some(builtin) }
 }
 
 pub(crate) fn is_builtin_specifier(specifier: &str) -> bool {
@@ -947,6 +962,7 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("stream/consumers", BuiltinModule::StreamConsumers),
     ("node:stream/consumers", BuiltinModule::StreamConsumers),
     ("timers", BuiltinModule::Timers),
+    ("internal/timers", BuiltinModule::InternalTimers),
     ("node:timers", BuiltinModule::Timers),
     ("timers/promises", BuiltinModule::TimersPromises),
     ("node:timers/promises", BuiltinModule::TimersPromises),
@@ -1136,6 +1152,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             crate::modules::timers_shared_vm::timers_module(context, promises)
         }
         BuiltinModule::TimersPromises => crate::modules::timers_shared_vm::promises_module(context),
+        BuiltinModule::InternalTimers => crate::modules::timers_shared_vm::internal_module(context),
         BuiltinModule::NodeTest => crate::modules::test_shared_vm::module(context),
         BuiltinModule::Vm => crate::modules::vm_shared_vm::module(context),
         BuiltinModule::WorkerThreads => {
@@ -1291,7 +1308,8 @@ fn resolve_filename(
     let resolver = commonjs_resolver();
     let node_lib = context.host_mut().node_library_root.join("lib");
     let internal_specifier = specifier.strip_prefix("node:").unwrap_or(specifier);
-    let node_internal = internal_specifier.starts_with("internal/")
+    let node_internal = (internal_specifier.starts_with("internal/")
+        && (internal_specifier != "internal/timers" || internal_timers_exposed(context)))
         || (internal_specifier.starts_with('_')
             && node_lib
                 .join(internal_specifier)

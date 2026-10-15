@@ -94,7 +94,7 @@ impl<H: Host> Vm<H> {
             dynamic_atoms: vec![],
             startup_intrinsics: Default::default(),
             atom_sequence: Rc::new(crate::bytecode::AtomSequence::new(Default::default())),
-            regexp_subject: None,
+            regexp_subjects: Vec::new(),
             regexp_matchers: Default::default(),
             atom_classes: vec![],
             dynamic_strings: None,

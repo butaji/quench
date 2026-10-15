@@ -361,6 +361,7 @@ pub(crate) fn internal_binding(
     let binding = context.object_rooted()?;
     match name.as_str() {
         "crypto" => return super::tls_shared_vm::facade::binding(context),
+        "timers" => return super::timers_shared_vm::binding(context),
         "uv" => return super::util_system_error_shared_vm::uv_binding(context),
         "fs_event_wrap" => return super::fs_watch_shared_vm::event_binding(context),
         "trace_events" => {

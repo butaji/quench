@@ -646,6 +646,12 @@ impl<H: Host> Vm<H> {
         self.to_string(&program, value)
     }
 
+    pub(crate) fn embedding_to_number(&mut self, root: RootId) -> Result<f64, JsError> {
+        let value = self.embedding_value(root)?;
+        let program = self.embedding_program()?;
+        self.to_number(&program, value)
+    }
+
     pub(crate) fn embedding_arithmetic(
         &mut self,
         operation: crate::NativeArithmetic,
