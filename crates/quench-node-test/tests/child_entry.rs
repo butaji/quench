@@ -6638,6 +6638,10 @@ for(const name of ['indexOf','lastIndexOf','includes']) {
  const encoding={valueOf(){return 'utf8';}};out.push(buffer[name]('a',0,undefined,encoding));
  const b2=Buffer.from('xxx');out.push(b2[name]('a',{valueOf(){b2[1]=97;return 0;}}));
 }
+const aligned=Buffer.from('aβaβ','utf16le');
+out.push(aligned.indexOf('a',1,undefined,'utf16le'));
+out.push(aligned.indexOf(Buffer.from('a','utf16le'),1,undefined,'utf16le'));
+out.push(aligned.includes('a',5,undefined,'utf16le'));
 console.log(JSON.stringify(out));
 "#);
 }
