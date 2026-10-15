@@ -6569,3 +6569,33 @@ Object.defineProperty(Buffer,Symbol.hasInstance,{configurable:true,value(){throw
 console.log(JSON.stringify(out));
 "#);
 }
+
+#[test]
+fn native_buffer_bigint_methods_preserve_layout_original_hooks_errors_and_aliases() {
+    compare_node_stream_source(r#"
+'use strict';
+const out=[],names=[];
+for(const action of ['read','write'])for(const type of ['BigUInt64','BigInt64'])for(const end of ['LE','BE'])names.push(action+type+end);
+function attempt(fn){try{const value=fn();return ['ok',typeof value==='bigint'?value.toString()+'n':value];}catch(e){return [e.name,e.code||null,e.code?e.message:null];}}
+for(const name of names){
+ const method=Buffer.prototype[name],d=Object.getOwnPropertyDescriptor(Buffer.prototype,name),read=name.startsWith('read');
+ out.push([name,method.name,method.length,d.writable,d.enumerable,d.configurable,Object.hasOwn(method,'prototype'),method===Buffer.prototype[name.replace('UInt','Uint')]]);
+ for(const offset of [undefined,0,1,-1,.5,NaN,Infinity,'0',null,1n,{}]){
+  const b=Buffer.from([128,1,2,3,4,5,6,255,7]);out.push(attempt(()=>read?method.call(b,offset):method.call(b,123456789n,offset)),Array.from(b));
+ }
+ if(!read)for(const value of [0n,1n,-1n,-(1n<<63n),(1n<<63n)-1n,(1n<<64n)-1n,1n<<64n,123,'bad',true,null,undefined]){const b=Buffer.alloc(8);out.push(attempt(()=>method.call(b,value)),Array.from(b));}
+ const log=[],receiver={length:8};for(let i=0;i<8;i++)Object.defineProperty(receiver,i,{get(){log.push(['get',i]);return (i+1)*241;},set(value){log.push(['set',i,value]);}});
+ out.push(attempt(()=>read?method.call(receiver):method.call(receiver,name.includes('UInt')?0xfedcba9876543210n:-0x0123456789abcdefn)),log);
+ const typed=new Uint8Array(8);out.push(attempt(()=>read?method.call(typed):method.call(typed,42n)),Array.from(typed));
+ const base=Buffer.alloc(12),slice=base.subarray(2,10);out.push(attempt(()=>read?method.call(slice):method.call(slice,42n)),Array.from(base));
+ const marker={},short={0:1,get length(){throw marker;}};try{read?method.call(short):method.call(short,1n);out.push(false);}catch(e){out.push(e===marker);}
+ if(!read){const log=[],b=Buffer.alloc(8),value={[Symbol.toPrimitive](hint){log.push(hint);return 42n;}};out.push(attempt(()=>method.call(b,value)),Array.from(b),log);}
+}
+for(const name of names.filter(name=>name.startsWith('write'))){
+ const log=[],buffer=Buffer.alloc(8);let count=0;const value={[Symbol.toPrimitive](hint){log.push([hint,Array.from(buffer)]);return ++count<4?0x0123456789abcdefn:0xfedcba9876543210n;}};out.push(attempt(()=>Buffer.prototype[name].call(buffer,value)),Array.from(buffer),log);
+ const marker={},partial=Buffer.alloc(8);let calls=0;const throwing={[Symbol.toPrimitive](){if(++calls===4)throw marker;return 42n;}};try{Buffer.prototype[name].call(partial,throwing);out.push(false);}catch(error){out.push(error===marker,Array.from(partial));}
+}
+const original=globalThis.BigInt;globalThis.BigInt=()=>{throw Error('public BigInt must not replace internal conversion');};out.push(Buffer.from([1,0,0,0,0,0,0,0]).readBigUInt64LE().toString());globalThis.BigInt=original;
+console.log(JSON.stringify(out));
+"#);
+}
