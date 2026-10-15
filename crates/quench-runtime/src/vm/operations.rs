@@ -384,6 +384,9 @@ impl<H: Host> Vm<H> {
         if Self::is_collection_native(native) {
             return self.call_collection_native(p, native, this, args);
         }
+        if super::wasm_js::is_wasm_js_native(native) {
+            return self.call_wasm_js_native(p, native, this, args);
+        }
         if matches!(
             native,
             Native::ShadowRealmEvaluate

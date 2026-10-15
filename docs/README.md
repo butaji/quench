@@ -9,6 +9,7 @@
 - [Native Node host contracts](node-host-contracts.md)
 - [Shared array operation contracts](shared-array-contracts.md)
 - [V8-v7 commands](v8_v7.md)
+- [GC verification and experiment strategy](v2/gc-verification.md)
 - [JetStream 3 commands](jetstream3.md)
 - [Benchmark micros](../quench-bench/micros/README.md)
 

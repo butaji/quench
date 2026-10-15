@@ -9,6 +9,7 @@ use std::sync::{Mutex, OnceLock};
 mod access;
 mod cell;
 mod cell_access;
+mod buffer_bytes;
 mod collection_entries;
 mod external;
 #[cfg(feature = "profile-memory")]
@@ -19,6 +20,7 @@ mod slots;
 mod thin_slice;
 mod weak;
 pub(crate) use cell::*;
+pub(crate) use buffer_bytes::BufferBytes;
 pub(crate) use collection_entries::CollectionEntries;
 use records::{ArrayRecordSpace, ObjectRecordSpace, RecordSweep};
 pub use root::RootId;
@@ -302,9 +304,11 @@ fn cell_rc_drop_lock(cell: &Cell) -> Option<&'static Mutex<()>> {
         Cell::Array { object } => {
             Some(&RC_DROP_LOCKS[rc_drop_lock_index(Rc::as_ptr(object.elements()) as usize)])
         }
-        Cell::ArrayBuffer { bytes, .. } => {
-            Some(&RC_DROP_LOCKS[rc_drop_lock_index(Rc::as_ptr(bytes) as usize)])
-        }
+        Cell::ArrayBuffer { bytes, .. } => Some(if bytes.holds_external_rc() {
+            &SHARED_RC_DROP_LOCK
+        } else {
+            &RC_DROP_LOCKS[rc_drop_lock_index(bytes.as_ptr() as usize)]
+        }),
         Cell::WasmHostFunction { signature, .. } => {
             Some(&RC_DROP_LOCKS[rc_drop_lock_index(Rc::as_ptr(signature) as usize)])
         }
@@ -322,7 +326,7 @@ fn cell_rc_drop_lock(cell: &Cell) -> Option<&'static Mutex<()>> {
 fn cell_has_shared_rc_payload(cell: &Cell) -> bool {
     match cell {
         Cell::Array { object } => Rc::strong_count(object.elements()) > 1,
-        Cell::ArrayBuffer { bytes, .. } => Rc::strong_count(bytes) > 1,
+        Cell::ArrayBuffer { bytes, .. } => bytes.is_shared(),
         Cell::WasmHostFunction { signature, .. } => Rc::strong_count(signature) > 1,
         Cell::Iterator { .. }
         | Cell::String(_)
@@ -2298,7 +2302,10 @@ impl Heap {
                 object(value);
                 work.extend([*env, value.realm]);
             }
-            Cell::WasmGlobal { value, .. } => work.push(*value),
+            Cell::WasmGlobal { header, value: global, .. } => {
+                object(&header.object);
+                work.push(*global);
+            }
             Cell::BindingReference { environment, .. } => work.push(*environment),
             Cell::Environment {
                 parent,
@@ -2322,7 +2329,10 @@ impl Heap {
                 work.extend(with_objects.iter().copied());
             }
             Cell::WasmElements(elements) => work.extend(elements.iter().copied()),
-            Cell::WasmTable { elements, .. } => work.extend(elements.iter().copied()),
+            Cell::WasmTable { object: value, elements, .. } => {
+                object(value);
+                work.extend(elements.iter().copied());
+            }
             Cell::WasmGc { fields, .. } => {
                 work.extend(fields.values.iter().copied());
                 work.extend(fields.descriptor);
@@ -2346,10 +2356,26 @@ impl Heap {
             | Cell::Symbol(_)
             | Cell::Error(_)
             | Cell::WasmTag { .. }
-            | Cell::WasmHostFunction { .. }
+            | Cell::WasmHostFunction {
+                target: crate::heap::WasmHostTarget::Host(_),
+                ..
+            }
             | Cell::WasmBits64(_)
-            | Cell::WasmV128(_)
-            | Cell::WasmMemory { .. } => {}
+            | Cell::WasmV128(_) => {}
+            Cell::WasmHostFunction {
+                target: crate::heap::WasmHostTarget::Js(target),
+                ..
+            } => work.push(*target),
+            Cell::WasmObject { object: value, slot } => {
+                object(value);
+                if let crate::heap::WasmObjectSlot::Instance { exports } = slot {
+                    work.push(*exports);
+                }
+            }
+            Cell::WasmMemory { header, buffer, .. } => {
+                object(&header.object);
+                work.push(*buffer);
+            }
             _ => unreachable!("typed array backing handled above"),
         }
     }

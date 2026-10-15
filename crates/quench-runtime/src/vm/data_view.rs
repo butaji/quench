@@ -527,7 +527,7 @@ impl<H: Host> Vm<H> {
         let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(buffer) else {
             return Err(JsError("DataView buffer is invalid".into()));
         };
-        let Some(slot) = Rc::make_mut(bytes).get_mut(index) else {
+        let Some(slot) = bytes.make_mut().get_mut(index) else {
             return Err(JsError("DataView byte offset is out of range".into()));
         };
         *slot = value;

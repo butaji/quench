@@ -241,6 +241,9 @@ fn native_length(kind: Native) -> Option<f64> {
     if let Some(length) = super::finalization::disposal_native_length(kind) {
         return Some(length);
     }
+    if let Some(length) = super::wasm_js::wasm_js_native_length(kind) {
+        return Some(length);
+    }
     Some(match kind {
         Native::FunctionPrototype
         | Native::IsHTMLDDA
@@ -1517,22 +1520,11 @@ impl<H: Host> Vm<H> {
                             "Promise.resolve receiver is not a constructor".into(),
                         ));
                     }
-                    if let Some(value) = args.first().copied()
-                        && self.realm.promise.records.contains_key(&value)
-                    {
-                        let constructor_atom = self.intern_atom("constructor");
-                        if self.get_property(p, value, constructor_atom)? == this {
-                            return Ok(value);
-                        }
-                    }
-                    let (promise, resolve, _) = self.new_promise_capability(p, this)?;
-                    self.call_value(
+                    self.promise_resolve_for_constructor(
                         p,
-                        resolve,
-                        Value::UNDEFINED,
-                        &[args.first().copied().unwrap_or(Value::UNDEFINED)],
-                    )?;
-                    Ok(promise)
+                        this,
+                        args.first().copied().unwrap_or(Value::UNDEFINED),
+                    )
                 }
             }
             Native::PromiseReject => {
@@ -2115,7 +2107,7 @@ impl<H: Host> Vm<H> {
                 let kind = crate::heap::TypedArrayKind::Uint8;
                 let buffer = self.heap.alloc(Cell::ArrayBuffer {
                     object: Box::new(Self::empty_object(self.array_buffer_proto)),
-                    bytes: std::rc::Rc::new(bytes),
+                    bytes: bytes.into(),
                     shared: false,
                     detached: false,
                     max_byte_length: length,
@@ -4613,7 +4605,7 @@ impl<H: Host> Vm<H> {
         if self.object_data(value).is_none() {
             return self.promise_settle(p, promise, PromiseState::Fulfilled, value);
         }
-        let then_atom = self.intern_atom("then");
+        let then_atom = self.runtime_atoms.then;
         let then = match self.get_property(p, value, then_atom) {
             Ok(then) => then,
             Err(error) => {
@@ -4662,11 +4654,18 @@ impl<H: Host> Vm<H> {
                 );
             }
             let constructor = vm.promise_species_constructor(p, promise)?;
-            let (next, resolve, reject) = vm.new_promise_capability(p, constructor)?;
-            vm.realm
-                .promise
-                .reaction_capabilities
-                .insert(next, (resolve, reject));
+            // A %Promise% capability is unobservable (see `promise_resolve_for_constructor`):
+            // its promise is settled directly when the reaction runs.
+            let next = if constructor == vm.intrinsic_promise_constructor() {
+                vm.promise_object()
+            } else {
+                let (next, resolve, reject) = vm.new_promise_capability(p, constructor)?;
+                vm.realm
+                    .promise
+                    .reaction_capabilities
+                    .insert(next, (resolve, reject));
+                next
+            };
             vm.perform_promise_then(p, promise, on_fulfilled, on_rejected, next);
             Ok(next)
         })
@@ -4735,7 +4734,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         promise: Value,
     ) -> Result<Value, JsError> {
-        let constructor_atom = self.intern_atom("constructor");
+        let constructor_atom = self.runtime_atoms.constructor;
         let constructor = self.get_property(p, promise, constructor_atom)?;
         if constructor.is_undefined() {
             return Ok(self.intrinsic_promise_constructor());
@@ -4767,13 +4766,22 @@ impl<H: Host> Vm<H> {
         let outcome = (|| {
             let input = self.heap.root_value(value).unwrap();
             if self.realm.promise.records.contains_key(&input) {
-                let constructor_atom = self.intern_atom("constructor");
+                let constructor_atom = self.runtime_atoms.constructor;
                 let observed = self.get_property(p, input, constructor_atom)?;
                 if observed == self.heap.root_value(constructor).unwrap() {
                     return Ok(self.heap.root_value(value).unwrap());
                 }
             }
             let constructor = self.heap.root_value(constructor).unwrap();
+            if constructor == self.intrinsic_promise_constructor() {
+                // NewPromiseCapability(%Promise%) observes nothing: the executor is internal
+                // and %Promise%.prototype is fixed, so resolve a fresh promise directly
+                // instead of through resolving functions no code can reach.
+                let promise = self.promise_object();
+                let value = self.heap.root_value(value).unwrap();
+                self.with_call_roots([promise], |vm| vm.promise_resolve_value(p, promise, value))?;
+                return Ok(promise);
+            }
             let (promise, resolve, _) = self.new_promise_capability(p, constructor)?;
             let value = self.heap.root_value(value).unwrap();
             self.call_value(p, resolve, Value::UNDEFINED, &[value])?;
@@ -4832,7 +4840,7 @@ impl<H: Host> Vm<H> {
         let original = args.first().copied().unwrap_or(Value::UNDEFINED);
         let cleanup = self.call_value(p, callback.handler, Value::UNDEFINED, &[])?;
         let promise = self.promise_resolve_for_constructor(p, callback.constructor, cleanup)?;
-        let then_atom = self.intern_atom("then");
+        let then_atom = self.runtime_atoms.then;
         let then = self.get_property(p, promise, then_atom)?;
         if !self.is_function(then) {
             return Err(self.type_error(p, "Promise cleanup then is not callable".into()));
@@ -4875,7 +4883,7 @@ impl<H: Host> Vm<H> {
                 self.type_error(p, "Promise.prototype.catch called on nullish value".into())
             );
         }
-        let then_atom = self.intern_atom("then");
+        let then_atom = self.runtime_atoms.then;
         let then = self.get_property(p, receiver, then_atom)?;
         if !self.is_function(then) {
             return Err(self.type_error(p, "Promise.prototype.catch then is not callable".into()));
@@ -4972,7 +4980,7 @@ impl<H: Host> Vm<H> {
             let source = self.heap.root_value(receiver).unwrap();
             let constructor = self.promise_species_constructor(p, source)?;
             constructor_root = Some(self.heap.root(constructor));
-            let then_atom = self.intern_atom("then");
+            let then_atom = self.runtime_atoms.then;
             let source = self.heap.root_value(receiver).unwrap();
             let then = self.get_property(p, source, then_atom)?;
             if !self.is_function(then) {

@@ -598,7 +598,16 @@ const NATIVES: &[Native] = &[
     Native::PromiseAggregateJob,
     Native::PromiseAsyncResumeJob, Native::DynamicImport, Native::AsyncFromSyncValue,
     Native::AsyncFromSyncValueRejected, Native::AsyncGeneratorDelegateFulfilled,
-    Native::AsyncGeneratorDelegateRejected, ];
+    Native::AsyncGeneratorDelegateRejected,
+    Native::WebAssemblyValidate, Native::WebAssemblyCompile, Native::WebAssemblyInstantiate,
+    Native::WasmModule, Native::WasmModuleExports, Native::WasmModuleImports,
+    Native::WasmInstance, Native::WasmInstanceExportsGetter,
+    Native::WasmMemory, Native::WasmMemoryGrow, Native::WasmMemoryBufferGetter,
+    Native::WasmTable, Native::WasmTableLengthGetter, Native::WasmTableGrow, Native::WasmTableGet,
+    Native::WasmTableSet,
+    Native::WasmGlobal, Native::WasmGlobalValueGetter, Native::WasmGlobalValueSetter,
+    Native::WasmGlobalValueOf,
+    Native::WasmCompileError, Native::WasmLinkError, Native::WasmRuntimeError, ];
 /// How much of a realm a VM installs when it initializes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum RealmScope {
@@ -719,6 +728,7 @@ impl<H: Host> Vm<H> {
         self.install_typed_array_iterator_symbol(program)?;
         let symbol_prototype_atom = self.prototype_atom();
         let symbol_prototype = self.get_property(program, symbol, symbol_prototype_atom)?;
+        self.realm.intrinsics.builtin_prototypes.insert((self.realm.globals, Native::Symbol), symbol_prototype);
         let symbol_to_primitive = self.native_value(Native::SymbolToPrimitive);
         self.set_builtin_function_name(symbol_to_primitive, "[Symbol.toPrimitive]")?;
         let to_primitive = self.well_known_symbols["toPrimitive"];
@@ -873,6 +883,7 @@ impl<H: Host> Vm<H> {
         self.install_reflect(program)?;
         self.install_math(program)?;
         self.install_promise(program)?;
+        self.install_webassembly(program)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_builtins_before_temporal");
         // `Temporal` is about as large as every other builtin together and few programs use
@@ -1239,18 +1250,23 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         let atom = self.intern_atom("name");
         let property = PropertyKey::string(atom);
-        self.set_property_attributes(
-            function,
-            property,
-            PropertyAttributes {
-                writable: true,
-                enumerable: false,
-                configurable: true,
-                accessor: false,
-                getter: None,
-                setter: None,
-            },
-        );
+        // An existing `name` is made writable so the store below replaces it. A function
+        // without one (a fresh bound function) gets it from the store; recording attributes
+        // for an absent key would leave a stale descriptor and flush every field cache.
+        if self.object_property_slot(function, property).is_some() {
+            self.set_property_attributes(
+                function,
+                property,
+                PropertyAttributes {
+                    writable: true,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+        }
         let value = self.heap.alloc(Cell::String(JsString::from_str(name)));
         self.set_property(function, atom, value)?;
         self.set_property_attributes(
