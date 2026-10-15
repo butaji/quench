@@ -5,6 +5,8 @@ use crate::module_identity::ModuleIdentity;
 pub(crate) enum ModulePhase {
     Loading,
     Linking,
+    /// Linked graph retained after a synchronous host declined async evaluation.
+    Instantiated,
     Deferred,
     Evaluating,
     EvaluatingAsync,
@@ -127,8 +129,13 @@ impl ModuleRecord {
         self.transition(ModulePhase::Loading, ModulePhase::Linking)
     }
 
+    pub(crate) fn retain_instantiation(&mut self) {
+        self.transition(ModulePhase::Linking, ModulePhase::Instantiated);
+    }
+
     pub(crate) fn begin_evaluation(&mut self) -> bool {
         self.transition(ModulePhase::Linking, ModulePhase::Evaluating)
+            || self.transition(ModulePhase::Instantiated, ModulePhase::Evaluating)
     }
 
     pub(crate) fn begin_deferred_evaluation(&mut self) -> Option<Value> {

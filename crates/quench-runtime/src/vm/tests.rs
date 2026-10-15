@@ -9868,3 +9868,33 @@ check('setter-original',()=>field({set x(v){throw marker}}));const hostile={get 
         assert_eq!(output.borrow().as_slice(), [r#"[["undefined","TypeError","Cannot set properties of undefined (setting 'x')",false],["undefined","TypeError","Cannot set properties of undefined (setting 'x')",false],["null","TypeError","Cannot set properties of null (setting 'x')",false],["null","TypeError","Cannot set properties of null (setting 'x')",false],["boolean","TypeError","Cannot create property 'x' on boolean 'false'",false],["boolean","TypeError","Cannot create property 'x' on boolean 'false'",false],["number","TypeError","Cannot create property 'x' on number '1'",false],["number","TypeError","Cannot create property 'x' on number '1'",false],["string","TypeError","Cannot create property 'x' on string 'abc'",false],["string","TypeError","Cannot create property 'x' on string 'abc'",false],["symbol","TypeError","Cannot create property 'x' on symbol 'Symbol(s)'",false],["symbol","TypeError","Cannot create property 'x' on symbol 'Symbol(s)'",false],["bigint","TypeError","Cannot create property 'x' on bigint '1'",false],["bigint","TypeError","Cannot create property 'x' on bigint '1'",false],["frozen","TypeError","Cannot assign to read only property 'x' of object '#<Object>'",false],["frozen","TypeError","Cannot assign to read only property 'x' of object '#<Object>'",false],["sealed","TypeError","Cannot add property x, object is not extensible",false],["sealed","TypeError","Cannot add property x, object is not extensible",false],["getter","TypeError","Cannot set property x of #<Object> which has only a getter",false],["getter","TypeError","Cannot set property x of #<Object> which has only a getter",false],["proxy","TypeError","'set' on proxy: trap returned falsish for property 'x'",false],["proxy-readonly","TypeError","Cannot assign to read only property 'x' of object '#<Object>'",false],["proxy-extend","TypeError","Cannot define property x, object is not extensible",false],["nested","TypeError","'set' on proxy: trap returned falsish for property 'x'",false],["setter-original",null,null,true],["hostile","TypeError","Cannot assign to read only property 'x' of object '[object Object]'",false],[["string","0"],"TypeError","Cannot assign to read only property '0' of string 'abc'",false],[["string","length"],"TypeError","Cannot assign to read only property 'length' of string 'abc'",false],[["string","5"],"TypeError","Cannot create property '5' on string 'abc'",false],["primitive-getter","TypeError","Cannot set property x of [object Boolean] which has only a getter",false],["reflect",false],["trap-get","trap-call","inner"]]"#]);
     }
 }
+
+#[test]
+fn private_field_initialization_does_not_follow_proxy_prototypes() {
+    let source = r#"
+      const events=[];
+      const prototype=new Proxy({}, {
+        get(){events.push('get');throw Error('public get');},
+        set(){events.push('set');throw Error('public set');},
+        getOwnPropertyDescriptor(){events.push('descriptor');throw Error('public descriptor');},
+        getPrototypeOf(){events.push('prototype');throw Error('public prototype');}
+      });
+      class ReturnValue { constructor(value){return value;} }
+      class Stamp extends ReturnValue {
+        #value;
+        constructor(value){super(value);this.#value=42;}
+        static read(value){return value.#value;}
+        static has(value){return #value in value;}
+      }
+      const object=Object.create(prototype);
+      const result=new Stamp(object);
+      print(JSON.stringify([result===object,Stamp.has(object),Stamp.read(object),events]));
+    "#;
+    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
+        let program=compile(source,"private-proxy-prototype.js").unwrap();
+        let output=Rc::new(RefCell::new(Vec::new()));
+        let mut vm=Vm::new(RecordingHost(output.clone()));
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(),["[true,true,42,[]]"]);
+    }
+}

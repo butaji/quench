@@ -1536,6 +1536,50 @@ fn resolve_filename(
     }
 }
 
+/// Captured once by bootstrap's first module, before preloads or guest code.
+/// The weak keys preserve Node's private first-parent relation independently of
+/// the mutable public module.parent projection.
+fn module_parent_api(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    if let Some(api) = context.host_mut().shared_state().borrow().module_parent_api { return Ok(api); }
+    let global = context.global_root()?;
+    let constructor = get(context, global, "WeakMap")?;
+    let map = context.construct_rooted(constructor, constructor, &[])?;
+    let prototype = get(context, constructor, "prototype")?;
+    let setter = get(context, prototype, "set")?;
+    let api = context.null_object_rooted()?;
+    set(context, api, "map", map)?;
+    set(context, api, "set", setter)?;
+    let array = get(context, global, "Array")?;
+    let prototype = get(context, array, "prototype")?;
+    for name in ["push", "join"] {
+        let method = get(context, prototype, name)?;
+        set(context, api, name, method)?;
+    }
+    let api = context.retain(api)?;
+    context.host_mut().shared_state().borrow_mut().module_parent_api = Some(api);
+    Ok(api)
+}
+
+fn first_module_parent(context: &mut Context<'_>, module: RootId) -> Result<RootId, RootedError> {
+    let api = module_parent_api(context)?;
+    let map = get(context, api, "map")?;
+    context.weak_map_get_rooted(map, module)
+}
+
+fn require_stack(context: &mut Context<'_>, parent: RootId) -> Result<RootId, RootedError> {
+    let api = module_parent_api(context)?;
+    let push = get(context, api, "push")?;
+    let stack = context.array_rooted(&[])?;
+    let mut cursor = parent;
+    while context.truthy_rooted(cursor)? {
+        let filename = get(context, cursor, "filename")?;
+        let name = if context.truthy_rooted(filename)? { filename } else { get(context, cursor, "id")? };
+        context.call_rooted(push, stack, &[name])?;
+        cursor = first_module_parent(context, cursor)?;
+    }
+    Ok(stack)
+}
+
 fn module_record(
     context: &mut Context<'_>,
     filename: &Path,
@@ -1565,6 +1609,10 @@ fn module_record(
     set(context, module, "path", path)?;
     let parent = parent.unwrap_or_else(|| context.undefined());
     set(context, module, "parent", parent)?;
+    let api = module_parent_api(context)?;
+    let map = get(context, api, "map")?;
+    let setter = get(context, api, "set")?;
+    context.call_rooted(setter, map, &[module, parent])?;
     let loaded = context.boolean(false);
     set(context, module, "loaded", loaded)?;
     let children = context.array_rooted(&[])?;
@@ -1606,6 +1654,64 @@ pub(crate) fn create_require(
     get(context, module, "require")
 }
 
+fn require_module_error(context: &mut Context<'_>, code: &'static str, message: &str) -> Result<RootedError, RootedError> {
+    let error = context.error_rooted(message)?;
+    crate::modules::node_errors_shared_vm::decorate_error(context, error, code)?;
+    Ok(context.throw(error))
+}
+
+fn require_es_module(context: &mut Context<'_>, filename: &Path, parent: Option<RootId>) -> Result<RootId, RootedError> {
+    let url = url::Url::from_file_path(filename).map_err(|_| RootedError::host("invalid ES module filename"))?;
+    let module = quench_runtime::Host::resolve_dynamic_import(context.host_mut(), &filename.to_string_lossy(), url.as_str())
+        .map_err(RootedError::host)?.ok_or_else(|| RootedError::host("ES module source unavailable"))?;
+    let namespace = match context.evaluate_module_sync_rooted(&module)? {
+        quench_runtime::SynchronousModule::Namespace(namespace) => namespace,
+        quench_runtime::SynchronousModule::AsyncGraph => {
+            let mut units = format!("require() cannot be used on an ESM graph with top-level await. Use import() instead. To see where the top-level await comes from, use --experimental-print-required-tla.\nRequired module: {}", filename.display()).encode_utf16().collect::<Vec<_>>();
+            let stack = if let Some(parent) = parent { Some(require_stack(context, parent)?) } else { None };
+            if let Some(stack) = stack {
+                let length = get(context, stack, "length")?;
+                if context.truthy_rooted(length)? {
+                    let api = module_parent_api(context)?;
+                    let join = get(context, api, "join")?;
+                    let separator = context.string_rooted("\n- ");
+                    let joined = context.call_rooted(join, stack, &[separator])?;
+                    units.extend("\nRequire stack:\n- ".encode_utf16());
+                    units.extend(context.to_string_code_units(joined)?);
+                }
+            }
+            let error = context.error_rooted("")?;
+            let message = context.string_units_rooted(&units);
+            context.assign_named_property_rooted(error, "message", message)?;
+            crate::modules::node_errors_shared_vm::decorate_error(context, error, "ERR_REQUIRE_ASYNC_MODULE")?;
+            if let Some(stack) = stack {
+                let key = context.string_rooted("requireStack");
+                context.define_data_property_rooted(error, key, stack, true, false, true)?;
+            }
+            return Err(context.throw(error));
+        }
+        quench_runtime::SynchronousModule::Evaluating => {
+            let mut message = format!("Cannot require() ES Module {} in a cycle.", filename.display());
+            if let Some(parent) = parent {
+                let name = get(context, parent, "filename")?;
+                message.push_str(&format!(" (from {})", context.to_string(name)?));
+            }
+            message.push_str(" A cycle involving require(esm) is not allowed to maintain invariants mandated by the ECMAScript specification. Try making at least part of the dependency in the graph lazily loaded.");
+            return Err(require_module_error(context, "ERR_REQUIRE_CYCLE_MODULE", &message)?);
+        }
+    };
+    let key = context.string_rooted("module.exports");
+    if context.has_property_rooted(namespace, key)? {
+        return context.get_property_rooted(namespace, key);
+    }
+    let default = context.string_rooted("default");
+    let marker = context.string_rooted("__esModule");
+    if context.has_property_rooted(namespace, default)? && !context.has_property_rooted(namespace, marker)? {
+        let yes = context.boolean(true);
+        context.module_namespace_with_export_rooted(namespace, "__esModule", yes)
+    } else { Ok(namespace) }
+}
+
 fn load(
     context: &mut Context<'_>,
     filename: &Path,
@@ -1614,6 +1720,16 @@ fn load(
 ) -> Result<RootId, RootedError> {
     let key = filename.to_string_lossy().into_owned();
     let roots = context.host_mut().shared_state();
+    let active = roots.borrow().active_esm_requires.get(&key).copied();
+    if let Some(active) = active {
+        let mut message = format!("Cannot require() ES Module {key} in a cycle.");
+        let parent = first_module_parent(context, active)?;
+        if context.truthy_rooted(parent)? {
+            let name = get(context, parent, "filename")?;
+            message.push_str(&format!(" (from {})", context.to_string(name)?));
+        }
+        return Err(require_module_error(context, "ERR_REQUIRE_CYCLE_MODULE", &message)?);
+    }
     let cached = roots.borrow().module_cache.get(&key).copied();
     if let Some(module) = cached {
         if let Some(parent) = parent {
@@ -1621,6 +1737,7 @@ fn load(
         }
         return get(context, module, "exports");
     }
+    let is_esm = goal == EntryGoal::Node && source_kind(filename).map_err(RootedError::host)? == quench_runtime::SourceKind::Module;
     let is_main = parent.is_none() && context.host_mut().commonjs_entry.is_some();
     let module = module_record(context, filename, parent, is_main)?;
     if let Some(parent) = parent {
@@ -1631,7 +1748,15 @@ fn load(
         .borrow_mut()
         .module_cache
         .insert(key.clone(), retained);
+    if is_esm { roots.borrow_mut().active_esm_requires.insert(key.clone(), retained); }
     let result = (|| {
+        if is_esm {
+            let exports = require_es_module(context, filename, parent)?;
+            set(context, module, "exports", exports)?;
+            let loaded = context.boolean(true);
+            set(context, module, "loaded", loaded)?;
+            return Ok(exports);
+        }
         let file_text = match std::fs::read(filename) {
             Ok(bytes) => String::from_utf8(bytes)
                 .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned()),
@@ -1653,14 +1778,6 @@ fn load(
                 ));
             }
             _ => {
-                if goal == EntryGoal::Node
-                    && source_kind(filename).map_err(RootedError::host)?
-                        == quench_runtime::SourceKind::Module
-                {
-                    return Err(RootedError::host(
-                        "requiring an ES module is not implemented on the shared VM",
-                    ));
-                }
                 // Node's internal crypto utility creates a private `kHandle`
                 // symbol for native Hash objects. The compact crypto builtin
                 // uses the global registry to expose the matching handle to
@@ -1860,6 +1977,7 @@ const getLinkedBinding = () => ({});
         set(context, module, "loaded", loaded)?;
         get(context, module, "exports")
     })();
+    if is_esm { roots.borrow_mut().active_esm_requires.remove(&key); }
     if result.is_err() {
         roots.borrow_mut().module_cache.remove(&key);
         context.release_root(retained);
