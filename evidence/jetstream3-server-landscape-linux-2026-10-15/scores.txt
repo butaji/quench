@@ -1,0 +1,30 @@
+# JetStream 3 server landscape, 1 round each, stock cli.js under the node:vm prelude, --no-prefetch
+# host: Linux x86_64, 4 vCPU, 15 GiB cloud container; quench 39aef12 production build; bar: Node v26.10.0 --jitless
+# doxbee-async re-measured on 7404e94 (await pair removal): 4.71
+web-ssr quench=7.88 node_jitless=59.69
+typescript-lib quench=0.06 node_jitless=0.64
+babel-wtb quench=3.11 node_jitless=17.87
+babylon-wtb quench=0.47 node_jitless=5.94
+acorn-wtb quench=0.48 node_jitless=3.67
+espree-wtb quench=0.43 node_jitless=5.12
+esprima-next-wtb quench=0.86 node_jitless=6.14
+prettier-wtb quench=0.68 node_jitless=8.12
+postcss-wtb quench=fail node_jitless=6.67
+source-map-wtb quench=1.65 node_jitless=fail
+babel-minify-wtb quench=2.19 node_jitless=13.38
+chai-wtb quench=3.98 node_jitless=34.54
+doxbee-promise quench=1.58 node_jitless=68.50
+doxbee-async quench=0.90 node_jitless=112.06
+async-fs quench=2.34 node_jitless=38.61
+sync-fs quench=3.24 node_jitless=27.03
+js-tokens quench=0.89 node_jitless=35.05
+lazy-collections quench=4.86 node_jitless=35.71
+json-parse-inspector quench=7.44 node_jitless=130.87
+json-stringify-inspector quench=9.75 node_jitless=315.33
+validatorjs quench=11.81 node_jitless=107.37
+UniPoker quench=5.44 node_jitless=34.31
+hash-map quench=1.93 node_jitless=19.29
+stanford-crypto-aes quench=4.36 node_jitless=24.97
+stanford-crypto-pbkdf2 quench=13.56 node_jitless=37.36
+stanford-crypto-sha256 quench=15.48 node_jitless=31.46
+bigint-noble-ed25519 quench=1.95 node_jitless=20.86

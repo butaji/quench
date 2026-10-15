@@ -7232,3 +7232,64 @@ console.log(JSON.stringify(rows));
     }
     assert_eq!(observations[0], observations[1]);
 }
+
+#[test]
+fn native_http_status_reasons_preserve_mutable_map_coercion_errors_and_wire_bytes() {
+compare_node_stream_source(r#"
+const http=require('http'),net=require('net'),codes=http.STATUS_CODES,marker={},out=[],saved=Object.getOwnPropertyDescriptors(codes);
+const initial=[Object.keys(codes).map(k=>[k,codes[k],Object.getOwnPropertyDescriptor(codes,k)]),Object.getOwnPropertyDescriptor(http,'STATUS_CODES').writable,Object.getPrototypeOf(codes)===Object.prototype];
+const cases=[
+ ['head-default',r=>r.writeHead(200)],
+ ['implicit-default',r=>{r.statusCode=451;r.end('x')}],
+ ['map-mutation',r=>{codes[600]='Changed';r.statusCode=600;r.end('x')}],
+ ['map-falsy',r=>{codes[601]=0;r.statusCode=601;r.end('x')}],
+ ['map-replacement',r=>{codes[602]='Captured';http.STATUS_CODES={602:'Wrong'};r.writeHead(602)}],
+ ['explicit-empty',r=>r.writeHead(200,'')],
+ ['existing-empty',r=>{r.statusMessage='';r.writeHead(404)}],
+ ['existing-number',r=>{r.statusMessage=123;r.writeHead(200)}],
+ ['existing-object',(r,events)=>{r.statusMessage={toString(){events.push('convert');return 'Object Reason'}};r.writeHead(200)}],
+ ['latin1',r=>r.writeHead(200,'caf\u00e9')],
+ ['invalid-crlf',r=>r.writeHead(201,'bad\r\nInjected: x')],
+ ['invalid-wide',r=>r.writeHead(202,'bad\u010d')],
+ ['invalid-del',r=>r.writeHead(203,'bad\x7f')],
+ ['status-object',r=>r.writeHead({})],
+ ['status-array',r=>r.writeHead([])],
+ ['status-string',r=>r.writeHead('201')],
+ ['status-fraction',r=>r.writeHead(201.7)],
+ ['status-wrap',r=>r.writeHead(2**32+200)],
+ ['map-throw',r=>{Object.defineProperty(codes,500,{configurable:true,get(){throw marker}});r.writeHead(500)}],
+ ['message-accessor',(r,events)=>{let value='';Object.defineProperty(r,'statusMessage',{configurable:true,get(){events.push('get');return value},set(v){events.push(['set',v]);value=v}});r.writeHead(200)}],
+];
+const server=http.createServer((req,res)=>{const i=Number(req.url.slice(1)),events=[];res.sendDate=false;let error=null;try{cases[i][1](res,events)}catch(e){error=[e.name,e.code,e.message,e===marker]}
+ const value=res.statusMessage;out[i]=[cases[i][0],error,res.statusCode,typeof value,typeof value==='string'||typeof value==='number'?value:null,!!res.headersSent,events.slice()];
+ http.STATUS_CODES=codes;for(const key of Object.keys(codes))if(!(key in saved))delete codes[key];for(const [k,d]of Object.entries(saved))Object.defineProperty(codes,k,d);
+ if(error){res.statusMessage='OK';res.statusCode=200}if(!res.finished)res.end('x');});
+server.listen(0,'127.0.0.1',()=>{let i=0;function next(){const parts=[];const socket=net.connect(server.address().port,'127.0.0.1',()=>socket.write(`GET /${i} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n`));socket.on('data',b=>parts.push(b));socket.on('end',()=>{out[i].push(Buffer.concat(parts).toString('latin1').split('\r\n')[0]);if(++i<cases.length)next();else server.close(()=>console.log(JSON.stringify([initial,out])))});}next();});
+
+"#);
+}
+
+#[test]
+fn native_util_extend_preserves_reverse_copy_effects_metadata_errors_and_deprecation() {
+compare_node_stream_source(r#"
+const u=require('util'),f=u._extend,out=[],marker={},events=[],original=process.emitWarning;
+process.emitWarning=function(...args){events.push(['warning',...args.map(x=>typeof x==='function'?[x.name,x.length]:x)])};
+function check(tag,fn){events.length=0;try{out.push([tag,'ok',fn(),events.slice()])}catch(e){out.push([tag,e.name,e.code,e.message,e===marker,events.slice()])}}
+check('metadata',()=>{const d=Object.getOwnPropertyDescriptor(u,'_extend'),p=Object.getPrototypeOf(f);return [f.name,f.length,Object.hasOwn(f,'prototype'),p.name,p.length,f.prototype===p.prototype,d.writable,d.enumerable,d.configurable]});
+check('no-deprecation',()=>{process.noDeprecation=true;const result=f({},{});delete process.noDeprecation;return result});check('warning-first',()=>f({},{}));check('warning-once',()=>f({},{}));check('shared-warning-code',()=>u.deprecate(()=>42,'duplicate','DEP0060')());
+for(const source of [undefined,null,false,1,'abc',Symbol('s'),1n,()=>{},[],[1,2],new Uint8Array([3,4]),Object('ab'),{x:1}])check(['source',typeof source,String(source)],()=>{const target={};return [f(target,source)===target,target]});
+for(const target of [undefined,null,false,1,'abc',Symbol('t'),1n,{},Object.preventExtensions({}),Object.freeze({x:0})])check(['target',typeof target,String(target)],()=>f(target,{x:1}));
+check('reverse',()=>{const target={};const source={get a(){events.push('a');return 1},get b(){events.push('b');return 2}};return [f(target,source)===target,Object.keys(target)]});
+check('snapshot',()=>{const source={a:1,get b(){events.push('b');delete source.a;source.c=3;return 2}};return f({},source)});
+check('symbols',()=>{const source={x:1,[Symbol('key')]:2};Object.defineProperty(source,'hidden',{value:3});return Reflect.ownKeys(f({},source))});
+check('setters',()=>{const target={set a(v){events.push(['a',this===target,v])},set b(v){events.push(['b',this===target,v])}};return f(target,{a:1,b:2})===target});
+check('getter-throws',()=>f({},{get a(){events.push('get');throw marker}}));
+check('setter-throws',()=>f({set a(v){events.push('set');throw marker}},{a:1}));
+check('proxy',()=>{const source=new Proxy({a:1,b:2},{ownKeys(t){events.push('keys');return ['a','b']},getOwnPropertyDescriptor(t,k){events.push(['descriptor',k]);return Object.getOwnPropertyDescriptor(t,k)},get(t,k){events.push(['get',k]);return t[k]}});return f({},source)});
+check('proxy-false',()=>f(new Proxy({},{set(t,k,v){events.push(['set',k,v]);return false}}),{a:1}));
+check('proto',()=>{const source=JSON.parse('{"__proto__":{"inherited":42}}');const target=f({},source);return [target.inherited,Object.hasOwn(target,'__proto__')]});
+check('construct',()=>{const source={x:1},target={};return new f(target,source)===target});
+process.emitWarning=original;console.log(JSON.stringify(out));
+
+"#);
+}
