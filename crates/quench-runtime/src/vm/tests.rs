@@ -10014,3 +10014,40 @@ fn private_field_initialization_does_not_follow_proxy_prototypes() {
         assert_eq!(output.borrow().as_slice(),["[true,true,42,[]]"]);
     }
 }
+
+#[test]
+fn typed_array_base_methods_validate_backing_before_arguments_with_node_diagnostics() {
+    let source = r#"
+      for(const name of ['includes','indexOf','join','reverse','fill','copyWithin','slice','keys','values','entries']) {
+        for(const detached of [false,true]) {
+          const buffer=new ArrayBuffer(8,{maxByteLength:16}),view=new Uint8Array(buffer,4,2);
+          if(detached)buffer.transfer();else buffer.resize(2);
+          let called=false;
+          const argument={valueOf(){called=true;throw Error('argument coercion');},toString(){called=true;throw Error('argument coercion');}};
+          try{Uint8Array.prototype[name].call(view,argument);throw Error('accepted invalid backing');}
+          catch(error){
+            const state=name==='keys'?'detached':'detached or out-of-bounds';
+            if(!(error instanceof TypeError)||error.message!==`Cannot perform %TypedArray%.prototype.${name} on a ${state} ArrayBuffer`)throw error;
+          }
+          if(called)throw Error('converted argument before validating receiver');
+        }
+        const value={toString(){throw Error('public conversion');}};
+        try{Uint8Array.prototype[name].call(value);throw Error('accepted invalid brand');}
+        catch(error){
+          const expected=name==='join'||name==='slice'?`Method %TypedArray%.prototype.${name} called on incompatible receiver [object Object]`:'this is not a typed array.';
+          if(!(error instanceof TypeError)||error.message!==expected)throw error;
+        }
+      }
+    "#;
+    for program in [
+        Engine::compile(crate::ExecutionRequest {
+            source,
+            name: "typed-method-diagnostics.js",
+            kind: crate::SourceKind::Script,
+        })
+        .unwrap(),
+        Engine::specialize(source, "typed-method-diagnostics.js").unwrap(),
+    ] {
+        Vm::new(SilentHost).execute(&program).unwrap();
+    }
+}
