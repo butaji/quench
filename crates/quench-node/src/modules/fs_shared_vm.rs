@@ -1770,7 +1770,7 @@ const ASYNC_OWNER_API: &str = r#"(ownerSync, descriptor) => {
   };
 }"#;
 
-const ASYNC_LSTAT_API: &str = r#"(lstatSync) => {
+const ASYNC_LSTAT_API: &str = r#"(lstatSync, toPathIfFileURL) => {
   return function lstat(path, options, callback) {
     if (typeof options === 'function') {
       callback = options;
@@ -1781,13 +1781,13 @@ const ASYNC_LSTAT_API: &str = r#"(lstatSync) => {
       error.code = 'ERR_INVALID_ARG_TYPE';
       throw error;
     }
-    if (typeof path !== 'string' && !Buffer.isBuffer(path) && !(path instanceof URL)) {
+    path = toPathIfFileURL(path);
+    if (typeof path !== 'string' && !Buffer.isBuffer(path)) {
       const error = new TypeError(`The "path" argument must be of type string, Buffer, or URL. Received ${path === null || path === undefined ? path : typeof path === 'object' ? `an instance of ${Array.isArray(path) ? 'Array' : 'Object'}` : `type ${typeof path} (${String(path)})`}`);
       error.code = 'ERR_INVALID_ARG_TYPE';
       throw error;
     }
     if (Buffer.isBuffer(path)) path = path.toString();
-    else if (path instanceof URL) path = decodeURIComponent(path.pathname);
     queueMicrotask(() => {
       try { Reflect.apply(callback, undefined, [null, lstatSync(path, options)]); }
       catch (error) { Reflect.apply(callback, undefined, [error]); }
@@ -1795,7 +1795,7 @@ const ASYNC_LSTAT_API: &str = r#"(lstatSync) => {
   };
 }"#;
 
-const ASYNC_STAT_API: &str = r#"(statSync) => {
+const ASYNC_STAT_API: &str = r#"(statSync, toPathIfFileURL) => {
   return function stat(path, options, callback) {
     if (typeof options === 'function') {
       callback = options;
@@ -1806,13 +1806,13 @@ const ASYNC_STAT_API: &str = r#"(statSync) => {
       error.code = 'ERR_INVALID_ARG_TYPE';
       throw error;
     }
-    if (typeof path !== 'string' && !Buffer.isBuffer(path) && !(path instanceof URL)) {
+    path = toPathIfFileURL(path);
+    if (typeof path !== 'string' && !Buffer.isBuffer(path)) {
       const error = new TypeError(`The "path" argument must be of type string, Buffer, or URL. Received ${path === null || path === undefined ? path : typeof path === 'object' ? `an instance of ${Array.isArray(path) ? 'Array' : 'Object'}` : `type ${typeof path} (${String(path)})`}`);
       error.code = 'ERR_INVALID_ARG_TYPE';
       throw error;
     }
     if (Buffer.isBuffer(path)) path = path.toString();
-    else if (path instanceof URL) path = decodeURIComponent(path.pathname);
     queueMicrotask(() => {
       try {
         const stats = statSync(path, options);
@@ -1823,14 +1823,14 @@ const ASYNC_STAT_API: &str = r#"(statSync) => {
   };
 }"#;
 
-const STAT_SYNC_API: &str = r#"(hostStatSync) => function wrappedStatSync(path, options) {
-  if (typeof path !== 'string' && !Buffer.isBuffer(path) && !(path instanceof URL)) {
+const STAT_SYNC_API: &str = r#"(hostStatSync, toPathIfFileURL) => function wrappedStatSync(path, options) {
+  path = toPathIfFileURL(path);
+  if (typeof path !== 'string' && !Buffer.isBuffer(path)) {
     const error = new TypeError(`The "path" argument must be of type string, Buffer, or URL. Received ${path === null || path === undefined ? path : typeof path === 'object' ? `an instance of ${Array.isArray(path) ? 'Array' : 'Object'}` : `type ${typeof path} (${String(path)})`}`);
     error.code = 'ERR_INVALID_ARG_TYPE';
     throw error;
   }
   if (Buffer.isBuffer(path)) path = path.toString();
-  else if (path instanceof URL) path = decodeURIComponent(path.pathname);
   try { return hostStatSync(path, options); }
   catch (error) {
     if (options?.throwIfNoEntry === false && error?.code === 'ENOENT') return undefined;
@@ -1838,14 +1838,14 @@ const STAT_SYNC_API: &str = r#"(hostStatSync) => function wrappedStatSync(path, 
   }
 }"#;
 
-const STATFS_SYNC_API: &str = r#"(hostStatfsSync) => function statfsSync(path, options) {
-  if (typeof path !== 'string' && !Buffer.isBuffer(path) && !(path instanceof URL)) {
+const STATFS_SYNC_API: &str = r#"(hostStatfsSync, toPathIfFileURL) => function statfsSync(path, options) {
+  path = toPathIfFileURL(path);
+  if (typeof path !== 'string' && !Buffer.isBuffer(path)) {
     const error = new TypeError(`The "path" argument must be of type string, Buffer, or URL. Received ${path === null || path === undefined ? path : typeof path === 'object' ? `an instance of ${Array.isArray(path) ? 'Array' : 'Object'}` : `type ${typeof path} (${String(path)})`}`);
     error.code = 'ERR_INVALID_ARG_TYPE';
     throw error;
   }
   if (Buffer.isBuffer(path)) path = path.toString();
-  else if (path instanceof URL) path = decodeURIComponent(path.pathname);
   const stats = hostStatfsSync(path);
   if (options?.bigint === true) {
     for (const name of ['type', 'bsize', 'frsize', 'blocks', 'bfree', 'bavail', 'files', 'ffree']) {
@@ -1855,7 +1855,7 @@ const STATFS_SYNC_API: &str = r#"(hostStatfsSync) => function statfsSync(path, o
   return stats;
 }"#;
 
-const ASYNC_STATFS_API: &str = r#"(statfsSync) => function statfs(path, options, callback) {
+const ASYNC_STATFS_API: &str = r#"(statfsSync, toPathIfFileURL) => function statfs(path, options, callback) {
   if (typeof options === 'function') {
     callback = options;
     options = undefined;
@@ -1865,13 +1865,13 @@ const ASYNC_STATFS_API: &str = r#"(statfsSync) => function statfs(path, options,
     error.code = 'ERR_INVALID_ARG_TYPE';
     throw error;
   }
-  if (typeof path !== 'string' && !Buffer.isBuffer(path) && !(path instanceof URL)) {
+  path = toPathIfFileURL(path);
+  if (typeof path !== 'string' && !Buffer.isBuffer(path)) {
     const error = new TypeError(`The "path" argument must be of type string, Buffer, or URL. Received ${path === null || path === undefined ? path : typeof path === 'object' ? `an instance of ${Array.isArray(path) ? 'Array' : 'Object'}` : `type ${typeof path} (${String(path)})`}`);
     error.code = 'ERR_INVALID_ARG_TYPE';
     throw error;
   }
   if (Buffer.isBuffer(path)) path = path.toString();
-  else if (path instanceof URL) path = decodeURIComponent(path.pathname);
   queueMicrotask(() => {
     try { Reflect.apply(callback, undefined, [null, statfsSync(path, options)]); }
     catch (error) { Reflect.apply(callback, undefined, [error]); }
@@ -2150,21 +2150,31 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         &[read_file, validate, complete],
     )?;
     set(context, module, "readFile", read_file_async)?;
+    let to_path_if_file_url =
+        context.host_function(crate::host::shared_vm::operation("toPathIfFileURL"))?;
     let stat_host = context.host_function(crate::host::shared_vm::operation("fsStatSync"))?;
     let stat_factory =
         context.evaluate_script_rooted(STAT_SYNC_API, "node:fs/shared-stat-sync.js")?;
     let undefined = context.undefined();
     let stat_sync =
-        context.call_rooted(stat_factory, undefined, &[stat_host])?;
+        context.call_rooted(stat_factory, undefined, &[stat_host, to_path_if_file_url])?;
     set(context, module, "statSync", stat_sync)?;
     let statfs_host = context.host_function(crate::host::shared_vm::operation("fsStatfsSync"))?;
     let statfs_factory =
         context.evaluate_script_rooted(STATFS_SYNC_API, "node:fs/shared-statfs-sync.js")?;
-    let statfs_sync = context.call_rooted(statfs_factory, undefined, &[statfs_host])?;
+    let statfs_sync = context.call_rooted(
+        statfs_factory,
+        undefined,
+        &[statfs_host, to_path_if_file_url],
+    )?;
     set(context, module, "statfsSync", statfs_sync)?;
     let statfs_factory =
         context.evaluate_script_rooted(ASYNC_STATFS_API, "node:fs/shared-async-statfs.js")?;
-    let statfs = context.call_rooted(statfs_factory, undefined, &[statfs_sync])?;
+    let statfs = context.call_rooted(
+        statfs_factory,
+        undefined,
+        &[statfs_sync, to_path_if_file_url],
+    )?;
     set(context, module, "statfs", statfs)?;
     let exists_factory = context.evaluate_script_rooted(EXISTS_API, "node:fs/shared-exists.js")?;
     let undefined = context.undefined();
@@ -2196,15 +2206,13 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let lstat_factory =
         context.evaluate_script_rooted(STAT_SYNC_API, "node:fs/shared-lstat-sync.js")?;
     let undefined = context.undefined();
-    let lstat_sync = context.call_rooted(
-        lstat_factory,
-        undefined,
-        &[lstat_host],
-    )?;
+    let lstat_sync =
+        context.call_rooted(lstat_factory, undefined, &[lstat_host, to_path_if_file_url])?;
     set(context, module, "lstatSync", lstat_sync)?;
     let lstat_factory =
         context.evaluate_script_rooted(ASYNC_LSTAT_API, "node:fs/shared-async-lstat.js")?;
-    let lstat = context.call_rooted(lstat_factory, undefined, &[lstat_sync])?;
+    let lstat =
+        context.call_rooted(lstat_factory, undefined, &[lstat_sync, to_path_if_file_url])?;
     set(context, module, "lstat", lstat)?;
     let readdir_sync = make_readdir_sync(context)?;
     set(context, module, "readdirSync", readdir_sync)?;
@@ -2296,7 +2304,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let stat_factory =
         context.evaluate_script_rooted(ASYNC_STAT_API, "node:fs/shared-async-stat.js")?;
     let undefined = context.undefined();
-    let stat = context.call_rooted(stat_factory, undefined, &[stat_sync])?;
+    let stat = context.call_rooted(stat_factory, undefined, &[stat_sync, to_path_if_file_url])?;
     set(context, module, "stat", stat)?;
     let mkdir_sync = get(context, module, "mkdirSync")?;
     let mkdir_factory =
