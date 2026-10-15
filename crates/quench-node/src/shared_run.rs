@@ -238,6 +238,7 @@ pub fn executable_path() -> std::io::Result<PathBuf> {
 
 /// Parse the development CLI's entry form and route it through `execute_shared`.
 pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<ExitCode, String> {
+    crate::host::resident_pages::map_touched_pages_only();
     let args = arguments.into_iter().collect::<Vec<_>>();
     match args.first().map(String::as_str) {
         Some("--help") | Some("-h") => {
