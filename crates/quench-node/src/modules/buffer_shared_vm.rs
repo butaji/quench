@@ -4,7 +4,7 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
-    r#"(encode, decode, canonicalEncoding, encodeView) => {
+    r#"(encode, decode, canonicalEncoding, encodeView, maxStringLength) => {
   const codedTypeError = (message, code) => {
     const error = new TypeError(message);
     error.code = code;
@@ -12,7 +12,6 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
   };
   const typedArraySet = Object.getPrototypeOf(Uint8Array.prototype).set;
   const maxBufferLength = Number.MAX_SAFE_INTEGER;
-  const maxStringLength = 536870888;
   const invalidArgumentDescription = (value) => {
     if (value === null || value === undefined) return ` Received ${value}`;
     if (typeof value === "function") return ` Received function ${value.name}`;
@@ -540,10 +539,18 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let canonical_encoding =
         context.host_function(crate::host::shared_vm::operation("bufferCanonicalEncoding"))?;
     let undefined = context.undefined();
+    let maximum_string_length =
+        context.number(NativeContext::<NodeHost>::MAX_STRING_CODE_UNITS as f64);
     let constructor = context.call_rooted(
         factory,
         undefined,
-        &[encode, decode, canonical_encoding, encode_view],
+        &[
+            encode,
+            decode,
+            canonical_encoding,
+            encode_view,
+            maximum_string_length,
+        ],
     )?;
 
     let module = context.object_rooted()?;
@@ -561,7 +568,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         let value = get(context, limits, name)?;
         context.define_data_property_rooted(limits, key, value, false, true, false)?;
     }
-    super::buffer_string_shared_vm::install(context, prototype, limits)?;
+    super::buffer_string_shared_vm::install(context, prototype)?;
     super::buffer_fill_shared_vm::install(context, prototype)?;
     super::buffer_inspect_shared_vm::install(context, module, prototype)?;
     install_backing_getters(context, buffer, prototype)?;
