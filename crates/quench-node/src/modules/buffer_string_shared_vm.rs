@@ -43,11 +43,7 @@ fn index(c: &mut Context<'_>, v: RootId, fallback: usize) -> Result<usize, Roote
     }
     Ok(n as usize)
 }
-pub(crate) fn install(
-    c: &mut Context<'_>,
-    prototype: RootId,
-    limits: RootId,
-) -> Result<(), RootedError> {
+pub(crate) fn install(c: &mut Context<'_>, prototype: RootId) -> Result<(), RootedError> {
     let data = c.null_object_rooted()?;
     let global = c.global_root()?;
     let u8 = get(c, global, "Uint8Array")?;
@@ -64,8 +60,6 @@ pub(crate) fn install(
         let f = getter(c, p, n)?;
         put(c, data, &format!("dv{n}"), f)?;
     }
-    let maximum = get(c, limits, "MAX_STRING_LENGTH")?;
-    put(c, data, "maximum", maximum)?;
     let f =
         c.host_constructor_with_data(crate::host::shared_vm::operation("bufferToString"), data)?;
     let k = c.string_rooted("name");
@@ -149,12 +143,16 @@ fn slice(
     let bytes = c
         .view_bytes_rooted(view)
         .ok_or_else(|| RootedError::host("original byte view missing"))?;
-    let maximum = get(c, data, "maximum")?;
-    let maximum =
-        c.rooted_value(maximum)
-            .and_then(|v| v.as_number())
-            .ok_or_else(|| RootedError::host("string length limit missing"))? as usize;
-    let Some(units) = super::buffer_codec::decode_units_limited(&bytes, encoding, maximum) else {
+    decode_bytes(c, &bytes, encoding)
+}
+
+pub(crate) fn decode_bytes(
+    c: &mut Context<'_>,
+    bytes: &[u8],
+    encoding: &str,
+) -> Result<RootId, RootedError> {
+    let maximum = Context::MAX_STRING_CODE_UNITS;
+    let Some(units) = super::buffer_codec::decode_units_limited(bytes, encoding, maximum) else {
         let e = c.error_rooted(&format!(
             "Cannot create a string longer than 0x{maximum:x} characters"
         ))?;
