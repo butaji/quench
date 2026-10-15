@@ -194,6 +194,14 @@ impl<H: Host> Vm<H> {
                         | Native::TemporalZonedDateTime
                         | Native::TemporalPlainMonthDay
                         | Native::TemporalPlainYearMonth
+                        | Native::WasmModule
+                        | Native::WasmInstance
+                        | Native::WasmMemory
+                        | Native::WasmTable
+                        | Native::WasmGlobal
+                        | Native::WasmCompileError
+                        | Native::WasmLinkError
+                        | Native::WasmRuntimeError
                 ),
             },
             _ => false,
@@ -857,7 +865,9 @@ impl<H: Host> Vm<H> {
                     Native::SyntaxError => Some("SyntaxError"),
                     Native::TypeError | Native::RealmTypeError => Some("TypeError"),
                     Native::URIError => Some("URIError"),
-                    _ => None,
+                    native => super::wasm_js::WASM_ERRORS
+                        .iter()
+                        .find_map(|(name, error)| (*error == native).then_some(*name)),
                 })
             else {
                 return Ok(None);
@@ -1008,6 +1018,9 @@ impl<H: Host> Vm<H> {
                 self.construct_collection_native(p, native, args, new_target)
             }
             Native::ShadowRealm => self.construct_shadow_realm(p, new_target),
+            native if super::wasm_js::is_wasm_js_constructor(native) => {
+                self.construct_wasm_js_native(p, native, args)
+            }
             Native::WeakMap | Native::WeakSet => {
                 self.construct_weak_collection_native(p, native, args, new_target)
             }
@@ -1056,7 +1069,10 @@ impl<H: Host> Vm<H> {
             | Native::SyntaxError
             | Native::TypeError
             | Native::URIError
-            | Native::RealmTypeError => {
+            | Native::RealmTypeError
+            | Native::WasmCompileError
+            | Native::WasmLinkError
+            | Native::WasmRuntimeError => {
                 self.construct_error_with_new_target(p, native, args, new_target)
             }
             Native::String => {
