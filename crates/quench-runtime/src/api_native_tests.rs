@@ -327,6 +327,39 @@ fn native_construction_reentry_scopes_results_and_retains_thrown_identity() {
     }
 }
 
+#[test]
+fn native_backed_ordinary_constructors_preserve_completion_and_new_target() {
+    let (mut runtime, _program, _host) = initialized(
+        "var payload = {}; var Target = function() {};",
+    );
+    let global = runtime.global_root().unwrap();
+    let payload = property(&mut runtime, global, "payload");
+    let target = property(&mut runtime, global, "Target");
+    let constructor = runtime.host_constructor(ECHO).unwrap();
+    let prototype = property(&mut runtime, constructor, "prototype");
+    let linked_constructor = property(&mut runtime, prototype, "constructor");
+    assert_eq!(runtime.rooted_value(linked_constructor), runtime.rooted_value(constructor));
+    let callback = runtime.host_function(CONSTRUCT).unwrap();
+    let receiver = runtime.root(Value::UNDEFINED);
+    let number = runtime.root(Value::number(42.0));
+    let instance = runtime.call_rooted(callback, receiver, &[constructor, target, number]).unwrap();
+    let object = property(&mut runtime, global, "Object");
+    let get_prototype = property(&mut runtime, object, "getPrototypeOf");
+    let object_prototype = runtime.call_rooted(get_prototype, object, &[instance]).unwrap();
+    let target_prototype = property(&mut runtime, target, "prototype");
+    assert_eq!(runtime.rooted_value(object_prototype), runtime.rooted_value(target_prototype));
+    let returned = runtime.call_rooted(callback, receiver, &[constructor, target, payload]).unwrap();
+    assert_eq!(runtime.rooted_value(returned), runtime.rooted_value(payload));
+    let original_prototype = runtime.call_rooted(get_prototype, object, &[payload]).unwrap();
+    assert_ne!(runtime.rooted_value(original_prototype), runtime.rooted_value(target_prototype));
+
+    // Adding a public prototype does not change the private [[Construct]] fact.
+    let ordinary = runtime.host_function(ECHO).unwrap();
+    let key = runtime.string_rooted("prototype");
+    assert!(runtime.set_property_rooted(ordinary, key, target_prototype, ordinary).unwrap());
+    assert!(runtime.call_rooted(callback, receiver, &[ordinary, ordinary, number]).is_err());
+}
+
 fn escaped(
     ctx: &mut NativeContext<'_, TestHost>,
     receiver: RootId,
@@ -713,4 +746,49 @@ fn native_number_conversion_uses_original_hooks_and_shared_language_errors() {
         Engine::compile(crate::ExecutionRequest { source, name: "native-number.js", kind: crate::SourceKind::Script }).unwrap(),
         Engine::specialize(source,"native-number.js").unwrap(),
     ] { Runtime::new(NumberCoercionHost).execute(&program).unwrap(); }
+}
+
+#[derive(Default)]
+struct InstanceOfHost;
+impl Host for InstanceOfHost {
+    fn write_line(&mut self, _: &str) {}
+    fn clock_millis(&mut self) -> f64 {
+        0.0
+    }
+    fn functions(&self) -> &[HostFunction<Self>] {
+        crate::host_functions![global "nativeInstanceOf" (2) => native_instanceof]
+    }
+}
+fn native_instanceof(
+    context: &mut NativeContext<'_, InstanceOfHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    context.collect()?;
+    let yes = context.instance_of_rooted(args[0], args[1])?;
+    Ok(context.boolean(yes))
+}
+#[test]
+fn native_instanceof_preserves_original_hooks_proxy_effects_and_abrupt_completions() {
+    let source = r#"
+    function C(){};const object=new C(),marker={},log=[];
+    if(!nativeInstanceOf(object,C)||nativeInstanceOf({},C)||nativeInstanceOf(null,C))throw Error('ordinary membership');
+    const constructor={get [Symbol.hasInstance](){log.push('get');return function(value){log.push(this===constructor,value===object);return marker;};}};
+    if(!nativeInstanceOf(object,constructor)||JSON.stringify(log)!=='["get",true,true]')throw Error('original hook');
+    const proxy=new Proxy(object,{getPrototypeOf(){throw marker;}});
+    try{nativeInstanceOf(proxy,C);throw Error('missing proxy error');}catch(error){if(error!==marker)throw error;}
+    try{nativeInstanceOf(object,{[Symbol.hasInstance](){throw marker;}});throw Error('missing hook error');}catch(error){if(error!==marker)throw error;}
+    for(const constructor of [null,{}, {[Symbol.hasInstance]:1}]){try{nativeInstanceOf(object,constructor);throw Error('missing type error');}catch(error){if(!(error instanceof TypeError))throw error;}}
+    "#;
+    for program in [
+        Engine::compile(crate::ExecutionRequest {
+            source,
+            name: "native-instanceof.js",
+            kind: crate::SourceKind::Script,
+        })
+        .unwrap(),
+        Engine::specialize(source, "native-instanceof.js").unwrap(),
+    ] {
+        Runtime::new(InstanceOfHost).execute(&program).unwrap();
+    }
 }
