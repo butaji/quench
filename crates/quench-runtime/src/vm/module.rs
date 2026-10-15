@@ -24,6 +24,10 @@ pub(crate) enum ModuleOutcome {
 #[derive(Clone, Debug)]
 pub(crate) struct ModuleRecord {
     pub(crate) outcome: ModuleOutcome,
+    /// The single compiled program and binding environment for this module.
+    pub(crate) program: Option<super::program_store::ProgramId>,
+    /// Resolved identities in the compiled program's module-request order.
+    pub(crate) resolved_requests: Vec<String>,
     deferred_namespace: Option<Value>,
     evaluation_promise: Option<Value>,
     waiters: Vec<Value>,
@@ -34,6 +38,8 @@ pub(crate) struct ModuleRecord {
 impl ModuleRecord {
     pub(crate) fn loading(import_promise: Value) -> Self {
         Self {
+            program: None,
+            resolved_requests: Vec::new(),
             outcome: ModuleOutcome::Pending(ModulePhase::Loading),
             deferred_namespace: None,
             evaluation_promise: None,
@@ -45,6 +51,8 @@ impl ModuleRecord {
 
     pub(crate) fn evaluating_root(namespace: Value, import_promise: Value) -> Self {
         Self {
+            program: None,
+            resolved_requests: Vec::new(),
             outcome: ModuleOutcome::Pending(ModulePhase::Evaluating),
             deferred_namespace: None,
             evaluation_promise: None,
@@ -56,6 +64,8 @@ impl ModuleRecord {
 
     pub(crate) fn evaluating_main(namespace: Value) -> Self {
         Self {
+            program: None,
+            resolved_requests: Vec::new(),
             outcome: ModuleOutcome::Pending(ModulePhase::Evaluating),
             deferred_namespace: None,
             evaluation_promise: None,
@@ -67,6 +77,8 @@ impl ModuleRecord {
 
     pub(crate) fn evaluating_static() -> Self {
         Self {
+            program: None,
+            resolved_requests: Vec::new(),
             outcome: ModuleOutcome::Pending(ModulePhase::Evaluating),
             deferred_namespace: None,
             evaluation_promise: None,
@@ -78,6 +90,8 @@ impl ModuleRecord {
 
     pub(crate) fn materialized(namespace: Value) -> Self {
         Self {
+            program: None,
+            resolved_requests: Vec::new(),
             outcome: ModuleOutcome::Evaluated(namespace),
             deferred_namespace: None,
             evaluation_promise: None,
@@ -89,6 +103,8 @@ impl ModuleRecord {
 
     pub(crate) fn deferred(namespace: Value) -> Self {
         Self {
+            program: None,
+            resolved_requests: Vec::new(),
             outcome: ModuleOutcome::Deferred(namespace),
             deferred_namespace: Some(namespace),
             evaluation_promise: None,
@@ -208,6 +224,16 @@ impl ModuleRecord {
         } else {
             None
         }
+    }
+
+    /// Instantiation failure leaves the compiled graph unlinked, so the next
+    /// import retries it. Only failures after evaluation starts are permanent.
+    pub(crate) fn retry_instantiation(&mut self) -> Option<Vec<Value>> {
+        if !matches!(self.phase(), ModulePhase::Loading | ModulePhase::Linking) {
+            return None;
+        }
+        self.outcome = ModuleOutcome::Pending(ModulePhase::Loading);
+        Some(std::mem::take(&mut self.waiters))
     }
 
     pub(crate) fn roots(&self) -> impl Iterator<Item = Value> {

@@ -1,0 +1,12 @@
+   Compiling quench-node v0.1.0 (/workspace/quench/crates/quench-node)
+   Compiling quench-runtime v0.1.0 (/workspace/quench/crates/quench-runtime)
+   Compiling quench-wasm v0.1.0 (/workspace/quench/crates/quench-wasm)
+   Compiling quench-node-test v0.1.0 (/workspace/quench/crates/quench-node-test)
+    Finished `iteration` profile [optimized] target(s) in 1m 54s
+     Running tests/shared_regressions.rs (work/host-build/iteration/deps/shared_regressions-5c2e69aab5219543)
+
+running 1 test
+test promise_resolution_with_promises_keeps_job_order_and_species_reads ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.31s
+

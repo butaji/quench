@@ -499,11 +499,11 @@ impl Engine {
             if matches!(
                 import.phase,
                 ModuleRequestPhase::Source | ModuleRequestPhase::Defer
-            ) {
+            ) || import.module_type.is_some() {
                 locals.push((local, exported));
                 continue;
             }
-            if import.phase != ModuleRequestPhase::Evaluation || import.module_type.is_some() {
+            if import.phase != ModuleRequestPhase::Evaluation {
                 return None;
             }
             plan.reexports.push(match &import.imported {

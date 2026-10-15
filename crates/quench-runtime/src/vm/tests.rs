@@ -4186,7 +4186,7 @@ fn dynamic_import_waiters_are_rooted_while_queued_and_during_batch_evaluation() 
                     bytes: source.as_bytes().to_vec(),
                     source,
                 },
-                promises: vec![promise],
+                promise,
             });
         }
         if collect_while_queued {

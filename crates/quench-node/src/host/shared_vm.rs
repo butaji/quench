@@ -64,6 +64,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "processKill" (2) => crate::modules::process_shared_vm::kill,
         method "bufferConstructor" (0) => crate::modules::buffer_shared_vm::constructor,
         method "webStreamsInitialize" (0) => commonjs::initialize_web_streams,
+        method "markAsUncloneable" (1) => crate::modules::clone_shared_vm::mark_as_uncloneable,
         method "webApisInitialize" (0) => commonjs::initialize_web_apis,
         method "processSurfaceInitialize" (0) => commonjs::initialize_process_surface,
         method "processRawDebug" (0) => crate::modules::process_shared_vm::raw_debug,
@@ -333,7 +334,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "httpResponseSetHeader" (4) => crate::modules::http_shared_vm::response_set_header,
         method "httpResponseGetHeader" (2) => crate::modules::http_shared_vm::response_get_header,
         method "httpResponseRemoveHeader" (2) => crate::modules::http_shared_vm::response_remove_header,
-        method "httpResponseWrite" (6) => crate::modules::http_shared_vm::response_write,
+        method "httpResponseWrite" (7) => crate::modules::http_shared_vm::response_write,
         method "httpResponseFinish" (7) => crate::modules::http_shared_vm::response_finish,
         method "httpResponseWriteHead" (6) => crate::modules::http_shared_vm::response_write_head,
         method "httpResponseInitialize" (2) => crate::modules::http_shared_vm::response_initialize,
@@ -686,25 +687,36 @@ impl quench_runtime::Host for NodeHost {
         } else {
             referrer.parent().unwrap_or(Path::new(".")).to_path_buf()
         };
-        let resolver = oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
-            extensions: vec![".mjs".into(), ".js".into(), ".json".into(), ".cjs".into()],
-            main_files: vec!["index".into()],
-            condition_names: vec!["node".into(), "import".into(), "default".into()],
-            ..Default::default()
-        });
-        let resolution_specifier = if internal {
-            format!("./{specifier}")
+        let path = if !internal {
+            commonjs::exact_file_path(&base, specifier)
         } else {
-            specifier.to_owned()
+            None
         };
-        let resolution = match resolver.resolve(&base, &resolution_specifier) {
-            Ok(resolution) => resolution,
-            Err(
-                oxc_resolver::ResolveError::NotFound(_) | oxc_resolver::ResolveError::Specifier(_),
-            ) => return Ok(None),
-            Err(error) => return Err(error.to_string()),
+        let path = match path {
+            Some(path) => path,
+            None => {
+                let resolver = oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
+                    extensions: vec![".mjs".into(), ".js".into(), ".json".into(), ".cjs".into()],
+                    main_files: vec!["index".into()],
+                    condition_names: vec!["node".into(), "import".into(), "default".into()],
+                    ..Default::default()
+                });
+                let resolution_specifier = if internal {
+                    format!("./{specifier}")
+                } else {
+                    specifier.to_owned()
+                };
+                let resolution = match resolver.resolve(&base, &resolution_specifier) {
+                    Ok(resolution) => resolution,
+                    Err(
+                        oxc_resolver::ResolveError::NotFound(_)
+                        | oxc_resolver::ResolveError::Specifier(_),
+                    ) => return Ok(None),
+                    Err(error) => return Err(error.to_string()),
+                };
+                resolution.full_path()
+            }
         };
-        let path = resolution.full_path();
         let path = std::fs::canonicalize(&path).unwrap_or(path);
         let bytes =
             std::fs::read(&path).map_err(|error| format!("module {}: {error}", path.display()))?;
@@ -773,6 +785,14 @@ impl quench_runtime::Host for NodeHost {
         url::Url::from_file_path(absolute)
             .map(|url| url.to_string())
             .unwrap_or_else(|_| source_name.to_owned())
+    }
+
+    fn stack_source_name(&mut self, source_name: &str, is_module: bool) -> String {
+        if is_module {
+            self.import_meta_url(source_name)
+        } else {
+            source_name.to_owned()
+        }
     }
 
     fn capture_job_context(&mut self) -> Option<quench_runtime::HostExecutionContext> {

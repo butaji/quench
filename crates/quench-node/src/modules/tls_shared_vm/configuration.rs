@@ -376,7 +376,6 @@ pub(crate) fn configure(
                 )?,
             );
         }
-        super::super::crypto_engine_shared_vm::emit_deprecation(context)?;
         let method = get(context, inner, "setEngineKey")?;
         if !context.truthy_rooted(method)? {
             return Err(super::super::crypto_engine_shared_vm::error(
@@ -471,7 +470,6 @@ pub(crate) fn configure(
                 )?,
             );
         }
-        super::super::crypto_engine_shared_vm::emit_deprecation(context)?;
         let method = get(context, inner, "setClientCertEngine")?;
         if !context.is_callable_rooted(method)? {
             return Err(super::super::crypto_engine_shared_vm::error(
