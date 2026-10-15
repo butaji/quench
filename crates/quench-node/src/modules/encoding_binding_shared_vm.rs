@@ -14,7 +14,7 @@ fn put(c: &mut Context<'_>, object: RootId, name: &str, value: RootId) -> Result
 pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     const CACHE_KEY: &str = "\0binding:encoding";
     let shared = c.host_mut().shared_state();
-    if let Some(value) = shared.borrow().module_cache.get(CACHE_KEY).copied() {
+    if let Some(value) = shared.borrow().builtin_cache.get(CACHE_KEY).copied() {
         return Ok(value);
     }
     let binding = c.with_startup_intrinsics(|c| {
@@ -52,7 +52,7 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let retained = c.retain(binding)?;
     shared
         .borrow_mut()
-        .module_cache
+        .builtin_cache
         .insert(CACHE_KEY.to_owned(), retained);
     Ok(binding)
 }
