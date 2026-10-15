@@ -7650,3 +7650,19 @@ console.log(JSON.stringify(out));
 "#,
     );
 }
+
+#[test]
+fn filesystem_relative_paths_follow_chdir_without_repository_aliases() {
+    compare_node_stream_source(
+        r#"
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),assert=require('node:assert');
+const original=process.cwd(),dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-relative-paths-')),out=[];
+try {
+ for(const relative of ['test/common/index.js','tests/node/test/common/index.js']){const file=path.join(dir,relative);fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,'application-owned:'+relative);}
+ process.chdir(dir);
+ for(const relative of ['test/common/index.js','tests/node/test/common/index.js']){const content='application-owned:'+relative;assert.strictEqual(fs.readFileSync(relative,'utf8'),content);assert.strictEqual(fs.statSync(relative).size,Buffer.byteLength(content));out.push([relative,fs.readFileSync(relative,'utf8')]);}
+} finally {process.chdir(original);fs.rmSync(dir,{recursive:true,force:true});}
+console.log(JSON.stringify(out));
+"#,
+    );
+}
