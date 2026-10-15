@@ -8283,3 +8283,70 @@ out[2]=target[0];console.log(JSON.stringify(out));
 "#,
     );
 }
+
+#[cfg(target_os = "linux")]
+const PROCESS_MEMORY_SOURCE: &str = r#"
+const fs=require('node:fs'),os=require('node:os'),assert=require('node:assert'),processModule=require('node:process'),out=[];
+const physical=os.totalmem();
+for(const name of ['availableMemory','constrainedMemory']){
+ const fn=processModule[name],descriptor=Object.getOwnPropertyDescriptor(processModule,name);
+ out.push([name,fn.name,fn.length,Object.getOwnPropertyNames(fn),descriptor.writable,descriptor.enumerable,descriptor.configurable]);
+ const value=Reflect.apply(fn,{unrelated:true},[{valueOf(){throw Error('argument coercion')}}]);
+ assert(Number.isFinite(value)&&value>=0);
+ if(name==='availableMemory')assert(value<=physical);
+ else out.push(['constraint',value]);
+ assert.throws(()=>Reflect.construct(fn,[]),TypeError);
+}
+const original=fs.readFileSync;fs.readFileSync=()=>{throw Error('public fs hook')};
+try{assert.strictEqual(typeof processModule.availableMemory(),'number');assert.strictEqual(typeof processModule.constrainedMemory(),'number');out.push('native facts')}finally{fs.readFileSync=original}
+console.log(JSON.stringify(out));
+"#;
+#[cfg(target_os = "linux")]
+#[test]
+fn process_memory_reports_kernel_constraints_and_native_function_metadata() {
+    compare_node_stream_source(PROCESS_MEMORY_SOURCE);
+}
+#[cfg(target_os = "linux")]
+#[test]
+fn process_memory_constraints_respect_inherited_data_limits() {
+    use std::os::unix::process::CommandExt;
+    const DATA_LIMIT_BYTES: u64 = 12 * 1024 * 1024 * 1024;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", PROCESS_MEMORY_SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        // The lower soft limit applies only to this test child, leaving the runner unchanged.
+        unsafe {
+            command.pre_exec(|| {
+                let mut limit = std::mem::MaybeUninit::<libc::rlimit>::uninit();
+                if libc::getrlimit(libc::RLIMIT_DATA, limit.as_mut_ptr()) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                let mut limit = limit.assume_init();
+                limit.rlim_cur = limit.rlim_cur.min(DATA_LIMIT_BYTES as libc::rlim_t);
+                if libc::setrlimit(libc::RLIMIT_DATA, &limit) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(
+            observation.stderr.is_empty(),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
