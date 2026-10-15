@@ -92,10 +92,10 @@ impl<H: Host> Vm<H> {
             },
         );
         let number_value = self.intern_atom("\0quench:number-value");
-        self.set_property(prototype, number_value, Value::number(0.0))?;
-        self.set_property_attributes(
+        self.set_property_with_attributes(
             prototype,
-            PropertyKey::string(number_value),
+            number_value,
+            Value::number(0.0),
             PropertyAttributes {
                 writable: false,
                 enumerable: false,
@@ -104,7 +104,7 @@ impl<H: Host> Vm<H> {
                 getter: None,
                 setter: None,
             },
-        );
+        )?;
         self.set_builtin_value_named(prototype, "constructor", number)?;
         self.set_builtin_named(program, prototype, "toString", Native::NumberString)?;
         self.set_builtin_named(program, prototype, "valueOf", Native::NumberValueOf)?;

@@ -675,6 +675,7 @@ enum ShapeTransition {
     Add {
         key: property_key::PropertyKey,
         slot: u32,
+        attributes: DataAttributes,
     },
     Delete {
         key: property_key::PropertyKey,
@@ -691,7 +692,7 @@ enum ShapeTransition {
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum ShapeTransitionKey {
-    AddString(Atom),
+    AddString(Atom, DataAttributes),
     /// A descriptor without accessor functions (`ShapeAttributes::accessors` is
     /// `NO_SHAPE_ACCESSORS`).
     Descriptor {
@@ -710,6 +711,40 @@ struct ShapeAttributes {
     accessor: bool,
     accessors: u32,
 }
+/// The attributes a data property is created with. Its `Add` transition records them, so a
+/// property created non-enumerable (as builtin methods are) costs no second, `Descriptor`
+/// shape.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct DataAttributes {
+    writable: bool,
+    enumerable: bool,
+    configurable: bool,
+}
+impl DataAttributes {
+    /// `attributes` when they describe a data property.
+    fn of(attributes: PropertyAttributes) -> Option<Self> {
+        (!attributes.accessor).then_some(Self {
+            writable: attributes.writable,
+            enumerable: attributes.enumerable,
+            configurable: attributes.configurable,
+        })
+    }
+
+    fn shape(self) -> ShapeAttributes {
+        ShapeAttributes {
+            writable: self.writable,
+            enumerable: self.enumerable,
+            configurable: self.configurable,
+            accessor: false,
+            accessors: NO_SHAPE_ACCESSORS,
+        }
+    }
+}
+const DEFAULT_DATA_ATTRIBUTES: DataAttributes = DataAttributes {
+    writable: true,
+    enumerable: true,
+    configurable: true,
+};
 /// `ShapeAttributes::accessors` of attributes with neither getter nor setter.
 const NO_SHAPE_ACCESSORS: u32 = u32::MAX;
 /// A shape-held accessor property's getter and setter.
@@ -730,6 +765,15 @@ impl ShapeAttributes {
             accessor: attributes.accessor,
             accessors: index,
         }
+    }
+
+    /// These attributes as a data property's, which its add transition can carry.
+    fn data(self) -> Option<DataAttributes> {
+        (!self.accessor && self.accessors == NO_SHAPE_ACCESSORS).then_some(DataAttributes {
+            writable: self.writable,
+            enumerable: self.enumerable,
+            configurable: self.configurable,
+        })
     }
 
     fn functions(self, accessors: &[ShapeAccessors]) -> ShapeAccessors {
@@ -764,8 +808,9 @@ impl ShapeTransition {
         match self {
             Self::Add {
                 key: PropertyKey::String(atom),
+                attributes,
                 ..
-            } => Some(ShapeTransitionKey::AddString(atom)),
+            } => Some(ShapeTransitionKey::AddString(atom, attributes)),
             // The transition table outlives individual properties. Never put
             // accessor values in a key, where they would become strong roots.
             Self::Descriptor { slot, attributes } if attributes.accessors == NO_SHAPE_ACCESSORS => {
@@ -841,9 +886,20 @@ const _: () = assert!(size_of::<Shape>() == 48);
 const NO_PARENT_SHAPE: u32 = u32::MAX;
 const PROTOTYPE_SLOT_UNKNOWN: u32 = u32::MAX;
 const PROTOTYPE_SLOT_NONE: u32 = u32::MAX - 1;
+/// The shape table's initial capacity, above what a builtin realm uses (about 1900 shapes).
+/// A table this large is mapped by the allocator on its own, so it grows by remapping in
+/// place, never leaving a copied-out table behind, and only the shapes in use are resident.
+const SHAPE_TABLE_CAPACITY: usize = 4096;
 impl Shape {
     fn root() -> Self {
         Self::child(None, ShapeTransition::Root, 0, None, false)
+    }
+
+    /// A shape table holding the root shape.
+    fn table() -> Vec<Self> {
+        let mut table = Vec::with_capacity(SHAPE_TABLE_CAPACITY);
+        table.push(Self::root());
+        table
     }
 
     fn parent(&self) -> Option<u32> {
@@ -1352,10 +1408,10 @@ impl<H: Host> Vm<H> {
             {
                 return Err(self.type_error(program, "cannot declare global var".into()));
             }
-            self.set_property(self.realm.globals, atom, Value::UNDEFINED)?;
-            self.set_property_attributes(
+            self.set_property_with_attributes(
                 self.realm.globals,
-                PropertyKey::string(atom),
+                atom,
+                Value::UNDEFINED,
                 PropertyAttributes {
                     writable: true,
                     enumerable: true,
@@ -1364,7 +1420,7 @@ impl<H: Host> Vm<H> {
                     getter: None,
                     setter: None,
                 },
-            );
+            )?;
         }
         Ok(())
     }
