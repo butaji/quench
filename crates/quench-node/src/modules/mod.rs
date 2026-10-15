@@ -55,6 +55,7 @@ pub(crate) mod fs_ops;
 pub(crate) mod fs_path;
 pub(crate) mod fs_policy_shared_vm;
 pub(crate) mod fs_read_file_shared_vm;
+pub(crate) mod fs_write_shared_vm;
 pub(crate) mod fs_shared_vm;
 pub(crate) mod fs_stat_watch_shared_vm;
 pub(crate) mod fs_state;
