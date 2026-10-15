@@ -304,6 +304,30 @@ pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     )?;
     let get_name = context.call_rooted(wrapper, undefined, &[native])?;
     set(context, prototype, "getName", get_name)?;
+    for (name, public_operation, original_operation) in [
+        (
+            "validateHeaderName",
+            "httpValidateHeaderNamePublic",
+            "httpValidateHeaderNameOriginal",
+        ),
+        (
+            "validateHeaderValue",
+            "httpValidateHeaderValuePublic",
+            "httpValidateHeaderValueOriginal",
+        ),
+    ] {
+        let public =
+            context.host_constructor(crate::host::shared_vm::operation(public_operation))?;
+        let original =
+            context.host_function(crate::host::shared_vm::operation(original_operation))?;
+        for (function, name) in [(public, name), (original, "")] {
+            let key = context.string_rooted("name");
+            let name = context.string_rooted(name);
+            context.define_data_property_rooted(function, key, name, false, false, true)?;
+        }
+        set(context, public, "withoutStackTrace", original)?;
+        set(context, module, name, public)?;
+    }
     let methods = crate::modules::http_protocol::HTTP_METHODS
         .iter()
         .map(|method| context.string_rooted(method))
@@ -1550,4 +1574,100 @@ fn set(
             "cannot install shared http property {name}"
         )))
     }
+}
+
+pub(crate) fn validate_header_name(
+    context: &mut Context<'_>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let name = argument(context, args.first().copied());
+    let text = context.string_text(name)?;
+    if text.as_ref().is_some_and(|name| {
+        !name.is_empty()
+            && name
+                .chars()
+                .all(crate::modules::http_protocol::is_http_token_char)
+    }) {
+        return Ok(context.undefined());
+    }
+    let label = argument(context, args.get(1).copied());
+    let label = if context.truthy_rooted(label)? {
+        label
+    } else {
+        context.string_rooted("Header name")
+    };
+    formatted_header_error(
+        context,
+        "ERR_INVALID_HTTP_TOKEN",
+        "%s must be a valid HTTP token [\"%s\"]",
+        &[label, name],
+    )
+}
+
+pub(crate) fn validate_header_value(
+    context: &mut Context<'_>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let name = argument(context, args.first().copied());
+    let value = argument(context, args.get(1).copied());
+    if context.rooted_value(value).is_some_and(Value::is_undefined) {
+        return formatted_header_error(
+            context,
+            "ERR_HTTP_INVALID_HEADER_VALUE",
+            "Invalid value \"%s\" for header \"%s\"",
+            &[value, name],
+        );
+    }
+    let lenient = argument(context, args.get(2).copied());
+    let lenient = context.truthy_rooted(lenient)?;
+    let units = context.to_string_code_units(value)?;
+    if !units
+        .iter()
+        .all(|unit| crate::modules::http_protocol::valid_header_unit(*unit, lenient))
+    {
+        let mut message: Vec<u16> = "Invalid character in header content"
+            .encode_utf16()
+            .collect();
+        if !context.rooted_value(name).is_some_and(Value::is_undefined) {
+            // ERR_INVALID_CHAR uses template-string coercion rather than %s.
+            message.extend(" [\"".encode_utf16());
+            message.extend(context.to_string_code_units(name)?);
+            message.extend("\"]".encode_utf16());
+        }
+        let message = context.string_units_rooted(&message);
+        return throw_header_message(context, "ERR_INVALID_CHAR", message);
+    }
+    Ok(context.undefined())
+}
+
+fn formatted_header_error(
+    context: &mut Context<'_>,
+    code: &str,
+    template: &str,
+    arguments: &[RootId],
+) -> Result<RootId, RootedError> {
+    let formatters = crate::modules::util_shared_vm::internal_formatters(context)?;
+    let key = context.string_rooted("format");
+    let format = context.get_property_rooted(formatters, key)?;
+    let template = context.string_rooted(template);
+    let mut arguments_with_template = Vec::with_capacity(arguments.len() + 1);
+    arguments_with_template.push(template);
+    arguments_with_template.extend_from_slice(arguments);
+    let receiver = context.undefined();
+    let message = context.call_rooted(format, receiver, &arguments_with_template)?;
+    throw_header_message(context, code, message)
+}
+
+// Node has already formatted this message. Keep that original VM string,
+// including lone surrogates, as the ordinary Error's non-enumerable message.
+fn throw_header_message(
+    context: &mut Context<'_>,
+    code: &str,
+    message: RootId,
+) -> Result<RootId, RootedError> {
+    let error = coded_error_rooted(context, true, code, "")?;
+    set(context, error, "message", message)?;
+    Err(context.throw(error))
 }
