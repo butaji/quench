@@ -1,6 +1,12 @@
 use super::property_key::PropertyKey;
 use super::*;
 
+/// The caller owns the diagnostic, while conversion and index bounds stay shared.
+pub(super) enum BufferIndexUse {
+    ArrayBufferLength,
+    TypedArrayByteOffset,
+}
+
 impl<H: Host> Vm<H> {
     pub(super) fn install_array_buffer(
         &mut self,
@@ -752,13 +758,31 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         value: Value,
     ) -> Result<usize, JsError> {
+        self.buffer_to_index(p, value, BufferIndexUse::ArrayBufferLength)
+    }
+
+    pub(super) fn buffer_to_index(
+        &mut self,
+        p: &ResidualProgram,
+        value: Value,
+        usage: BufferIndexUse,
+    ) -> Result<usize, JsError> {
         let number = self.to_number(p, value)?;
         if number.is_nan() || number == 0.0 {
             return Ok(0);
         }
         let integer = number.trunc();
         if !number.is_finite() || integer < 0.0 || integer > MAX_SAFE_INTEGER {
-            return Err(self.range_error(p, "ArrayBuffer length is out of range".into()));
+            let message = match usage {
+                BufferIndexUse::ArrayBufferLength => {
+                    "ArrayBuffer length is out of range".to_owned()
+                }
+                BufferIndexUse::TypedArrayByteOffset => format!(
+                    "Start offset {} is outside the bounds of the buffer",
+                    crate::number_to_string::format(number),
+                ),
+            };
+            return Err(self.range_error(p, message));
         }
         Ok(integer as usize)
     }

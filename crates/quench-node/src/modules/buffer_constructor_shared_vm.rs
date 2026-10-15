@@ -3,6 +3,7 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 type Context<'a> = NativeContext<'a, NodeHost>;
 const MAX_DEPRECATION_LOCATION_CHECKS: f64 = 10_000.0;
+const DEFAULT_BUFFER_POOL_SIZE: usize = 64 * 1024;
 const WARNING: &str = "Buffer() is deprecated due to security and usability issues. Please use the Buffer.alloc(), Buffer.allocUnsafe(), or Buffer.from() methods instead.";
 fn get(context: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, RootedError> {
     let key = context.string_rooted(name);
@@ -48,6 +49,8 @@ pub(crate) fn install(context: &mut Context<'_>, fast: RootId) -> Result<RootId,
     let constructor = context
         .host_constructor_with_data(crate::host::shared_vm::operation("bufferLegacyConstruct"), data)?;
     name(context, constructor, "Buffer")?;
+    let pool_size = context.number(DEFAULT_BUFFER_POOL_SIZE as f64);
+    set(context, constructor, "poolSize", pool_size)?;
     set(context, data, "constructor", constructor)?;
     for key in context.own_keys_rooted(fast)? {
         if context
@@ -89,6 +92,7 @@ pub(crate) fn install(context: &mut Context<'_>, fast: RootId) -> Result<RootId,
     let yes = context.boolean(true);
     set(context, descriptor, "configurable", yes)?;
     context.define_property_descriptor_rooted(constructor, species, descriptor)?;
+    super::buffer_from_shared_vm::install(context, constructor, fast)?;
     Ok(constructor)
 }
 fn warn(context: &mut Context<'_>, data: RootId) -> Result<(), RootedError> {

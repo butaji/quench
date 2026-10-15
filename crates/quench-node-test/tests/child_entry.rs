@@ -6775,6 +6775,20 @@ process.emitWarning=originalWarning;out.push(warnings);console.log(JSON.stringif
 }
 
 #[test]
+fn buffer_pool_size_preserves_public_configuration_and_legacy_numeric_construction() {
+    compare_node_stream_source(r#"
+const B=require('buffer').Buffer,out=[];
+const d=Object.getOwnPropertyDescriptor(B,'poolSize');
+out.push([d.value,d.writable,d.enumerable,d.configurable]);
+const emit=process.emitWarning;process.emitWarning=()=>{};
+const b=new B(B.poolSize);out.push([b.length,b.parent instanceof ArrayBuffer]);
+B.poolSize=128;out.push(B.poolSize);delete B.poolSize;out.push(Object.hasOwn(B,'poolSize'));
+Object.defineProperty(B,'poolSize',d);out.push(B.poolSize);
+process.emitWarning=emit;console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
 fn native_buffer_constructor_deprecation_follows_original_vm_filenames_and_process_flags() {
     compare_node_stream_source(r#"
 'use strict';
@@ -6974,5 +6988,187 @@ for(let code=0;code<=255;code++)for(const lenient of [false,true])invoke(['byte'
 for(let n=0;n<names.length;n++)for(const value of [undefined,'\r','ok'])invoke(['error-name',n,value],http.validateHeaderValue,[names[n],value]);
 for(const name of ['validateHeaderName','validateHeaderValue'])for(const args of [[],['valid','ok'],['bad name','\r']])invoke(['unwrapped',name,args],http[name].withoutStackTrace,args);
 console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn cli_eval_builtin_globals_preserve_lazy_descriptors_cache_and_assignment() {
+compare_node_stream_source(r#"
+'use strict';
+const out=[];
+function descriptor(name){const d=Object.getOwnPropertyDescriptor(globalThis,name);return !d?null:[d.enumerable,d.configurable,typeof d.get,typeof d.set,d.get&&[d.get.name,d.get.length,Object.hasOwn(d.get,'prototype')],d.set&&[d.set.name,d.set.length,Object.hasOwn(d.set,'prototype')]]}
+for(const name of ['vm','fs','path','util','buffer','fs/promises','_http_agent'])out.push(['initial',name,descriptor(name)]);
+const before=Object.getOwnPropertyDescriptor(globalThis,'vm');
+try{const value=vm;const after=Object.getOwnPropertyDescriptor(globalThis,'vm');out.push(['load',value===require('vm'),descriptor('vm'),before.get===after.get,before.set===after.set])}catch(e){out.push(['load-error',e.name,e.message])}
+try{vm=123;out.push(['assign',vm,Object.getOwnPropertyDescriptor(globalThis,'vm')])}catch(e){out.push(['assign-error',e.name,e.message])}
+console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn cli_eval_builtin_globals_use_original_module_identity_and_mutable_require_hook() {
+compare_node_stream_source(r#"
+'use strict';
+const M=require('module'),original=M.prototype.require,out=[];
+M.prototype.require=function(name){out.push(['require-hook',name,this.id,this.filename,this.loaded]);if(name==='vm')return {fromHook:1};return original.call(this,name)};
+try{const first=vm;M.prototype.require=function(){throw new Error('second require must not run')};out.push(['cached',first===vm,first.fromHook])}catch(e){out.push(['error',e.name,e.message])}
+M.prototype.require=original;
+console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn cli_eval_builtin_accessors_preserve_blocked_cache_inherited_setters_and_errors() {
+compare_node_stream_source(r#"
+'use strict';
+const M=require('module'),original=M.prototype.require,out=[];
+let calls=0;
+M.prototype.require=function(name){if(name==='fs'){calls++;return {calls}}return original.call(this,name)};
+Object.defineProperty(globalThis,'fs',{configurable:false});
+const a=fs,b=fs;out.push(['blocked-cache',a.calls,b.calls,a===b]);
+try{fs=1}catch(e){out.push(['blocked-set',e.name,e.message])}
+M.prototype.require=original;
+let seen=[];
+Object.defineProperty(Object.getPrototypeOf(globalThis),'path',{set(v){seen.push([this===globalThis,v])},configurable:true});
+path=4;out.push(['inherited-setter',seen,Object.hasOwn(globalThis,'path')]);
+delete Object.getPrototypeOf(globalThis).path;
+const marker={};M.prototype.require=function(){throw marker};
+try{void vm}catch(e){out.push(['original-error',e===marker])}
+M.prototype.require=original;
+console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn native_buffer_from_and_copy_bytes_preserve_conversion_bounds_brands_and_hooks() {
+compare_node_stream_source(r#"
+'use strict';const B=Buffer,out=[],hooks=[];
+function check(tag,value,...tail){hooks.length=0;try{const b=B.from(value,...tail);out.push([tag,'ok',Array.from(b),Object.getPrototypeOf(b)===B.prototype,b.buffer===value,hooks.slice()])}catch(e){out.push([tag,e.name,e.code,e.message,hooks.slice()])}}
+for(const fn of [B.from,B.copyBytesFrom])out.push(['shape',fn&&fn.name,fn&&fn.length,!!fn&&Object.hasOwn(fn,'prototype')]);
+const values=[undefined,null,false,0,1,1n,Symbol('v'),{},Object.create(null),new Boolean(true),new Number(3),new String('test'),{valueOf(){hooks.push('valueOf');return 'test'}},{[Symbol.toPrimitive](hint){hooks.push(hint);return 'test'}},{valueOf(){hooks.push('valueOf');return null}},{valueOf:null},{valueOf:1},{length:3,0:257,1:-1,2:2},{length:'3',0:1},{length:NaN},{type:'Buffer',data:[1,2,3]},new Uint8Array([1,2,255]),new Uint16Array([0xffff,256]),new BigInt64Array([1n]),new DataView(new ArrayBuffer(3)),[1,2,257],['1','2',null]];
+for(let i=0;i<values.length;i++)check(['value',i],values[i]);
+for(const value of ['test','é','😀','\ud800','aaZZbb'])for(const enc of [undefined,null,false,0,{},'utf8','utf16le','latin1','hex','base64','bogus'])check(['string',value,typeof enc,String(enc)],value,enc);
+for(const offset of [undefined,null,0,1,1.5,-1,6,NaN,Infinity,'2',1n,{valueOf(){hooks.push('offset');return 1}}])for(const length of [undefined,null,0,2,2.5,-1,9,NaN,Infinity,'2',1n])check(['ab',typeof offset,String(offset),typeof length,String(length)],new Uint8Array([1,2,3,4,5]).buffer,offset,length);
+for(const kind of ['valueOf','primitive','length','buffer','type','data']){
+ let o={};
+ if(kind==='valueOf')Object.defineProperty(o,'valueOf',{get(){hooks.push('get-valueOf');return function(){hooks.push('call-valueOf');return 'xy'}}});
+ if(kind==='primitive')o[Symbol.toPrimitive]=hint=>{hooks.push(hint);return 'xy'};
+ if(kind==='length')Object.defineProperty(o,'length',{get(){hooks.push('length');return 2}});
+ if(kind==='buffer'){o.buffer=new ArrayBuffer(2)};
+ if(kind==='type'){o.type='Buffer';Object.defineProperty(o,'data',{get(){hooks.push('data');return [3,4]}})};
+ if(kind==='data')o={type:'Buffer',data:new Uint8Array([3,4])};
+ check(['hooks',kind],o);
+}
+for(const source of [new Uint8Array([1,2,3]),new Uint16Array([0x1234,0xabcd]),new BigInt64Array([1n,-2n]),new DataView(new ArrayBuffer(4)),[],new Uint8Array(0)])for(const offset of [undefined,null,0,1,-1,NaN,1.5,9,'1',1n])for(const length of [undefined,0,1,9,-1]){
+ hooks.length=0;try{const b=B.copyBytesFrom(source,offset,length);out.push(['copy',source.constructor.name,typeof offset,String(offset),length,'ok',Array.from(b)])}catch(e){out.push(['copy',source.constructor.name,typeof offset,String(offset),length,e.name,e.code,e.message])}
+}
+console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn inspect_shallow_null_prototype_records_preserve_empty_hidden_and_symbol_keys() {
+compare_node_stream_source(r#"
+const u=require('util'),out=[],empty=Object.create(null),visible=Object.assign(Object.create(null),{a:1}),hidden=Object.create(null),symbol=Object.create(null),hiddenSymbol=Object.create(null);
+Object.defineProperty(hidden,'x',{value:1});symbol[Symbol('x')]=1;Object.defineProperty(hiddenSymbol,Symbol('x'),{value:1});
+for(const value of [empty,visible,hidden,symbol,hiddenSymbol])for(const depth of [-2,-1])for(const showHidden of [false,true])out.push(u.inspect(value,{depth,showHidden}));
+console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn native_buffer_string_conversion_preserves_bounds_metadata_encodings_and_original_hooks() {
+compare_node_stream_source(r#"
+const B=require('buffer').Buffer,out=[],hooks=[];
+function record(tag,fn){hooks.length=0;try{const value=fn();out.push([tag,'ok',typeof value==='string'?Array.from(value,c=>c.codePointAt(0)):value,hooks.slice()])}catch(e){out.push([tag,e.name,e.code,e.message,hooks.slice()])}}
+for(const n of ['toString','toLocaleString','asciiSlice','base64Slice','base64urlSlice','latin1Slice','hexSlice','ucs2Slice','utf8Slice']){const f=B.prototype[n];record(['shape',n],()=>[f.name,f.length,Object.hasOwn(f,'prototype'),Object.getOwnPropertyDescriptor(B.prototype,n).enumerable])}
+record('alias',()=>B.prototype.toString===B.prototype.toLocaleString);
+const b=B.from([0,65,127,128,195,169,255,0,216]);
+for(const enc of [undefined,'utf8','hex','base64','base64url','latin1','ascii','utf16le','bogus','\ud800',null,false,0,Symbol('enc'),{toString(){hooks.push('encoding');return 'hex'}}])for(const start of [undefined,-1,0,1,1.5,20,NaN,Infinity,'2',1n])record(['toString',typeof enc,String(enc),typeof start,String(start)],()=>b.toString(enc,start));
+for(const start of [undefined,-1,0,2,2.9,20,NaN,Infinity,'2',null,1n,{valueOf(){hooks.push('start');return 2}}])for(const end of [undefined,-1,0,4,4.9,20,NaN,Infinity,'5',null,1n,{valueOf(){hooks.push('end');return 5}}])record(['range',typeof start,String(start),typeof end,String(end)],()=>b.toString('hex',start,end));
+for(const value of [{length:0},Object.create(B.prototype),new Uint8Array([65,66]),new Uint16Array([65,66]),new DataView(new ArrayBuffer(2)),null,undefined])for(const args of [[],['hex'],['hex',20],['bogus',0,0]])record(['receiver',Object.prototype.toString.call(value),args],()=>B.prototype.toString.apply(value,args));
+for(const n of ['asciiSlice','base64Slice','base64urlSlice','latin1Slice','hexSlice','ucs2Slice','utf8Slice'])for(const start of [undefined,-1,-0.5,-1.5,0,1,1.5,20,NaN,Infinity,-Infinity,2**63,2**64,'2',1n,Symbol('index')])for(const end of [undefined,-1,0,4,20,NaN,'5',1n])record([n,typeof start,String(start),typeof end,String(end)],()=>B.prototype[n].call(b,start,end));
+const own=B.from([65,66,67]);Object.defineProperty(own,'length',{get(){hooks.push('length');return 1}});own.subarray=()=>{throw Error('public subarray')};
+for(const args of [[],[undefined],['hex'],['hex',0,2]])record(['original-hooks',args],()=>own.toString(...args));
+console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn native_buffer_string_slices_preserve_detached_views_and_original_conversion_errors() {
+compare_node_stream_source(r#"
+const out=[],marker={},hooks=[];function check(tag,fn){hooks.length=0;try{const v=fn();out.push([tag,'ok',v,hooks.slice()])}catch(e){out.push([tag,e.name,e.code,e.message,e===marker,hooks.slice()])}}
+for(const detach of [false,true]){const ab=new ArrayBuffer(4);new Uint8Array(ab).set([65,66,67,68]);const dv=new DataView(ab);if(detach)structuredClone(ab,{transfer:[ab]});for(const method of ['utf8Slice','hexSlice'])check([method,'dv',detach],()=>Buffer.prototype[method].call(dv,{valueOf(){hooks.push('start');throw marker}}));}
+const rab=new ArrayBuffer(8,{maxByteLength:16}),dv=new DataView(rab,4,4);rab.resize(2);check('oob-dv',()=>Buffer.prototype.hexSlice.call(dv,0,4));
+const b=Buffer.from([65,66,67,68]);check('changing-start',()=>b.toString('hex',{valueOf(){hooks.push('start');return hooks.length}}));
+for(const position of ['start','end','encoding'])check(['throw',position],()=>b.toString(position==='encoding'?{toString(){throw marker}}:'hex',position==='start'?{valueOf(){throw marker}}:0,position==='end'?{valueOf(){throw marker}}:4));
+const constants=require('buffer').constants;check('limit-export-isolation',()=>{try{constants.MAX_STRING_LENGTH=0}catch{}return b.toString('hex')});for(const name of ['MAX_LENGTH','MAX_STRING_LENGTH'])check(['constant',name],()=>Object.getOwnPropertyDescriptor(constants,name));console.log(JSON.stringify(out));"#);
+}
+
+#[test]
+fn native_buffer_static_comparison_preserves_brands_detachment_metadata_and_byte_order() {
+compare_node_stream_source(r#"
+const B=Buffer,out=[];const f=B.compare,d=Object.getOwnPropertyDescriptor(B,'compare');out.push([f.name,f.length,Object.hasOwn(f,'prototype'),d.writable,d.enumerable,d.configurable]);function record(a,b){try{out.push(['ok',f(a,b)])}catch(e){out.push([e.name,e.code,e.message])}};const fake=Object.create(B.prototype),u8=new Uint8Array([1,2]);for(const a of [undefined,null,0,'x',{},fake,new Uint8ClampedArray([1]),new Uint16Array([1]),new DataView(new ArrayBuffer(1)),B.from([]),B.from([1]),u8])for(const b of [undefined,fake,new Uint8Array([]),new Uint8Array([1,3]),u8])record(a,b);const ab=new ArrayBuffer(2),view=new Uint8Array(ab);structuredClone(ab,{transfer:[ab]});record(view,view);record(view,B.alloc(0));for(const left of [{},fake,new Uint8Array([1,2]),new Uint16Array([513]),B.alloc(0)])for(const right of [undefined,fake,new Uint8Array([]),new Uint8Array([1,2])]){try{out.push(['equals','ok',B.prototype.equals.call(left,right)])}catch(e){out.push(['equals',e.name,e.code,e.message])}};const eq=B.prototype.equals;out.push(['equals-shape',eq.name,eq.length,Object.hasOwn(eq,'prototype')]);console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn native_http_status_reasons_preserve_mutable_map_coercion_errors_and_wire_bytes() {
+compare_node_stream_source(r#"
+const http=require('http'),net=require('net'),codes=http.STATUS_CODES,marker={},out=[],saved=Object.getOwnPropertyDescriptors(codes);
+const initial=[Object.keys(codes).map(k=>[k,codes[k],Object.getOwnPropertyDescriptor(codes,k)]),Object.getOwnPropertyDescriptor(http,'STATUS_CODES').writable,Object.getPrototypeOf(codes)===Object.prototype];
+const cases=[
+ ['head-default',r=>r.writeHead(200)],
+ ['implicit-default',r=>{r.statusCode=451;r.end('x')}],
+ ['map-mutation',r=>{codes[600]='Changed';r.statusCode=600;r.end('x')}],
+ ['map-falsy',r=>{codes[601]=0;r.statusCode=601;r.end('x')}],
+ ['map-replacement',r=>{codes[602]='Captured';http.STATUS_CODES={602:'Wrong'};r.writeHead(602)}],
+ ['explicit-empty',r=>r.writeHead(200,'')],
+ ['existing-empty',r=>{r.statusMessage='';r.writeHead(404)}],
+ ['existing-number',r=>{r.statusMessage=123;r.writeHead(200)}],
+ ['existing-object',(r,events)=>{r.statusMessage={toString(){events.push('convert');return 'Object Reason'}};r.writeHead(200)}],
+ ['latin1',r=>r.writeHead(200,'caf\u00e9')],
+ ['invalid-crlf',r=>r.writeHead(201,'bad\r\nInjected: x')],
+ ['invalid-wide',r=>r.writeHead(202,'bad\u010d')],
+ ['invalid-del',r=>r.writeHead(203,'bad\x7f')],
+ ['status-object',r=>r.writeHead({})],
+ ['status-array',r=>r.writeHead([])],
+ ['status-string',r=>r.writeHead('201')],
+ ['status-fraction',r=>r.writeHead(201.7)],
+ ['status-wrap',r=>r.writeHead(2**32+200)],
+ ['map-throw',r=>{Object.defineProperty(codes,500,{configurable:true,get(){throw marker}});r.writeHead(500)}],
+ ['message-accessor',(r,events)=>{let value='';Object.defineProperty(r,'statusMessage',{configurable:true,get(){events.push('get');return value},set(v){events.push(['set',v]);value=v}});r.writeHead(200)}],
+];
+const server=http.createServer((req,res)=>{const i=Number(req.url.slice(1)),events=[];res.sendDate=false;let error=null;try{cases[i][1](res,events)}catch(e){error=[e.name,e.code,e.message,e===marker]}
+ const value=res.statusMessage;out[i]=[cases[i][0],error,res.statusCode,typeof value,typeof value==='string'||typeof value==='number'?value:null,!!res.headersSent,events.slice()];
+ http.STATUS_CODES=codes;for(const key of Object.keys(codes))if(!(key in saved))delete codes[key];for(const [k,d]of Object.entries(saved))Object.defineProperty(codes,k,d);
+ if(error){res.statusMessage='OK';res.statusCode=200}if(!res.finished)res.end('x');});
+server.listen(0,'127.0.0.1',()=>{let i=0;function next(){const parts=[];const socket=net.connect(server.address().port,'127.0.0.1',()=>socket.write(`GET /${i} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n`));socket.on('data',b=>parts.push(b));socket.on('end',()=>{out[i].push(Buffer.concat(parts).toString('latin1').split('\r\n')[0]);if(++i<cases.length)next();else server.close(()=>console.log(JSON.stringify([initial,out])))});}next();});
+
+"#);
+}
+
+#[test]
+fn native_util_extend_preserves_reverse_copy_effects_metadata_errors_and_deprecation() {
+compare_node_stream_source(r#"
+const u=require('util'),f=u._extend,out=[],marker={},events=[],original=process.emitWarning;
+process.emitWarning=function(...args){events.push(['warning',...args.map(x=>typeof x==='function'?[x.name,x.length]:x)])};
+function check(tag,fn){events.length=0;try{out.push([tag,'ok',fn(),events.slice()])}catch(e){out.push([tag,e.name,e.code,e.message,e===marker,events.slice()])}}
+check('metadata',()=>{const d=Object.getOwnPropertyDescriptor(u,'_extend'),p=Object.getPrototypeOf(f);return [f.name,f.length,Object.hasOwn(f,'prototype'),p.name,p.length,f.prototype===p.prototype,d.writable,d.enumerable,d.configurable]});
+check('no-deprecation',()=>{process.noDeprecation=true;const result=f({},{});delete process.noDeprecation;return result});check('warning-first',()=>f({},{}));check('warning-once',()=>f({},{}));check('shared-warning-code',()=>u.deprecate(()=>42,'duplicate','DEP0060')());
+for(const source of [undefined,null,false,1,'abc',Symbol('s'),1n,()=>{},[],[1,2],new Uint8Array([3,4]),Object('ab'),{x:1}])check(['source',typeof source,String(source)],()=>{const target={};return [f(target,source)===target,target]});
+for(const target of [undefined,null,false,1,'abc',Symbol('t'),1n,{},Object.preventExtensions({}),Object.freeze({x:0})])check(['target',typeof target,String(target)],()=>f(target,{x:1}));
+check('reverse',()=>{const target={};const source={get a(){events.push('a');return 1},get b(){events.push('b');return 2}};return [f(target,source)===target,Object.keys(target)]});
+check('snapshot',()=>{const source={a:1,get b(){events.push('b');delete source.a;source.c=3;return 2}};return f({},source)});
+check('symbols',()=>{const source={x:1,[Symbol('key')]:2};Object.defineProperty(source,'hidden',{value:3});return Reflect.ownKeys(f({},source))});
+check('setters',()=>{const target={set a(v){events.push(['a',this===target,v])},set b(v){events.push(['b',this===target,v])}};return f(target,{a:1,b:2})===target});
+check('getter-throws',()=>f({},{get a(){events.push('get');throw marker}}));
+check('setter-throws',()=>f({set a(v){events.push('set');throw marker}},{a:1}));
+check('proxy',()=>{const source=new Proxy({a:1,b:2},{ownKeys(t){events.push('keys');return ['a','b']},getOwnPropertyDescriptor(t,k){events.push(['descriptor',k]);return Object.getOwnPropertyDescriptor(t,k)},get(t,k){events.push(['get',k]);return t[k]}});return f({},source)});
+check('proxy-false',()=>f(new Proxy({},{set(t,k,v){events.push(['set',k,v]);return false}}),{a:1}));
+check('proto',()=>{const source=JSON.parse('{"__proto__":{"inherited":42}}');const target=f({},source);return [target.inherited,Object.hasOwn(target,'__proto__')]});
+check('construct',()=>{const source={x:1},target={};return new f(target,source)===target});
+process.emitWarning=original;console.log(JSON.stringify(out));
+
 "#);
 }

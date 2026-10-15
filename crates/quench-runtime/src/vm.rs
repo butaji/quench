@@ -113,6 +113,7 @@ mod method_cache;
 mod module;
 mod number;
 mod object;
+mod object_assignment;
 mod object_array;
 mod object_builtins;
 mod object_descriptors;
@@ -478,6 +479,16 @@ struct ArgumentsObjectTemplate {
     iterator_slot: usize,
 }
 const ARGUMENTS_OBJECT_PROPERTY_COUNT: usize = 3;
+/// Where a private name is resolved: the running function and the environment its
+/// lookup starts from.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct PrivateHomeKey {
+    environment: Value,
+    program: ProgramId,
+    function: u32,
+    name: Atom,
+}
+
 #[derive(Default)]
 struct GlobalLexicalState {
     declarations: FxHashSet<Atom>,
@@ -672,7 +683,7 @@ enum ShapeTransition {
     Vacant,
     Descriptor {
         slot: u32,
-        attributes: PropertyAttributes,
+        attributes: ShapeAttributes,
     },
     Dictionary {
         trigger: DictionaryTrigger,
@@ -681,26 +692,70 @@ enum ShapeTransition {
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum ShapeTransitionKey {
     AddString(Atom),
+    /// A descriptor without accessor functions (`ShapeAttributes::accessors` is
+    /// `NO_SHAPE_ACCESSORS`).
     Descriptor {
         slot: u32,
-        attributes: CachedPropertyAttributes,
+        attributes: ShapeAttributes,
     },
 }
+/// A property's attributes as a shape records them. Accessor functions are rare among
+/// shapes and live in `Vm::shape_accessors`, which `accessors` indexes, so every shape stays
+/// small.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-#[repr(C)]
-struct CachedPropertyAttributes {
+struct ShapeAttributes {
     writable: bool,
     enumerable: bool,
     configurable: bool,
     accessor: bool,
+    accessors: u32,
+}
+/// `ShapeAttributes::accessors` of attributes with neither getter nor setter.
+const NO_SHAPE_ACCESSORS: u32 = u32::MAX;
+/// A shape-held accessor property's getter and setter.
+type ShapeAccessors = (Option<Value>, Option<Value>);
+impl ShapeAttributes {
+    /// `attributes` for a shape, appending its accessor functions to `accessors`.
+    fn record(attributes: PropertyAttributes, accessors: &mut Vec<ShapeAccessors>) -> Self {
+        let index = if attributes.getter.is_none() && attributes.setter.is_none() {
+            NO_SHAPE_ACCESSORS
+        } else {
+            accessors.push((attributes.getter, attributes.setter));
+            u32::try_from(accessors.len() - 1).expect("shape accessor table exhausted")
+        };
+        Self {
+            writable: attributes.writable,
+            enumerable: attributes.enumerable,
+            configurable: attributes.configurable,
+            accessor: attributes.accessor,
+            accessors: index,
+        }
+    }
+
+    fn functions(self, accessors: &[ShapeAccessors]) -> ShapeAccessors {
+        accessors
+            .get(self.accessors as usize)
+            .copied()
+            .unwrap_or((None, None))
+    }
+
+    fn attributes(self, accessors: &[ShapeAccessors]) -> PropertyAttributes {
+        let (getter, setter) = self.functions(accessors);
+        PropertyAttributes {
+            writable: self.writable,
+            enumerable: self.enumerable,
+            configurable: self.configurable,
+            accessor: self.accessor,
+            getter,
+            setter,
+        }
+    }
 }
 impl ShapeTransition {
     fn introduces_gc_roots(self) -> bool {
         match self {
             Self::Add { key, .. } => key.symbol_value().is_some(),
-            Self::Descriptor { attributes, .. } => {
-                attributes.getter.is_some() || attributes.setter.is_some()
-            }
+            Self::Descriptor { attributes, .. } => attributes.accessors != NO_SHAPE_ACCESSORS,
             Self::Root | Self::Delete { .. } | Self::Vacant | Self::Dictionary { .. } => false,
         }
     }
@@ -713,18 +768,8 @@ impl ShapeTransition {
             } => Some(ShapeTransitionKey::AddString(atom)),
             // The transition table outlives individual properties. Never put
             // accessor values in a key, where they would become strong roots.
-            Self::Descriptor { slot, attributes }
-                if attributes.getter.is_none() && attributes.setter.is_none() =>
-            {
-                Some(ShapeTransitionKey::Descriptor {
-                    slot,
-                    attributes: CachedPropertyAttributes {
-                        writable: attributes.writable,
-                        enumerable: attributes.enumerable,
-                        configurable: attributes.configurable,
-                        accessor: attributes.accessor,
-                    },
-                })
+            Self::Descriptor { slot, attributes } if attributes.accessors == NO_SHAPE_ACCESSORS => {
+                Some(ShapeTransitionKey::Descriptor { slot, attributes })
             }
             Self::Root
             | Self::Add { .. }
@@ -762,20 +807,22 @@ impl DictionaryTrigger {
 struct ShapeLookupIndex {
     entries: Vec<(property_key::PropertyKey, u32)>,
     slots: FxHashMap<property_key::PropertyKey, u32>,
-    attributes: FxHashMap<u32, PropertyAttributes>,
+    attributes: FxHashMap<u32, ShapeAttributes>,
 }
 #[cfg(feature = "profile-memory")]
 impl ShapeLookupIndex {
     fn payload_capacity_bytes(&self) -> usize {
         self.entries.capacity() * size_of::<(property_key::PropertyKey, u32)>()
             + self.slots.capacity() * size_of::<(property_key::PropertyKey, u32)>()
-            + self.attributes.capacity() * size_of::<(u32, PropertyAttributes)>()
+            + self.attributes.capacity() * size_of::<(u32, ShapeAttributes)>()
     }
 }
 struct Shape {
-    parent: Option<u32>,
+    /// The shape this one extends; `NO_PARENT_SHAPE` for the root.
+    parent: u32,
     transition: ShapeTransition,
-    storage_len: usize,
+    /// Property slots an object of this shape stores (slot indices are `u32`).
+    storage_len: u32,
     dictionary_trigger: Option<DictionaryTrigger>,
     may_have_gc_roots: bool,
     lookup_index: OnceCell<Box<ShapeLookupIndex>>,
@@ -787,11 +834,24 @@ struct Shape {
     /// accessor. Dictionary shapes never memoize.
     prototype_slot: std::cell::Cell<u32>,
 }
+// Every object layout and property key costs one shape; keep the record compact.
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(size_of::<Shape>() == 48);
+/// `Shape::parent` of the root shape.
+const NO_PARENT_SHAPE: u32 = u32::MAX;
 const PROTOTYPE_SLOT_UNKNOWN: u32 = u32::MAX;
 const PROTOTYPE_SLOT_NONE: u32 = u32::MAX - 1;
 impl Shape {
     fn root() -> Self {
         Self::child(None, ShapeTransition::Root, 0, None, false)
+    }
+
+    fn parent(&self) -> Option<u32> {
+        (self.parent != NO_PARENT_SHAPE).then_some(self.parent)
+    }
+
+    fn storage_len(&self) -> usize {
+        self.storage_len as usize
     }
 
     fn child(
@@ -802,9 +862,9 @@ impl Shape {
         parent_may_have_gc_roots: bool,
     ) -> Self {
         Self {
-            parent,
+            parent: parent.unwrap_or(NO_PARENT_SHAPE),
             transition,
-            storage_len,
+            storage_len: u32::try_from(storage_len).expect("object property index exceeds u32"),
             dictionary_trigger,
             may_have_gc_roots: parent_may_have_gc_roots || transition.introduces_gc_roots(),
             lookup_index: OnceCell::new(),
@@ -908,6 +968,13 @@ impl PropertyAttributes {
     }
 }
 
+const DEFAULT_SHAPE_ATTRIBUTES: ShapeAttributes = ShapeAttributes {
+    writable: true,
+    enumerable: true,
+    configurable: true,
+    accessor: false,
+    accessors: NO_SHAPE_ACCESSORS,
+};
 const DEFAULT_PROPERTY_ATTRIBUTES: PropertyAttributes = PropertyAttributes {
     writable: true,
     enumerable: true,
@@ -1003,6 +1070,8 @@ pub(crate) struct Vm<H> {
     active_program: ProgramId,
     profile: Profile,
     shapes: Vec<Shape>,
+    /// The getters and setters of shapes' accessor descriptors (`ShapeAttributes`).
+    shape_accessors: Vec<ShapeAccessors>,
     transitions: FxHashMap<(u32, ShapeTransitionKey), u32>,
     atom_text: AtomTable,
     atoms: FxHashMap<u64, Atom>,
@@ -1067,6 +1136,9 @@ pub(crate) struct Vm<H> {
     /// The JavaScript wrapper of each exported Wasm closure, so every export of one
     /// function is one object. Weak: a wrapper nothing holds is made again on demand.
     wasm_exported_functions: FxHashMap<Value, WeakHandle>,
+    /// Private-name home objects found by `private_name_home`, kept while their starting
+    /// environment is live.
+    private_homes: FxHashMap<PrivateHomeKey, Value>,
     wasm_js: wasm_js::WasmJsIntrinsics,
     direct_eval: bool,
     direct_eval_var_program: Option<ProgramId>,
@@ -1488,7 +1560,7 @@ impl<H: Host> Vm<H> {
         let max_shape_width = self
             .shapes
             .iter()
-            .map(|shape| shape.storage_len)
+            .map(|shape| shape.storage_len())
             .max()
             .unwrap_or(0);
         let cell_counts = self.heap.cell_counts();
@@ -1746,6 +1818,7 @@ impl<H: Host> Vm<H> {
         self.descriptors.clear();
         self.function_values.clear();
         self.wasm_exported_functions.clear();
+        self.private_homes.clear();
         self.programs.reset(program.clone());
         self.instanceof_constructor_layout = None;
         self.regexp_last_index_layout = None;

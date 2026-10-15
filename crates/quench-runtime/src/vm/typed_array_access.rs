@@ -478,7 +478,7 @@ impl<H: Host> Vm<H> {
         };
         let (target_kind, target_buffer, target_offset) = (*kind, *buffer, object.offset);
         if source_kind.is_bigint() != target_kind.is_bigint() {
-            return Err(self.type_error(p, "typed array content types differ".into()));
+            return Err(self.type_error(p, super::operations::MIXED_BIGINT_TYPES.into()));
         }
         if source_kind == target_kind {
             let target_offset = target_offset + target_start * target_kind.width();

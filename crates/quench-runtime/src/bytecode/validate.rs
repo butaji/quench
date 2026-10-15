@@ -1034,16 +1034,20 @@ fn selective_capture_layout_is_eligible(
         .filter_map(|packed| instruction_at(function, *packed))
         .chain(function.wide.iter().copied())
         .any(|instruction| instruction.op() == super::Op::MakeClosure);
-    let local_atoms_are_static = function.local_atoms.len() == usize::from(function.locals)
-        && function.local_atoms.iter().all(|atom| {
-            usize::try_from(*atom).is_ok_and(|atom| {
-                atom < atoms.len() && !super::local_name_requires_environment(&atoms[atom])
-            })
-        });
     let captured = function
         .selective_capture_slots
         .as_deref()
         .unwrap_or_default();
+    // Locals the runtime resolves by name must live in the environment.
+    let local_atoms_are_static = function.local_atoms.len() == usize::from(function.locals)
+        && function.local_atoms.iter().enumerate().all(|(slot, atom)| {
+            usize::try_from(*atom).is_ok_and(|atom| {
+                atom < atoms.len()
+                    && (!super::local_name_requires_environment(&atoms[atom])
+                        || u16::try_from(slot)
+                            .is_ok_and(|slot| captured.binary_search(&slot).is_ok()))
+            })
+        });
     let mapped_parameter_is_captured =
         function.arguments_are_mapped() && captured.iter().any(|slot| *slot < function.params);
     let mapped_arguments_are_captured = !mapped_parameter_is_captured
