@@ -314,6 +314,10 @@ pub(super) struct ScriptCallTarget {
     constructs: bool,
     /// It keeps the values it was passed for a forwarded `arguments` (`CallPlan::forwards_arguments`).
     forwards: bool,
+    /// The slots its depth-0 captures read (`LaneContext::capture`), or null where the walk
+    /// does not end at a function environment. The storage of a live environment never
+    /// moves, and the generation retires the target at the next collection.
+    capture: *const crate::heap::EnvironmentSlots,
 }
 
 const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
@@ -327,6 +331,7 @@ const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
     strict: false,
     constructs: false,
     forwards: false,
+    capture: std::ptr::null(),
 };
 
 /// Entries of the script call cache, indexed by the callee's heap index.
@@ -814,18 +819,24 @@ unsafe fn lane_binary_value<H: Host>(
     let operator = i.imm();
     match unsafe { vm(cx) }.number_binary(operator, left, right) {
         Some(value) => Some(value),
-        None => lane_relation_value::<H>(operator, left, right),
+        None => lane_relation::<H>(operator, left, right)
+            .map(|holds| if holds { Value::TRUE } else { Value::FALSE }),
     }
 }
 
-/// `lane_binary_value` past Number arithmetic: a relation's Boolean. Out of line, taking
-/// its operands by value, so the handlers inlining that value keep no stack locals a
-/// callee could reach, which would cost them the tail call to the next record.
-#[inline(never)]
-fn lane_relation_value<H: Host>(operator: u32, left: Value, right: Value) -> Option<Value> {
-    super::operations::number_relation(operator, left, right)
-        .or_else(|| lane_relation_other::<H>(operator, left, right))
-        .map(|holds| if holds { Value::TRUE } else { Value::FALSE })
+/// A relation the lane decides without running guest code: Number comparison, identity
+/// decided from the operand words, then `lane_relation_other`. Matches rather than
+/// `Option::or_else` closures, which capture the operands by reference and, left out of
+/// line, would cost the calling handler its tail call to the next record.
+#[inline(always)]
+fn lane_relation<H: Host>(operator: u32, left: Value, right: Value) -> Option<bool> {
+    if let Some(holds) = super::operations::number_relation(operator, left, right) {
+        return Some(holds);
+    }
+    if let Some(holds) = Vm::<H>::word_identity_equality(operator, left, right) {
+        return Some(holds);
+    }
+    lane_relation_other::<H>(operator, left, right)
 }
 
 /// Runs `handler` for the record at `ip` as a sibling call: the calling handler's fast path
@@ -1180,7 +1191,26 @@ unsafe fn lane_single_field_base<H: Host>(
     if base == crate::bytecode::FieldBase::NESTED {
         return None;
     }
-    unsafe { lane_field_base(cx, r, crate::bytecode::FieldBase(base)) }
+    match crate::bytecode::FieldBase(base).register_index() {
+        Some(register) => Some(r.get(register)),
+        None => unsafe { lane_fixed_this(cx) },
+    }
+}
+
+/// `this` where the lane holds it or the frame fixed it; `None` for a lexical `this`, which
+/// the general lookup (`lane_this`) resolves with a call. Without that call, a handler's
+/// fast path keeps its values in registers no callee preserves.
+///
+/// # Safety
+/// `cx` is the running lane's context.
+#[inline(always)]
+unsafe fn lane_fixed_this<H: Host>(cx: *mut LaneContext<H>) -> Option<Value> {
+    let this = unsafe { (*cx).this };
+    if !this.is_deleted() {
+        return Some(this);
+    }
+    let frame = (unsafe { vm(cx) }).frames.get(unsafe { (*cx).frame })?;
+    frame.fixed_this.then_some(frame.this)
 }
 
 lane_handler! {
@@ -1218,15 +1248,36 @@ lane_handler! {
 }
 
 lane_handler! {
+    /// `GetField` of a register or `this` at a site whose primary entry names a prototype
+    /// holder (`Vm::field_site_holder`), a method read: that entry inline; any other read
+    /// takes `lane_get_field`.
+    fn lane_get_field_holder<>(cx, r, ip, i, view) {
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) })
+            .and_then(|object| (unsafe { vm(cx) }).primary_holder_field_hit(code, object, i.c))
+        else {
+            sibling!(lane_get_field::<H>, r, ip, Carried::SCRIPT)
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::SCRIPT)
+    }
+}
+
+lane_handler! {
     /// A primary-entry miss of `lane_get_field_own`: a nested record moves to
-    /// `lane_get_field`, one whose site went polymorphic to `lane_get_field_polymorphic`;
-    /// the read itself takes `lane_get_field`.
+    /// `lane_get_field`, one whose site went polymorphic to `lane_get_field_polymorphic`,
+    /// one whose primary entry names a prototype holder to `lane_get_field_holder`; the read
+    /// itself takes `lane_get_field`.
     #[inline(never)]
     fn lane_get_field_miss<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
         if i.b == crate::bytecode::FieldBase::NESTED {
             requicken(ip, lane_get_field::<H>);
-        } else if (unsafe { vm(cx) }).field_site_polymorphic(i.c) {
+        } else if vm.field_site_polymorphic(i.c) {
             requicken(ip, lane_get_field_polymorphic::<H>);
+        } else if vm.field_site_holder(i.c) {
+            requicken(ip, lane_get_field_holder::<H>);
         }
         sibling!(lane_get_field::<H>, r, ip, Carried::SCRIPT)
     }
@@ -1399,9 +1450,7 @@ lane_handler! {
         else {
             return exit(ip);
         };
-        let Some(holds) = super::operations::number_relation(u32::from(i.a), left, right)
-            .or_else(|| lane_relation_other::<H>(u32::from(i.a), left, right))
-        else {
+        let Some(holds) = lane_relation::<H>(u32::from(i.a), left, right) else {
             return exit(ip);
         };
         if !holds {
@@ -1416,9 +1465,7 @@ lane_handler! {
     /// (`specialize_register_operands`).
     fn lane_jump_binary_false_registers<BACKWARD: bool>(cx, r, ip, i, view) {
         let (left, right) = (r.get(i.b), r.get(i.c));
-        let Some(holds) = super::operations::number_relation(u32::from(i.a), left, right)
-            .or_else(|| lane_relation_other::<H>(u32::from(i.a), left, right))
-        else {
+        let Some(holds) = lane_relation::<H>(u32::from(i.a), left, right) else {
             return exit(ip);
         };
         if !holds {
@@ -3070,6 +3117,11 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let view = self.lane_view_any(program, function)?;
+        // A frameless activation's function has no environment of its own.
+        let capture = match self.environment_capture_slots(env, false, 0) {
+            Some((slots, None)) => slots as *const crate::heap::EnvironmentSlots,
+            _ => std::ptr::null(),
+        };
         let target = ScriptCallTarget {
             callee,
             generation: self.lane_stack.generation,
@@ -3081,6 +3133,7 @@ impl<H: Host> Vm<H> {
             strict: body.strict,
             constructs: Self::inline_constructible(body),
             forwards: plan.forwards_arguments,
+            capture,
         };
         self.lane_stack.script_targets[index] = target;
         Some(target)
@@ -3397,7 +3450,7 @@ fn lane_activate<H: Host>(
         (*cx).base = base;
         (*cx).this = this;
         (*cx).env = target.env;
-        (*cx).capture = std::ptr::null();
+        (*cx).capture = target.capture;
     }
     Ok((callee_registers, base))
 }
@@ -3514,7 +3567,7 @@ fn lane_activate_keeping<H: Host>(
         (*cx).base = base;
         (*cx).this = this;
         (*cx).env = target.env;
-        (*cx).capture = std::ptr::null();
+        (*cx).capture = target.capture;
     }
     Ok((callee_registers, base))
 }
