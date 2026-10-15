@@ -36,6 +36,8 @@ pub(crate) struct Response {
     pub(crate) headers: Vec<(String, String)>,
     pub(crate) body: Body,
     pub(crate) send_date: bool,
+    pub(crate) http10: bool,
+    pub(crate) use_chunked_encoding_by_default: bool,
     pub(crate) lifecycle: ResponseLifecycle,
 }
 

@@ -121,6 +121,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "emitterAsyncLink" (2) => crate::modules::emitter_async_resource_shared_vm::link,
         method "emitterAsyncOwner" (1) => crate::modules::emitter_async_resource_shared_vm::owner,
         method "nodeErrorToString" (1) => crate::modules::node_errors_shared_vm::to_string,
+        method "utilInspectBuiltin" (5) => crate::modules::util_inspect_builtin_shared_vm::render,
+        method "utilFormatString" (2) => crate::modules::util_format_string_shared_vm::format,
         method "utilInspectQuote" (1) => crate::modules::util_shared_vm::inspect_quote,
         method "styleText" (3) => crate::modules::util_style_shared_vm::style_text,
         method "utilColorAliasGet" (0) => crate::modules::util_style_shared_vm::alias_get,
@@ -177,6 +179,15 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "osTotalmem" (0) => crate::modules::os_shared_vm::totalmem_operation,
         method "osUptime" (0) => crate::modules::os_shared_vm::uptime_operation,
         method "osNetworkInterfaces" (0) => crate::modules::os_shared_vm::network_interfaces_operation,
+        method "osCpus" (0) => crate::modules::os_shared_vm::cpus_operation,
+        method "btoa" (1) => crate::modules::base64_shared_vm::btoa,
+        method "atob" (1) => crate::modules::base64_shared_vm::atob,
+        method "moduleConstruct" (0) => crate::modules::module_shared_vm::construct,
+        method "moduleConstructorGet" (0) => crate::modules::module_shared_vm::constructor_get,
+        method "moduleParentGet" (0) => crate::modules::module_shared_vm::parent_get,
+        method "moduleParentSet" (1) => crate::modules::module_shared_vm::parent_set,
+        method "moduleRequire" (1) => crate::modules::module_shared_vm::require,
+        method "moduleCompile" (3) => crate::modules::module_shared_vm::compile,
         method "netLookupResult" (3) => crate::modules::net_lookup_shared_vm::result,
         method "netLookupError" (2) => crate::modules::net_lookup_shared_vm::error,
         method "netGetAutoSelectFamily" (0) => crate::modules::net_lookup_shared_vm::get_default,
@@ -213,6 +224,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "streamShouldResumeData" (1) => crate::modules::stream_shared_vm::should_resume_data,
         method "streamIsPaused" (1) => crate::modules::stream_shared_vm::is_paused,
         method "streamSetFlowing" (2) => crate::modules::stream_shared_vm::set_flowing,
+        method "streamResumeFlow" (1) => crate::modules::stream_shared_vm::resume_flow,
         method "streamPipeStart" (2) => crate::modules::stream_pipe_shared_vm::start,
         method "streamListenerRemoved" (3) => crate::modules::stream_shared_vm::listener_removed,
         method "streamUpdateReadableListening" (1) => crate::modules::stream_shared_vm::update_readable_listening,
@@ -250,6 +262,9 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "emitterOnce" (4) => crate::modules::event_emitter_shared_vm::once,
         method "emitterOnceInvoke" (0) => crate::modules::event_emitter_shared_vm::once_invoke,
         method "eventsDefaultMaxGet" (0) => crate::modules::event_limits_shared_vm::default_get,
+        method "consoleLoadUtil" (0) => crate::modules::console_shared_vm::load_util,
+        method "eventGlobalsInitialize" (0) => crate::modules::events_shared_vm::initialize_event_globals,
+        method "eventAbortStateInitialize" (0) => crate::modules::events_shared_vm::initialize_abort_state,
         method "eventsDefaultMaxSet" (1) => crate::modules::event_limits_shared_vm::default_set,
         method "emitterMaxGet" (1) => crate::modules::event_limits_shared_vm::emitter_get,
         method "emitterMaxSet" (2) => crate::modules::event_limits_shared_vm::emitter_set,
@@ -304,9 +319,15 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "httpResponseSetHeader" (4) => crate::modules::http_shared_vm::response_set_header,
         method "httpResponseGetHeader" (2) => crate::modules::http_shared_vm::response_get_header,
         method "httpResponseRemoveHeader" (2) => crate::modules::http_shared_vm::response_remove_header,
-        method "httpResponseWrite" (5) => crate::modules::http_shared_vm::response_write,
+        method "httpResponseWrite" (6) => crate::modules::http_shared_vm::response_write,
         method "httpResponseFinish" (7) => crate::modules::http_shared_vm::response_finish,
-        method "httpResponseWriteHead" (5) => crate::modules::http_shared_vm::response_write_head,
+        method "httpResponseWriteHead" (6) => crate::modules::http_shared_vm::response_write_head,
+        method "httpResponseInitialize" (2) => crate::modules::http_shared_vm::response_initialize,
+        method "httpResponseSend" (4) => crate::modules::http_shared_vm::response_send,
+        method "httpValidateHeaderNamePublic" (0) => crate::modules::http_shared_vm::validate_header_name,
+        method "httpValidateHeaderNameOriginal" (2) => crate::modules::http_shared_vm::validate_header_name,
+        method "httpValidateHeaderValuePublic" (0) => crate::modules::http_shared_vm::validate_header_value,
+        method "httpValidateHeaderValueOriginal" (3) => crate::modules::http_shared_vm::validate_header_value,
         method "httpResponseDestroy" (1) => crate::modules::http_shared_vm::response_destroy,
         method "fsReadStreamOpen" (1) => crate::modules::fs_shared_vm::read_stream_open,
         method "fsReadStreamRead" (2) => crate::modules::fs_shared_vm::read_stream_read,
@@ -470,6 +491,18 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "zlibCallbackQueue" (5) => crate::modules::zlib_shared_vm::queue_callback,
         method "zlibCallbackRun" (0) => crate::modules::zlib_shared_vm::run_callback,
         method "zlibCrc32" (2) => crate::modules::zlib_shared_vm::crc32,
+        method "bufferLegacyConstruct" (3) => crate::modules::buffer_constructor_shared_vm::construct,
+        method "bufferIsBuffer" (1) => crate::modules::buffer_constructor_shared_vm::is_buffer,
+        method "bufferSpeciesGet" (0) => crate::modules::buffer_constructor_shared_vm::species,
+        method "bufferOf" (0) => crate::modules::buffer_constructor_shared_vm::of,
+        method "bufferInspect" (2) => crate::modules::buffer_inspect_shared_vm::inspect,
+        method "bufferInspectMaxGet" (0) => crate::modules::buffer_inspect_shared_vm::maximum,
+        method "bufferInspectMaxSet" (1) => crate::modules::buffer_inspect_shared_vm::set_maximum,
+        method "bufferFill" (4) => crate::modules::buffer_fill_shared_vm::fill,
+        method "bufferBindingFill" (0) => crate::modules::buffer_fill_shared_vm::binding_fill,
+        method "bufferWrite" (4) => crate::modules::buffer_write_shared_vm::write,
+        method "bufferSwap" (0) => crate::modules::buffer_swap_shared_vm::operation,
+        method "bufferBigInt" (3) => crate::modules::buffer_bigint_shared_vm::operation,
         method "bufferBackingGet" (0) => crate::modules::buffer_shared_vm::backing_get,
         method "bufferSearch" (5) => crate::modules::buffer_search_shared_vm::search,
         method "bufferEncode" (2) => crate::modules::buffer_shared_vm::encode,
@@ -574,6 +607,17 @@ impl quench_runtime::Host for NodeHost {
 
     fn clock_millis(&mut self) -> f64 {
         quench_runtime::Host::clock_millis(&mut SystemHost)
+    }
+
+    fn compile_wasm(
+        &mut self,
+        bytes: &[u8],
+        mode: quench_runtime::ExecutionMode,
+    ) -> Result<quench_runtime::WasmModule, String> {
+        quench_wasm::Engine::new()
+            .compile(bytes)
+            .and_then(|module| module.lower_shared_module_for(mode))
+            .map_err(|error| error.to_string())
     }
 
     fn resolve_dynamic_import(

@@ -137,6 +137,7 @@ impl<H: Host> Vm<H> {
                     element_type,
                     declarations,
                     table64,
+                    ..
                 }) = self.heap.get(value)
                 else {
                     return Err(JsError::wasm_link(
@@ -176,11 +177,12 @@ impl<H: Host> Vm<H> {
                 let value = self
                     .root_value(imports[name.index as usize])
                     .ok_or_else(|| JsError::wasm_link("invalid Wasm memory import root"))?;
-                let Some(Cell::WasmMemory { bytes, ty }) = self.heap.get(value) else {
+                let Some(Cell::WasmMemory { bytes, header, .. }) = self.heap.get(value) else {
                     return Err(JsError::wasm_link(
                         "Wasm memory import has wrong external kind",
                     ));
                 };
+                let ty = &header.ty;
                 if ty.shared != memory.ty.shared
                     || ty.index_type() != memory.ty.index_type()
                     || ty.page_size() != memory.ty.page_size()
@@ -209,10 +211,11 @@ impl<H: Host> Vm<H> {
                 match self.heap.get(value) {
                     Some(Cell::WasmGlobal {
                         ty: actual,
-                        declarations,
+                        header,
                         mutable,
                         ..
-                    }) if *mutable == global.mutable
+                    }) if let declarations = &header.declarations
+                        && *mutable == global.mutable
                         && (if *mutable {
                             declarations.value_subtype(
                                 *actual,
@@ -300,48 +303,14 @@ impl<H: Host> Vm<H> {
                 values.push(value);
                 continue;
             }
-            let length = memory.byte_length().ok_or_else(|| {
-                JsError::validation("Wasm memory allocation exceeds host address space".into())
-            })?;
-            // An unshared memory32 lives in a guarded reservation in both
-            // modes: its pages commit as they are first touched, and growth
-            // never copies. Compiled code also relies on the guard in place
-            // of bounds checks, and on the memory repeating above 2^32 to
-            // form i32 sums in 64 bits; the interpreter forms no addresses
-            // that way, so its memory stays private anonymous pages. The
-            // guard covers exactly the bytes past the memory's length only
-            // when every length is a whole number of host pages.
-            let wraps = self.execution_mode == super::ExecutionMode::Compiled;
-            let guarded = (!memory.ty.shared
-                && !memory.ty.memory64
-                && (memory.ty.page_size() as usize).is_multiple_of(crate::wasm::memory::HOST_PAGE))
-            .then(|| crate::wasm::memory::LinearBytes::reserved(length, wraps))
-            .flatten();
-            let bytes = match guarded {
-                Some(bytes) => bytes,
-                None => {
-                    let mut bytes = Vec::new();
-                    bytes
-                        .try_reserve_exact(length)
-                        .map_err(|_| JsError::validation("Wasm memory allocation failed".into()))?;
-                    bytes.resize(length, 0);
-                    crate::wasm::memory::LinearBytes::heap(bytes)
-                }
-            };
-            values.push(self.heap.alloc(Cell::WasmMemory {
-                bytes: std::rc::Rc::new(crate::wasm::memory::MemoryStorage::new(
-                    bytes,
-                    memory.ty.shared,
-                )),
-                ty: Box::new(memory.ty),
-            }));
+            values.push(self.alloc_wasm_memory(memory.ty)?);
         }
         for segment in module.data.iter() {
             // All segments are available before initialization effects. A later
             // trap can leave functions reachable through an imported table.
             values.push(self.heap.alloc(Cell::ArrayBuffer {
                 object: Box::new(Self::empty_object(Value::NULL)),
-                bytes: segment.bytes.clone(),
+                bytes: segment.bytes.clone().into(),
                 shared: false,
                 detached: false,
                 max_byte_length: segment.bytes.len(),
@@ -354,23 +323,11 @@ impl<H: Host> Vm<H> {
                 values.push(value);
                 continue;
             }
-            let length = usize::try_from(table.ty.initial).map_err(|_| {
-                JsError::validation("Wasm table size exceeds host address space".into())
-            })?;
-            let mut elements = Vec::new();
-            elements
-                .try_reserve_exact(length)
-                .map_err(|_| JsError::validation("Wasm table allocation failed".into()))?;
-            elements.resize(length, Value::NULL);
-            values.push(self.heap.alloc(Cell::WasmTable {
-                table64: table.ty.table64,
-                elements: Box::new(crate::heap::WasmTableElements {
-                    values: elements,
-                    maximum: table.ty.maximum,
-                }),
-                element_type: table.ty.element_type,
-                declarations: Box::new(module.signatures.declarations.clone()),
-            }));
+            values.push(self.alloc_wasm_table(
+                table.ty,
+                module.signatures.declarations.clone(),
+                Value::NULL,
+            )?);
         }
         values.extend(std::iter::repeat_n(Value::UNDEFINED, module.elements.len()));
         for (tag, imported) in module.tags.iter().zip(tags) {
@@ -419,6 +376,96 @@ impl<H: Host> Vm<H> {
         Ok(crate::WasmInstance {
             module: module.clone(),
             environment: root,
+        })
+    }
+
+    /// A new zeroed memory of type `ty`, which is also its `WebAssembly.Memory` object.
+    pub(super) fn alloc_wasm_memory(
+        &mut self,
+        ty: wasmparser::MemoryType,
+    ) -> Result<Value, JsError> {
+        let length = crate::WasmMemory { ty, import: None }.byte_length().ok_or_else(|| {
+            JsError::validation("Wasm memory allocation exceeds host address space".into())
+        })?;
+        // An unshared memory32 lives in a guarded reservation in both
+        // modes: its pages commit as they are first touched, and growth
+        // never copies. Compiled code also relies on the guard in place
+        // of bounds checks, and on the memory repeating above 2^32 to
+        // form i32 sums in 64 bits; the interpreter forms no addresses
+        // that way, so its memory stays private anonymous pages. The
+        // guard covers exactly the bytes past the memory's length only
+        // when every length is a whole number of host pages.
+        let wraps = self.execution_mode == super::ExecutionMode::Compiled;
+        let guarded = (!ty.shared
+            && !ty.memory64
+            && (ty.page_size() as usize).is_multiple_of(crate::wasm::memory::HOST_PAGE))
+        .then(|| crate::wasm::memory::LinearBytes::reserved(length, wraps))
+        .flatten();
+        let bytes = match guarded {
+            Some(bytes) => bytes,
+            None => {
+                let mut bytes = Vec::new();
+                bytes
+                    .try_reserve_exact(length)
+                    .map_err(|_| JsError::validation("Wasm memory allocation failed".into()))?;
+                bytes.resize(length, 0);
+                crate::wasm::memory::LinearBytes::heap(bytes)
+            }
+        };
+        Ok(self.heap.alloc(Cell::WasmMemory {
+            header: Box::new(crate::heap::WasmMemoryHeader {
+                object: Self::empty_object(self.wasm_js.memory),
+                ty,
+            }),
+            bytes: std::rc::Rc::new(crate::wasm::memory::MemoryStorage::new(bytes, ty.shared)),
+            buffer: Value::UNDEFINED,
+        }))
+    }
+
+    /// A new table of type `ty` with every element `initial`, which is also its
+    /// `WebAssembly.Table` object.
+    pub(super) fn alloc_wasm_table(
+        &mut self,
+        ty: wasmparser::TableType,
+        declarations: crate::WasmTypes,
+        initial: Value,
+    ) -> Result<Value, JsError> {
+        let length = usize::try_from(ty.initial)
+            .map_err(|_| JsError::validation("Wasm table size exceeds host address space".into()))?;
+        let mut elements = Vec::new();
+        elements
+            .try_reserve_exact(length)
+            .map_err(|_| JsError::validation("Wasm table allocation failed".into()))?;
+        elements.resize(length, initial);
+        Ok(self.heap.alloc(Cell::WasmTable {
+            object: Box::new(Self::empty_object(self.wasm_js.table)),
+            table64: ty.table64,
+            elements: Box::new(crate::heap::WasmTableElements {
+                values: elements,
+                maximum: ty.maximum,
+            }),
+            element_type: ty.element_type,
+            declarations: Box::new(declarations),
+        }))
+    }
+
+    /// A new global holding the encoded `value`, which is also its `WebAssembly.Global`
+    /// object.
+    pub(super) fn alloc_wasm_global(
+        &mut self,
+        value: Value,
+        ty: crate::WasmType,
+        declarations: crate::WasmTypes,
+        mutable: bool,
+    ) -> Value {
+        self.heap.alloc(Cell::WasmGlobal {
+            header: Box::new(crate::heap::WasmGlobalHeader {
+                object: Self::empty_object(self.wasm_js.global),
+                declarations,
+            }),
+            value,
+            ty,
+            mutable,
         })
     }
 
@@ -518,12 +565,12 @@ impl<H: Host> Vm<H> {
             };
             let value = self.evaluate_wasm_initializer(module, expression, environment)?;
             let value = self.encode_wasm_value(value);
-            let binding = self.heap.alloc(Cell::WasmGlobal {
+            let binding = self.alloc_wasm_global(
                 value,
-                ty: expression.value_type(),
-                declarations: Box::new(module.signatures.declarations.clone()),
-                mutable: global.mutable,
-            });
+                expression.value_type(),
+                module.signatures.declarations.clone(),
+                global.mutable,
+            );
             *self.heap.environment_slot_mut(environment, index).unwrap() = binding;
         }
         Ok(())
@@ -697,7 +744,7 @@ impl<H: Host> Vm<H> {
                         let Some(Cell::WasmGlobal {
                             value,
                             ty,
-                            declarations,
+                            header,
                             ..
                         }) = self.heap.get(binding)
                         else {
@@ -706,7 +753,7 @@ impl<H: Host> Vm<H> {
                                 "invalid Wasm initializer global binding",
                             ));
                         };
-                        self.decode_wasm_value_in(*value, *ty, Some(declarations))
+                        self.decode_wasm_value_in(*value, *ty, Some(&header.declarations))
                             .map_err(|error| {
                                 crate::Diagnostic::unsupported(name, error.to_string())
                             })
@@ -899,15 +946,12 @@ impl<H: Host> Vm<H> {
     ) -> Result<crate::WasmValue, JsError> {
         let binding = self.wasm_global_binding(instance, index)?;
         let Some(Cell::WasmGlobal {
-            value,
-            ty,
-            declarations,
-            ..
+            value, ty, header, ..
         }) = self.heap.get(binding)
         else {
             return Err(JsError::validation("invalid Wasm global binding".into()));
         };
-        self.decode_wasm_value_in(*value, *ty, Some(declarations))
+        self.decode_wasm_value_in(*value, *ty, Some(&header.declarations))
     }
 
     pub(crate) fn wasm_global_binding(
@@ -977,15 +1021,16 @@ impl<H: Host> Vm<H> {
         memory: Value,
     ) -> Result<wasmparser::MemoryType, JsError> {
         match self.heap.get(memory) {
-            Some(Cell::WasmMemory { ty, .. }) => Ok(**ty),
+            Some(Cell::WasmMemory { header, .. }) => Ok(header.ty),
             _ => Err(JsError::validation("invalid Wasm memory binding".into())),
         }
     }
 
     pub(super) fn wasm_memory_pages(&self, memory: Value) -> Result<u64, JsError> {
-        let Some(Cell::WasmMemory { bytes, ty }) = self.heap.get(memory) else {
+        let Some(Cell::WasmMemory { bytes, header, .. }) = self.heap.get(memory) else {
             return Err(JsError::validation("invalid Wasm memory binding".into()));
         };
+        let ty = &header.ty;
         Ok((bytes.len() / ty.page_size() as usize) as u64)
     }
 
@@ -1022,8 +1067,8 @@ impl<H: Host> Vm<H> {
         memory: Value,
     ) -> Result<(crate::wasm::memory::MemoryGuard<'_>, usize), JsError> {
         match self.heap.get(memory) {
-            Some(Cell::WasmMemory { bytes, ty }) => {
-                Ok((bytes.lock(), crate::wasm::memory::maximum_bytes(ty)))
+            Some(Cell::WasmMemory { bytes, header, .. }) => {
+                Ok((bytes.lock(), crate::wasm::memory::maximum_bytes(&header.ty)))
             }
             _ => Err(JsError::validation(
                 "invalid mutable Wasm memory binding".into(),
@@ -1268,7 +1313,46 @@ impl<H: Host> Vm<H> {
         let after = bytes.capacity();
         drop(bytes);
         self.heap.adjust_external_bytes(before, after);
+        self.refresh_wasm_memory_buffer(memory);
         Ok(Some(old_pages as u64))
+    }
+
+    /// The ArrayBuffer viewing `memory`'s current bytes, created on first request; `None`
+    /// for a shared memory, whose buffer is not supported yet.
+    pub(super) fn wasm_memory_buffer(&mut self, memory: Value) -> Option<Value> {
+        let Some(Cell::WasmMemory { bytes, buffer, .. }) = self.heap.get(memory) else {
+            return None;
+        };
+        if !buffer.is_undefined() {
+            return Some(*buffer);
+        }
+        let view = crate::heap::BufferBytes::wasm_view(bytes)?;
+        let byte_length = view.len();
+        let buffer = self.heap.alloc(Cell::ArrayBuffer {
+            object: Box::new(Self::empty_object(self.array_buffer_proto)),
+            bytes: view,
+            shared: false,
+            detached: false,
+            max_byte_length: byte_length,
+            resizable: false,
+            immutable: false,
+        });
+        if let Some(Cell::WasmMemory { buffer: current, .. }) = self.heap.get_mut(memory) {
+            *current = buffer;
+        }
+        Some(buffer)
+    }
+
+    /// After growth: detaches the buffer viewing the old bytes, so the next request makes
+    /// a buffer of the new length.
+    fn refresh_wasm_memory_buffer(&mut self, memory: Value) {
+        let Some(Cell::WasmMemory { buffer, .. }) = self.heap.get_mut(memory) else {
+            return;
+        };
+        let previous = std::mem::replace(buffer, Value::UNDEFINED);
+        if !previous.is_undefined() {
+            self.detach_array_buffer(previous);
+        }
     }
 
     fn register_wasm_program(&mut self, module: &crate::WasmModule) -> Result<ProgramId, JsError> {
@@ -1776,7 +1860,7 @@ mod tests {
             assert!(!vm.heap.is_live(owner_env));
             assert!(matches!(
                 vm.heap.get(memory),
-                Some(Cell::WasmMemory { ty, .. }) if ty.maximum == Some(3)
+                Some(Cell::WasmMemory { header, .. }) if header.ty.maximum == Some(3)
             ));
             vm.wasm_memory_store(
                 memory,

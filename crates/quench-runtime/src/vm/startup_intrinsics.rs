@@ -67,6 +67,13 @@ impl StartupIntrinsics {
 }
 
 impl<H: Host> Vm<H> {
+    pub(crate) fn has_startup_global_name(&self, name: &str) -> bool {
+        self.lookup_atom(name).is_some_and(|atom| {
+            self.startup_intrinsics.properties.iter().any(|property|
+                property.holder == self.realm.globals && property.key == PropertyKey::string(atom))
+        })
+    }
+
     /// Records the intrinsics: every own shape property of the global object, of each object a
     /// global property holds, and of that object's `prototype`.
     pub(crate) fn seal_startup_intrinsics(&mut self) {

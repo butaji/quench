@@ -311,6 +311,7 @@ impl<H: Host> Vm<H> {
         // every source costs each root a step through every nesting level.
         let mut roots = Vec::new();
         self.programs.extend_roots(&mut roots);
+        roots.extend(self.wasm_js.roots());
         roots.extend([
             self.realm.globals,
             self.object_proto,
@@ -353,6 +354,8 @@ impl<H: Host> Vm<H> {
             self.async_from_sync_iterator_proto,
             self.regexp_proto,
         ]);
+        // The active realm's top-level lexical bindings, then every inactive realm's.
+        roots.extend(self.realm.global_lexical_bindings.values().copied());
         roots.extend(
             self.realm
                 .global_lexical_states
@@ -678,6 +681,7 @@ impl<H: Host> Vm<H> {
         // weak function cache before any post-collection cleanup can allocate
         // into newly freed slots.
         self.prune_function_values();
+        self.prune_wasm_exported_functions();
         if full && self.programs.has_unchecked_reclaimable() {
             self.reclaim_unreferenced_programs();
         }

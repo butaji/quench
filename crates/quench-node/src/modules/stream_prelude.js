@@ -548,7 +548,6 @@
     if (stream.destroyed) return;
     const st = stream._readableState;
     const resumePending = st.resumeScheduled && st.resumeEventPending;
-    const restoreResume = resumePending && readableBufferCount(st) > 0;
     if (resumePending) {
       st.resumeScheduled = false;
       st.resumeEventPending = false;
@@ -656,12 +655,6 @@
           }
         })
       );
-    }
-    if (restoreResume && !stream.destroyed) {
-      st.resumeScheduled = true;
-      nextTick(() => {
-        st.resumeScheduled = false;
-      });
     }
   }
 
@@ -895,7 +888,7 @@
     resume() {
       if (this.destroyed) return this;
       this._readableState.paused = false;
-      this._readableState.flowing = true;
+      this._readableState.flowing = deps.resumeFlow(this._readableState);
       if (!this._readableState.resumeScheduled) {
         this._readableState.resumeScheduled = true;
         this._readableState.resumeEventPending = true;
