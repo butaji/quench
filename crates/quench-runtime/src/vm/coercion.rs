@@ -206,7 +206,7 @@ impl<H: Host> Vm<H> {
             }
             Some(Cell::BigInt(_)) => {
                 return Err(
-                    self.type_error(program, "cannot convert a BigInt value to a number".into())
+                    self.type_error(program, "Cannot convert a BigInt value to a number".into())
                 );
             }
             _ => {}

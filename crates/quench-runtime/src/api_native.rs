@@ -208,6 +208,18 @@ impl<'a, H: Host> NativeContext<'a, H> {
         result.map_err(|error| self.error(error))
     }
 
+    /// Whether a name was an own global property in the sealed host bootstrap.
+    pub fn has_startup_global_name(&self, name: &str) -> bool {
+        self.vm.has_startup_global_name(name)
+    }
+
+    /// A proxy's original target, including null for a revoked proxy, without traps.
+    pub fn proxy_target_rooted(&mut self, root: RootId) -> Result<Option<RootId>, RootedError> {
+        let result = self.vm.embedding_proxy_target(root);
+        let value = result.map_err(|error| self.error(error))?;
+        Ok(value.map(|value| self.scoped_value(value)))
+    }
+
     /// Test an internal-slot brand without invoking guest getters or proxy traps.
     pub fn has_builtin_brand_rooted(
         &mut self,
@@ -244,6 +256,12 @@ impl<'a, H: Host> NativeContext<'a, H> {
     ) -> Result<bool, RootedError> {
         let result = self.vm.embedding_strict_equal(left, right);
         result.map_err(|error| self.error(error))
+    }
+
+    /// Compiler-owned source names of live JavaScript callers, nearest first.
+    /// This reads frame metadata without evaluating guest stack accessors.
+    pub fn call_stack_source_names(&self) -> Vec<String> {
+        self.vm.embedding_call_stack_source_names()
     }
 
     /// Apply shared InstanceofOperator, including original @@hasInstance hooks
@@ -300,6 +318,14 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.completion(result)
     }
 
+    /// Own non-array-index keys without expanding a view's virtual element keys.
+    pub fn own_non_index_keys_rooted(&mut self, root: RootId, enumerable_only: bool) -> Result<Vec<RootId>, RootedError> {
+        let result = self.vm.embedding_non_index_own_keys(root, enumerable_only);
+        let roots = result.map_err(|error| self.error(error))?;
+        self.roots.extend(roots.iter().copied());
+        Ok(roots)
+    }
+
     /// Enumerable own string keys, optionally including Symbols, through internal methods.
     pub fn enumerable_own_keys_rooted(
         &mut self,
@@ -318,6 +344,12 @@ impl<'a, H: Host> NativeContext<'a, H> {
     /// Apply the realm's ordinary ToString operation at a host boundary.
     pub fn to_string(&mut self, root: RootId) -> Result<String, RootedError> {
         let result = self.vm.embedding_to_string(root);
+        result.map_err(|error| self.error(error))
+    }
+
+    /// Apply ordinary ToString while preserving every UTF-16 code unit.
+    pub fn to_string_code_units(&mut self, root: RootId) -> Result<Vec<u16>, RootedError> {
+        let result = self.vm.embedding_to_string_code_units(root);
         result.map_err(|error| self.error(error))
     }
 
@@ -660,6 +692,11 @@ impl<'a, H: Host> NativeContext<'a, H> {
             .and_then(|value| self.vm.embedding_view_bytes(value))
     }
 
+    /// Snapshot at most `maximum` original bytes of an ArrayBuffer or buffer view.
+    pub fn bytes_prefix_rooted(&self, root: RootId, maximum: usize) -> Option<Vec<u8>> {
+        self.vm.root_value(root).and_then(|value| self.vm.embedding_bytes_prefix(value, maximum))
+    }
+
     /// Check callability without coercion or invoking guest code.
     pub fn is_callable_rooted(&mut self, root: RootId) -> Result<bool, RootedError> {
         self.vm
@@ -726,6 +763,23 @@ impl<'a, H: Host> NativeContext<'a, H> {
 
     pub fn host_function(&mut self, id: HostFunctionId) -> Result<RootId, RootedError> {
         let result = self.vm.create_host_function(id);
+        self.completion(result)
+    }
+
+    /// Create a native-backed ordinary constructor. Primitive completions return
+    /// the allocated receiver; object completions replace it, like JavaScript functions.
+    pub fn host_constructor(&mut self, id: HostFunctionId) -> Result<RootId, RootedError> {
+        let result = self.vm.create_host_constructor(id);
+        self.completion(result)
+    }
+
+    pub fn host_constructor_with_data(
+        &mut self,
+        id: HostFunctionId,
+        data: RootId,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.embedding_value(data)
+            .and_then(|value| self.vm.create_host_constructor_with_data(id, value));
         self.completion(result)
     }
 
@@ -882,6 +936,13 @@ impl<H: Host> Runtime<H> {
     /// Create a persistent native callable from this host's stable table.
     pub fn host_function(&mut self, id: HostFunctionId) -> Result<RootId, RootedError> {
         match self.vm.create_host_function(id) {
+            Ok(value) => Ok(self.root(value)),
+            Err(error) => Err(RootedError::retain(&mut self.vm, error)),
+        }
+    }
+
+    pub fn host_constructor(&mut self, id: HostFunctionId) -> Result<RootId, RootedError> {
+        match self.vm.create_host_constructor(id) {
             Ok(value) => Ok(self.root(value)),
             Err(error) => Err(RootedError::retain(&mut self.vm, error)),
         }

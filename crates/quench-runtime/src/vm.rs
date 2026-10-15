@@ -5,6 +5,7 @@ pub use compiled::ExecutionMode;
 mod wasm_exception;
 mod wasm_gc;
 mod wasm_host;
+mod wasm_js;
 mod wasm_table;
 use crate::Value;
 use crate::bytecode::{
@@ -43,6 +44,9 @@ struct RuntimeAtoms {
     last_index: Atom,
     /// `regexp::REGEXP_FLAG_ACCESSORS` names, in that order.
     regexp_flag_accessors: [Atom; regexp::REGEXP_FLAG_ACCESSORS.len()],
+    /// Read by every promise resolution and species lookup.
+    then: Atom,
+    constructor: Atom,
 }
 pub(crate) mod activation;
 mod activation_lifecycle;
@@ -1060,6 +1064,10 @@ pub(crate) struct Vm<H> {
     descriptors: FxHashMap<(Value, property_key::PropertyKey), PropertyAttributes>,
     // Weak identities; captured environments remain authoritative in function cells.
     function_values: FxHashMap<(ProgramId, u32), Vec<WeakHandle>>,
+    /// The JavaScript wrapper of each exported Wasm closure, so every export of one
+    /// function is one object. Weak: a wrapper nothing holds is made again on demand.
+    wasm_exported_functions: FxHashMap<Value, WeakHandle>,
+    wasm_js: wasm_js::WasmJsIntrinsics,
     direct_eval: bool,
     direct_eval_var_program: Option<ProgramId>,
     parameter_eval: bool,
@@ -1717,6 +1725,8 @@ impl<H: Host> Vm<H> {
             regexp_flags: self.intern_atom("flags"),
             last_index: self.intern_atom("lastIndex"),
             regexp_flag_accessors,
+            then: self.intern_atom("then"),
+            constructor: self.intern_atom("constructor"),
         };
         self.field_caches = vec![EMPTY_CACHE; program.cache_sites as usize];
         Self::prime_loop_decoding(program);
@@ -1735,6 +1745,7 @@ impl<H: Host> Vm<H> {
         self.object_shapes = vec![u32::MAX; program.object_sites.len()];
         self.descriptors.clear();
         self.function_values.clear();
+        self.wasm_exported_functions.clear();
         self.programs.reset(program.clone());
         self.instanceof_constructor_layout = None;
         self.regexp_last_index_layout = None;

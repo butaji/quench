@@ -163,18 +163,25 @@ large), so the run kept 4-6 MB of file pages resident. `quench_entry_compiled`
 (a no-op called once the entry has compiled) splits a callgrind profile there
 (`--dump-before`); `symbol-order --run` places the functions executed after it
 first: the empty start's in order, then the corpus's by how many programs
-executed them. The start-up order follows. Retrain both orders (static and
+executed them; then every per-instruction lane handler (`--dense
+13dispatch_fast`, 126 KB of small functions a hot loop reaches by its code,
+which short training programs rarely do); then the Test262 sample's run
+functions, ranked as a second tier so its builtin coverage does not push the
+interpreter's paths apart. The start-up order follows. Retrain both orders (static and
 dynamic builds) on their own binaries:
 
 ```sh
 for f in empty.cjs quench-bench/deegen-curriculum/*.js quench-bench/micros/*.js train-test262/*.js; do
   valgrind --tool=cachegrind --cache-sim=no --demangle=no \
     --cachegrind-out-file=train/$(basename $f).out $BINARY $f
-  valgrind --tool=callgrind --demangle=no --dump-before=quench_entry_compiled \
+  valgrind --tool=callgrind --dump-instr=yes --dump-line=no --demangle=no \
+    --dump-before=quench_entry_compiled \
     --callgrind-out-file=run/$(basename $f).out $BINARY $f
 done
-target/production/symbol-order $BINARY $ORDER train/empty.cjs.out train/*.js.out \
-  --run run/empty.cjs.out run/*.js.out
+# The static order adds --foreign-first (block layout below).
+target/production/symbol-order $BINARY $ORDER --dense 13dispatch_fast \
+  train/empty.cjs.out train/*.js.out \
+  --run run/empty.cjs.out run/{curriculum,micros}*.out --run run/test262-*.out
 ```
 
 Stock V8-v7 max RSS against the previous orders (MB), static / dynamic:
@@ -184,3 +191,47 @@ EarleyBoyer 15.6 -> 15.0 / 17.0 -> 16.1, NavierStokes 9.9 -> 9.1 / 11.1 ->
 Richards 8.9 -> 8.1 / 9.9 -> 9.4, Splay 54.2 -> 53.8 / 55.1 -> 55.0. The
 empty start rises 0.6 MB (start-up code now follows the run region); no
 fixture peaks during start-up.
+
+## Block layout (BOLT)
+
+Function order cannot pack a run's code below the size of the functions it
+enters: Richards' run phase executes 59,000 distinct instructions (about 235 KB)
+spread over 346 pages, 45 fault-around windows of the run region. The static
+qualification binary keeps its link relocations (`--emit-relocs`) and is
+rewritten by `llvm-bolt` 20 from a basic-sample profile of the same training
+corpus (`bolt-profile`, from the order's callgrind profiles taken with
+`--dump-instr=yes --dump-line=no`): each function's executed blocks move into
+hot text in the trained function order, the never-executed ones into cold text.
+Commands: `docs/README.md`, "Wasm execution modes and link order".
+
+Three choices decide the result; each was measured against the alternative:
+
+- The interpreter dispatch (`run_frame_general_until`, the lane handlers) stays
+  whole (`--dense`). Split by the corpus, a scored run reached 16 pages of its
+  cold blocks.
+- BOLT leaves code not generated from Rust in place: glibc's single-thread
+  atomics jump over a `lock` prefix, which BOLT splits off its instruction
+  (`lock jmp`, `SIGILL` in `_int_free`). `symbol-order --foreign-first` packs
+  that code at the start of the original text; left among the moved Rust
+  functions it touched 21 windows for 44 pages.
+- Splitting stays on and the profile covers start-up as well as the run: no
+  split, a run-phase-only profile, `-jump-tables=move` and `cdsort` function
+  order each measured 0.1-0.5 MB worse.
+
+Stock V8-v7 max RSS, static build of the same source without and with BOLT,
+binaries evicted from the page cache first (MB): Crypto 8.0 -> 7.5, DeltaBlue
+7.5 -> 7.4, EarleyBoyer 14.2 -> 14.3, NavierStokes 8.1 -> 7.7, RayTrace 7.2 ->
+6.7, RegExp 19.0 -> 18.8, Richards 6.8 -> 6.4, Splay 52.2 -> 51.9. Richards'
+run touches 238 text pages in 38 windows instead of 346 in 45.
+
+A just-written binary is cached in large folios, whose pages fault-around maps
+together: the first BOLT output measured 15.4 MB on Richards until evicted
+(`posix_fadvise(POSIX_FADV_DONTNEED)`), then 7.3 MB. Comparisons evict every
+binary first.
+
+Correctness: 529 Node parallel fixtures (every eighth) run directly on both
+binaries exit identically, except `test-webcrypto-digest-turboshake-rfc.js`,
+which times out at 20 s without BOLT and fails with it (it fails either way).
+
+Callgrind guard (`guard-bolt-raw.txt`, without against with BOLT): start-up
+-0.4% to -1.0%, per-run -1.15% (RayTrace) to +0.80% (NavierStokes).

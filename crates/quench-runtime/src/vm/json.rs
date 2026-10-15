@@ -933,7 +933,11 @@ impl<H: Host> Vm<H> {
             | Some(Cell::TemporalPlainMonthDay { .. })
             | Some(Cell::TemporalPlainYearMonth { .. })
             | Some(Cell::TemporalZonedDateTime { .. })
-            | Some(Cell::TemporalInstant { .. }) => {
+            | Some(Cell::TemporalInstant { .. })
+            | Some(Cell::WasmObject { .. })
+            | Some(Cell::WasmGlobal { .. })
+            | Some(Cell::WasmMemory { .. })
+            | Some(Cell::WasmTable { .. }) => {
                 self.json_serialize_object(p, value, state).map(Some)
             }
             Some(Cell::Environment { .. })
@@ -941,9 +945,6 @@ impl<H: Host> Vm<H> {
             | Some(Cell::ArrayFromAsyncState(_))
             | Some(Cell::PromiseResolvingState { .. })
             | Some(Cell::WasmElements(_))
-            | Some(Cell::WasmGlobal { .. })
-            | Some(Cell::WasmMemory { .. })
-            | Some(Cell::WasmTable { .. })
             | Some(Cell::WasmBits64(_))
             | Some(Cell::WasmGc { .. })
             | Some(Cell::WasmExtern(_))

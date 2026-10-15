@@ -244,57 +244,6 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
       return decode(this.subarray(first, last), normalized);
     }
 
-    write(value, offset, length, encoding) {
-      if (typeof value !== "string") {
-        throw codedTypeError('The "string" argument must be of type string', "ERR_INVALID_ARG_TYPE");
-      }
-      if (typeof offset === "string") {
-        encoding = offset;
-        offset = 0;
-        length = this.length;
-      } else if (typeof length === "string") {
-        encoding = length;
-        length = undefined;
-      }
-      if (offset === undefined) offset = 0;
-      if (typeof offset !== "number") {
-        throw codedTypeError('The "offset" argument must be of type number', "ERR_INVALID_ARG_TYPE");
-      }
-      if (!Number.isInteger(offset) || offset < 0 || offset > this.length) {
-        const error = new RangeError(`The value of "offset" is out of range. It must be >= 0 && <= ${this.length}. Received ${offset}`);
-        error.code = "ERR_OUT_OF_RANGE";
-        throw error;
-      }
-      if (length === undefined) length = this.length - offset;
-      if (typeof length !== "number") {
-        throw codedTypeError('The "length" argument must be of type number', "ERR_INVALID_ARG_TYPE");
-      }
-      if (!Number.isInteger(length) || length < 0 || length > this.length - offset) {
-        const error = new RangeError(`The value of "length" is out of range. It must be >= 0 && <= ${this.length - offset}. Received ${length}`);
-        error.code = "ERR_OUT_OF_RANGE";
-        throw error;
-      }
-      const normalized = normalizeEncoding(encoding === undefined ? "utf8" : encoding);
-      const bytes = encode(value, normalized);
-      let count = Math.min(bytes.length, length);
-      if (normalized === "utf8" && count < bytes.length) {
-        let lead = count;
-        while (lead > 0 && (bytes[lead - 1] & 0xC0) === 0x80) lead--;
-        if (lead < count) {
-          const first = bytes[lead - 1];
-          const width = first < 0xE0 ? 2 : first < 0xF0 ? 3 : 4;
-          if (lead - 1 + width > count) count = lead - 1;
-        } else if (count > 0) {
-          const first = bytes[count - 1];
-          const width = first < 0x80 ? 1 : first < 0xE0 ? 2 : first < 0xF0 ? 3 : 4;
-          if (count - 1 + width > count) count--;
-        }
-      }
-      if (normalized === "utf16le") count -= count % 2;
-      this.set(bytes.subarray ? bytes.subarray(0, count) : bytes.slice(0, count), offset);
-      return count;
-    }
-
     slice(start = 0, end = this.length) {
       return this.subarray(start, end);
     }
@@ -313,41 +262,6 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
         if (this[index] !== other[index]) return false;
       }
       return true;
-    }
-
-    fill(value = 0, offset = 0, end = this.length, encoding = "utf8") {
-      if (typeof offset === "string") {
-        encoding = offset;
-        offset = 0;
-        end = this.length;
-      } else if (typeof end === "string") {
-        encoding = end;
-        end = this.length;
-      }
-      offset = Math.trunc(Number(offset));
-      end = Math.trunc(Number(end));
-      if (Number.isNaN(offset) || Number.isNaN(end)) {
-        throw codedTypeError('The "offset" and "end" arguments must be numbers', "ERR_INVALID_ARG_TYPE");
-      }
-      if (offset < 0 || offset > this.length || end < 0 || end > this.length) {
-        const error = new RangeError("The value of \"offset\" or \"end\" is out of range");
-        error.code = "ERR_OUT_OF_RANGE";
-        throw error;
-      }
-      if (end <= offset) return this;
-      let bytes;
-      if (typeof value === "string") bytes = encode(value, normalizeEncoding(encoding));
-      else if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) {
-        bytes = value instanceof ArrayBuffer
-          ? Array.from(new Uint8Array(value))
-          : Array.from(new Uint8Array(value.buffer, value.byteOffset, value.byteLength));
-      } else {
-        return Uint8Array.prototype.fill.call(this, value, offset, end);
-      }
-      if (bytes.length === 0) return Uint8Array.prototype.fill.call(this, 0, offset, end);
-      if (bytes.length === 1) return Uint8Array.prototype.fill.call(this, bytes[0], offset, end);
-      for (let index = offset; index < end; index++) this[index] = bytes[(index - offset) % bytes.length];
-      return this;
     }
 
     copy(target, targetStart = 0, sourceStart = 0, sourceEnd = this.length) {
@@ -663,8 +577,14 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
 
     let module = context.object_rooted()?;
     let buffer = get(context, constructor, "Buffer")?;
+    let buffer = super::buffer_constructor_shared_vm::install(context, buffer)?;
     let prototype = get(context, buffer, "prototype")?;
     super::buffer_search_shared_vm::install(context, prototype)?;
+    super::buffer_bigint_shared_vm::install(context, prototype)?;
+    super::buffer_swap_shared_vm::install(context, prototype)?;
+    super::buffer_write_shared_vm::install(context, prototype)?;
+    super::buffer_fill_shared_vm::install(context, prototype)?;
+    super::buffer_inspect_shared_vm::install(context, module, prototype)?;
     install_backing_getters(context, buffer, prototype)?;
     let shared = context.host_mut().shared_state();
     let capture_prototype = shared.borrow().buffer_prototype.is_none();

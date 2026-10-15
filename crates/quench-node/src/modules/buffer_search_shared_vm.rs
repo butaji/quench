@@ -2,6 +2,8 @@
 use crate::host::NodeHost;
 use quench_runtime::{BuiltinBrand, NativeArithmetic, NativeContext, RootId, RootedError};
 
+const UTF16_CODE_UNIT_BYTES: usize = std::mem::size_of::<u16>();
+
 #[derive(Clone, Copy)]
 #[repr(u8)]
 enum SearchKind {
@@ -266,7 +268,7 @@ fn byte_search(
     forward: bool,
     two_byte: bool,
 ) -> Option<usize> {
-    let stride = if two_byte { 2 } else { 1 };
+    let stride = if two_byte { UTF16_CODE_UNIT_BYTES } else { 1 };
     let needle_length = if two_byte {
         needle.len() & !1
     } else {

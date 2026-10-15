@@ -287,7 +287,11 @@ impl<H: Host> Runtime<H> {
         id: crate::WasmHostFunctionId,
         signature: crate::WasmSignature,
     ) -> Result<RootId, JsError> {
-        let function = self.vm.create_wasm_host_function(name, id, signature)?;
+        let function = self.vm.create_wasm_host_function(
+            name,
+            crate::heap::WasmHostTarget::Host(id),
+            signature,
+        )?;
         Ok(self.root(function))
     }
 

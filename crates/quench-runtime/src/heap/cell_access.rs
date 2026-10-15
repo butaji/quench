@@ -32,7 +32,11 @@ impl Cell {
             | Self::TemporalPlainMonthDay { object, .. }
             | Self::TemporalPlainYearMonth { object, .. }
             | Self::TemporalZonedDateTime { object, .. }
-            | Self::TemporalInstant { object, .. } => Some(object),
+            | Self::TemporalInstant { object, .. }
+            | Self::WasmObject { object, .. }
+            | Self::WasmTable { object, .. } => Some(object),
+            Self::WasmGlobal { header, .. } => Some(&header.object),
+            Self::WasmMemory { header, .. } => Some(&header.object),
             Self::Function { object, .. } => Some(&object.object),
             Self::TypedArray { object, .. } | Self::DataView { object, .. } => Some(&object.object),
             _ => None,
@@ -63,7 +67,11 @@ impl Cell {
             | Self::TemporalPlainMonthDay { object, .. }
             | Self::TemporalPlainYearMonth { object, .. }
             | Self::TemporalZonedDateTime { object, .. }
-            | Self::TemporalInstant { object, .. } => Some(object),
+            | Self::TemporalInstant { object, .. }
+            | Self::WasmObject { object, .. }
+            | Self::WasmTable { object, .. } => Some(object),
+            Self::WasmGlobal { header, .. } => Some(&mut header.object),
+            Self::WasmMemory { header, .. } => Some(&mut header.object),
             Self::Function { object, .. } => Some(&mut object.object),
             Self::TypedArray { object, .. } | Self::DataView { object, .. } => {
                 Some(&mut object.object)
