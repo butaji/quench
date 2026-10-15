@@ -404,6 +404,9 @@ struct LaneContext<H: Host> {
     /// The program's lane views by function, which a call reads when its
     /// callee's view is derived.
     views: *const [std::cell::OnceCell<LaneView>],
+    /// The program's constants, which constant operands index. A program's lane views are
+    /// derived from its constants and replaced with them, so they hold for the run.
+    constants: *const [Value],
     /// Lane calls and returns manage activations: the interpreter runs a
     /// Wasm program in a loop that allows inline calls. A compiled callee
     /// runs from the general path, which raises its traps.
@@ -712,12 +715,10 @@ fn lane_operand_value<H: Host>(
     let operand = crate::bytecode::Operand(encoded);
     match operand.kind()? {
         crate::bytecode::OperandKind::Register => Some(r.get(operand.payload())),
-        crate::bytecode::OperandKind::Constant => {
-            let program = unsafe { (*cx).program };
-            unsafe { vm(cx) }
-                .programs
-                .constant(program, usize::from(operand.payload()))
-        }
+        // SAFETY: the run's program keeps its constants (`LaneContext::constants`).
+        crate::bytecode::OperandKind::Constant => unsafe { &*(*cx).constants }
+            .get(usize::from(operand.payload()))
+            .copied(),
         _ => None,
     }
 }
@@ -4371,7 +4372,7 @@ fn derive_lane_view<H: Host>(
                             [usize::from(arith)][usize::from(acc)],
                     )
                 })
-            } else if op == Op::LoadLocal
+            } else if matches!(op, Op::LoadLocal | Op::LoadLocalPlain)
                 && function.forwards_arguments_only()
                 && function.arguments_slot == u16::try_from(instruction.local_slot()).ok()
             {
@@ -5195,6 +5196,7 @@ impl<H: Host> Vm<H> {
                 .programs
                 .lane_views(program)
                 .map_or(&[][..], |views| views) as *const _,
+            constants: self.programs.constants(program) as *const _,
             inline_calls: inline_calls
                 && code.kind == crate::bytecode::ProgramKind::Wasm
                 && self.execution_mode != super::compiled::ExecutionMode::Compiled,
