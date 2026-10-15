@@ -431,10 +431,10 @@ impl<H: Host> Vm<H> {
                             continue;
                         }
                         if self.own_property(globals, atom).is_none() {
-                            self.set_property(globals, atom, Value::UNDEFINED)?;
-                            self.set_property_attributes(
+                            self.set_property_with_attributes(
                                 globals,
-                                PropertyKey::string(atom),
+                                atom,
+                                Value::UNDEFINED,
                                 PropertyAttributes {
                                     writable: true,
                                     enumerable: true,
@@ -443,7 +443,7 @@ impl<H: Host> Vm<H> {
                                     getter: None,
                                     setter: None,
                                 },
-                            );
+                            )?;
                         }
                     }
                 }

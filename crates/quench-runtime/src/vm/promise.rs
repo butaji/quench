@@ -1227,10 +1227,10 @@ impl<H: Host> Vm<H> {
             .or_else(|| native_length(kind));
         if let Some(length) = length {
             let atom = self.intern_atom("length");
-            let _ = self.set_property(function, atom, Value::number(length));
-            self.set_property_attributes(
+            let _ = self.set_property_with_attributes(
                 function,
-                property_key::PropertyKey::string(atom),
+                atom,
+                Value::number(length),
                 PropertyAttributes {
                     writable: false,
                     enumerable: false,
@@ -1244,10 +1244,10 @@ impl<H: Host> Vm<H> {
         if promise_resolver || anonymous_capability_executor || anonymous_proxy_revoke {
             let atom = self.intern_atom("name");
             let empty_name = self.heap.alloc(Cell::String("".into()));
-            let _ = self.set_property(function, atom, empty_name);
-            self.set_property_attributes(
+            let _ = self.set_property_with_attributes(
                 function,
-                property_key::PropertyKey::string(atom),
+                atom,
+                empty_name,
                 PropertyAttributes {
                     writable: false,
                     enumerable: false,
