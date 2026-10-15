@@ -326,7 +326,7 @@ pub(crate) fn start(
         watch_file(context, watcher, data, filename, false)?;
         let directory = method(context, stat, "isDirectory")?;
         if context.truthy_rooted(directory)? {
-            watch_folder(context, watcher, data, filename)?;
+            watch_folder(context, watcher, data, filename, true)?;
         }
         Ok(context.undefined())
     })();
@@ -335,10 +335,12 @@ pub(crate) fn start(
         Err(error) => {
             let options = get(context, data, "options")?;
             let throw = get(context, options, "throwIfNoEntry")?;
-            if !context.truthy_rooted(throw)? && is_enoent(context, &error)? {
+            if context.truthy_rooted(throw)? || !is_enoent(context, &error)? {
                 if let Some(exception) = error.exception {
                     set(context, exception, "filename", filename)?;
                 }
+                let undefined = context.undefined();
+                close(context, undefined, &[watcher, data])?;
                 Err(error)
             } else {
                 Ok(context.undefined())
@@ -366,6 +368,16 @@ fn watch_file(
     let symbolic = context.boolean(symbolic);
     set(context, record, "symbolic", symbolic)?;
     map_set(context, data, file, record)?;
+    // Linux directory watches report events for their entries. Keep regular
+    // files in the same tree, but only arm directories, links and a file root.
+    let directory = method(context, stat, "isDirectory")?;
+    let root = get(context, data, "rootPath")?;
+    if !context.truthy_rooted(directory)?
+        && !context.truthy_rooted(symbolic)?
+        && !context.strict_equal_rooted(file, root)?
+    {
+        return Ok(());
+    }
     let undefined = context.undefined();
     let callback = operation(
         context,
@@ -407,6 +419,7 @@ fn watch_folder(
     watcher: RootId,
     data: RootId,
     folder: RootId,
+    initial: bool,
 ) -> Result<(), RootedError> {
     let result = (|| {
         let options = context.object_rooted()?;
@@ -434,7 +447,9 @@ fn watch_folder(
             if !nullish(context, existing) {
                 continue;
             }
-            emit(context, watcher, "rename", relative)?;
+            if !initial {
+                emit(context, watcher, "rename", relative)?;
+            }
             let symbolic = method(context, entry, "isSymbolicLink")?;
             let symbolic = context.truthy_rooted(symbolic)?;
             let result = (|| {
@@ -443,7 +458,7 @@ fn watch_folder(
                 if context.truthy_rooted(directory)? {
                     let symbolic = method(context, entry, "isSymbolicLink")?;
                     if !context.truthy_rooted(symbolic)? {
-                        watch_folder(context, watcher, data, file)?;
+                        watch_folder(context, watcher, data, file, initial)?;
                     }
                 }
                 Ok(())
@@ -501,8 +516,41 @@ pub(crate) fn notify(
 ) -> Result<RootId, RootedError> {
     let watcher = args.first().copied().unwrap_or_else(|| context.undefined());
     let data = args.get(1).copied().unwrap_or_else(|| context.undefined());
-    let file = args.get(2).copied().unwrap_or_else(|| context.undefined());
-    let captured = args.get(3).copied().unwrap_or_else(|| context.undefined());
+    let mut file = args.get(2).copied().unwrap_or_else(|| context.undefined());
+    let mut captured = args.get(3).copied().unwrap_or_else(|| context.undefined());
+    if closed(context, data)? {
+        return Ok(context.undefined());
+    }
+    let stats = get(context, captured, "stats")?;
+    let directory = method(context, stats, "isDirectory")?;
+    let symbolic = get(context, captured, "symbolic")?;
+    let filename = args.get(5).copied().unwrap_or_else(|| context.undefined());
+    if context.truthy_rooted(directory)?
+        && !context.truthy_rooted(symbolic)?
+        && !nullish(context, filename)
+    {
+        let undefined = context.undefined();
+        let child = operation(context, "join", undefined, &[file, filename])?;
+        let record = map_get(context, data, child)?;
+        if nullish(context, record) {
+            // Rescanning registers newly discovered paths and their descendants
+            // through the same entry policy used during initial discovery.
+            let options = context.object_rooted()?;
+            let no = context.boolean(false);
+            set(context, options, "throwIfNoEntry", no)?;
+            let current = fs_call(context, "statSync", &[file, options])?;
+            if nullish(context, current) {
+                let name = relative(context, data, file)?;
+                emit(context, watcher, "rename", name)?;
+                unwatch_tree(context, data, file)?;
+            } else {
+                watch_folder(context, watcher, data, file, false)?;
+            }
+            return Ok(context.undefined());
+        }
+        file = child;
+        captured = record;
+    }
     let existing = map_get(context, data, file)?;
     let previous = if nullish(context, existing) {
         context.undefined()
@@ -556,7 +604,7 @@ pub(crate) fn notify(
             } else {
                 let directory = method(context, current, "isDirectory")?;
                 if context.truthy_rooted(directory)? {
-                    watch_folder(context, watcher, data, file)?;
+                    watch_folder(context, watcher, data, file, false)?;
                 } else {
                     emit(context, watcher, "change", name)?;
                 }
@@ -589,9 +637,20 @@ pub(crate) fn close(
 pub(crate) fn reference(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
-    _: &[RootId],
+    args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    // The pinned recursive implementation stores Stats, not StatWatchers, in
-    // its files map; ref/unref therefore leave the per-path watches unchanged.
+    let data = args.first().copied().unwrap_or_else(|| context.undefined());
+    let reference = args.get(1).copied().unwrap_or_else(|| context.undefined());
+    let name = if context.truthy_rooted(reference)? {
+        "ref"
+    } else {
+        "unref"
+    };
+    for (_, record) in files(context, data)? {
+        let child = get(context, record, "watcher")?;
+        if !nullish(context, child) {
+            method(context, child, name)?;
+        }
+    }
     Ok(context.undefined())
 }

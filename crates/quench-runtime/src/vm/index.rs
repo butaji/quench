@@ -139,14 +139,8 @@ impl<H: Host> Vm<H> {
         strict: bool,
     ) -> Result<(), JsError> {
         if object.is_null() || object.is_undefined() {
-            return Err(self.type_error(
-                p,
-                if object.is_null() {
-                    "cannot set properties of null".into()
-                } else {
-                    "cannot set properties of undefined".into()
-                },
-            ));
+            let property = self.detail_string(key);
+            return Err(self.nullish_assignment_error(p, object, &property));
         }
         if let Some(index) = self.array_index_key(key) {
             let index = index as usize;

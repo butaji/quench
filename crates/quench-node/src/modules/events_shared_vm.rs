@@ -181,6 +181,9 @@ pub(crate) fn initialize_targets(
         set(context, data, field, key)?;
     }
     let description = context.string_rooted("nodejs.rejection");
+    let owner_description = context.string_rooted("quench.internal.streamOwner");
+    let owner_key = context.call_rooted(registry, symbol, &[owner_description])?;
+    set(context, data, "streamOwnerKey", owner_key)?;
     let rejection_key = context.call_rooted(registry, symbol, &[description])?;
     set(context, data, "rejectionKey", rejection_key)?;
     let description = context.string_rooted("events.errorMonitor");
@@ -323,6 +326,7 @@ pub(crate) fn initialize_event_globals(
         &[records_key, max_key, warned_key, max_default],
     )?;
     let event = get(context, global, "Event")?;
+    set(context, data, "eventCtor", event)?;
     // Node exposes immutable DOM event phase constants on the constructor.
     for (name, phase) in [
         ("NONE", 0.0),

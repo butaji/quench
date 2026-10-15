@@ -15,6 +15,19 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "utilCallbackified" (2) => crate::modules::util_callbackify_shared_vm::callbackified,
         method "utilCallbackifySettled" (1) => crate::modules::util_callbackify_shared_vm::settled,
         method "utilCallbackifyInvoke" (0) => crate::modules::util_callbackify_shared_vm::invoke,
+        method "utilExtend" (2) => crate::modules::util_extend_shared_vm::extend,
+        method "utilExtendDeprecated" (2) => crate::modules::util_extend_shared_vm::deprecated,
+        method "duplexPair" (1) => crate::modules::stream_duplex_pair_shared_vm::pair,
+        method "duplexPairInitialize" (1) => crate::modules::stream_duplex_pair_shared_vm::initialize,
+        method "duplexPairLink" (2) => crate::modules::stream_duplex_pair_shared_vm::link,
+        method "duplexPairRead" (1) => crate::modules::stream_duplex_pair_shared_vm::read,
+        method "duplexPairWrite" (4) => crate::modules::stream_duplex_pair_shared_vm::write,
+        method "duplexPairFinal" (2) => crate::modules::stream_duplex_pair_shared_vm::final_,
+        method "duplexPairDestroy" (3) => crate::modules::stream_duplex_pair_shared_vm::destroy,
+        method "duplexPairDestroyPeer" (0) => crate::modules::stream_duplex_pair_shared_vm::destroy_peer,
+        method "streamInitializeEmitter" (2) => crate::modules::stream_emitter_shared_vm::initialize,
+        method "streamEmitterMaximumGet" (0) => crate::modules::stream_emitter_shared_vm::maximum_get,
+        method "streamEmitterMaximumSet" (1) => crate::modules::stream_emitter_shared_vm::maximum_set,
         method "stripVTControlCharacters" (1) => crate::modules::util_shared_vm::strip_vt,
         method "getSystemErrorName" (1) => crate::modules::util_system_error_shared_vm::get_system_error_name,
         method "parseEnv" (1) => crate::modules::util_shared_vm::parse_env,
@@ -51,7 +64,9 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "processKill" (2) => crate::modules::process_shared_vm::kill,
         method "bufferConstructor" (0) => crate::modules::buffer_shared_vm::constructor,
         method "webStreamsInitialize" (0) => commonjs::initialize_web_streams,
+        method "markAsUncloneable" (1) => crate::modules::clone_shared_vm::mark_as_uncloneable,
         method "webApisInitialize" (0) => commonjs::initialize_web_apis,
+        method "webFetchInitialize" (0) => commonjs::initialize_fetch_apis,
         method "processSurfaceInitialize" (0) => commonjs::initialize_process_surface,
         method "processRawDebug" (0) => crate::modules::process_shared_vm::raw_debug,
         method "processLoadEnvFile" (1) => crate::modules::process_shared_vm::load_env_file,
@@ -320,7 +335,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "httpResponseSetHeader" (4) => crate::modules::http_shared_vm::response_set_header,
         method "httpResponseGetHeader" (2) => crate::modules::http_shared_vm::response_get_header,
         method "httpResponseRemoveHeader" (2) => crate::modules::http_shared_vm::response_remove_header,
-        method "httpResponseWrite" (6) => crate::modules::http_shared_vm::response_write,
+        method "httpResponseWrite" (7) => crate::modules::http_shared_vm::response_write,
         method "httpResponseFinish" (7) => crate::modules::http_shared_vm::response_finish,
         method "httpResponseWriteHead" (6) => crate::modules::http_shared_vm::response_write_head,
         method "httpResponseInitialize" (2) => crate::modules::http_shared_vm::response_initialize,
@@ -445,10 +460,12 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "tlsSocketUpgrade" (3) => crate::modules::tls_shared_vm::socket::upgrade,
         method "tlsSocketAuthorize" (1) => crate::modules::tls_shared_vm::socket::authorize,
         method "tlsSocketInfo" (2) => crate::modules::tls_shared_vm::socket::info,
+        method "tlsHandleVerifyError" (0) => crate::modules::tls_shared_vm::handle::verify_error,
         method "tlsMatchName" (1) => crate::modules::tls_shared_vm::identity::match_name,
         method "tlsLowercaseName" (1) => crate::modules::tls_shared_vm::identity::lowercase_name,
         method "tlsCollectAltName" (1) => crate::modules::tls_shared_vm::identity::collect_alt_name,
         method "tlsCheckServerIdentity" (2) => crate::modules::tls_shared_vm::identity::check_server_identity,
+        method "tlsBundledRoots" (0) => crate::modules::tls_shared_vm::bundled::bundled,
         method "tlsGetCiphers" (0) => crate::modules::tls_shared_vm::discovery::ciphers,
         method "tlsContextCreate" (1) => crate::modules::tls_shared_vm::facade::create,
         method "tlsContextConfigure" (0) => crate::modules::tls_shared_vm::configuration::method,
@@ -672,25 +689,36 @@ impl quench_runtime::Host for NodeHost {
         } else {
             referrer.parent().unwrap_or(Path::new(".")).to_path_buf()
         };
-        let resolver = oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
-            extensions: vec![".mjs".into(), ".js".into(), ".json".into(), ".cjs".into()],
-            main_files: vec!["index".into()],
-            condition_names: vec!["node".into(), "import".into(), "default".into()],
-            ..Default::default()
-        });
-        let resolution_specifier = if internal {
-            format!("./{specifier}")
+        let path = if !internal {
+            commonjs::exact_file_path(&base, specifier)
         } else {
-            specifier.to_owned()
+            None
         };
-        let resolution = match resolver.resolve(&base, &resolution_specifier) {
-            Ok(resolution) => resolution,
-            Err(
-                oxc_resolver::ResolveError::NotFound(_) | oxc_resolver::ResolveError::Specifier(_),
-            ) => return Ok(None),
-            Err(error) => return Err(error.to_string()),
+        let path = match path {
+            Some(path) => path,
+            None => {
+                let resolver = oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
+                    extensions: vec![".mjs".into(), ".js".into(), ".json".into(), ".cjs".into()],
+                    main_files: vec!["index".into()],
+                    condition_names: vec!["node".into(), "import".into(), "default".into()],
+                    ..Default::default()
+                });
+                let resolution_specifier = if internal {
+                    format!("./{specifier}")
+                } else {
+                    specifier.to_owned()
+                };
+                let resolution = match resolver.resolve(&base, &resolution_specifier) {
+                    Ok(resolution) => resolution,
+                    Err(
+                        oxc_resolver::ResolveError::NotFound(_)
+                        | oxc_resolver::ResolveError::Specifier(_),
+                    ) => return Ok(None),
+                    Err(error) => return Err(error.to_string()),
+                };
+                resolution.full_path()
+            }
         };
-        let path = resolution.full_path();
         let path = std::fs::canonicalize(&path).unwrap_or(path);
         let bytes =
             std::fs::read(&path).map_err(|error| format!("module {}: {error}", path.display()))?;
@@ -759,6 +787,14 @@ impl quench_runtime::Host for NodeHost {
         url::Url::from_file_path(absolute)
             .map(|url| url.to_string())
             .unwrap_or_else(|_| source_name.to_owned())
+    }
+
+    fn stack_source_name(&mut self, source_name: &str, is_module: bool) -> String {
+        if is_module {
+            self.import_meta_url(source_name)
+        } else {
+            source_name.to_owned()
+        }
     }
 
     fn capture_job_context(&mut self) -> Option<quench_runtime::HostExecutionContext> {

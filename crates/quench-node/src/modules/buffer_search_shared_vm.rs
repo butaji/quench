@@ -213,11 +213,16 @@ pub(crate) fn search(
         -1
     } else {
         let position = position as usize;
-        let position = if !kind.forward() && position >= end {
+        let mut position = if !kind.forward() && position >= end {
             end.saturating_sub(1)
         } else {
             position
         };
+        // Node rounds forward string searches up to the next complete UTF-16
+        // unit. Byte-view needles retain their separate floor-alignment rule.
+        if two_byte && string_needle && kind.forward() {
+            position += position % UTF16_CODE_UNIT_BYTES;
+        }
         if end == 0
             || (kind.forward()
                 && (position >= end || needle_bytes.len().saturating_add(position) > end))

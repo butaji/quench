@@ -1,44 +1,10 @@
-//! One OpenSSL engine loader and deprecation owner for crypto and TLS.
+//! Shared OpenSSL engine loading and errors for crypto and TLS.
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
-
-#[derive(Default)]
-pub(crate) struct State {
-    warned: bool,
-}
 
 pub(crate) const EXPECTED_ENGINE_TYPES: &str = "of type string or one of null or undefined";
 
 pub(crate) const SUPPORTED: bool = cfg!(quench_openssl_engine);
-
-pub(crate) fn emit_deprecation(
-    context: &mut NativeContext<'_, NodeHost>,
-) -> Result<(), RootedError> {
-    let shared = context.host_mut().shared_state();
-    let emit = {
-        let mut state = shared.borrow_mut();
-        if state.crypto_engines.warned {
-            false
-        } else {
-            state.crypto_engines.warned = true;
-            true
-        }
-    };
-    if emit {
-        let process = shared
-            .borrow()
-            .process_module
-            .ok_or_else(|| RootedError::host("Process warning owner is not initialized"))?;
-        let key = context.string_rooted("emitWarning");
-        let method = context.get_property_rooted(process, key)?;
-        let message = context.string_rooted("OpenSSL engine-based APIs are deprecated.");
-        let kind = context.string_rooted("DeprecationWarning");
-        let code = context.string_rooted("DEP0183");
-        let undefined = context.undefined();
-        context.call_rooted(method, process, &[message, kind, code, undefined])?;
-    }
-    Ok(())
-}
 
 #[cfg_attr(not(quench_openssl_engine), allow(dead_code))]
 pub(crate) enum Failure {
@@ -104,7 +70,6 @@ pub(crate) fn set_engine(
         .rooted_value(flags)
         .and_then(|value| value.as_number())
         .expect("integer coercion result") as i32 as u32;
-    emit_deprecation(context)?;
     if let Err(failure) = native::set_default(&name, flags) {
         if matches!(failure, Failure::Unsupported) {
             return Err(error(context, failure));
