@@ -7666,3 +7666,28 @@ console.log(JSON.stringify(out));
 "#,
     );
 }
+
+#[test]
+fn structured_clone_transfer_markers_and_commit_order_match_node() {
+    compare_node_stream_source(
+        r#"
+const assert=require('node:assert'),w=require('node:worker_threads'),out=[];
+for(const name of ['markAsUncloneable','markAsUntransferable','isMarkedAsUntransferable']){const f=w[name],d=Object.getOwnPropertyDescriptor(f,'prototype');out.push([f.name,f.length,Object.hasOwn(f,'prototype'),d.writable,d.enumerable,d.configurable,f.prototype.constructor===f]);}
+for(const primitive of [undefined,null,1,1n,'x',Symbol('x')]){assert.strictEqual(w.markAsUntransferable(primitive),undefined);assert.strictEqual(w.isMarkedAsUntransferable(primitive),false);}
+for(const value of [{},[],new Map(),new Set(),new Date(),new Error(),new Uint8Array(2),new ArrayBuffer(2),function(){}]){assert.strictEqual(w.isMarkedAsUntransferable(value),false);assert.strictEqual(w.markAsUntransferable(value),undefined);assert.strictEqual(w.isMarkedAsUntransferable(value),true);w.markAsUntransferable(value);assert.throws(()=>structuredClone(1,{transfer:[value]}),e=>e.name==='DataCloneError'&&e.code===25&&e.message==='Cannot transfer object of unsupported type.');}
+for(const revoked of [false,true]){const trace=[],{proxy,revoke}=Proxy.revocable({},{get(){trace.push('get')},set(){trace.push('set');return true}});if(revoked)revoke();assert.strictEqual(w.isMarkedAsUntransferable(proxy),false);for(const name of ['markAsUntransferable','markAsUncloneable'])assert.throws(()=>w[name](proxy),e=>e.name==='TypeError'&&e.message==='Cannot pass private property name to proxy trap');assert.deepStrictEqual(trace,[]);}
+const marked=new ArrayBuffer(2),keys=Reflect.ownKeys(marked);w.markAsUntransferable(marked);assert.deepStrictEqual(Reflect.ownKeys(marked),keys);const unmarkedCopy=structuredClone(marked);assert.strictEqual(w.isMarkedAsUntransferable(unmarkedCopy),false);for(const method of ['transfer','transferToFixedLength'])assert.throws(()=>marked[method](),e=>e.name==='TypeError'&&e.message==='ArrayBuffer is not detachable and could not be cloned.');assert.strictEqual(marked.byteLength,2);
+function error(operation){try{operation();return null}catch(e){return [e.name,e.code??null,e.message]}}
+const b=new ArrayBuffer(2),detached=new ArrayBuffer(2);detached.transfer();out.push(error(()=>structuredClone(1,{transfer:[b,b]})));out.push(error(()=>structuredClone(1,{transfer:[{}]})));out.push(error(()=>structuredClone(1,{transfer:[detached]})));out.push(error(()=>structuredClone(1,{transfer:[new WebAssembly.Memory({initial:1}).buffer]})));
+for(const action of ['resize','detach','write']){const b=new ArrayBuffer(4,{maxByteLength:16});const c=structuredClone({b,get x(){if(action==='resize')b.resize(8);else if(action==='detach')b.transfer();else new Uint8Array(b)[0]=7;return 1}},{transfer:[b]});out.push([action,c.b.byteLength,c.b.resizable,c.b.maxByteLength,Array.from(new Uint8Array(c.b))]);assert.strictEqual(b.byteLength,0);}
+for(const first of [true,false]){const b=new ArrayBuffer(8,{maxByteLength:16}),v=new Uint8Array(b,4,4);const source=first?{v,get x(){b.resize(2);return 1}}:{get x(){b.resize(2);return 1},v};const result=error(()=>structuredClone(source,{transfer:[b]}));out.push(['view-order',first,result,b.byteLength]);}
+{const b=new ArrayBuffer(4,{maxByteLength:16});const result=error(()=>structuredClone({b,get v(){b.resize(8);return new Uint8Array(b,4,4)}}));out.push(['copied-view',result,b.byteLength]);}
+{const a=new ArrayBuffer(2),b=new ArrayBuffer(2);const result=error(()=>structuredClone({get x(){w.markAsUntransferable(b);return 1}},{transfer:[a,b]}));out.push(['detach-key',result,a.byteLength,b.byteLength]);assert.strictEqual(a.byteLength,0);assert.strictEqual(b.byteLength,2);}
+{const b=new ArrayBuffer(2),marker={};assert.throws(()=>structuredClone({b,get x(){throw marker}},{transfer:[b]}),e=>e===marker);assert.strictEqual(b.byteLength,2);}
+for(const transfer of [false,true])for(const rab of [false,true])for(const type of ['typed','data']){const b=rab?new ArrayBuffer(8,{maxByteLength:16}):new ArrayBuffer(8),v=type==='typed'?new Uint8Array(b,0,2):new DataView(b,0,2);let copy;const failure=error(()=>{copy=structuredClone({b,get x(){b.transfer();return 1},v},transfer?{transfer:[b]}:{})});out.push(['detached-view',transfer,rab,type,failure,copy?[copy.v.byteOffset,copy.v.byteLength,copy.b.byteLength]:null]);}
+for(const type of ['typed','data']){const b=new ArrayBuffer(4,{maxByteLength:16}),v=type==='typed'?new Uint8Array(b):new DataView(b);const c=structuredClone({b,get x(){b.resize(8);return 1},v});assert.strictEqual(c.v.byteLength,4);assert.strictEqual(c.b.byteLength,4);}
+
+console.log(JSON.stringify(out));
+"#,
+    );
+}

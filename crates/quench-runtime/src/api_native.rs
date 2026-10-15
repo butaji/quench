@@ -542,6 +542,18 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.vm.embedding_mark_uncloneable(value).map_err(|error| self.error(error))
     }
 
+    pub fn mark_untransferable_rooted(&mut self, value: RootId) -> Result<(), RootedError> {
+        self.vm
+            .embedding_mark_untransferable(value)
+            .map_err(|error| self.error(error))
+    }
+
+    pub fn is_marked_untransferable_rooted(&mut self, value: RootId) -> Result<bool, RootedError> {
+        self.vm
+            .embedding_is_marked_untransferable(value)
+            .map_err(|error| self.error(error))
+    }
+
     pub fn structured_clone_rooted(
         &mut self,
         value: RootId,

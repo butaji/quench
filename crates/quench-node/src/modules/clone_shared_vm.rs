@@ -89,7 +89,41 @@ pub(crate) fn mark_as_uncloneable(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     if let Some(value) = args.first().copied() {
+        validate_marker_target(context, value)?;
         context.mark_uncloneable_rooted(value)?;
     }
     Ok(context.undefined())
+}
+
+pub(crate) fn mark_as_untransferable(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    if let Some(value) = args.first().copied() {
+        validate_marker_target(context, value)?;
+        context.mark_untransferable_rooted(value)?;
+    }
+    Ok(context.undefined())
+}
+
+pub(crate) fn is_marked_as_untransferable(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let value = args.first().copied().unwrap_or_else(|| context.undefined());
+    let marked = context.is_marked_untransferable_rooted(value)?;
+    Ok(context.boolean(marked))
+}
+
+fn validate_marker_target(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: RootId,
+) -> Result<(), RootedError> {
+    if context.has_builtin_brand_rooted(value, quench_runtime::BuiltinBrand::Proxy)? {
+        let error = context.type_error_rooted("Cannot pass private property name to proxy trap")?;
+        return Err(context.throw(error));
+    }
+    Ok(())
 }

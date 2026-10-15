@@ -8,6 +8,13 @@ struct CloneGraph {
     // stable memo key while recursive getters may run guest code.
     copies: HashMap<Value, RootId>,
     roots: Vec<RootId>,
+    views: Vec<SerializedView>,
+}
+
+struct SerializedView {
+    view: RootId,
+    byte_length: usize,
+    backed_by_resizable: bool,
 }
 
 impl CloneGraph {
@@ -35,6 +42,24 @@ impl CloneGraph {
 }
 
 impl<H: Host> Vm<H> {
+    pub(crate) fn embedding_mark_untransferable(&mut self, source: RootId) -> Result<(), JsError> {
+        let source = self.embedding_value(source)?;
+        if let Some(object) = self.object_data_mut(source) {
+            object.forbid_structured_transfer();
+        }
+        Ok(())
+    }
+
+    pub(crate) fn embedding_is_marked_untransferable(
+        &self,
+        source: RootId,
+    ) -> Result<bool, JsError> {
+        let source = self.embedding_value(source)?;
+        Ok(self
+            .object_data(source)
+            .is_some_and(Object::is_structured_transfer_forbidden))
+    }
+
     pub(crate) fn embedding_mark_uncloneable(&mut self, source: RootId) -> Result<(), JsError> {
         let source = self.embedding_value(source)?;
         // The host marker applies to ordinary objects. Built-in serialized
@@ -83,14 +108,106 @@ impl<H: Host> Vm<H> {
         graph: &mut CloneGraph,
     ) -> Result<Value, JsError> {
         self.validate_transfer_roots(program, transfers)?;
-        let source = self.embedding_value(source)?;
-        let clone = self.structured_clone_value(program, source, graph)?;
-        self.validate_transfer_roots(program, transfers)?;
         for transfer in transfers {
             let buffer = self.heap.root_value(*transfer).unwrap();
-            self.detach_array_buffer_native(program, &[buffer])?;
+            graph.root(self, buffer);
+            let prototype = self.intrinsic_builtin_prototype(Native::ArrayBuffer);
+            let target = self.heap.alloc(Cell::ArrayBuffer {
+                object: Box::new(Self::empty_object(prototype)),
+                bytes: Default::default(),
+                shared: false,
+                detached: false,
+                max_byte_length: 0,
+                resizable: false,
+                immutable: false,
+            });
+            let target = graph.root(self, target);
+            graph.remember(buffer, target);
         }
+        let source = self.embedding_value(source)?;
+        let clone = self.structured_clone_value(program, source, graph)?;
+        // Node serializes first, then transfers the current backing stores.
+        // Getters may resize/detach a buffer, or install a detach key meanwhile.
+        for transfer in transfers {
+            let buffer = self.heap.root_value(*transfer).unwrap();
+            let (bytes, maximum, resizable) = match self.heap.get(buffer) {
+                Some(Cell::ArrayBuffer { detached: true, .. }) => (Default::default(), 0, false),
+                Some(Cell::ArrayBuffer {
+                    bytes,
+                    max_byte_length,
+                    resizable,
+                    ..
+                }) => (bytes.clone(), *max_byte_length, *resizable),
+                _ => unreachable!("validated transfer remains an ArrayBuffer"),
+            };
+            self.detach_array_buffer_native(program, &[buffer])?;
+            let target = graph.copied(self, buffer).unwrap();
+            let Some(Cell::ArrayBuffer {
+                bytes: target_bytes,
+                max_byte_length,
+                resizable: target_resizable,
+                ..
+            }) = self.heap.get_mut(target)
+            else {
+                unreachable!("reserved transfer target remains an ArrayBuffer");
+            };
+            let before = target_bytes.capacity();
+            let after = bytes.capacity();
+            *target_bytes = bytes;
+            *max_byte_length = maximum;
+            *target_resizable = resizable;
+            self.heap.adjust_external_bytes(before, after);
+        }
+        self.validate_cloned_views(program, graph)?;
         Ok(clone)
+    }
+
+    fn validate_cloned_views(
+        &mut self,
+        program: &ResidualProgram,
+        graph: &CloneGraph,
+    ) -> Result<(), JsError> {
+        for view in &graph.views {
+            let value = self.heap.root_value(view.view).unwrap();
+            let (buffer, offset, tracking) = match self.heap.get(value) {
+                Some(
+                    Cell::TypedArray {
+                        buffer,
+                        object,
+                        length_tracking,
+                        ..
+                    }
+                    | Cell::DataView {
+                        buffer,
+                        object,
+                        length_tracking,
+                        ..
+                    },
+                ) => (*buffer, object.offset, *length_tracking),
+                _ => unreachable!("serialized view remains live"),
+            };
+            let Some(Cell::ArrayBuffer {
+                bytes,
+                resizable,
+                shared,
+                ..
+            }) = self.heap.get(buffer)
+            else {
+                unreachable!("serialized view retains its backing buffer");
+            };
+            if offset > bytes.len()
+                || view.byte_length > bytes.len() - offset
+                || ((view.backed_by_resizable || tracking) && !resizable)
+                || (view.backed_by_resizable && *shared)
+                || (*resizable && !shared && !view.backed_by_resizable)
+            {
+                let message = "Unable to deserialize cloned data.";
+                let text = self.heap.alloc(Cell::String(message.into()));
+                let error = self.construct_error_native(program, Native::Error, &[text])?;
+                return Err(JsError::thrown(error, message.into()));
+            }
+        }
+        Ok(())
     }
 
     fn structured_clone_transfers(
@@ -139,6 +256,16 @@ impl<H: Host> Vm<H> {
         let mut seen = HashSet::new();
         for root in transfers.iter().copied() {
             let value = self.heap.root_value(root).unwrap();
+            if self
+                .object_data(value)
+                .is_some_and(Object::is_structured_transfer_forbidden)
+                || matches!(self.heap.get(value), Some(Cell::ArrayBuffer { detached, immutable, bytes, .. })
+                    if *detached || *immutable || bytes.is_wasm_view())
+            {
+                return Err(
+                    self.data_clone_error(program, "Cannot transfer object of unsupported type.")
+                );
+            }
             let valid = matches!(
                 self.heap.get(value),
                 Some(Cell::ArrayBuffer {
@@ -150,14 +277,11 @@ impl<H: Host> Vm<H> {
                 }) if !bytes.is_wasm_view()
             );
             if !valid {
-                return Err(self.data_clone_error(
-                    program,
-                    "Transfer list contains a value that cannot be transferred",
-                ));
+                return Err(self.data_clone_error(program, "Found invalid value in transferList."));
             }
             if !seen.insert(value) {
                 return Err(
-                    self.data_clone_error(program, "Transfer list contains a duplicate value")
+                    self.data_clone_error(program, "Transfer list contains duplicate ArrayBuffer")
                 );
             }
         }
@@ -244,17 +368,26 @@ impl<H: Host> Vm<H> {
                 length_tracking,
             } => {
                 graph.root(self, source);
-                if self.array_buffer_detached(buffer) {
+                let detached = self.array_buffer_detached(buffer);
+                if detached && graph.copied(self, buffer).is_none() {
                     return Err(self.data_clone_error(
                         program,
                         "An ArrayBuffer is detached and could not be cloned.",
                     ));
                 }
-                if self.typed_array_out_of_bounds(source) {
+                if !detached && self.typed_array_out_of_bounds(source) {
                     return Err(
                         self.data_clone_error(program, "[object Object] could not be cloned.")
                     );
                 }
+                // Length-tracking views serialize an auto-length, not the
+                // source buffer's current derived length.
+                let byte_length = if length_tracking {
+                    0
+                } else {
+                    length * kind.width()
+                };
+                let backed_by_resizable = self.array_buffer_resizable(buffer);
                 let buffer = self.structured_clone_value(program, buffer, graph)?;
                 let prototype = self.typed_array_proto(kind);
                 let target = self.heap.alloc(Cell::TypedArray {
@@ -269,6 +402,11 @@ impl<H: Host> Vm<H> {
                 });
                 let target_root = graph.root(self, target);
                 graph.remember(source, target_root);
+                graph.views.push(SerializedView {
+                    view: target_root,
+                    byte_length,
+                    backed_by_resizable,
+                });
                 Ok(self.heap.root_value(target_root).unwrap())
             }
             Cell::DataView {
@@ -278,16 +416,21 @@ impl<H: Host> Vm<H> {
                 length_tracking,
             } => {
                 graph.root(self, source);
-                if self.array_buffer_detached(buffer) {
+                let detached = self.array_buffer_detached(buffer);
+                if detached && graph.copied(self, buffer).is_none() {
                     return Err(self.data_clone_error(
                         program,
                         "An ArrayBuffer is detached and could not be cloned.",
                     ));
                 }
                 let required = if length_tracking { 0 } else { length };
-                if self.array_buffer_out_of_bounds(buffer, object.offset, required) {
+                let backed_by_resizable = self.array_buffer_resizable(buffer);
+                if (!detached || backed_by_resizable)
+                    && self.array_buffer_out_of_bounds(buffer, object.offset, required)
+                {
                     return Err(self.data_clone_error(program, "#<DataView> could not be cloned."));
                 }
+                let byte_length = required;
                 let buffer = self.structured_clone_value(program, buffer, graph)?;
                 let prototype = self.intrinsic_builtin_prototype(Native::DataView);
                 let target = self.heap.alloc(Cell::DataView {
@@ -301,6 +444,11 @@ impl<H: Host> Vm<H> {
                 });
                 let target_root = graph.root(self, target);
                 graph.remember(source, target_root);
+                graph.views.push(SerializedView {
+                    view: target_root,
+                    byte_length,
+                    backed_by_resizable,
+                });
                 Ok(self.heap.root_value(target_root).unwrap())
             }
             Cell::Map { entries, .. } => {
