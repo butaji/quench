@@ -169,6 +169,7 @@ pub(crate) fn open_write(path: &str, flag: Option<&str>) -> io::Result<std::fs::
     open.open(path)
 }
 
+#[cfg(not(unix))]
 pub(crate) fn open(
     path: impl AsRef<Path>,
     flag: Option<&str>,
@@ -216,24 +217,29 @@ pub(crate) fn open(
     options.open(path)
 }
 
-pub(crate) fn open_numeric(path: &str, flags: i32, mode: Option<u32>) -> io::Result<std::fs::File> {
+pub(crate) fn open_numeric(
+    path: impl AsRef<Path>,
+    flags: i32,
+    mode: Option<u32>,
+) -> io::Result<std::fs::File> {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::OpenOptionsExt;
-        let access = flags & libc::O_ACCMODE;
-        let mut options = std::fs::OpenOptions::new();
-        options
-            .read(access == libc::O_RDONLY || access == libc::O_RDWR)
-            .write(access == libc::O_WRONLY || access == libc::O_RDWR)
-            .create(flags & libc::O_CREAT != 0)
-            .truncate(flags & libc::O_TRUNC != 0)
-            .append(flags & libc::O_APPEND != 0)
-            .create_new(flags & libc::O_EXCL != 0 && flags & libc::O_CREAT != 0)
-            .custom_flags(flags);
-        if let Some(mode) = mode {
-            options.mode(mode);
+        use std::os::{fd::FromRawFd, unix::ffi::OsStrExt};
+        let path = std::ffi::CString::new(path.as_ref().as_os_str().as_bytes())
+            .map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
+        // SAFETY: path is NUL-terminated and mode has the promoted C varargs type.
+        let fd = unsafe {
+            libc::open(
+                path.as_ptr(),
+                flags | libc::O_CLOEXEC,
+                mode.unwrap_or(0o666) as libc::c_uint,
+            )
+        };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
         }
-        return options.open(path);
+        // SAFETY: a successful open returned a new descriptor owned by this File.
+        return Ok(unsafe { std::fs::File::from_raw_fd(fd) });
     }
     #[cfg(not(unix))]
     {

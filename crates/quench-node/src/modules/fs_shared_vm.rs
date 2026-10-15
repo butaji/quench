@@ -3,7 +3,7 @@ use crate::modules::fs_ops;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 // Node's internal fs readFile limit, independent of Buffer's larger capacity.
-const MAX_READ_FILE_BYTES: u64 = i32::MAX as u64;
+pub(super) const MAX_READ_FILE_BYTES: u64 = i32::MAX as u64;
 
 use fs_ops::ReadFileFailure;
 
@@ -2756,27 +2756,27 @@ pub(crate) fn read_file_sync(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let input = args.first().copied().unwrap_or_else(|| context.undefined());
-    let (encoding, flag) = if let Some(options) = args.get(1).copied().filter(|options| {
-        context
-            .rooted_value(*options)
-            .is_none_or(|value| !value.is_undefined() && !value.is_null())
-    }) {
-        if let Some(encoding) = context.string_text(options)? {
-            (Some(encoding), None)
-        } else {
-            let encoding_key = context.string_rooted("encoding");
-            let encoding = context.get_property_rooted(options, encoding_key)?;
-            let encoding = context.string_text(encoding)?;
-            let flag_key = context.string_rooted("flag");
-            let flag = context.get_property_rooted(options, flag_key)?;
-            let flag = context.string_text(flag)?;
-            (encoding, flag)
-        }
+    let undefined = context.undefined();
+    let provided_options = args.get(1).copied().unwrap_or(undefined);
+    let defaults = context.object_rooted()?;
+    let key = context.string_rooted("flag");
+    let read_flag = context.string_rooted("r");
+    context.define_data_property_rooted(defaults, key, read_flag, true, true, true)?;
+    let options =
+        super::fs_policy_shared_vm::call(context, "getOptions", &[provided_options, defaults])?;
+    super::fs_policy_shared_vm::call(context, "validateReadFileBufferOptions", &[options])?;
+    let user_buffer = get(context, options, "buffer")?;
+    let has_user_buffer = !context
+        .rooted_value(user_buffer)
+        .is_some_and(|value| value.is_undefined());
+    let encoding = get(context, options, "encoding")?;
+    let utf8 = if context.string_text(encoding)?.as_deref() == Some("utf8") {
+        true
     } else {
-        (None, None)
+        let encoding = get(context, options, "encoding")?;
+        context.string_text(encoding)?.as_deref() == Some("utf-8")
     };
-    let encoding = encoding.filter(|encoding| !encoding.is_empty());
-    let fast_utf8 = matches!(encoding.as_deref(), Some("utf8" | "utf-8"));
+    let fast_utf8 = utf8 && !has_user_buffer;
     // Node's isInt32 intentionally performs ToInt32 before strict equality,
     // including observable valueOf/toString on non-numeric paths.
     let zero = context.number(0.0);
@@ -2786,23 +2786,19 @@ pub(crate) fn read_file_sync(
     } else {
         None
     };
+    if !fast_utf8 {
+        return super::fs_read_file_shared_vm::read_general(
+            context,
+            input,
+            options,
+            fd.is_some(),
+            has_user_buffer,
+        );
+    }
     let mut filename = None;
     let bytes = if let Some(fd) = fd {
-        if !fast_utf8 {
-            let maximum = context.number(i32::MAX as f64);
-            if let Err(error) =
-                super::util_shared_vm::validate_integer(context, input, "fd", 0.0, maximum)
-            {
-                if let Some(exception) = error.exception {
-                    super::node_errors_shared_vm::hide_range_error(
-                        context,
-                        exception,
-                        "ERR_OUT_OF_RANGE",
-                    )?;
-                }
-                return Err(error);
-            }
-        }
+        let flag = get(context, options, "flag")?;
+        super::fs_policy_shared_vm::call(context, "stringToFlags", &[flag])?;
         let fs = context.host_mut().shared_state().borrow().fs.clone();
         fs.with_descriptor(fd, |file| Ok(fs_ops::read_file(file, MAX_READ_FILE_BYTES)))
             .unwrap_or_else(|error| {
@@ -2813,9 +2809,19 @@ pub(crate) fn read_file_sync(
             })
     } else {
         let input = super::fs_path::validate(context, input, "path")?;
+        let flag = get(context, options, "flag")?;
+        let flags = super::fs_policy_shared_vm::call(context, "stringToFlags", &[flag])?;
+        let flags = context.to_number(flags)? as i32;
         let path = super::fs_path::resolve(context, input)?;
         filename = Some(super::fs_path::display(context, input)?);
-        match fs_ops::open(&path, flag.as_deref(), None) {
+        #[cfg(unix)]
+        let opened = fs_ops::open_numeric(&path, flags, None);
+        #[cfg(not(unix))]
+        let opened = {
+            let _ = flags;
+            fs_ops::open(&path, context.string_text(flag)?.as_deref(), None)
+        };
+        match opened {
             Ok(mut file) => fs_ops::read_file(&mut file, MAX_READ_FILE_BYTES),
             Err(error) => Err(ReadFileFailure::Io {
                 syscall: "open",
@@ -2824,18 +2830,7 @@ pub(crate) fn read_file_sync(
         }
     };
     match bytes {
-        Ok(bytes) if fast_utf8 => {
-            super::buffer_string_shared_vm::decode_bytes(context, &bytes, "utf8")
-        }
-        Ok(bytes) => match encoding.as_deref() {
-            None => crate::modules::buffer_shared_vm::from_bytes(context, &bytes),
-            Some(encoding) => {
-                let buffer = crate::modules::buffer_shared_vm::from_bytes(context, &bytes)?;
-                let to_string = get(context, buffer, "toString")?;
-                let encoding = context.string_rooted(encoding);
-                context.call_rooted(to_string, buffer, &[encoding])
-            }
-        },
+        Ok(bytes) => super::buffer_string_shared_vm::decode_bytes(context, &bytes, "utf8"),
         Err(ReadFileFailure::TooLarge(size)) => {
             let error =
                 context.range_error_rooted(&format!("File size ({size}) is greater than 2 GiB"))?;
