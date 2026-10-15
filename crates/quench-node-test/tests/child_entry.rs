@@ -1906,6 +1906,63 @@ console.log(JSON.stringify([Object.keys(clone),clone.length,clone[1],reads]));
 }
 
 #[test]
+fn structured_clone_errors_preserve_intrinsics_descriptors_snapshots_and_cycles() {
+    compare_node_stream_source(
+        r#"
+const assert=require('node:assert'),types=require('node:util').types,out=[];
+for(const Type of [Error,EvalError,RangeError,ReferenceError,SyntaxError,TypeError,URIError,AggregateError]) {
+ const source=Type===AggregateError?new Type([], 'message'):new Type('message');
+ source.stack='saved stack';source.extra=42;source.cause=source;
+ const copy=structuredClone([source,source]),clone=copy[0];
+ assert.strictEqual(clone,copy[1]);assert.strictEqual(clone.cause,clone);assert.notStrictEqual(clone,source);
+ assert.strictEqual(Object.getPrototypeOf(clone),Type===AggregateError?Error.prototype:Type.prototype);
+ assert.strictEqual(types.isNativeError(clone),true);assert.strictEqual(clone.stack,'saved stack');
+ assert.deepStrictEqual(Object.keys(clone),[]);assert.strictEqual(Object.hasOwn(clone,'extra'),false);
+ assert.deepStrictEqual(Object.getOwnPropertyDescriptor(clone,'message'),{value:'message',writable:true,enumerable:false,configurable:true});
+ const descriptor=Object.getOwnPropertyDescriptor(clone,'cause');assert.strictEqual(descriptor.enumerable,false);assert.strictEqual(descriptor.writable,true);assert.strictEqual(descriptor.configurable,true);
+ const stack=Object.getOwnPropertyDescriptor(clone,'stack');out.push([clone.name,typeof stack.get,typeof stack.set,stack.enumerable,stack.configurable]);
+ clone.stack='changed';assert.strictEqual(clone.stack,'changed');
+}
+
+const unicodeError=new Error();unicodeError.message={toString(){return '\ud800message\udfff'}};unicodeError.stack='fixed';assert.strictEqual(structuredClone(unicodeError).message,'\ud800message\udfff');
+const trace=[],oldCause={old:true},source=new Error();
+Object.defineProperties(source,{
+ message:{configurable:true,value:{toString(){trace.push('message');return 'snapshot message'}}},
+ cause:{configurable:true,value:oldCause},
+ name:{get(){trace.push('name');Object.defineProperty(source,'message',{value:'mutated'});Object.defineProperty(source,'cause',{value:null});const garbage=[];for(let i=0;i<20000;i++)garbage.push({i});return {toString(){trace.push('name coercion');return 'TypeError'}}}},
+ stack:{configurable:true,get(){trace.push('stack');return 'snapshot stack'}}
+});
+const clone=structuredClone(source);assert.strictEqual(clone.message,'snapshot message');assert.deepStrictEqual(clone.cause,{old:true});assert.notStrictEqual(clone.cause,oldCause);assert.strictEqual(Object.getPrototypeOf(clone),TypeError.prototype);assert.deepStrictEqual(trace,['name','name coercion','message','stack']);out.push(trace);
+for(const stack of [undefined,42,null,{}]){const source=new Error();Object.defineProperty(source,'stack',{value:stack});Object.defineProperty(source,'message',{get(){throw 'message accessor'}});Object.defineProperty(source,'cause',{get(){throw 'cause accessor'}});const c=structuredClone(source);assert.strictEqual(Object.hasOwn(c,'message'),false);assert.strictEqual(Object.hasOwn(c,'cause'),false);assert.strictEqual(c.stack,undefined);}
+for(const property of ['name','stack']){const marker={};const e=new Error();Object.defineProperty(e,property,{get(){throw marker}});assert.throws(()=>structuredClone(e),e=>e===marker);}
+for(const property of ['name','message']){const e=new Error();Object.defineProperty(e,'stack',{value:'fixed'});Object.defineProperty(e,property,{value:Symbol('bad')});assert.throws(()=>structuredClone(e),TypeError);}
+const original=TypeError,e=new original('intrinsic');e.stack='fixed';globalThis.TypeError=function(){throw 'replacement'};const c=structuredClone(e);assert.strictEqual(Object.getPrototypeOf(c),original.prototype);globalThis.TypeError=original;
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[test]
+fn structured_clone_builtin_graphs_preserve_snapshots_and_ignore_public_hooks() {
+    compare_node_stream_source(
+        r#"
+const assert=require('node:assert'),out=[];
+const key={key:1},map=new Map(),set=new Set();map.set(key,set);map.set(map,map);set.add(key);set.add(map);set.add(set);
+for(const value of [map,set]){Object.defineProperty(value,Symbol.iterator,{get(){throw 'iterator'}});Object.defineProperty(value,'extra',{enumerable:true,get(){throw 'extra'}});Object.setPrototypeOf(value,Object.create(Object.getPrototypeOf(value)));}
+const oldSet=Map.prototype.set,oldAdd=Set.prototype.add;Map.prototype.set=Set.prototype.add=function(){throw 'public insertion'};
+const graph=structuredClone([map,set,key,map]);Map.prototype.set=oldSet;Set.prototype.add=oldAdd;
+const [m,s,k]=graph;assert.strictEqual(graph[3],m);assert.strictEqual(m.get(k),s);assert.strictEqual(m.get(m),m);assert.deepStrictEqual([...s],[k,m,s]);assert.strictEqual(Object.getPrototypeOf(m),Map.prototype);assert.strictEqual(Object.getPrototypeOf(s),Set.prototype);assert.deepStrictEqual(Object.keys(m),[]);
+const snapshot=new Map(),first={get value(){snapshot.clear();return 'first'}},last={last:true};snapshot.set(first,last);snapshot.set(last,first);const copied=structuredClone(snapshot);const pairs=[...copied];assert.strictEqual(pairs.length,2);assert.strictEqual(pairs[0][0],pairs[1][1]);assert.strictEqual(pairs[0][1],pairs[1][0]);assert.strictEqual(pairs[0][0].value,'first');
+const members=new Set(),element={get value(){members.clear();members.add('late');return 'first'}};members.add(element);members.add(last);assert.deepStrictEqual([...structuredClone(members)],[{value:'first'},{last:true}]);
+for(const time of [0,-1,1700000000123,NaN]){const date=new Date(time);Object.defineProperty(date,'getTime',{get(){throw 'date hook'}});Object.defineProperty(date,'extra',{enumerable:true,get(){throw 'date extra'}});const pair=structuredClone([date,date]);assert.strictEqual(pair[0],pair[1]);assert(Object.is(pair[0].getTime(),time));assert.strictEqual(Object.getPrototypeOf(pair[0]),Date.prototype);assert.deepStrictEqual(Object.keys(pair[0]),[]);}
+const regexp=/a(b)/dgimsuy;regexp.lastIndex=99;for(const name of ['source','flags','extra'])Object.defineProperty(regexp,name,{enumerable:true,get(){throw 'regexp hook'}});const pair=structuredClone([regexp,regexp]);assert.strictEqual(pair[0],pair[1]);assert.strictEqual(pair[0].source,'a(b)');assert.strictEqual(pair[0].flags,'dgimsuy');assert.strictEqual(pair[0].lastIndex,0);assert.strictEqual(Object.getPrototypeOf(pair[0]),RegExp.prototype);assert.deepStrictEqual(Object.keys(pair[0]),[]);
+for(const [name,value] of [['Map',new Map([[1,2]])],['Set',new Set([1])],['Date',new Date(42)],['RegExp',/x/g]]){const original=globalThis[name],prototype=original.prototype;globalThis[name]=function(){throw 'public constructor'};const clone=structuredClone(value);assert.strictEqual(Object.getPrototypeOf(clone),prototype);globalThis[name]=original;out.push([name,Object.prototype.toString.call(clone)]);}
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[test]
 fn cyclic_esm_instantiates_live_bindings_before_running_dependencies() {
     for (fixture, expected) in [("esm-graph", "cyclic-esm-live-bindings\n"), ("esm-errors", "esm-link-error-retry\n")] {
     let entry = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -7535,4 +7592,61 @@ fn util_parse_args_default_argv_matches_eval_print_and_file_entry_forms() {
         }
         assert_eq!(observations[0].stdout,observations[1].stdout,"{args:?}");
     }
+}
+
+#[test]
+fn structured_clone_views_preserve_backing_aliases_transfers_and_resize_modes() {
+    compare_node_stream_source(
+        r#"
+const assert=require('node:assert'),out=[];
+for(const Type of [Uint8Array,Uint8ClampedArray,Uint16Array,Uint32Array,Int8Array,Int16Array,Int32Array,BigInt64Array,BigUint64Array,Float16Array,Float32Array,Float64Array]){
+ const buffer=new ArrayBuffer(64),bytes=new Uint8Array(buffer);for(let i=0;i<64;i++)bytes[i]=i;
+ const view=new Type(buffer,16,2),data=new DataView(buffer,8,24);Object.defineProperty(view,'buffer',{get(){throw 'buffer hook'}});Object.defineProperty(view,'extra',{enumerable:true,get(){throw 'extra'}});
+ const [copy,v,d,alias]=structuredClone([buffer,view,data,view]);assert.notStrictEqual(copy,buffer);assert.strictEqual(v.buffer,copy);assert.strictEqual(d.buffer,copy);assert.strictEqual(alias,v);assert.strictEqual(Object.getPrototypeOf(v),Type.prototype);assert.strictEqual(v.byteOffset,16);assert.strictEqual(v.length,2);assert.strictEqual(d.byteOffset,8);assert.strictEqual(d.byteLength,24);assert.deepStrictEqual([...new Uint8Array(copy)],[...bytes]);new Uint8Array(copy)[0]=255;assert.strictEqual(bytes[0],0);out.push([Type.name,v.byteOffset,v.length]);
+}
+for(const transfer of [false,true]){const b=new ArrayBuffer(16,{maxByteLength:32}),fixed=new Uint16Array(b,4,2),tracking=new Uint16Array(b,4),dataFixed=new DataView(b,4,4),dataTracking=new DataView(b,4);const [c,f,t,df,dt]=structuredClone([b,fixed,tracking,dataFixed,dataTracking],transfer?{transfer:[b]}:{});assert.strictEqual(b.byteLength,transfer?0:16);assert.strictEqual(c.resizable,true);assert.strictEqual(c.maxByteLength,32);for(const view of [f,t,df,dt])assert.strictEqual(view.buffer,c);c.resize(24);assert.strictEqual(f.length,2);assert.strictEqual(t.length,10);assert.strictEqual(df.byteLength,4);assert.strictEqual(dt.byteLength,20);}
+for(const kind of ['typed','data','buffer']){const b=new ArrayBuffer(8),v=kind==='typed'?new Uint16Array(b):kind==='data'?new DataView(b):b;structuredClone(b,{transfer:[b]});assert.throws(()=>structuredClone(v),e=>e.name==='DataCloneError'&&e.code===25&&e.message==='An ArrayBuffer is detached and could not be cloned.');}
+for(const kind of ['typed','data']){const b=new ArrayBuffer(8,{maxByteLength:16}),v=kind==='typed'?new Uint16Array(b,4,2):new DataView(b,4,4);b.resize(2);assert.throws(()=>structuredClone(v),e=>e.name==='DataCloneError'&&e.code===25&&e.message===(kind==='typed'?'[object Object] could not be cloned.':'#<DataView> could not be cloned.'));}
+const b=new ArrayBuffer(8),view=new Uint8Array(b);assert.throws(()=>structuredClone({view,bad:()=>{}},{transfer:[b]}),e=>e.name==='DataCloneError');assert.strictEqual(b.byteLength,8);
+const original=Uint16Array;globalThis.Uint16Array=function(){throw 'replacement'};const copy=structuredClone(new original([42]));assert.strictEqual(Object.getPrototypeOf(copy),original.prototype);globalThis.Uint16Array=original;
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[test]
+fn structured_clone_boxed_values_and_rejected_brands_match_node() {
+    compare_node_stream_source(
+        r#"
+const assert=require('node:assert'),out=[];
+for(const value of [true,false,0,-0,NaN,Infinity,42n,'a\ud800b']) {
+ const source=Object(value),prototype=Object.getPrototypeOf(source);
+ Object.defineProperty(source,'valueOf',{get(){throw 'valueOf hook'}});Object.defineProperty(source,Symbol.toPrimitive,{get(){throw 'primitive hook'}});Object.defineProperty(source,'extra',{enumerable:true,get(){throw 'extra hook'}});
+ const [copy,alias]=structuredClone([source,source]);assert.strictEqual(copy,alias);assert.notStrictEqual(copy,source);assert.strictEqual(Object.getPrototypeOf(copy),prototype);assert(Object.is(prototype.valueOf.call(copy),value));assert.strictEqual(Object.hasOwn(copy,'extra'),false);out.push([typeof value,Object.keys(copy)]);
+}
+for(const Type of [Boolean,Number,String]){const copy=structuredClone(Type.prototype);assert.strictEqual(Object.getPrototypeOf(copy),Type.prototype);assert(Object.is(copy.valueOf(),Type.prototype.valueOf()));}
+for(const [value,message] of [[Object(Symbol('x')),'[object Symbol] could not be cloned.'],[Promise.resolve(),'#<Promise> could not be cloned.'],[(function(){return arguments})(1),'#<Object> could not be cloned.']]){Object.defineProperty(value,'extra',{enumerable:true,get(){throw 'rejected getter'}});assert.throws(()=>structuredClone(value),e=>e.name==='DataCloneError'&&e.code===25&&e.message===message);}
+const source=Object(12n),original=BigInt;globalThis.BigInt=function(){throw 'replacement'};const copy=structuredClone(source);assert.strictEqual(Object.getPrototypeOf(copy),original.prototype);globalThis.BigInt=original;
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[test]
+fn structured_clone_webidl_options_preserve_errors_iteration_and_original_intrinsics() {
+    compare_node_stream_source(
+        r#"
+const assert=require('node:assert'),out=[];
+try{structuredClone()}catch(e){out.push([e.name,e.code,e.message]);}
+for(const options of ['',1,true,1n,Symbol('x'),{transfer:null},{transfer:''},{transfer:1},{transfer:[1]},{transfer:[null]},{transfer:{[Symbol.iterator]:1}}]){
+ try{structuredClone(undefined,options);throw 'accepted invalid options'}catch(e){assert.strictEqual(e.code,'ERR_INVALID_ARG_TYPE');out.push([e.name,e.code,e.message]);}
+}
+assert.strictEqual(structuredClone(undefined,null),undefined);assert.strictEqual(structuredClone(undefined,{transfer:undefined}),undefined);
+const trace=[],buffer=new ArrayBuffer(8),options={get transfer(){trace.push('transfer');return {get [Symbol.iterator](){trace.push('iterator');return function(){trace.push('call');let done=false;return {get next(){trace.push('next');return function(){trace.push('step');if(done)return {done:true};done=true;return {get done(){trace.push('done');return false},get value(){trace.push('value');return buffer}}}}}}}}}};
+const copy=structuredClone(buffer,options);assert.strictEqual(copy.byteLength,8);assert.strictEqual(buffer.byteLength,0);out.push(trace);
+const marker={};assert.throws(()=>structuredClone({}, {get transfer(){throw marker}}),e=>e===marker);
+const original=Array.prototype[Symbol.iterator];Array.prototype[Symbol.iterator]=function(){throw 'public array iterator'};const b=new ArrayBuffer(1);const cloned=structuredClone(b,{transfer:{[Symbol.iterator](){let done=false;return {next(){if(done)return {done:true};done=true;return {value:b,done:false}}}}}});Array.prototype[Symbol.iterator]=original;assert.strictEqual(cloned.byteLength,1);assert.strictEqual(b.byteLength,0);
+console.log(JSON.stringify(out));
+"#,
+    );
 }
