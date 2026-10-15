@@ -1996,6 +1996,22 @@ impl Heap {
         }?;
         (!value.is_deleted()).then_some(value)
     }
+    /// `property_get_unchecked` that leaves a dictionary's storage to the caller's slower path
+    /// (`ValueArena::get_shaped`), so a cache hit makes no call.
+    ///
+    /// # Safety
+    /// As for `property_get_unchecked`.
+    #[inline(always)]
+    pub(crate) unsafe fn property_get_shaped(&self, object: &Object, slot: usize) -> Option<Value> {
+        if let Some(values) = object.inline_properties() {
+            debug_assert!(slot < INLINE_PROPERTY_COUNT);
+            // SAFETY: the caller proves that the property slot exists.
+            Some(unsafe { *values.get_unchecked(slot) })
+        } else {
+            // SAFETY: the caller proves that the property slot exists.
+            unsafe { self.properties.get_shaped(object.properties(), slot) }
+        }
+    }
     #[inline(always)]
     pub(crate) unsafe fn property_get_unchecked(&self, object: &Object, slot: usize) -> Value {
         if let Some(values) = object.inline_properties() {
