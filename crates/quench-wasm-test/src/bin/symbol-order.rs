@@ -15,6 +15,9 @@
 //! executes once start-up is over. Those functions come first, the first run
 //! profile's in its order and the rest by how many run profiles executed them,
 //! so the code every run touches is dense and start-up code stays apart.
+//! `--dense PATTERN` then places every function whose symbol contains PATTERN
+//! (the interpreter's per-instruction lane handlers, `13dispatch_fast`): a run
+//! reaches whichever handlers its code needs, so the whole family stays packed.
 
 use std::{collections::HashSet, env, fs, process::Command, process::ExitCode};
 
@@ -118,7 +121,13 @@ fn run_phase(profiles: &[String]) -> Result<Vec<String>, String> {
     Ok(order)
 }
 
-fn run(binary: &str, out: &str, profiles: &[String], run: &[String]) -> Result<(), String> {
+fn run(
+    binary: &str,
+    out: &str,
+    profiles: &[String],
+    run: &[String],
+    dense: &[String],
+) -> Result<(), String> {
     let symbols = code_symbols(binary)?;
     // Profiles may come from an earlier link of the same build: match names
     // without LTO module hashes, and write the binary's current names. A
@@ -135,6 +144,11 @@ fn run(binary: &str, out: &str, profiles: &[String], run: &[String]) -> Result<(
             if seen.insert(*name) {
                 order.push(name);
             }
+        }
+    }
+    for name in &symbols {
+        if dense.iter().any(|pattern| name.contains(pattern.as_str())) && seen.insert(name) {
+            order.push(name);
         }
     }
     let runtime = PROCESS_RUNTIME.iter().map(|name| (*name).to_owned());
@@ -157,14 +171,26 @@ fn run(binary: &str, out: &str, profiles: &[String], run: &[String]) -> Result<(
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
     let [binary, out, profiles @ ..] = args.as_slice() else {
-        eprintln!("usage: symbol-order <binary> <out.order> <cachegrind.out>... [--run <callgrind.out>...]");
+        eprintln!("usage: symbol-order <binary> <out.order> [--dense PATTERN]... <cachegrind.out>... [--run <callgrind.out>...]");
         return ExitCode::from(2);
     };
-    let (profiles, run_profiles) = match profiles.iter().position(|arg| arg == "--run") {
-        Some(index) => (&profiles[..index], &profiles[index + 1..]),
-        None => (profiles, &[][..]),
+    let mut dense = Vec::new();
+    let mut rest = Vec::new();
+    let mut arguments = profiles.iter();
+    while let Some(argument) = arguments.next() {
+        match (argument.as_str(), arguments.clone().next()) {
+            ("--dense", Some(pattern)) => {
+                dense.push(pattern.clone());
+                arguments.next();
+            }
+            _ => rest.push(argument.clone()),
+        }
+    }
+    let (profiles, run_profiles) = match rest.iter().position(|arg| arg == "--run") {
+        Some(index) => (&rest[..index], &rest[index + 1..]),
+        None => (&rest[..], &[][..]),
     };
-    match run(binary, out, profiles, run_profiles) {
+    match run(binary, out, profiles, run_profiles, &dense) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("error: {error}");
