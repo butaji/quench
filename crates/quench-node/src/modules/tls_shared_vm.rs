@@ -49,10 +49,17 @@ const TLS_FACTORY: &str = quench_js_check::checked_js!(
 );
 
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    // The library's crypto wrapper must finish before TLS policy imports it.
+    crate::host::shared_vm::commonjs::crypto_module(context)?;
     let factory = context.evaluate_script_rooted(TLS_FACTORY, "node:tls/shared.js")?;
     let undefined = context.undefined();
     let api = facade::install(context)?;
     handle::registry(context)?;
+    let policy = crate::host::shared_vm::commonjs::node_library_export(
+        context, "tls.js", "internal/tls/secure-context.js", "configSecureContext",
+    )?;
+    let key = context.string_rooted("standardConfigure");
+    context.define_data_property_rooted(api, key, policy, false, false, false)?;
     let patterns = context.evaluate_script_rooted(
         quench_js_check::checked_js!("({trailingDot:()=>/[.]$/,upperCase:()=>/[A-Z]/g})"),
         "node:tls/identity-patterns.js",
