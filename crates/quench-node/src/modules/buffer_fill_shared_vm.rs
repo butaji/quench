@@ -108,6 +108,13 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         let function = function(c, true)?;
         let key = c.string_rooted("fill");
         c.define_data_property_rooted(result, key, function, true, true, true)?;
+        let data = intrinsics(c)?;
+        let copy = c.host_function_with_data(crate::host::shared_vm::operation("bufferCopyArrayBuffer"), data)?;
+        let key = c.string_rooted("name");
+        let name = c.string_rooted("copyArrayBuffer");
+        c.define_data_property_rooted(copy, key, name, false, false, true)?;
+        let key = c.string_rooted("copyArrayBuffer");
+        c.define_data_property_rooted(result, key, copy, true, true, true)?;
         Ok(result)
     })?;
     let binding = c.retain(binding)?;
@@ -326,4 +333,15 @@ pub(crate) fn binding_fill(
     raw_fill(
         c, data, values[0], values[1], values[2], values[3], values[4],
     )
+}
+
+/// Copy via Core's captured typed-array intrinsics, including overlapping stores.
+pub(crate) fn copy_array_buffer(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let data = c.host_function_data()?;
+    let constructor = get(c, data, "Uint8Array")?;
+    let target = c.construct_rooted(constructor, constructor, &[args[0], args[1], args[4]])?;
+    let source = c.construct_rooted(constructor, constructor, &[args[2], args[3], args[4]])?;
+    let set = get(c, data, "set")?;
+    c.call_rooted(set, target, &[source])?;
+    Ok(c.undefined())
 }

@@ -340,10 +340,7 @@ fn install_performance_global(context: &mut Context<'_>) -> Result<(), RootedErr
 /// (as in Node), so a polyfill is evaluated only when script first observes one of its globals.
 /// A member materializes writable, so a polyfill defining one read-only says so explicitly.
 const WEB_STREAM_GLOBALS: &[&str] = &[
-    "__quenchWebStreamsState",
     "ReadableStream",
-    "__quenchWebStreams",
-    "__quenchReadableStream",
     "WritableStream",
     "TransformStream",
     "CompressionStream",
@@ -406,11 +403,14 @@ pub(super) fn initialize_web_streams(
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    evaluate_polyfill_block(
-        context,
-        crate::polyfills::bootstrap::web_streams::JS,
-        "node:bootstrap/shared-vm/web-streams.js",
-    )
+    let module = cached_builtin(context, BuiltinModule::WebStreams)?;
+    let global = context.global_root()?;
+    for name in WEB_STREAM_GLOBALS {
+        let value = get(context, module, name)?;
+        let key = context.string_rooted(name);
+        context.define_data_property_rooted(global, key, value, true, false, true)?;
+    }
+    Ok(context.undefined())
 }
 
 pub(super) fn initialize_process_surface(
@@ -1007,6 +1007,8 @@ pub(crate) fn is_builtin_specifier(specifier: &str) -> bool {
 }
 
 const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
+    ("internal/process/task_queues", BuiltinModule::Internal("internal/process/task_queues")),
+    ("internal/worker/io", BuiltinModule::Internal("internal/worker/io")),
     ("constants", BuiltinModule::Internal("constants")),
     ("node:constants", BuiltinModule::Internal("constants")),
     ("dns/promises", BuiltinModule::Internal("dns/promises")),
@@ -1223,6 +1225,12 @@ fn cached_builtin(
     context: &mut Context<'_>,
     builtin: BuiltinModule,
 ) -> Result<RootId, RootedError> {
+    // Source-owned CommonJS modules keep their live exports on the module record.
+    // Reentrant requires must observe module.exports reassignment during loading,
+    // rather than a second cache retaining an earlier partial export object.
+    if matches!(builtin, BuiltinModule::Stream | BuiltinModule::StreamPromises) {
+        return context.with_startup_intrinsics(|context| build_builtin(context, builtin));
+    }
     let canonical = builtin
         .cache_key()
         .ok_or_else(|| RootedError::host("builtin module has no canonical cache key"))?;
@@ -1234,7 +1242,8 @@ fn cached_builtin(
 
     let module = context.with_startup_intrinsics(|context| build_builtin(context, builtin))?;
     let retained = context.retain(module)?;
-    roots.borrow_mut().builtin_cache.insert(key.clone(), retained);
+    let previous = roots.borrow_mut().builtin_cache.insert(key.clone(), retained);
+    if let Some(previous) = previous { context.release_root(previous); }
     if matches!(builtin, BuiltinModule::Crypto | BuiltinModule::Events) {
         let policy = context.with_startup_intrinsics(|context| {
             if matches!(builtin, BuiltinModule::Events) {
@@ -1281,9 +1290,7 @@ pub(crate) fn node_library_export(
     get(context, library, name)
 }
 
-fn node_library_module(
-    context: &mut Context<'_>, owner: &str, relative: &str,
-) -> Result<RootId, RootedError> {
+fn node_library_module(context: &mut Context<'_>, owner: &str, relative: &str) -> Result<RootId, RootedError> {
     let root = context.host_mut().node_library_root.clone();
     let parent = module_record(context, &root.join("lib").join(owner), None, false)?;
     load(context, &root.join("lib").join(relative), Some(parent), EntryGoal::CommonJs)
@@ -1327,6 +1334,25 @@ pub(crate) fn dns_module(context: &mut Context<'_>) -> Result<RootId, RootedErro
 
 fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<RootId, RootedError> {
     match builtin {
+        BuiltinModule::Internal("internal/worker/io") => {
+            let global = context.global_root()?;
+            let module = context.object_rooted()?;
+            for name in ["MessageChannel", "MessagePort"] {
+                let value = context.with_startup_intrinsics(|context| get(context, global, name))?;
+                let key = context.string_rooted(name);
+                context.define_data_property_rooted(module, key, value, true, true, true)?;
+            }
+            Ok(module)
+        }
+        BuiltinModule::Internal("internal/process/task_queues") => {
+            let global = context.global_root()?;
+            let queue = context.startup_data_property_rooted(global, "queueMicrotask")
+                .ok_or_else(|| RootedError::host("startup microtask queue missing"))?;
+            let module = context.object_rooted()?;
+            let key = context.string_rooted("queueMicrotask");
+            context.define_data_property_rooted(module, key, queue, true, true, true)?;
+            Ok(module)
+        }
         BuiltinModule::Internal("_http_incoming") => {
             let root = context.host_mut().node_library_root.clone();
             let parent = module_record(context, &root.join("lib/http.js"), None, false)?;
@@ -1365,18 +1391,9 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             crate::modules::buffer_shared_vm::install_blob_export(context, module)?;
             Ok(module)
         }
-        BuiltinModule::Stream => {
-            let decoder = cached_builtin(context, BuiltinModule::StringDecoder)?;
-            crate::modules::stream_shared_vm::module(context, decoder)
-        }
-        BuiltinModule::StreamPromises => {
-            let stream = cached_builtin(context, BuiltinModule::Stream)?;
-            get(context, stream, "promises")
-        }
-        BuiltinModule::WebStreams => {
-            let global = context.global_root()?;
-            get(context, global, "__quenchWebStreams")
-        }
+        BuiltinModule::Stream => node_library_module(context, "stream.js", "stream.js"),
+        BuiltinModule::StreamPromises => node_library_module(context, "stream.js", "stream/promises.js"),
+        BuiltinModule::WebStreams => node_library_module(context, "stream/web.js", "stream/web.js"),
         BuiltinModule::StringDecoder => crate::modules::string_decoder_shared_vm::module(context),
         BuiltinModule::Timers => {
             let promises = cached_builtin(context, BuiltinModule::TimersPromises)?;
@@ -1436,8 +1453,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             crate::modules::zlib_shared_vm::module(context, stream)
         }
         BuiltinModule::Crypto => {
-            let string_decoder = crate::modules::string_decoder_shared_vm::module(context)?;
-            let stream = crate::modules::stream_shared_vm::module(context, string_decoder)?;
+            let stream = cached_builtin(context, BuiltinModule::Stream)?;
             let transform_key = context.string_rooted("Transform");
             let transform = context.get_property_rooted(stream, transform_key)?;
             crate::modules::crypto_shared_vm::module(context, transform)
@@ -2116,16 +2132,16 @@ const getLinkedBinding = () => ({});
                 } else if in_node_internal {
                     r#"const internalBinding = (name) => {
   switch (String(name)) {
+    case "encoding_binding":
+    case "symbols":
     case "http2":
     case "fs_event_wrap": return __nativeInternalBinding(name);
     case "util": return Object.assign({}, require("util"), {
-      privateSymbols: {
-        arrow_message_private_symbol: Symbol.for("nodejs.util.inspect.custom"),
-        decorated_private_symbol: Symbol.for("nodejs.util.inspect.decorated"),
-      },
+      privateSymbols: __nativeInternalBinding("util").privateSymbols,
       constants: __nativeInternalBinding("util").constants,
       getOwnNonIndexProperties: __nativeInternalBinding("util").getOwnNonIndexProperties,
-      getPromiseDetails: () => [0, undefined],
+      getPromiseDetails: __nativeInternalBinding("util").getPromiseDetails,
+      markPromiseAsHandled: __nativeInternalBinding("util").markPromiseAsHandled,
       getProxyDetails: () => undefined,
       previewEntries: () => undefined,
       getConstructorName: (value) => value?.constructor?.name,
@@ -2135,18 +2151,15 @@ const getLinkedBinding = () => ({});
       defineLazyProperties: () => undefined,
       sleep: () => undefined,
     });
-    case "types": return require("internal/util/types");
+    case "types": return __nativeInternalBinding("types");
     case "constants": return {
-      fs: Object.assign({
-        UV_DIRENT_UNKNOWN: 0, UV_DIRENT_FILE: 1, UV_DIRENT_DIR: 2,
-        UV_DIRENT_LINK: 3, UV_DIRENT_FIFO: 4, UV_DIRENT_SOCKET: 5,
-        UV_DIRENT_CHAR: 6, UV_DIRENT_BLOCK: 7,
-      }, require("fs").constants),
+      fs: __nativeInternalBinding("constants").fs,
+      zlib: __nativeInternalBinding("constants").zlib,
       os: { signals: (require("os").constants || {}).signals || {}, errno: { EISDIR: -21 } },
       crypto: { ENGINE_METHOD_ALL: 0xffff },
     };
     case "string_decoder": return { encodings: ["hex", "utf8", "ascii", "binary", "base64", "base64url", "latin1", "ucs2", "utf16le"] };
-    case "buffer": return require("buffer");
+    case "buffer": return Object.assign({}, require("buffer"), __nativeInternalBinding("buffer"));
     case "fs": return require("fs");
     case "crypto": {
       const crypto = require("crypto");
@@ -2243,9 +2256,17 @@ const getLinkedBinding = () => ({});
                 }
             }
         }
+        let exports = get(context, module, "exports")?;
+        if filename == context.host_mut().node_library_root.join("lib/internal/util/debuglog.js") {
+            let initialize = get(context, exports, "initializeDebugEnv")?;
+            let initial = context.host_mut().initial_node_debug.clone();
+            let debug = initial.map(|value| context.string_rooted(&value)).unwrap_or_else(|| context.undefined());
+            let absent = context.undefined();
+            context.call_rooted(initialize, absent, &[debug])?;
+        }
         let loaded = context.boolean(true);
         set(context, module, "loaded", loaded)?;
-        get(context, module, "exports")
+        Ok(exports)
     })();
     if is_esm {
         if let Some(retained) = roots.borrow_mut().active_esm_requires.remove(&key) {
@@ -2263,7 +2284,7 @@ const getLinkedBinding = () => ({});
     }
     if key.ends_with("/internal/fs/utils.js") {
         if let Ok(exports) = &result {
-            crate::modules::fs_shared_vm::stat::types::adopt_bigint_stats(context, *exports)?;
+            crate::modules::fs_shared_vm::stat::types::adopt_binding_types(context, *exports)?;
             let state = get(context, *exports, "vfsState")?;
             let global = context.global_root()?;
             set(context, global, "\0quench:vfsState", state)?;

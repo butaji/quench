@@ -78,6 +78,14 @@ pub enum BuiltinBrand {
     BoxedPrimitive,
 }
 
+/// A real Promise's current settlement, without running reactions or guest hooks.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PromiseSnapshot<T = RootId> {
+    Pending,
+    Fulfilled(T),
+    Rejected(T),
+}
+
 /// Intrinsic payload snapshot. Value roots remain scoped to the native callback.
 #[derive(Debug)]
 pub enum BuiltinData<T = RootId> {
@@ -214,6 +222,21 @@ impl<'a, H: Host> NativeContext<'a, H> {
     pub fn is_promise_rooted(&mut self, root: RootId) -> Result<bool, RootedError> {
         let result = self.vm.embedding_is_promise(root);
         result.map_err(|error| self.error(error))
+    }
+
+    /// Observe settlement without then/species access, reactions or a job checkpoint.
+    pub fn promise_snapshot_rooted(&mut self, promise: RootId) -> Result<Option<PromiseSnapshot>, RootedError> {
+        let snapshot = self.vm.embedding_promise_snapshot(promise).map_err(|error| self.error(error))?;
+        Ok(snapshot.map(|snapshot| match snapshot {
+            PromiseSnapshot::Pending => PromiseSnapshot::Pending,
+            PromiseSnapshot::Fulfilled(value) => PromiseSnapshot::Fulfilled(self.scoped_value(value)),
+            PromiseSnapshot::Rejected(value) => PromiseSnapshot::Rejected(self.scoped_value(value)),
+        }))
+    }
+
+    /// Mark the same rejection owner handled that then/await observe.
+    pub fn mark_promise_handled_rooted(&mut self, promise: RootId) -> Result<(), RootedError> {
+        self.vm.embedding_mark_promise_handled(promise).map_err(|error| self.error(error))
     }
 
     /// Whether a name was an own global property in the sealed host bootstrap.
