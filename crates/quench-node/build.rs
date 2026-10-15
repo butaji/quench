@@ -2,8 +2,9 @@
 //! its pointer tables (`.data.rel.ro`) at every start, dirtying about 1.3 MiB and reading 1 MiB
 //! of relocation records, which shows in every process's resident set.
 //!
-//! On x86-64 Linux the functions a start-up and a general workload execute are laid out
-//! first, in execution order (`link/x86_64-linux.order`, derived by `quench-wasm-test`'s
+//! On x86-64 Linux the functions a run executes once its entry has compiled are laid out
+//! first (split at `quench_entry_compiled`), then those a start-up and a general workload
+//! execute, in execution order (`link/x86_64-linux.order`, derived by `quench-wasm-test`'s
 //! `symbol-order` from the start-up, `quench-bench/deegen-curriculum`, `quench-bench/micros`
 //! and a Test262 sample's profiles, never from a scored bench). A fault on a file-backed page
 //! maps its cached neighbours too, so executed code scattered among cold code keeps the cold

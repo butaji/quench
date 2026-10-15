@@ -2044,15 +2044,27 @@ fn drain_checkpoint(
         } else {
             None
         };
-        if let Some(timer) = due {
+        if let Some(mut timer) = due {
             let _span =
                 crate::modules::trace_state::EnvironmentSpan::enter(&shared_state, "RunTimers");
             let api = shared_state.borrow().timer_handle_api.expect("queued timer handle API");
-            let (primitive_id, callback_result) = match runtime.get_property_rooted(timer.callback.receiver, api.async_id_key) {
+            let (primitive_id, mut callback_result) = match runtime.get_property_rooted(timer.callback.receiver, api.async_id_key) {
                 Ok(id) => (Some(id), invoke_timer_callback(runtime, program, &timer.callback)),
                 Err(error) => (None, route_callback_failure(runtime, program, error)),
             };
 
+            let repeated = runtime.call_rooted(api.repeat_delay, timer.callback.receiver, &[]);
+            match repeated {
+                Ok(repeated) => {
+                    timer.interval = runtime.rooted_value(repeated).and_then(|value| value.as_number())
+                        .map(|value| std::time::Duration::from_millis(value.max(0.0).trunc() as u64));
+                    runtime.release_root(repeated);
+                }
+                Err(error) => {
+                    callback_result = route_callback_failure(runtime, program, error);
+                    shared_state.borrow_mut().scheduler.cancel_shared_timer(timer.id);
+                }
+            }
             if callback_result.is_err() {
                 shared_state
                     .borrow_mut()
@@ -2419,7 +2431,11 @@ fn drain_shared_jobs(
     program: &quench_runtime::ResidualProgram,
     shared_state: &Rc<RefCell<crate::host::SharedNodeState>>,
 ) -> Result<(), String> {
+    let process_control = shared_state.borrow().process_control.clone();
     loop {
+        if process_control.requested_exit_code().is_some() {
+            return Ok(());
+        }
         loop {
             let callback = { shared_state.borrow_mut().scheduler.take_shared_next_tick() };
             let Some(callback) = callback else {
@@ -2428,8 +2444,17 @@ fn drain_shared_jobs(
             runtime.with_native_stack_frame("process.processTicksAndRejections", |runtime| {
                 invoke_async_callback(runtime, program, callback)
             })?;
+            if process_control.requested_exit_code().is_some() {
+                return Ok(());
+            }
         }
         run_host_jobs_with_uncaught(runtime, program)?;
+        // An async callback can wrap the host's exit completion in a rejected
+        // promise. Termination wins over further ticks/rejection notification;
+        // dispatching that synthetic rejection would replace the requested code.
+        if process_control.requested_exit_code().is_some() {
+            return Ok(());
+        }
         if shared_state.borrow().scheduler.has_shared_next_ticks() {
             continue;
         }

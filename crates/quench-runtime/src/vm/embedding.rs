@@ -298,6 +298,13 @@ impl<H: Host> Vm<H> {
         Ok(self.strict_equal(self.embedding_value(left)?, self.embedding_value(right)?))
     }
 
+    pub(crate) fn embedding_instanceof(&mut self, value: RootId, constructor: RootId) -> Result<bool, JsError> {
+        let value = self.embedding_value(value)?;
+        let constructor = self.embedding_value(constructor)?;
+        let program = self.embedding_program()?;
+        self.instanceof(&program, value, constructor)
+    }
+
     pub(crate) fn embedding_builtin_data(
         &self,
         root: RootId,
@@ -644,6 +651,18 @@ impl<H: Host> Vm<H> {
         let value = self.embedding_value(root)?;
         let program = self.embedding_program()?;
         self.to_string(&program, value)
+    }
+
+    pub(crate) fn embedding_to_string_code_units(&mut self, root: RootId) -> Result<Vec<u16>, JsError> {
+        let value = self.embedding_value(root)?;
+        let program = self.embedding_program()?;
+        Ok(self.coerce_js_string(&program, value)?.units().wide().into_owned())
+    }
+
+    pub(crate) fn embedding_to_number(&mut self, root: RootId) -> Result<f64, JsError> {
+        let value = self.embedding_value(root)?;
+        let program = self.embedding_program()?;
+        self.to_number(&program, value)
     }
 
     pub(crate) fn embedding_arithmetic(

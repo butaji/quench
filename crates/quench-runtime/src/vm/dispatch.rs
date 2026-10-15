@@ -1250,8 +1250,8 @@ impl<H: Host> Vm<H> {
                 }
                 if terminal
                     && p.kind != crate::bytecode::ProgramKind::Wasm
-                    && p.functions[self.frames[f].function as usize].strict
-                    && !p.functions[self.frames[f].function as usize].class_field_initializer
+                    && p.functions[self.frames[f].function as usize]
+                        .permits_js_tail_call_at(pc.saturating_sub(1) as u32)
                     && !matches!(self.heap.get(callee), Some(Cell::Proxy { .. }))
                     && let Some(CallTarget::User(program_id, id, env)) =
                         self.call_target(callee).ok()
@@ -1373,7 +1373,8 @@ impl<H: Host> Vm<H> {
                 if ((p.kind == crate::bytecode::ProgramKind::Wasm && i.returns_from_frame())
                     || (p.kind != crate::bytecode::ProgramKind::Wasm
                         && terminal
-                        && p.functions[self.frames[f].function as usize].strict))
+                        && p.functions[self.frames[f].function as usize]
+                            .permits_js_tail_call_at(pc.saturating_sub(1) as u32)))
                     && !p.functions[function_index as usize].is_async
                     && !p.functions[function_index as usize].is_generator
                 {
