@@ -297,13 +297,13 @@ enum ActivationArguments {
 }
 
 /// A user function a lane `Call` may activate without a frame, valid as the general loop's
-/// `InLoopCallTarget` is: for `callee` in `realm` until the collection after `epoch`.
+/// `InLoopCallTarget` is: for `callee` while the collection epoch, realm and program it was
+/// resolved under hold, which its `generation` names.
 #[derive(Clone, Copy)]
 pub(super) struct ScriptCallTarget {
     callee: Value,
-    epoch: u64,
-    realm: Value,
-    program: ProgramId,
+    /// The `LaneStack::generation` it was resolved in.
+    generation: u64,
     function: u32,
     env: Value,
     view: *const LaneView,
@@ -318,9 +318,7 @@ pub(super) struct ScriptCallTarget {
 
 const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
     callee: Value::UNDEFINED,
-    epoch: 0,
-    realm: Value::UNDEFINED,
-    program: ProgramId::MAIN,
+    generation: NO_SCRIPT_GENERATION,
     function: 0,
     env: Value::UNDEFINED,
     view: std::ptr::null(),
@@ -346,7 +344,15 @@ pub(super) struct LaneStack {
     activations: Vec<Activation>,
     /// Resolved targets of lane `Call` records (`Vm::script_call_target`).
     script_targets: Box<[ScriptCallTarget; SCRIPT_CALL_TARGETS]>,
+    /// Names the collection epoch, realm and program of the running lane, which no lane
+    /// instruction changes: a target resolved under another generation is stale.
+    generation: u64,
+    /// The epoch, realm and program `generation` names.
+    generation_key: (u64, Value, ProgramId),
 }
+
+/// A generation no lane runs under: an empty target entry never matches.
+const NO_SCRIPT_GENERATION: u64 = 0;
 
 impl Default for LaneStack {
     fn default() -> Self {
@@ -354,6 +360,8 @@ impl Default for LaneStack {
             values: Vec::new(),
             activations: Vec::new(),
             script_targets: Box::new([EMPTY_SCRIPT_CALL_TARGET; SCRIPT_CALL_TARGETS]),
+            generation: NO_SCRIPT_GENERATION,
+            generation_key: (0, Value::UNDEFINED, ProgramId::MAIN),
         }
     }
 }
@@ -362,6 +370,15 @@ impl LaneStack {
     /// Forget resolved call targets, as the general loop's call target cache is reset.
     pub(super) fn clear_script_targets(&mut self) {
         *self.script_targets = [EMPTY_SCRIPT_CALL_TARGET; SCRIPT_CALL_TARGETS];
+    }
+
+    /// The generation of a lane run under `key`: the current one while the key holds, else
+    /// a new one, which retires every target resolved before.
+    fn enter_generation(&mut self, key: (u64, Value, ProgramId)) {
+        if self.generation == NO_SCRIPT_GENERATION || self.generation_key != key {
+            self.generation += 1;
+            self.generation_key = key;
+        }
     }
 }
 
@@ -2993,10 +3010,7 @@ impl<H: Host> Vm<H> {
     fn script_call_target(&self, callee: Value) -> Option<ScriptCallTarget> {
         let index = callee.heap_index()? as usize & (SCRIPT_CALL_TARGETS - 1);
         let cached = self.lane_stack.script_targets[index];
-        (cached.callee == callee
-            && cached.epoch == self.heap.collection_epoch()
-            && cached.realm == self.realm.globals
-            && cached.program == self.active_program)
+        (cached.callee == callee && cached.generation == self.lane_stack.generation)
             .then_some(cached)
     }
 
@@ -3022,9 +3036,7 @@ impl<H: Host> Vm<H> {
         let view = self.lane_view_any(program, function)?;
         let target = ScriptCallTarget {
             callee,
-            epoch: self.heap.collection_epoch(),
-            realm: self.realm.globals,
-            program,
+            generation: self.lane_stack.generation,
             function,
             env,
             view,
@@ -5071,6 +5083,11 @@ impl<H: Host> Vm<H> {
             stack_pointer().saturating_sub(LANE_STACK_SLACK)
         };
         let outer_floor = LANE_FLOOR.with(|current| current.replace(floor));
+        self.lane_stack.enter_generation((
+            self.heap.collection_epoch(),
+            self.realm.globals,
+            self.active_program,
+        ));
         let mut context = LaneContext {
             vm: self,
             code,

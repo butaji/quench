@@ -1567,8 +1567,15 @@ impl Object {
         self.extras_mut().stack_data = Some(data);
     }
 
-    pub(crate) fn visit_stack_data_roots(&self, mut visit: impl FnMut(Value)) {
-        match self.extras().and_then(|extras| extras.stack_data.as_ref()) {
+    /// Visit the values an object's extras keep alive: private-name homes and stack data.
+    pub(crate) fn visit_extras_roots(&self, mut visit: impl FnMut(Value)) {
+        let Some(extras) = self.extras() else {
+            return;
+        };
+        for brand in &extras.private_names {
+            visit(brand.home);
+        }
+        match extras.stack_data.as_ref() {
             Some(StackData::Captured(records)) => {
                 for record in records {
                     visit(record.this_value);
