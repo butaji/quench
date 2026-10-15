@@ -291,5 +291,6 @@ pub(crate) fn load_util(
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    crate::host::shared_vm::commonjs::util_module(context)
+    crate::host::shared_vm::commonjs::util_module(context)?;
+    crate::modules::util_shared_vm::internal_formatters(context)
 }

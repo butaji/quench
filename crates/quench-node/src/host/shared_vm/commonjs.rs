@@ -99,6 +99,7 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     context.profile_memory_checkpoint("node_url_global");
     crate::host::resident_pages::release_read_only_pages();
     install_shared_web_globals(context)?;
+    crate::modules::base64_shared_vm::install(context)?;
     if context.host_mut().vfs_enabled() {
         install_vfs_globals(context)?;
     }
@@ -346,6 +347,15 @@ pub(super) fn initialize_web_apis(
 pub(super) fn require(
     context: &mut Context<'_>,
     _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let parent = context.host_function_data()?;
+    require_for_module(context, parent, args)
+}
+
+pub(crate) fn require_for_module(
+    context: &mut Context<'_>,
+    parent: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let specifier = specifier(context, args, Request::Require)?;
@@ -634,7 +644,6 @@ pub(super) fn require(
         }
         None => {}
     }
-    let parent = context.host_function_data()?;
     let filename = resolve_filename(context, &specifier, parent)?;
     let goal = if filename.starts_with(context.host_mut().node_library_root.join("lib")) {
         EntryGoal::CommonJs
@@ -1302,9 +1311,15 @@ fn resolve_filename(
     parent: RootId,
 ) -> Result<PathBuf, RootedError> {
     let filename = get(context, parent, "filename")?;
-    let filename = context
-        .string_text(filename)?
-        .ok_or_else(|| RootedError::host("invalid parent module filename"))?;
+    let directory = match context.string_text(filename)? {
+        Some(filename) => Path::new(&filename).parent().unwrap_or(Path::new(".")).to_owned(),
+        None => {
+            let directory = get(context, parent, "path")?;
+            let directory = context.string_text(directory)?
+                .ok_or_else(|| RootedError::host("invalid parent module path"))?;
+            PathBuf::from(directory)
+        }
+    };
     let resolver = commonjs_resolver();
     let node_lib = context.host_mut().node_library_root.join("lib");
     let internal_specifier = specifier.strip_prefix("node:").unwrap_or(specifier);
@@ -1319,7 +1334,7 @@ fn resolve_filename(
         (node_lib.as_path(), format!("./{internal_specifier}"))
     } else {
         (
-            Path::new(&filename).parent().unwrap_or(Path::new(".")),
+            directory.as_path(),
             specifier.to_owned(),
         )
     };
@@ -1660,29 +1675,7 @@ const getLinkedBinding = () => ({});
                 let wrapper_source = format!("{prefix}{text}{WRAPPER_SUFFIX}");
                 drop(text);
                 drop(source);
-                let line_offset = u32::try_from(
-                    prefix.bytes().filter(|byte| *byte == b'\n').count(),
-                )
-                .map_err(|_| {
-                    RootedError::host("CommonJS wrapper line origin exceeds compiler positions")
-                })?;
-                let column_offset = u32::try_from(
-                    prefix
-                        .rsplit('\n')
-                        .next()
-                        .unwrap_or("")
-                        .encode_utf16()
-                        .count(),
-                )
-                .map_err(|_| {
-                    RootedError::host("CommonJS wrapper column origin exceeds compiler positions")
-                })?;
-                let wrapper = context.evaluate_specialized_script_with_origin_rooted(
-                    &wrapper_source,
-                    &key,
-                    line_offset,
-                    column_offset,
-                )?;
+                let wrapper = evaluate_wrapper(context, &prefix, &wrapper_source, &key)?;
                 // The compiled program keeps its own source; the module body runs inside this
                 // call, so the file text and wrapper are released before it.
                 drop(wrapper_source);
@@ -1725,6 +1718,36 @@ const getLinkedBinding = () => ({});
         }
     }
     result
+}
+
+fn evaluate_wrapper(context: &mut Context<'_>, prefix: &str, source: &str, filename: &str) -> Result<RootId, RootedError> {
+    let line_offset = u32::try_from(prefix.bytes().filter(|byte| *byte == b'\n').count())
+        .map_err(|_| RootedError::host("CommonJS wrapper line origin exceeds compiler positions"))?;
+    let column_offset = u32::try_from(prefix.rsplit('\n').next().unwrap_or("").encode_utf16().count())
+        .map_err(|_| RootedError::host("CommonJS wrapper column origin exceeds compiler positions"))?;
+    context.evaluate_specialized_script_with_origin_rooted(source, filename, line_offset, column_offset)
+}
+
+pub(crate) fn compile_public(context: &mut Context<'_>, module: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let content = args.first().copied().unwrap_or_else(|| context.undefined());
+    let filename = args.get(1).copied().unwrap_or_else(|| context.undefined());
+    let content = context.string_text(content)?.ok_or_else(|| RootedError::host("Module._compile content must be a string"))?;
+    let name = context.string_text(filename)?.ok_or_else(|| RootedError::host("Module._compile filename must be a string"))?;
+    let text = content.as_str();
+    let text = if text.starts_with("#!") { text.find('\n').map_or("", |end| &text[end..]) } else { text };
+    let source = format!("{WRAPPER_PREFIX}{text}{WRAPPER_SUFFIX}");
+    let wrapper = evaluate_wrapper(context, WRAPPER_PREFIX, &source, &name)?;
+    let exports = get(context, module, "exports")?;
+    let require = context.host_function_with_data(super::operation("require"), module)?;
+    let resolve = context.host_function_with_data(super::operation("resolve"), module)?;
+    set(context, require, "resolve", resolve)?;
+    let global = context.global_root()?;
+    let process = get(context, global, "process")?;
+    let main = get(context, process, "mainModule")?;
+    set(context, require, "main", main)?;
+    let directory = crate::modules::path_shared_vm::host_dirname(context, filename)?;
+    context.call_rooted(wrapper, exports, &[exports, require, module, filename, directory])?;
+    Ok(context.undefined())
 }
 
 enum ChildTransition {

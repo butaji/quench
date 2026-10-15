@@ -895,7 +895,7 @@
     resume() {
       if (this.destroyed) return this;
       this._readableState.paused = false;
-      this._readableState.flowing = true;
+      this._readableState.flowing = deps.resumeFlow(this._readableState);
       if (!this._readableState.resumeScheduled) {
         this._readableState.resumeScheduled = true;
         this._readableState.resumeEventPending = true;
