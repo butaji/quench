@@ -41,10 +41,10 @@ impl<H: Host> Vm<H> {
         let function = self.native_with_env(Native::WasmHost, environment);
         self.set_builtin_function_name(function, name)?;
         let atom = self.intern_atom("length");
-        self.set_property(function, atom, Value::number(length as f64))?;
-        self.set_property_attributes(
+        self.set_property_with_attributes(
             function,
-            PropertyKey::string(atom),
+            atom,
+            Value::number(length as f64),
             PropertyAttributes {
                 writable: false,
                 enumerable: false,
@@ -53,7 +53,7 @@ impl<H: Host> Vm<H> {
                 getter: None,
                 setter: None,
             },
-        );
+        )?;
         Ok(function)
     }
 
