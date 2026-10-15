@@ -7,6 +7,24 @@ use std::rc::Rc;
 
 const REQUEST_HEAD_LIMIT: usize = 64 * 1024;
 const RESPONSE_HEAD_LIMIT: usize = 64 * 1024;
+const BAD_REQUEST_RESPONSE: &[u8] = b"HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n";
+
+fn reject_request(shared_state: &Rc<RefCell<SharedNodeState>>, socket: u64) -> Result<(), String> {
+    let mut state = shared_state.borrow_mut();
+    let Some(connection) = state.http.connections.get_mut(&socket) else {
+        return Ok(());
+    };
+    connection.request_dispatched = true;
+    // An application may have already responded or destroyed the exchange in
+    // its request callback. Never append a second response to committed output.
+    let committed = state.http.responses.values().any(|response| {
+        response.socket == socket && response.lifecycle != super::state::ResponseLifecycle::Open
+    });
+    if !committed {
+        net_shared_vm::write(&mut state.tcp, socket, BAD_REQUEST_RESPONSE)?;
+    }
+    net_shared_vm::end(&mut state.tcp, socket)
+}
 
 pub(crate) fn poll(
     runtime: &mut Runtime<NodeHost>,
@@ -286,6 +304,15 @@ pub(crate) fn poll(
                         }
                     };
                     if let Some(message) = dispatch {
+                        if matches!(
+                            message.body,
+                            Err(super::protocol::RequestFramingError::InvalidTransferCodingOrder)
+                        ) {
+                            reject_request(shared_state, socket)?;
+                            progressed = true;
+                            continue;
+                        }
+                        let body_invalid = message.body.is_err();
                         let request_async_id =
                             crate::modules::async_hooks_shared_vm::create_context(shared_state);
                         let (server_root, response_id, response_factory, incoming_factory) = {
@@ -352,13 +379,18 @@ pub(crate) fn poll(
                                 return Err(error);
                             }
                         };
-                        let body_text = latin1_text(&message.body);
+                        let body_text = latin1_text(message.body.as_deref().unwrap_or_default());
                         let body = runtime.string_rooted(&body_text);
                         let undefined = runtime.root(Value::UNDEFINED);
+                        let open = runtime.root(if body_invalid {
+                            Value::TRUE
+                        } else {
+                            Value::FALSE
+                        });
                         let readable = match runtime.call_rooted(
                             incoming_factory,
                             undefined,
-                            &[request, body],
+                            &[request, body, open],
                         ) {
                             Ok(readable) => readable,
                             Err(error) => {
@@ -368,6 +400,7 @@ pub(crate) fn poll(
                                 }
                                 runtime.release_root(request);
                                 runtime.release_root(body);
+                                runtime.release_root(open);
                                 runtime.release_root(undefined);
                                 runtime.release_root(socket_object);
                                 return Err(message);
@@ -375,6 +408,7 @@ pub(crate) fn poll(
                         };
                         runtime.release_root(request);
                         runtime.release_root(body);
+                        runtime.release_root(open);
                         runtime.release_root(undefined);
                         let id = runtime.root(Value::number(response_id as f64));
                         let status = runtime.root(Value::number(200.0));
@@ -446,6 +480,9 @@ pub(crate) fn poll(
                         runtime.release_root(undefined);
                         runtime.release_root(socket_object);
                         delivered?;
+                        if body_invalid {
+                            reject_request(shared_state, socket)?;
+                        }
                         progressed = true;
                     }
                 } else if shared_state.borrow().http.clients.contains_key(&socket) {
