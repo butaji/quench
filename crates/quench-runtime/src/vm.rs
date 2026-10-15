@@ -1439,25 +1439,38 @@ impl<H: Host> Vm<H> {
         self.realm.global_lexical_bindings.extend(bindings);
     }
     pub(crate) fn execute(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
-        self.execute_with_job_drain(program, true)
+        self.execute_with_job_drain(program, &[], true)
+    }
+
+    /// Evaluate host-supplied global scripts, then `program`, in one realm.
+    pub(crate) fn execute_after_scripts(
+        &mut self,
+        scripts: &[(&str, &str)],
+        program: &ResidualProgram,
+    ) -> Result<Value, JsError> {
+        self.execute_with_job_drain(program, scripts, true)
     }
 
     pub(crate) fn execute_deferred_jobs(
         &mut self,
         program: &ResidualProgram,
     ) -> Result<Value, JsError> {
-        self.execute_with_job_drain(program, false)
+        self.execute_with_job_drain(program, &[], false)
     }
 
     fn execute_with_job_drain(
         &mut self,
         program: &ResidualProgram,
+        scripts: &[(&str, &str)],
         drain_jobs: bool,
     ) -> Result<Value, JsError> {
         if program.functions.is_empty() {
             return Err(JsError::validation("program has no entry function".into()));
         }
         self.initialize(program)?;
+        for (source, name) in scripts {
+            self.eval_script_source(program, source, name)?;
+        }
         if program.is_module() {
             self.instantiate_main_module(program)?;
             self.evaluate_program_module_requests(program)?;
