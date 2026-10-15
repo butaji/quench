@@ -7485,3 +7485,54 @@ const http=require('http'),net=require('net');
 "#,
     );
 }
+
+#[test]
+fn util_parse_args_preserves_defaults_getter_order_tokens_and_strict_writes() {
+    compare_node_stream_source(include_str!("../node-tests/test-util-parse-args-contract.js"));
+}
+
+#[test]
+fn util_parse_args_uses_captured_intrinsics_after_nonconfigurable_guest_replacement() {
+    compare_node_stream_source(r#"
+const savedStringify=JSON.stringify;
+for(const [owner,key] of [[Array.prototype,'slice'],[Array.prototype,'shift'],[Array.prototype,'unshift'],[Array.prototype,'push'],[Array.prototype,'map'],[Object,'hasOwn'],[Object,'entries'],[Reflect,'apply'],[String.prototype,'charAt'],[String.prototype,'startsWith'],[String.prototype,'includes'],[String.prototype,'indexOf'],[String.prototype,'slice']]){
+Object.defineProperty(owner,key,{value(){throw Error('guest intrinsic '+key)},configurable:false,writable:false});
+}
+const parse=require('node:util').parseArgs;
+const result=parse({args:['-abx','--no-flag','--','pos'],options:{alpha:{type:'boolean',short:'a'},beta:{type:'string',short:'b'},flag:{type:'boolean'}},allowNegative:true,allowPositionals:true,tokens:true});
+process.stdout.write(savedStringify({name:parse.name,length:parse.length,prototype:Object.hasOwnProperty.call(parse,'prototype'),result})+'\n');
+"#);
+}
+
+#[test]
+fn util_parse_args_default_argv_matches_eval_print_and_file_entry_forms() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = "JSON.stringify(require('util').parseArgs({strict:false}).values)";
+    std::fs::write(directory.path().join("entry.cjs"), format!("process.stdout.write({source})")).unwrap();
+    std::fs::write(directory.path().join("preload.cjs"),format!("process.stdout.write({source})")).unwrap();
+    for args in [
+        vec!["-e".to_owned(),format!("process.stdout.write({source})"),"--".into(),"--foo".into(),"--bar".into()],
+        vec!["--eval".to_owned(),format!("process.stdout.write({source})"),"--".into(),"--foo".into(),"--bar".into()],
+        vec![format!("--eval=process.stdout.write({source})"),"--".into(),"--foo".into(),"--bar".into()],
+        vec!["-p".into(),source.into(),"--".into(),"--foo".into(),"--bar".into()],
+        vec!["--print".into(),"--eval".into(),source.into(),"--".into(),"--foo".into(),"--bar".into()],
+        vec!["--print".into(),format!("--eval={source}"),"--".into(),"--foo".into(),"--bar".into()],
+        vec!["-r".into(),"./preload.cjs".into(),"-e".into(),"".into(),"--".into(),"--foo".into(),"--bar".into()],
+        vec!["-r".into(),"./preload.cjs".into(),"-p".into(),"".into(),"--".into(),"--foo".into(),"--bar".into()],
+        vec!["entry.cjs".into(),"--foo".into(),"--bar".into()],
+        vec!["--".into(),"entry.cjs".into(),"--foo".into(),"--bar".into()],
+    ] {
+        let observations = ["node",env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+            let mut command = Command::new(executable);
+            command.current_dir(directory.path()).args(&args);
+            if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1"); }
+            quench_node_test::case_process::observe_command(command,Duration::from_secs(10)).unwrap()
+        });
+        for observation in &observations {
+            assert!(!observation.timed_out,"{args:?}");
+            assert_eq!(observation.exit_code,Some(0),"{args:?}: {}",String::from_utf8_lossy(&observation.stderr));
+            assert!(observation.stderr.is_empty(),"{args:?}");
+        }
+        assert_eq!(observations[0].stdout,observations[1].stdout,"{args:?}");
+    }
+}

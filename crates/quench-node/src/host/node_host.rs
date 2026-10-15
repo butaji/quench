@@ -36,6 +36,8 @@ pub struct NodeHost {
     pub(crate) commonjs_entry: Option<CommonJsEntry>,
     pub(crate) inline_source: InlineSource,
     pub(crate) eval_builtin_globals: bool,
+    /// Node's default argument slice uses the normalized, nonempty eval source.
+    pub(crate) eval_source_nonempty: bool,
     pub(crate) net_pending_writes: Vec<(u64, Vec<u8>)>,
     pub(crate) net_pending_ends: Vec<u64>,
     pub(crate) net_pending_destroys: Vec<(u64, bool)>,
@@ -295,6 +297,7 @@ impl NodeHost {
             commonjs_entry: None,
             inline_source: InlineSource::default(),
             eval_builtin_globals: false,
+            eval_source_nonempty: false,
             net_pending_writes: Vec::new(),
             net_pending_ends: Vec::new(),
             net_pending_destroys: Vec::new(),
