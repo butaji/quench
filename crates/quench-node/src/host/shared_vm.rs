@@ -186,6 +186,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "querystringParse" (4) => crate::modules::querystring_shared_vm::parse,
         method "querystringStringify" (4) => crate::modules::querystring_shared_vm::stringify,
         method "osString" (0) => crate::modules::os_shared_vm::string_operation,
+        method "osFreemem" (0) => crate::modules::os_shared_vm::freemem_operation,
         method "osTotalmem" (0) => crate::modules::os_shared_vm::totalmem_operation,
         method "osUptime" (0) => crate::modules::os_shared_vm::uptime_operation,
         method "osNetworkInterfaces" (0) => crate::modules::os_shared_vm::network_interfaces_operation,

@@ -8350,3 +8350,26 @@ fn process_memory_constraints_respect_inherited_data_limits() {
     }
     assert_eq!(observations[0].stdout, observations[1].stdout);
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn os_memory_functions_report_native_values_names_and_primitive_conversion() {
+    compare_node_stream_source(
+        r#"
+const assert=require('node:assert'),OriginalSymbol=globalThis.Symbol;globalThis.Symbol=function(){throw Error('public Symbol')};let os;
+try{os=require('node:os')}finally{globalThis.Symbol=OriginalSymbol}
+const out=[],physical=os.totalmem();
+for(const name of ['freemem','totalmem']){
+ const f=os[name],d=Object.getOwnPropertyDescriptor(f,Symbol.toPrimitive),hook=f[Symbol.toPrimitive];
+ const value=f();assert(Number.isFinite(value)&&value>=0&&value<=physical);
+ out.push([name,f.name,f.length,Object.getOwnPropertyNames(f),Reflect.ownKeys(f).map(String),d.writable,d.enumerable,d.configurable,hook.name,hook.length,hook===f]);
+ assert.strictEqual(Function.prototype.toString.call(f),'function () { [native code] }');
+ assert.strictEqual(f.valueOf(),f);assert.throws(()=>Reflect.construct(f,[]),TypeError);
+ assert.strictEqual(typeof +f,'number');assert(/^\d+$/.test(String(f)));
+ const original=os[name];os[name]=()=>-1;
+ try{const number=original[Symbol.toPrimitive].call({unrelated:true},Symbol('hint'));assert(number>=0&&number<=physical);out.push('captured native value')}finally{os[name]=original}
+}
+console.log(JSON.stringify(out));
+"#,
+    );
+}

@@ -15,6 +15,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         set(context, module, name, function)?;
     }
     for (name, operation) in [
+        #[cfg(not(target_os = "linux"))]
         ("totalmem", "osTotalmem"),
         ("uptime", "osUptime"),
         ("networkInterfaces", "osNetworkInterfaces"),
@@ -22,6 +23,8 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         let function = context.host_function(crate::host::shared_vm::operation(operation))?;
         set(context, module, name, function)?;
     }
+    #[cfg(target_os = "linux")]
+    install_memory_functions(context, module)?;
     #[cfg(target_os = "linux")]
     {
         let cpus = context.host_constructor(crate::host::shared_vm::operation("osCpus"))?;
@@ -254,4 +257,31 @@ pub(crate) fn signal_constants(
         return Err(RootedError::host("cannot seal OS signal constants"));
     }
     Ok(signals)
+}
+
+#[cfg(target_os = "linux")]
+fn install_memory_functions(
+    context: &mut NativeContext<'_, NodeHost>,
+    module: RootId,
+) -> Result<(), RootedError> {
+    let global = context.global_root()?;
+    let key = context.string_rooted("Symbol");
+    let symbol = context.get_property_rooted(global, key)?;
+    let key = context.string_rooted("toPrimitive");
+    let primitive = context.get_property_rooted(symbol, key)?;
+    for (name, operation) in [("freemem", "osFreemem"), ("totalmem", "osTotalmem")] {
+        let operation = crate::host::shared_vm::operation(operation);
+        let function = context.host_function_named(operation, "")?;
+        let coercion = context.host_function_named(operation, "")?;
+        context.define_data_property_rooted(function, primitive, coercion, true, true, true)?;
+        set(context, module, name, function)?;
+    }
+    Ok(())
+}
+pub(crate) fn freemem_operation(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    Ok(context.number(crate::modules::os_facts::memory_info().available as f64))
 }
