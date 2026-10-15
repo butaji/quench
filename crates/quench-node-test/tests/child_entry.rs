@@ -1534,6 +1534,57 @@ child.on('close',()=>{assert(exited);console.log(JSON.stringify({complete:true})
     assert_eq!(String::from_utf8_lossy(&observations[1].stdout).trim(), r#"{"complete":true}"#);
 }
 
+#[test]
+fn ipc_counted_references_preserve_initial_state_explicit_overrides_and_exit() {
+    for (methods, kept) in [
+        ("['unrefCounted']", true),
+        ("['refCounted','unrefCounted']", false),
+        ("['refCounted','refCounted','unrefCounted']", true),
+        ("['unref','refCounted','refCounted']", false),
+        ("['ref','unrefCounted']", true),
+        ("['unrefCounted','refCounted','refCounted','unrefCounted']", false),
+    ] {
+        let source = format!(r#"
+const assert=require('assert'),{{spawn}}=require('child_process');
+const child=spawn(process.execPath,['-e','setTimeout(()=>process.exit(0),300)'],{{stdio:['ignore','ignore','ignore','ipc']}});
+child.unref();
+for(const name of ['refCounted','unrefCounted']){{
+ const method=child.channel[name],descriptor=Object.getOwnPropertyDescriptor(Object.getPrototypeOf(child.channel),name);
+ assert.strictEqual(method.name,name);assert.strictEqual(method.length,0);
+ assert.strictEqual(descriptor.enumerable,false);assert.strictEqual(descriptor.writable,true);assert.strictEqual(descriptor.configurable,true);
+ assert.throws(()=>method.call({{}}),TypeError);assert.throws(()=>Reflect.construct(method,[]),TypeError);
+}}
+for(const method of {methods})assert.strictEqual(child.channel[method](),undefined);
+console.log('setup');setTimeout(()=>console.log('kept'),50).unref();
+"#);
+        let observations = compare_node_stream_source(&source);
+        assert_eq!(String::from_utf8_lossy(&observations[1].stdout), if kept {"setup\nkept\n"} else {"setup\n"});
+    }
+}
+
+#[test]
+fn ipc_process_counted_references_compose_with_implicit_listener_counts() {
+    let observations = compare_node_stream_source(r#"
+const assert=require('assert'),{spawn}=require('child_process');
+(async()=>{
+ const out=[];
+ for(const keep of [false,true]){
+  const source=`process.on('message',()=>{});process.on('disconnect',()=>{});
+  process.channel.unrefCounted();process.channel.unrefCounted();
+  if(${keep})process.channel.refCounted();
+  console.log('setup');setTimeout(()=>{console.log('kept');process.exit(0)},50).unref();`;
+  const child=spawn(process.execPath,['-e',source],{stdio:['ignore','pipe','pipe','ipc']});
+  let stdout='',stderr='';child.stdout.on('data',chunk=>stdout+=chunk);child.stderr.on('data',chunk=>stderr+=chunk);
+  const code=await new Promise((resolve,reject)=>{child.on('error',reject);child.on('close',resolve)});
+  assert.strictEqual(code,0);assert.strictEqual(stderr,'');assert.strictEqual(stdout,keep?'setup\nkept\n':'setup\n');out.push(stdout);
+ }
+ console.log(JSON.stringify({complete:true,out}));
+})().catch(error=>{console.error(error);process.exitCode=1});
+"#);
+    let result: serde_json::Value=serde_json::from_slice(&observations[1].stdout).unwrap();
+    assert_eq!(result["complete"],true);
+}
+
 fn compare_node_stream_source(source: &str) -> [quench_node_test::case_process::CaseObservation; 2] {
     let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
         let mut command = Command::new(executable);

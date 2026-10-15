@@ -164,6 +164,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "ipcDisconnect" (0) => crate::modules::child_process_ipc_shared_vm::disconnect,
         method "ipcDescriptor" (0) => crate::modules::child_process_ipc_shared_vm::descriptor,
         method "ipcReference" (0) => crate::modules::child_process_ipc_shared_vm::reference,
+        method "ipcReferenceCounted" (0) => crate::modules::child_process_ipc_shared_vm::reference_counted,
         method "ipcComplete" (2) => crate::modules::child_process_ipc_shared_vm::complete,
         method "ipcDecode" (2) => crate::modules::child_process_ipc_shared_vm::decode,
         method "ipcEmit" (3) => crate::modules::child_process_ipc_shared_vm::emit,
