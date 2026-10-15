@@ -663,6 +663,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
 
     let module = context.object_rooted()?;
     let buffer = get(context, constructor, "Buffer")?;
+    let buffer = super::buffer_constructor_shared_vm::install(context, buffer)?;
     let prototype = get(context, buffer, "prototype")?;
     super::buffer_search_shared_vm::install(context, prototype)?;
     super::buffer_bigint_shared_vm::install(context, prototype)?;
