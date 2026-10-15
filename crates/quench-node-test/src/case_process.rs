@@ -176,6 +176,15 @@ pub fn is_node_parallel_fixture(repository: &Path, fixture: &Path) -> bool {
     fixture.starts_with(repository.join(NODE_PARALLEL_DIR))
 }
 
+/// The upstream harness launches parallel fixtures from their Node checkout.
+pub(crate) fn parallel_checkout_root(fixture: &Path) -> Option<&Path> {
+    fixture
+        .ancestors()
+        .find(|directory| directory.ends_with("test/parallel"))
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+}
+
 fn observe_case_with_environment(
     executable: &Path,
     fixture: &Path,
@@ -201,12 +210,7 @@ fn observe_case_with_environment(
         .env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
     command.envs(env.iter().cloned());
     if skip_flag_check {
-        if let Some(project) = fixture
-            .ancestors()
-            .find(|directory| directory.ends_with("test/parallel"))
-            .and_then(Path::parent)
-            .and_then(Path::parent)
-        {
+        if let Some(project) = parallel_checkout_root(&fixture) {
             command.current_dir(project);
             command.env(quench_node::shared_run::NODE_LIBRARY_ROOT_ENV, project);
         }

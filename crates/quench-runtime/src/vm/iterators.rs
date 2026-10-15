@@ -2653,15 +2653,7 @@ impl<H: Host> Vm<H> {
             native,
             Native::Uint8ArrayKeys | Native::Uint8ArrayValues | Native::Uint8ArrayEntries
         ) {
-            let Some(Cell::TypedArray { buffer, .. }) = self.heap.get(source) else {
-                return Err(self.type_error(
-                    p,
-                    "typed array iterator called on incompatible receiver".into(),
-                ));
-            };
-            if self.typed_array_out_of_bounds(source) || self.array_buffer_detached(*buffer) {
-                return Err(self.type_error(p, "typed array iterator receiver is invalid".into()));
-            }
+            self.validate_typed_array_method(p, native, source)?;
             source
         } else {
             self.box_object_or_type_error(p, source)?

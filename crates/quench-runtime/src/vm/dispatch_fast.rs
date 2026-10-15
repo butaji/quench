@@ -699,6 +699,56 @@ lane_handler! {
     }
 }
 
+lane_handler! {
+    /// `LoadLocal` and `LoadEnvLocal` of an initialized binding a VM frame owns
+    /// (`Vm::initialized_frame_binding`); any other read takes the general path.
+    fn lane_load_local<>(cx, r, ip, i, view) {
+        let value = if unsafe { (*cx).env }.is_deleted()
+            && i.a & crate::bytecode::NUMERIC_LOCAL_TARGET == 0
+        {
+            // SAFETY: the context's program outlives the lane run.
+            (unsafe { vm(cx) }).initialized_frame_binding(
+                unsafe { &*(*cx).code },
+                unsafe { (*cx).frame },
+                i.imm() as usize,
+            )
+        } else {
+            None
+        };
+        let Some(value) = value else {
+            return exit(ip);
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `StoreLocal` and `StoreEnvLocal` to a binding a VM frame owns that
+    /// `Vm::store_initialized_frame_binding` completes; any other store takes the general
+    /// path. A `StoreEnvLocal` of a function that resolves names at run time, which may
+    /// write a `with` object's binding instead, has no record (`derive_lane_view`).
+    fn lane_store_local<>(cx, r, ip, i, view) {
+        let value = r.get(i.a);
+        // SAFETY: the context's program outlives the lane run.
+        let stored = unsafe { (*cx).env }.is_deleted()
+            && (unsafe { vm(cx) }).store_initialized_frame_binding(
+                unsafe { &*(*cx).code },
+                unsafe { (*cx).frame },
+                i.imm() as usize,
+                value,
+                i.c != 0,
+            );
+        if !stored {
+            return exit(ip);
+        }
+        if let Some(register) = i.b.checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS) {
+            r.set(register, value);
+        }
+        next!(cx, r, following(ip), view)
+    }
+}
+
 /// The value of a register or constant operand; other operand kinds take
 /// the general path.
 #[inline(always)]
@@ -3988,6 +4038,7 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
 const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> Option<Handler> {
     match op {
         Op::StoreLocalPlain => Some(lane_store_local_plain::<H>),
+        Op::StoreLocal | Op::StoreEnvLocal => Some(lane_store_local::<H>),
         Op::LoadThis => Some(lane_load_this::<H>),
         Op::GetField => Some(lane_get_field_own::<H>),
         Op::SetField | Op::SetFieldStrict => Some(lane_set_object_field::<H>),
@@ -4000,6 +4051,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::LoadCapture => Some(lane_load_capture::<H>),
         Op::JumpBinaryFalse => Some(lane_jump_binary_false::<H, BACKWARD>),
         Op::LoadLocalPlain => Some(lane_load_local_plain::<H>),
+        Op::LoadLocal | Op::LoadEnvLocal => Some(lane_load_local::<H>),
         Op::Jump => Some(lane_jump_always::<H, BACKWARD>),
         Op::JumpFalse => Some(lane_jump_false::<H, BACKWARD>),
         Op::JumpTrue => Some(lane_jump_true::<H, BACKWARD>),
@@ -4296,6 +4348,7 @@ fn derive_lane_view<H: Host>(
     let tables = const { &LaneTable::<H>::TABLES };
     let memory_register = memory_register(function);
     let jump_targets = jump_targets(function);
+    let resolves_names = function.has_dynamic_scope_access();
     let mut producer: Option<u16> = None;
     // Per instruction: the general path executes it, and its record reads
     // the accumulator.
@@ -4374,6 +4427,8 @@ fn derive_lane_view<H: Host>(
                     handler: lane_load_forwarded_arguments::<H> as Handler,
                     produces: false,
                 })
+            } else if op == Op::StoreEnvLocal && resolves_names {
+                None
             } else if op == Op::GetField && lane_sinks_field(instruction) {
                 Some(LaneHandler {
                     handler: lane_get_field_sink::<H> as Handler,

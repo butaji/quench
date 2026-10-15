@@ -11,6 +11,7 @@ pub(crate) struct NodeErrorApi {
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum ErrorClass {
+    Error,
     TypeError,
     RangeError,
 }
@@ -66,6 +67,7 @@ fn coded_error_prototype(
         .expect("initialized error API")
         .brand;
     let base_error = match class {
+        ErrorClass::Error => context.error_rooted("")?,
         ErrorClass::TypeError => context.type_error_rooted("")?,
         ErrorClass::RangeError => context.range_error_rooted("")?,
     };
@@ -165,12 +167,20 @@ pub(super) fn decorate_argument_type(
     decorate_type_error(context, error, INVALID_ARGUMENT_TYPE)
 }
 
+pub(super) fn decorate_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    error: RootId,
+    code: &'static str,
+) -> Result<(), RootedError> {
+    decorate_coded_error(context, error, code, ErrorClass::Error, &[])
+}
+
 pub(super) fn decorate_type_error(
     context: &mut NativeContext<'_, NodeHost>,
     error: RootId,
     code: &'static str,
 ) -> Result<(), RootedError> {
-    decorate_coded_error(context, error, code, ErrorClass::TypeError)
+    decorate_coded_error(context, error, code, ErrorClass::TypeError, &[])
 }
 
 pub(super) fn decorate_range_error(
@@ -178,7 +188,38 @@ pub(super) fn decorate_range_error(
     error: RootId,
     code: &'static str,
 ) -> Result<(), RootedError> {
-    decorate_coded_error(context, error, code, ErrorClass::RangeError)
+    decorate_coded_error(context, error, code, ErrorClass::RangeError, &[])
+}
+
+/// Fields produced by a Node error message constructor precede its message.
+pub(super) fn decorate_type_error_with_fields(
+    context: &mut NativeContext<'_, NodeHost>,
+    error: RootId,
+    code: &'static str,
+    fields: &[(&str, RootId)],
+) -> Result<(), RootedError> {
+    decorate_coded_error(context, error, code, ErrorClass::TypeError, fields)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MessageOrder {
+    BeforeCode,
+    AfterConstructorFields,
+}
+
+pub(super) fn decorate_formatted_type_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    error: RootId,
+    code: &'static str,
+) -> Result<(), RootedError> {
+    decorate_ordered_error(
+        context,
+        error,
+        code,
+        ErrorClass::TypeError,
+        &[],
+        MessageOrder::BeforeCode,
+    )
 }
 
 fn decorate_coded_error(
@@ -186,6 +227,25 @@ fn decorate_coded_error(
     error: RootId,
     code: &'static str,
     class: ErrorClass,
+    fields: &[(&str, RootId)],
+) -> Result<(), RootedError> {
+    decorate_ordered_error(
+        context,
+        error,
+        code,
+        class,
+        fields,
+        MessageOrder::AfterConstructorFields,
+    )
+}
+
+fn decorate_ordered_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    error: RootId,
+    code: &'static str,
+    class: ErrorClass,
+    fields: &[(&str, RootId)],
+    order: MessageOrder,
 ) -> Result<(), RootedError> {
     super::util_shared_vm::module(context)?;
     let prototype = coded_error_prototype(context, code, class)?;
@@ -193,18 +253,24 @@ fn decorate_coded_error(
     // Node's variadic error constructor installs its code field before message.
     let message_key = context.string_rooted("message");
     let message = context.get_property_rooted(error, message_key)?;
-    let data = context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .event_targets_api
-        .ok_or_else(|| RootedError::host("argument error assignment API missing"))?;
-    let delete = get(context, data, "delete")?;
-    let undefined = context.undefined();
-    context.call_rooted(delete, undefined, &[error, message_key])?;
+    if order == MessageOrder::AfterConstructorFields {
+        let data = context
+            .host_mut()
+            .shared_state()
+            .borrow()
+            .event_targets_api
+            .ok_or_else(|| RootedError::host("argument error assignment API missing"))?;
+        let delete = get(context, data, "delete")?;
+        let undefined = context.undefined();
+        context.call_rooted(delete, undefined, &[error, message_key])?;
+    }
     let code = context.string_rooted(code);
     let key = context.string_rooted("code");
     context.define_data_property_rooted(error, key, code, true, true, true)?;
+    for &(name, value) in fields {
+        let key = context.string_rooted(name);
+        context.define_data_property_rooted(error, key, value, true, true, true)?;
+    }
     context.define_data_property_rooted(error, message_key, message, true, false, true)?;
     Ok(())
 }
