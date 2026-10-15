@@ -6911,3 +6911,33 @@ const ab=new ArrayBuffer(2);structuredClone(ab,{transfer:[ab]});out.push(u.inspe
 console.log(JSON.stringify(out));
 "#);
 }
+
+#[test]
+fn http_response_preserves_http10_close_framing_raw_send_and_date_setting() {
+    compare_node_stream_source(r#"
+'use strict';
+const http=require('http'),net=require('net');
+let index=0,dateReads=0;
+const cases=[['1.0',false,false],['1.0',true,false],['1.0',false,true],['1.1',false,true],['1.0',false,false,false]];
+function next(){
+ if(index===cases.length)return;
+ const [version,split,length,head=true]=cases[index++];dateReads=0;
+ const server=http.createServer((req,res)=>{
+  const f=res._send;console.log(JSON.stringify(['method',f.name,f.length,Object.hasOwn(f,'prototype'),Object.hasOwn(res,'_send')]));
+  Object.defineProperty(res,'sendDate',{get(){dateReads++;return false},configurable:true});
+  const headers={'Content-Type':'text/plain'};
+  if(length)headers['Content-Length']='6';
+  if(head)res.writeHead(200,headers);else for(const key of Object.keys(headers))res.setHeader(key,headers[key]);
+  if(split){res.write('hel');res._send('');res.write('lo\n');res._send('');res.end()}
+  else res.end('hello\n');
+ });
+ server.listen(0,()=>{
+  const client=net.createConnection(server.address().port);let data='';
+  client.setEncoding('utf8');client.on('connect',()=>client.write(`GET / HTTP/${version}\r\nHost: localhost\r\n${version==='1.1'?'Connection: close\r\n':''}\r\n`));
+  client.on('data',chunk=>data+=chunk);
+  client.on('end',()=>{require('assert').strictEqual(dateReads,1);console.log(JSON.stringify([version,split,length,data]));client.end();server.close(next)});
+ });
+}
+next();
+"#);
+}

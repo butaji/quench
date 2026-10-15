@@ -187,7 +187,7 @@ pub(crate) fn compose(
         .filter(|(key, _)| key.eq_ignore_ascii_case("transfer-encoding"))
         .collect::<Vec<_>>();
     for (key, value) in headers {
-        if key.eq_ignore_ascii_case("transfer-encoding") {
+        if key.eq_ignore_ascii_case("transfer-encoding") || key.eq_ignore_ascii_case("connection") {
             continue;
         }
         out.extend_from_slice(format!("{key}: {value}\r\n").as_bytes());
