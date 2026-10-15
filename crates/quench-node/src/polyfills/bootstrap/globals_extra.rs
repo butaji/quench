@@ -595,114 +595,6 @@ if (typeof globalThis.Blob === "function" && globalThis.Blob.prototype) {
     });
   }
 }
-if (typeof globalThis.Headers !== "function") {
-  const HeadersClass = class Headers {
-    constructor(init) {
-      this._entries = [];
-      if (init instanceof globalThis.Headers) {
-        for (const [key, value] of init.entries()) this.append(key, value);
-      } else if (init instanceof Map) {
-        for (const [key, value] of init.entries()) this.set(key, value);
-      } else if (Array.isArray(init)) {
-        for (const pair of init) if (Array.isArray(pair) && pair.length >= 2) this.append(pair[0], pair[1]);
-      } else if (init && typeof init === "object") {
-        for (const key of Object.keys(init)) this.set(key, init[key]);
-      }
-    }
-    _key(key) { return String(key).toLowerCase(); }
-    append(key, value) { this._entries.push([this._key(key), String(value)]); }
-    set(key, value) {
-      const normalized = this._key(key);
-      this._entries = this._entries.filter(([name]) => name !== normalized);
-      if (Array.isArray(value)) {
-        for (const item of value) this.append(normalized, item);
-      } else {
-        this.append(normalized, value);
-      }
-    }
-    get(key) {
-      const normalized = this._key(key);
-      const values = this._entries.filter(([name]) => name === normalized).map(([, value]) => value);
-      return values.length ? values.join(", ") : null;
-    }
-    *entries() { yield* this._entries; }
-    keys() { return this._entries.map(([name]) => name)[Symbol.iterator](); }
-    values() { return this._entries.map(([, value]) => value)[Symbol.iterator](); }
-    [Symbol.iterator]() { return this.entries(); }
-  };
-  Object.defineProperty(globalThis, 'Headers', {
-    value: HeadersClass,
-    writable: true,
-    configurable: true
-  });
-}
-const Headers = globalThis.Headers;
-if (typeof globalThis.Request !== "function") {
-  class Request {
-    constructor(input, init = {}) {
-      const source = input instanceof Request ? input : null;
-      this.url = String(source?.url || input || "");
-      this.method = String(init.method ?? source?.method ?? "GET").toUpperCase();
-      this.headers = new Headers(init.headers ?? source?.headers);
-      this._body = init.body ?? source?._body ?? null;
-      this.bodyUsed = false;
-      this.signal = init.signal ?? source?.signal ?? new AbortController().signal;
-    }
-    async text() {
-      this.bodyUsed = true;
-      return this._body == null ? "" : String(this._body);
-    }
-    async json() { return JSON.parse(await this.text()); }
-    clone() {
-      if (this.bodyUsed) throw new TypeError("Body has already been consumed.");
-      return new Request(this);
-    }
-  }
-  Object.defineProperty(globalThis, "Request", {
-    configurable: true, enumerable: false, writable: true, value: Request,
-  });
-}
-if (typeof globalThis.Response !== "function") {
-  class Response {
-    constructor(body = null, init = {}) {
-      this.status = Number(init.status ?? 200);
-      this.statusText = String(init.statusText ?? "");
-      this.headers = new Headers(init.headers);
-      this._body = body instanceof globalThis.Blob ? body : body == null ? "" : String(body);
-      this.bodyUsed = false;
-      this.ok = this.status >= 200 && this.status < 300;
-    }
-    async text() {
-      this.bodyUsed = true;
-      return this._body instanceof globalThis.Blob ? this._body.text() : this._body;
-    }
-    async bytes() {
-      this.bodyUsed = true;
-      return this._body instanceof globalThis.Blob
-        ? this._body.bytes()
-        : new TextEncoder().encode(this._body);
-    }
-    async arrayBuffer() { return (await this.bytes()).buffer; }
-    async json() { return JSON.parse(await this.text()); }
-    async blob() {
-      if (this._body instanceof globalThis.Blob) return this._body;
-      return new globalThis.Blob([await this.bytes()], {
-        type: this.headers.get("content-type") || "",
-      });
-    }
-    clone() {
-      return new Response(this._body, {
-        status: this.status,
-        statusText: this.statusText,
-        headers: this.headers,
-      });
-    }
-  }
-  Object.defineProperty(globalThis, "Response", {
-    configurable: true, enumerable: false, writable: true, value: Response,
-  });
-}
-/* quench:web-api:end */
 if (typeof globalThis.File !== "function" && typeof globalThis.Blob === "function") {
   class File extends globalThis.Blob {
     constructor(parts = [], name = "", options = {}) {
@@ -719,6 +611,7 @@ if (typeof globalThis.File !== "function" && typeof globalThis.Blob === "functio
     value: File
   });
 }
+/* quench:web-api:end */
 if (typeof globalThis.fetch === "function" && !globalThis.fetch.__quenchBlobFetch) {
   const __quenchHostFetch = globalThis.fetch;
   const __quenchBlobFetch = function (input, init = {}) {

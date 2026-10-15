@@ -171,6 +171,7 @@ pub(crate) fn compose(
     keep_alive: bool,
     http10: bool,
     send_date: bool,
+    now: std::time::SystemTime,
 ) -> Vec<u8> {
     let text = if text.is_empty() { "OK" } else { text };
     let mut out = format!("HTTP/1.1 {status} {text}\r\n").into_bytes();
@@ -190,7 +191,8 @@ pub(crate) fn compose(
             .iter()
             .any(|(key, _)| key.eq_ignore_ascii_case("date"))
     {
-        out.extend_from_slice(b"Date: Thu, 01 Jan 1970 00:00:00 GMT\r\n");
+        let now: chrono::DateTime<chrono::Utc> = now.into();
+        out.extend_from_slice(format!("Date: {}\r\n", now.format("%a, %d %b %Y %H:%M:%S GMT")).as_bytes());
     }
     let connection = headers
         .iter()
