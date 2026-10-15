@@ -1753,6 +1753,10 @@ fn commonjs_namespace_static_prefix_uses_syntax_and_matches_node() {
 const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-cjs-export-prefix-'));
 const sources={accessor:"const refresh=()=>1,resolve=()=>2;module.exports={refresh,resolve,get path(){return '.';}};",nested:"const before=1,after=2;module.exports={before,nested:{x:1},after};",literal:"const later=2;module.exports={first:1,later};",assignments:"const text='exports.fake=1';/* exports.comment=1 */module.exports['hyphen-name']=3;module.exports.for=4;function unused(){exports.never=5;} exports.compound+=1;exports.logical ||=3;"};
+const expressions=['value','value.x','value["x"]','value?.x','fn()','fn+1','true','null','undefined','this','new Date()','function(){}','class{}','async()=>1','/x/','`x`','"text"','1','-1','(value)','\\u0076alue','π'];
+const properties=[...expressions.map(value=>'b:'+value),'...value','...require("./spread.cjs")','...value.x','b(){}','async b(){}','get b(){return 1}','set b(x){}','*b(){}','"b"(){}','["b"]:value','b:value /* hi */','b:π','b:v\\u0061lue'];
+fs.writeFileSync(path.join(dir,'spread.cjs'),'exports.spread=1');
+for(const [index,property] of properties.entries()) sources['prefix-'+index]='const value={x:1},fn=()=>1,π=value;module.exports={a:value,'+property+',c:value}';
 (async()=>{for(const [name,source] of Object.entries(sources)){const file=path.join(dir,name+'.cjs');fs.writeFileSync(file,source);const namespace=await import(file);assert.strictEqual(namespace.default,require(file));assert.strictEqual(namespace['module.exports'],namespace.default);console.log(name,Object.keys(namespace).join(','));if(name==='accessor'){assert.strictEqual(namespace.refresh(),1);assert.strictEqual(namespace.resolve(),2);}if(name==='assignments'){assert(!Object.hasOwn(namespace,'fake'));assert(!Object.hasOwn(namespace,'comment'));assert.strictEqual(namespace['hyphen-name'],3);assert.strictEqual(namespace.for,4);}}fs.rmSync(dir,{recursive:true,force:true});})();
 "#);
 }
