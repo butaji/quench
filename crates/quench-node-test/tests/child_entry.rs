@@ -1086,7 +1086,10 @@ process.on('exit',()=>console.log(JSON.stringify(result.map(value=>JSON.stringif
         );
         assert!(observation.stderr.is_empty());
     }
-    assert_eq!(observations[0].stdout, observations[1].stdout);
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout),
+    );
 }
 
 #[test]
@@ -7642,4 +7645,63 @@ console.log(JSON.stringify({complete:true,out}));
         let value:serde_json::Value=serde_json::from_slice(&result.stdout).unwrap();assert_eq!(value["complete"],true);
     }
     assert_eq!(observations[0].stdout,observations[1].stdout);
+}
+
+#[test]
+fn commonjs_cache_mutation_replacement_and_esm_reload_match_node() {
+    let directory = tempfile::tempdir().unwrap();
+    for (name, source) in [
+        ("value.cjs", "globalThis.loads=(globalThis.loads||0)+1;module.exports={n:loads,cache:require.cache};"),
+        ("data.json", "{\"n\":1}"),
+        ("failure.cjs", "throw globalThis.failure;"),
+        ("default.mjs", "export default 42;"),
+        ("namespace.mjs", "export const n=42;"),
+    ] { std::fs::write(directory.path().join(name), source).unwrap(); }
+    let entry = directory.path().join("entry.cjs");
+    std::fs::write(&entry, r#"
+const Module=require('node:module');const original=Module._cache;const out=[];
+out.push(['identity',require.cache===original,Object.getPrototypeOf(original)===null,original[__filename]===module]);
+out.push(['private',Object.keys(original).every(key=>!key.includes('/lib/internal/')&&!key.includes('\0'))]);
+const filename=require.resolve('./value.cjs');const a=require('./value.cjs');
+out.push(['record',original[filename].loaded,original[filename].exports===a,original[filename].parent===module]);
+delete require.cache[filename];const b=require('./value.cjs');out.push(['reload',a!==b,a.n,b.n]);
+const json=require.resolve('./data.json');original[json]={loaded:true,exports:{mock:42}};
+out.push(['substitution',require('./data.json')]);delete original[json];out.push(['json',require('./data.json')]);
+const actualFs=require('node:fs');original.fs={loaded:true,exports:{mock:'fs'}};
+out.push(['builtin',require('fs'),require('node:fs')===actualFs]);delete original.fs;
+const descriptor=Object.getOwnPropertyDescriptor(Module,'_cache');
+out.push(['descriptor',descriptor.writable,descriptor.enumerable,descriptor.configurable]);
+Module._cache=Object.create(null);const fresh=Module._cache;const c=require('./value.cjs');
+out.push(['replace',require.cache===original,c.cache===fresh,c.n,fresh[filename].exports===c]);
+require.cache={unused:true};out.push(['require property',require('./value.cjs')===c,Module._cache===fresh]);
+require.cache=original;Module._cache=original;
+globalThis.failure={tag:'failure'};const bad=require.resolve('./failure.cjs');
+for(let count=0;count<2;count++)try{require('./failure.cjs')}catch(e){out.push(['failure',e===failure,Object.hasOwn(original,bad),module.children.some(child=>child.filename===bad)]);}
+const events=[];const proxied=new Proxy(original,{
+ get(target,key){if(key===filename)events.push('get');return Reflect.get(target,key)},
+ set(target,key,value){if(key===filename)events.push('set');return Reflect.set(target,key,value)},
+ deleteProperty(target,key){if(key===bad)events.push('delete');return Reflect.deleteProperty(target,key)}
+});
+Module._cache=proxied;delete original[filename];const d=require('./value.cjs');
+try{require('./failure.cjs')}catch(e){out.push(['proxy failure',e===failure]);}
+out.push(['proxy',d.cache===proxied,events]);Module._cache=original;
+for(const name of ['default','namespace']){
+ const path=require.resolve('./'+name+'.mjs');const first=require(path);delete original[path];const second=require(path);
+ out.push(['esm',name,first===second,Object.getPrototypeOf(second)===null]);
+}
+console.log(JSON.stringify({complete:true,out}));
+"#).unwrap();
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable); command.arg(&entry);
+        if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(20)).unwrap()
+    });
+    for result in &observations {
+        assert!(!result.timed_out);
+        assert_eq!(result.exit_code, Some(0), "{}", String::from_utf8_lossy(&result.stderr));
+        assert!(result.stderr.is_empty());
+        let value: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+        assert_eq!(value["complete"], true);
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
 }
