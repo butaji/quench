@@ -1,5 +1,8 @@
 use super::destructure::AssignmentReference;
 use super::*;
+
+/// The TypeError message for assigning an immutable binding, as V8 words it.
+const ASSIGNMENT_TO_CONSTANT: &str = "Assignment to constant variable.";
 impl FunctionCompiler<'_, '_> {
     pub(crate) fn expression(&mut self, expression: &Expression<'_>) -> Register {
         let position = self.owner.source_position(expression.span().start);
@@ -315,12 +318,15 @@ impl FunctionCompiler<'_, '_> {
             self.active_lexical_binding(source_atom)
         };
         let atom = lexical.unwrap_or(source_atom);
+        // A captured binding is only reached when no local binding shadows it.
+        let local = self.local_slots.contains_key(&atom);
         let function_name_binding = !initializing
             && ((!self.dynamic_eval
                 && binding_kind == LexicalBindingKind::FunctionName
                 && (self.with_depth == self.inherited_with_depth || lexical.is_some()))
                 || (self.with_depth == 0
                     && !self.dynamic_eval
+                    && !local
                     && self.has_function_name_capture(source_atom)));
         if function_name_binding {
             if self.strict {
@@ -332,7 +338,7 @@ impl FunctionCompiler<'_, '_> {
             || immutable_lexical
             || (self.with_depth == 0
                 && !self.dynamic_eval
-                && !self.local_slots.contains_key(&atom)
+                && !local
                 && self.has_immutable_capture(atom))
         {
             self.throw_immutable_binding(atom);
@@ -446,8 +452,11 @@ impl FunctionCompiler<'_, '_> {
     fn throw_immutable_binding(&mut self, atom: Atom) {
         let _ = self.load_atom(atom);
         let constructor = self.load_name("TypeError");
+        let message = self.literal(Constant::String(ASSIGNMENT_TO_CONSTANT.into()));
+        let argument = self.reg();
+        self.emit(Op::Move, argument, message, 0, 0);
         let error = self.reg();
-        self.emit(Op::Construct, error, constructor, 0, 0);
+        self.emit(Op::Construct, error, constructor, argument, 1);
         self.emit(Op::Throw, error, 0, 0, 0);
     }
 
