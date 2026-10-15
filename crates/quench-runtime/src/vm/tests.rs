@@ -626,7 +626,9 @@ fn realm_intrinsic_registries_keep_each_realm_rooted() {
 fn unreachable_promise_callback_and_aggregate_cycles_are_collected() {
     let mut vm = Vm::new(SilentHost);
     let program = Engine::specialize(
-        "function make() { var p = new Promise(() => {}), value = {}; var handler = () => value; return [p, p.then(handler), p.finally(handler), Promise.all([p])]; }",
+        // A species other than %Promise% keeps a real capability; %Promise% reactions settle
+        // their promise directly.
+        "function make() { var p = new Promise(() => {}), q = new Promise(() => {}), value = {}; q.constructor = { [Symbol.species]: function (executor) { return new Promise(executor); } }; var handler = () => value; return [p, q, p.then(handler), q.then(handler), p.finally(handler), Promise.all([p])]; }",
         "promise-owner-cycles.js",
     ).unwrap();
     vm.execute(&program).unwrap();
@@ -9710,4 +9712,66 @@ fn script_directive_completion_survives_declarations_and_preserves_string_units(
         let value = vm.eval_global_script_named(&program, r"'\ud800'; var x;", false, "directive-completion.js").unwrap();
         assert!(matches!(vm.heap.get(value), Some(super::Cell::String(text)) if text.units().wide().as_ref() == [0xd800]));
     }
+}
+
+#[test]
+fn primitive_intrinsic_prototypes_survive_global_replacement_realms_and_collection() {
+    let setup = r#"
+      globalThis.savedPrimitives={constructors:[Number,Boolean,Symbol,BigInt,String],values:[17,true,Symbol('original'),19n,'text']};
+      savedPrimitives.prototypes=savedPrimitives.constructors.map(constructor=>constructor.prototype);
+      for(const prototype of savedPrimitives.prototypes)prototype.originalReceiver=function(){'use strict';return this;};
+      for(const name of ['Number','Boolean','Symbol','BigInt','String'])globalThis[name]=function Replacement(){};
+    "#;
+    let check = r#"
+      for(let i=0;i<savedPrimitives.values.length;i++){
+        const value=savedPrimitives.values[i],prototype=savedPrimitives.prototypes[i];
+        if(value.originalReceiver()!==value||value.valueOf()!==value)throw Error('primitive receiver or prototype changed');
+        if(Object.getPrototypeOf(Object(value))!==prototype)throw Error('boxed intrinsic prototype changed');
+      }
+      if((19n).toString()!=='19'||(17).toString()!=='17'||true.toString()!=='true')throw Error('primitive formatting changed');
+    "#;
+    for program in [Engine::compile(crate::ExecutionRequest{source:setup,name:"primitive-intrinsics.js",kind:crate::SourceKind::Script}).unwrap(),Engine::specialize(setup,"primitive-intrinsics.js").unwrap()] {
+        let mut vm=Vm::new(SilentHost);vm.execute(&program).unwrap();
+        let original=vm.realm.globals;
+        let other=vm.create_realm_global(&program).unwrap();vm.switch_realm_global(other);
+        vm.eval_global_script_named(&program,setup,false,"foreign-primitive-intrinsics.js").unwrap();
+        vm.collect_now(&program);vm.eval_global_script_named(&program,check,false,"foreign-primitive-check.js").unwrap();
+        vm.switch_realm_global(original);vm.collect_now(&program);
+        vm.eval_global_script_named(&program,check,false,"original-primitive-check.js").unwrap();
+    }
+}
+
+#[test]
+fn typed_array_getter_diagnostics_do_not_observe_guest_conversion_hooks() {
+    let source=r#"
+      let hooks=0;const object={toString(){hooks++;throw Error('guest hook');},[Symbol.toStringTag]:'Special'};
+      for(const property of ['length','byteLength','byteOffset','buffer']) {
+        const getter=Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype),property).get;
+        for(const [value,label] of [[null,'null'],[undefined,'undefined'],[object,'#<Object>'],[new DataView(new ArrayBuffer(0)),'#<DataView>']]) {
+          try { getter.call(value);throw Error('accepted invalid receiver'); }
+          catch(error) { if(!(error instanceof TypeError)||error.message!==`Method get TypedArray.prototype.${property} called on incompatible receiver ${label}`)throw error; }
+        }
+      }
+      if(hooks!==0)throw Error('diagnostics invoked guest conversion');
+    "#;
+    for program in [Engine::compile(crate::ExecutionRequest{source,name:"typed-getter-diagnostics.js",kind:crate::SourceKind::Script}).unwrap(),Engine::specialize(source,"typed-getter-diagnostics.js").unwrap()] {
+        Vm::new(SilentHost).execute(&program).unwrap();
+    }
+}
+
+#[test]
+fn nullish_property_diagnostics_include_original_property_names() {
+    let source=r#"
+      let hooks=0;const key={toString(){hooks++;throw Error('key hook');}};
+      for(const value of [null,undefined]) {
+        for(const property of ['length',1,Symbol('x')]) {
+          try { value[property]; throw Error('accepted nullish receiver'); }
+          catch(error) { if(!(error instanceof TypeError)||error.message!==`Cannot read properties of ${value} (reading '${String(property)}')`)throw error; }
+        }
+        try { value[key]; throw Error('accepted object key'); }
+        catch(error) { if(!(error instanceof TypeError)||error.message!==`Cannot read properties of ${value}`)throw error; }
+      }
+      if(hooks!==0)throw Error('rejected base invoked key conversion');
+    "#;
+    for program in [Engine::compile(crate::ExecutionRequest{source,name:"nullish-property-errors.js",kind:crate::SourceKind::Script}).unwrap(),Engine::specialize(source,"nullish-property-errors.js").unwrap()] {Vm::new(SilentHost).execute(&program).unwrap();}
 }

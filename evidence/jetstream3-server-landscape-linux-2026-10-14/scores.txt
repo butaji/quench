@@ -1,0 +1,24 @@
+# JetStream 3 server-side landscape, one round per bench
+# host: Linux 6.18.44-fc-v114 x86_64, 4 vCPU, 15 GiB; cloud container
+# quench: target/production/quench-node at 314f178 (v2-merged); rows from doxbee-promise onward ran on a rebuild that adds the %Promise% PromiseResolve fast path and cached then/constructor atoms
+# node: v26.10.0 --jitless; harness: stock cli.js under the node:vm shell prelude, --no-prefetch, one test per process, timeout 1500 s (quench) / 900 s (node)
+typescript-lib quench=0.06 node_jitless=0.63
+validatorjs quench=13.32 node_jitless=130.91
+UniPoker quench=6.11 node_jitless=38.34
+chai-wtb quench=4.20 node_jitless=42.64
+sync-fs quench=3.75 node_jitless=31.13
+async-fs quench=1.68 node_jitless=46.51
+babel-minify-wtb quench=1.86 node_jitless=14.38
+babel-wtb quench=0.91 node_jitless=22.78
+acorn-wtb quench=0.54 node_jitless=4.13
+prettier-wtb quench=0.73 node_jitless=8.67
+postcss-wtb quench=fail node_jitless=6.80
+doxbee-promise quench=0.79 node_jitless=89.05
+doxbee-async quench=0.96 node_jitless=113.80
+lazy-collections quench=6.26 node_jitless=35.88
+hash-map quench=2.71 node_jitless=21.43
+js-tokens quench=0.96 node_jitless=43.97
+web-ssr quench=9.93 node_jitless=72.77
+babylon-wtb quench=0.52 node_jitless=6.43
+espree-wtb quench=0.48 node_jitless=5.30
+esprima-next-wtb quench=0.94 node_jitless=6.28

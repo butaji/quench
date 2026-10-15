@@ -685,6 +685,57 @@ impl<H: Host> Vm<H> {
         FieldCacheProbe::OrdinaryMiss
     }
 
+    /// The own data field of a direct object that the site's primary entry names: the read
+    /// `cached_field_hit` answers first, without its other tiers.
+    #[inline(always)]
+    pub(super) fn primary_own_field_hit(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        site: u16,
+    ) -> Option<Value> {
+        if !(self.specialized && p.specialized) {
+            return None;
+        }
+        let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
+        let index = self.field_cache_index(site);
+        // SAFETY: the active program's layout reserves every compiler-emitted site.
+        let cache = unsafe { *self.field_caches.get_unchecked(index) };
+        if cache.receiver != receiver.shape() || cache.holder != NO_FIELD_HOLDER {
+            return None;
+        }
+        self.profile.field_cache_hit(0, 0);
+        // SAFETY: as for `cached_field_hit`.
+        Some(unsafe { self.heap.property_get_unchecked(receiver, cache.slot as usize) })
+    }
+
+    /// The own data field of a direct object among the site's inline megamorphic entries,
+    /// which include the primary entry: `cached_field_hit` for a site past one shape.
+    #[inline(always)]
+    pub(super) fn polymorphic_own_field_hit(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        site: u16,
+    ) -> Option<Value> {
+        if !(self.specialized && p.specialized) {
+            return None;
+        }
+        let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
+        let slot = self.inline_megamorphic_field_slot(self.field_cache_index(site), receiver.shape())?;
+        self.profile.field_cache_hit(2, 0);
+        // SAFETY: as for `cached_field_hit`.
+        Some(unsafe { self.heap.property_get_unchecked(receiver, usize::from(slot)) })
+    }
+
+    /// Whether the site's shapes moved to inline megamorphic entries without an overflow:
+    /// `polymorphic_own_field_hit` then sees every own entry the site has recorded.
+    pub(super) fn field_site_polymorphic(&self, site: u16) -> bool {
+        let table_index = self.megamorphic_field_indices[self.field_cache_index(site)];
+        table_index != NO_MEGAMORPHIC_FIELD
+            && self.megamorphic_fields[table_index as usize].overflow.is_none()
+    }
+
     /// An own-data slot from a site's inline megamorphic entries; the hashed overflow is
     /// left to `cached_field_value`.
     #[inline(always)]
