@@ -235,3 +235,19 @@ which times out at 20 s without BOLT and fails with it (it fails either way).
 
 Callgrind guard (`guard-bolt-raw.txt`, without against with BOLT): start-up
 -0.4% to -1.0%, per-run -1.15% (RayTrace) to +0.80% (NavierStokes).
+
+## Packed shapes, packed seal, lazy process members
+
+A shape kept its descriptor's getter and setter inline (80 bytes); accessor
+functions now sit in a side table that shape compaction rebuilds, and a shape
+is 48 bytes. The startup intrinsic records reuse that packing (72 -> 40
+bytes). The process surface script's members no start needs (getBuiltinModule,
+cpuUsage, memoryUsage, release, setSourceMapsEnabled, ...) are a lazy data
+property group on `process`. Node parallel manifest unchanged (pass=442).
+
+Stock V8-v7 max RSS, BOLT static builds before and after (MB, two interleaved
+rounds, evicted): Crypto 7.6 -> 7.3, DeltaBlue 7.4 -> 7.2, EarleyBoyer 14.0 ->
+13.7, NavierStokes 8.0 -> 7.6, RayTrace 6.9 -> 6.6, RegExp 19.2 -> 18.8,
+Richards 6.7 -> 6.4, Splay 52.1 -> 51.7. Callgrind
+(`guard-shapes-process-raw.txt`): start-up -0.8% (RegExp) to -12.5%
+(Richards), per-run -0.43% to +0.01%.
