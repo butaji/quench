@@ -7104,3 +7104,10 @@ const b=Buffer.from([65,66,67,68]);check('changing-start',()=>b.toString('hex',{
 for(const position of ['start','end','encoding'])check(['throw',position],()=>b.toString(position==='encoding'?{toString(){throw marker}}:'hex',position==='start'?{valueOf(){throw marker}}:0,position==='end'?{valueOf(){throw marker}}:4));
 const constants=require('buffer').constants;check('limit-export-isolation',()=>{try{constants.MAX_STRING_LENGTH=0}catch{}return b.toString('hex')});for(const name of ['MAX_LENGTH','MAX_STRING_LENGTH'])check(['constant',name],()=>Object.getOwnPropertyDescriptor(constants,name));console.log(JSON.stringify(out));"#);
 }
+
+#[test]
+fn native_buffer_static_comparison_preserves_brands_detachment_metadata_and_byte_order() {
+compare_node_stream_source(r#"
+const B=Buffer,out=[];const f=B.compare,d=Object.getOwnPropertyDescriptor(B,'compare');out.push([f.name,f.length,Object.hasOwn(f,'prototype'),d.writable,d.enumerable,d.configurable]);function record(a,b){try{out.push(['ok',f(a,b)])}catch(e){out.push([e.name,e.code,e.message])}};const fake=Object.create(B.prototype),u8=new Uint8Array([1,2]);for(const a of [undefined,null,0,'x',{},fake,new Uint8ClampedArray([1]),new Uint16Array([1]),new DataView(new ArrayBuffer(1)),B.from([]),B.from([1]),u8])for(const b of [undefined,fake,new Uint8Array([]),new Uint8Array([1,3]),u8])record(a,b);const ab=new ArrayBuffer(2),view=new Uint8Array(ab);structuredClone(ab,{transfer:[ab]});record(view,view);record(view,B.alloc(0));for(const left of [{},fake,new Uint8Array([1,2]),new Uint16Array([513]),B.alloc(0)])for(const right of [undefined,fake,new Uint8Array([]),new Uint8Array([1,2])]){try{out.push(['equals','ok',B.prototype.equals.call(left,right)])}catch(e){out.push(['equals',e.name,e.code,e.message])}};const eq=B.prototype.equals;out.push(['equals-shape',eq.name,eq.length,Object.hasOwn(eq,'prototype')]);console.log(JSON.stringify(out));
+"#);
+}
