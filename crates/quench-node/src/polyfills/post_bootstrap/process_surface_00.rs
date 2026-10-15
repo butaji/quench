@@ -105,6 +105,72 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
         }
       });
     }
+    // The Rust host installs invocation flags before bootstrap. Preserve that
+    // fact; only supply the empty default for embedders that omit it.
+    globalThis.process.execArgv ??= [];
+    globalThis.process.argv0 ||= "node";
+    globalThis.process.features ||= {};
+    globalThis.process.features.inspector ??= false;
+    globalThis.process.noDeprecation ??= false;
+    globalThis.process.traceDeprecation ??= false;
+    globalThis.process.throwDeprecation ??= false;
+    globalThis.process.version ||= "v22.0.0";
+    globalThis.process.versions ||= {};
+    globalThis.process.versions.node ??= "22.0.0";
+    globalThis.process.versions.v8 ??= "12.4.254.21-node.20";
+    globalThis.process.versions.uv ??= "1.48.0";
+    globalThis.process.versions.openssl ??= "3.0.13";
+    globalThis.process.versions.zlib ??= "1.3.0";
+    globalThis.process.versions.modules ??= "127";
+    globalThis.process.versions.napi ??= "9";
+    globalThis.process.versions.acorn ??= "8.11.3";
+    globalThis.process.versions.ada ??= "2.7.8";
+    globalThis.process.versions.tz ??= "2024a";
+    globalThis.process.versions.brotli ??= "1.1.0";
+    globalThis.process.versions.nbytes ??= "1.0.0";
+    globalThis.process.versions.cldr ??= "45.0";
+    globalThis.process.versions.icu ??= "75.1";
+    globalThis.process.versions.nghttp2 ??= "1.61.0";
+    globalThis.process.versions.llhttp ??= "9.2.1";
+    globalThis.process.versions.nghttp3 ??= "1.3.0";
+    globalThis.process.versions.ngtcp2 ??= "1.4.0";
+    globalThis.process.versions.simdutf ??= "5.2.4";
+    globalThis.process.versions.unicode ??= "15.1";
+    Object.freeze(globalThis.process.versions);
+    globalThis.process.title =
+      globalThis.__quench_cli_title || globalThis.process.title || "node";
+    delete globalThis.__quench_cli_title;
+    globalThis.process.loadEnvFile ||= () => undefined;
+  }
+}
+"#);
+
+/// The `process` members `LAZY_JS` defines, which are absent until it runs: a lazy group
+/// (`define_lazy_data_properties_rooted`), so the script is compiled on first use.
+pub const LAZY_MEMBERS: &[&str] = &[
+    "getActiveResourcesInfo",
+    "_getActiveRequests",
+    "availableMemory",
+    "constrainedMemory",
+    "setSourceMapsEnabled",
+    "abort",
+    "sourceMapsEnabled",
+    "debugPort",
+    "release",
+    "allowedNodeEnvironmentFlags",
+    "getBuiltinModule",
+    "finalization",
+    "permission",
+    "resourceUsage",
+    "memoryUsage",
+    "cpuUsage",
+    "threadCpuUsage",
+    "ref",
+    "unref",
+];
+
+pub const LAZY_JS: &str = quench_js_check::checked_js!(r#"{
+  if (globalThis.process) {
     globalThis.process.getActiveResourcesInfo = () => [
       ...globalThis.process.__quenchGetActiveTimerResources(),
       ...globalThis.process.__quenchGetActiveNetworkResources(),
@@ -194,41 +260,6 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
         configurable: true,
       });
     }
-    // The Rust host installs invocation flags before bootstrap. Preserve that
-    // fact; only supply the empty default for embedders that omit it.
-    globalThis.process.execArgv ??= [];
-    globalThis.process.argv0 ||= "node";
-    globalThis.process.features ||= {};
-    globalThis.process.features.inspector ??= false;
-    globalThis.process.noDeprecation ??= false;
-    globalThis.process.traceDeprecation ??= false;
-    globalThis.process.throwDeprecation ??= false;
-    globalThis.process.version ||= "v22.0.0";
-    globalThis.process.versions ||= {};
-    globalThis.process.versions.node ??= "22.0.0";
-    globalThis.process.versions.v8 ??= "12.4.254.21-node.20";
-    globalThis.process.versions.uv ??= "1.48.0";
-    globalThis.process.versions.openssl ??= "3.0.13";
-    globalThis.process.versions.zlib ??= "1.3.0";
-    globalThis.process.versions.modules ??= "127";
-    globalThis.process.versions.napi ??= "9";
-    globalThis.process.versions.acorn ??= "8.11.3";
-    globalThis.process.versions.ada ??= "2.7.8";
-    globalThis.process.versions.tz ??= "2024a";
-    globalThis.process.versions.brotli ??= "1.1.0";
-    globalThis.process.versions.nbytes ??= "1.0.0";
-    globalThis.process.versions.cldr ??= "45.0";
-    globalThis.process.versions.icu ??= "75.1";
-    globalThis.process.versions.nghttp2 ??= "1.61.0";
-    globalThis.process.versions.llhttp ??= "9.2.1";
-    globalThis.process.versions.nghttp3 ??= "1.3.0";
-    globalThis.process.versions.ngtcp2 ??= "1.4.0";
-    globalThis.process.versions.simdutf ??= "5.2.4";
-    globalThis.process.versions.unicode ??= "15.1";
-    Object.freeze(globalThis.process.versions);
-    globalThis.process.title =
-      globalThis.__quench_cli_title || globalThis.process.title || "node";
-    delete globalThis.__quench_cli_title;
     globalThis.process.getBuiltinModule ||= (name) => {
       if (typeof name !== "string") {
         const received = name === null ? "Received null" : name === undefined
@@ -256,7 +287,6 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
         throw error;
       }
     };
-    globalThis.process.loadEnvFile ||= () => undefined;
     globalThis.process.finalization ||= {
       register: () => undefined,
       unregister: () => undefined,

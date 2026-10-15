@@ -206,7 +206,7 @@ fn rootless_shapes_survive_collection_and_shape_compaction() {
     vm.collect_now(&program);
     assert!(vm.shapes.len() < before);
     let object = vm.object_data(owner).unwrap();
-    assert_eq!(vm.shapes[object.shape() as usize].storage_len, 1);
+    assert_eq!(vm.shapes[object.shape() as usize].storage_len(), 1);
     assert_eq!(
         vm.heap.property_get(vm.object_data(owner).unwrap(), 0),
         Some(Value::integer(42))
@@ -891,6 +891,21 @@ fn array_results_survive_collections_in_proxy_traps() {
 }
 
 #[test]
+fn private_names_resolve_per_class_across_collections() {
+    // Each class evaluation has its own private names; resolution is memoized per
+    // environment and must still reject foreign objects across collections.
+    let source = "function make() { return class { #x = 1; get() { return this.#x; } has(o) { return #x in o; } read(o) { return o.#x; } }; }\n\
+         var A = make(), B = make(), a = new A(), b = new B(), out = [];\n\
+         for (let round = 0; round < 3; round++) { out.push(a.get(), b.get(), a.has(b), a.has(a)); for (let i = 0; i < 50000; i++) ({ i }); }\n\
+         try { a.read(b); } catch (error) { out.push(error.constructor.name); }\n\
+         var result = out.join();";
+    assert_eq!(
+        global_text(source, "result"),
+        "1,1,false,true,1,1,false,true,1,1,false,true,TypeError"
+    );
+}
+
+#[test]
 fn promise_record_edges_follow_promise_and_resolver_lifetime() {
     let mut vm = Vm::new(SilentHost);
     let promise = vm.promise_object();
@@ -1225,7 +1240,7 @@ fn dictionary_shapes_fall_back_after_deletion_and_prototype_use() {
 #[test]
 fn dictionary_shape_starts_when_property_slots_exceed_cache_encoding() {
     let mut vm = Vm::new(SilentHost);
-    vm.shapes[0].storage_len = super::object::FIELD_CACHE_SLOT_CAPACITY;
+    vm.shapes[0].storage_len = super::object::FIELD_CACHE_SLOT_CAPACITY as u32;
     let atom = vm.intern_atom("overflow");
     let key = super::property_key::PropertyKey::string(atom);
     let shape = vm.transition_property_shape(0, key);
@@ -1239,7 +1254,7 @@ fn dictionary_shape_starts_when_property_slots_exceed_cache_encoding() {
         Some(super::object::FIELD_CACHE_SLOT_CAPACITY)
     );
     assert_eq!(
-        vm.shapes[shape as usize].storage_len,
+        vm.shapes[shape as usize].storage_len(),
         super::object::FIELD_CACHE_SLOT_CAPACITY + 1
     );
     #[cfg(feature = "profile-aggregate")]
@@ -9780,7 +9795,9 @@ fn typed_array_getter_diagnostics_do_not_observe_guest_conversion_hooks() {
       let hooks=0;const object={toString(){hooks++;throw Error('guest hook');},[Symbol.toStringTag]:'Special'};
       for(const property of ['length','byteLength','byteOffset','buffer']) {
         const getter=Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype),property).get;
-        for(const [value,label] of [[null,'null'],[undefined,'undefined'],[object,'#<Object>'],[new DataView(new ArrayBuffer(0)),'#<DataView>']]) {
+        const accessor={};Object.defineProperty(accessor,'toString',{get(){hooks++;throw Error('getter');}});
+        const tagged={toString(){hooks++;throw Error('conversion');}};Object.defineProperty(tagged,Symbol.toStringTag,{get(){hooks++;throw Error('tag');}});
+        for(const [value,label] of [[null,'null'],[undefined,'undefined'],[{},'#<Object>'],[object,'[object Special]'],[Object.create(Uint8Array.prototype),'[object Object]'],[Object.create(null),'[object Object]'],[accessor,'[object Object]'],[tagged,'[object Object]'],[new DataView(new ArrayBuffer(0)),'#<DataView>']]) {
           try { getter.call(value);throw Error('accepted invalid receiver'); }
           catch(error) { if(!(error instanceof TypeError)||error.message!==`Method get TypedArray.prototype.${property} called on incompatible receiver ${label}`)throw error; }
         }
@@ -9807,4 +9824,47 @@ fn nullish_property_diagnostics_include_original_property_names() {
       if(hooks!==0)throw Error('rejected base invoked key conversion');
     "#;
     for program in [Engine::compile(crate::ExecutionRequest{source,name:"nullish-property-errors.js",kind:crate::SourceKind::Script}).unwrap(),Engine::specialize(source,"nullish-property-errors.js").unwrap()] {Vm::new(SilentHost).execute(&program).unwrap();}
+}
+
+#[test]
+fn typed_array_offset_and_content_errors_preserve_numeric_hooks_and_targets() {
+    let source = r#"
+const ab=new ArrayBuffer(5),calls=[];
+try{new Uint8Array(ab,{valueOf(){calls.push('offset');return -1.5}},{valueOf(){calls.push('length');return 1}})}catch(e){print(e.name);print(e.message)}
+print(calls.join());print(new Uint8Array(ab,-0.5).length);
+const marker={};try{new Uint8Array(ab,{valueOf(){throw marker}})}catch(e){print(e===marker)}
+for(const [target,source] of [[new Uint8Array(2),new BigInt64Array(1)],[new BigInt64Array(2),new Uint8Array(1)]]){
+ try{target.set(source)}catch(e){print(e.name);print(e.message)}
+ print(Array.from(target,String).join());
+}
+"#;
+    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
+        let output=Rc::new(RefCell::new(Vec::new()));
+        let mut vm=Vm::new(RecordingHost(output.clone()));
+        let program=compile(source,"typed-array-offset-content-errors.js").unwrap();
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(),[
+            "RangeError","Start offset -1.5 is outside the bounds of the buffer","offset","5","true",
+            "TypeError","Cannot mix BigInt and other types, use explicit conversions","0,0",
+            "TypeError","Cannot mix BigInt and other types, use explicit conversions","0,0",
+        ]);
+    }
+}
+
+#[test]
+fn rejected_property_assignments_preserve_diagnostics_and_proxy_effects() {
+    let source = r#"
+const out=[],events=[],marker={};function store(target,key){'use strict';target[key]=1}function field(target){'use strict';target.x=1}function check(tag,fn){try{fn();out.push([tag,'ok'])}catch(e){out.push([tag,e.name,e.message,e===marker])}}
+for(const [name,target] of [['undefined',undefined],['null',null],['boolean',false],['number',1],['string','abc'],['symbol',Symbol('s')],['bigint',1n],['frozen',Object.freeze({x:0})],['sealed',Object.preventExtensions({})],['getter',Object.defineProperty({},'x',{get(){events.push('unexpected-get')}})]])for(const fn of [field,t=>store(t,'x')])check(name,()=>fn(target));
+const handler={get set(){events.push('trap-get');return function(t,k,v){events.push('trap-call');delete handler.set;return false}}};check('proxy',()=>store(new Proxy({},handler),'x'));
+check('proxy-readonly',()=>store(new Proxy(Object.freeze({x:0}),{}),'x'));check('proxy-extend',()=>store(new Proxy(Object.preventExtensions({}),{}),'x'));check('nested',()=>field(new Proxy(new Proxy({}, {set(){events.push('inner');return false}}),{})));
+check('setter-original',()=>field({set x(v){throw marker}}));const hostile={get toString(){events.push('unexpected-string');throw marker},get [Symbol.toStringTag](){events.push('unexpected-tag');throw marker}};Object.defineProperty(hostile,'x',{value:0,writable:false});check('hostile',()=>field(hostile));for(const key of ['0','length','5'])check(['string',key],()=>store('abc',key));Object.defineProperty(Boolean.prototype,'x',{configurable:true,get(){events.push('unexpected-boolean-get')}});check('primitive-getter',()=>field(false));delete Boolean.prototype.x;out.push(['reflect',Reflect.set(new Proxy({}, {set(){return false}}),'x',1)]);out.push(events);print(JSON.stringify(out));
+
+"#;
+    for program in [Engine::compile(crate::ExecutionRequest { source, name: "assignment-diagnostics.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "assignment-diagnostics.js").unwrap()] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(RecordingHost(output.clone()));
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), [r#"[["undefined","TypeError","Cannot set properties of undefined (setting 'x')",false],["undefined","TypeError","Cannot set properties of undefined (setting 'x')",false],["null","TypeError","Cannot set properties of null (setting 'x')",false],["null","TypeError","Cannot set properties of null (setting 'x')",false],["boolean","TypeError","Cannot create property 'x' on boolean 'false'",false],["boolean","TypeError","Cannot create property 'x' on boolean 'false'",false],["number","TypeError","Cannot create property 'x' on number '1'",false],["number","TypeError","Cannot create property 'x' on number '1'",false],["string","TypeError","Cannot create property 'x' on string 'abc'",false],["string","TypeError","Cannot create property 'x' on string 'abc'",false],["symbol","TypeError","Cannot create property 'x' on symbol 'Symbol(s)'",false],["symbol","TypeError","Cannot create property 'x' on symbol 'Symbol(s)'",false],["bigint","TypeError","Cannot create property 'x' on bigint '1'",false],["bigint","TypeError","Cannot create property 'x' on bigint '1'",false],["frozen","TypeError","Cannot assign to read only property 'x' of object '#<Object>'",false],["frozen","TypeError","Cannot assign to read only property 'x' of object '#<Object>'",false],["sealed","TypeError","Cannot add property x, object is not extensible",false],["sealed","TypeError","Cannot add property x, object is not extensible",false],["getter","TypeError","Cannot set property x of #<Object> which has only a getter",false],["getter","TypeError","Cannot set property x of #<Object> which has only a getter",false],["proxy","TypeError","'set' on proxy: trap returned falsish for property 'x'",false],["proxy-readonly","TypeError","Cannot assign to read only property 'x' of object '#<Object>'",false],["proxy-extend","TypeError","Cannot define property x, object is not extensible",false],["nested","TypeError","'set' on proxy: trap returned falsish for property 'x'",false],["setter-original",null,null,true],["hostile","TypeError","Cannot assign to read only property 'x' of object '[object Object]'",false],[["string","0"],"TypeError","Cannot assign to read only property '0' of string 'abc'",false],[["string","length"],"TypeError","Cannot assign to read only property 'length' of string 'abc'",false],[["string","5"],"TypeError","Cannot create property '5' on string 'abc'",false],["primitive-getter","TypeError","Cannot set property x of [object Boolean] which has only a getter",false],["reflect",false],["trap-get","trap-call","inner"]]"#]);
+    }
 }
