@@ -1,13 +1,13 @@
 //! Typed embedding calls through ordinary native functions and VM root leases.
 
 use super::*;
-use crate::{WasmHostFunctionId, WasmHostValue, WasmSignature, WasmValue};
+use crate::{WasmHostValue, WasmSignature, WasmValue};
 
 impl<H: Host> Vm<H> {
     pub(crate) fn create_wasm_host_function(
         &mut self,
         name: &str,
-        id: WasmHostFunctionId,
+        target: crate::heap::WasmHostTarget,
         signature: WasmSignature,
     ) -> Result<Value, JsError> {
         if signature
@@ -35,7 +35,7 @@ impl<H: Host> Vm<H> {
         }
         let length = signature.params.len();
         let environment = self.heap.alloc(Cell::WasmHostFunction {
-            id,
+            target,
             signature: Rc::new(signature),
         });
         let function = self.native_with_env(Native::WasmHost, environment);
@@ -151,16 +151,22 @@ impl<H: Host> Vm<H> {
         let environment = self
             .active_native_env()
             .ok_or_else(|| JsError::validation("missing Wasm host binding".into()))?;
-        let Some(Cell::WasmHostFunction { id, signature }) = self.heap.get(environment) else {
+        let Some(Cell::WasmHostFunction { target, signature }) = self.heap.get(environment) else {
             return Err(JsError::validation("invalid Wasm host binding".into()));
         };
-        let id = *id;
+        let target = *target;
         let signature = signature.clone();
         if args.len() != signature.params.len() {
             return Err(JsError::validation(
                 "Wasm host argument count mismatch".into(),
             ));
         }
+        let id = match target {
+            crate::heap::WasmHostTarget::Host(id) => id,
+            crate::heap::WasmHostTarget::Js(target) => {
+                return self.call_wasm_js_import(target, &signature, args);
+            }
+        };
         let mut roots = Vec::new();
         let result = (|| {
             let mut arguments = Vec::with_capacity(args.len());
@@ -265,7 +271,7 @@ impl<H: Host> Vm<H> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Engine, RootId, WasmFunctionBody, WasmFunctionImport, WasmImportName, WasmType};
+    use crate::{Engine, RootId, WasmFunctionBody, WasmHostFunctionId, WasmFunctionImport, WasmImportName, WasmType};
     use wasmparser::Operator;
 
     #[derive(Default)]
@@ -399,7 +405,11 @@ mod tests {
         }
 
         let function = vm
-            .create_wasm_host_function("echo", WasmHostFunctionId(0), signature)
+            .create_wasm_host_function(
+                "echo",
+                crate::heap::WasmHostTarget::Host(WasmHostFunctionId(0)),
+                signature,
+            )
             .unwrap();
         let Some(Cell::Function { env, .. }) = vm.heap.get(function) else {
             panic!()
