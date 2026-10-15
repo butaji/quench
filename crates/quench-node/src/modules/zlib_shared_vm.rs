@@ -306,7 +306,7 @@ pub(super) fn codec_input(
 pub(crate) fn constants(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     const CACHE_KEY: &str = "\0builtin:zlib/constants";
     let shared = context.host_mut().shared_state();
-    if let Some(value) = shared.borrow().module_cache.get(CACHE_KEY).copied() { return Ok(value); }
+    if let Some(value) = shared.borrow().builtin_cache.get(CACHE_KEY).copied() { return Ok(value); }
     let object = context.object_rooted()?;
     for (name, number) in crate::modules::zlib_constants::ZLIB_CONSTANTS {
         let key = context.string_rooted(name);
@@ -316,7 +316,7 @@ pub(crate) fn constants(context: &mut NativeContext<'_, NodeHost>) -> Result<Roo
         }
     }
     let retained = context.retain(object)?;
-    shared.borrow_mut().module_cache.insert(CACHE_KEY.to_owned(), retained);
+    shared.borrow_mut().builtin_cache.insert(CACHE_KEY.to_owned(), retained);
     Ok(object)
 }
 
