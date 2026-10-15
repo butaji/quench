@@ -871,7 +871,8 @@ fn lane_set_field<H: Host>(
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let vm = unsafe { vm(cx) };
-    if !vm.set_field_cache_hit(code, object, i.imm(), r.get(i.a), i.c) {
+    // The general loop's cached write: the store inline, the add out of line.
+    if !vm.cached_field_write_hit(code, object, i.imm(), r.get(i.a), i.c) {
         return exit(ip);
     }
     // Adding a property can allocate.
