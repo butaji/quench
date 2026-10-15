@@ -202,10 +202,6 @@ pub(crate) fn initialize_targets(
     set(context, data, "delete", delete)?;
     let string = get(context, global, "String")?;
     set(context, data, "stringCtor", string)?;
-    let max_default = context.host_function_with_data(
-        crate::host::shared_vm::operation("eventsDefaultMaxGet"),
-        data,
-    )?;
     let description = context.string_rooted("kResistStopPropagation");
     let resist_key = context.call_rooted(symbol, undefined, &[description])?;
     set(context, data, "resistKey", resist_key)?;
@@ -224,6 +220,57 @@ pub(crate) fn initialize_targets(
         "node:events/abort-listener-disposable.js",
     )?;
     set(context, data, "disposeFactory", dispose_factory)?;
+    set(context, data, "recordsKey", records_key)?;
+    set(context, data, "brandKey", brand_key)?;
+    let retained = context.retain(data)?;
+    context
+        .host_mut()
+        .shared_state()
+        .borrow_mut()
+        .event_targets_api = Some(retained);
+    // The DOM event family is built on first use; the natives that read `abortState` reach
+    // it through the same group.
+    let initialize = context.host_function_with_data(
+        crate::host::shared_vm::operation("eventGlobalsInitialize"),
+        data,
+    )?;
+    context.define_lazy_data_properties_rooted(global, EVENT_GLOBALS, false, initialize)?;
+    let abort_state = context.host_function(crate::host::shared_vm::operation(
+        "eventAbortStateInitialize",
+    ))?;
+    context.define_lazy_data_properties_rooted(data, &["abortState"], true, abort_state)?;
+    Ok(())
+}
+
+/// The globals the abort and event-target polyfills define, in definition order.
+const EVENT_GLOBALS: &[&str] = &[
+    "DOMException",
+    "AbortSignal",
+    "AbortController",
+    "Event",
+    "EventTarget",
+    "MessageEvent",
+    "MessagePort",
+    "MessageChannel",
+];
+
+/// Builds the DOM event family: the abort polyfill, `EventTarget` and its relatives.
+pub(crate) fn initialize_event_globals(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let data = context.host_function_data()?;
+    let global = context.global_root()?;
+    let undefined = context.undefined();
+    let records_key = get(context, data, "recordsKey")?;
+    let brand_key = get(context, data, "brandKey")?;
+    let max_key = get(context, data, "maxKey")?;
+    let warned_key = get(context, data, "warnedKey")?;
+    let max_default = context.host_function_with_data(
+        crate::host::shared_vm::operation("eventsDefaultMaxGet"),
+        data,
+    )?;
     let abort_add = context.host_function_with_data(
         crate::host::shared_vm::operation("abortAddEventListener"),
         data,
@@ -295,16 +342,19 @@ pub(crate) fn initialize_targets(
     let signal_prototype = get(context, signal, "prototype")?;
     let target_prototype = get(context, target, "prototype")?;
     context.set_prototype_rooted(signal_prototype, target_prototype)?;
-    set(context, data, "recordsKey", records_key)?;
-    set(context, data, "brandKey", brand_key)?;
     set(context, data, "abortState", abort_state)?;
-    let retained = context.retain(data)?;
-    context
-        .host_mut()
-        .shared_state()
-        .borrow_mut()
-        .event_targets_api = Some(retained);
-    Ok(())
+    Ok(undefined)
+}
+
+/// `abortState` exists once the event family does.
+pub(crate) fn initialize_abort_state(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let global = context.global_root()?;
+    get(context, global, "AbortSignal")?;
+    Ok(context.undefined())
 }
 
 pub(crate) fn listener_count(
