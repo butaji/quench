@@ -101,7 +101,7 @@ const UTIL: &str = quench_js_check::checked_js!(
         return `${current.name || "Error"}${current.message ? `: ${current.message}` : ""}`;
       }
       if (depth > maxDepth) {
-        return shallowLabel(current);
+        return shallowLabel(current, settings);
       }
       if (seen.has(current)) return "[Circular]";
       seen.add(current);
@@ -760,7 +760,14 @@ pub(crate) fn argument_type_description(
                 "an instance of Object".to_owned()
             }
         } else {
-            "an instance of Object".to_owned()
+            let inspect = internal_inspect(context)?;
+            let options = context.null_object_rooted()?;
+            let depth = context.string_rooted("depth");
+            let shallow = context.number(-1.0);
+            context.define_data_property_rooted(options, depth, shallow, true, true, true)?;
+            let undefined = context.undefined();
+            let text = context.call_rooted(inspect, undefined, &[root, options])?;
+            context.to_string(text)?
         }
     } else {
         format!("type bigint ({}n)", context.to_string(root)?)
@@ -814,6 +821,31 @@ pub(crate) fn inspect_shallow_label(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let object = args.first().copied().unwrap_or_else(|| context.undefined());
+    // Empty ordinary null-prototype records keep their braces even beyond
+    // the depth limit. Internal-slot brands retain their specialized labels.
+    let mut ordinary = true;
+    for (_, brand) in TYPE_PREDICATES {
+        if context.has_builtin_brand_rooted(object, *brand)? {
+            ordinary = false;
+            break;
+        }
+    }
+    if ordinary && !context.is_array_rooted(object)? && !context.is_callable_rooted(object)? {
+        let prototype = context.prototype_rooted(object)?;
+        if context.rooted_value(prototype).is_some_and(|value| value.is_null()) {
+            let settings = args.get(1).copied().unwrap_or_else(|| context.undefined());
+            let hidden = if context.is_object_rooted(settings)? {
+                let key = context.string_rooted("showHidden");
+                let hidden = context.get_property_rooted(settings, key)?;
+                context.truthy_rooted(hidden)?
+            } else { false };
+            let keys = if hidden { context.own_keys_rooted(object)? }
+                else { context.enumerable_own_keys_rooted(object, true, true)? };
+            if keys.is_empty() {
+                return Ok(context.string_rooted("[Object: null prototype] {}"));
+            }
+        }
+    }
     let mut current = object;
     let constructor_key = context.string_rooted("constructor");
     let value_key = context.string_rooted("value");

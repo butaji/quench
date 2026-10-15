@@ -931,7 +931,18 @@ impl<H: Host> Vm<H> {
                     Some(Cell::Symbol(description)) => format!("Symbol({})", description.as_deref().unwrap_or("")),
                     Some(Cell::String(_) | Cell::BigInt(_)) => self.to_string(p, this)?,
                     _ if this.as_number().is_some() || this.as_bool().is_some() => self.to_string(p, this)?,
-                    _ => "#<Object>".to_owned(),
+                    _ => {
+                        let to_string = self.intern_atom("toString");
+                        let method = self.diagnostic_data_property(this, property_key::PropertyKey::string(to_string));
+                        if method.is_some_and(|method| matches!(self.heap.get(method), Some(Cell::Function { kind: FunctionKind::Native(Native::ObjectPrototypeToString), .. }))) {
+                            "#<Object>".to_owned()
+                        } else {
+                            let tag = self.well_known_symbols.get("toStringTag").copied()
+                                .and_then(|symbol| self.diagnostic_data_property(this, property_key::PropertyKey::symbol(symbol)))
+                                .and_then(|value| match self.heap.get(value) { Some(Cell::String(text)) => Some(text.host_string().to_owned()), _ => None });
+                            format!("[object {}]", tag.as_deref().unwrap_or("Object"))
+                        }
+                    },
                 }};
             return Err(self.type_error(p, format!("Method get TypedArray.prototype.{property} called on incompatible receiver {receiver}")));
         };
