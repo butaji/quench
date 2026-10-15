@@ -610,7 +610,7 @@ impl<H: Host> Vm<H> {
     /// The home object that declares private name `atom` for the running frame: the nearest
     /// eval-introduced private binding, otherwise the first visible class home declaring the
     /// name. It depends on the frame's function and environment chain, never on the target,
-    /// so a found home is memoized until the next collection.
+    /// so a found home is memoized while that environment lives.
     fn private_name_home(&mut self, p: &ResidualProgram, atom: Atom) -> Option<Value> {
         let frame_index = self.frames.len().checked_sub(1)?;
         let start = self.captured_parent_environment(frame_index);
