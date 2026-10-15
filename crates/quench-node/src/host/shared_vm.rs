@@ -457,6 +457,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "tlsContextSetOptions" (0) => crate::modules::tls_shared_vm::contexts::set_options,
         method "tlsContextGetMinProto" (0) => crate::modules::tls_shared_vm::contexts::minimum,
         method "tlsContextGetMaxProto" (0) => crate::modules::tls_shared_vm::contexts::maximum,
+        method "cryptoHandleSymbol" (0) => crate::modules::crypto_shared_vm::handle_symbol,
         method "cryptoSetEngine" (2) => crate::modules::crypto_engine_shared_vm::set_engine,
         method "cryptoHash" (3) => crate::modules::crypto_shared_vm::hash,
         method "cryptoHmac" (3) => crate::modules::crypto_shared_vm::hmac,
