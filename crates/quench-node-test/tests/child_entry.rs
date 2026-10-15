@@ -7024,3 +7024,40 @@ M.prototype.require=original;
 console.log(JSON.stringify(out));
 "#);
 }
+
+#[test]
+fn native_buffer_from_and_copy_bytes_preserve_conversion_bounds_brands_and_hooks() {
+compare_node_stream_source(r#"
+'use strict';const B=Buffer,out=[],hooks=[];
+function check(tag,value,...tail){hooks.length=0;try{const b=B.from(value,...tail);out.push([tag,'ok',Array.from(b),Object.getPrototypeOf(b)===B.prototype,b.buffer===value,hooks.slice()])}catch(e){out.push([tag,e.name,e.code,e.message,hooks.slice()])}}
+for(const fn of [B.from,B.copyBytesFrom])out.push(['shape',fn&&fn.name,fn&&fn.length,!!fn&&Object.hasOwn(fn,'prototype')]);
+const values=[undefined,null,false,0,1,1n,Symbol('v'),{},Object.create(null),new Boolean(true),new Number(3),new String('test'),{valueOf(){hooks.push('valueOf');return 'test'}},{[Symbol.toPrimitive](hint){hooks.push(hint);return 'test'}},{valueOf(){hooks.push('valueOf');return null}},{valueOf:null},{valueOf:1},{length:3,0:257,1:-1,2:2},{length:'3',0:1},{length:NaN},{type:'Buffer',data:[1,2,3]},new Uint8Array([1,2,255]),new Uint16Array([0xffff,256]),new BigInt64Array([1n]),new DataView(new ArrayBuffer(3)),[1,2,257],['1','2',null]];
+for(let i=0;i<values.length;i++)check(['value',i],values[i]);
+for(const value of ['test','é','😀','\ud800','aaZZbb'])for(const enc of [undefined,null,false,0,{},'utf8','utf16le','latin1','hex','base64','bogus'])check(['string',value,typeof enc,String(enc)],value,enc);
+for(const offset of [undefined,null,0,1,1.5,-1,6,NaN,Infinity,'2',1n,{valueOf(){hooks.push('offset');return 1}}])for(const length of [undefined,null,0,2,2.5,-1,9,NaN,Infinity,'2',1n])check(['ab',typeof offset,String(offset),typeof length,String(length)],new Uint8Array([1,2,3,4,5]).buffer,offset,length);
+for(const kind of ['valueOf','primitive','length','buffer','type','data']){
+ let o={};
+ if(kind==='valueOf')Object.defineProperty(o,'valueOf',{get(){hooks.push('get-valueOf');return function(){hooks.push('call-valueOf');return 'xy'}}});
+ if(kind==='primitive')o[Symbol.toPrimitive]=hint=>{hooks.push(hint);return 'xy'};
+ if(kind==='length')Object.defineProperty(o,'length',{get(){hooks.push('length');return 2}});
+ if(kind==='buffer'){o.buffer=new ArrayBuffer(2)};
+ if(kind==='type'){o.type='Buffer';Object.defineProperty(o,'data',{get(){hooks.push('data');return [3,4]}})};
+ if(kind==='data')o={type:'Buffer',data:new Uint8Array([3,4])};
+ check(['hooks',kind],o);
+}
+for(const source of [new Uint8Array([1,2,3]),new Uint16Array([0x1234,0xabcd]),new BigInt64Array([1n,-2n]),new DataView(new ArrayBuffer(4)),[],new Uint8Array(0)])for(const offset of [undefined,null,0,1,-1,NaN,1.5,9,'1',1n])for(const length of [undefined,0,1,9,-1]){
+ hooks.length=0;try{const b=B.copyBytesFrom(source,offset,length);out.push(['copy',source.constructor.name,typeof offset,String(offset),length,'ok',Array.from(b)])}catch(e){out.push(['copy',source.constructor.name,typeof offset,String(offset),length,e.name,e.code,e.message])}
+}
+console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn inspect_shallow_null_prototype_records_preserve_empty_hidden_and_symbol_keys() {
+compare_node_stream_source(r#"
+const u=require('util'),out=[],empty=Object.create(null),visible=Object.assign(Object.create(null),{a:1}),hidden=Object.create(null),symbol=Object.create(null),hiddenSymbol=Object.create(null);
+Object.defineProperty(hidden,'x',{value:1});symbol[Symbol('x')]=1;Object.defineProperty(hiddenSymbol,Symbol('x'),{value:1});
+for(const value of [empty,visible,hidden,symbol,hiddenSymbol])for(const depth of [-2,-1])for(const showHidden of [false,true])out.push(u.inspect(value,{depth,showHidden}));
+console.log(JSON.stringify(out));
+"#);
+}

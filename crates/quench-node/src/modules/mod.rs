@@ -15,6 +15,7 @@ pub(crate) mod buffer_search_shared_vm;
 pub(crate) mod buffer_bigint_shared_vm;
 pub(crate) mod buffer_swap_shared_vm;
 pub(crate) mod buffer_constructor_shared_vm;
+pub(crate) mod buffer_from_shared_vm;
 pub(crate) mod child_process_env_shared_vm;
 pub(crate) mod child_process_exec_shared_vm;
 pub(crate) mod child_process_fork_shared_vm;
