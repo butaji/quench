@@ -1240,18 +1240,23 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         let atom = self.intern_atom("name");
         let property = PropertyKey::string(atom);
-        self.set_property_attributes(
-            function,
-            property,
-            PropertyAttributes {
-                writable: true,
-                enumerable: false,
-                configurable: true,
-                accessor: false,
-                getter: None,
-                setter: None,
-            },
-        );
+        // An existing `name` is made writable so the store below replaces it. A function
+        // without one (a fresh bound function) gets it from the store; recording attributes
+        // for an absent key would leave a stale descriptor and flush every field cache.
+        if self.object_property_slot(function, property).is_some() {
+            self.set_property_attributes(
+                function,
+                property,
+                PropertyAttributes {
+                    writable: true,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+        }
         let value = self.heap.alloc(Cell::String(JsString::from_str(name)));
         self.set_property(function, atom, value)?;
         self.set_property_attributes(
