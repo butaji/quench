@@ -852,3 +852,27 @@ fn native_bootstrap_names_and_proxy_targets_survive_mutation_revocation_and_coll
         Runtime::new(SnapshotMetadataHost).execute(&program).unwrap();
     }
 }
+
+struct BoundedViewHost;
+impl Host for BoundedViewHost {
+    fn write_line(&mut self,_:&str){}
+    fn clock_millis(&mut self)->f64{0.0}
+    fn functions(&self)->&[HostFunction<Self>]{crate::host_functions![global "nativeBoundedView" (1) => native_bounded_view]}
+}
+fn native_bounded_view(context:&mut NativeContext<'_,BoundedViewHost>,_:RootId,args:&[RootId])->Result<RootId,RootedError>{
+    let value=args.first().copied().unwrap_or_else(||context.undefined());
+    let keys=context.own_non_index_keys_rooted(value,false)?;context.collect()?;
+    let bytes=context.bytes_prefix_rooted(value,2).ok_or_else(||RootedError::host("buffer bytes missing"))?;
+    let bytes=context.uint8_array_rooted(&bytes)?;let keys=context.array_rooted(&keys)?;context.array_rooted(&[bytes,keys])
+}
+#[test]
+fn native_bounded_byte_snapshots_and_non_index_keys_preserve_views_and_gc_roots(){
+    let source=r#"
+      const ab=new Uint8Array([1,2,3,4]).buffer,view=new Uint8Array(ab,1,3),symbol=Symbol('key');view.extra=1;view[symbol]=2;Object.defineProperty(view,'hidden',{value:3});
+      const result=nativeBoundedView(view);
+      if(result[0].join()!=='2,3'||result[1].length!==3||result[1][0]!=='extra'||result[1][1]!=='hidden'||result[1][2]!==symbol)throw Error('view bytes or keys changed');
+      if(nativeBoundedView(ab)[0].join()!=='1,2')throw Error('backing prefix changed');
+      if(nativeBoundedView(new DataView(ab,2,2))[0].join()!=='3,4')throw Error('DataView prefix changed');
+    "#;
+    for program in [Engine::compile(crate::ExecutionRequest{source,name:"native-bounded-view.js",kind:crate::SourceKind::Script}).unwrap(),Engine::specialize(source,"native-bounded-view.js").unwrap()]{Runtime::new(BoundedViewHost).execute(&program).unwrap();}
+}

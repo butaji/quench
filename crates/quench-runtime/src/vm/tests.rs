@@ -9758,3 +9758,20 @@ fn typed_array_getter_diagnostics_do_not_observe_guest_conversion_hooks() {
         Vm::new(SilentHost).execute(&program).unwrap();
     }
 }
+
+#[test]
+fn nullish_property_diagnostics_include_original_property_names() {
+    let source=r#"
+      let hooks=0;const key={toString(){hooks++;throw Error('key hook');}};
+      for(const value of [null,undefined]) {
+        for(const property of ['length',1,Symbol('x')]) {
+          try { value[property]; throw Error('accepted nullish receiver'); }
+          catch(error) { if(!(error instanceof TypeError)||error.message!==`Cannot read properties of ${value} (reading '${String(property)}')`)throw error; }
+        }
+        try { value[key]; throw Error('accepted object key'); }
+        catch(error) { if(!(error instanceof TypeError)||error.message!==`Cannot read properties of ${value}`)throw error; }
+      }
+      if(hooks!==0)throw Error('rejected base invoked key conversion');
+    "#;
+    for program in [Engine::compile(crate::ExecutionRequest{source,name:"nullish-property-errors.js",kind:crate::SourceKind::Script}).unwrap(),Engine::specialize(source,"nullish-property-errors.js").unwrap()] {Vm::new(SilentHost).execute(&program).unwrap();}
+}

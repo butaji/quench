@@ -6858,3 +6858,56 @@ for(const value of [new Date(0),new Date(NaN),new Number(3),new String('abc'),ne
 out.push(hooks);console.log(JSON.stringify(out));
 "#);
 }
+
+#[test]
+fn native_buffer_fill_preserves_overloads_views_ranges_coercions_and_overlap() {
+compare_node_stream_source(r#"
+'use strict';const B=require('buffer').Buffer,out=[],fn=B.prototype.fill,d=Object.getOwnPropertyDescriptor(B.prototype,'fill');out.push([fn.name,fn.length,Object.hasOwn(fn,'prototype'),d.writable,d.enumerable,d.configurable]);
+const values=[undefined,null,true,false,0,-1,257,NaN,Infinity,1n,Symbol('v'),'', 'a','é','😀','yKJh','\u0222',B.from([1,2]),new Uint8Array([3,4]),new Uint16Array([0x1234,0x5678]),new DataView(new ArrayBuffer(2)),new ArrayBuffer(2),[],{}, {valueOf(){return 7}}];
+for(let i=0;i<values.length;i++)for(const tail of [[],[1,4],[1,4,'utf8'],['hex'],['base64'],[0,0,'bogus'],[9,10]]){const b=B.alloc(8,0x7f);try{out.push([i,tail,fn.call(b,values[i],...tail)===b,Array.from(b)])}catch(e){out.push([i,tail,e.name,e.code,e.message,Array.from(b)])}}
+for(const name of ['offset','end','encoding'])for(const value of [null,'2',NaN,1.1,-1,9,Infinity,1n,{},true]){const b=B.alloc(8,0x7f),args=name==='offset'?['ab',value,4]:name==='end'?['ab',1,value]:['ab',1,4,value];try{out.push([name,typeof value,String(value),fn.apply(b,args)===b,Array.from(b)])}catch(e){out.push([name,typeof value,String(value),e.name,e.code,e.message])}}
+for(const receiver of [new Uint8Array(8),new Uint16Array(4),{},null])try{out.push(['receiver',fn.call(receiver,'ab',1,3)===receiver,Array.from(receiver)])}catch(e){out.push(['receiver',e.name,e.code,e.message])}
+const b=B.from([1,2,3,4,5,6,7,8]);out.push(['overlap',fn.call(b,b.subarray(0,3),1,8)===b,Array.from(b)]);
+
+for(const value of [B.alloc(0),new Uint8Array(0),new DataView(new ArrayBuffer(0)),new DataView(new Uint8Array([3,4]).buffer),new Uint8Array([5,6]).buffer,new String('7')]){const b=B.alloc(8,0x7f);try{out.push(['additional-value',Object.prototype.toString.call(value),fn.call(b,value)===b,Array.from(b)])}catch(e){out.push(['additional-value',Object.prototype.toString.call(value),e.name,e.code,e.message,Array.from(b)])}}
+for(const length of [2,4,9]){const events=[],encoding={length,toString(){events.push('string');return 'utf8'}};const b=B.alloc(8);try{out.push(['encoding-hooks',length,fn.call(b,'ab',1,4,encoding)===b,events,Array.from(b)])}catch(e){out.push(['encoding-hooks',length,e.name,e.code,e.message,events])}}
+console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn native_buffer_binding_fill_preserves_statuses_indices_and_shared_byte_policy() {
+compare_node_stream_source(r#"
+'use strict';
+const {spawnSync}=require('child_process');
+const source=`process.emitWarning=()=>{};const internal=require('internal/test/binding').internalBinding,binding=internal('buffer'),f=binding.fill,out=[];out.push(binding===internal('buffer'));out.push([f.name,f.length,Object.hasOwn(f,'prototype')]);for(const args of [[1,-1,0,1],[1,0,-2,1],[1,0,3,1],['ab',0,4,'utf8'],['x',0,4,'hex'],[Buffer.alloc(0),0,4,'utf8'],[true,1,4,'utf8'],[new Uint8Array([2,3]),1,7,'utf8']]){const b=Buffer.alloc(8,0x7f);try{const value=f(b,...args);out.push([value===undefined?'undefined':value,Array.from(b)])}catch(e){out.push([e.name,e.code,e.message,Array.from(b)])}}console.log(JSON.stringify(out));`;
+const result=spawnSync(process.execPath,['--expose-internals','-e',source],{encoding:'utf8'});console.log(JSON.stringify([result.status,result.signal,result.stdout,result.stderr]));
+"#);
+}
+
+#[test]
+fn native_buffer_inspection_preserves_aliases_limits_properties_and_constructor_errors() {
+compare_node_stream_source(r#"
+'use strict';const mod=require('buffer'),B=mod.Buffer,u=require('util'),out=[],custom=Symbol.for('nodejs.util.inspect.custom');
+for(const key of ['inspect',custom]){const d=Object.getOwnPropertyDescriptor(B.prototype,key);out.push([String(key),d.value.name,d.value.length,Object.hasOwn(d.value,'prototype'),d.writable,d.enumerable,d.configurable])}
+{const d=Object.getOwnPropertyDescriptor(mod,'INSPECT_MAX_BYTES');out.push([d.get.name,d.get.length,d.set.name,d.set.length,d.enumerable,d.configurable,B.prototype.inspect===B.prototype[custom]])}
+for(const max of [50,2,Infinity,0,2.5,-0]){mod.INSPECT_MAX_BYTES=max;for(const length of [0,2,4,51]){const b=B.alloc(length,'x');out.push([String(max),length,u.inspect(b),b.inspect()]);}}
+mod.INSPECT_MAX_BYTES=50;
+for(const value of [NaN,-1,'bad',1n,null,{}])try{mod.INSPECT_MAX_BYTES=value;out.push(['set','accepted'])}catch(e){out.push(['set',e.name,e.code,e.message])}
+for(const b of [B.alloc(0),B.from([1,2])]){b.extra=new Uint8Array(0);b.inspect=undefined;out.push(['props',u.inspect(b)]);}
+const b=B.from([1,2]);Object.defineProperty(b,'constructor',{get(){throw new Error('ignored')}});out.push(['constructor',u.inspect(b)]);
+
+for(const length of [NaN,undefined,-1,-0.5,2.5,100,Infinity])for(const size of [0,4]){const b=B.alloc(size,1),events=[];Object.defineProperty(b,'length',{get(){events.push('length');return length}});try{out.push(['length-hooks',String(length),size,b.inspect(),events])}catch(e){out.push(['length-hooks',String(length),size,e.name,e.code,e.message,events])}}
+console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn native_binary_inspection_preserves_view_layouts_backing_and_detached_state() {
+compare_node_stream_source(r#"
+'use strict';const u=require('util'),out=[];
+for(const value of [new Uint8Array(0),new Uint8Array([1,2,255]),new Uint16Array([256,512]),new BigInt64Array([-1n,2n]),new ArrayBuffer(0),new Uint8Array([1,2,3]).buffer,new DataView(new ArrayBuffer(0)),new DataView(new Uint8Array([3,4]).buffer)])out.push(u.inspect(value));
+const ab=new ArrayBuffer(2);structuredClone(ab,{transfer:[ab]});out.push(u.inspect(ab));
+console.log(JSON.stringify(out));
+"#);
+}

@@ -318,6 +318,14 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.completion(result)
     }
 
+    /// Own non-array-index keys without expanding a view's virtual element keys.
+    pub fn own_non_index_keys_rooted(&mut self, root: RootId, enumerable_only: bool) -> Result<Vec<RootId>, RootedError> {
+        let result = self.vm.embedding_non_index_own_keys(root, enumerable_only);
+        let roots = result.map_err(|error| self.error(error))?;
+        self.roots.extend(roots.iter().copied());
+        Ok(roots)
+    }
+
     /// Enumerable own string keys, optionally including Symbols, through internal methods.
     pub fn enumerable_own_keys_rooted(
         &mut self,
@@ -682,6 +690,11 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.vm
             .root_value(root)
             .and_then(|value| self.vm.embedding_view_bytes(value))
+    }
+
+    /// Snapshot at most `maximum` original bytes of an ArrayBuffer or buffer view.
+    pub fn bytes_prefix_rooted(&self, root: RootId, maximum: usize) -> Option<Vec<u8>> {
+        self.vm.root_value(root).and_then(|value| self.vm.embedding_bytes_prefix(value, maximum))
     }
 
     /// Check callability without coercion or invoking guest code.
