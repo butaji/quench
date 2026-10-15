@@ -1077,7 +1077,7 @@ pub(super) struct AsyncResumeJob {
 pub(super) struct DynamicImportJob {
     pub(super) cache_key: String,
     pub(super) module: ModuleSource,
-    pub(super) promises: Vec<Value>,
+    pub(super) promise: Value,
 }
 
 #[derive(Default)]
@@ -2548,24 +2548,12 @@ impl<H: Host> Vm<H> {
         module: ModuleSource,
         promise: Value,
     ) {
-        if let Some(job) = self
-            .realm
+        // Each import owns an instantiation attempt. Successful evaluation is
+        // shared by the module record; link failures must produce fresh errors.
+        self.realm
             .promise
             .dynamic_import_jobs
-            .iter_mut()
-            .find(|job| job.cache_key == cache_key)
-        {
-            job.promises.push(promise);
-        } else {
-            self.realm
-                .promise
-                .dynamic_import_jobs
-                .push(DynamicImportJob {
-                    cache_key,
-                    module,
-                    promises: vec![promise],
-                });
-        }
+            .push(DynamicImportJob { cache_key, module, promise });
     }
 
     pub(super) fn advance_dynamic_import_jobs(
@@ -2579,7 +2567,7 @@ impl<H: Host> Vm<H> {
         // is settled or transferred back to a queue/module record.
         let waiters: Vec<_> = jobs
             .iter()
-            .flat_map(|job| job.promises.iter().copied())
+            .map(|job| job.promise)
             .collect();
         self.with_call_roots(waiters, |vm| {
             for job in jobs {
@@ -2589,7 +2577,7 @@ impl<H: Host> Vm<H> {
                     .modules
                     .get(&job.cache_key)
                     .map(|record| record.outcome)
-                    && vm.settle_dynamic_import_waiters(p, &job.promises, outcome)?
+                    && vm.settle_dynamic_import_waiter(p, job.promise, outcome)?
                 {
                     continue;
                 }
@@ -2602,9 +2590,7 @@ impl<H: Host> Vm<H> {
                     let reason = error
                         .thrown_value()
                         .unwrap_or_else(|| vm.heap.alloc(Cell::Error(error.into_message())));
-                    for promise in job.promises {
-                        vm.promise_settle(p, promise, PromiseState::Rejected, reason)?;
-                    }
+                    vm.promise_settle(p, job.promise, PromiseState::Rejected, reason)?;
                     continue;
                 }
                 let outcome = vm
@@ -2614,22 +2600,20 @@ impl<H: Host> Vm<H> {
                     .get(&job.cache_key)
                     .map(|record| record.outcome)
                     .unwrap_or(ModuleOutcome::Pending(ModulePhase::Evaluating));
-                if !vm.settle_dynamic_import_waiters(p, &job.promises, outcome)?
+                if !vm.settle_dynamic_import_waiter(p, job.promise, outcome)?
                     && let Some(record) = vm.realm.promise.modules.get_mut(&job.cache_key)
                 {
-                    for promise in job.promises {
-                        record.add_waiter(promise);
-                    }
+                    record.add_waiter(job.promise);
                 }
             }
             Ok(())
         })
     }
 
-    fn settle_dynamic_import_waiters(
+    fn settle_dynamic_import_waiter(
         &mut self,
         p: &ResidualProgram,
-        promises: &[Value],
+        promise: Value,
         outcome: ModuleOutcome,
     ) -> Result<bool, JsError> {
         let (state, value) = match outcome {
@@ -2637,9 +2621,7 @@ impl<H: Host> Vm<H> {
             ModuleOutcome::Errored(reason) => (PromiseState::Rejected, reason),
             ModuleOutcome::Pending(_) | ModuleOutcome::Deferred(_) => return Ok(false),
         };
-        for promise in promises {
-            self.promise_settle(p, *promise, state, value)?;
-        }
+        self.promise_settle(p, promise, state, value)?;
         Ok(true)
     }
 
@@ -2729,6 +2711,18 @@ impl<H: Host> Vm<H> {
             }
         }
         Ok(())
+    }
+
+    fn missing_module_export(
+        &mut self,
+        p: &ResidualProgram,
+        source: &str,
+        name: &str,
+    ) -> Result<Value, JsError> {
+        self.syntax_error_result(
+            p,
+            &format!("The requested module '{source}' does not provide an export named '{name}'"),
+        )
     }
 
     fn resolve_module_import_values(
@@ -2826,7 +2820,7 @@ impl<H: Host> Vm<H> {
                     && Self::static_module_declares_export(&module, name) == Some(false)
                 {
                     return self
-                        .syntax_error_result(p, "module import binding could not be resolved")
+                        .missing_module_export(p, &import.source, name)
                         .map(|_| Vec::new());
                 }
                 return Err(self.type_error(p, "deferred module namespace is unavailable".into()));
@@ -2849,7 +2843,7 @@ impl<H: Host> Vm<H> {
                     if module_type == "json" && name != "default" =>
                 {
                     return self
-                        .syntax_error_result(p, "JSON modules expose only a default binding")
+                        .missing_module_export(p, &import.source, name)
                         .map(|_| Vec::new());
                 }
                 (_, crate::bytecode::ModuleImportName::Named(name)) => {
@@ -2860,7 +2854,7 @@ impl<H: Host> Vm<H> {
                     let fallback = self.own_property(namespace, atom);
                     if is_namespace && named_binding.is_none() && fallback.is_none() {
                         return self
-                            .syntax_error_result(p, "module import binding could not be resolved")
+                            .missing_module_export(p, &import.source, name)
                             .map(|_| Vec::new());
                     }
                     match (named_binding, fallback) {
@@ -3512,7 +3506,7 @@ impl<H: Host> Vm<H> {
                     record
                 });
             if let Err(error) = self.instantiate_static_module_graph(p, &module, None) {
-                return self.settle_static_module(p, &cache_key, Err(error));
+                return self.reject_module_instantiation(p, &cache_key, error);
             }
         }
         let resuming_waiting = matches!(
@@ -3683,19 +3677,57 @@ impl<H: Host> Vm<H> {
         let Some(waiters) = waiters else {
             return Err(self.type_error(p, "module record was not evaluating".into()));
         };
-        let rejection_is_observed = state != PromiseState::Rejected
-            || !waiters.is_empty()
-            || self.waiting_static_parent(p, cache_key)?;
-        for waiter in waiters {
-            self.promise_settle(p, waiter, state, value)?;
+        self.settle_module_waiters(p, cache_key, waiters, state, value)
+    }
+
+    fn reject_module_instantiation(
+        &mut self,
+        p: &ResidualProgram,
+        cache_key: &str,
+        error: JsError,
+    ) -> Result<(), JsError> {
+        let waiters = self
+            .realm
+            .promise
+            .modules
+            .get_mut(cache_key)
+            .and_then(ModuleRecord::retry_instantiation)
+            .ok_or_else(|| self.type_error(p, "module was not being instantiated".into()))?;
+        // Queued imports own their promises outside the module record. Return
+        // the transient error to that job instead of leaving it waiting on an
+        // unlinked record that deliberately does not cache the error.
+        if waiters.is_empty() {
+            return Err(error);
         }
-        if state == PromiseState::Rejected && !rejection_is_observed {
-            return Err(JsError::thrown(
-                value,
-                "static module evaluation failed".into(),
-            ));
-        }
-        Ok(())
+        let reason = error
+            .thrown_value()
+            .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
+        self.settle_module_waiters(p, cache_key, waiters, PromiseState::Rejected, reason)
+    }
+
+    fn settle_module_waiters(
+        &mut self,
+        p: &ResidualProgram,
+        cache_key: &str,
+        waiters: Vec<Value>,
+        state: PromiseState,
+        value: Value,
+    ) -> Result<(), JsError> {
+        self.with_call_roots(waiters.iter().copied().chain([value]), |vm| {
+            let rejection_is_observed = state != PromiseState::Rejected
+                || !waiters.is_empty()
+                || vm.waiting_static_parent(p, cache_key)?;
+            for &waiter in &waiters {
+                vm.promise_settle(p, waiter, state, value)?;
+            }
+            if state == PromiseState::Rejected && !rejection_is_observed {
+                return Err(JsError::thrown(
+                    value,
+                    "static module evaluation failed".into(),
+                ));
+            }
+            Ok(())
+        })
     }
 
     fn waiting_static_parent(
