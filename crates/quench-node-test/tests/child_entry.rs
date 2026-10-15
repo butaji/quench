@@ -5934,6 +5934,31 @@ console.log(tls.createSecureContext().context.getMinProto(),creations);console.l
 }
 
 #[test]
+fn native_internal_key_filters_and_raw_engine_binding_match_node() {
+    const SOURCE: &str = r#"
+const {internalBinding}=require('internal/test/binding');const u=internalBinding('util'),c=internalBinding('crypto');
+console.log(JSON.stringify([c.setEngine.name,c.setEngine.length,u.getOwnNonIndexProperties.name,u.getOwnNonIndexProperties.length,u===internalBinding('util'),Object.entries(u.constants)]));
+for(const flags of [0,1,65535])console.log(JSON.stringify(['dynamic',flags,c.setEngine('dynamic',flags)]));
+const a=[1,2];a.extra=3;Object.defineProperty(a,'hidden',{value:4});a[Symbol('x')]=5;a['01']=6;a['4294967295']=7;
+const o={data:1};Object.defineProperties(o,{get:{get(){throw Error('getter invoked')},enumerable:true,configurable:true},set:{set(v){},enumerable:true,configurable:true},both:{get(){throw Error('getter invoked')},set(v){},enumerable:true,configurable:true},fixed:{value:2,enumerable:true}});
+for(const object of [a,o,new Uint8Array(3),Object.create(null)])for(const flags of [0,1,2,3,4,8,16,17,31])console.log(JSON.stringify([flags,u.getOwnNonIndexProperties(object,flags).map(k=>typeof k==='symbol'?String(k):k)]));
+for(const flags of [0,1,2,3,4,8,16,17,31]){const trace=[];const p=new Proxy({a:1},{ownKeys(){trace.push('keys');return ['a','ghost','0']},getOwnPropertyDescriptor(t,k){trace.push('desc:'+k);return Object.getOwnPropertyDescriptor(t,k)}});console.log(JSON.stringify([flags,u.getOwnNonIndexProperties(p,flags),trace]));}
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["--no-warnings", "--expose-internals", "-e", SOURCE]);
+        if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1"); }
+        quench_node_test::case_process::observe_command(command,Duration::from_secs(10)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(observation.exit_code,Some(0),"{}",String::from_utf8_lossy(&observation.stderr));
+        assert!(observation.stderr.is_empty(),"{}",String::from_utf8_lossy(&observation.stderr));
+    }
+    assert_eq!(String::from_utf8_lossy(&observations[0].stdout),String::from_utf8_lossy(&observations[1].stdout));
+}
+
+#[test]
 fn native_tls_bundled_roots_preserve_stable_trust_material_cache_metadata_and_intrinsic_hooks() {
     compare_node_stream_source(r#"
 const tls=require('tls'),crypto=require('crypto');
