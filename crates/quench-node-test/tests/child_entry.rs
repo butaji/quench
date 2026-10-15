@@ -7111,3 +7111,124 @@ compare_node_stream_source(r#"
 const B=Buffer,out=[];const f=B.compare,d=Object.getOwnPropertyDescriptor(B,'compare');out.push([f.name,f.length,Object.hasOwn(f,'prototype'),d.writable,d.enumerable,d.configurable]);function record(a,b){try{out.push(['ok',f(a,b)])}catch(e){out.push([e.name,e.code,e.message])}};const fake=Object.create(B.prototype),u8=new Uint8Array([1,2]);for(const a of [undefined,null,0,'x',{},fake,new Uint8ClampedArray([1]),new Uint16Array([1]),new DataView(new ArrayBuffer(1)),B.from([]),B.from([1]),u8])for(const b of [undefined,fake,new Uint8Array([]),new Uint8Array([1,3]),u8])record(a,b);const ab=new ArrayBuffer(2),view=new Uint8Array(ab);structuredClone(ab,{transfer:[ab]});record(view,view);record(view,B.alloc(0));for(const left of [{},fake,new Uint8Array([1,2]),new Uint16Array([513]),B.alloc(0)])for(const right of [undefined,fake,new Uint8Array([]),new Uint8Array([1,2])]){try{out.push(['equals','ok',B.prototype.equals.call(left,right)])}catch(e){out.push(['equals',e.name,e.code,e.message])}};const eq=B.prototype.equals;out.push(['equals-shape',eq.name,eq.length,Object.hasOwn(eq,'prototype')]);console.log(JSON.stringify(out));
 "#);
 }
+
+#[test]
+fn node_modules_bounds_package_scope_without_hiding_local_package_types() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("package.json"),
+        r#"{"type":"module"}"#,
+    )
+    .unwrap();
+    for (package_type, expected) in [
+        (None, "function\n"),
+        (Some("module"), "undefined\n"),
+        (Some("commonjs"), "function\n"),
+    ] {
+        let package = directory.path().join("node_modules/fixture");
+        std::fs::create_dir_all(&package).unwrap();
+        let manifest = package.join("package.json");
+        if let Some(package_type) = package_type {
+            std::fs::write(&manifest, format!(r#"{{"type":"{package_type}"}}"#)).unwrap();
+        }
+        std::fs::write(package.join("entry.js"), "console.log(typeof require)").unwrap();
+        for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
+            let mut command = Command::new(executable);
+            command
+                .current_dir(directory.path())
+                .arg("node_modules/fixture/entry.js");
+            if executable != "node" {
+                command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            }
+            let result =
+                quench_node_test::case_process::observe_command(command, Duration::from_secs(10))
+                    .unwrap();
+            assert_eq!(
+                result.exit_code,
+                Some(0),
+                "{executable}: {:?}",
+                result.stderr
+            );
+            assert_eq!(result.stdout, expected.as_bytes(), "{executable}");
+        }
+        if manifest.exists() {
+            std::fs::remove_file(manifest).unwrap();
+        }
+    }
+}
+
+#[test]
+fn binary_http_response_views_match_the_node_oracle() {
+    let source = r#"
+const http = require('http');
+const chunks = [Buffer.from([0,128,255,13,10]), new Uint8Array([9,1,254,8]).subarray(1,3)];
+const server = http.Server((req,res) => { for (const chunk of chunks) res.write(chunk); res.write('ff','hex'); res.end(Buffer.from([0,255])); });
+server.listen(0,'127.0.0.1',()=>http.get({host:'127.0.0.1',port:server.address().port},response=>{
+  const body=[]; response.on('data',chunk=>body.push(chunk)); response.on('end',()=>{
+    console.log(Buffer.concat(body).toString('hex'), Math.abs(Date.now()-Date.parse(response.headers.date)) < 5000, Object.getPrototypeOf(response.headers)===Object.prototype); server.close();
+  });
+}));
+"#;
+    let mut observations = Vec::new();
+    for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
+        let mut command = Command::new(executable);
+        command.args(["-e", source]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        let result =
+            quench_node_test::case_process::observe_command(command, Duration::from_secs(10))
+                .unwrap();
+        assert_eq!(
+            result.exit_code,
+            Some(0),
+            "{executable}: {:?}",
+            result.stderr
+        );
+        observations.push(result.stdout);
+    }
+    assert_eq!(observations[0], b"0080ff0d0a01feff00ff true true\n");
+    assert_eq!(observations[0], observations[1]);
+}
+
+#[test]
+fn headers_and_host_clone_markers_match_the_node_oracle() {
+    let source = r#"
+const {markAsUncloneable}=require('worker_threads');
+const globals=['File','FormData','Headers','Request','Response'].map(name=>{const d=Object.getOwnPropertyDescriptor(globalThis,name);return [name,d.writable,d.enumerable,d.configurable,typeof globalThis[name]]});
+const h=new Headers([['X-Test',' a '],['x-test','b'],['set-cookie','a=1'],['set-cookie','b=2']]);
+const rows=[globals,[...h],h.get('x-test'),h.has('X-Test'),h.getSetCookie()];
+h.delete('X-Test'); rows.push(h.has('x-test'));
+for (const [name,args] of [['has',[]],['set',['x']],['append',['a b','c']],['append',['x','a\nb']],['get',[Symbol()]]]) {
+  try { h[name](...args); } catch(e) { rows.push([e.name,e.message]); }
+}
+const target=Object.freeze({x:1}); const before=Reflect.ownKeys(target); markAsUncloneable(target); markAsUncloneable(target);
+rows.push(JSON.stringify(before)===JSON.stringify(Reflect.ownKeys(target)));
+try { structuredClone({target}); } catch(e) { rows.push([e instanceof DOMException,e.name,e.code,e.message]); }
+const getterError=new Error('getter'); const input={get x(){throw getterError}};
+try {structuredClone(input)} catch(e) {rows.push(e===getterError)}
+let saved;try{structuredClone(target)}catch(e){saved=e}
+try{structuredClone({get x(){throw saved}})}catch(e){rows.push(e===saved)}
+const array=[1,2];markAsUncloneable(array);rows.push(structuredClone(array));
+console.log(JSON.stringify(rows));
+"#;
+    let mut observations = Vec::new();
+    for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
+        let mut command = Command::new(executable);
+        command.args(["-e", source]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        let result =
+            quench_node_test::case_process::observe_command(command, Duration::from_secs(15))
+                .unwrap();
+        assert_eq!(
+            result.exit_code,
+            Some(0),
+            "{executable}: {:?}",
+            result.stderr
+        );
+        observations.push(result.stdout);
+    }
+    assert_eq!(observations[0], observations[1]);
+}
