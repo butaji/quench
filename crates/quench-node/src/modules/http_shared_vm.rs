@@ -1,6 +1,7 @@
 //! Shared-VM HTTP projection over the shared TCP transport.
 
 mod client;
+pub(crate) mod incoming;
 mod operations;
 mod poll;
 mod protocol;
