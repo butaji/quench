@@ -740,7 +740,6 @@ pub(crate) fn emit(
         context.get_property_rooted(events, event)?
     };
     if undefined(context, listeners) {
-        let target = super::event_constructor_shared_vm::emitter_owner(context, data, target)?;
         let domain = get(context, target, "domain")?;
         let has_domain = !context
             .rooted_value(domain)
