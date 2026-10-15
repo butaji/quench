@@ -11,6 +11,7 @@ pub(crate) struct NodeErrorApi {
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum ErrorClass {
+    Error,
     TypeError,
     RangeError,
 }
@@ -66,6 +67,7 @@ fn coded_error_prototype(
         .expect("initialized error API")
         .brand;
     let base_error = match class {
+        ErrorClass::Error => context.error_rooted("")?,
         ErrorClass::TypeError => context.type_error_rooted("")?,
         ErrorClass::RangeError => context.range_error_rooted("")?,
     };
@@ -163,6 +165,14 @@ pub(super) fn decorate_argument_type(
     error: RootId,
 ) -> Result<(), RootedError> {
     decorate_type_error(context, error, INVALID_ARGUMENT_TYPE)
+}
+
+pub(super) fn decorate_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    error: RootId,
+    code: &'static str,
+) -> Result<(), RootedError> {
+    decorate_coded_error(context, error, code, ErrorClass::Error)
 }
 
 pub(super) fn decorate_type_error(
