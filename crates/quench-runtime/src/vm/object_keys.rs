@@ -1,3 +1,4 @@
+use super::property_key::PropertyKey;
 use super::*;
 
 pub(super) enum EnumerableOwnPropertyKind {
@@ -28,6 +29,31 @@ impl<H: Host> Vm<H> {
         Some(keys)
     }
 
+    /// EnumerableOwnProperties(O, key) for an object whose string keys all live in its shape
+    /// (not a Proxy, array, typed array or module namespace): enumerability is read from the
+    /// shape in OrdinaryOwnPropertyKeys order, without key strings or descriptor objects.
+    /// `None` sends every other object through the generic path.
+    pub(super) fn shape_enumerable_keys(&self, object: Value) -> Option<Vec<Atom>> {
+        if matches!(
+            self.heap.get(object),
+            Some(Cell::Proxy { .. } | Cell::TypedArray { .. })
+        ) || self.heap.array(object).is_some()
+            || self.object_data(object)?.is_module_namespace()
+        {
+            return None;
+        }
+        Some(
+            self.own_named_keys(object)
+                .into_iter()
+                .filter(|atom| {
+                    self.property_attributes(object, PropertyKey::string(*atom))
+                        .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES)
+                        .enumerable
+                })
+                .collect(),
+        )
+    }
+
     pub(super) fn enumerable_own_properties(
         &mut self,
         p: &ResidualProgram,
@@ -35,6 +61,15 @@ impl<H: Host> Vm<H> {
         kind: EnumerableOwnPropertyKind,
     ) -> Result<Value, JsError> {
         let object = self.box_object(object)?;
+        if let EnumerableOwnPropertyKind::Key = kind
+            && let Some(keys) = self.shape_enumerable_keys(object)
+        {
+            let keys = keys
+                .into_iter()
+                .map(|atom| self.heap.alloc(Cell::String(self.atom_value(atom))))
+                .collect();
+            return Ok(self.own_keys_array(keys));
+        }
         let object = self.heap.root(object);
         let mut keys = Vec::new();
         let mut properties = Vec::new();
