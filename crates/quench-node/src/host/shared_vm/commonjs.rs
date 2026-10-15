@@ -78,6 +78,8 @@ pub(crate) fn source_kind(path: &Path) -> Result<quench_runtime::SourceKind, Str
     match path.extension().and_then(|extension| extension.to_str()) {
         Some("mjs") => return Ok(quench_runtime::SourceKind::Module),
         Some("cjs") => return Ok(quench_runtime::SourceKind::Script),
+        Some("json" | "node") => return Ok(quench_runtime::SourceKind::Script),
+        Some(extension) if extension != "js" => return detect_source_kind(path),
         _ => {}
     }
     let path = std::fs::canonicalize(path).map_err(|error| error.to_string())?;
@@ -100,9 +102,10 @@ pub(crate) fn source_kind(path: &Path) -> Result<quench_runtime::SourceKind, Str
         let package_json: serde_json::Value =
             serde_json::from_str(text.strip_prefix('\u{feff}').unwrap_or(&text))
                 .map_err(|_| format!("Invalid package config {}.", package.display()))?;
-        let module = match package_json.get("type") {
-            Some(serde_json::Value::String(kind)) => kind == "module",
-            None => false,
+        let explicit = match package_json.get("type") {
+            Some(serde_json::Value::String(kind)) if kind == "module" => Some(quench_runtime::SourceKind::Module),
+            Some(serde_json::Value::String(kind)) if kind == "commonjs" => Some(quench_runtime::SourceKind::Script),
+            Some(serde_json::Value::String(_)) | None => None,
             Some(_) => {
                 return Err(format!(
                     "Invalid package config {}. \"type\" key must be a string",
@@ -110,18 +113,42 @@ pub(crate) fn source_kind(path: &Path) -> Result<quench_runtime::SourceKind, Str
                 ))
             }
         };
-        return Ok(
-            if (path.extension().is_none()
-                || path.extension().is_some_and(|extension| extension == "js"))
-                && module
-            {
-                quench_runtime::SourceKind::Module
-            } else {
-                quench_runtime::SourceKind::Script
-            },
-        );
+        return match explicit {
+            Some(kind) => Ok(kind),
+            None => detect_source_kind(&path),
+        };
     }
-    Ok(quench_runtime::SourceKind::Script)
+    detect_source_kind(&path)
+}
+
+/// Node first accepts the CommonJS wrapper. Only syntax that cannot live in
+/// that wrapper triggers ESM detection, including top-level await and lexical
+/// declarations of wrapper parameters. OXC owns both grammar and early errors.
+fn detect_source_kind(path: &Path) -> Result<quench_runtime::SourceKind, String> {
+    let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
+    let text = String::from_utf8_lossy(&bytes);
+    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
+    let text = if text.starts_with("#!") {
+        text.find('\n').map_or("", |newline| &text[newline..])
+    } else { text };
+    let wrapper = format!("{WRAPPER_PREFIX}{text}{WRAPPER_SUFFIX}");
+    if valid_source(&wrapper, oxc_span::SourceType::cjs()) {
+        return Ok(quench_runtime::SourceKind::Script);
+    }
+    let allocator = oxc_allocator::Allocator::default();
+    let parsed = oxc_parser::Parser::new(&allocator, text, oxc_span::SourceType::unambiguous()).parse();
+    if parsed.program.source_type.is_module() || valid_source(text, oxc_span::SourceType::mjs()) {
+        Ok(quench_runtime::SourceKind::Module)
+    } else {
+        Ok(quench_runtime::SourceKind::Script)
+    }
+}
+
+fn valid_source(source: &str, source_type: oxc_span::SourceType) -> bool {
+    let allocator = oxc_allocator::Allocator::default();
+    let parsed = oxc_parser::Parser::new(&allocator, source, source_type).parse();
+    parsed.diagnostics.is_empty() && oxc_semantic::SemanticBuilder::new()
+        .with_check_syntax_error(true).build(&parsed.program).diagnostics.is_empty()
 }
 
 pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
