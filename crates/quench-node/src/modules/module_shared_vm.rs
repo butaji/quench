@@ -89,7 +89,38 @@ const BUILTIN_MODULES: &[&str] = &[
 const NODE_ONLY_BUILTINS: &[&str] = &["sea", "sqlite", "test", "test/reporters"];
 
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    let module = context.object_rooted()?;
+    let global = context.global_root()?;
+    let weak_map = get(context, global, "WeakMap")?;
+    let parents = context.construct_rooted(weak_map, weak_map, &[])?;
+    let module = context.host_constructor_with_data(
+        crate::host::shared_vm::operation("moduleConstruct"),
+        parents,
+    )?;
+    name_function(context, module, "Module")?;
+    set(context, module, "Module", module)?;
+    let prototype = get(context, module, "prototype")?;
+    let constructor = context.host_function_with_data(
+        crate::host::shared_vm::operation("moduleConstructorGet"),
+        module,
+    )?;
+    name_function(context, constructor, "get")?;
+    accessor(context, prototype, "constructor", constructor, None)?;
+    let parent_get = context.host_function_with_data(
+        crate::host::shared_vm::operation("moduleParentGet"),
+        parents,
+    )?;
+    let parent_set = context.host_function_with_data(
+        crate::host::shared_vm::operation("moduleParentSet"),
+        parents,
+    )?;
+    name_function(context, parent_get, "deprecated")?;
+    name_function(context, parent_set, "deprecated")?;
+    accessor(context, prototype, "parent", parent_get, Some(parent_set))?;
+    for (name, operation) in [("require", "moduleRequire"), ("_compile", "moduleCompile")] {
+        let method = context.host_constructor(crate::host::shared_vm::operation(operation))?;
+        name_function(context, method, name)?;
+        set(context, prototype, name, method)?;
+    }
     let mut names = BUILTIN_MODULES
         .iter()
         .map(|name| context.string_rooted(name))
@@ -113,12 +144,143 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let paths = get(context, facades, "1")?;
     set(context, module, "createRequire", create_require)?;
     set(context, module, "_nodeModulePaths", paths)?;
-    let resolve_filename = context.host_function(crate::host::shared_vm::operation("_resolveFilename"))?;
+    let resolve_filename =
+        context.host_function(crate::host::shared_vm::operation("_resolveFilename"))?;
     set(context, module, "_resolveFilename", resolve_filename)?;
     let find_package_json =
         context.host_function(crate::host::shared_vm::operation("findPackageJSON"))?;
     set(context, module, "findPackageJSON", find_package_json)?;
     Ok(module)
+}
+
+fn name_function(
+    context: &mut NativeContext<'_, NodeHost>,
+    function: RootId,
+    name: &str,
+) -> Result<(), RootedError> {
+    let key = context.string_rooted("name");
+    let name = context.string_rooted(name);
+    if context.define_data_property_rooted(function, key, name, false, false, true)? {
+        Ok(())
+    } else {
+        Err(RootedError::host("cannot name Module callable"))
+    }
+}
+
+fn accessor(
+    context: &mut NativeContext<'_, NodeHost>,
+    object: RootId,
+    name: &str,
+    getter: RootId,
+    setter: Option<RootId>,
+) -> Result<(), RootedError> {
+    let descriptor = context.null_object_rooted()?;
+    set(context, descriptor, "get", getter)?;
+    if let Some(setter) = setter {
+        set(context, descriptor, "set", setter)?;
+    }
+    let flag = context.boolean(false);
+    set(context, descriptor, "configurable", flag)?;
+    set(context, descriptor, "enumerable", flag)?;
+    let key = context.string_rooted(name);
+    context.define_property_descriptor_rooted(object, key, descriptor)?;
+    Ok(())
+}
+
+pub(crate) fn construct(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let id = args
+        .first()
+        .copied()
+        .filter(|id| !context.rooted_value(*id).is_some_and(|v| v.is_undefined()))
+        .unwrap_or_else(|| context.string_rooted(""));
+    set(context, receiver, "id", id)?;
+    let path = crate::modules::path_shared_vm::host_dirname(context, id)?;
+    set(context, receiver, "path", path)?;
+    let exports = context.object_rooted()?;
+    // Exports is an own data property even when a derived prototype defines a setter.
+    let key = context.string_rooted("exports");
+    context.define_data_property_rooted(receiver, key, exports, true, true, true)?;
+    let parent = args.get(1).copied().unwrap_or_else(|| context.undefined());
+    let parents = context.host_function_data()?;
+    invoke(context, parents, "set", &[receiver, parent])?;
+    if context
+        .rooted_value(parent)
+        .is_some_and(|v| !v.is_null() && !v.is_undefined())
+    {
+        let children = get(context, parent, "children")?;
+        if context.truthy_rooted(children)? {
+            let global = context.global_root()?;
+            let array = get(context, global, "Array")?;
+            let prototype = get(context, array, "prototype")?;
+            let push = get(context, prototype, "push")?;
+            context.call_rooted(push, children, &[receiver])?;
+        }
+    }
+    let filename = context.null();
+    set(context, receiver, "filename", filename)?;
+    let loaded = context.boolean(false);
+    set(context, receiver, "loaded", loaded)?;
+    let children = context.array_rooted(&[])?;
+    set(context, receiver, "children", children)?;
+    Ok(context.undefined())
+}
+
+fn invoke(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    name: &str,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let function = get(context, receiver, name)?;
+    context.call_rooted(function, receiver, args)
+}
+
+pub(crate) fn constructor_get(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    context.host_function_data()
+}
+
+pub(crate) fn parent_get(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let parents = context.host_function_data()?;
+    invoke(context, parents, "get", &[receiver])
+}
+
+pub(crate) fn parent_set(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let parent = args.first().copied().unwrap_or_else(|| context.undefined());
+    let parents = context.host_function_data()?;
+    invoke(context, parents, "set", &[receiver, parent])?;
+    Ok(context.undefined())
+}
+
+pub(crate) fn require(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    crate::host::shared_vm::commonjs::require_for_module(context, receiver, args)
+}
+
+pub(crate) fn compile(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    crate::host::shared_vm::commonjs::compile_public(context, receiver, args)
 }
 
 pub(crate) fn find_package_json(
