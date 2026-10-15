@@ -106,6 +106,17 @@ pub trait Host {
         Err("host does not provide Wasm functions".into())
     }
 
+    /// Decode and validate a WebAssembly binary for the `WebAssembly` namespace, lowering
+    /// it for `mode`. The error text becomes a `WebAssembly.CompileError` message. A host
+    /// without a Wasm frontend cannot compile.
+    fn compile_wasm(
+        &mut self,
+        _bytes: &[u8],
+        _mode: crate::ExecutionMode,
+    ) -> Result<crate::WasmModule, String> {
+        Err("WebAssembly compilation is not available in this host".into())
+    }
+
     /// Optional host-owned globals. The evaluator installs these only when
     /// the host explicitly advertises them; ordinary production hosts remain
     /// free of conformance or embedding-specific names.

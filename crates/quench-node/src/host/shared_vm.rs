@@ -121,6 +121,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "emitterAsyncLink" (2) => crate::modules::emitter_async_resource_shared_vm::link,
         method "emitterAsyncOwner" (1) => crate::modules::emitter_async_resource_shared_vm::owner,
         method "nodeErrorToString" (1) => crate::modules::node_errors_shared_vm::to_string,
+        method "utilInspectBuiltin" (5) => crate::modules::util_inspect_builtin_shared_vm::render,
+        method "utilFormatString" (2) => crate::modules::util_format_string_shared_vm::format,
         method "utilInspectQuote" (1) => crate::modules::util_shared_vm::inspect_quote,
         method "styleText" (3) => crate::modules::util_style_shared_vm::style_text,
         method "utilColorAliasGet" (0) => crate::modules::util_style_shared_vm::alias_get,
@@ -483,6 +485,18 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "zlibCallbackQueue" (5) => crate::modules::zlib_shared_vm::queue_callback,
         method "zlibCallbackRun" (0) => crate::modules::zlib_shared_vm::run_callback,
         method "zlibCrc32" (2) => crate::modules::zlib_shared_vm::crc32,
+        method "bufferLegacyConstruct" (3) => crate::modules::buffer_constructor_shared_vm::construct,
+        method "bufferIsBuffer" (1) => crate::modules::buffer_constructor_shared_vm::is_buffer,
+        method "bufferSpeciesGet" (0) => crate::modules::buffer_constructor_shared_vm::species,
+        method "bufferOf" (0) => crate::modules::buffer_constructor_shared_vm::of,
+        method "bufferInspect" (2) => crate::modules::buffer_inspect_shared_vm::inspect,
+        method "bufferInspectMaxGet" (0) => crate::modules::buffer_inspect_shared_vm::maximum,
+        method "bufferInspectMaxSet" (1) => crate::modules::buffer_inspect_shared_vm::set_maximum,
+        method "bufferFill" (4) => crate::modules::buffer_fill_shared_vm::fill,
+        method "bufferBindingFill" (0) => crate::modules::buffer_fill_shared_vm::binding_fill,
+        method "bufferWrite" (4) => crate::modules::buffer_write_shared_vm::write,
+        method "bufferSwap" (0) => crate::modules::buffer_swap_shared_vm::operation,
+        method "bufferBigInt" (3) => crate::modules::buffer_bigint_shared_vm::operation,
         method "bufferBackingGet" (0) => crate::modules::buffer_shared_vm::backing_get,
         method "bufferSearch" (5) => crate::modules::buffer_search_shared_vm::search,
         method "bufferEncode" (2) => crate::modules::buffer_shared_vm::encode,
@@ -587,6 +601,17 @@ impl quench_runtime::Host for NodeHost {
 
     fn clock_millis(&mut self) -> f64 {
         quench_runtime::Host::clock_millis(&mut SystemHost)
+    }
+
+    fn compile_wasm(
+        &mut self,
+        bytes: &[u8],
+        mode: quench_runtime::ExecutionMode,
+    ) -> Result<quench_runtime::WasmModule, String> {
+        quench_wasm::Engine::new()
+            .compile(bytes)
+            .and_then(|module| module.lower_shared_module_for(mode))
+            .map_err(|error| error.to_string())
     }
 
     fn resolve_dynamic_import(

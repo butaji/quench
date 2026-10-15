@@ -125,6 +125,8 @@ impl<H: Host> Vm<H> {
             object_shapes: vec![],
             descriptors: FxHashMap::default(),
             function_values: FxHashMap::default(),
+            wasm_exported_functions: FxHashMap::default(),
+            wasm_js: Default::default(),
             direct_eval: false,
             direct_eval_var_program: None,
             parameter_eval: false,

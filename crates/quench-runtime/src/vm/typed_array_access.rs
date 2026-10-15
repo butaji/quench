@@ -13,7 +13,7 @@ impl<H: Host> Vm<H> {
         let buffer = self.new_fixed_array_buffer(&program, bytes.len(), false)?;
         let buffer_root = self.heap.root(buffer);
         if let Some(Cell::ArrayBuffer { bytes: backing, .. }) = self.heap.get_mut(buffer) {
-            Rc::make_mut(backing).copy_from_slice(bytes);
+            backing.make_mut().copy_from_slice(bytes);
         } else {
             unreachable!("fixed ArrayBuffer allocation");
         }
@@ -32,6 +32,17 @@ impl<H: Host> Vm<H> {
     }
 
     pub(crate) fn embedding_view_bytes(&self, value: Value) -> Option<Vec<u8>> {
+        self.embedding_view_bytes_prefix(value, usize::MAX)
+    }
+
+    pub(crate) fn embedding_bytes_prefix(&self, value: Value, maximum: usize) -> Option<Vec<u8>> {
+        if let Some(Cell::ArrayBuffer { bytes, detached, .. }) = self.heap.get(value) {
+            return Some(if *detached { Vec::new() } else { bytes[..bytes.len().min(maximum)].to_vec() });
+        }
+        self.embedding_view_bytes_prefix(value, maximum)
+    }
+
+    fn embedding_view_bytes_prefix(&self, value: Value, maximum: usize) -> Option<Vec<u8>> {
         let (buffer, offset, byte_length) = match self.heap.get(value)? {
             Cell::TypedArray {
                 object,
@@ -78,7 +89,7 @@ impl<H: Host> Vm<H> {
         if *detached {
             return Some(Vec::new());
         }
-        let end = offset.checked_add(byte_length)?;
+        let end = offset.checked_add(byte_length.min(maximum))?;
         Some(bytes.get(offset..end)?.to_vec())
     }
 
@@ -99,7 +110,7 @@ impl<H: Host> Vm<H> {
         let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get(buffer) else {
             return Some(Value::UNDEFINED);
         };
-        let bytes = Rc::clone(bytes);
+        let bytes = bytes.clone();
         let start = offset + index * kind.width();
         let Some(bytes) = bytes.get(start..start + kind.width()) else {
             return Some(Value::UNDEFINED);
@@ -338,7 +349,7 @@ impl<H: Host> Vm<H> {
         }
         let encoded = Self::typed_array_element_bytes(kind, value);
         if let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(buffer) {
-            let bytes = Rc::make_mut(bytes);
+            let bytes = bytes.make_mut();
             let start = offset + index * kind.width();
             bytes[start..start + kind.width()].copy_from_slice(&encoded[..kind.width()]);
         }
@@ -425,7 +436,7 @@ impl<H: Host> Vm<H> {
             return false;
         };
         let bytes =
-            &mut Rc::make_mut(bytes)[offset + start * kind.width()..offset + end * kind.width()];
+            &mut bytes.make_mut()[offset + start * kind.width()..offset + end * kind.width()];
         let element = &encoded[..kind.width()];
         if element.iter().all(|byte| *byte == element[0]) {
             bytes.fill(element[0]);
@@ -477,17 +488,17 @@ impl<H: Host> Vm<H> {
                     unreachable!("typed copy backing buffer was validated");
                 };
                 // Set snapshots overlapping source bytes, unlike slice's forward copy.
-                Rc::make_mut(bytes)
+                bytes.make_mut()
                     .copy_within(source_offset..source_offset + byte_length, target_offset);
             } else {
                 let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get(source_buffer) else {
                     unreachable!("typed copy source backing buffer was validated");
                 };
-                let source_bytes = Rc::clone(bytes);
+                let source_bytes = bytes.clone();
                 let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(target_buffer) else {
                     unreachable!("typed copy target backing buffer was validated");
                 };
-                Rc::make_mut(bytes)[target_offset..target_offset + byte_length]
+                bytes.make_mut()[target_offset..target_offset + byte_length]
                     .copy_from_slice(&source_bytes[source_offset..source_offset + byte_length]);
             }
             return Ok(());

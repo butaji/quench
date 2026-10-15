@@ -6681,3 +6681,233 @@ Object.defineProperty(Buffer,Symbol.hasInstance,{configurable:true,value(){throw
 console.log(JSON.stringify(out));
 "#);
 }
+
+#[test]
+fn native_buffer_bigint_methods_preserve_layout_original_hooks_errors_and_aliases() {
+    compare_node_stream_source(r#"
+'use strict';
+const out=[],names=[];
+for(const action of ['read','write'])for(const type of ['BigUInt64','BigInt64'])for(const end of ['LE','BE'])names.push(action+type+end);
+function attempt(fn){try{const value=fn();return ['ok',typeof value==='bigint'?value.toString()+'n':value];}catch(e){return [e.name,e.code||null,e.code?e.message:null];}}
+for(const name of names){
+ const method=Buffer.prototype[name],d=Object.getOwnPropertyDescriptor(Buffer.prototype,name),read=name.startsWith('read');
+ out.push([name,method.name,method.length,d.writable,d.enumerable,d.configurable,Object.hasOwn(method,'prototype'),method===Buffer.prototype[name.replace('UInt','Uint')]]);
+ for(const offset of [undefined,0,1,-1,.5,NaN,Infinity,'0',null,1n,{}]){
+  const b=Buffer.from([128,1,2,3,4,5,6,255,7]);out.push(attempt(()=>read?method.call(b,offset):method.call(b,123456789n,offset)),Array.from(b));
+ }
+ if(!read)for(const value of [0n,1n,-1n,-(1n<<63n),(1n<<63n)-1n,(1n<<64n)-1n,1n<<64n,123,'bad',true,null,undefined]){const b=Buffer.alloc(8);out.push(attempt(()=>method.call(b,value)),Array.from(b));}
+ const log=[],receiver={length:8};for(let i=0;i<8;i++)Object.defineProperty(receiver,i,{get(){log.push(['get',i]);return (i+1)*241;},set(value){log.push(['set',i,value]);}});
+ out.push(attempt(()=>read?method.call(receiver):method.call(receiver,name.includes('UInt')?0xfedcba9876543210n:-0x0123456789abcdefn)),log);
+ const typed=new Uint8Array(8);out.push(attempt(()=>read?method.call(typed):method.call(typed,42n)),Array.from(typed));
+ const base=Buffer.alloc(12),slice=base.subarray(2,10);out.push(attempt(()=>read?method.call(slice):method.call(slice,42n)),Array.from(base));
+ const marker={},short={0:1,get length(){throw marker;}};try{read?method.call(short):method.call(short,1n);out.push(false);}catch(e){out.push(e===marker);}
+ if(!read){const log=[],b=Buffer.alloc(8),value={[Symbol.toPrimitive](hint){log.push(hint);return 42n;}};out.push(attempt(()=>method.call(b,value)),Array.from(b),log);}
+}
+for(const name of names.filter(name=>name.startsWith('write'))){
+ const log=[],buffer=Buffer.alloc(8);let count=0;const value={[Symbol.toPrimitive](hint){log.push([hint,Array.from(buffer)]);return ++count<4?0x0123456789abcdefn:0xfedcba9876543210n;}};out.push(attempt(()=>Buffer.prototype[name].call(buffer,value)),Array.from(buffer),log);
+ const marker={},partial=Buffer.alloc(8);let calls=0;const throwing={[Symbol.toPrimitive](){if(++calls===4)throw marker;return 42n;}};try{Buffer.prototype[name].call(partial,throwing);out.push(false);}catch(error){out.push(error===marker,Array.from(partial));}
+}
+const original=globalThis.BigInt;globalThis.BigInt=()=>{throw Error('public BigInt must not replace internal conversion');};out.push(Buffer.from([1,0,0,0,0,0,0,0]).readBigUInt64LE().toString());globalThis.BigInt=original;
+console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn native_buffer_swaps_preserve_generic_views_thresholds_aliases_and_backing_identity() {
+    compare_node_stream_source(r#"
+'use strict';
+const out=[];
+for(const name of ['swap16','swap32','swap64']){
+ const d=Object.getOwnPropertyDescriptor(Buffer.prototype,name),method=d.value;
+ out.push([name,method.name,method.length,d.writable,d.enumerable,d.configurable,Object.hasOwn(method,'prototype')]);
+ for(const length of [0,1,2,4,8,16,24,32,40,48,64,128])for(const Ctor of [Uint8Array,Int8Array,Uint16Array,Uint32Array,BigUint64Array]){
+  const view=new Ctor(length);for(let i=0;i<length;i++)view[i]=Ctor===BigUint64Array?BigInt(i+1):(i+1)*257+3;
+  try{out.push([Ctor.name,length,method.call(view)===view,Array.from(new Uint8Array(view.buffer))]);}catch(e){out.push([Ctor.name,length,e.name,e.code||null,e.code?e.message:null]);}
+ }
+ const b=Buffer.from([1,2,3,4,5,6,7,8,9,10]),slice=b.subarray(1,9);try{out.push(method.call(slice)===slice,Array.from(b));}catch(e){out.push(e.name,e.code);}
+ for(const value of [{length:8},new DataView(new ArrayBuffer(8)),null,undefined,new Proxy(new Uint8Array(8),{})]){try{method.call(value);out.push('accepted');}catch(e){out.push([e.name,e.code||null]);}}
+ const shadow=new Uint8Array(64);for(let i=0;i<shadow.length;i++)shadow[i]=i;Object.defineProperties(shadow,{length:{get(){throw Error('shadow length');}},buffer:{get(){throw Error('shadow buffer');}},byteOffset:{get(){throw Error('shadow offset');}},byteLength:{get(){throw Error('shadow byteLength');}}});try{out.push(method.call(shadow)===shadow,Array.from(shadow));}catch(e){out.push(e.message);}
+ const transferred=new Uint8Array(8);structuredClone(transferred.buffer,{transfer:[transferred.buffer]});try{out.push(method.call(transferred)===transferred);}catch(e){out.push([e.name,e.code||null]);}
+}
+const locale=Object.getOwnPropertyDescriptor(Buffer.prototype,'toLocaleString');out.push(locale.value===Buffer.prototype.toString,locale.enumerable,locale.writable,locale.configurable,Buffer.from('aβ').toLocaleString());
+console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn stream_once_readable_pipe_preserves_original_resume_calls_and_completion() {
+    compare_node_stream_source(r#"
+'use strict';
+const {Readable,Writable}=require('stream'),out=[];
+for(const placement of ['before','after']){
+ const result={placement,readable:0,finish:0,data:'',resumes:0};out.push(result);
+ const source=new Readable({read(){}}),destination=new Writable({write(chunk,encoding,callback){result.data+=chunk;callback();}});
+ const resume=source.resume;source.resume=function(...args){result.resumes++;return resume.apply(this,args);};
+ if(placement==='before')source.once('readable',()=>result.readable++);
+ source.pipe(destination);for(const chunk of ['foo','bar','baz',null])source.push(chunk);
+ if(placement==='after')source.once('readable',()=>result.readable++);
+ destination.on('finish',()=>result.finish++);
+}
+process.on('exit',()=>console.log(JSON.stringify(out)));
+"#);
+}
+
+#[test]
+fn native_buffer_constructor_preserves_calls_species_original_methods_and_warning_identity() {
+    compare_node_stream_source(r#"
+'use strict';
+const {Buffer:B}=require('buffer'),out=[],warnings=[];
+const originalWarning=process.emitWarning;process.emitWarning=function(...args){warnings.push([this===process,args]);};
+const p=Object.getOwnPropertyDescriptor(B,'prototype'),s=Object.getOwnPropertyDescriptor(B,Symbol.species);
+out.push([B.name,B.length,p.writable,p.enumerable,p.configurable,Object.getPrototypeOf(B)===Uint8Array,B.prototype.constructor===B,B[Symbol.species]===B,B[Symbol.species].name,B[Symbol.species].prototype===B.prototype,s.enumerable,s.configurable,s.get.name,s.get.length,Object.hasOwn(s.get,'prototype')]);
+for(const args of [[3],['abc'],[[1,2,255]],[new ArrayBuffer(5),1,3]])for(const construct of [false,true]){
+ const value=construct?new B(...args):B(...args);out.push([construct,Array.from(value),value instanceof B,value instanceof Uint8Array,value.constructor===B,B.isBuffer(value)]);
+}
+try{new B(42,'utf8');}catch(e){out.push([e.name,e.code,e.message]);}
+class Derived extends B{}const derived=new Derived([4,5]);out.push([derived instanceof Derived,derived instanceof B,derived.constructor===B,Array.from(derived)]);
+const marker={},from=B.from,alloc=B.alloc;
+B.from=function(...args){out.push(['from',this===B,args.length,args[0],args[1],args[2]]);return marker;};out.push(B('input','utf8',2)===marker,new B('input')===marker);B.from=from;
+B.alloc=function(...args){out.push(['alloc',this===B,args]);return marker;};out.push(B(3)===marker,new B(3)===marker);B.alloc=alloc;
+const real=B.from([1]);Object.defineProperty(B,Symbol.hasInstance,{configurable:true,value(value){out.push(['membership',this===B,value===real]);return true;}});out.push(B.isBuffer(real));delete B[Symbol.hasInstance];
+const identity=B.isBuffer;out.push([identity.name,identity.length,Object.hasOwn(identity,'prototype')]);
+process.emitWarning=originalWarning;out.push(warnings);console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn native_buffer_constructor_deprecation_follows_original_vm_filenames_and_process_flags() {
+    compare_node_stream_source(r#"
+'use strict';
+const {spawnSync}=require('child_process'),out=[];
+for(const filename of ['/a/node_modules/x.js','/a/node_modules/pkg/node_modules/x.js','/a.js','/node_modules/b.js','c:\\a\\node_modules\\b.js','c:\\a.js','node_modules']){
+ for(const pending of [false,true]){
+  const source=`const vm=require('vm'),warnings=[];process.emitWarning=function(message,type,code){warnings.push([this===process,message,type,code]);};vm.runInNewContext('Buffer(2);new Buffer(2)',{Buffer},{filename:${JSON.stringify(filename)}});console.log(JSON.stringify(warnings));`;
+  const result=spawnSync(process.execPath,[...(pending?['--pending-deprecation']:[]),'-e',source],{encoding:'utf8'});
+  out.push([filename,pending,result.status,result.signal,result.stdout,result.stderr]);
+ }
+}
+console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn native_buffer_of_avoids_legacy_warnings_and_preserves_original_coercions() {
+    compare_node_stream_source(r#"
+ 'use strict';
+const B=require('buffer').Buffer,out=[],warnings=[];
+process.emitWarning=(...args)=>warnings.push(args);
+const f=B.of,d=Object.getOwnPropertyDescriptor(B,'of');
+out.push([f.name,f.length,Object.hasOwn(f,'prototype'),d.writable,d.enumerable,d.configurable]);
+for(const args of [[],[0,1],[-1,256,257,1.9,NaN,Infinity,undefined,null,'3']]){
+ const v=f.call(function(){throw new Error('wrong receiver')},...args);out.push([Array.from(v),v.constructor===B,B.isBuffer(v)]);
+}
+const hooks=[];const a={valueOf(){hooks.push('a');return 260}},b={valueOf(){hooks.push('b');return -2}};
+out.push(Array.from(f(a,b)),hooks);
+for(const v of [1n,Symbol('x')])try{f(v)}catch(e){out.push([e.name,e.message])}
+try{new f(1)}catch(e){out.push([e.name])}
+out.push(warnings);console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn native_buffer_write_preserves_overloads_encodings_bounds_backing_and_hooks() {
+ compare_node_stream_source(r#"
+'use strict';
+const B=require('buffer').Buffer,out=[];
+const fn=B.prototype.write,descriptor=Object.getOwnPropertyDescriptor(B.prototype,'write');
+out.push([fn.name,fn.length,Object.hasOwn(fn,'prototype'),descriptor.writable,descriptor.enumerable,descriptor.configurable]);
+const values=[undefined,null,0,NaN,-1,1.1,Infinity,'abc',1n,Symbol('x'),{}];
+const cases=[['abc'],['abc',2,8],['abc',2,9],['abc','utf8'],['abc','utf8',2],['abc',undefined,Symbol('ignored'),'bogus']];
+for(const value of values){cases.push(['abc',value],['abc',0,value],['abc',0,2,value],[value]);}
+for(const args of cases){const b=B.alloc(8,0x7f);try{out.push(['call',cases.indexOf(args),fn.apply(b,args),Array.from(b)])}catch(e){out.push(['call',cases.indexOf(args),e.name,e.code,e.message,Array.from(b)])}}
+for(const encoding of ['utf8','utf16le','hex','base64','latin1','ascii','UTF-8'])for(const value of ['abc','aé😀z','fffff','YWJjZA=='])for(let length=0;length<=8;length++){
+ const b=B.alloc(8,0x7f);try{out.push([encoding,value,length,fn.call(b,value,2,length,encoding),Array.from(b)])}catch(e){out.push([encoding,value,length,e.name,e.code,e.message])}
+}
+for(const receiver of [new Uint8Array(8),new Uint16Array(4),new BigUint64Array(1),new DataView(new ArrayBuffer(8)),{},null])try{out.push(['receiver',fn.call(receiver,'ab',0,2),ArrayBuffer.isView(receiver)?Array.from(new Uint8Array(receiver.buffer)):null])}catch(e){out.push(['receiver',e.name,e.code,e.message])}
+const hooks=[];const b=B.alloc(8);Object.defineProperty(b,'length',{get(){throw new Error('shadow length')}});Object.defineProperty(b,'buffer',{get(){throw new Error('shadow buffer')}});Object.defineProperty(b,'byteOffset',{get(){throw new Error('shadow offset')}});
+const encoding={[Symbol.toPrimitive](hint){hooks.push(hint);return 'utf8'}};try{out.push(['hooks',fn.call(b,'abc',1,5,encoding),hooks,Array.from(b)])}catch(e){out.push(['hooks',e.name,e.message,hooks])}
+
+for(const enc of ['utf8','ascii','latin1','utf16le','hex','base64']){
+ const value=enc==='hex'?'6162':enc==='base64'?'YWI=':'ab';
+ const b=B.alloc(8),events=[];Object.defineProperty(b,'byteLength',{get(){events.push('byteLength');return {valueOf(){events.push('number');return 8}}}});
+ try{out.push(['byte-length-hooks',enc,fn.call(b,value,1,4,enc),events,Array.from(b)])}catch(e){out.push(['byte-length-hooks',enc,e.name,e.code,e.message,events])}
+}
+{const b=B.alloc(2);structuredClone(b.buffer,{transfer:[b.buffer]});try{out.push(['detached',fn.call(b,'abc')])}catch(e){out.push(['detached',e.name,e.code,e.message])}}
+
+for(const mode of ['primitive','string','inspect']){
+ const events=[];const encoding=mode==='primitive'?{[Symbol.toPrimitive](hint){events.push(hint);return 'unknown'}}:mode==='string'?{valueOf(){events.push('valueOf');return 'unknown'},toString(){events.push('toString');return 'display'}}:{valueOf(){events.push('valueOf');return 'unknown'},[Symbol.for('nodejs.util.inspect.custom')](){events.push('inspect');return 'custom'}};
+ try{out.push(['unknown-hooks',mode,fn.call(B.alloc(8),'x',0,4,encoding),events])}catch(e){out.push(['unknown-hooks',mode,e.name,e.code,e.message,events])}
+}
+console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn native_util_string_format_preserves_primitives_builtin_objects_and_original_hooks() {
+compare_node_stream_source(r#"
+'use strict';
+const u=require('util'),out=[],hooks=[];
+class Custom{toString(){hooks.push('custom');return 'custom-string'}}
+globalThis.Custom=Custom;
+const values=[undefined,null,true,false,0,-0,NaN,Infinity,1n,Symbol('x'),'str',{},[],[1,[2]],new Date(0),/abc/,new Number(3),new String('abc'),new Custom(),{[Symbol.toPrimitive](hint){hooks.push(hint);return 'primitive'}},{[Symbol.for('nodejs.util.inspect.custom')](){hooks.push('inspect');return 'inspected'}}];
+for(const value of values)try{out.push(u.format('%s',value))}catch(e){out.push([e.name,e.message])}
+for(const value of [new Date(0),new Date(NaN),new Number(3),new String('abc'),new Boolean(false),Object(2n),Object(Symbol('boxed'))]){
+ value.extra={nested:1};Object.defineProperty(value,'hidden',{value:7});
+ out.push(u.format('%s',value));
+}
+out.push(hooks);console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn native_buffer_fill_preserves_overloads_views_ranges_coercions_and_overlap() {
+compare_node_stream_source(r#"
+'use strict';const B=require('buffer').Buffer,out=[],fn=B.prototype.fill,d=Object.getOwnPropertyDescriptor(B.prototype,'fill');out.push([fn.name,fn.length,Object.hasOwn(fn,'prototype'),d.writable,d.enumerable,d.configurable]);
+const values=[undefined,null,true,false,0,-1,257,NaN,Infinity,1n,Symbol('v'),'', 'a','é','😀','yKJh','\u0222',B.from([1,2]),new Uint8Array([3,4]),new Uint16Array([0x1234,0x5678]),new DataView(new ArrayBuffer(2)),new ArrayBuffer(2),[],{}, {valueOf(){return 7}}];
+for(let i=0;i<values.length;i++)for(const tail of [[],[1,4],[1,4,'utf8'],['hex'],['base64'],[0,0,'bogus'],[9,10]]){const b=B.alloc(8,0x7f);try{out.push([i,tail,fn.call(b,values[i],...tail)===b,Array.from(b)])}catch(e){out.push([i,tail,e.name,e.code,e.message,Array.from(b)])}}
+for(const name of ['offset','end','encoding'])for(const value of [null,'2',NaN,1.1,-1,9,Infinity,1n,{},true]){const b=B.alloc(8,0x7f),args=name==='offset'?['ab',value,4]:name==='end'?['ab',1,value]:['ab',1,4,value];try{out.push([name,typeof value,String(value),fn.apply(b,args)===b,Array.from(b)])}catch(e){out.push([name,typeof value,String(value),e.name,e.code,e.message])}}
+for(const receiver of [new Uint8Array(8),new Uint16Array(4),{},null])try{out.push(['receiver',fn.call(receiver,'ab',1,3)===receiver,Array.from(receiver)])}catch(e){out.push(['receiver',e.name,e.code,e.message])}
+const b=B.from([1,2,3,4,5,6,7,8]);out.push(['overlap',fn.call(b,b.subarray(0,3),1,8)===b,Array.from(b)]);
+
+for(const value of [B.alloc(0),new Uint8Array(0),new DataView(new ArrayBuffer(0)),new DataView(new Uint8Array([3,4]).buffer),new Uint8Array([5,6]).buffer,new String('7')]){const b=B.alloc(8,0x7f);try{out.push(['additional-value',Object.prototype.toString.call(value),fn.call(b,value)===b,Array.from(b)])}catch(e){out.push(['additional-value',Object.prototype.toString.call(value),e.name,e.code,e.message,Array.from(b)])}}
+for(const length of [2,4,9]){const events=[],encoding={length,toString(){events.push('string');return 'utf8'}};const b=B.alloc(8);try{out.push(['encoding-hooks',length,fn.call(b,'ab',1,4,encoding)===b,events,Array.from(b)])}catch(e){out.push(['encoding-hooks',length,e.name,e.code,e.message,events])}}
+console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn native_buffer_binding_fill_preserves_statuses_indices_and_shared_byte_policy() {
+compare_node_stream_source(r#"
+'use strict';
+const {spawnSync}=require('child_process');
+const source=`process.emitWarning=()=>{};const internal=require('internal/test/binding').internalBinding,binding=internal('buffer'),f=binding.fill,out=[];out.push(binding===internal('buffer'));out.push([f.name,f.length,Object.hasOwn(f,'prototype')]);for(const args of [[1,-1,0,1],[1,0,-2,1],[1,0,3,1],['ab',0,4,'utf8'],['x',0,4,'hex'],[Buffer.alloc(0),0,4,'utf8'],[true,1,4,'utf8'],[new Uint8Array([2,3]),1,7,'utf8']]){const b=Buffer.alloc(8,0x7f);try{const value=f(b,...args);out.push([value===undefined?'undefined':value,Array.from(b)])}catch(e){out.push([e.name,e.code,e.message,Array.from(b)])}}console.log(JSON.stringify(out));`;
+const result=spawnSync(process.execPath,['--expose-internals','-e',source],{encoding:'utf8'});console.log(JSON.stringify([result.status,result.signal,result.stdout,result.stderr]));
+"#);
+}
+
+#[test]
+fn native_buffer_inspection_preserves_aliases_limits_properties_and_constructor_errors() {
+compare_node_stream_source(r#"
+'use strict';const mod=require('buffer'),B=mod.Buffer,u=require('util'),out=[],custom=Symbol.for('nodejs.util.inspect.custom');
+for(const key of ['inspect',custom]){const d=Object.getOwnPropertyDescriptor(B.prototype,key);out.push([String(key),d.value.name,d.value.length,Object.hasOwn(d.value,'prototype'),d.writable,d.enumerable,d.configurable])}
+{const d=Object.getOwnPropertyDescriptor(mod,'INSPECT_MAX_BYTES');out.push([d.get.name,d.get.length,d.set.name,d.set.length,d.enumerable,d.configurable,B.prototype.inspect===B.prototype[custom]])}
+for(const max of [50,2,Infinity,0,2.5,-0]){mod.INSPECT_MAX_BYTES=max;for(const length of [0,2,4,51]){const b=B.alloc(length,'x');out.push([String(max),length,u.inspect(b),b.inspect()]);}}
+mod.INSPECT_MAX_BYTES=50;
+for(const value of [NaN,-1,'bad',1n,null,{}])try{mod.INSPECT_MAX_BYTES=value;out.push(['set','accepted'])}catch(e){out.push(['set',e.name,e.code,e.message])}
+for(const b of [B.alloc(0),B.from([1,2])]){b.extra=new Uint8Array(0);b.inspect=undefined;out.push(['props',u.inspect(b)]);}
+const b=B.from([1,2]);Object.defineProperty(b,'constructor',{get(){throw new Error('ignored')}});out.push(['constructor',u.inspect(b)]);
+
+for(const length of [NaN,undefined,-1,-0.5,2.5,100,Infinity])for(const size of [0,4]){const b=B.alloc(size,1),events=[];Object.defineProperty(b,'length',{get(){events.push('length');return length}});try{out.push(['length-hooks',String(length),size,b.inspect(),events])}catch(e){out.push(['length-hooks',String(length),size,e.name,e.code,e.message,events])}}
+console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn native_binary_inspection_preserves_view_layouts_backing_and_detached_state() {
+compare_node_stream_source(r#"
+'use strict';const u=require('util'),out=[];
+for(const value of [new Uint8Array(0),new Uint8Array([1,2,255]),new Uint16Array([256,512]),new BigInt64Array([-1n,2n]),new ArrayBuffer(0),new Uint8Array([1,2,3]).buffer,new DataView(new ArrayBuffer(0)),new DataView(new Uint8Array([3,4]).buffer)])out.push(u.inspect(value));
+const ab=new ArrayBuffer(2);structuredClone(ab,{transfer:[ab]});out.push(u.inspect(ab));
+console.log(JSON.stringify(out));
+"#);
+}

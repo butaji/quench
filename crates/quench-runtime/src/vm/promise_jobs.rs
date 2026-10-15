@@ -529,6 +529,10 @@ impl<H: Host> Vm<H> {
         state: PromiseState,
         value: Value,
     ) -> Result<(), JsError> {
+        // A reaction without a result capability (an `await`) settles nothing.
+        if next.is_undefined() {
+            return Ok(());
+        }
         let capability = self.realm.promise.reaction_capabilities.remove(&next);
         if let Some((resolve, reject)) = capability {
             let settler = if state == PromiseState::Fulfilled {

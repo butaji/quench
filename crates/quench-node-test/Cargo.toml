@@ -15,4 +15,5 @@ wait-timeout = "0.2.1"
 quench-node = { path = "../quench-node" }
 
 [dev-dependencies]
+quench-stack = { path = "../quench-stack" }
 openssl = "0.10"
