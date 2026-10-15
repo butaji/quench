@@ -81,6 +81,7 @@ mod environment;
 mod equality;
 mod error;
 mod eval;
+mod fdlibm_math;
 mod field_cache;
 mod finalization;
 mod function;
