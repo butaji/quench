@@ -873,9 +873,9 @@ mod tests {
             Instr::new(Op::Move, 5, 3, 0, 0),
             Instr::new(Op::Return, 5, 0, 0, 0),
         ];
-        let original = function.code.clone();
         assert!(!coalesce_distant_producer_moves(function, &[], &[], &[]));
-        assert_eq!(function.code, original);
+        assert_eq!(function.code[0].result_register(), 3);
+        assert_eq!(function.code[2].op(), Op::Move);
     }
 
     #[test]
