@@ -1,0 +1,24 @@
+{
+  "integration_source": "7b68d182c54bceaff367bf9d4f18dcf265231e71",
+  "repair_source": "7b68d182c54bceaff367bf9d4f18dcf265231e71",
+  "runtime_source": "4a952c16cc0ea84ccc8cbd883e4db49fa72a6dc2",
+  "runtime_sources_unchanged": true,
+  "oracle": "Node v26.12.0",
+  "total_node_parity": false,
+  "benchmark_win": false,
+  "binaries": {
+    "baseline": {
+      "path": "work/quench-http-blockers-integrated",
+      "sha256": "700cb9c953c1ebbbefb0931d1cc48421d32f29399b7f9d13f0f59bd1f4b39352"
+    },
+    "integration": {
+      "path": "work/quench-statfs-presentation-repaired",
+      "sha256": "dc216c5551925a0dfa55ce591a4cc7cdcf7c75a89bad582ef75fcd4553e03de3"
+    },
+    "node": {
+      "path": "work/node-v26.12.0-linux-x64/bin/node",
+      "sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943"
+    }
+  },
+  "runtime_source_proof": ""
+}

@@ -912,3 +912,89 @@ fn native_non_index_keys_keep_array_length_order_descriptors_symbols_and_proxy_s
         Runtime::new(NonIndexKeyHost).execute(&program).unwrap();
     }
 }
+
+struct BootstrapRegExpHost;
+impl Host for BootstrapRegExpHost {
+    fn write_line(&mut self, _: &str) {}
+    fn clock_millis(&mut self) -> f64 { 0.0 }
+    fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
+        context.seal_startup_intrinsics(); Ok(())
+    }
+    fn functions(&self) -> &[HostFunction<Self>] {
+        crate::host_functions![global "nativeBootstrapRegExp" (1) => native_bootstrap_regexp]
+    }
+}
+fn native_bootstrap_regexp(context: &mut NativeContext<'_, BootstrapRegExpHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let missing = context.undefined();
+    let fail = context.truthy_rooted(args.first().copied().unwrap_or(missing))?;
+    context.with_startup_intrinsics(|context| {
+        context.evaluate_script_rooted("/(host)(setup)/.exec('beforehostsetupafter');", "host-regexp.js")?;
+        context.collect()?;
+        context.with_startup_intrinsics(|context| {
+            context.evaluate_script_rooted("/(nested)/.exec('nested');", "nested-host-regexp.js")
+        })?;
+        if fail {
+            context.evaluate_script_rooted("throw globalThis.failure;", "failing-host-regexp.js")
+        } else { Ok(context.undefined()) }
+    })
+}
+#[test]
+fn native_builtin_setup_preserves_regexp_statics_across_nested_gc_and_throw() {
+    let source = r#"
+      function state(){return [RegExp.input,RegExp.lastMatch,RegExp.lastParen,RegExp.leftContext,RegExp.rightContext,RegExp.$1,RegExp.$2,RegExp.$9]}
+      /(left)-(right)/.exec('beforeleft-rightafter');
+      RegExp.input='caller assigned input';
+      const before=JSON.stringify(state());
+      nativeBootstrapRegExp(false);
+      if(JSON.stringify(state())!==before)throw Error('builtin setup changed caller match');
+      globalThis.failure={marker:42};let caught;
+      try{nativeBootstrapRegExp(true)}catch(error){caught=error}
+      if(caught!==failure)throw Error('bootstrap throw lost identity');
+      if(JSON.stringify(state())!==before)throw Error('failed builtin setup changed caller match');
+      /(next)/.exec('next');if(RegExp.$1!=='next')throw Error('later guest match was suppressed');
+    "#;
+    for program in [Engine::compile(crate::ExecutionRequest{source,name:"native-bootstrap-regexp.js",kind:crate::SourceKind::Script}).unwrap(),Engine::specialize(source,"native-bootstrap-regexp.js").unwrap()] {
+        Runtime::new(BootstrapRegExpHost).execute(&program).unwrap();
+    }
+}
+
+struct PromiseSlotsHost;
+impl Host for PromiseSlotsHost {
+    fn write_line(&mut self, _: &str) {}
+    fn clock_millis(&mut self) -> f64 { 0.0 }
+    fn functions(&self) -> &[HostFunction<Self>] {
+        crate::host_functions![global "promiseSlots" (1) => promise_slots]
+    }
+}
+fn promise_slots(context: &mut NativeContext<'_, PromiseSlotsHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let snapshot = context.promise_snapshot_rooted(args[0])?;
+    context.collect()?;
+    let result = match snapshot {
+        Some(PromiseSnapshot::Pending) => context.string_rooted("pending"),
+        Some(PromiseSnapshot::Fulfilled(value) | PromiseSnapshot::Rejected(value)) => value,
+        None => context.undefined(),
+    };
+    if snapshot.is_some() { context.mark_promise_handled_rooted(args[0])?; }
+    Ok(result)
+}
+#[test]
+fn native_promise_slots_preserve_identity_without_observation_or_guest_hooks() {
+    let source = r#"
+      let ran=false; const value={answer:42};
+      const pending=new Promise(()=>{}), fulfilled=Promise.resolve(value), rejected=Promise.reject(value);
+      for(const p of [pending,fulfilled,rejected]) {
+        Object.defineProperty(p,'then',{get(){throw Error('then getter')}});
+        Object.defineProperty(p,'constructor',{get(){throw Error('constructor getter')}});
+      }
+      Promise.resolve().then(()=>{ran=true});
+      if(promiseSlots(pending)!=='pending')throw Error('pending');
+      if(promiseSlots(fulfilled)!==value || promiseSlots(rejected)!==value)throw Error('result identity');
+      if(promiseSlots({})!==undefined)throw Error('brand');
+      if(ran)throw Error('inspection drained jobs');
+    "#;
+    for program in [Engine::compile(crate::ExecutionRequest{source,name:"promise-slots.js",kind:crate::SourceKind::Script}).unwrap(),Engine::specialize(source,"promise-slots.js").unwrap()] {
+        let mut runtime=Runtime::new(PromiseSlotsHost);
+        runtime.execute(&program).unwrap();
+        assert!(runtime.take_promise_rejection_unhandled_events().is_empty());
+    }
+}

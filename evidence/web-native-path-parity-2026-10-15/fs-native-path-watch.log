@@ -1,0 +1,31 @@
+    Finished `iteration` profile [optimized] target(s) in 0.11s
+     Running tests/child_entry.rs (work/host-build/iteration/deps/child_entry-0c4d472d0248eb46)
+
+running 24 tests
+test native_fs_watch_ignore_validation_and_filters_match_node ... ok
+test native_fs_watch_inherited_options_and_encoding_getters_match_node ... ok
+test native_fs_watch_keeps_roots_across_gc_and_routes_original_callback_errors ... ok
+test native_fs_watch_matches_node_events_close_references_and_abort_lifecycle ... ok
+test native_fs_watch_missing_path_and_unreferenced_exit_match_node ... ok
+test native_promise_watch_abort_preserves_cause_and_descriptor_like_node ... ok
+test native_promise_watch_abort_resists_stopped_propagation_like_node ... ok
+test native_promise_watch_buffers_burst_events_and_closes_like_node ... ok
+test native_promise_watch_lazy_validation_matches_node ... ok
+test native_promise_watch_overflow_error_releases_handle_like_node ... ok
+test native_recursive_watch_callback_rm_is_async_and_preserves_errors_like_node ... ok
+test native_recursive_watch_class_close_and_per_path_hooks_match_node ... ok
+test native_recursive_watch_discovery_changes_and_ignore_match_node ... ok
+test native_recursive_watch_globstar_root_and_nested_paths_match_node ... ok
+test native_recursive_watch_internal_url_conversion_preserves_brands_and_identity ... ok
+test native_recursive_watch_iterator_and_gc_match_node ... ok
+test native_recursive_watch_promises_forward_iterator_and_abort_cause_like_node ... ok
+test native_recursive_watch_validation_matches_node ... ok
+test native_stat_watch_bigint_timestamps_and_original_callback_error_match_node ... ok
+test native_stat_watch_cache_stop_order_and_reference_counts_match_node ... ok
+test native_stat_watch_initial_request_survives_unreference_like_node ... ok
+test native_stat_watch_missing_creation_stats_match_node ... ok
+test native_stat_watch_stats_constructor_projection_matches_node ... ok
+test native_stat_watch_validation_option_getters_and_stop_removal_match_node ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 243 filtered out; finished in 7.32s
+

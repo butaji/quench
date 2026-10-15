@@ -1,0 +1,12 @@
+==217630== Callgrind, a call-graph generating cache profiler
+==217630== Copyright (C) 2002-2017, and GNU GPL'd, by Josef Weidendorfer et al.
+==217630== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info
+==217630== Command: /usr/bin/true /workspace/quench/work/guard-negative-inputs/probe-0.js
+==217630== Parent PID: 217621
+==217630== 
+==217630== For interactive control, run 'callgrind_control -h'.
+==217630== 
+==217630== Events    : Ir
+==217630== Collected : 287149
+==217630== 
+==217630== I   refs:      287,149
