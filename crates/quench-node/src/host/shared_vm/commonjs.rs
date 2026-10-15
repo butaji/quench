@@ -149,6 +149,9 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     preload_modules(context)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_preloads");
+    if context.host_mut().eval_builtin_globals {
+        crate::modules::eval_globals_shared_vm::install(context)?;
+    }
     if context.is_module()? {
         return Ok(());
     }
@@ -1078,6 +1081,10 @@ fn cached_builtin(
     let retained = context.retain(module)?;
     roots.borrow_mut().module_cache.insert(key, retained);
     Ok(module)
+}
+
+pub(crate) fn module_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    cached_builtin(context, BuiltinModule::Module)
 }
 
 pub(crate) fn stream_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
