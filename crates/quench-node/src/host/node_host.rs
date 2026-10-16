@@ -50,6 +50,14 @@ pub(crate) struct CommonJsEntry {
     pub(crate) goal: EntryGoal,
 }
 
+/// Before node:module is built the loader owns its cache directly. Thereafter
+/// Module._cache is authoritative, including guest replacement of that property.
+#[derive(Clone, Copy)]
+pub(crate) enum CommonJsCache {
+    Bootstrap(quench_runtime::RootId),
+    Module(quench_runtime::RootId),
+}
+
 /// Host-owned state and lifecycle data for the shared VM path.
 pub(crate) struct SharedNodeState {
     pub(crate) async_hooks: crate::modules::async_hooks_state::SharedAsyncHooksState,
@@ -62,7 +70,10 @@ pub(crate) struct SharedNodeState {
     pub(crate) fs_stat_watch: crate::modules::fs_stat_watch_shared_vm::State,
     pub(crate) cwd: crate::modules::process_state::ProcessCwd,
     pub(crate) buffer_prototype: Option<quench_runtime::RootId>,
-    pub(crate) module_cache: std::collections::HashMap<String, quench_runtime::RootId>,
+    pub(crate) module_parent_api: Option<quench_runtime::RootId>,
+    pub(crate) active_esm_requires: std::collections::HashMap<String, quench_runtime::RootId>,
+    pub(crate) builtin_cache: std::collections::HashMap<String, quench_runtime::RootId>,
+    pub(crate) commonjs_cache: Option<CommonJsCache>,
     /// Node's internal primordial snapshot used when loading `lib/internal/*`.
     pub(crate) primordials_module: Option<quench_runtime::RootId>,
     pub(crate) crypto_handle_symbol: Option<quench_runtime::RootId>,
@@ -82,7 +93,6 @@ pub(crate) struct SharedNodeState {
     pub(crate) net_auto_select_family_attempt_timeout: u64,
     pub(crate) net_auto_select_family: bool,
     pub(crate) process_module: Option<quench_runtime::RootId>,
-    pub(crate) assert_module: Option<quench_runtime::RootId>,
     pub(crate) path_module: Option<quench_runtime::RootId>,
     pub(crate) url_constructor: Option<quench_runtime::RootId>,
     pub(crate) url_state: Option<quench_runtime::RootId>,
@@ -163,13 +173,15 @@ pub(crate) enum ChildProcessEvent {
 impl SharedNodeState {
     /// Forget cached guest handles before bootstrapping a replacement VM heap.
     pub(crate) fn reset_cached_vm_roots(&mut self) {
-        self.module_cache.clear();
+        self.builtin_cache.clear();
+        self.commonjs_cache = None;
+        self.module_parent_api = None;
+        self.active_esm_requires.clear();
         self.buffer_prototype = None;
         self.primordials_module = None;
         self.crypto_handle_symbol = None;
         self.event_targets_api = None;
         self.process_module = None;
-        self.assert_module = None;
         self.path_module = None;
         self.url_constructor = None;
         self.url_state = None;
@@ -210,7 +222,10 @@ impl SharedNodeState {
             fs_stat_watch: crate::modules::fs_stat_watch_shared_vm::State::default(),
             cwd,
             buffer_prototype: None,
-            module_cache: std::collections::HashMap::new(),
+            builtin_cache: std::collections::HashMap::new(),
+            commonjs_cache: None,
+            module_parent_api: None,
+            active_esm_requires: std::collections::HashMap::new(),
             primordials_module: None,
             crypto_handle_symbol: None,
             event_targets_api: None,
@@ -229,7 +244,6 @@ impl SharedNodeState {
             net_auto_select_family_attempt_timeout:
                 crate::modules::net_config::DEFAULT_AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT,
             process_module: None,
-            assert_module: None,
             path_module: None,
             url_constructor: None,
             url_state: None,

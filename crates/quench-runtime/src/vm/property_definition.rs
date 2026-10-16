@@ -154,13 +154,6 @@ impl<H: Host> Vm<H> {
                     {
                         return self.define_array_length(p, object, descriptor.resolve(&self.heap));
                     }
-                    if let Some(index) = super::object_static::array_index(self.atom_name(atom)) {
-                        return self.define_array_property(
-                            object,
-                            index as usize,
-                            descriptor.resolve(&self.heap),
-                        );
-                    }
                 }
                 self.evaluate_deferred_namespace_for_key(p, object, Some(property))?;
                 // A lazy data property is configurable with the attributes its data property
@@ -170,6 +163,15 @@ impl<H: Host> Vm<H> {
                     self.materialize_lazy_data_property(p, object, property)?;
                 }
                 let object = self.heap.root_value(target).unwrap();
+                if self.heap.array(object).is_some()
+                    && let Some(index) = super::object_static::array_index(self.atom_name(atom))
+                {
+                    return self.define_array_property(
+                        object,
+                        index as usize,
+                        descriptor.resolve(&self.heap),
+                    );
+                }
                 if self
                     .object_data(object)
                     .is_some_and(Object::is_module_namespace)

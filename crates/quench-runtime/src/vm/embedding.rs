@@ -208,6 +208,7 @@ impl<H: Host> Vm<H> {
         let value = self.embedding_value(root)?;
         let cell = self.heap.get(value);
         Ok(match brand {
+            B::External => self.heap.object(value).and_then(Object::external_address).is_some(),
             B::Date => matches!(cell, Some(Cell::Date { .. })),
             B::RegExp => matches!(cell, Some(Cell::RegExp { .. })),
             B::NativeError => self.error_is_error(value) || matches!(cell, Some(Cell::Error(_))),
@@ -331,8 +332,66 @@ impl<H: Host> Vm<H> {
     }
 
     pub(crate) fn embedding_proxy_target(&self, root: RootId) -> Result<Option<Value>, JsError> {
+        Ok(self.embedding_proxy_details(root)?.map(|(target, _)| target))
+    }
+
+    pub(crate) fn embedding_proxy_details(&self, root: RootId) -> Result<Option<(Value, Value)>, JsError> {
         let value = self.embedding_value(root)?;
-        Ok(match self.heap.get(value) { Some(Cell::Proxy { target, .. }) => Some(*target), _ => None })
+        Ok(match self.heap.get(value) {
+            Some(Cell::Proxy { target, handler, .. }) => Some((*target, *handler)),
+            _ => None,
+        })
+    }
+
+    /// Read the same live slots and cursor used by normal collection iteration.
+    pub(crate) fn embedding_collection_preview(&self, root: RootId) -> Result<Option<crate::CollectionPreview<Value>>, JsError> {
+        use crate::CollectionPreview;
+        let value = self.embedding_value(root)?;
+        let preview = match self.heap.get(value) {
+            Some(Cell::Map { entries, .. }) => CollectionPreview {
+                entries: entries.iter().flat_map(|(key, value)| [key, value]).collect(), is_key_value: true,
+            },
+            Some(Cell::Set { entries, .. }) => CollectionPreview { entries: entries.to_vec(), is_key_value: false },
+            Some(Cell::WeakMap { entries, .. }) => CollectionPreview {
+                entries: entries.iter().flat_map(|&(key, value)| [key, value]).collect(), is_key_value: true,
+            },
+            Some(Cell::WeakSet { entries, .. }) => CollectionPreview { entries: entries.to_vec(), is_key_value: false },
+            Some(Cell::Iterator { source, kind, index, done, ext, .. }) => {
+                let is_key_value = match kind {
+                    IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::SetValues => false,
+                    IteratorKind::MapEntries | IteratorKind::SetEntries => true,
+                    _ => return Ok(None),
+                };
+                let mut output = Vec::new();
+                let mut position = ext.position(*index);
+                if !*done {
+                    match self.heap.get(*source) {
+                        Some(Cell::Map { entries, .. }) => {
+                            while let Some((slot, (key, value))) = entries.next_live(position) {
+                                match kind {
+                                    IteratorKind::MapKeys => output.push(key),
+                                    IteratorKind::MapValues => output.push(value),
+                                    IteratorKind::MapEntries => output.extend([key, value]),
+                                    _ => unreachable!("map iterator source"),
+                                }
+                                position = slot + 1;
+                            }
+                        }
+                        Some(Cell::Set { entries, .. }) => {
+                            while let Some((slot, value)) = entries.next_live(position) {
+                                output.push(value);
+                                if is_key_value { output.push(value); }
+                                position = slot + 1;
+                            }
+                        }
+                        _ => {},
+                    }
+                }
+                CollectionPreview { entries: output, is_key_value }
+            }
+            _ => return Ok(None),
+        };
+        Ok(Some(preview))
     }
 
     pub(crate) fn embedding_builtin_data(
@@ -925,6 +984,17 @@ impl<H: Host> Vm<H> {
         self.root(value)
     }
 
+    pub(crate) fn create_embedding_external(&mut self, address: usize) -> Result<Value, JsError> {
+        let value = self.create_embedding_null_object()?;
+        self.heap.object_mut(value).expect("new native object").set_external_address(address);
+        Ok(value)
+    }
+
+    pub(crate) fn embedding_external_address(&self, root: RootId) -> Option<usize> {
+        let value = self.root_value(root)?;
+        self.heap.object(value)?.external_address()
+    }
+
     pub(crate) fn create_embedding_object(&mut self) -> Result<Value, JsError> {
         self.create_embedding_object_with_prototype(self.object_proto)
     }
@@ -1062,6 +1132,26 @@ impl<H: Host> Vm<H> {
         let atom = self.intern_atom(name);
         let program = self.embedding_program()?;
         self.set_property_with_program_mode(&program, object, atom, value, true)
+    }
+
+    pub(crate) fn evaluate_module_sync(
+        &mut self,
+        module: &crate::ModuleSource,
+    ) -> Result<crate::SynchronousModule<Value>, JsError> {
+        let program = self.embedding_program()?;
+        self.synchronous_module_namespace(&program, module)
+    }
+
+    pub(crate) fn module_namespace_with_export_rooted(
+        &mut self,
+        namespace: RootId,
+        name: &str,
+        value: RootId,
+    ) -> Result<Value, JsError> {
+        let namespace = self.embedding_value(namespace)?;
+        let value = self.embedding_value(value)?;
+        let program = self.embedding_program()?;
+        self.module_namespace_with_export(&program, namespace, name, value)
     }
 
     pub(crate) fn set_property_rooted(

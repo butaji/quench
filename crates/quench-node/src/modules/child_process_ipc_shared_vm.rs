@@ -43,12 +43,44 @@ struct PendingWrite {
     callback: Option<RootId>,
 }
 
+/// Parent channels start referenced. Child channels instead derive their
+/// implicit references from process message/disconnect listeners.
+enum CountedReferences {
+    Parent { count: f64, referenced: bool },
+    Process { adjustment: f64 },
+}
+
+impl CountedReferences {
+    fn change(&mut self, add: bool) {
+        let delta = if add { 1.0 } else { -1.0 };
+        match self {
+            Self::Parent { count, referenced } => {
+                *count += delta;
+                if add && *count == 1.0 {
+                    *referenced = true;
+                } else if !add && *count == 0.0 {
+                    *referenced = false;
+                }
+            }
+            Self::Process { adjustment } => *adjustment += delta,
+        }
+    }
+
+    fn referenced(&self, process_listeners: usize) -> bool {
+        match self {
+            Self::Parent { referenced, .. } => *referenced,
+            Self::Process { adjustment } => process_listeners as f64 + adjustment > 0.0,
+        }
+    }
+}
+
 pub(crate) struct IpcChannel {
     phase: Phase,
     input: Vec<u8>,
     writes: VecDeque<PendingWrite>,
     completed: VecDeque<(RootId, bool)>,
     reference: Option<bool>,
+    counted_references: CountedReferences,
     disconnected: bool,
 }
 
@@ -74,7 +106,9 @@ impl IpcChannel {
             && (!self.writes.is_empty()
                 || !self.completed.is_empty()
                 || matches!(self.phase, Phase::Disconnecting(_))
-                || self.reference.unwrap_or(true))
+                || self
+                    .reference
+                    .unwrap_or_else(|| self.counted_references.referenced(0)))
     }
 
     #[cfg(unix)]
@@ -85,6 +119,10 @@ impl IpcChannel {
             writes: VecDeque::new(),
             completed: VecDeque::new(),
             reference: None,
+            counted_references: CountedReferences::Parent {
+                count: 0.0,
+                referenced: true,
+            },
             disconnected: false,
         }
     }
@@ -302,7 +340,9 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
             socket
                 .set_nonblocking(true)
                 .map_err(|error| RootedError::host(error.to_string()))?;
-            state.borrow_mut().process_ipc.channel = Some(IpcChannel::new(socket));
+            let mut channel = IpcChannel::new(socket);
+            channel.counted_references = CountedReferences::Process { adjustment: 0.0 };
+            state.borrow_mut().process_ipc.channel = Some(channel);
         }
     }
     Ok(())
@@ -315,15 +355,17 @@ const API_FACTORY: &str = quench_js_check::checked_js!(
     constructor(backend) { super(); this.#backend=backend; }
     ref() { return this.#backend.reference(); }
     unref() { return this.#backend.unreference(); }
+    refCounted() { return this.#backend.refCounted(); }
+    unrefCounted() { return this.#backend.unrefCounted(); }
     get fd() { return this.#backend.descriptor(); }
   }
-  return (send,disconnect,reference,unreference,descriptor) => {
+  return (send,disconnect,reference,unreference,descriptor,refCounted,unrefCounted) => {
     const api={};
     api.send=function(message,handle,options,callback) { return send(message,handle,options,callback); };
     api.disconnect=function() { return disconnect(); };
     Object.defineProperty(api.send,'name',{value:''});
     Object.defineProperty(api.disconnect,'name',{value:''});
-    api.channel=new Control({reference,unreference,descriptor});
+    api.channel=new Control({reference,unreference,descriptor,refCounted,unrefCounted});
     return api;
   };
 }"#
@@ -385,19 +427,29 @@ pub(crate) fn install(
     let descriptor = context
         .host_function_with_data(crate::host::shared_vm::operation("ipcDescriptor"), data)?;
     let mut references = Vec::new();
-    for refed in [true, false] {
-        let refed = context.boolean(refed);
-        let data = context.array_rooted(&[owner, target, refed])?;
-        references.push(
-            context
-                .host_function_with_data(crate::host::shared_vm::operation("ipcReference"), data)?,
-        );
+    for operation in ["ipcReference", "ipcReferenceCounted"] {
+        for refed in [true, false] {
+            let refed = context.boolean(refed);
+            let data = context.array_rooted(&[owner, target, refed])?;
+            references.push(
+                context
+                    .host_function_with_data(crate::host::shared_vm::operation(operation), data)?,
+            );
+        }
     }
     let undefined = context.undefined();
     let api = context.call_rooted(
         factory,
         undefined,
-        &[send, disconnect, references[0], references[1], descriptor],
+        &[
+            send,
+            disconnect,
+            references[0],
+            references[1],
+            descriptor,
+            references[2],
+            references[3],
+        ],
     )?;
     for name in ["send", "disconnect", "channel"] {
         let key = context.string_rooted(name);
@@ -628,10 +680,30 @@ pub(crate) fn has_work(state: &SharedNodeState) -> bool {
         || !channel.completed.is_empty()
         || matches!(channel.phase, Phase::Disconnecting(_))
         || channel.reference.unwrap_or_else(|| {
-            ["message", "disconnect"]
-                .iter()
-                .any(|name| state.scheduler.has_shared_string_listener(name))
+            channel.counted_references.referenced(
+                ["message", "disconnect"]
+                    .iter()
+                    .map(|name| state.scheduler.shared_string_listener_count(name))
+                    .sum(),
+            )
         })
+}
+
+pub(crate) fn reference_counted(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let (owner, _) = owner(context)?;
+    let data = context.host_function_data()?;
+    let key = context.string_rooted("2");
+    let add = context.get_property_rooted(data, key)?;
+    let add = context.truthy_rooted(add)?;
+    let state = context.host_mut().shared_state();
+    if let Some(channel) = channel(&mut state.borrow_mut(), owner) {
+        channel.counted_references.change(add);
+    }
+    Ok(context.undefined())
 }
 
 pub(crate) fn poll(

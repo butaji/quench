@@ -35,6 +35,7 @@ fn on_path(program: &str) -> bool {
 
 fn main() {
     embed_node_sources();
+    configure_icu();
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed={X86_64_LINUX_ORDER}");
     println!("cargo:rerun-if-changed={X86_64_LINUX_STATIC_ORDER}");
@@ -129,5 +130,34 @@ fn embed_node_sources() {
     let output = std::path::PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("node_sources.rs");
     if std::fs::read_to_string(&output).ok().as_deref() != Some(&generated) {
         std::fs::write(output, generated).unwrap();
+    }
+}
+
+/// Legacy TextDecoder mappings follow ICU, as Node does. Hosts without ICU
+/// retain the portable Unicode and single-byte decoders.
+fn configure_icu() {
+    println!("cargo:rustc-check-cfg=cfg(quench_icu)");
+    let Ok(library) = pkg_config::Config::new()
+        .cargo_metadata(false)
+        .probe("icu-uc")
+    else {
+        return;
+    };
+    let Some(major) = library
+        .version
+        .split('.')
+        .next()
+        .filter(|major| !major.is_empty() && major.bytes().all(|byte| byte.is_ascii_digit()))
+    else {
+        return;
+    };
+    println!("cargo:rustc-cfg=quench_icu");
+    println!("cargo:rustc-env=QUENCH_ICU_MAJOR={major}");
+    println!("cargo:rustc-env=QUENCH_ICU_VERSION={}", library.version);
+    for directory in library.link_paths {
+        println!("cargo:rustc-link-search=native={}", directory.display());
+    }
+    for name in library.libs {
+        println!("cargo:rustc-link-lib={name}");
     }
 }

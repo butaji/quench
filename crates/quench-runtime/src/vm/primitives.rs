@@ -536,9 +536,9 @@ impl<H: Host> Vm<H> {
             Native::MathAtan2 => {
                 let y = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let x = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-                Ok(Value::number(
-                    self.to_number(p, y)?.atan2(self.to_number(p, x)?),
-                ))
+                let y = self.to_number(p, y)?;
+                let x = self.to_number(p, x)?;
+                Ok(Value::number(super::fdlibm_math::atan2(y, x)))
             }
             Native::MathMin | Native::MathMax => {
                 let mut result = if native == Native::MathMin {
