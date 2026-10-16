@@ -320,7 +320,7 @@ pub struct StageReport {
     pub passed: usize,
     pub failed: usize,
     /// Raw failures that match their Node waiver; counted in `failed` too.
-    pub waived: usize,
+    pub waived: Vec<std::path::PathBuf>,
     /// Outcomes the run must reject: unwaived failures and stale waivers.
     pub failures: Vec<(std::path::PathBuf, String)>,
 }
