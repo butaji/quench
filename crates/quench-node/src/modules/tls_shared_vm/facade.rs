@@ -60,6 +60,8 @@ pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>) -> Result<RootI
         set(context, binding, "setEngine", function)?;
     }
     super::super::crypto_secret_job_shared_vm::install(context, binding)?;
+    #[cfg(quench_openssl_provider)]
+    super::super::crypto_hash_shared_vm::install(context, binding)?;
     set(context, api, "binding", binding)?;
     let prototype = get(context, native, "prototype")?;
     for (name, operation) in [

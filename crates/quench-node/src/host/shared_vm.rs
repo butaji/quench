@@ -419,6 +419,18 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "cryptoCaptureKeyBrands" (2) => crate::modules::crypto_key_shared_vm::capture_brands,
         #[cfg(quench_openssl_provider)]
         method "cryptoHashJobNew" (3) => crate::modules::crypto_secret_job_shared_vm::create_hash,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoNativeHashNew" (0) => crate::modules::crypto_hash_shared_vm::create_hash,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoNativeHmacNew" (0) => crate::modules::crypto_hash_shared_vm::create_hmac,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoNativeHmacInit" (0) => crate::modules::crypto_hash_shared_vm::init_hmac,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoNativeHashUpdate" (0) => crate::modules::crypto_hash_shared_vm::update,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoNativeHashDigest" (0) => crate::modules::crypto_hash_shared_vm::digest,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoNativeOneShotDigest" (0) => crate::modules::crypto_hash_shared_vm::one_shot,
         method "cryptoSecretJobNew" (5) => crate::modules::crypto_secret_job_shared_vm::create,
         method "cryptoSecretJobRun" (0) => crate::modules::crypto_secret_job_shared_vm::run,
         method "cryptoSecretJobExecutor" (2) => crate::modules::crypto_secret_job_shared_vm::executor,
