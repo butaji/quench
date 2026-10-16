@@ -1,0 +1,17 @@
+    Blocking waiting for file lock on build directory
+   Compiling quench-node v0.1.0 (/workspace/quench/crates/quench-node)
+   Compiling quench-node-test v0.1.0 (/workspace/quench/crates/quench-node-test)
+    Finished `iteration` profile [optimized] target(s) in 1m 12s
+     Running tests/shared_regressions.rs (target/iteration/deps/shared_regressions-6cb5177e23b5648c)
+
+running 7 tests
+test deep_named_calls_raise_catchable_range_error_and_recover ... ok
+test idle_task_combinator_finishes_on_the_shared_worker ... ok
+test promise_resolution_with_promises_keeps_job_order_and_species_reads ... ok
+test strict_assert_aliases_preserve_identity_and_strict_comparison ... ok
+test strict_call_followed_by_return_of_another_register_matches_node ... ok
+test vm_context_lexicals_survive_collection_and_prototypes_end_in_the_context ... ok
+test webassembly_namespace_links_converts_and_shares_memory_like_node ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.94s
+
