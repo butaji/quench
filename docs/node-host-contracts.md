@@ -931,3 +931,19 @@ unused code and execution caches to be collected. Runtime reset or a foreign
 runtime rejects the handle through the existing atom-sequence ownership guard.
 This Core primitive does not by itself implement native `ContextifyScript`, VM
 timeouts, cached bytecode or code-generation restrictions.
+
+## Configured synchronous directory policy
+
+`fs.readdirSync` executes the configured Node SDK policy over native Rust
+`readdir` and `readdirRecursive` bindings. Linux scanning preserves raw filename
+bytes and reported directory types. Recursive walks follow directory symlinks,
+resolve unknown types with real metadata, and flatten lexical directory scans in
+breadth-first order. Actual scan errors retain their syscall and input path.
+
+Encoding uses the shared Buffer codecs; Buffer results retain the original
+filename bytes. Recursive Dirent results use Node's packed native layout, with
+Uint8 types and aligned Uint32 directory counts sharing one ArrayBuffer. The
+unchanged SDK owns validation and Dirent construction. Existing filesystem
+adapters capture a Rust forwarding function to this same policy, initialized
+after the filesystem module is cached. Their outer asynchronous validation and
+scheduling remain separate compatibility work.
