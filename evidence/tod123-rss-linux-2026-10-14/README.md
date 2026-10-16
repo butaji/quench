@@ -325,3 +325,27 @@ Matched unbolted maxrss (`board-lazy-primordials.txt`, MiB, medians): Crypto 6.9
 DeltaBlue 6.54 → 4.65, EarleyBoyer 13.08 → 11.19, NavierStokes 7.83 → 5.45, RayTrace
 6.43 → 4.30, RegExp 16.89 → 14.90, Richards 6.08 → 4.25, Splay 50.76 → 49.00.
 Node `framework-core` gate: 43/43.
+
+## Folded data attributes, inline short strings, shared regexp matcher
+
+- A data property's creation attributes ride on its `Add` transition: a builtin realm needs
+  615 fewer shapes and transitions (2486 → 1871), and the shape table starts at a capacity
+  the allocator maps on its own, so growth remaps in place.
+- ASCII text of at most 22 bytes sits inline in `FlatUnits` (still three words): most names,
+  tokens and substrings cost one allocation. The atom sequence holds atom strings, not
+  `Rc<str>` copies; short RegExp subjects skip the identity cache.
+- A regexp's range-only queries use its compiled matcher (`RangeBackend::Compiled`) instead
+  of a clone with its own cache pool.
+
+Test262 stage 10 (11087 passed, 15 waived) and stages 29–92 (23633 passed, 35 waived), no
+failures; Node `framework-core` 43/43.
+
+Guard (`guard-shapes-strings-raw.txt`, base `origin/v2-merged` bc9e0080c, candidate its merge
+with this batch): per run Crypto +0.09%, DeltaBlue −0.61%, EarleyBoyer −0.22%, NavierStokes
+0.00%, RayTrace +0.35%, RegExp −1.72%, Richards 0.00%, Splay −0.02%. Matched unbolted
+maxrss in `board-shapes-strings.txt`.
+
+Bolted static against QuickJS 2026-06-04 (`board-bolt-vs-qjs-b17.txt`, evicted, 7 runs
+interleaved, medians KiB): Richards 3328 vs 3320, DeltaBlue 3692 vs 3680, NavierStokes 4628
+vs 4948, RayTrace 3456 vs 3348, Crypto 4116 vs 3484; EarleyBoyer 10268 vs 16716, Splay 48152
+vs 147000, RegExp 13176 vs 6708 (5 runs).
