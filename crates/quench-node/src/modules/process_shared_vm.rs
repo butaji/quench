@@ -111,6 +111,7 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     let raw_debug = context.host_function(crate::host::shared_vm::operation("processRawDebug"))?;
     install(context, process, "_rawDebug", raw_debug)?;
     for (name, operation) in [
+        ("binding", "processBinding"),
         ("setUncaughtExceptionCaptureCallback", "processSetUncaughtExceptionCaptureCallback"),
         ("hasUncaughtExceptionCaptureCallback", "processHasUncaughtExceptionCaptureCallback"),
     ] {
@@ -1843,18 +1844,15 @@ fn emit_before_exit(
         Err(failure) => return route_callback_failure(runtime, program, failure),
     };
     let event = runtime.string_rooted("beforeExit");
-    let callback = crate::modules::shared_event_loop::SharedCallback {
+    let callback = crate::modules::shared_event_loop::SharedCallback { execution: None,
         callback: operation,
         receiver: process,
         args: vec![event, code],
     };
-    let result = call_shared_callback(runtime, &callback);
+    let result = call_shared_callback(runtime, program, &callback);
     runtime.release_root(operation);
     runtime.release_root(event);
-    match result {
-        Ok(()) => Ok(()),
-        Err(failure) => route_callback_failure(runtime, program, failure),
-    }
+    result
 }
 
 pub(crate) fn finish_after_uncaught_error(
@@ -2340,10 +2338,7 @@ fn invoke_timer_callback(
     program: &quench_runtime::ResidualProgram,
     callback: &crate::modules::shared_event_loop::SharedCallback,
 ) -> Result<(), String> {
-    match call_shared_callback(runtime, callback) {
-        Ok(()) => Ok(()),
-        Err(failure) => route_callback_failure(runtime, program, failure),
-    }
+    call_shared_callback(runtime, program, callback)
 }
 
 fn invoke_async_callback(
@@ -2351,30 +2346,44 @@ fn invoke_async_callback(
     program: &quench_runtime::ResidualProgram,
     callback: crate::modules::shared_event_loop::SharedCallback,
 ) -> Result<(), String> {
-    let result = call_shared_callback(runtime, &callback);
+    let result = call_shared_callback(runtime, program, &callback);
     release_callback(runtime, callback);
-    match result {
-        Ok(()) => Ok(()),
-        Err(failure) => route_callback_failure(runtime, program, failure),
-    }
+    result
 }
 
 fn call_shared_callback(
     runtime: &mut quench_runtime::Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
     callback: &crate::modules::shared_event_loop::SharedCallback,
-) -> Result<(), RootedError> {
-    match runtime.call_rooted(callback.callback, callback.receiver, &callback.args) {
-        Ok(result) => {
-            runtime.release_root(result);
-            Ok(())
-        }
+) -> Result<(), String> {
+    let shared = runtime.host_mut().shared_state();
+    let scope = callback.execution.as_ref().map(|execution|
+        super::async_hooks_shared_vm::enter_resource_context(&shared, execution.id, execution.resource));
+    let before = match &callback.execution {
+        Some(execution) => super::async_hook_registry_shared_vm::emit_runtime(runtime, super::async_hook_registry_shared_vm::HookKind::Before, execution.id),
+        None => Ok(()),
+    };
+    let called = before.and_then(|()| runtime.call_rooted(callback.callback, callback.receiver, &callback.args));
+    let result = match called {
+        Ok(value) => { runtime.release_root(value); Ok(()) }
         Err(mut error) => {
             if error.exception.is_none() {
                 error.exception = error.error.thrown_value().map(|value| runtime.root(value));
             }
-            Err(error)
+            // Node's uncaught handler observes the failing resource. Only
+            // after that handler completes does the after hook/pop run.
+            route_callback_failure(runtime, program, error)
         }
-    }
+    };
+    let result = result.and_then(|()| match &callback.execution {
+        Some(execution) => match super::async_hook_registry_shared_vm::emit_runtime(runtime, super::async_hook_registry_shared_vm::HookKind::After, execution.id) {
+            Ok(()) => Ok(()),
+            Err(error) => route_callback_failure(runtime, program, error),
+        },
+        None => Ok(()),
+    });
+    drop(scope);
+    result
 }
 
 pub(super) fn route_callback_failure(
@@ -3027,6 +3036,10 @@ fn release_callback(
     runtime: &mut quench_runtime::Runtime<NodeHost>,
     callback: crate::modules::shared_event_loop::SharedCallback,
 ) {
+    if let Some(execution) = callback.execution {
+        super::async_hooks_shared_vm::complete_runtime_context(runtime, execution.id);
+        runtime.release_root(execution.resource);
+    }
     release_callback_roots(runtime, callback.callback, callback.receiver, callback.args);
 }
 
@@ -3089,21 +3102,8 @@ pub(crate) fn next_tick(
         return Ok(context.undefined());
     }
 
-    let callback = context.retain(callback)?;
     let undefined = context.undefined();
-    let receiver = context.retain(undefined)?;
-    let retained_args = args[1..]
-        .iter()
-        .copied()
-        .map(|argument| context.retain(argument))
-        .collect::<Result<Vec<_>, _>>()?;
-    state.borrow_mut().scheduler.queue_shared_next_tick(
-        crate::modules::shared_event_loop::SharedCallback {
-            callback,
-            receiver,
-            args: retained_args,
-        },
-    );
+    super::shared_event_loop::queue_next_tick(context, callback, undefined, &args[1..])?;
     Ok(context.undefined())
 }
 
@@ -3193,7 +3193,7 @@ fn poll_process_signals(
         let event = runtime.string_rooted(&name);
         let signal = runtime.string_rooted(&name);
         state.borrow_mut().scheduler.queue_shared_next_tick(
-            crate::modules::shared_event_loop::SharedCallback {
+            crate::modules::shared_event_loop::SharedCallback { execution: None,
                 callback,
                 receiver,
                 args: vec![event, signal],
