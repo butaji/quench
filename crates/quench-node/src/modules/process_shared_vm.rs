@@ -120,24 +120,13 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
 
     let raw_debug = context.host_function(crate::host::shared_vm::operation("processRawDebug"))?;
     install(context, process, "_rawDebug", raw_debug)?;
-    let set_capture = context.host_function(crate::host::shared_vm::operation(
-        "processSetUncaughtExceptionCaptureCallback",
-    ))?;
-    install(
-        context,
-        process,
-        "setUncaughtExceptionCaptureCallback",
-        set_capture,
-    )?;
-    let has_capture = context.host_function(crate::host::shared_vm::operation(
-        "processHasUncaughtExceptionCaptureCallback",
-    ))?;
-    install(
-        context,
-        process,
-        "hasUncaughtExceptionCaptureCallback",
-        has_capture,
-    )?;
+    for (name, operation) in [
+        ("setUncaughtExceptionCaptureCallback", "processSetUncaughtExceptionCaptureCallback"),
+        ("hasUncaughtExceptionCaptureCallback", "processHasUncaughtExceptionCaptureCallback"),
+    ] {
+        let function = context.host_constructor_named(crate::host::shared_vm::operation(operation), name)?;
+        install(context, process, name, function)?;
+    }
     let active_handles =
         context.host_function(crate::host::shared_vm::operation("processGetActiveHandles"))?;
     install(context, process, "_getActiveHandles", active_handles)?;
@@ -1980,10 +1969,54 @@ pub(crate) fn route_uncaught_exception_value(
         };
     }
     runtime.release_root(capture);
+    if call_auxiliary_capture(runtime, program, state, exception)? { return Ok(true); }
     let origin = runtime.string_rooted(origin);
     let handled = emit_process_event(runtime, program, "uncaughtException", &[exception, origin]);
     runtime.release_root(origin);
     handled
+}
+
+fn call_auxiliary_capture(
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
+    state: RootId,
+    exception: RootId,
+) -> Result<bool, String> {
+    let callbacks = get_rooted_property(runtime, program, state, "auxiliaryCallbacks")?;
+    let length = get_rooted_property(runtime, program, callbacks, "length");
+    runtime.release_root(callbacks);
+    let length = length?;
+    let one = runtime.root(Value::number(1.0));
+    let index = runtime.subtract_rooted(length, one);
+    runtime.release_root(length);
+    runtime.release_root(one);
+    let index = index.map_err(|error| rooted_error_message(runtime, program, error))?;
+    // A Number right operand makes a successful subtraction a Number.
+    let number = runtime.rooted_value(index).and_then(Value::as_number);
+    runtime.release_root(index);
+    let mut index = number.ok_or_else(|| "auxiliary capture index is not a number".to_owned())?;
+    while index >= 0.0 {
+        let callbacks = get_rooted_property(runtime, program, state, "auxiliaryCallbacks")?;
+        let key = runtime.root(Value::number(index));
+        let callback = runtime.get_property_rooted(callbacks, key);
+        runtime.release_root(key);
+        let callback = match callback {
+            Ok(callback) => callback,
+            Err(error) => {
+                runtime.release_root(callbacks);
+                return Err(rooted_error_message(runtime, program, error));
+            }
+        };
+        let called = runtime.call_rooted(callback, callbacks, &[exception]);
+        runtime.release_root(callback);
+        runtime.release_root(callbacks);
+        let called = called.map_err(|error| rooted_error_message(runtime, program, error))?;
+        let handled = runtime.rooted_value(called).and_then(Value::as_bool) == Some(true);
+        runtime.release_root(called);
+        if handled { return Ok(true); }
+        index -= 1.0;
+    }
+    Ok(false)
 }
 
 fn drain_checkpoint(

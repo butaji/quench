@@ -9701,3 +9701,18 @@ fn process_uncaught_events_ignore_monitor_results_and_use_emit_truthiness() {
 fn process_capture_delivery_reloads_the_callback_after_the_null_check() {
     compare_node_source_with_args(include_str!("../node-tests/test-process-capture-getter-order.js"), &[]);
 }
+
+#[test]
+fn process_auxiliary_capture_runs_in_reverse_order_with_exact_true_handling() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-auxiliary.js"), &[]);
+}
+
+#[test]
+fn process_auxiliary_capture_preserves_length_coercion_fractional_keys_and_replacement() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-auxiliary-coercion.js"), &["--expose-gc"]);
+}
+
+#[test]
+fn process_capture_methods_have_public_names_and_ordinary_constructor_shapes() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-method-shape.js"), &[]);
+}
