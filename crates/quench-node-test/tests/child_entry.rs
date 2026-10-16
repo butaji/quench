@@ -9372,3 +9372,8 @@ fn abort_listener_errors_are_reported_on_ticks_without_replacing_source_errors()
 fn native_zlib_streaming_counts_bytes_pending_close_and_iterable_pipelines_match_node() {
     compare_node_source_with_args(include_str!("../node-tests/test-native-zlib-streaming.js"), &["--no-warnings", "--expose-internals", "--experimental-stream-iter"]);
 }
+
+#[test]
+fn native_brotli_streaming_bytes_dictionaries_and_errors_match_node() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-brotli-streaming.js"), &["--no-warnings", "--expose-internals", "--experimental-stream-iter"]);
+}

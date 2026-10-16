@@ -98,19 +98,32 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         let set = get(c, p, "set")?;
         put(c, api, "copy", set)?;
         let result = c.object_rooted()?;
-        let ctor = c.host_constructor_with_data(crate::host::shared_vm::operation("Zlib"), api)?;
-        let proto = get(c, ctor, "prototype")?;
-        for (name, op) in [
-            ("write", "zlibNativeWrite"),
-            ("writeSync", "zlibNativeWriteSync"),
-            ("close", "zlibNativeClose"),
-            ("init", "zlibNativeInit"),
-        ] {
-            let f =
-                c.host_function_named_with_data(crate::host::shared_vm::operation(op), name, api)?;
-            put(c, proto, name, f)?;
+        let constructors = [
+            ("Zlib", "Zlib"),
+            #[cfg(quench_node_brotli)]
+            ("BrotliEncoder", "BrotliEncoder"),
+            #[cfg(quench_node_brotli)]
+            ("BrotliDecoder", "BrotliDecoder"),
+        ];
+        for (name, operation) in constructors {
+            let ctor =
+                c.host_constructor_with_data(crate::host::shared_vm::operation(operation), api)?;
+            let proto = get(c, ctor, "prototype")?;
+            for (name, op) in [
+                ("write", "zlibNativeWrite"),
+                ("writeSync", "zlibNativeWriteSync"),
+                ("close", "zlibNativeClose"),
+                ("init", "zlibNativeInit"),
+            ] {
+                let f = c.host_function_named_with_data(
+                    crate::host::shared_vm::operation(op),
+                    name,
+                    api,
+                )?;
+                put(c, proto, name, f)?;
+            }
+            put(c, result, name, ctor)?;
         }
-        put(c, result, "Zlib", ctor)?;
         #[cfg(quench_node_zlib)]
         {
             let version = c.string_rooted(&super::zlib_native_codec::version());
@@ -140,6 +153,25 @@ pub(crate) fn create(
         })
         .map(|v| v.2)
         .ok_or_else(|| fail(c, "Invalid zlib mode"))?;
+    create_handle(c, handle, mode)
+}
+#[cfg(quench_node_brotli)]
+pub(crate) fn create_brotli_encoder(
+    c: &mut Context<'_>,
+    handle: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    create_handle(c, handle, Mode::BrotliCompress)
+}
+#[cfg(quench_node_brotli)]
+pub(crate) fn create_brotli_decoder(
+    c: &mut Context<'_>,
+    handle: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    create_handle(c, handle, Mode::BrotliDecompress)
+}
+fn create_handle(c: &mut Context<'_>, handle: RootId, mode: Mode) -> Result<RootId, RootedError> {
     let api = c.host_function_data()?;
     let data = c.null_object_rooted()?;
     let map = get(c, api, "handles")?;
@@ -170,28 +202,73 @@ pub(crate) fn initialize(
     if !matches!(shared.borrow().zlib_native.entries[i].phase, Phase::New) {
         return Err(fail(c, "Compression handle already initialized"));
     }
-    let mut values = Vec::new();
-    for arg in args.iter().take(4) {
-        values.push(c.to_number(*arg)? as i32)
-    }
-    if values.len() != 4 {
-        return Err(fail(c, "Invalid zlib initialization"));
-    }
-    let dictionary = args.get(6).copied().and_then(|v| c.view_bytes_rooted(v));
-    let engine = Engine::new(mode, values[0], values[1], values[2], values[3], dictionary)
-        .map_err(|e| fail(c, &e.message))?;
+    let (engine, state_index, callback_index) = {
+        #[cfg(quench_node_brotli)]
+        if matches!(mode, Mode::BrotliCompress | Mode::BrotliDecompress) {
+            let params = args
+                .first()
+                .copied()
+                .and_then(|v| c.view_bytes_rooted(v))
+                .ok_or_else(|| fail(c, "Invalid Brotli parameters"))?;
+            let params = params
+                .chunks_exact(std::mem::size_of::<u32>())
+                .map(|bytes| u32::from_ne_bytes(bytes.try_into().expect("u32 chunk")))
+                .collect::<Vec<_>>();
+            let dictionary = args.get(3).copied().and_then(|v| c.view_bytes_rooted(v));
+            (Engine::brotli(mode, &params, dictionary), 1, 2)
+        } else {
+            initialize_zlib(c, mode, args)?
+        }
+        #[cfg(not(quench_node_brotli))]
+        {
+            initialize_zlib(c, mode, args)?
+        }
+    };
     let api = c.host_function_data()?;
+    let engine = match engine {
+        Ok(engine) => engine,
+        Err(error) => {
+            let callback = get(c, handle, "onerror")?;
+            let message = c.string_rooted(&error.message);
+            let errno = c.number(error.errno as f64);
+            let code = c.string_rooted(&error.code);
+            c.call_rooted(callback, handle, &[message, errno, code])?;
+            let exception = c.error_rooted("Initialization failed")?;
+            let code = c.string_rooted("ERR_ZLIB_INITIALIZATION_FAILED");
+            put(c, exception, "code", code)?;
+            return Err(c.throw(exception));
+        }
+    };
     let data = payload(c, api, handle)?;
     let state = *args
-        .get(4)
+        .get(state_index)
         .ok_or_else(|| RootedError::host("compression write state missing"))?;
     let callback = *args
-        .get(5)
+        .get(callback_index)
         .ok_or_else(|| RootedError::host("compression callback missing"))?;
     put(c, data, "state", state)?;
     put(c, data, "callback", callback)?;
     shared.borrow_mut().zlib_native.entries[i].phase = Phase::Ready(engine);
     Ok(c.undefined())
+}
+fn initialize_zlib(
+    c: &mut Context<'_>,
+    mode: Mode,
+    args: &[RootId],
+) -> Result<(Result<Engine, Failure>, usize, usize), RootedError> {
+    let mut values = Vec::new();
+    for arg in args.iter().take(4) {
+        values.push(c.to_number(*arg)? as i32);
+    }
+    if values.len() != 4 {
+        return Err(fail(c, "Invalid zlib initialization"));
+    }
+    let dictionary = args.get(6).copied().and_then(|v| c.view_bytes_rooted(v));
+    Ok((
+        Engine::new(mode, values[0], values[1], values[2], values[3], dictionary),
+        4,
+        5,
+    ))
 }
 struct Write {
     flush: i32,
@@ -286,7 +363,7 @@ fn complete(
             let callback = get(c, handle, "onerror")?;
             let message = c.string_rooted(&error.message);
             let number = c.number(error.errno as f64);
-            let code = c.string_rooted(error.code);
+            let code = c.string_rooted(&error.code);
             c.call_rooted(callback, handle, &[message, number, code])?;
         }
     }

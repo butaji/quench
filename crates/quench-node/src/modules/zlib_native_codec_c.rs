@@ -53,15 +53,7 @@ extern "C" {
     fn deflateSetDictionary(s: *mut Stream, dict: *const u8, length: c_uint) -> c_int;
     fn inflateSetDictionary(s: *mut Stream, dict: *const u8, length: c_uint) -> c_int;
 }
-pub(crate) struct Failure {
-    pub(crate) errno: i32,
-    pub(crate) code: &'static str,
-    pub(crate) message: String,
-}
-pub(crate) struct Step {
-    pub(crate) consumed: usize,
-    pub(crate) produced: usize,
-}
+use super::{Failure, Step};
 pub(crate) struct Codec {
     stream: Box<Stream>,
     encoding: bool,
@@ -180,7 +172,7 @@ impl Codec {
         };
         Failure {
             errno: status,
-            code: code(status),
+            code: code(status).into(),
             message,
         }
     }

@@ -288,6 +288,10 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "abortDispatchListeners" (4) => crate::modules::events_abort_shared_vm::abort_dispatch_listeners,
         method "eventTargetQueueError" (1) => crate::modules::events_abort_shared_vm::queue_listener_error,
         method "eventTargetRethrow" (0) => crate::modules::events_abort_shared_vm::rethrow_listener_error,
+        #[cfg(quench_node_brotli)]
+        method "BrotliEncoder" (0) => crate::modules::zlib_native_shared_vm::create_brotli_encoder,
+        #[cfg(quench_node_brotli)]
+        method "BrotliDecoder" (0) => crate::modules::zlib_native_shared_vm::create_brotli_decoder,
         method "Zlib" (0) => crate::modules::zlib_native_shared_vm::create,
         method "zlibNativeInit" (0) => crate::modules::zlib_native_shared_vm::initialize,
         method "zlibNativeWrite" (0) => crate::modules::zlib_native_shared_vm::write,
