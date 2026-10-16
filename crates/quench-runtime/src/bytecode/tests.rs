@@ -473,3 +473,19 @@ fn fused_field_source_locations_survive_binary_round_trip_and_validate_coordinat
         std::fs::remove_file(path).unwrap();
     }
 }
+
+#[test]
+fn source_lines_share_javascript_boundaries_and_preserve_wrapper_origins() {
+    let text = "a\r\nb\rc\nd\u{2028}e\u{2029}";
+    assert_eq!(super::source_line_starts(text).collect::<Vec<_>>(), [0, 3, 5, 7, 11, 15]);
+    let source = super::ProgramSource { text: text.into(), line_offset: 0, column_offset: 0 };
+    for (index, expected) in ["a", "b", "c", "d", "e", ""].into_iter().enumerate() {
+        assert_eq!(source.source_line(index as u32 + 1), Some(expected));
+    }
+    assert_eq!(source.source_line(7), None);
+    assert_eq!(source.source_line(0), None);
+    let wrapped = super::ProgramSource { text: "wrapper\r\n😀first\rsecond\u{2028}third".into(), line_offset: 1, column_offset: 2 };
+    assert_eq!(wrapped.source_line(1), Some("first"));
+    assert_eq!(wrapped.source_line(2), Some("second"));
+    assert_eq!(wrapped.source_line(3), Some("third"));
+}

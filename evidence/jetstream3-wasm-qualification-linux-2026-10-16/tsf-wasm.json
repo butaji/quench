@@ -1,0 +1,2183 @@
+{
+  "schema": 5,
+  "suite": "jet-stream3",
+  "created_unix_ns": 1792127565078479360,
+  "rounds_requested": 11,
+  "timeout_ms": 900000,
+  "source_revision": "b25cd40ce4266cbf5357c55d08033e5c3e868807",
+  "source_dirty": false,
+  "corpus": {
+    "pinned_revision": "06785cf861ac44855f168cbbe829278c2802e6de",
+    "checkout_revision": "06785cf861ac44855f168cbbe829278c2802e6de",
+    "checkout_clean": true,
+    "fixture_set_matches": false
+  },
+  "host": {
+    "uname": "Linux vm 6.18.44-fc-v139 #1 SMP PREEMPT_DYNAMIC @0 x86_64 x86_64 x86_64 GNU/Linux",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.0\nLLVM version: 23.1.1",
+    "model": null,
+    "memory_bytes": 16874930176,
+    "memory_limit_bytes": null,
+    "cpu_quota": null,
+    "logical_cpus": 4,
+    "process_metrics_backend": "Linux wait4 rusage"
+  },
+  "engines": [
+    {
+      "name": "quench",
+      "executable": "/home/user/quench/target/production/quench-node",
+      "executable_sha256": "a3a9ef42c88ad5f4f7b85dd12e742c073774bd9cab87da189ad04e7c381f32fb",
+      "version": "Quench shared-VM interpreter build; package 0.1.0",
+      "argv": [],
+      "environment": {
+        "HOME": "/root",
+        "PATH": "/nix/var/nix/profiles/default/bin:/root/.local/bin:/root/.cargo/bin:/usr/local/go/bin:/opt/node22/bin:/opt/maven/bin:/opt/gradle/bin:/opt/rbenv/bin:/root/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+      },
+      "inherits_environment": false,
+      "jit_mode": "interpreter",
+      "jit_proof_command": [
+        "/home/user/quench/target/production/quench-node"
+      ],
+      "jit_proof": "the measured shared VM executes interpreter bytecode; no guest JIT path is enabled",
+      "webassembly": true
+    },
+    {
+      "name": "bun",
+      "executable": "/root/.bun/bin/bun",
+      "executable_sha256": "a83d263767d839e4d2649ca8e35d07159c7afc99afdc96d731ced29e056dda0c",
+      "version": "1.4.2",
+      "argv": [],
+      "environment": {
+        "BUN_JSC_useJIT": "0",
+        "HOME": "/root",
+        "PATH": "/nix/var/nix/profiles/default/bin:/root/.local/bin:/root/.cargo/bin:/usr/local/go/bin:/opt/node22/bin:/opt/maven/bin:/opt/gradle/bin:/opt/rbenv/bin:/root/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+      },
+      "inherits_environment": false,
+      "jit_mode": "disabled-and-probed",
+      "jit_proof_command": [
+        "BUN_JSC_useJIT=0",
+        "BUN_JSC_dumpOptions=1",
+        "/root/.bun/bin/bun",
+        "-e",
+        "console.log(Bun.version)"
+      ],
+      "jit_proof": "command succeeded and reported \"useJIT=false\": 1.4.2\n\nModified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)",
+      "webassembly": true
+    },
+    {
+      "name": "node",
+      "executable": "/root/engines/node-v26.10.0-linux-x64/bin/node",
+      "executable_sha256": "ab9c8eecf9f82d6693cdc3accced17034065c8d96213b0aa76a7e803d20ae1da",
+      "version": "v26.10.0",
+      "argv": [
+        "--jitless"
+      ],
+      "environment": {
+        "HOME": "/root",
+        "PATH": "/nix/var/nix/profiles/default/bin:/root/.local/bin:/root/.cargo/bin:/usr/local/go/bin:/opt/node22/bin:/opt/maven/bin:/opt/gradle/bin:/opt/rbenv/bin:/root/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+      },
+      "inherits_environment": false,
+      "jit_mode": "disabled-and-probed",
+      "jit_proof_command": [
+        "/root/engines/node-v26.10.0-linux-x64/bin/node",
+        "--jitless",
+        "-e",
+        "console.log(process.execArgv.includes('--jitless'))"
+      ],
+      "jit_proof": "command succeeded and reported \"true\": true",
+      "webassembly": false
+    }
+  ],
+  "suite_inputs": [
+    {
+      "path": "quench-bench/jetstream/cli.js",
+      "size_bytes": 5600,
+      "modified_unix_ns": 1791940074483510650,
+      "sha256": "22ee4b987b07940dd7397ed7f88345c71acc415e2549b64bf45ba43f7572e5f0"
+    },
+    {
+      "path": "quench-bench/jetstream/JetStreamDriver.js",
+      "size_bytes": 110633,
+      "modified_unix_ns": 1791940073225880797,
+      "sha256": "f105bddfd402514b2325fe9ea6e1df5ce776a4ad4570a8006c7c8559159440fc"
+    },
+    {
+      "path": "quench-bench/jetstream/utils/params.js",
+      "size_bytes": 8047,
+      "modified_unix_ns": 1791940076276650218,
+      "sha256": "0e9d28c0fd2de5583c64678ffc61307b10d983bcb419fe2e3bb383c8b7ded647"
+    },
+    {
+      "path": "quench-bench/jetstream/utils/shell-config.js",
+      "size_bytes": 2352,
+      "modified_unix_ns": 1791940076276854446,
+      "sha256": "9a83000be5e6526a3c26a414fc3a23043e57ef8e4cd67aaff459066a2c347bca"
+    }
+  ],
+  "fixtures": {
+    "quench-bench/jetstream/tsf-wasm": {
+      "source": {
+        "path": "quench-bench/jetstream/tsf-wasm",
+        "size_bytes": null,
+        "modified_unix_ns": null,
+        "sha256": null
+      },
+      "valid": true,
+      "output_equal": true,
+      "summaries": {
+        "bun": {
+          "median_score": 5.47,
+          "median_max_rss_bytes": 55201792,
+          "valid_samples": 11
+        },
+        "quench": {
+          "median_score": 12.07,
+          "median_max_rss_bytes": 54972416,
+          "valid_samples": 11
+        }
+      },
+      "unsupported_engines": {
+        "node": "the test is tagged Wasm and the engine has no WebAssembly"
+      },
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench",
+            "bun"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 43717772238,
+              "peak_rss_bytes": 55717888,
+              "score": 5.42,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 11825,
+              "page_reclaims": 11825,
+              "involuntary_context_switches": 137,
+              "host_before": {
+                "captured_unix_ns": 1792127584831774271,
+                "load_average": {
+                  "one_minute": 1.06,
+                  "five_minutes": 1.05,
+                  "fifteen_minutes": 1.01
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.0,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792127628556493134,
+                "load_average": {
+                  "one_minute": 1.03,
+                  "five_minutes": 1.04,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning tsf-wasm:\ntsf-wasm First-Score                             5.65 pts\ntsf-wasm Worst-Score                             4.93 pts\ntsf-wasm Average-Score                           5.72 pts\ntsf-wasm Score                                   5.42 pts\ntsf-wasm First-Time                            885.38 ms \ntsf-wasm Worst-Time                           1013.22 ms \ntsf-wasm Average-Time                          873.49 ms \ntsf-wasm Total-Time                           2772.09 ms \ntsf-wasm Wall-Time                            43696.55 ms \n\nOverall:\nOverall First-Score                              5.65 pts\nOverall Worst-Score                              4.93 pts\nOverall Average-Score                            5.72 pts\nOverall First-Time                             885.38 ms \nOverall Worst-Time                            1013.22 ms \nOverall Average-Time                           873.49 ms \n\nOverall Score                                    5.42 pts\nOverall Wall-Time                             43699.03 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 19570558896,
+              "peak_rss_bytes": 54947840,
+              "score": 11.4,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 54439,
+              "page_reclaims": 54439,
+              "involuntary_context_switches": 33,
+              "host_before": {
+                "captured_unix_ns": 1792127565249413839,
+                "load_average": {
+                  "one_minute": 1.09,
+                  "five_minutes": 1.05,
+                  "fifteen_minutes": 1.01
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  },
+                  {
+                    "pid": 4,
+                    "cpu_percent": 0.0,
+                    "command": "kworker/R-rcu_gp"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792127584824975100,
+                "load_average": {
+                  "one_minute": 1.06,
+                  "five_minutes": 1.05,
+                  "fifteen_minutes": 1.01
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.0,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning tsf-wasm:\ntsf-wasm First-Score                            11.01 pts\ntsf-wasm Worst-Score                            10.20 pts\ntsf-wasm Average-Score                          13.21 pts\ntsf-wasm Score                                  11.40 pts\ntsf-wasm First-Time                            454.11 ms \ntsf-wasm Worst-Time                            490.18 ms \ntsf-wasm Average-Time                          378.59 ms \ntsf-wasm Total-Time                           1322.87 ms \ntsf-wasm Wall-Time                            19051.02 ms \n\nOverall:\nOverall First-Score                             11.01 pts\nOverall Worst-Score                             10.20 pts\nOverall Average-Score                           13.21 pts\nOverall First-Time                             454.11 ms \nOverall Worst-Time                             490.18 ms \nOverall Average-Time                           378.59 ms \n\nOverall Score                                   11.40 pts\nOverall Wall-Time                             19053.11 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 1,
+          "execution_order": [
+            "bun",
+            "quench"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 43595475166,
+              "peak_rss_bytes": 55246848,
+              "score": 5.37,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 11865,
+              "page_reclaims": 11865,
+              "involuntary_context_switches": 136,
+              "host_before": {
+                "captured_unix_ns": 1792127628561089285,
+                "load_average": {
+                  "one_minute": 1.03,
+                  "five_minutes": 1.04,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792127672162058003,
+                "load_average": {
+                  "one_minute": 1.01,
+                  "five_minutes": 1.03,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning tsf-wasm:\ntsf-wasm First-Score                             5.45 pts\ntsf-wasm Worst-Score                             4.96 pts\ntsf-wasm Average-Score                           5.75 pts\ntsf-wasm Score                                   5.37 pts\ntsf-wasm First-Time                            917.83 ms \ntsf-wasm Worst-Time                           1008.73 ms \ntsf-wasm Average-Time                          870.15 ms \ntsf-wasm Total-Time                           2796.71 ms \ntsf-wasm Wall-Time                            43565.46 ms \n\nOverall:\nOverall First-Score                              5.45 pts\nOverall Worst-Score                              4.96 pts\nOverall Average-Score                            5.75 pts\nOverall First-Time                             917.83 ms \nOverall Worst-Time                            1008.73 ms \nOverall Average-Time                           870.15 ms \n\nOverall Score                                    5.37 pts\nOverall Wall-Time                             43567.94 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 19338927073,
+              "peak_rss_bytes": 54894592,
+              "score": 12.23,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 54003,
+              "page_reclaims": 54003,
+              "involuntary_context_switches": 35,
+              "host_before": {
+                "captured_unix_ns": 1792127672166890688,
+                "load_average": {
+                  "one_minute": 1.01,
+                  "five_minutes": 1.03,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792127691512699169,
+                "load_average": {
+                  "one_minute": 1.01,
+                  "five_minutes": 1.03,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning tsf-wasm:\ntsf-wasm First-Score                            13.23 pts\ntsf-wasm Worst-Score                            10.43 pts\ntsf-wasm Average-Score                          13.27 pts\ntsf-wasm Score                                  12.23 pts\ntsf-wasm First-Time                            377.98 ms \ntsf-wasm Worst-Time                            479.21 ms \ntsf-wasm Average-Time                          376.88 ms \ntsf-wasm Total-Time                           1234.07 ms \ntsf-wasm Wall-Time                            18889.12 ms \n\nOverall:\nOverall First-Score                             13.23 pts\nOverall Worst-Score                             10.43 pts\nOverall Average-Score                           13.27 pts\nOverall First-Time                             377.98 ms \nOverall Worst-Time                             479.21 ms \nOverall Average-Time                           376.88 ms \n\nOverall Score                                   12.23 pts\nOverall Wall-Time                             18891.99 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 2,
+          "execution_order": [
+            "quench",
+            "bun"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 42955904976,
+              "peak_rss_bytes": 55525376,
+              "score": 5.43,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 11853,
+              "page_reclaims": 11853,
+              "involuntary_context_switches": 112,
+              "host_before": {
+                "captured_unix_ns": 1792127710816734435,
+                "load_average": {
+                  "one_minute": 1.0,
+                  "five_minutes": 1.03,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792127753779611928,
+                "load_average": {
+                  "one_minute": 1.07,
+                  "five_minutes": 1.04,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning tsf-wasm:\ntsf-wasm First-Score                             5.28 pts\ntsf-wasm Worst-Score                             5.21 pts\ntsf-wasm Average-Score                           5.84 pts\ntsf-wasm Score                                   5.43 pts\ntsf-wasm First-Time                            947.64 ms \ntsf-wasm Worst-Time                            960.33 ms \ntsf-wasm Average-Time                          856.48 ms \ntsf-wasm Total-Time                           2764.44 ms \ntsf-wasm Wall-Time                            42928.39 ms \n\nOverall:\nOverall First-Score                              5.28 pts\nOverall Worst-Score                              5.21 pts\nOverall Average-Score                            5.84 pts\nOverall First-Time                             947.64 ms \nOverall Worst-Time                             960.33 ms \nOverall Average-Time                           856.48 ms \n\nOverall Score                                    5.43 pts\nOverall Wall-Time                             42931.01 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 19287508609,
+              "peak_rss_bytes": 54972416,
+              "score": 12.28,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 53939,
+              "page_reclaims": 53939,
+              "involuntary_context_switches": 34,
+              "host_before": {
+                "captured_unix_ns": 1792127691517118387,
+                "load_average": {
+                  "one_minute": 1.01,
+                  "five_minutes": 1.03,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792127710809720739,
+                "load_average": {
+                  "one_minute": 1.0,
+                  "five_minutes": 1.03,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning tsf-wasm:\ntsf-wasm First-Score                            12.97 pts\ntsf-wasm Worst-Score                            10.75 pts\ntsf-wasm Average-Score                          13.27 pts\ntsf-wasm Score                                  12.28 pts\ntsf-wasm First-Time                            385.53 ms \ntsf-wasm Worst-Time                            465.08 ms \ntsf-wasm Average-Time                          376.84 ms \ntsf-wasm Total-Time                           1227.44 ms \ntsf-wasm Wall-Time                            18894.50 ms \n\nOverall:\nOverall First-Score                             12.97 pts\nOverall Worst-Score                             10.75 pts\nOverall Average-Score                           13.27 pts\nOverall First-Time                             385.53 ms \nOverall Worst-Time                             465.08 ms \nOverall Average-Time                           376.84 ms \n\nOverall Score                                   12.28 pts\nOverall Wall-Time                             18896.45 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 3,
+          "execution_order": [
+            "bun",
+            "quench"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 43426336369,
+              "peak_rss_bytes": 55345152,
+              "score": 5.55,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 11784,
+              "page_reclaims": 11784,
+              "involuntary_context_switches": 167,
+              "host_before": {
+                "captured_unix_ns": 1792127753784572327,
+                "load_average": {
+                  "one_minute": 1.07,
+                  "five_minutes": 1.04,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792127797216023211,
+                "load_average": {
+                  "one_minute": 1.03,
+                  "five_minutes": 1.03,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning tsf-wasm:\ntsf-wasm First-Score                             5.73 pts\ntsf-wasm Worst-Score                             5.19 pts\ntsf-wasm Average-Score                           5.76 pts\ntsf-wasm Score                                   5.55 pts\ntsf-wasm First-Time                            873.28 ms \ntsf-wasm Worst-Time                            963.16 ms \ntsf-wasm Average-Time                          867.64 ms \ntsf-wasm Total-Time                           2704.08 ms \ntsf-wasm Wall-Time                            43398.81 ms \n\nOverall:\nOverall First-Score                              5.73 pts\nOverall Worst-Score                              5.19 pts\nOverall Average-Score                            5.76 pts\nOverall First-Time                             873.28 ms \nOverall Worst-Time                             963.16 ms \nOverall Average-Time                           867.64 ms \n\nOverall Score                                    5.55 pts\nOverall Wall-Time                             43401.30 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 18902541304,
+              "peak_rss_bytes": 54976512,
+              "score": 12.22,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 53488,
+              "page_reclaims": 53488,
+              "involuntary_context_switches": 38,
+              "host_before": {
+                "captured_unix_ns": 1792127797222927652,
+                "load_average": {
+                  "one_minute": 1.03,
+                  "five_minutes": 1.03,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792127816132338995,
+                "load_average": {
+                  "one_minute": 1.02,
+                  "five_minutes": 1.03,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning tsf-wasm:\ntsf-wasm First-Score                            12.48 pts\ntsf-wasm Worst-Score                            10.74 pts\ntsf-wasm Average-Score                          13.60 pts\ntsf-wasm Score                                  12.22 pts\ntsf-wasm First-Time                            400.53 ms \ntsf-wasm Worst-Time                            465.54 ms \ntsf-wasm Average-Time                          367.51 ms \ntsf-wasm Total-Time                           1233.58 ms \ntsf-wasm Wall-Time                            18455.18 ms \n\nOverall:\nOverall First-Score                             12.48 pts\nOverall Worst-Score                             10.74 pts\nOverall Average-Score                           13.60 pts\nOverall First-Time                             400.53 ms \nOverall Worst-Time                             465.54 ms \nOverall Average-Time                           367.51 ms \n\nOverall Score                                   12.22 pts\nOverall Wall-Time                             18457.20 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 4,
+          "execution_order": [
+            "quench",
+            "bun"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 44355968707,
+              "peak_rss_bytes": 55185408,
+              "score": 5.45,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 11795,
+              "page_reclaims": 11795,
+              "involuntary_context_switches": 111,
+              "host_before": {
+                "captured_unix_ns": 1792127835747771991,
+                "load_average": {
+                  "one_minute": 1.02,
+                  "five_minutes": 1.03,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792127880109579898,
+                "load_average": {
+                  "one_minute": 1.06,
+                  "five_minutes": 1.04,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning tsf-wasm:\ntsf-wasm First-Score                             5.79 pts\ntsf-wasm Worst-Score                             4.96 pts\ntsf-wasm Average-Score                           5.64 pts\ntsf-wasm Score                                   5.45 pts\ntsf-wasm First-Time                            864.28 ms \ntsf-wasm Worst-Time                           1007.77 ms \ntsf-wasm Average-Time                          886.85 ms \ntsf-wasm Total-Time                           2758.90 ms \ntsf-wasm Wall-Time                            44331.15 ms \n\nOverall:\nOverall First-Score                              5.79 pts\nOverall Worst-Score                              4.96 pts\nOverall Average-Score                            5.64 pts\nOverall First-Time                             864.28 ms \nOverall Worst-Time                            1007.77 ms \nOverall Average-Time                           886.85 ms \n\nOverall Score                                    5.45 pts\nOverall Wall-Time                             44334.50 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 19598521748,
+              "peak_rss_bytes": 54927360,
+              "score": 12.07,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 53861,
+              "page_reclaims": 53861,
+              "involuntary_context_switches": 30,
+              "host_before": {
+                "captured_unix_ns": 1792127816138937407,
+                "load_average": {
+                  "one_minute": 1.02,
+                  "five_minutes": 1.03,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792127835743272927,
+                "load_average": {
+                  "one_minute": 1.02,
+                  "five_minutes": 1.03,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.2,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning tsf-wasm:\ntsf-wasm First-Score                            12.47 pts\ntsf-wasm Worst-Score                            10.70 pts\ntsf-wasm Average-Score                          13.17 pts\ntsf-wasm Score                                  12.07 pts\ntsf-wasm First-Time                            400.86 ms \ntsf-wasm Worst-Time                            467.43 ms \ntsf-wasm Average-Time                          379.72 ms \ntsf-wasm Total-Time                           1248.01 ms \ntsf-wasm Wall-Time                            19054.07 ms \n\nOverall:\nOverall First-Score                             12.47 pts\nOverall Worst-Score                             10.70 pts\nOverall Average-Score                           13.17 pts\nOverall First-Time                             400.86 ms \nOverall Worst-Time                             467.43 ms \nOverall Average-Time                           379.72 ms \n\nOverall Score                                   12.07 pts\nOverall Wall-Time                             19056.19 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 5,
+          "execution_order": [
+            "bun",
+            "quench"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 43728569324,
+              "peak_rss_bytes": 55132160,
+              "score": 5.47,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 11850,
+              "page_reclaims": 11850,
+              "involuntary_context_switches": 113,
+              "host_before": {
+                "captured_unix_ns": 1792127880114437602,
+                "load_average": {
+                  "one_minute": 1.06,
+                  "five_minutes": 1.04,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792127923848212761,
+                "load_average": {
+                  "one_minute": 1.03,
+                  "five_minutes": 1.03,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning tsf-wasm:\ntsf-wasm First-Score                             5.60 pts\ntsf-wasm Worst-Score                             5.10 pts\ntsf-wasm Average-Score                           5.72 pts\ntsf-wasm Score                                   5.47 pts\ntsf-wasm First-Time                            892.58 ms \ntsf-wasm Worst-Time                            979.76 ms \ntsf-wasm Average-Time                          873.47 ms \ntsf-wasm Total-Time                           2745.80 ms \ntsf-wasm Wall-Time                            43703.43 ms \n\nOverall:\nOverall First-Score                              5.60 pts\nOverall Worst-Score                              5.10 pts\nOverall Average-Score                            5.72 pts\nOverall First-Time                             892.58 ms \nOverall Worst-Time                             979.76 ms \nOverall Average-Time                           873.47 ms \n\nOverall Score                                    5.47 pts\nOverall Wall-Time                             43705.94 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 19474890163,
+              "peak_rss_bytes": 54984704,
+              "score": 11.74,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 52976,
+              "page_reclaims": 52976,
+              "involuntary_context_switches": 41,
+              "host_before": {
+                "captured_unix_ns": 1792127923852924817,
+                "load_average": {
+                  "one_minute": 1.03,
+                  "five_minutes": 1.03,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792127943332942285,
+                "load_average": {
+                  "one_minute": 1.08,
+                  "five_minutes": 1.04,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning tsf-wasm:\ntsf-wasm First-Score                            11.89 pts\ntsf-wasm Worst-Score                            10.30 pts\ntsf-wasm Average-Score                          13.20 pts\ntsf-wasm Score                                  11.74 pts\ntsf-wasm First-Time                            420.50 ms \ntsf-wasm Worst-Time                            485.37 ms \ntsf-wasm Average-Time                          378.88 ms \ntsf-wasm Total-Time                           1284.75 ms \ntsf-wasm Wall-Time                            19051.03 ms \n\nOverall:\nOverall First-Score                             11.89 pts\nOverall Worst-Score                             10.30 pts\nOverall Average-Score                           13.20 pts\nOverall First-Time                             420.50 ms \nOverall Worst-Time                             485.37 ms \nOverall Average-Time                           378.88 ms \n\nOverall Score                                   11.74 pts\nOverall Wall-Time                             19053.26 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 6,
+          "execution_order": [
+            "quench",
+            "bun"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 43092498921,
+              "peak_rss_bytes": 55648256,
+              "score": 5.64,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 11757,
+              "page_reclaims": 11757,
+              "involuntary_context_switches": 123,
+              "host_before": {
+                "captured_unix_ns": 1792127963225589821,
+                "load_average": {
+                  "one_minute": 1.06,
+                  "five_minutes": 1.04,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792128006323799494,
+                "load_average": {
+                  "one_minute": 1.03,
+                  "five_minutes": 1.03,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning tsf-wasm:\ntsf-wasm First-Score                             5.93 pts\ntsf-wasm Worst-Score                             5.21 pts\ntsf-wasm Average-Score                           5.80 pts\ntsf-wasm Score                                   5.64 pts\ntsf-wasm First-Time                            842.87 ms \ntsf-wasm Worst-Time                            960.43 ms \ntsf-wasm Average-Time                          861.53 ms \ntsf-wasm Total-Time                           2664.83 ms \ntsf-wasm Wall-Time                            43068.49 ms \n\nOverall:\nOverall First-Score                              5.93 pts\nOverall Worst-Score                              5.21 pts\nOverall Average-Score                            5.80 pts\nOverall First-Time                             842.87 ms \nOverall Worst-Time                             960.43 ms \nOverall Average-Time                           861.53 ms \n\nOverall Score                                    5.64 pts\nOverall Wall-Time                             43070.98 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 19878306349,
+              "peak_rss_bytes": 54947840,
+              "score": 11.61,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 54541,
+              "page_reclaims": 54541,
+              "involuntary_context_switches": 36,
+              "host_before": {
+                "captured_unix_ns": 1792127943337687604,
+                "load_average": {
+                  "one_minute": 1.08,
+                  "five_minutes": 1.04,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792127963220895332,
+                "load_average": {
+                  "one_minute": 1.06,
+                  "five_minutes": 1.04,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning tsf-wasm:\ntsf-wasm First-Score                            12.40 pts\ntsf-wasm Worst-Score                             9.80 pts\ntsf-wasm Average-Score                          12.88 pts\ntsf-wasm Score                                  11.61 pts\ntsf-wasm First-Time                            403.24 ms \ntsf-wasm Worst-Time                            510.23 ms \ntsf-wasm Average-Time                          388.11 ms \ntsf-wasm Total-Time                           1301.58 ms \ntsf-wasm Wall-Time                            19464.11 ms \n\nOverall:\nOverall First-Score                             12.40 pts\nOverall Worst-Score                              9.80 pts\nOverall Average-Score                           12.88 pts\nOverall First-Time                             403.24 ms \nOverall Worst-Time                             510.23 ms \nOverall Average-Time                           388.11 ms \n\nOverall Score                                   11.61 pts\nOverall Wall-Time                             19466.16 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 7,
+          "execution_order": [
+            "bun",
+            "quench"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 43828461186,
+              "peak_rss_bytes": 55201792,
+              "score": 5.47,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 11853,
+              "page_reclaims": 11853,
+              "involuntary_context_switches": 184,
+              "host_before": {
+                "captured_unix_ns": 1792128006328501788,
+                "load_average": {
+                  "one_minute": 1.03,
+                  "five_minutes": 1.03,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792128050162090101,
+                "load_average": {
+                  "one_minute": 1.06,
+                  "five_minutes": 1.04,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning tsf-wasm:\ntsf-wasm First-Score                             5.53 pts\ntsf-wasm Worst-Score                             5.17 pts\ntsf-wasm Average-Score                           5.71 pts\ntsf-wasm Score                                   5.47 pts\ntsf-wasm First-Time                            903.84 ms \ntsf-wasm Worst-Time                            967.15 ms \ntsf-wasm Average-Time                          875.25 ms \ntsf-wasm Total-Time                           2746.24 ms \ntsf-wasm Wall-Time                            43801.16 ms \n\nOverall:\nOverall First-Score                              5.53 pts\nOverall Worst-Score                              5.17 pts\nOverall Average-Score                            5.71 pts\nOverall First-Time                             903.84 ms \nOverall Worst-Time                             967.15 ms \nOverall Average-Time                           875.25 ms \n\nOverall Score                                    5.47 pts\nOverall Wall-Time                             43803.67 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 19093315185,
+              "peak_rss_bytes": 55013376,
+              "score": 12.28,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 53652,
+              "page_reclaims": 53652,
+              "involuntary_context_switches": 39,
+              "host_before": {
+                "captured_unix_ns": 1792128050169578610,
+                "load_average": {
+                  "one_minute": 1.06,
+                  "five_minutes": 1.04,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792128069267754838,
+                "load_average": {
+                  "one_minute": 1.11,
+                  "five_minutes": 1.05,
+                  "fifteen_minutes": 1.01
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning tsf-wasm:\ntsf-wasm First-Score                            11.70 pts\ntsf-wasm Worst-Score                            11.72 pts\ntsf-wasm Average-Score                          13.50 pts\ntsf-wasm Score                                  12.28 pts\ntsf-wasm First-Time                            427.41 ms \ntsf-wasm Worst-Time                            426.66 ms \ntsf-wasm Average-Time                          370.35 ms \ntsf-wasm Total-Time                           1224.43 ms \ntsf-wasm Wall-Time                            18618.49 ms \n\nOverall:\nOverall First-Score                             11.70 pts\nOverall Worst-Score                             11.72 pts\nOverall Average-Score                           13.50 pts\nOverall First-Time                             427.41 ms \nOverall Worst-Time                             426.66 ms \nOverall Average-Time                           370.35 ms \n\nOverall Score                                   12.28 pts\nOverall Wall-Time                             18620.52 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 8,
+          "execution_order": [
+            "quench",
+            "bun"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 42693858601,
+              "peak_rss_bytes": 55017472,
+              "score": 5.53,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 11872,
+              "page_reclaims": 11872,
+              "involuntary_context_switches": 88,
+              "host_before": {
+                "captured_unix_ns": 1792128088842581599,
+                "load_average": {
+                  "one_minute": 1.09,
+                  "five_minutes": 1.05,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792128131543920849,
+                "load_average": {
+                  "one_minute": 1.04,
+                  "five_minutes": 1.04,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning tsf-wasm:\ntsf-wasm First-Score                             5.42 pts\ntsf-wasm Worst-Score                             5.32 pts\ntsf-wasm Average-Score                           5.87 pts\ntsf-wasm Score                                   5.53 pts\ntsf-wasm First-Time                            921.97 ms \ntsf-wasm Worst-Time                            939.38 ms \ntsf-wasm Average-Time                          851.80 ms \ntsf-wasm Total-Time                           2713.14 ms \ntsf-wasm Wall-Time                            42670.36 ms \n\nOverall:\nOverall First-Score                              5.42 pts\nOverall Worst-Score                              5.32 pts\nOverall Average-Score                            5.87 pts\nOverall First-Time                             921.97 ms \nOverall Worst-Time                             939.38 ms \nOverall Average-Time                           851.80 ms \n\nOverall Score                                    5.53 pts\nOverall Wall-Time                             42673.86 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 19554938415,
+              "peak_rss_bytes": 54984704,
+              "score": 11.42,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 53725,
+              "page_reclaims": 53725,
+              "involuntary_context_switches": 36,
+              "host_before": {
+                "captured_unix_ns": 1792128069276245075,
+                "load_average": {
+                  "one_minute": 1.11,
+                  "five_minutes": 1.05,
+                  "fifteen_minutes": 1.01
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792128088835966194,
+                "load_average": {
+                  "one_minute": 1.09,
+                  "five_minutes": 1.05,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning tsf-wasm:\ntsf-wasm First-Score                            10.85 pts\ntsf-wasm Worst-Score                            10.44 pts\ntsf-wasm Average-Score                          13.15 pts\ntsf-wasm Score                                  11.42 pts\ntsf-wasm First-Time                            460.83 ms \ntsf-wasm Worst-Time                            478.74 ms \ntsf-wasm Average-Time                          380.33 ms \ntsf-wasm Total-Time                           1319.90 ms \ntsf-wasm Wall-Time                            19142.42 ms \n\nOverall:\nOverall First-Score                             10.85 pts\nOverall Worst-Score                             10.44 pts\nOverall Average-Score                           13.15 pts\nOverall First-Time                             460.83 ms \nOverall Worst-Time                             478.74 ms \nOverall Average-Time                           380.33 ms \n\nOverall Score                                   11.42 pts\nOverall Wall-Time                             19144.40 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 9,
+          "execution_order": [
+            "bun",
+            "quench"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 43231932844,
+              "peak_rss_bytes": 55185408,
+              "score": 5.42,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 11838,
+              "page_reclaims": 11838,
+              "involuntary_context_switches": 117,
+              "host_before": {
+                "captured_unix_ns": 1792128131552146579,
+                "load_average": {
+                  "one_minute": 1.04,
+                  "five_minutes": 1.04,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792128174788986883,
+                "load_average": {
+                  "one_minute": 1.02,
+                  "five_minutes": 1.03,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning tsf-wasm:\ntsf-wasm First-Score                             5.44 pts\ntsf-wasm Worst-Score                             5.04 pts\ntsf-wasm Average-Score                           5.80 pts\ntsf-wasm Score                                   5.42 pts\ntsf-wasm First-Time                            919.46 ms \ntsf-wasm Worst-Time                            992.24 ms \ntsf-wasm Average-Time                          862.62 ms \ntsf-wasm Total-Time                           2774.33 ms \ntsf-wasm Wall-Time                            43201.94 ms \n\nOverall:\nOverall First-Score                              5.44 pts\nOverall Worst-Score                              5.04 pts\nOverall Average-Score                            5.80 pts\nOverall First-Time                             919.46 ms \nOverall Worst-Time                             992.24 ms \nOverall Average-Time                           862.62 ms \n\nOverall Score                                    5.42 pts\nOverall Wall-Time                             43204.88 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 19344869500,
+              "peak_rss_bytes": 54980608,
+              "score": 11.84,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 53346,
+              "page_reclaims": 53346,
+              "involuntary_context_switches": 38,
+              "host_before": {
+                "captured_unix_ns": 1792128174793625371,
+                "load_average": {
+                  "one_minute": 1.02,
+                  "five_minutes": 1.03,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792128194145361897,
+                "load_average": {
+                  "one_minute": 1.01,
+                  "five_minutes": 1.03,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning tsf-wasm:\ntsf-wasm First-Score                            11.13 pts\ntsf-wasm Worst-Score                            11.18 pts\ntsf-wasm Average-Score                          13.33 pts\ntsf-wasm Score                                  11.84 pts\ntsf-wasm First-Time                            449.36 ms \ntsf-wasm Worst-Time                            447.38 ms \ntsf-wasm Average-Time                          375.09 ms \ntsf-wasm Total-Time                           1271.83 ms \ntsf-wasm Wall-Time                            18877.39 ms \n\nOverall:\nOverall First-Score                             11.13 pts\nOverall Worst-Score                             11.18 pts\nOverall Average-Score                           13.33 pts\nOverall First-Time                             449.36 ms \nOverall Worst-Time                             447.38 ms \nOverall Average-Time                           375.09 ms \n\nOverall Score                                   11.84 pts\nOverall Wall-Time                             18880.50 ms \n\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 10,
+          "execution_order": [
+            "quench",
+            "bun"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 42688271582,
+              "peak_rss_bytes": 55115776,
+              "score": 5.62,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 11880,
+              "page_reclaims": 11880,
+              "involuntary_context_switches": 135,
+              "host_before": {
+                "captured_unix_ns": 1792128213407937525,
+                "load_average": {
+                  "one_minute": 1.01,
+                  "five_minutes": 1.03,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792128256102900031,
+                "load_average": {
+                  "one_minute": 1.0,
+                  "five_minutes": 1.02,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning tsf-wasm:\ntsf-wasm First-Score                             5.85 pts\ntsf-wasm Worst-Score                             5.17 pts\ntsf-wasm Average-Score                           5.86 pts\ntsf-wasm Score                                   5.62 pts\ntsf-wasm First-Time                            853.99 ms \ntsf-wasm Worst-Time                            967.16 ms \ntsf-wasm Average-Time                          852.97 ms \ntsf-wasm Total-Time                           2674.11 ms \ntsf-wasm Wall-Time                            42659.56 ms \n\nOverall:\nOverall First-Score                              5.85 pts\nOverall Worst-Score                              5.17 pts\nOverall Average-Score                            5.86 pts\nOverall First-Time                             853.99 ms \nOverall Worst-Time                             967.16 ms \nOverall Average-Time                           852.97 ms \n\nOverall Score                                    5.62 pts\nOverall Wall-Time                             42662.84 ms \n\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 19247102077,
+              "peak_rss_bytes": 54935552,
+              "score": 12.38,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 53773,
+              "page_reclaims": 53773,
+              "involuntary_context_switches": 36,
+              "host_before": {
+                "captured_unix_ns": 1792128194150073151,
+                "load_average": {
+                  "one_minute": 1.01,
+                  "five_minutes": 1.03,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792128213402829724,
+                "load_average": {
+                  "one_minute": 1.01,
+                  "five_minutes": 1.03,
+                  "fifteen_minutes": 1.0
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 17454,
+                    "cpu_percent": 2.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 97,
+                    "cpu_percent": 1.2,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.0,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "Starting JetStream3\nRunning tsf-wasm:\ntsf-wasm First-Score                            12.90 pts\ntsf-wasm Worst-Score                            10.99 pts\ntsf-wasm Average-Score                          13.38 pts\ntsf-wasm Score                                  12.38 pts\ntsf-wasm First-Time                            387.71 ms \ntsf-wasm Worst-Time                            454.90 ms \ntsf-wasm Average-Time                          373.83 ms \ntsf-wasm Total-Time                           1216.45 ms \ntsf-wasm Wall-Time                            18754.14 ms \n\nOverall:\nOverall First-Score                             12.90 pts\nOverall Worst-Score                             10.99 pts\nOverall Average-Score                           13.38 pts\nOverall First-Time                             387.71 ms \nOverall Worst-Time                             454.90 ms \nOverall Average-Time                           373.83 ms \n\nOverall Score                                   12.38 pts\nOverall Wall-Time                             18756.96 ms \n\n",
+              "stderr": ""
+            }
+          }
+        }
+      ]
+    }
+  },
+  "complete": true,
+  "qualification_ready": false
+}

@@ -1,0 +1,419 @@
+diff --git a/crates/quench-node-test/tests/child_entry.rs b/crates/quench-node-test/tests/child_entry.rs
+index 2d1975301..b1b6394bd 100644
+--- a/crates/quench-node-test/tests/child_entry.rs
++++ b/crates/quench-node-test/tests/child_entry.rs
+@@ -9535,3 +9535,13 @@ fn fatal_source_excerpts_follow_javascript_line_terminators_and_original_file_li
+         assert_eq!(excerpts[0], excerpts[1]);
+     }
+ }
++
++#[test]
++fn eval_call_sites_capture_original_compiling_callers_and_hide_absent_script_names() {
++    compare_node_source_with_args(include_str!("../node-tests/test-callsite-eval-origins.js"), &["--expose-gc"]);
++}
++
++#[test]
++fn indirect_eval_script_identity_preserves_origins_fresh_values_templates_and_realm_isolation() {
++    compare_node_source_with_args(include_str!("../node-tests/test-indirect-eval-script-identity.js"), &[]);
++}
+diff --git a/crates/quench-runtime/src/compile.rs b/crates/quench-runtime/src/compile.rs
+index 15e2e04f3..f95b5a98a 100644
+--- a/crates/quench-runtime/src/compile.rs
++++ b/crates/quench-runtime/src/compile.rs
+@@ -190,6 +190,24 @@ pub(crate) struct StaticModulePlan {
+ }
+ pub(crate) use crate::bytecode::ModuleReexport as StaticModuleReexport;
+ impl Engine {
++    /// V8 excludes tagged templates from eval's compilation cache because each
++    /// evaluation owns distinct template objects, including nested function sites.
++    pub(crate) fn eval_has_tagged_template(source: &str) -> bool {
++        use oxc_ast_visit::Visit;
++        struct TaggedTemplate(bool);
++        impl<'a> Visit<'a> for TaggedTemplate {
++            fn visit_tagged_template_expression(&mut self, _: &TaggedTemplateExpression<'a>) {
++                self.0 = true;
++            }
++        }
++        let allocator = Allocator::with_capacity(source.len());
++        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
++        if stack::validate_parsed(&parsed).is_err() || !parsed.diagnostics.is_empty() { return true; }
++        let mut visitor = TaggedTemplate(false);
++        visitor.visit_program(&parsed.program);
++        visitor.0
++    }
++
+     pub(crate) fn eval_single_regexp_literal(source: &str) -> Option<EvalRegExpLiteral> {
+         let allocator = Allocator::with_capacity(source.len());
+         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
+diff --git a/crates/quench-runtime/src/compile/rewrite.rs b/crates/quench-runtime/src/compile/rewrite.rs
+index c59ac6ce8..597443a30 100644
+--- a/crates/quench-runtime/src/compile/rewrite.rs
++++ b/crates/quench-runtime/src/compile/rewrite.rs
+@@ -778,13 +778,14 @@ pub(super) fn relocate(
+     for site in binding_sites {
+         site.resume_pc = map[site.resume_pc as usize] as u32;
+     }
+-    relocate_source_positions(code.len(), source_positions, old_code, map);
++    relocate_source_positions(code.len(), source_positions, old_code, wide, map);
+ }
+ 
+ fn relocate_source_positions(
+     code_len: usize,
+     source_positions: &mut Vec<crate::bytecode::SourcePosition>,
+     old_code: &[Instr],
++    wide: &[WideInstruction],
+     map: &[usize],
+ ) {
+     let surviving_positions = source_positions
+@@ -824,7 +825,7 @@ fn relocate_source_positions(
+         // Call anchors are observable even when their location matches a
+         // preceding Move that a later pass may remove.
+         if previous_location == Some(location)
+-            && old_code[anchor].op().control_flow_layout()
++            && fixed_width(old_code[anchor], wide).op().control_flow_layout()
+                 != crate::bytecode::ControlFlowLayout::Call
+         {
+             continue;
+@@ -1284,4 +1285,27 @@ mod tests {
+             ]
+         );
+     }
++
++    #[test]
++    fn wide_call_source_anchors_survive_later_argument_move_removal() {
++        use crate::bytecode::SourcePosition;
++        let wide = [WideInstruction::new(Op::Call, 0, 0, 0, 0)];
++        let load = Instr::new(Op::LoadConst, 0, 0, 0, 0);
++        let call = Instr::wide(0).unwrap();
++        let mut positions = vec![
++            SourcePosition { pc: 0, line: 1, column: 74 },
++            SourcePosition { pc: 1, line: 1, column: 69 },
++            SourcePosition { pc: 2, line: 1, column: 69 },
++        ];
++        let first = [load, Instr::new(Op::Move, 0, 0, 0, 0), call];
++        relocate_source_positions(3, &mut positions, &first, &wide, &[0, 1, 2, 3]);
++        assert_eq!(positions.last().unwrap().pc, 2);
++        let second = [load, Instr::new(Op::Nop, 0, 0, 0, 0), call];
++        relocate_source_positions(2, &mut positions, &second, &wide, &[0, 1, 1, 2]);
++        assert_eq!(positions, vec![
++            SourcePosition { pc: 0, line: 1, column: 74 },
++            SourcePosition { pc: 1, line: 1, column: 69 },
++        ]);
++    }
++
+ }
+diff --git a/crates/quench-runtime/src/heap/cell.rs b/crates/quench-runtime/src/heap/cell.rs
+index 3aa35acb7..5902d1f9b 100644
+--- a/crates/quench-runtime/src/heap/cell.rs
++++ b/crates/quench-runtime/src/heap/cell.rs
+@@ -1235,7 +1235,7 @@ pub(crate) struct CallSiteRecord {
+     pub(crate) this_value: Value,
+     pub(crate) hide_identity: bool,
+     pub(crate) is_constructor: bool,
+-    pub(crate) is_eval: bool,
++    pub(crate) eval_origin: Option<JsString>,
+ }
+ 
+ impl CallSiteRecord {
+diff --git a/crates/quench-runtime/src/vm/error.rs b/crates/quench-runtime/src/vm/error.rs
+index d05715ec7..b5c192351 100644
+--- a/crates/quench-runtime/src/vm/error.rs
++++ b/crates/quench-runtime/src/vm/error.rs
+@@ -543,11 +543,39 @@ impl<H: Host> Vm<H> {
+             name,
+             hide_identity,
+             is_constructor: frame.context.is_constructor(),
+-            is_eval: self.programs.is_eval(frame.program),
++            eval_origin: self.programs.eval_origin(frame.program),
+             this_value: if frame.this == Value::DELETED { Value::UNDEFINED } else { frame.this },
+         }, residual.kind == crate::bytecode::ProgramKind::Module))
+     }
+ 
++    /// Snapshot the actual compiling caller without evaluating guest name hooks.
++    pub(super) fn capture_eval_origin(&mut self, context: &ResidualProgram) -> Result<JsString, JsError> {
++        let fallback = || JsString::from_str(super::program_store::ANONYMOUS_EVAL_ORIGIN);
++        let (mut record, module, name) = {
++            let Some(frame) = self.frames.last() else { return Ok(fallback()); };
++            let Some((record, module)) = self.source_call_site_record(frame, false) else { return Ok(fallback()); };
++            let Some(program) = self.programs.get(frame.program) else { return Ok(fallback()); };
++            let Some(function) = program.functions.get(frame.function as usize) else { return Ok(fallback()); };
++            let primary_constructor = self.programs.is_function_constructor(frame.program)
++                && function.parent == Some(ROOT_FUNCTION_ID);
++            let name = function.name.or_else(|| (!primary_constructor)
++                .then(|| frame.context.callable().and_then(|callee| self.original_function_name(callee)))
++                .flatten()).map(|name| self.atom_value(name));
++            (record, module, name.filter(|name| !name.units().is_empty()))
++        };
++        Self::map_call_site_source(&mut self.host, &mut record, module);
++        let mut text = super::wtf16::JsStringBuilder::default();
++        text.append(&JsString::from_str("eval at "));
++        text.append(&name.unwrap_or_else(|| JsString::from_str("<anonymous>")));
++        text.append(&JsString::from_str(" ("));
++        if let Some(origin) = &record.eval_origin { text.append(origin); }
++        else if let CallSiteLocation::Source { file_name, line, column } = &record.location {
++            text.append(&JsString::from_str(&format!("{file_name}:{line}:{column}")));
++        } else { text.append(&JsString::from_str("unknown source")); }
++        text.append(&JsString::from_str(")"));
++        self.string_build_result(context, text.finish())
++    }
++
+     pub(super) fn map_call_site_source(host: &mut H, record: &mut CallSiteRecord, module: bool) {
+         if let CallSiteLocation::Source { file_name, .. } = &mut record.location {
+             *file_name = host.stack_source_name(file_name, module);
+@@ -586,7 +614,7 @@ impl<H: Host> Vm<H> {
+                         this_value: Value::UNDEFINED,
+                         hide_identity: true,
+                         is_constructor: false,
+-                        is_eval: false,
++                        eval_origin: None,
+                     });
+                 }
+             }
+@@ -624,7 +652,7 @@ impl<H: Host> Vm<H> {
+                     this_value: Value::UNDEFINED,
+                     hide_identity: true,
+                     is_constructor: false,
+-                    is_eval: false,
++                    eval_origin: None,
+                 });
+             }
+         }
+@@ -708,19 +736,28 @@ impl<H: Host> Vm<H> {
+ 
+     pub(super) fn call_site_name(&self, record: &CallSiteRecord) -> Option<JsString> {
+         let name = match &record.name {
+-            CallSiteName::Callable(function) => self.debug_function_name(*function)?,
+-            CallSiteName::Static(name) => name.clone(),
+-            CallSiteName::Anonymous => return None,
++            CallSiteName::Callable(function) => self.debug_function_name(*function),
++            CallSiteName::Static(name) => Some(name.clone()),
++            CallSiteName::Anonymous => None,
+         };
+-        (name.len() != 0).then_some(name)
++        name.filter(|name| !name.units().is_empty()).or_else(|| record.eval_origin.as_ref()
++            .map(|_| JsString::from_str("eval")))
+     }
+ 
+     fn format_call_site(&mut self, program: &ResidualProgram, record: &CallSiteRecord) -> Result<JsString, JsError> {
+         let location = match &record.location {
+-            CallSiteLocation::Source { file_name, line, column } => format!("{file_name}:{line}:{column}"),
+-            CallSiteLocation::Native => "native".to_owned(),
++            CallSiteLocation::Source { file_name, line, column } => {
++                let mut text = super::wtf16::JsStringBuilder::default();
++                if let Some(origin) = &record.eval_origin {
++                    text.append(origin);
++                    text.append(&JsString::from_str(", <anonymous>"));
++                } else { text.append(&JsString::from_str(file_name)); }
++                text.append(&JsString::from_str(&format!(":{line}:{column}")));
++                text.finish()
++            }
++            CallSiteLocation::Native => Ok(JsString::from_str("native")),
+         };
+-        let location = JsString::from_str(&location);
++        let location = self.string_build_result(program, location)?;
+         let name = self.call_site_name(record).or_else(|| {
+             record.is_constructor.then(|| JsString::from_str("<anonymous>"))
+         });
+@@ -762,6 +799,7 @@ impl<H: Host> Vm<H> {
+             }
+         };
+         match native {
++            Native::CallSiteGetFileName if record.eval_origin.is_some() => Ok(Value::UNDEFINED),
+             Native::CallSiteGetFileName => Ok(match record.location {
+                 CallSiteLocation::Source { file_name, .. } => {
+                     self.heap.alloc(Cell::String(file_name.into()))
+@@ -787,7 +825,7 @@ impl<H: Host> Vm<H> {
+                 CallSiteLocation::Source { column, .. } => Value::number(f64::from(column)),
+                 CallSiteLocation::Native => Value::NULL,
+             }),
+-            Native::CallSiteIsEval => Ok(if record.is_eval { Value::TRUE } else { Value::FALSE }),
++            Native::CallSiteIsEval => Ok(if record.eval_origin.is_some() { Value::TRUE } else { Value::FALSE }),
+             Native::CallSiteIsConstructor => Ok(if record.is_constructor { Value::TRUE } else { Value::FALSE }),
+             Native::CallSiteIsNative => {
+                 Ok(if matches!(record.location, CallSiteLocation::Native) {
+@@ -799,7 +837,8 @@ impl<H: Host> Vm<H> {
+             Native::CallSiteGetTypeName => Ok(self.call_site_type_name(&record)?
+                 .map(|name| self.heap.alloc(Cell::String(name)))
+                 .unwrap_or(Value::NULL)),
+-            Native::CallSiteGetEvalOrigin => Ok(Value::UNDEFINED),
++            Native::CallSiteGetEvalOrigin => Ok(record.eval_origin
++                .map(|origin| self.heap.alloc(Cell::String(origin))).unwrap_or(Value::UNDEFINED)),
+             Native::CallSiteToString => {
+                 let text = self.format_call_site(program, &record)?;
+                 Ok(self.heap.alloc(Cell::String(text)))
+@@ -1324,7 +1363,8 @@ impl<H: Host> Vm<H> {
+         let Some(program_id) = self.store_dynamic_program(residual) else {
+             return Err(self.type_error(program, "dynamic program store is full".into()));
+         };
+-        self.programs.set_origin(program_id, super::program_store::CompilationOrigin::Eval);
++        let origin = self.capture_eval_origin(program)?;
++        self.programs.set_origin(program_id, super::program_store::CompilationOrigin::FunctionConstructor { caller: origin });
+         let residual = self
+             .programs
+             .get(program_id)
+diff --git a/crates/quench-runtime/src/vm/eval.rs b/crates/quench-runtime/src/vm/eval.rs
+index 159e78a02..3d304827a 100644
+--- a/crates/quench-runtime/src/vm/eval.rs
++++ b/crates/quench-runtime/src/vm/eval.rs
+@@ -121,17 +121,20 @@ impl<H: Host> Vm<H> {
+                 .alloc(Cell::String(JsString::from_units(&flag_units)));
+             return self.construct_regexp_native(p, &[pattern, flags], None);
+         }
+-        let text = match self.heap.get(source) {
+-            Some(Cell::String(value)) => value.host_string().to_owned(),
++        let source_text = match self.heap.get(source) {
++            Some(Cell::String(value)) => value.clone(),
+             _ => return Ok(source),
+         };
++        let text = source_text.host_string().to_owned();
+         let inherited_strict = self.direct_eval
+             && (self.in_class_field_initializer(p)
+                 || self.frames.last()
+                     .and_then(|frame| p.functions.get(frame.function as usize))
+                     .is_some_and(|function| function.strict));
+         self.validate_eval_arguments_context(p, &text)?;
+-        self.eval_global_script(p, &text, inherited_strict)
++        let source_name = format!("<Eval:{}>", self.programs.len());
++        let cache_source = (!self.direct_eval).then_some(source_text);
++        self.eval_global_script_with_cache(p, &text, inherited_strict, &source_name, cache_source)
+     }
+ 
+     pub(super) fn eval_global_script(
+@@ -151,6 +154,20 @@ impl<H: Host> Vm<H> {
+         strict: bool,
+         source_name: &str,
+     ) -> Result<Value, JsError> {
++        self.eval_global_script_with_cache(p, source, strict, source_name, None)
++    }
++
++    fn eval_global_script_with_cache(
++        &mut self,
++        p: &ResidualProgram,
++        source: &str,
++        strict: bool,
++        source_name: &str,
++        cache_source: Option<JsString>,
++    ) -> Result<Value, JsError> {
++        if let Some(program) = cache_source.as_ref().and_then(|source| self.programs.cached_global_eval(source)) {
++            return self.run_global_eval_program(p, program);
++        }
+         if strict {
+             self.validate_strict_eval(p, source)?;
+         }
+@@ -201,9 +218,16 @@ impl<H: Host> Vm<H> {
+             self.syntax_error_result(p, &message)
+                 .expect_err("dynamic eval syntax errors must throw")
+         })?;
++        let cache_source = cache_source.filter(|_| {
++            residual.functions.first().is_some_and(|root| !root.strict)
++                && !crate::Engine::eval_has_tagged_template(source)
++        });
+         let Some(program_id) = self.store_dynamic_program(residual) else {
+             return Err(self.type_error(p, "dynamic program store is full".into()));
+         };
++        let origin = self.capture_eval_origin(p)?;
++        self.programs.set_origin(program_id, super::program_store::CompilationOrigin::Eval { caller: Some(origin) });
++        if let Some(source) = cache_source { self.programs.cache_global_eval(source, program_id); }
+         self.run_global_eval_program(p, program_id)
+     }
+ 
+diff --git a/crates/quench-runtime/src/vm/program_store.rs b/crates/quench-runtime/src/vm/program_store.rs
+index eb42d75f3..06ec95801 100644
+--- a/crates/quench-runtime/src/vm/program_store.rs
++++ b/crates/quench-runtime/src/vm/program_store.rs
+@@ -1,6 +1,8 @@
+ use crate::Value;
++use super::wtf16::JsString;
+ use crate::bytecode::ResidualProgram;
+ use std::rc::Rc;
++use rustc_hash::FxHashMap;
+ 
+ struct ProgramEntry {
+     residual: Rc<ResidualProgram>,
+@@ -29,8 +31,14 @@ struct ProgramEntry {
+     pass: u64,
+ }
+ 
+-#[derive(Clone, Copy, PartialEq, Eq)]
+-pub(super) enum CompilationOrigin { Source, Eval }
++pub(super) const ANONYMOUS_EVAL_ORIGIN: &str = "eval at <anonymous>";
++
++#[derive(Clone)]
++pub(super) enum CompilationOrigin {
++    Source,
++    Eval { caller: Option<JsString> },
++    FunctionConstructor { caller: JsString },
++}
+ 
+ /// Where a stored program's root body evaluates, which decides whether its
+ /// by-name loads can only reach the global environment.
+@@ -78,6 +86,8 @@ pub(crate) struct ProgramStore {
+     /// Indexed by `ProgramId`; a reclaimed program leaves an empty slot, so an
+     /// id never names another program.
+     programs: Vec<Option<ProgramEntry>>,
++    /// Weak compiled-script identities for global eval; contexts are supplied per call.
++    global_eval_programs: FxHashMap<JsString, ProgramId>,
+     /// Completed reclamation passes; see `reclaim_unreferenced`.
+     reclaim_passes: u64,
+     /// Reclaimable programs inserted since the last reclamation pass.
+@@ -85,6 +95,15 @@ pub(crate) struct ProgramStore {
+ }
+ 
+ impl ProgramStore {
++    pub(super) fn cached_global_eval(&self, source: &JsString) -> Option<ProgramId> {
++        let program = *self.global_eval_programs.get(source)?;
++        self.entry(program).map(|_| program)
++    }
++
++    pub(super) fn cache_global_eval(&mut self, source: JsString, program: ProgramId) {
++        self.global_eval_programs.insert(source, program);
++    }
++
+     pub(crate) fn len(&self) -> usize {
+         self.programs.len()
+     }
+@@ -139,10 +158,15 @@ impl ProgramStore {
+             reclaimed.extend(ProgramId::from_index(index));
+         }
+         self.unchecked_reclaimable = pending;
++        if !reclaimed.is_empty() {
++            let programs = &self.programs;
++            self.global_eval_programs.retain(|_, id| programs.get(id.index()).is_some_and(Option::is_some));
++        }
+         reclaimed
+     }
+ 
+     pub(crate) fn reset(&mut self, main: Rc<ResidualProgram>) -> ProgramId {
++        self.global_eval_programs.clear();
+         self.programs.clear();
+         self.unchecked_reclaimable = 0;
+         let module = main.is_module();
+@@ -157,8 +181,17 @@ impl ProgramStore {
+         if let Some(entry) = self.entry_mut(id) { entry.origin = origin; }
+     }
+ 
+-    pub(super) fn is_eval(&self, id: ProgramId) -> bool {
+-        self.entry(id).is_some_and(|entry| entry.origin == CompilationOrigin::Eval)
++    pub(super) fn eval_origin(&self, id: ProgramId) -> Option<JsString> {
++        match &self.entry(id)?.origin {
++            CompilationOrigin::Source => None,
++            CompilationOrigin::Eval { caller } => Some(caller.clone()
++                .unwrap_or_else(|| JsString::from_str(ANONYMOUS_EVAL_ORIGIN))),
++            CompilationOrigin::FunctionConstructor { caller } => Some(caller.clone()),
++        }
++    }
++
++    pub(super) fn is_function_constructor(&self, id: ProgramId) -> bool {
++        self.entry(id).is_some_and(|entry| matches!(entry.origin, CompilationOrigin::FunctionConstructor { .. }))
+     }
+ 
+     pub(crate) fn mark_global_scope(&mut self, id: ProgramId) {
+@@ -203,7 +236,7 @@ impl ProgramStore {
+             .iter()
+             .map(|_| std::cell::OnceCell::new())
+             .collect();
+-        let origin = if program.kind == crate::bytecode::ProgramKind::Eval { CompilationOrigin::Eval } else { CompilationOrigin::Source };
++        let origin = if program.kind == crate::bytecode::ProgramKind::Eval { CompilationOrigin::Eval { caller: None } } else { CompilationOrigin::Source };
+         self.programs.push(Some(ProgramEntry {
+             residual: program,
+             wasm_signatures: None,
