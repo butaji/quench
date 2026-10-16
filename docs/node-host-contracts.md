@@ -950,3 +950,9 @@ host API implementation or target program. Rust publishes immutable numeric
 constants and constructs fresh error maps and fresh value arrays on each call,
 using startup intrinsics. SDK utility policy owns public argument validation and
 error construction; native I/O uses the same status-name authority directly.
+
+Configured SDK module wrappers execute in strict mode before binding setup,
+including prepared realm wrappers. Binding setup must not invalidate the SDK's
+strict directive: assignment errors on primitive targets, rejected proxy writes
+and nonwritable properties retain Node's behavior. Application CommonJS wrappers
+retain their source-directed strictness.
