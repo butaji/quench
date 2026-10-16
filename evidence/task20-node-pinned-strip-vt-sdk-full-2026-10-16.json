@@ -1,0 +1,97 @@
+{
+  "scope": "Complete unchanged pinned parallel inventory after original SDK utilities, native directory policy and merged HTTP/net lifecycle",
+  "source_commit": "1208a19a61c408728e0391eac92c7b8ab65fe8eb",
+  "release": "v27.0.0-nightly20260819c79868f102",
+  "fixture_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+  "counts": {
+    "timeout": 83,
+    "fail": 2129,
+    "pass": 1837,
+    "skip": 678
+  },
+  "total": 4727,
+  "inventory_hash": "1e51ca4121020d14",
+  "baseline": {
+    "counts": {
+      "timeout": 84,
+      "fail": 2144,
+      "pass": 1821,
+      "skip": 678
+    },
+    "total": 4727,
+    "inventory_hash": "1e51ca4121020d14"
+  },
+  "gained": [
+    "test-diff.js",
+    "test-domain-load-after-set-uncaught-exception-capture.js",
+    "test-domain-set-uncaught-exception-capture-after-load.js",
+    "test-fs-buffer.js",
+    "test-fs-readdir-ucs2.js",
+    "test-mime-api.js",
+    "test-mime-whatwg.js",
+    "test-net-listen-close-server-callback-is-not-function.js",
+    "test-net-listen-close-server.js",
+    "test-net-server-close-before-calling-lookup-callback.js",
+    "test-net-server-close-before-ipc-response.js",
+    "test-performance-many-marks.js",
+    "test-util-convert-signal-to-exit-code.mjs",
+    "test-util-exception-with-host-port.js",
+    "test-util-promisify.js",
+    "test-util.js",
+    "test-uv-binding-constant.js",
+    "test-uv-errmap.js",
+    "test-uv-errno.js"
+  ],
+  "lost": [
+    "test-fs-readdir-recursive.js",
+    "test-fs-readdir-types-symlinks.js",
+    "test-shadow-realm-gc-module.js"
+  ],
+  "skip_changes": {},
+  "memory_events_delta": {
+    "low": 0,
+    "high": 0,
+    "max": 0,
+    "oom": 0,
+    "oom_kill": 0,
+    "oom_group_kill": 0
+  },
+  "elapsed_seconds": 1754.9361024429672,
+  "raw": [
+    {
+      "path": "work/full-strip-vt-sdk-pinned/results.json",
+      "bytes": 13418583,
+      "sha256": "d1c26d6591f28a3c8eb8df206c69ac0147116cc353e181775567971290ddc33f"
+    },
+    {
+      "path": "work/full-strip-vt-sdk-pinned/runner.log",
+      "bytes": 391279,
+      "sha256": "28d47859c1afa80d8a234fcb9d40f1f6da87eea1d15bdda684526c016ac4423b"
+    },
+    {
+      "path": "work/full-strip-vt-sdk-pinned/receipt-before.json",
+      "bytes": 1111,
+      "sha256": "73d8caf4e51042e25942a6e4d296c573ffd450638dc3ec252b78cf0210e1ed66"
+    },
+    {
+      "path": "work/full-strip-vt-sdk-pinned/receipt.json",
+      "bytes": 1755,
+      "sha256": "210b5ac938385a2c4fc267ad75c51846e33faea25401c16a2b1d4071234e2e14"
+    },
+    {
+      "path": "work/full-strip-vt-sdk-pinned/summary.json",
+      "bytes": 150,
+      "sha256": "cea040cbf9b9c04d8e77e38a2ef464b7d39eff1a3c422465227b7565f8d5c71e"
+    },
+    {
+      "path": "work/full-strip-vt-sdk-pinned/comparison.json",
+      "bytes": 913,
+      "sha256": "d5c681373acae2d33828d2917e8968ff99c5695147185fd14695e412c53b0dc8"
+    }
+  ],
+  "limitations": [
+    "Goal remains open; all nonpass outcomes retained. No selected-case sums, skips/deadline/budget changes or speed claim.",
+    "This frozen1208 run includes SDK utility projection, native directory policy, strict SDK wrappers, native stripVT policy and shared HTTP/net lifecyclef4e6ed305. Later shared2fdb67fcb and native Contextify/SDK test harness work are excluded.",
+    "Native compilation overlapped part of this run. Actual memory.events deltas are retained below; concurrent resource pressure is not subtracted from outcomes. All full outcomes retained, no speed claim or adjusted totals."
+  ]
+}

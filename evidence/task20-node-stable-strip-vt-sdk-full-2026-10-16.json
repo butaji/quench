@@ -1,0 +1,100 @@
+{
+  "scope": "Complete unchanged stable parallel inventory after original SDK utilities, native directory policy and merged HTTP/net lifecycle",
+  "source_commit": "1208a19a61c408728e0391eac92c7b8ab65fe8eb",
+  "release": "v26.12.0",
+  "fixture_commit": "26e72d85a611e222e3f06025de8a3c496923bacd",
+  "counts": {
+    "timeout": 93,
+    "fail": 2465,
+    "pass": 1819,
+    "skip": 638
+  },
+  "total": 5015,
+  "inventory_hash": "a3820c977f97ed07",
+  "baseline": {
+    "counts": {
+      "timeout": 98,
+      "fail": 2486,
+      "pass": 1793,
+      "skip": 638
+    },
+    "total": 5015,
+    "inventory_hash": "a3820c977f97ed07"
+  },
+  "gained": [
+    "test-diff.js",
+    "test-domain-load-after-set-uncaught-exception-capture.js",
+    "test-domain-set-uncaught-exception-capture-after-load.js",
+    "test-fs-buffer.js",
+    "test-fs-readdir-ucs2.js",
+    "test-mark-promise-handled.js",
+    "test-mime-api.js",
+    "test-mime-whatwg.js",
+    "test-net-listen-close-server-callback-is-not-function.js",
+    "test-net-listen-close-server.js",
+    "test-net-server-close-before-calling-lookup-callback.js",
+    "test-net-server-close-before-ipc-response.js",
+    "test-shadow-realm-gc-module.js",
+    "test-stream-iter-broadcast-waiter-cleanup.js",
+    "test-stream2-read-sync-stack.js",
+    "test-util-convert-signal-to-exit-code.mjs",
+    "test-util-debounce.js",
+    "test-util-exception-with-host-port.js",
+    "test-util-isPartialDeepStrictEqual.js",
+    "test-util-promisify.js",
+    "test-util-stripvtcontrolcharacters.js",
+    "test-util-throttle.js",
+    "test-util.js",
+    "test-uv-binding-constant.js",
+    "test-uv-errmap.js",
+    "test-uv-errno.js"
+  ],
+  "lost": [],
+  "skip_changes": {},
+  "memory_events_delta": {
+    "low": 0,
+    "high": 0,
+    "max": 0,
+    "oom": 0,
+    "oom_kill": 0,
+    "oom_group_kill": 0
+  },
+  "elapsed_seconds": 1725.9071369479643,
+  "raw": [
+    {
+      "path": "work/full-strip-vt-sdk-stable/results.json",
+      "bytes": 14545113,
+      "sha256": "9091bfc48af89e34cbe16ad463fae1786dd664de43e6d3f11a9421a1751d95e9"
+    },
+    {
+      "path": "work/full-strip-vt-sdk-stable/runner.log",
+      "bytes": 516179,
+      "sha256": "ca2810a7d84157e245fbad752f5f293c1656ffd061eb5c4fc870e97ec652a5e6"
+    },
+    {
+      "path": "work/full-strip-vt-sdk-stable/receipt-before.json",
+      "bytes": 1106,
+      "sha256": "37372afbfd635c7fc924d906423c3f02eaf52c1d9be815229dfa188786b5f0f3"
+    },
+    {
+      "path": "work/full-strip-vt-sdk-stable/receipt.json",
+      "bytes": 1750,
+      "sha256": "60b147b865f9b588060856d1e7be45f419cf6dd4b054e36f5856d4b807dd4fda"
+    },
+    {
+      "path": "work/full-strip-vt-sdk-stable/summary.json",
+      "bytes": 150,
+      "sha256": "08eb42318fe4700cf3a40c23beb73e62fa907f12e34ec1fe733b41f7022a896c"
+    },
+    {
+      "path": "work/full-strip-vt-sdk-stable/comparison.json",
+      "bytes": 1071,
+      "sha256": "24985a7fad0f82224ba5d19f809e3564003d6a221a3d56f830ff995f881a0c5a"
+    }
+  ],
+  "limitations": [
+    "Goal remains open; all nonpass outcomes retained. No selected-case sums, skips/deadline/budget changes or speed claim.",
+    "This frozen1208 run includes SDK utility projection, native directory policy, strict SDK wrappers, native stripVT policy and shared HTTP/net lifecyclef4e6ed305. Later shared2fdb67fcb and native Contextify/SDK test harness work are excluded.",
+    "Native compilation overlapped part of this run. Actual memory.events deltas are retained below; concurrent resource pressure is not subtracted from outcomes. All full outcomes retained, no speed claim or adjusted totals."
+  ]
+}

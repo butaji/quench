@@ -1037,14 +1037,6 @@ returns the configured SDK classifier protocol: directory1, other successful
 metadata0, or a negative libuv error. It resolves relative paths through Node's
 cwd owner. Original SDK recursive traversal owns policy for using this result.
 
-Encoding uses the shared Buffer codecs; Buffer results retain the original
-filename bytes. Recursive Dirent results use Node's packed native layout, with
-Uint8 types and aligned Uint32 directory counts sharing one ArrayBuffer. The
-unchanged SDK owns validation and Dirent construction. Existing filesystem
-adapters capture a Rust forwarding function to this same policy, initialized
-after the filesystem module is cached. Their outer asynchronous validation and
-scheduling remain separate compatibility work.
-
 ## Configured CLI version and flag order
 
 The Node-compatible CLI derives --version/-v from the same configured SDK
