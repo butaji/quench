@@ -2564,7 +2564,7 @@ pub(crate) fn node_internal_binding_source() -> &'static str {
     case "options": return __nativeInternalBinding("options");
     case "string_decoder": return __nativeInternalBinding("string_decoder");
     case "buffer": return Object.assign({}, require("buffer"), __nativeInternalBinding("buffer"));
-    case "fs": return require("fs");
+    case "fs": return __nativeInternalBinding("fs");
     case "crypto": {
       const crypto = require("crypto");
       return Object.assign({}, crypto, __nativeInternalBinding("crypto_keys"), {
