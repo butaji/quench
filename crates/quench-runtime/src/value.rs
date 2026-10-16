@@ -279,6 +279,27 @@ impl Value {
         self.0 == TAG_NULL
     }
 
+    /// Whether the value names an object or array record, which holds only an ordinary
+    /// object or an array: never a string, a BigInt or a function.
+    #[inline(always)]
+    pub(crate) fn is_record(self) -> bool {
+        self.is_heap() && self.0 & (DIRECT_OBJECT_HANDLE_BIT | DIRECT_ARRAY_HANDLE_BIT) != 0
+    }
+
+    /// ToBoolean where the value alone decides it: Numbers, the primitive tags, and object
+    /// and array records, which hold only ordinary objects and arrays and so never "", 0n or
+    /// the IsHTMLDDA function. `None` leaves another heap value to its cell.
+    #[inline(always)]
+    pub(crate) fn truthiness(self) -> Option<bool> {
+        if let Some(number) = self.as_number() {
+            return Some(!(number == 0.0 || number.is_nan()));
+        }
+        if self.is_heap() {
+            return self.is_record().then_some(true);
+        }
+        Some(!(self.is_null() || self.is_undefined() || self.is_deleted() || self == Self::FALSE))
+    }
+
     pub fn is_heap(self) -> bool {
         (self.0 & TAG_MASK) == TAG_HEAP
     }

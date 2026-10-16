@@ -1010,11 +1010,14 @@ lane_handler! {
 }
 
 lane_handler! {
-    /// `lane_set_index` past a record array.
+    /// `lane_set_index` past a record array, or appending to a dense array at its length.
     #[inline(never)]
     fn lane_set_index_slot<>(cx, r, ip, i, view) {
-        let (object, key) = (r.get(i.b), r.get(i.c));
-        if !(unsafe { vm(cx) }).try_replace_dense_element(object, key, r.get(i.a)) {
+        let (object, key, value) = (r.get(i.b), r.get(i.c), r.get(i.a));
+        let vm = unsafe { vm(cx) };
+        if !vm.try_replace_dense_element(object, key, value)
+            && !vm.try_append_dense_element(object, key, value)
+        {
             return exit(ip);
         }
         next!(cx, r, following(ip), view)
@@ -1467,6 +1470,65 @@ fn lane_cached_field_miss<H: Host>(
 }
 
 lane_handler! {
+    /// A sinking `GetField`'s first run: a site that reads `name` or `length`
+    /// (`Vm::reads_function_info`) keeps `lane_get_field_sink`, whose reads prepare them;
+    /// any other takes `lane_get_field_sink_own`.
+    #[inline(never)]
+    fn lane_get_field_sink_first<>(cx, r, ip, i, view) {
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let vm = unsafe { vm(cx) };
+        let own = i.b == crate::bytecode::FieldBase::NESTED
+            && code.field_sites.get(i.imm() as usize).is_some_and(|site| {
+                !vm.reads_function_info(site.first.0)
+                    && site.second.is_none_or(|(atom, _)| !vm.reads_function_info(atom))
+            });
+        if own {
+            requicken(ip, lane_get_field_sink_own::<H>);
+            sibling!(lane_get_field_sink_own::<H>, r, ip, Carried::SCRIPT)
+        }
+        requicken(ip, lane_get_field_sink::<H>);
+        sibling!(lane_get_field_sink::<H>, r, ip, Carried::SCRIPT)
+    }
+}
+
+lane_handler! {
+    /// `lane_get_field_sink` where every step hits its site's primary own entry: the
+    /// nested read (`Vm::primary_own_field_hit`), then the store to `this`
+    /// (`Vm::primary_own_field_store_hit`). Any other run takes `lane_get_field_sink`, which
+    /// repeats the side-effect-free reads.
+    fn lane_get_field_sink_own<>(cx, r, ip, i, view) {
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let vm = unsafe { vm(cx) };
+        // SAFETY: `lane_get_field_sink_first` installs this handler only on a nested site.
+        let site = unsafe { code.field_sites.get_unchecked(i.imm() as usize) };
+        let base = match site.base.register_index() {
+            Some(register) => Some(r.get(register)),
+            None => unsafe { lane_fixed_this(cx) },
+        };
+        let value = base
+            .and_then(|base| vm.primary_own_field_hit(code, base, site.first.1))
+            .and_then(|value| match site.second {
+                Some((_, cache)) => vm.primary_own_field_hit(code, value, cache),
+                None => Some(value),
+            });
+        let stored = match (value, site.sink, unsafe { lane_fixed_this(cx) }) {
+            (Some(value), Some((atom, cache)), Some(this)) => {
+                vm.primary_own_field_store_hit(code, this, atom, value, cache)
+            }
+            _ => false,
+        };
+        if !stored {
+            sibling!(lane_get_field_sink::<H>, r, ip, Carried::SCRIPT)
+        }
+        // SAFETY: a store happened only with a value.
+        r.set(i.a & crate::bytecode::REGISTER_MASK, unsafe { value.unwrap_unchecked() });
+        next!(cx, r, following(ip), Carried::SCRIPT)
+    }
+}
+
+lane_handler! {
     /// A nested `GetField` that also stores its value to a field of `this` (`this.a =
     /// this.b.c`): the read as `lane_get_field` makes it, then the cached write of
     /// `SetThisField`. A read or write the caches do not answer takes the general path,
@@ -1532,7 +1594,7 @@ lane_handler! {
     fn lane_set_this_field_own<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        let stored = unsafe { lane_this(cx) }.is_some_and(|this| {
+        let stored = unsafe { lane_fixed_this(cx) }.is_some_and(|this| {
             unsafe { vm(cx) }.primary_own_field_store_hit(code, this, i.imm(), r.get(i.a), i.c)
         });
         if !stored {
@@ -1648,12 +1710,27 @@ lane_handler! {
         };
         let equal = if strict {
             value == if i.c == NULLISH_NULL { Value::NULL } else { Value::UNDEFINED }
+        } else if value.is_heap() && !value.is_record() {
+            sibling!(lane_jump_nullish_cell::<H, BACKWARD>, r, ip, view)
         } else {
-            value.is_null()
-                || value.is_undefined()
-                || (value.is_heap() && (unsafe { vm(cx) }).is_html_dda(value))
+            value.is_null() || value.is_undefined()
         };
         if equal == negated {
+            return lane_jump(cx, r, ip, BACKWARD, view, None);
+        }
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `lane_jump_nullish_false`'s loose test of a heap value outside the records, which only
+    /// an [[IsHTMLDDA]] object passes; out of line, so the common tests make no call.
+    #[inline(never)]
+    fn lane_jump_nullish_cell<BACKWARD: bool>(cx, r, ip, i, view) {
+        let Some((_, negated)) = super::operations::equality_operator(u32::from(i.a)) else {
+            return exit(ip);
+        };
+        if unsafe { vm(cx) }.is_html_dda(r.get(i.b)) == negated {
             return lane_jump(cx, r, ip, BACKWARD, view, None);
         }
         next!(cx, r, following(ip), view)
@@ -1709,8 +1786,12 @@ lane_handler! {
 }
 
 lane_handler! {
+    /// `JumpFalse` of a value that decides its own truthiness (`Value::truthiness`); a heap
+    /// value whose cell decides it takes `lane_jump_test_cell`.
     fn lane_jump_false<BACKWARD: bool>(cx, r, ip, i, view) {
-        let truthy = unsafe { vm(cx) }.truthy(r.get(i.a));
+        let Some(truthy) = r.get(i.a).truthiness() else {
+            sibling!(lane_jump_test_cell::<H, BACKWARD, false>, r, ip, view)
+        };
         if !truthy {
             return lane_jump(cx, r, ip, BACKWARD, view, None);
         }
@@ -1719,10 +1800,24 @@ lane_handler! {
 }
 
 lane_handler! {
-    /// `JumpTrue`: ToBoolean runs no guest code.
+    /// `JumpTrue` as `lane_jump_false`: ToBoolean runs no guest code.
     fn lane_jump_true<BACKWARD: bool>(cx, r, ip, i, view) {
-        let truthy = unsafe { vm(cx) }.truthy(r.get(i.a));
+        let Some(truthy) = r.get(i.a).truthiness() else {
+            sibling!(lane_jump_test_cell::<H, BACKWARD, true>, r, ip, view)
+        };
         if truthy {
+            return lane_jump(cx, r, ip, BACKWARD, view, None);
+        }
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `JumpFalse` (`WHEN` false) or `JumpTrue` (`WHEN` true) of a heap value whose cell
+    /// decides its truthiness; out of line, so the common tests make no call.
+    #[inline(never)]
+    fn lane_jump_test_cell<BACKWARD: bool, WHEN: bool>(cx, r, ip, i, view) {
+        if unsafe { vm(cx) }.heap_cell_truthy(r.get(i.a)) == WHEN {
             return lane_jump(cx, r, ip, BACKWARD, view, None);
         }
         next!(cx, r, following(ip), view)
@@ -4608,7 +4703,7 @@ fn derive_lane_view<H: Host>(
                 None
             } else if op == Op::GetField && lane_sinks_field(instruction) {
                 Some(LaneHandler {
-                    handler: lane_get_field_sink::<H> as Handler,
+                    handler: lane_get_field_sink_first::<H> as Handler,
                     produces: false,
                 })
             } else if let Some(kind) = returning_kind(instruction) {
