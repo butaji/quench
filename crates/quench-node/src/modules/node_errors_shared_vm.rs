@@ -366,3 +366,32 @@ pub(crate) fn to_string(
     let message = context.to_string(message)?;
     Ok(context.string_rooted(&format!("{name} [{code}]: {message}")))
 }
+
+/// A ShadowRealm has its own original Node error module and primordial snapshot.
+/// Its private fallback must never reach the principal realm's hooks or brands.
+pub(crate) fn initialize_shadow_policy(
+    context: &mut NativeContext<'_, NodeHost>,
+    global: RootId,
+) -> Result<RootId, RootedError> {
+    let seed = context.null_object_rooted()?;
+    let primordials = crate::host::shared_vm::commonjs::node_library_module_in_realm(
+        context,
+        global,
+        "internal/per_context/primordials.js",
+        seed,
+        seed,
+    )?;
+    let exports = context.object_rooted()?;
+    let errors = crate::host::shared_vm::commonjs::node_library_module_in_realm(
+        context,
+        global,
+        "internal/errors.js",
+        exports,
+        primordials,
+    )?;
+    let constructor = get(context, global, "Error")?;
+    let prepare = get(context, errors, "ErrorPrepareStackTrace")?;
+    let key = context.string_rooted("prepareStackTrace");
+    context.define_data_property_rooted(constructor, key, prepare, true, false, true)?;
+    get(context, errors, "prepareStackTraceCallback")
+}

@@ -490,6 +490,7 @@ struct RealmIntrinsics {
 }
 #[derive(Clone, Copy)]
 struct ErrorRealmIntrinsics {
+    host_formatter: Option<Value>,
     constructor: Value,
     stack_getter: Value,
     stack_setter: Value,

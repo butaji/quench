@@ -236,6 +236,17 @@ pub(crate) fn internal_inspect(
         .ok_or_else(|| RootedError::host("util intrinsics missing"))
 }
 
+/// Capture the configured call-site policy before guests can replace internal
+/// validator exports. The original Node module retains those lexical imports.
+pub(crate) fn initialize_call_site_policy(
+    context: &mut NativeContext<'_, NodeHost>,
+) -> Result<(), RootedError> {
+    crate::host::shared_vm::commonjs::node_library_export(
+        context, "util.js", "util.js", "getCallSites",
+    )?;
+    Ok(())
+}
+
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let cached = context.host_mut().shared_state().borrow().util_intrinsics;
     if let Some(api) = cached {

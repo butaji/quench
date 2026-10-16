@@ -86,6 +86,20 @@ pub trait Host {
         Ok(())
     }
 
+    /// Initialize host policy in a fresh ShadowRealm before guest execution.
+    /// An optional callback owns this realm's Error formatting as
+    /// (global, error, callSites). The VM traces it with the realm intrinsics;
+    /// temporary context roots can be returned without retaining them.
+    fn initialize_shadow_realm(
+        _context: &mut crate::NativeContext<'_, Self>,
+        _global: crate::RootId,
+    ) -> Result<Option<crate::RootId>, crate::RootedError>
+    where
+        Self: Sized,
+    {
+        Ok(None)
+    }
+
     /// Capture the host context when the VM creates a Promise or thenable job.
     /// The returned token remains owned by that job until it runs or the VM
     /// collects it.

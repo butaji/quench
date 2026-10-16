@@ -9501,3 +9501,11 @@ fn callsite_columns_follow_member_parenthesized_and_constructor_call_syntax() {
 fn util_call_sites_capture_actual_metadata_without_error_hooks_and_use_node_validation() {
     compare_node_source_with_args(include_str!("../node-tests/test-util-real-call-sites.js"), &[]);
 }
+
+#[test]
+fn shadow_realms_own_original_node_error_policy_default_hooks_and_private_fallbacks() {
+    compare_node_source_with_args(
+        include_str!("../node-tests/test-shadow-stack-policy-isolation.js"),
+        &["--no-warnings", "--expose-internals", "--experimental-shadow-realm", "--expose-gc"],
+    );
+}

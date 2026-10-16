@@ -675,6 +675,13 @@ impl quench_runtime::Host for NodeHost {
         false
     }
 
+    fn initialize_shadow_realm(
+        context: &mut quench_runtime::NativeContext<'_, Self>,
+        global: quench_runtime::RootId,
+    ) -> Result<Option<quench_runtime::RootId>, quench_runtime::RootedError> {
+        crate::modules::node_errors_shared_vm::initialize_shadow_policy(context, global).map(Some)
+    }
+
     fn error_stack_formatter(&self) -> Option<quench_runtime::RootId> {
         self.shared_state().borrow().builtin_cache.get(crate::modules::node_errors_shared_vm::DEFAULT_STACK_FORMATTER).copied()
     }
