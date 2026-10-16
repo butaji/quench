@@ -1073,18 +1073,27 @@ impl<H: Host> Vm<H> {
 
     /// Evaluates host Script source as a global Script of the realm owning `global`.
     pub(crate) fn evaluate_embedding_script_in_realm(
-        &mut self,
-        global: RootId,
-        source: &str,
-        name: &str,
+        &mut self, global: RootId, source: &str, name: &str,
     ) -> Result<Value, JsError> {
+        self.with_embedding_realm(global, |vm| vm.evaluate_embedding_global_script(source, name))
+    }
+
+    pub(crate) fn evaluate_embedding_specialized_script_in_realm_with_origin(
+        &mut self, global: RootId, source: &str, name: &str, origin: (u32, u32),
+    ) -> Result<Value, JsError> {
+        self.with_embedding_realm(global, |vm| vm.evaluate_embedding_specialized_script_with_origin(source, name, Some(origin)))
+    }
+
+    fn with_embedding_realm<T>(
+        &mut self, global: RootId, run: impl FnOnce(&mut Self) -> Result<T, JsError>,
+    ) -> Result<T, JsError> {
         let global = self.embedding_value(global)?;
         if !self.is_realm_global(global) {
             let program = self.embedding_program()?;
             return Err(self.type_error(&program, "value is not a realm global object".into()));
         }
         let previous_global = self.switch_realm_global(global);
-        let result = self.evaluate_embedding_global_script(source, name);
+        let result = run(self);
         self.switch_realm_global(previous_global);
         result
     }
@@ -1211,6 +1220,17 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         )
+    }
+
+    pub(crate) fn materialize_lazy_data_property_rooted(
+        &mut self,
+        holder: RootId,
+        name: &str,
+    ) -> Result<(), JsError> {
+        let holder = self.embedding_value(holder)?;
+        let program = self.embedding_program()?;
+        let key = PropertyKey::string(self.intern_atom(name));
+        self.materialize_lazy_data_property(&program, holder, key)
     }
 
     pub(crate) fn define_lazy_data_properties_rooted(
