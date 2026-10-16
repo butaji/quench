@@ -5,6 +5,9 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 include!(concat!(env!("OUT_DIR"), "/node_uv_errors.rs"));
 type Context<'a> = NativeContext<'a, NodeHost>;
 
+pub(crate) fn system_error_number(name: &str) -> Option<i32> {
+    UV_ERRORS.iter().find(|row| row.1 == name).map(|row| row.0)
+}
 pub(crate) fn system_error_code(number: f64) -> Option<&'static str> {
     UV_ERRORS
         .iter()

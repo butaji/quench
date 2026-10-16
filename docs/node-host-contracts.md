@@ -1137,3 +1137,32 @@ not affect internal channel lookup. The internal test-binding module is the
 original SDK module and exports the same primordial owner used by SDK policies.
 It exposes cached raw native bindings and runs against current process state, so
 its warning observes guest replacements and current warning options.
+
+### Native backend ownership and configured SDK crypto policy
+
+Linux child cancellation uses an owned pidfd and the original child wait owner.
+Exit cleanup discards pending native callbacks without executing guest code.
+Failed-spawn errors precede real failed-pipe close completions. Public spawn
+observes the mutable ChildProcess prototype hook used by SDK MockTracker.
+
+Resolver requests use the shared pool for actual getaddrinfo/getnameinfo, retain
+their real request roots and read mutable completion slots at dispatch. TCP owns
+actual descriptors and connect/write/shutdown requests; public socket admission
+transfers read ownership from the raw handle. Close completion uses one prepend
+queue, with request cancellation before handle completion.
+
+Configured SDK Hash/Hmac and secret-key wrappers use owned fetched OpenSSL
+digests, native incremental contexts, actual copies and provider-backed jobs.
+Digest inventory and aliases come from the selected OpenSSL 3.5.9 provider.
+This does not establish full asymmetric KeyObject or WebCrypto parity. The
+historical public KeyObject family remains in place.
+
+VFS read/write/open/metadata boundaries preserve SDK validation, argument counts,
+getters and undefined-only fallthrough. existsSync falls through to its unwrapped
+native stat continuation after an undefined handler result. Legacy bootstrap VFS
+facades are retired. Host-private symbols use compact native identity and stay
+outside ordinary integrity and reflection queries.
+
+Qualification and retained failures appear in
+`evidence/task20-native-backends-qualified-2026-10-16.json`. Full parallel counts
+remain separate from selected API and upstream proof inventories.
