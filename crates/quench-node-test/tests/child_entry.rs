@@ -9017,3 +9017,8 @@ fn cli_signal_defaults_reset_inherited_ignores_before_vm_workers_start() {
         }
     }
 }
+
+#[test]
+fn file_handle_read_parameters_preserve_defaults_options_getter_order_and_result_prototype() {
+    compare_node_stream_source(include_str!("../node-tests/test-file-handle-read-parameters.js"));
+}
