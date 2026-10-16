@@ -9661,3 +9661,8 @@ fn tcp_default_listen_backlog_matches_node_when_syscall_tracing_is_available() {
 fn tcp_option_listen_backlog_matches_node_truthiness_and_int32_when_tracing_is_available() {
     compare_node_source_with_args(include_str!("../node-tests/test-tcp-option-listen-backlog.js"), &[]);
 }
+
+#[test]
+fn utility_sdk_projection_preserves_mime_diff_timing_promise_state_and_uv_protocol_metadata() {
+    compare_node_source_with_args(include_str!("../node-tests/test-util-sdk-projection.js"), &["--expose-internals", "--no-warnings"]);
+}
