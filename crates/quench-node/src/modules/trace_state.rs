@@ -24,15 +24,21 @@ pub(crate) enum Phase {
     Raw(u8),
 }
 impl Phase {
-    fn code(self) -> String {
-        char::from(match self {
+    pub(crate) fn from_code(code: u8) -> Self {
+        [Self::AsyncBegin, Self::AsyncInstant, Self::AsyncEnd, Self::Counter]
+            .into_iter().find(|phase| phase.byte() == code).unwrap_or(Self::Raw(code))
+    }
+    fn byte(self) -> u8 {
+        match self {
             Self::AsyncBegin => b'b',
             Self::AsyncInstant => b'n',
             Self::AsyncEnd => b'e',
             Self::Counter => b'C',
             Self::Raw(code) => code,
-        })
-        .to_string()
+        }
+    }
+    fn code(self) -> String {
+        char::from(self.byte()).to_string()
     }
 }
 
