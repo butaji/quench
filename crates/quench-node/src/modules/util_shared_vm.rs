@@ -236,8 +236,8 @@ pub(crate) fn internal_inspect(
         .ok_or_else(|| RootedError::host("util intrinsics missing"))
 }
 
-/// Capture the configured call-site policy before guests can replace internal
-/// validator exports. The original Node module retains those lexical imports.
+/// Captures the configured call-site policy: the original Node module retains its
+/// validator imports whatever a script later does to their exports.
 pub(crate) fn initialize_call_site_policy(
     context: &mut NativeContext<'_, NodeHost>,
 ) -> Result<(), RootedError> {
@@ -799,6 +799,7 @@ fn build_key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     for (name, operation) in [
         ("getConstructorName", "utilConstructorName"),
         ("getCallSites", "utilGetCallSites"),
+        ("getCallerLocation", "utilGetCallerLocation"),
         ("getOwnNonIndexProperties", "utilOwnNonIndexProperties"),
         ("getPromiseDetails", "utilPromiseDetails"),
         ("getProxyDetails", "utilProxyDetails"),
@@ -981,4 +982,22 @@ pub(crate) fn get_call_sites(
         sites.push(site);
     }
     context.array_rooted(&sites)
+}
+
+/// Node's native caller capture skips the immediate JavaScript activation.
+pub(crate) fn get_caller_location(
+    context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId],
+) -> Result<RootId, RootedError> {
+    const CALLER_LOCATION_FRAME_COUNT: usize = 2;
+    let mut frames = context.source_stack_frames(CALLER_LOCATION_FRAME_COUNT);
+    let Some(frame) = (frames.len() == CALLER_LOCATION_FRAME_COUNT).then(|| frames.pop().unwrap()) else {
+        return Ok(context.undefined());
+    };
+    // An unnamed eval has no ScriptNameOrSourceURL. Do not fabricate an
+    // internal bootstrap caller or a script name when no such frame exists.
+    if frame.is_eval { return Ok(context.undefined()); }
+    let line = context.number(f64::from(frame.line_number));
+    let column = context.number(f64::from(frame.column_number));
+    let name = context.string_rooted(&frame.script_name);
+    context.array_rooted(&[line, column, name])
 }

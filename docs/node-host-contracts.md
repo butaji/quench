@@ -29,6 +29,14 @@ ordinary callbacks cannot inherit a constructor entry. Receiver type names use
 the shared safe constructor-name operation; constructor/global receivers report
 null, and Proxy receivers do not invoke traps.
 
+The native error-source projection reads captured compiler positions without
+invoking `stack`, guest accessors or Proxy traps. A capture shares immutable
+compiler text, preserving its source through Script collection and repeated
+filenames; only a requested line is copied. Formatting releases that capture.
+When no unformatted source capture exists, lookup uses the current genuine
+JavaScript activation. The Node binding projects zero-based start columns and
+null-prototype records, leaving unnamed eval resource names undefined.
+
 Public function names and inferred debug names remain distinct. Variable
 initializer inference follows result-producing sequence, conditional and logical
 expressions without changing the public `.name`. A slotless shape transition
@@ -847,5 +855,64 @@ The atomic private-data definition operation is serialized in bytecode format
 92. Round-trip execution and generic/specialized collection tests cover the
 representation. Eval-capable methods retain their synthetic class-home capture
 in dynamic-name metadata, even when private syntax appears only inside eval's
-string. Complete private-environment contexts and the ordinary NUL string-key
-namespace remain separate conformance work.
+string. Bytecode format 93 adds lexical private-name bindings that retain each
+name's actual declaring home independently of the method's super home. Static
+and instance names, escaped ordinary closures, and outer/shadowed class names
+use that binding metadata. Ordinary-function eval uses OXC's ordinary-function
+grammar inside a private-name parsing context, and the extracted body must match
+the generated source boundaries. Complete private-environment contexts and the
+ordinary NUL string-key namespace remain separate conformance work.
+
+Private membership follows initialization: prototypes acquire no brand merely
+from a declaration, static data fields remain absent until initialization, and
+static private methods/accessors precede static fields. Auto-accessor backing
+identities retain their own lexical declaring-home binding, including public
+instance auto-accessors whose backing name is not visible to eval.
+
+Static blocks retain the actual class home for `super` and execute in strict
+mode. The compiler's class-initializer context is shared by field initializers,
+static blocks and their arrows: eval forbids lexical `arguments`, preserves
+`this`, and supplies undefined `new.target`. Ordinary nested functions introduce
+their own context. The existing serialized initializer flag represents this
+shared context; static blocks keep distinct variable scopes.
+
+TCP listeners share one native socket-creation path and Node's default backlog
+of 511, including ordinary net and HTTP listeners. Unix binds enable address
+reuse as libuv does; unsupported reuse-port requests retain their early error.
+Supplied `options.backlog` uses the JavaScript truthy default followed by shared
+ToNumber/ToInt32 conversion. Linux syscall comparisons cover default, IPv4,
+reuse-port and HTTP listeners plus numeric/string/nonfinite/wrapped options.
+The comparison explicitly reports when syscall tracing is unavailable.
+Positional backlog overloads and DNS-deferred coercion/error timing remain open.
+
+## Native SDK protocol tables and caller capture
+
+The errors binding's exit codes and modules binding's compile-cache status names
+are generated from the configured SDK's C++ macro tables. Property descriptors,
+ordering and binding identity follow Node. These protocol declarations do not
+claim implementation of compile-cache operations or other missing bindings.
+
+The utility caller-location binding projects genuine compiler-owned activations,
+skipping its immediate JavaScript caller. Error hooks, public function-name
+getters and stack limits do not participate. Missing callers and unnamed eval
+Scripts produce undefined rather than fabricated bootstrap frames.
+
+The original promises glob policy materializes as a lazy data property, keeping
+its real function descriptor and identity. Merely loading native fs no longer
+imports the promises implementation's readline/history/OS dependencies. This
+preserves Node's binding-capture order and avoids loading unrelated modules.
+
+## Owned host Script code
+
+Core's `CompiledScript` handle owns one logical source record, while each realm
+uses a separate execution instance and caches. Detailed captures project the
+actual source record identity across those instances. Repeated runs in one realm
+reuse its template sites while producing fresh objects and functions.
+
+The opaque owner retains compiler code only. Realm associations are weak and
+pruned immediately after collection, before heap slot reuse. Reclamation retains
+live owners and the source records of escaped functions; dropping owners allows
+unused code and execution caches to be collected. Runtime reset or a foreign
+runtime rejects the handle through the existing atom-sequence ownership guard.
+This Core primitive does not by itself implement native `ContextifyScript`, VM
+timeouts, cached bytecode or code-generation restrictions.

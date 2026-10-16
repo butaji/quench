@@ -320,8 +320,13 @@ impl FunctionCompiler<'_, '_> {
     pub(super) fn record_lexical_binding_site(&mut self, pc: usize) {
         let mut visible = rustc_hash::FxHashSet::default();
         let mut bindings = Vec::new();
+        let mut private_labels = FxHashSet::default();
         for scope in self.lexical_scopes.iter().rev() {
             for atom in scope.bindings.keys() {
+                if scope.kinds.get(atom) == Some(&LexicalBindingKind::PrivateName)
+                    && let Some(label) = crate::bytecode::private_identity_label(&self.owner.atoms[*atom as usize])
+                    && !private_labels.insert(label)
+                { continue; }
                 if scope.kinds.get(atom) != Some(&LexicalBindingKind::FunctionName)
                     && visible.insert(*atom)
                     && let Some(binding) = self.lexical_binding_projection(scope, *atom)
