@@ -639,6 +639,8 @@ any code of the executable runs, so a run whose environment sets no `GLIBC_TUNAB
 re-executes itself once from `.preinit_array` with the setting added, and the re-executed
 run removes it and its marker before the guest or a child process can observe the
 environment. An environment that sets `GLIBC_TUNABLES` leaves the allocator to it.
+Valgrind does not follow the re-execution, so profiling and guard runs set
+`GLIBC_TUNABLES=glibc.malloc.tcache_count=2` themselves (`callgrind-guard.sh` does).
 
 Measure peak RSS with a launcher whose own image is small (`vfork`, `exec`,
 `wait4`): a forked interpreter's pre-`exec` image counts toward the child's
