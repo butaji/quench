@@ -485,10 +485,10 @@ impl<H: Host> Vm<H> {
                 })?;
         }
         let prototype = self.array_buffer_prototype_from_new_target(p, new_target, shared)?;
-        let bytes = self.array_buffer_zeroed_bytes(p, length)?;
+        let bytes = self.new_buffer_bytes(p, length, max_byte_length, shared)?;
         let buffer = self.heap.alloc(Cell::ArrayBuffer {
             object: Box::new(Self::empty_object(prototype)),
-            bytes: bytes.into(),
+            bytes,
             shared,
             detached: false,
             max_byte_length,
@@ -525,6 +525,23 @@ impl<H: Host> Vm<H> {
             .unwrap_or(fallback))
     }
 
+    /// A new buffer's zeroed store. A SharedArrayBuffer of a host that shares memory across
+    /// threads gets a data block spanning its maximum length, so it grows in place.
+    fn new_buffer_bytes(
+        &mut self,
+        p: &ResidualProgram,
+        length: usize,
+        max_byte_length: usize,
+        shared: bool,
+    ) -> Result<crate::heap::BufferBytes, JsError> {
+        if shared && self.host.shares_memory_across_threads() {
+            let block = crate::heap::ConcurrentBytes::zeroed(length, max_byte_length)
+                .ok_or_else(|| self.range_error(p, "SharedArrayBuffer length is too large".into()))?;
+            return Ok(crate::heap::BufferBytes::concurrent(block));
+        }
+        Ok(self.array_buffer_zeroed_bytes(p, length)?.into())
+    }
+
     pub(super) fn array_buffer_zeroed_bytes(
         &mut self,
         p: &ResidualProgram,
@@ -554,10 +571,10 @@ impl<H: Host> Vm<H> {
         shared: bool,
     ) -> Result<Value, JsError> {
         let prototype = self.array_buffer_intrinsic_prototype(shared);
-        let bytes = self.array_buffer_zeroed_bytes(p, length)?;
+        let bytes = self.new_buffer_bytes(p, length, length, shared)?;
         Ok(self.heap.alloc(Cell::ArrayBuffer {
             object: Box::new(Self::empty_object(prototype)),
-            bytes: bytes.into(),
+            bytes,
             shared,
             detached: false,
             max_byte_length: length,
@@ -896,7 +913,12 @@ impl<H: Host> Vm<H> {
                 unreachable!("grow receiver validated before mutation");
             };
             let before = bytes.capacity();
-            bytes.owned_mut().resize(requested, 0);
+            match bytes.concurrent_block() {
+                Some(block) => {
+                    block.grow_to(requested);
+                }
+                None => bytes.owned_mut().resize(requested, 0),
+            }
             (before, bytes.capacity())
         };
         self.heap.adjust_external_bytes(before, after);

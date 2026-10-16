@@ -65,6 +65,7 @@ mod array_indexed;
 mod array_modern;
 mod atom_keys;
 mod atomics;
+mod atomics_shared;
 mod bigint;
 mod boolean;
 mod builtins;
@@ -181,6 +182,7 @@ mod typed_array_install;
 mod vm_init;
 pub(crate) mod wtf16;
 pub use error::JsError;
+pub use structured_clone::SerializedValue;
 use wtf16::JsString;
 #[cfg(test)]
 mod tests;
