@@ -73,8 +73,8 @@ impl StartupIntrinsics {
         let property = &mut self.properties[index];
         property.value = original.value;
         property.attributes = attributes;
-        (property.shape, property.slot) = place
-            .map_or((UNRECORDED_SHAPE, 0), |(shape, slot)| (shape, slot as u32));
+        (property.shape, property.slot) =
+            place.map_or((UNRECORDED_SHAPE, 0), |(shape, slot)| (shape, slot as u32));
     }
 
     /// Follows shape compaction (`mapping` from old to new shape ids).
@@ -93,9 +93,13 @@ impl StartupIntrinsics {
         self.properties
             .iter()
             .flat_map(|property| {
-                [Some(property.holder), property.key.symbol_value(), Some(property.value)]
-                    .into_iter()
-                    .flatten()
+                [
+                    Some(property.holder),
+                    property.key.symbol_value(),
+                    Some(property.value),
+                ]
+                .into_iter()
+                .flatten()
             })
             .chain(
                 self.accessors
@@ -114,8 +118,9 @@ impl StartupIntrinsics {
 impl<H: Host> Vm<H> {
     pub(crate) fn has_startup_global_name(&self, name: &str) -> bool {
         self.lookup_atom(name).is_some_and(|atom| {
-            self.startup_intrinsics.properties.iter().any(|property|
-                property.holder == self.realm.globals && property.key == PropertyKey::string(atom))
+            self.startup_intrinsics.properties.iter().any(|property| {
+                property.holder == self.realm.globals && property.key == PropertyKey::string(atom)
+            })
         })
     }
 

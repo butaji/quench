@@ -410,7 +410,10 @@ mod tests {
             Op::WasmAtomicAccess,
         ] {
             let instruction = Instr::new(op, 0, 1, 3, 0);
-            assert_eq!(uses(instruction.as_wide(), &[], &[], &[]), bit(1) | bit(2) | bit(3));
+            assert_eq!(
+                uses(instruction.as_wide(), &[], &[], &[]),
+                bit(1) | bit(2) | bit(3)
+            );
             assert_eq!(definitions(instruction.as_wide(), &[]), bit(0));
             assert_eq!(uses(Instr::new(op, 0, 0, 0, 0).as_wide(), &[], &[], &[]), 0);
         }

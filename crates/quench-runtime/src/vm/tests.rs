@@ -903,7 +903,10 @@ fn local_bindings_shadow_captured_function_names_and_constants() {
          var result = named() + ',' + finallyVar();\n\
          var message = (() => { try { n = 1; } catch (error) { return error.message; } })();";
     assert_eq!(global_text(source, "result"), "2,3,4,5");
-    assert_eq!(global_text(source, "message"), "Assignment to constant variable.");
+    assert_eq!(
+        global_text(source, "message"),
+        "Assignment to constant variable."
+    );
 }
 
 #[test]
@@ -9756,7 +9759,12 @@ fn string_constructor_and_template_coercion_preserve_wtf16_and_original_hooks() 
       }
     "#;
     for program in [
-        Engine::compile(crate::ExecutionRequest { source, name: "wtf16-string-coercion.js", kind: crate::SourceKind::Script }).unwrap(),
+        Engine::compile(crate::ExecutionRequest {
+            source,
+            name: "wtf16-string-coercion.js",
+            kind: crate::SourceKind::Script,
+        })
+        .unwrap(),
         Engine::specialize(source, "wtf16-string-coercion.js").unwrap(),
     ] {
         Vm::new(SilentHost).execute(&program).unwrap();
@@ -9766,7 +9774,12 @@ fn string_constructor_and_template_coercion_preserve_wtf16_and_original_hooks() 
 #[test]
 fn script_directive_completion_survives_declarations_and_preserves_string_units() {
     for program in [
-        Engine::compile(crate::ExecutionRequest { source: "", name: "directive-completion.js", kind: crate::SourceKind::Script }).unwrap(),
+        Engine::compile(crate::ExecutionRequest {
+            source: "",
+            name: "directive-completion.js",
+            kind: crate::SourceKind::Script,
+        })
+        .unwrap(),
         Engine::specialize("", "directive-completion.js").unwrap(),
     ] {
         for (source, expected) in [
@@ -9779,16 +9792,30 @@ fn script_directive_completion_survives_declarations_and_preserves_string_units(
         ] {
             let mut vm = Vm::new(SilentHost);
             vm.execute(&program).unwrap();
-            let value = vm.eval_global_script_named(&program, source, false, "directive-completion.js").unwrap();
+            let value = vm
+                .eval_global_script_named(&program, source, false, "directive-completion.js")
+                .unwrap();
             match expected {
-                Some(expected) => assert!(matches!(vm.heap.get(value), Some(super::Cell::String(text)) if text.host_string() == expected), "{source}"),
+                Some(expected) => assert!(
+                    matches!(vm.heap.get(value), Some(super::Cell::String(text)) if text.host_string() == expected),
+                    "{source}"
+                ),
                 None => assert!(value.is_undefined(), "{source}"),
             }
         }
         let mut vm = Vm::new(SilentHost);
         vm.execute(&program).unwrap();
-        let value = vm.eval_global_script_named(&program, r"'\ud800'; var x;", false, "directive-completion.js").unwrap();
-        assert!(matches!(vm.heap.get(value), Some(super::Cell::String(text)) if text.units().wide().as_ref() == [0xd800]));
+        let value = vm
+            .eval_global_script_named(
+                &program,
+                r"'\ud800'; var x;",
+                false,
+                "directive-completion.js",
+            )
+            .unwrap();
+        assert!(
+            matches!(vm.heap.get(value), Some(super::Cell::String(text)) if text.units().wide().as_ref() == [0xd800])
+        );
     }
 }
 
@@ -9808,20 +9835,35 @@ fn primitive_intrinsic_prototypes_survive_global_replacement_realms_and_collecti
       }
       if((19n).toString()!=='19'||(17).toString()!=='17'||true.toString()!=='true')throw Error('primitive formatting changed');
     "#;
-    for program in [Engine::compile(crate::ExecutionRequest{source:setup,name:"primitive-intrinsics.js",kind:crate::SourceKind::Script}).unwrap(),Engine::specialize(setup,"primitive-intrinsics.js").unwrap()] {
-        let mut vm=Vm::new(SilentHost);vm.execute(&program).unwrap();
-        let original=vm.realm.globals;
-        let other=vm.create_realm_global(&program).unwrap();vm.switch_realm_global(other);
-        vm.eval_global_script_named(&program,setup,false,"foreign-primitive-intrinsics.js").unwrap();
-        vm.collect_now(&program);vm.eval_global_script_named(&program,check,false,"foreign-primitive-check.js").unwrap();
-        vm.switch_realm_global(original);vm.collect_now(&program);
-        vm.eval_global_script_named(&program,check,false,"original-primitive-check.js").unwrap();
+    for program in [
+        Engine::compile(crate::ExecutionRequest {
+            source: setup,
+            name: "primitive-intrinsics.js",
+            kind: crate::SourceKind::Script,
+        })
+        .unwrap(),
+        Engine::specialize(setup, "primitive-intrinsics.js").unwrap(),
+    ] {
+        let mut vm = Vm::new(SilentHost);
+        vm.execute(&program).unwrap();
+        let original = vm.realm.globals;
+        let other = vm.create_realm_global(&program).unwrap();
+        vm.switch_realm_global(other);
+        vm.eval_global_script_named(&program, setup, false, "foreign-primitive-intrinsics.js")
+            .unwrap();
+        vm.collect_now(&program);
+        vm.eval_global_script_named(&program, check, false, "foreign-primitive-check.js")
+            .unwrap();
+        vm.switch_realm_global(original);
+        vm.collect_now(&program);
+        vm.eval_global_script_named(&program, check, false, "original-primitive-check.js")
+            .unwrap();
     }
 }
 
 #[test]
 fn typed_array_getter_diagnostics_do_not_observe_guest_conversion_hooks() {
-    let source=r#"
+    let source = r#"
       let hooks=0;const object={toString(){hooks++;throw Error('guest hook');},[Symbol.toStringTag]:'Special'};
       for(const property of ['length','byteLength','byteOffset','buffer']) {
         const getter=Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype),property).get;
@@ -9834,14 +9876,22 @@ fn typed_array_getter_diagnostics_do_not_observe_guest_conversion_hooks() {
       }
       if(hooks!==0)throw Error('diagnostics invoked guest conversion');
     "#;
-    for program in [Engine::compile(crate::ExecutionRequest{source,name:"typed-getter-diagnostics.js",kind:crate::SourceKind::Script}).unwrap(),Engine::specialize(source,"typed-getter-diagnostics.js").unwrap()] {
+    for program in [
+        Engine::compile(crate::ExecutionRequest {
+            source,
+            name: "typed-getter-diagnostics.js",
+            kind: crate::SourceKind::Script,
+        })
+        .unwrap(),
+        Engine::specialize(source, "typed-getter-diagnostics.js").unwrap(),
+    ] {
         Vm::new(SilentHost).execute(&program).unwrap();
     }
 }
 
 #[test]
 fn nullish_property_diagnostics_include_original_property_names() {
-    let source=r#"
+    let source = r#"
       let hooks=0;const key={toString(){hooks++;throw Error('key hook');}};
       for(const value of [null,undefined]) {
         for(const property of ['length',1,Symbol('x')]) {
@@ -9853,7 +9903,17 @@ fn nullish_property_diagnostics_include_original_property_names() {
       }
       if(hooks!==0)throw Error('rejected base invoked key conversion');
     "#;
-    for program in [Engine::compile(crate::ExecutionRequest{source,name:"nullish-property-errors.js",kind:crate::SourceKind::Script}).unwrap(),Engine::specialize(source,"nullish-property-errors.js").unwrap()] {Vm::new(SilentHost).execute(&program).unwrap();}
+    for program in [
+        Engine::compile(crate::ExecutionRequest {
+            source,
+            name: "nullish-property-errors.js",
+            kind: crate::SourceKind::Script,
+        })
+        .unwrap(),
+        Engine::specialize(source, "nullish-property-errors.js").unwrap(),
+    ] {
+        Vm::new(SilentHost).execute(&program).unwrap();
+    }
 }
 
 #[test]
@@ -9869,15 +9929,26 @@ for(const [target,source] of [[new Uint8Array(2),new BigInt64Array(1)],[new BigI
 }
 "#;
     for compile in [Engine::specialize, Engine::specialize_unspecialized] {
-        let output=Rc::new(RefCell::new(Vec::new()));
-        let mut vm=Vm::new(RecordingHost(output.clone()));
-        let program=compile(source,"typed-array-offset-content-errors.js").unwrap();
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let program = compile(source, "typed-array-offset-content-errors.js").unwrap();
         vm.execute(&program).unwrap();
-        assert_eq!(output.borrow().as_slice(),[
-            "RangeError","Start offset -1.5 is outside the bounds of the buffer","offset","5","true",
-            "TypeError","Cannot mix BigInt and other types, use explicit conversions","0,0",
-            "TypeError","Cannot mix BigInt and other types, use explicit conversions","0,0",
-        ]);
+        assert_eq!(
+            output.borrow().as_slice(),
+            [
+                "RangeError",
+                "Start offset -1.5 is outside the bounds of the buffer",
+                "offset",
+                "5",
+                "true",
+                "TypeError",
+                "Cannot mix BigInt and other types, use explicit conversions",
+                "0,0",
+                "TypeError",
+                "Cannot mix BigInt and other types, use explicit conversions",
+                "0,0",
+            ]
+        );
     }
 }
 
@@ -9891,10 +9962,23 @@ check('proxy-readonly',()=>store(new Proxy(Object.freeze({x:0}),{}),'x'));check(
 check('setter-original',()=>field({set x(v){throw marker}}));const hostile={get toString(){events.push('unexpected-string');throw marker},get [Symbol.toStringTag](){events.push('unexpected-tag');throw marker}};Object.defineProperty(hostile,'x',{value:0,writable:false});check('hostile',()=>field(hostile));for(const key of ['0','length','5'])check(['string',key],()=>store('abc',key));Object.defineProperty(Boolean.prototype,'x',{configurable:true,get(){events.push('unexpected-boolean-get')}});check('primitive-getter',()=>field(false));delete Boolean.prototype.x;out.push(['reflect',Reflect.set(new Proxy({}, {set(){return false}}),'x',1)]);out.push(events);print(JSON.stringify(out));
 
 "#;
-    for program in [Engine::compile(crate::ExecutionRequest { source, name: "assignment-diagnostics.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "assignment-diagnostics.js").unwrap()] {
+    for program in [
+        Engine::compile(crate::ExecutionRequest {
+            source,
+            name: "assignment-diagnostics.js",
+            kind: crate::SourceKind::Script,
+        })
+        .unwrap(),
+        Engine::specialize(source, "assignment-diagnostics.js").unwrap(),
+    ] {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(RecordingHost(output.clone()));
         vm.execute(&program).unwrap();
-        assert_eq!(output.borrow().as_slice(), [r#"[["undefined","TypeError","Cannot set properties of undefined (setting 'x')",false],["undefined","TypeError","Cannot set properties of undefined (setting 'x')",false],["null","TypeError","Cannot set properties of null (setting 'x')",false],["null","TypeError","Cannot set properties of null (setting 'x')",false],["boolean","TypeError","Cannot create property 'x' on boolean 'false'",false],["boolean","TypeError","Cannot create property 'x' on boolean 'false'",false],["number","TypeError","Cannot create property 'x' on number '1'",false],["number","TypeError","Cannot create property 'x' on number '1'",false],["string","TypeError","Cannot create property 'x' on string 'abc'",false],["string","TypeError","Cannot create property 'x' on string 'abc'",false],["symbol","TypeError","Cannot create property 'x' on symbol 'Symbol(s)'",false],["symbol","TypeError","Cannot create property 'x' on symbol 'Symbol(s)'",false],["bigint","TypeError","Cannot create property 'x' on bigint '1'",false],["bigint","TypeError","Cannot create property 'x' on bigint '1'",false],["frozen","TypeError","Cannot assign to read only property 'x' of object '#<Object>'",false],["frozen","TypeError","Cannot assign to read only property 'x' of object '#<Object>'",false],["sealed","TypeError","Cannot add property x, object is not extensible",false],["sealed","TypeError","Cannot add property x, object is not extensible",false],["getter","TypeError","Cannot set property x of #<Object> which has only a getter",false],["getter","TypeError","Cannot set property x of #<Object> which has only a getter",false],["proxy","TypeError","'set' on proxy: trap returned falsish for property 'x'",false],["proxy-readonly","TypeError","Cannot assign to read only property 'x' of object '#<Object>'",false],["proxy-extend","TypeError","Cannot define property x, object is not extensible",false],["nested","TypeError","'set' on proxy: trap returned falsish for property 'x'",false],["setter-original",null,null,true],["hostile","TypeError","Cannot assign to read only property 'x' of object '[object Object]'",false],[["string","0"],"TypeError","Cannot assign to read only property '0' of string 'abc'",false],[["string","length"],"TypeError","Cannot assign to read only property 'length' of string 'abc'",false],[["string","5"],"TypeError","Cannot create property '5' on string 'abc'",false],["primitive-getter","TypeError","Cannot set property x of [object Boolean] which has only a getter",false],["reflect",false],["trap-get","trap-call","inner"]]"#]);
+        assert_eq!(
+            output.borrow().as_slice(),
+            [
+                r#"[["undefined","TypeError","Cannot set properties of undefined (setting 'x')",false],["undefined","TypeError","Cannot set properties of undefined (setting 'x')",false],["null","TypeError","Cannot set properties of null (setting 'x')",false],["null","TypeError","Cannot set properties of null (setting 'x')",false],["boolean","TypeError","Cannot create property 'x' on boolean 'false'",false],["boolean","TypeError","Cannot create property 'x' on boolean 'false'",false],["number","TypeError","Cannot create property 'x' on number '1'",false],["number","TypeError","Cannot create property 'x' on number '1'",false],["string","TypeError","Cannot create property 'x' on string 'abc'",false],["string","TypeError","Cannot create property 'x' on string 'abc'",false],["symbol","TypeError","Cannot create property 'x' on symbol 'Symbol(s)'",false],["symbol","TypeError","Cannot create property 'x' on symbol 'Symbol(s)'",false],["bigint","TypeError","Cannot create property 'x' on bigint '1'",false],["bigint","TypeError","Cannot create property 'x' on bigint '1'",false],["frozen","TypeError","Cannot assign to read only property 'x' of object '#<Object>'",false],["frozen","TypeError","Cannot assign to read only property 'x' of object '#<Object>'",false],["sealed","TypeError","Cannot add property x, object is not extensible",false],["sealed","TypeError","Cannot add property x, object is not extensible",false],["getter","TypeError","Cannot set property x of #<Object> which has only a getter",false],["getter","TypeError","Cannot set property x of #<Object> which has only a getter",false],["proxy","TypeError","'set' on proxy: trap returned falsish for property 'x'",false],["proxy-readonly","TypeError","Cannot assign to read only property 'x' of object '#<Object>'",false],["proxy-extend","TypeError","Cannot define property x, object is not extensible",false],["nested","TypeError","'set' on proxy: trap returned falsish for property 'x'",false],["setter-original",null,null,true],["hostile","TypeError","Cannot assign to read only property 'x' of object '[object Object]'",false],[["string","0"],"TypeError","Cannot assign to read only property '0' of string 'abc'",false],[["string","length"],"TypeError","Cannot assign to read only property 'length' of string 'abc'",false],[["string","5"],"TypeError","Cannot create property '5' on string 'abc'",false],["primitive-getter","TypeError","Cannot set property x of [object Boolean] which has only a getter",false],["reflect",false],["trap-get","trap-call","inner"]]"#
+            ]
+        );
     }
 }
