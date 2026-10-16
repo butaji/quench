@@ -139,6 +139,16 @@ impl FunctionCompiler<'_, '_> {
     }
 
     fn chain_element_expression(&mut self, value: &ChainElement<'_>) -> Register {
+        let offset = match value {
+            ChainElement::StaticMemberExpression(member) => self.static_access_source_offset(member),
+            ChainElement::ComputedMemberExpression(member) => self.computed_access_source_offset(member),
+            ChainElement::PrivateFieldExpression(member) => member.field.span.start,
+            _ => return self.chain_element_at_current_position(value),
+        };
+        self.with_source_offset(offset, |compiler| compiler.chain_element_at_current_position(value))
+    }
+
+    fn chain_element_at_current_position(&mut self, value: &ChainElement<'_>) -> Register {
         match value {
             ChainElement::CallExpression(item) => self.optional_call(item),
             ChainElement::TSNonNullExpression(item) => self.expression(&item.expression),
@@ -200,6 +210,14 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn optional_call(&mut self, value: &CallExpression<'_>) -> Register {
+        let position = self.owner.source_position(self.call_source_offset(value));
+        let previous = self.current_source_position.replace((position.line, position.column));
+        let result = self.optional_call_at_current_position(value);
+        self.current_source_position = previous;
+        result
+    }
+
+    fn optional_call_at_current_position(&mut self, value: &CallExpression<'_>) -> Register {
         if matches!(&value.callee, Expression::Super(_)) {
             return self.call(value);
         }

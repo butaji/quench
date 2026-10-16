@@ -67,9 +67,17 @@ identities, mapped filenames, positions and the column alias. Native helper
 frames are excluded. Error CallSites and detailed capture share the source-frame
 projection; host filename mapping stays an explicit mutable host boundary.
 
-Call positions cover static member names and computed/parenthesized invocation
-parentheses as well as existing identifier and constructor positions. Complete
-optional-chain, eval/sourceURL, source-map and Node host-stack conformance remains
+The frame cursor explicitly distinguishes an executing guest-capable operation
+from a saved call continuation. Source inspection uses that state; GC root-map
+and lexical-binding projections keep their existing owners. General calls,
+materialized lane calls and restored activations preserve the distinction.
+
+Call positions use OXC expression/comment spans to identify method names and
+actual argument parentheses, including optional/private calls, returned
+functions, comments and line breaks. Property reads and writes have distinct
+operation positions, including assignments and updates. Source lines recognize
+all JavaScript line terminators and columns count UTF-16 units. Full fused
+sub-operation, eval/sourceURL, source-map and Node host-stack conformance remains
 open. Source IDs denote actual compiled units; missing host frames are not
 fabricated.
 
