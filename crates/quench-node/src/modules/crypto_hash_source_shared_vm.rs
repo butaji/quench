@@ -43,6 +43,15 @@ pub(crate) fn install(
             let key = c.string_rooted(name);
             c.define_data_property_rooted(public, key, value, true, true, true)?;
         }
+        let hashes = commonjs::node_library_export(c, "crypto.js", "internal/crypto/util.js", "getHashes")?;
+        let key = c.string_rooted("getHashes");
+        c.define_data_property_rooted(public, key, hashes, true, true, true)?;
+        let keys = commonjs::node_library_module(c, "crypto.js", "internal/crypto/keys.js")?;
+        for name in ["createSecretKey"] {
+            let value = get(c, keys, name)?;
+            let key = c.string_rooted(name);
+            c.define_data_property_rooted(public, key, value, true, true, true)?;
+        }
         Ok(())
     })
 }
