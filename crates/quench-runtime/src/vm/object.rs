@@ -2400,7 +2400,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn append_cached_shape_transition(&mut self, shape: u32, transition: ShapeTransition) -> u32 {
         let key = transition.cache_key();
         if let Some(key) = key
-            && let Some(next) = self.transitions.get(&(shape, key)).copied()
+            && let Some(next) = self.transitions.get(&self.shapes, shape, key)
         {
             self.profile.shape_transition(true);
             return next;
@@ -2438,7 +2438,7 @@ impl<H: Host> Vm<H> {
                 .dictionary_transition(DictionaryTrigger::PropertyCount);
         }
         if let Some(key) = key {
-            self.transitions.insert((shape, key), next);
+            self.transitions.insert(&self.shapes, shape, key, next);
         }
         next
     }
