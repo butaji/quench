@@ -1420,14 +1420,17 @@ pub(crate) fn refresh(context: &mut NativeContext<'_, NodeHost>, receiver: RootI
     let state = context.host_mut().shared_state();
     let existing = state.borrow_mut().scheduler.refresh_shared_timer(id, delay);
     let destroyed = property(context, receiver, TIMER_DESTROYED)?;
+    let mut execution_id = None;
     let initialize = if context.truthy_rooted(destroyed)? { true } else {
         let async_id = context.get_property_rooted(receiver, api.async_id_key)?;
+        execution_id = context.rooted_value(async_id).and_then(|value| value.as_number()).map(|id| id as u64);
         !context.truthy_rooted(async_id)?
     };
     if initialize {
         let live = context.boolean(false);
         install(context, receiver, TIMER_DESTROYED, live)?;
         let async_id = crate::modules::async_hooks_shared_vm::create_context(&state);
+        execution_id = Some(async_id);
         let value = context.number(async_id as f64);
         context.set_property_rooted(receiver, api.async_id_key, value, receiver)?;
         crate::modules::async_hooks_shared_vm::emit_init(context, receiver, "Timeout", async_id)?;
@@ -1436,8 +1439,9 @@ pub(crate) fn refresh(context: &mut NativeContext<'_, NodeHost>, receiver: RootI
     context.set_property_rooted(receiver, api.refed_key, value, receiver)?;
     state.borrow_mut().scheduler.set_shared_timer_ref(id, refed);
     if !existing {
-        let value = context.get_property_rooted(receiver, api.async_id_key)?;
-        let async_id = context.rooted_value(value).and_then(|v| v.as_number()).ok_or_else(|| RootedError::host("timer async identity"))? as u64;
+        // The slot can have an observable getter/setter. Retain the identity
+        // from the required read or initialization; do not read it again.
+        let async_id = execution_id.ok_or_else(|| RootedError::host("timer async identity"))?;
         let callback = SharedCallback { execution: Some(crate::modules::shared_event_loop::CallbackExecution {
             id: async_id, resource: context.retain(receiver)?,
         }), callback: context.retain(api.timer_callback)?, receiver: context.retain(receiver)?, args: Vec::new() };
