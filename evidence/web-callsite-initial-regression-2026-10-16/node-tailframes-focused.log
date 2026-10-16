@@ -1,0 +1,6 @@
+
+running 1 test
+test callsite_function_identity_obeys_strict_frame_visibility_and_ignores_name_getters ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 341 filtered out; finished in 0.27s
+
