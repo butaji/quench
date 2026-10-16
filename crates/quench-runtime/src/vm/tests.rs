@@ -1044,6 +1044,22 @@ fn string_indices_are_canonical_and_iterator_results_define_data_properties() {
 }
 
 #[test]
+fn spread_accumulates_without_user_methods_or_prototype_setters() {
+    // ArrayAccumulation defines elements at the next index: elisions advance it, and neither
+    // `push`, `apply`, `Reflect.construct` nor an inherited index setter is consulted.
+    let source = "var push = Array.prototype.push, apply = Function.prototype.apply, construct = Reflect.construct, seen = 0;\n\
+         Array.prototype.push = Function.prototype.apply = Reflect.construct = function () { seen++; };\n\
+         Object.defineProperty(Array.prototype, 1, { set: function () { seen++; }, configurable: true });\n\
+         function f() { return arguments.length; }\n\
+         function C() { this.n = arguments.length; }\n\
+         var a = [, ...[1], , 2, ,], b = [...'xy', ...[ , 3]];\n\
+         var calls = [f(...[1, 2], 3), new C(0, ...[1, 2]).n];\n\
+         Array.prototype.push = push; Function.prototype.apply = apply; Reflect.construct = construct; delete Array.prototype[1];\n\
+         var result = [a.length, Object.keys(a).join(), b.join(), Object.keys(b).join(), calls.join(), seen].join('|');";
+    assert_eq!(global_text(source, "result"), "5|1,3|x,y,,3|0,1,2,3|3,3|0");
+}
+
+#[test]
 fn typed_array_index_stores_convert_and_ignore_out_of_range_indices() {
     // Integer-indexed stores go straight to TypedArraySetElement: values convert by kind,
     // out-of-range indices and prototype setters are never reached, and a non-typed
@@ -3523,7 +3539,8 @@ fn spread_and_aggregate_roots_release_after_guest_failures() {
                 let result = if aggregate {
                     vm.construct_aggregate_error(&program, &args[..3], args[3])
                 } else {
-                    vm.spread_to_array(&program, args[0])
+                    let array = vm.new_array(Vec::new());
+                    vm.spread_into_array(&program, array, args[0]).map(|()| array)
                 };
                 assert_eq!(
                     result.is_err(),
