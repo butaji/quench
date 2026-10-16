@@ -433,7 +433,7 @@ impl<H: Host> Vm<H> {
                     intrinsics.stack_setter,
                     intrinsics.call_site_constructor,
                     intrinsics.call_site_prototype,
-                ]
+                ].into_iter().chain(intrinsics.host_formatter)
             },
         ));
         roots.extend(self.realm.intrinsics.regexp_intrinsics.iter().flat_map(
