@@ -20,6 +20,9 @@ pub(crate) fn values(context: &mut NativeContext<'_,NodeHost>,_:RootId,_:&[RootI
             let key=context.string_rooted(&name);let value=context.boolean(enabled);context.define_data_property_rooted(result,key,value,true,true,true)?;
         }
     }
+    for (name,value) in options.strings(){
+        let key=context.string_rooted(name);let value=context.string_rooted(value);context.define_data_property_rooted(result,key,value,true,true,true)?;
+    }
     for (name, values) in options.repeated_values() {
         let values = values.iter().map(|value| context.string_rooted(value)).collect::<Vec<_>>();
         let array = context.array_rooted(&values)?;

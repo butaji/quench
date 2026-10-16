@@ -960,6 +960,12 @@ collection during coercion. The retained Runtime subtraction adapter shares the
 same VM operation as native contexts. Public capture methods have Node's public
 names and ordinary constructor shapes. Diagnostic report integration and
 internal auxiliary registration remain unqualified.
+A thrown monitor, primary, auxiliary or uncaught listener enters a distinct
+fatal-handler exit state, using the configured SDK's typed exit code and
+suppressing normal exit events. Explicit exits retain their own status and event
+policy, including an explicitly requested code 7. The protocol enum and public
+binding table derive from the same header declaration. A 19-child oracle matrix
+covers top-level, next-tick, promise, auxiliary and explicit-exit paths.
 Bound-handle error/reentry details, original native-source/stack fidelity,
 diagnostic report flags and the wider Node lifecycle backlog remain open.
 
@@ -1030,3 +1036,44 @@ The private fs internalModuleStat binding follows native filesystem symlinks and
 returns the configured SDK classifier protocol: directory1, other successful
 metadata0, or a negative libuv error. It resolves relative paths through Node's
 cwd owner. Original SDK recursive traversal owns policy for using this result.
+
+Encoding uses the shared Buffer codecs; Buffer results retain the original
+filename bytes. Recursive Dirent results use Node's packed native layout, with
+Uint8 types and aligned Uint32 directory counts sharing one ArrayBuffer. The
+unchanged SDK owns validation and Dirent construction. Existing filesystem
+adapters capture a Rust forwarding function to this same policy, initialized
+after the filesystem module is cached. Their outer asynchronous validation and
+scheduling remain separate compatibility work.
+
+## Configured CLI version and flag order
+
+The Node-compatible CLI derives --version/-v from the same configured SDK
+version as process.version and process.versions.node. It handles version flags
+while parsing startup options, before evaluating guest source. An explicit -- or
+the first guest argument ends option parsing, so later version spellings remain
+guest arguments. The oracle checks aliases, jitless ordering, eval side effects
+and both argument boundaries. General help/unknown-option parity remains open.
+
+## Diagnostic-report configuration and one process listener store
+
+The lazy process.report getter returns the configured Node library's report
+object. Rust owns its mutable configuration, initialized from the same parsed
+startup options used by native option queries. The original SDK owns public
+validation, property/method descriptors, signal changes and field order.
+Report directory aliases, option/environment precedence, and report-signal's
+ordered implication of report-on-signal are covered against the oracle.
+
+Capture installation snapshots reportOnUncaughtException with strict true and
+then disables it. Clearing restores the saved flag only when auxiliary length
+is strictly numeric zero. The process.report reference is evaluated before the
+saved-flag getter on restoration; installation reads process.report separately
+for the read and write. Slot mutation precedes report getter failures.
+
+Process uses the common EventEmitter store for registration, dispatch,
+inspection, symbols, borrowed methods, prepending and mutable _events records.
+Signal watching and IPC counted references are actual listener add/remove
+observers; no second scheduler listener map mirrors those facts. Exit dispatch
+uses the public process emit hook after entering the named exit state.
+The Node26 ordinary once-wrapper shape is retained. Report generation/file I/O,
+abort toggles, default warning listener/source fidelity and the broader Node
+compatibility backlog remain unqualified.

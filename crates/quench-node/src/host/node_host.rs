@@ -110,6 +110,7 @@ pub(crate) struct SharedNodeState {
     /// Invocation flags supplied by the embedder for this logical process.
     pub(crate) exec_argv: Vec<String>,
     pub(crate) cli_options: crate::modules::cli_options::CliOptions,
+    pub(crate) report_config: crate::modules::report_configuration_shared_vm::State,
     initial_node_options: Option<String>,
     pub(crate) fetch: crate::modules::fetch_shared_vm::FetchState,
     pub(crate) diagnostics: crate::modules::diagnostics_channel_shared_vm::SharedDiagnosticsState,
@@ -272,6 +273,7 @@ impl SharedNodeState {
             timer_duration_warnings: Default::default(),
             exec_argv: Vec::new(),
             cli_options: Default::default(),
+            report_config: Default::default(),
             initial_node_options: std::env::var("NODE_OPTIONS").ok(),
             fetch: crate::modules::fetch_shared_vm::FetchState::new(),
             diagnostics:
@@ -381,6 +383,7 @@ impl NodeHost {
         let net_family = crate::modules::net_config::auto_select_family_from_exec_argv(&exec_argv);
         let mut shared = self.shared_state.borrow_mut();
         shared.cli_options=crate::modules::cli_options::CliOptions::parse(shared.initial_node_options.as_deref(),&exec_argv)?;
+        shared.report_config=crate::modules::report_configuration_shared_vm::State::from_options(&shared.cli_options);
         shared.trace.configure(&exec_argv);
         shared.exec_argv = exec_argv;
         shared.unhandled_rejection_mode = mode;
