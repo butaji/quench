@@ -28,31 +28,14 @@ fn binding(c: &mut Context<'_>, functions: &[(&str, &str)]) -> Result<RootId, Ro
     }
     Ok(result)
 }
-fn cached(
-    c: &mut Context<'_>,
-    key: &str,
-    build: fn(&mut Context<'_>) -> Result<RootId, RootedError>,
-) -> Result<RootId, RootedError> {
-    let shared = c.host_mut().shared_state();
-    if let Some(value) = shared.borrow().module_cache.get(key).copied() {
-        return Ok(value);
-    }
-    let value = build(c)?;
-    let retained = c.retain(value)?;
-    shared
-        .borrow_mut()
-        .module_cache
-        .insert(key.to_owned(), retained);
-    Ok(value)
-}
 pub(crate) fn os_binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    cached(c, "\0binding:os", build_os_binding)
+    crate::host::shared_vm::commonjs::cached_native_binding(c, "\0binding:os", build_os_binding)
 }
 pub(crate) fn credentials_binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    cached(c, "\0binding:credentials", build_credentials_binding)
+    crate::host::shared_vm::commonjs::cached_native_binding(c, "\0binding:credentials", build_credentials_binding)
 }
 pub(crate) fn constants(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    cached(c, "\0binding:os.constants", build_constants)
+    crate::host::shared_vm::commonjs::cached_native_binding(c, "\0binding:os.constants", build_constants)
 }
 fn build_os_binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let result = binding(

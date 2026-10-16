@@ -137,7 +137,7 @@ pub(crate) enum GcTraceKind {
 }
 
 pub(crate) type ParallelObjectRootTrace<'a> =
-    dyn Fn(GcTraceKind, Value, u32, &mut Vec<Value>) + Sync + 'a;
+    dyn Fn(GcTraceKind, Value, u32, bool, &mut Vec<Value>) + Sync + 'a;
 
 fn gc_allocation_headroom(live_cells: usize) -> usize {
     let factor = if live_cells >= LARGE_HEAP_MINIMUM_LIVE_CELLS {
@@ -444,7 +444,7 @@ impl<'heap> ReadOnlyHeapView<'heap> {
 
 struct ParallelMarkBatch {
     weak_maps: Vec<u32>,
-    object_roots: Vec<(Value, u32)>,
+    object_roots: Vec<(Value, u32, bool)>,
     work_items: u64,
     max_worklist: usize,
     marked_count: usize,
@@ -775,7 +775,12 @@ impl Heap {
         )
     }
 
+    pub(crate) fn mark_prototype(&mut self, prototype: Value) {
+        if let Some(object) = self.object_mut(prototype) { object.mark_as_prototype(); }
+    }
+
     pub fn alloc(&mut self, cell: Cell) -> Value {
+        if let Some(object) = cell.object() { self.mark_prototype(object.proto()); }
         #[cfg(feature = "profile-aggregate")]
         {
             let kind = Self::cell_kind(&cell) as usize;
@@ -866,7 +871,7 @@ impl Heap {
         shape: u32,
         values: &[Value],
     ) -> Value {
-        let (properties, inline_properties) = self.initial_object_storage(shape, values);
+        let (properties, inline_properties) = self.initial_object_storage(shape, values, true);
         self.alloc(Cell::Object(Object::with_property_storage(
             proto,
             properties,
@@ -879,7 +884,12 @@ impl Heap {
         shape: u32,
         values: &[Value],
     ) {
-        let (properties, inline_properties) = self.initial_object_storage(shape, values);
+        // An array's payload holds its element backing, so its properties live in the arena.
+        let inline = !self
+            .object(owner)
+            .expect("property owner is an object")
+            .is_array();
+        let (properties, inline_properties) = self.initial_object_storage(shape, values, inline);
         let previous = {
             let object = self.object_mut(owner).expect("property owner is an object");
             object.replace_property_storage(properties, inline_properties)
@@ -889,13 +899,16 @@ impl Heap {
         self.note_object_slots(owner, values.len());
     }
 
+    /// Storage for an object's first property `values`: inline where they fit and `inline`
+    /// allows it, else the arena.
     fn initial_object_storage(
         &mut self,
         shape: u32,
         values: &[Value],
+        inline: bool,
     ) -> (ValueVec, [Value; INLINE_PROPERTY_COUNT]) {
         self.properties.assert_shape_length(shape, values.len());
-        if values.len() <= INLINE_PROPERTY_COUNT {
+        if inline && values.len() <= INLINE_PROPERTY_COUNT {
             let mut inline = [Value::UNDEFINED; INLINE_PROPERTY_COUNT];
             inline[..values.len()].copy_from_slice(values);
             (ValueVec::inline_property_storage(shape), inline)
@@ -1065,7 +1078,7 @@ impl Heap {
     }
     #[cfg(test)]
     pub fn collect(&mut self, roots: impl IntoIterator<Item = Value>) -> Vec<(Value, Value)> {
-        self.collect_with_object_roots(roots, |_, _, _, _| {}, None, true)
+        self.collect_with_object_roots(roots, |_, _, _, _, _| {}, None, true)
     }
     /// Whether a collection requested as `full` traces and sweeps the whole heap.
     /// Direct records do not yet carry a generation. A full trace is the
@@ -1077,7 +1090,7 @@ impl Heap {
     pub(crate) fn collect_with_object_roots(
         &mut self,
         roots: impl IntoIterator<Item = Value>,
-        mut object_roots: impl FnMut(GcTraceKind, Value, u32, &mut Vec<Value>),
+        mut object_roots: impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
         parallel_object_roots: Option<&ParallelObjectRootTrace<'_>>,
         full: bool,
     ) -> Vec<(Value, Value)> {
@@ -1497,7 +1510,7 @@ impl Heap {
     fn mark_work_parallel_or_serial(
         &mut self,
         work: &mut Vec<Value>,
-        object_roots: &mut impl FnMut(GcTraceKind, Value, u32, &mut Vec<Value>),
+        object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
         parallel_object_roots: Option<&ParallelObjectRootTrace<'_>>,
         ephemerons: &mut weak::EphemeronWork,
         trace_kind: GcTraceKind,
@@ -1545,8 +1558,8 @@ impl Heap {
                         self.gc_profile.marked_kinds[kind] += count;
                     }
                 }
-                for (owner, shape) in batch.object_roots {
-                    object_roots(trace_kind, owner, shape, work);
+                for (owner, shape, prototype) in batch.object_roots {
+                    object_roots(trace_kind, owner, shape, prototype, work);
                 }
                 for index in batch.weak_maps {
                     let owner = Value::heap(index);
@@ -1592,11 +1605,11 @@ impl Heap {
             }
 
             let mut trace_object_root =
-                |kind: GcTraceKind, owner: Value, shape: u32, roots: &mut Vec<Value>| {
+                |kind: GcTraceKind, owner: Value, shape: u32, prototype: bool, roots: &mut Vec<Value>| {
                     if let Some(parallel_object_roots) = parallel_object_roots {
-                        parallel_object_roots(kind, owner, shape, roots);
+                        parallel_object_roots(kind, owner, shape, prototype, roots);
                     } else {
-                        batch.object_roots.push((owner, shape));
+                        batch.object_roots.push((owner, shape, prototype));
                     }
                 };
             Self::children(
@@ -1649,7 +1662,7 @@ impl Heap {
     fn debug_verify_full(
         &mut self,
         roots: &[Value],
-        object_roots: &mut impl FnMut(GcTraceKind, Value, u32, &mut Vec<Value>),
+        object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
     ) {
         let parallel_marks = Self::snapshot_marks(&self.marks);
         let parallel_object_marks = self.object_records.snapshot_marks();
@@ -1697,7 +1710,7 @@ impl Heap {
     fn debug_verify_minor(
         &mut self,
         roots: &[Value],
-        object_roots: &mut impl FnMut(GcTraceKind, Value, u32, &mut Vec<Value>),
+        object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
     ) {
         let minor_marks = Self::snapshot_marks(&self.marks);
         let young = self.young.clone();
@@ -1741,7 +1754,7 @@ impl Heap {
     fn mark_work(
         &mut self,
         work: &mut Vec<Value>,
-        object_roots: &mut impl FnMut(GcTraceKind, Value, u32, &mut Vec<Value>),
+        object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
         ephemerons: &mut weak::EphemeronWork,
         trace_kind: GcTraceKind,
     ) {
@@ -2146,7 +2159,7 @@ impl Heap {
         object: &Object,
         properties: &ValueArena,
         work: &mut Vec<Value>,
-        object_roots: &mut impl FnMut(GcTraceKind, Value, u32, &mut Vec<Value>),
+        object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
         trace_kind: GcTraceKind,
         last_proto: &mut Value,
     ) {
@@ -2157,7 +2170,7 @@ impl Heap {
                 work.push(proto);
             }
         }
-        object_roots(trace_kind, owner, object.shape(), work);
+        object_roots(trace_kind, owner, object.shape(), object.was_used_as_prototype(), work);
         object.visit_extras_roots(|value| work.push(value));
         if let Some(values) = object.inline_properties() {
             for &value in values {
@@ -2175,7 +2188,7 @@ impl Heap {
         cell: &Cell,
         properties: &ValueArena,
         work: &mut Vec<Value>,
-        object_roots: &mut impl FnMut(GcTraceKind, Value, u32, &mut Vec<Value>),
+        object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
         trace_kind: GcTraceKind,
         last_proto: &mut Value,
     ) {
@@ -2440,7 +2453,7 @@ impl Heap {
         array: &ArrayObject,
         properties: &ValueArena,
         work: &mut Vec<Value>,
-        object_roots: &mut impl FnMut(GcTraceKind, Value, u32, &mut Vec<Value>),
+        object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
         trace_kind: GcTraceKind,
         last_proto: &mut Value,
     ) {

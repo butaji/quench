@@ -1,0 +1,14 @@
+{
+  "reused": true,
+  "fresh_execution": false,
+  "original_report": "/workspace/scratch/npm-canonical-sync-scenarios.json",
+  "original_report_sha256": "1aa86aca56857740341b4c5a39d245adbe4de51271552e0daebdea54cf2c01d3",
+  "source": "faa120035a332d3b5eb232eaadcad1399f306d7d",
+  "published_merge": "1f36ad64d05505dc438d381cb2d1dd9740f96140",
+  "matched_harness_fields": [
+    "inventory_sha256",
+    "lock_sha256",
+    "node_sha256",
+    "scenario_sha256"
+  ]
+}

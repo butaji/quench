@@ -12,20 +12,62 @@ pub(crate) struct JsString {
     inner: Rc<JsStringInner>,
 }
 
-/// Flat code units. A string whose units are all ASCII is always stored `Ascii`, so equal
-/// strings share a representation.
+/// Flat code units. A string whose units are all ASCII is always stored `Short` when they
+/// fit and `Ascii` otherwise (`FlatUnits::ascii`), so equal strings share a representation.
 #[derive(Clone)]
 pub(crate) enum FlatUnits {
+    /// ASCII text held in the string's own allocation: most property names and tokens fit,
+    /// and need no second allocation.
+    Short(ShortAscii),
     Ascii(Rc<str>),
     Wide(Rc<[u16]>),
 }
 
+/// ASCII text of at most `SHORT_ASCII_CAPACITY` bytes, stored inline.
+#[derive(Clone, Copy)]
+pub(crate) struct ShortAscii {
+    length: u8,
+    bytes: [u8; SHORT_ASCII_CAPACITY],
+}
+
+/// `FlatUnits` is three words: a shared variant's tag word, then its pointer and length.
+/// `Short` fills them, less its own tag and `ShortAscii::length`.
+const SHORT_ASCII_CAPACITY: usize = 3 * size_of::<usize>() - 2;
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(size_of::<FlatUnits>() == 3 * size_of::<usize>());
+
+impl ShortAscii {
+    pub(crate) fn as_str(&self) -> &str {
+        // SAFETY: only `FlatUnits::ascii` fills the bytes, from ASCII text.
+        unsafe { std::str::from_utf8_unchecked(&self.bytes[..usize::from(self.length)]) }
+    }
+}
+
 impl FlatUnits {
+    /// ASCII `text` in its canonical storage.
+    fn ascii(text: &str) -> Self {
+        debug_assert!(text.is_ascii());
+        if text.len() <= SHORT_ASCII_CAPACITY {
+            let mut bytes = [0; SHORT_ASCII_CAPACITY];
+            bytes[..text.len()].copy_from_slice(text.as_bytes());
+            return Self::Short(ShortAscii {
+                length: text.len() as u8,
+                bytes,
+            });
+        }
+        Self::Ascii(Rc::from(text))
+    }
+
     fn view(&self) -> Units<'_> {
         match self {
+            Self::Short(text) => Units::Ascii(text.as_str().as_bytes()),
             Self::Ascii(text) => Units::Ascii(text.as_bytes()),
             Self::Wide(units) => Units::Wide(units),
         }
+    }
+
+    pub(crate) fn is_ascii(&self) -> bool {
+        matches!(self, Self::Short(_) | Self::Ascii(_))
     }
 
     fn same_storage(&self, other: &Self) -> bool {
@@ -242,7 +284,7 @@ fn is_ascii_unit(unit: u16) -> bool {
 fn flat_units(units: &[u16]) -> FlatUnits {
     if units.iter().all(|unit| is_ascii_unit(*unit)) {
         let text: String = units.iter().map(|unit| char::from(*unit as u8)).collect();
-        FlatUnits::Ascii(Rc::from(text))
+        FlatUnits::ascii(&text)
     } else {
         FlatUnits::Wide(Rc::from(units))
     }
@@ -263,7 +305,7 @@ struct JsStringInner {
 
 /// A string's rarely present parts, which never coexist: the concatenated halves, present
 /// exactly while `flat` is unset, and a `Wide` string's host text, made after flattening (an
-/// `Ascii` string's units are its host text). Sharing one word keeps a flat string's
+/// ASCII string's units are its host text). Sharing one word keeps a flat string's
 /// allocation small.
 enum Aside {
     Rope(Rc<JsStringInner>, Rc<JsStringInner>),
@@ -277,10 +319,7 @@ fn stored_length(length: usize) -> u32 {
 
 impl JsStringInner {
     fn flat(units: FlatUnits) -> Self {
-        let (length, ascii) = match &units {
-            FlatUnits::Ascii(text) => (text.len(), true),
-            FlatUnits::Wide(units) => (units.len(), false),
-        };
+        let (length, ascii) = (units.view().len(), units.is_ascii());
         Self {
             length: stored_length(length),
             ascii,
@@ -446,21 +485,18 @@ impl JsStringBuilder {
 
     pub(super) fn finish(self) -> Result<JsString, StringBuildError> {
         let length = self.length?;
-        let ascii = self
-            .parts
-            .iter()
-            .all(|part| matches!(part.units, FlatUnits::Ascii(_)));
-        if ascii {
-            let mut output = String::new();
+        if self.parts.iter().all(|part| part.units.is_ascii()) {
+            let mut output = Vec::new();
             output
                 .try_reserve_exact(length)
                 .map_err(|_| StringBuildError::Allocation)?;
             for part in &self.parts {
-                if let FlatUnits::Ascii(text) = &part.units {
-                    output.push_str(&text[part.range.clone()]);
+                if let Units::Ascii(bytes) = part.units.view().slice(part.range.clone()) {
+                    output.extend_from_slice(bytes);
                 }
             }
-            return Ok(JsString::from_flat(FlatUnits::Ascii(Rc::from(output))));
+            let text = std::str::from_utf8(&output).expect("ASCII units are UTF-8");
+            return Ok(JsString::from_flat(FlatUnits::ascii(text)));
         }
         let mut output = Vec::new();
         output
@@ -490,16 +526,16 @@ impl JsString {
     /// The string of `units`, sharing their storage when it is already canonical.
     pub(crate) fn from_unit_run(units: Units<'_>) -> Self {
         match units {
-            Units::Ascii(bytes) => Self::from_flat(FlatUnits::Ascii(Rc::from(
+            Units::Ascii(bytes) => Self::from_flat(FlatUnits::ascii(
                 std::str::from_utf8(bytes).expect("ASCII units are UTF-8"),
-            ))),
+            )),
             Units::Wide(units) => Self::from_units(units),
         }
     }
 
     pub(crate) fn from_str(text: &str) -> Self {
         if text.is_ascii() {
-            return Self::from_flat(FlatUnits::Ascii(Rc::from(text)));
+            return Self::from_flat(FlatUnits::ascii(text));
         }
         Self::from_flat(FlatUnits::Wide(Rc::from(
             text.encode_utf16().collect::<Vec<_>>(),
@@ -520,7 +556,7 @@ impl JsString {
                         output.push_str(std::str::from_utf8(bytes).expect("ASCII units are UTF-8"));
                     }
                 });
-                FlatUnits::Ascii(Rc::from(output))
+                FlatUnits::ascii(&output)
             } else {
                 let mut output = Vec::with_capacity(self.len());
                 self.inner.for_each_run(|run| run.extend_into(&mut output));
@@ -531,17 +567,10 @@ impl JsString {
         })
     }
 
+    /// The string as host text: its own units when ASCII, lossy UTF-8 made once otherwise.
     pub(crate) fn host_string(&self) -> &str {
-        self.host_text()
-    }
-
-    /// The host text `host_string` borrows, shared rather than copied.
-    pub(crate) fn host_name(&self) -> Rc<str> {
-        self.host_text().clone()
-    }
-
-    fn host_text(&self) -> &Rc<str> {
         match self.flat() {
+            FlatUnits::Short(text) => text.as_str(),
             FlatUnits::Ascii(text) => text,
             FlatUnits::Wide(units) => self
                 .inner
@@ -565,6 +594,7 @@ impl JsString {
     #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
     pub(crate) fn capacity(&self) -> usize {
         match self.flat() {
+            FlatUnits::Short(_) => 0,
             FlatUnits::Ascii(text) => text.len(),
             FlatUnits::Wide(units) => {
                 std::mem::size_of_val(&**units)
@@ -577,6 +607,8 @@ impl JsString {
     pub(crate) fn memory_parts(&self) -> ((usize, usize), Option<(usize, usize)>) {
         const RC_HEADER_BYTES: usize = 2 * std::mem::size_of::<usize>();
         let unit_storage = match self.flat() {
+            // Inline units live in the string's own allocation.
+            FlatUnits::Short(text) => (text.bytes.as_ptr() as usize, 0),
             FlatUnits::Ascii(text) => (
                 Rc::as_ptr(text) as *const u8 as usize,
                 RC_HEADER_BYTES + text.len(),
