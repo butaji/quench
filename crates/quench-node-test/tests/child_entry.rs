@@ -9206,3 +9206,72 @@ Error.prepareStackTrace=(_,frames)=>frames[0].toString();function Frame(){return
 console.log(JSON.stringify(out));
 "#, &[]);
 }
+
+#[test]
+fn text_decoder_stream_boundaries_and_repeated_flush_match_node() {
+    compare_node_stream_source(r#"
+const inputs=[['utf-8',[239,187,191,226,130,172,240,159,152,128,65]],['utf-16le',[255,254,61,216,0,222,65,0]],['utf-16be',[254,255,216,61,222,0,0,65]],['shift_jis',[130,160,65]],['big5',[164,164,65]],['euc-kr',[176,161,65]],['gb18030',[144,48,129,48,65]],['iso-2022-jp',[27,36,66,36,34,27,40,66,65]]];
+const rows=[];
+for(const [encoding,bytes]of inputs)for(const fatal of [false,true])for(const ignoreBOM of [false,true])for(let cut=0;cut<=bytes.length;cut++){
+ const decoder=new TextDecoder(encoding,{fatal,ignoreBOM});
+ try {const first=decoder.decode(Uint8Array.from(bytes.slice(0,cut)),{stream:true});const second=decoder.decode(Uint8Array.from(bytes.slice(cut)));const flushed=decoder.decode();rows.push([encoding,fatal,ignoreBOM,cut,[first,second,flushed]]);}
+ catch(e){rows.push([encoding,fatal,ignoreBOM,cut,{name:e.name,code:e.code??null,message:e.message}]);}
+}
+console.log(JSON.stringify({complete:true,cases:rows.length,rows}));
+"#);
+}
+
+#[test]
+fn text_decoder_descriptors_validation_and_utf8_encoding_match_node() {
+    compare_node_stream_source(r#"
+const rows=[];
+function capture(name,fn){try{rows.push({name,result:fn()});}catch(error){rows.push({name,error:{name:error.name,code:error.code??null,message:error.message}});}}
+function descriptors(object){return Reflect.ownKeys(object).map(key=>{const d=Object.getOwnPropertyDescriptor(object,key);return {key:String(key),enumerable:d.enumerable,configurable:d.configurable,...('writable'in d?{writable:d.writable}:{}),...('value'in d?{value:typeof d.value==='function'?[d.value.name,d.value.length]:typeof d.value==='symbol'?String(d.value):d.value}:{}),...(d.get?{get:[d.get.name,d.get.length]}:{}),...(d.set?{set:[d.set.name,d.set.length]}:{})};});}
+capture('decoder-prototype',()=>descriptors(TextDecoder.prototype));
+capture('encoder-prototype',()=>descriptors(TextEncoder.prototype));
+capture('decoder-instance-symbols',()=>Reflect.ownKeys(new TextDecoder()).map(String));
+capture('encoder-instance-symbols',()=>Reflect.ownKeys(new TextEncoder()).map(String));
+capture('decoder-label-symbol',()=>new TextDecoder(Symbol('encoding')).encoding);
+for(const options of [null,3,true,'x',()=>{}])capture('decoder-options-'+String(options),()=>{const d=new TextDecoder('utf-8',options);return[d.encoding,d.fatal,d.ignoreBOM];});
+capture('decoder-options-observation-order',()=>{const calls=[];const label={toString(){calls.push('label');return'utf-8';}};const options={get fatal(){calls.push('fatal');return true;},get ignoreBOM(){calls.push('ignoreBOM');return false;}};const d=new TextDecoder(label,options);return[calls,d.encoding,d.fatal,d.ignoreBOM];});
+capture('decoder-label-versus-options-error-priority',()=>new TextDecoder('not-an-encoding',3).encoding);
+for(const key of ['encoding','fatal','ignoreBOM'])capture('decoder-getter-brand-'+key,()=>Object.getOwnPropertyDescriptor(TextDecoder.prototype,key).get.call({}));
+capture('decoder-decode-brand',()=>TextDecoder.prototype.decode.call({}));
+for(const options of [null,3,true,'x',()=>{}])capture('decode-options-'+String(options),()=>new TextDecoder().decode(new Uint8Array([65]),options));
+capture('decode-options-getter',()=>{const calls=[];const d=new TextDecoder();const out=d.decode(new Uint8Array([65]),{get stream(){calls.push('stream');return true;}});return[calls,out,d.decode()];});
+capture('decode-shared-buffer',()=>{const b=new SharedArrayBuffer(2);new Uint8Array(b).set([65,66]);return new TextDecoder().decode(b);});
+capture('decode-view-offset',()=>new TextDecoder().decode(new DataView(new Uint8Array([0,65,66,0]).buffer,1,2)));
+capture('decode-detached-buffer',()=>{const b=new ArrayBuffer(2);structuredClone(b,{transfer:[b]});return new TextDecoder().decode(b);});
+capture('encoder-symbol',()=>Array.from(new TextEncoder().encode(Symbol('text'))));
+capture('encoder-encodeInto-invalid-destination',()=>new TextEncoder().encodeInto('x',[]));
+capture('encoder-encodeInto-symbol',()=>new TextEncoder().encodeInto(Symbol('text'),new Uint8Array(30)));
+capture('encoder-encodeInto-coercion-order',()=>{const calls=[];let error;try{new TextEncoder().encodeInto({toString(){calls.push('string');return'x';}},[]);}catch(e){error={name:e.name,code:e.code??null,message:e.message};}return[calls,error];});
+capture('encoder-partial-codepoint',()=>{const out=[];for(let length=0;length<=5;length++){const b=new Uint8Array(length).fill(255);out.push([new TextEncoder().encodeInto('😀x',b),Array.from(b)]);}return out;});
+console.log(JSON.stringify({complete:true,cases:rows.length,rows}));
+"#);
+}
+
+#[test]
+fn text_decoder_stream_errors_recover_and_reset_bom_match_node() {
+    compare_node_stream_source(r#"
+const fixtures=[
+ ['utf-8',[0xef,0xbb,0xbf,0x41],[0xe2,0x28,0xa1]],
+ ['utf-16le',[0xff,0xfe,0x41,0],[0,0xd8,0x41,0]],
+ ['utf-16be',[0xfe,0xff,0,0x41],[0xd8,0,0,0x41]],
+ ['shift_jis',[0x82,0xa0,0x41],[0x82,0x20,0xff]],
+ ['big5',[0xa4,0xa4,0x41],[0xa4,0x20,0xff]],
+ ['euc-kr',[0xb0,0xa1,0x41],[0xb0,0x20,0xff]],
+ ['gb18030',[0x90,0x30,0x81,0x30,0x41],[0x90,0x30,0x20,0xff]],
+ ['iso-2022-jp',[27,36,66,36,34,27,40,66,65],[27,36,255,27]],
+ ['windows-1252',[0x41,0x80],[0x81,0xff]],
+];
+const rows=[];
+for(const [encoding,valid,invalid]of fixtures)for(const fatal of [false,true])for(const ignoreBOM of [false,true])for(let cut=0;cut<=invalid.length;cut++){
+ const decoder=new TextDecoder(encoding,{fatal,ignoreBOM}),out=[];
+ const steps=[[invalid.slice(0,cut),true],[invalid.slice(cut),true],[[],false],[valid.slice(0,1),true],[valid.slice(1),false],[[],false],[valid,false]];
+ for(const[bytes,stream]of steps)try{out.push({value:decoder.decode(Uint8Array.from(bytes),{stream})});}catch(e){out.push({error:{name:e.name,code:e.code??null,message:e.message}});}
+ rows.push([encoding,fatal,ignoreBOM,cut,out]);
+}
+console.log(JSON.stringify({complete:true,cases:rows.length,calls:rows.length*7,rows}));
+"#);
+}

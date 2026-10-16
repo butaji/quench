@@ -65,6 +65,8 @@ pub(crate) struct SharedNodeState {
     pub(crate) fs: crate::modules::fs_state::FsState,
     pub(crate) fs_watch: crate::modules::fs_watch_shared_vm::State,
     pub(crate) tls_contexts: crate::modules::tls_shared_vm::contexts::State,
+    #[cfg(quench_icu)]
+    pub(crate) icu_converters: crate::modules::icu_binding_shared_vm::State,
     pub(crate) fs_stats: crate::modules::fs_shared_vm::stat::types::State,
     pub(crate) fs_policy: crate::modules::fs_policy_shared_vm::State,
     pub(crate) fs_stat_watch: crate::modules::fs_stat_watch_shared_vm::State,
@@ -197,6 +199,8 @@ impl SharedNodeState {
         self.net_handle_close_callbacks.clear();
         self.fs_watch = crate::modules::fs_watch_shared_vm::State::default();
         self.tls_contexts = crate::modules::tls_shared_vm::contexts::State::default();
+        #[cfg(quench_icu)]
+        { self.icu_converters = crate::modules::icu_binding_shared_vm::State::default(); }
         self.fs_stats = crate::modules::fs_shared_vm::stat::types::State::default();
         self.fs_policy = crate::modules::fs_policy_shared_vm::State::default();
         self.fs_stat_watch = crate::modules::fs_stat_watch_shared_vm::State::default();
@@ -217,6 +221,8 @@ impl SharedNodeState {
             fs,
             fs_watch: crate::modules::fs_watch_shared_vm::State::default(),
             tls_contexts: crate::modules::tls_shared_vm::contexts::State::default(),
+            #[cfg(quench_icu)]
+            icu_converters: crate::modules::icu_binding_shared_vm::State::default(),
             fs_stats: crate::modules::fs_shared_vm::stat::types::State::default(),
             fs_policy: crate::modules::fs_policy_shared_vm::State::default(),
             fs_stat_watch: crate::modules::fs_stat_watch_shared_vm::State::default(),
