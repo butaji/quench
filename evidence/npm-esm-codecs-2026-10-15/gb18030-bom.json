@@ -1,0 +1,15 @@
+{
+  "script": "console.log(JSON.stringify(['gb18030','gbk'].flatMap(encoding=>[false,true].map(ignoreBOM=>[encoding,ignoreBOM,new TextDecoder(encoding,{ignoreBOM}).decode(new Uint8Array([0x84,0x31,0x95,0x33])).split('').map(x=>x.charCodeAt(0))]))))",
+  "results": {
+    "node": {
+      "exit": 0,
+      "stdout": "[[\"gb18030\",false,[65279]],[\"gb18030\",true,[65279]],[\"gbk\",false,[65279]],[\"gbk\",true,[65279]]]\n",
+      "stderr": ""
+    },
+    "quench": {
+      "exit": 0,
+      "stdout": "[[\"gb18030\",false,[65279]],[\"gb18030\",true,[65279]],[\"gbk\",false,[65279]],[\"gbk\",true,[65279]]]\n",
+      "stderr": ""
+    }
+  }
+}

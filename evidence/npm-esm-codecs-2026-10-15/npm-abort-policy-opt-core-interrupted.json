@@ -1,0 +1,5 @@
+{
+  "source": "68e7ad0f4ea44571cf10051b216f1445c45a2f70",
+  "status": "interrupted-not-passed",
+  "reason": "New integration 791776ba4 changes Core typed-array diagnostics; synchronize before optimized Core compilation. Broad API also retained two child timing failures under concurrent compilation/guard; not relabeled passes."
+}

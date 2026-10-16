@@ -30,6 +30,7 @@ oxc_allocator = { workspace = true }
 oxc_ast = { workspace = true }
 oxc_ast_visit = { workspace = true }
 oxc_parser = { workspace = true }
+oxc_semantic = { workspace = true }
 oxc_span = { workspace = true }
 oxc_syntax = { workspace = true }
 quench-stack = { path = "../quench-stack" }
@@ -43,3 +44,6 @@ chrono = { version = "0.4", default-features = false, features = ["std", "clock"
 libc = "0.2"
 socket2 = { version = "0.6", features = ["all"] }
 zstd = "0.13"
+
+[build-dependencies]
+pkg-config = "0.3"
