@@ -483,3 +483,16 @@ pub(crate) fn source_positions(
     super::event_constructor_shared_vm::set(context, result, "startColumn", column)?;
     Ok(result)
 }
+
+pub(crate) fn binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    crate::host::shared_vm::commonjs::cached_native_binding(context, "\0binding:errors", build_binding)
+}
+
+fn build_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    let binding = context.object_rooted()?;
+    let function = context.host_function_named(
+        crate::host::shared_vm::operation("errorSourcePositions"), "getErrorSourcePositions",
+    )?;
+    super::event_constructor_shared_vm::set(context, binding, "getErrorSourcePositions", function)?;
+    Ok(binding)
+}
