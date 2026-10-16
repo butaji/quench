@@ -9627,3 +9627,13 @@ fn private_brands_follow_initialization_without_branding_the_declaring_prototype
 fn static_blocks_retain_strict_eval_super_receiver_and_separate_var_contexts() {
     compare_node_source_with_args(include_str!("../node-tests/test-static-block-context.js"), &[]);
 }
+
+#[test]
+fn tcp_default_listen_backlog_matches_node_when_syscall_tracing_is_available() {
+    compare_node_source_with_args(include_str!("../node-tests/test-tcp-default-listen-backlog.js"), &[]);
+}
+
+#[test]
+fn tcp_option_listen_backlog_matches_node_truthiness_and_int32_when_tracing_is_available() {
+    compare_node_source_with_args(include_str!("../node-tests/test-tcp-option-listen-backlog.js"), &[]);
+}
