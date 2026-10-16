@@ -487,7 +487,7 @@ impl<H: Host> Vm<H> {
         }
         let is_async = equal && timeout.is_none_or(|value| value.is_nan() || value > 0.0);
         let value = if is_async {
-            let promise = self.promise_object();
+            let promise = self.promise_object()?;
             if timeout.is_some_and(|value| value.is_finite() && value <= AGENT_YIELD_TIMEOUT_MS) {
                 let timeout_result = self.heap.alloc(Cell::String("timed-out".into()));
                 self.promise_settle(p, promise, PromiseState::Fulfilled, timeout_result)?;
