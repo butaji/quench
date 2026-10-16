@@ -328,6 +328,42 @@ impl<H: Host> Vm<H> {
         }).collect()
     }
 
+    pub(crate) fn embedding_error_source_position(
+        &mut self,
+        error: RootId,
+    ) -> Result<Option<crate::ErrorSourcePosition>, JsError> {
+        let value = self.embedding_value(error)?;
+        // Proxy objects deliberately do not expose their target's captured metadata.
+        if let Some(crate::heap::StackData::Captured { records, source }) =
+            self.object_data(value).and_then(crate::heap::Object::stack_data)
+        {
+            if let Some(record) = records.iter().find(|record| matches!(record.location, CallSiteLocation::Source { .. })) {
+                let CallSiteLocation::Source { file_name, line, column } = &record.location else { unreachable!() };
+                return Ok(Some(crate::ErrorSourcePosition {
+                    source_line: source.as_ref().and_then(|source| source.source_line(*line)).map(str::to_owned),
+                    script_name: record.eval_origin.is_none().then(|| file_name.clone()),
+                    line_number: *line,
+                    column_number: *column,
+                }));
+            }
+        }
+        let Some((mut record, module, source_line)) = self.frames.iter().rev().find_map(|frame| {
+            let (record, module) = self.source_call_site_record(frame, false)?;
+            let CallSiteLocation::Source { line, .. } = &record.location else { return None };
+            let source_line = self.programs.get(frame.program)?.source.as_ref()
+                .and_then(|source| source.source_line(*line)).map(str::to_owned);
+            Some((record, module, source_line))
+        }) else { return Ok(None) };
+        Self::map_call_site_source(&mut self.host, &mut record, module);
+        let CallSiteLocation::Source { file_name, line, column } = record.location else { unreachable!() };
+        Ok(Some(crate::ErrorSourcePosition {
+            source_line,
+            script_name: record.eval_origin.is_none().then_some(file_name),
+            line_number: line,
+            column_number: column,
+        }))
+    }
+
     pub(crate) fn embedding_call_stack_source_names(&self) -> Vec<String> {
         self.frames.iter().rev().filter_map(|frame| {
             self.programs.source_name(frame.program).map(str::to_owned)

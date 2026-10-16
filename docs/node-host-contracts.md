@@ -29,6 +29,14 @@ ordinary callbacks cannot inherit a constructor entry. Receiver type names use
 the shared safe constructor-name operation; constructor/global receivers report
 null, and Proxy receivers do not invoke traps.
 
+The native error-source projection reads captured compiler positions without
+invoking `stack`, guest accessors or Proxy traps. A capture shares immutable
+compiler text, preserving its source through Script collection and repeated
+filenames; only a requested line is copied. Formatting releases that capture.
+When no unformatted source capture exists, lookup uses the current genuine
+JavaScript activation. The Node binding projects zero-based start columns and
+null-prototype records, leaving unnamed eval resource names undefined.
+
 Public function names and inferred debug names remain distinct. Variable
 initializer inference follows result-producing sequence, conditional and logical
 expressions without changing the public `.name`. A slotless shape transition

@@ -453,3 +453,33 @@ pub(crate) fn initialize_shadow_policy(
     context.define_data_property_rooted(constructor, key, prepare, true, false, true)?;
     get(context, errors, "prepareStackTraceCallback")
 }
+
+/// Project compiler-owned error source metadata for the original Node SDK policy.
+pub(crate) fn source_positions(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let absent = context.undefined();
+    let error = args.first().copied().unwrap_or(absent);
+    if !context.is_object_rooted(error)? {
+        let error = context.type_error_rooted("Error source positions require an object")?;
+        return Err(context.throw(error));
+    }
+    let Some(position) = context.error_source_position_rooted(error)? else {
+        return Ok(context.undefined());
+    };
+    let result = context.null_object_rooted()?;
+    let source_line = context.string_rooted(position.source_line.as_deref().unwrap_or(""));
+    super::event_constructor_shared_vm::set(context, result, "sourceLine", source_line)?;
+    let resource = match position.script_name {
+        Some(name) => context.string_rooted(&name),
+        None => context.undefined(),
+    };
+    super::event_constructor_shared_vm::set(context, result, "scriptResourceName", resource)?;
+    let line = context.number(f64::from(position.line_number));
+    super::event_constructor_shared_vm::set(context, result, "lineNumber", line)?;
+    let column = context.number(f64::from(position.column_number.saturating_sub(1)));
+    super::event_constructor_shared_vm::set(context, result, "startColumn", column)?;
+    Ok(result)
+}
