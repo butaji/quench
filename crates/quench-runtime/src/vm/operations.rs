@@ -1269,6 +1269,7 @@ impl<H: Host> Vm<H> {
             Native::ErrorStackSetter => self.error_stack_setter(p, this, args),
             Native::CallSiteGetFileName
             | Native::CallSiteGetThis
+            | Native::CallSiteGetFunction
             | Native::CallSiteGetFunctionName
             | Native::CallSiteGetLineNumber
             | Native::CallSiteGetColumnNumber
