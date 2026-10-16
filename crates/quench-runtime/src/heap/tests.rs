@@ -7,7 +7,7 @@ fn plain_object() -> Object {
 }
 
 fn collect_minor(heap: &mut Heap, roots: impl IntoIterator<Item = Value>) -> Vec<(Value, Value)> {
-    heap.collect_with_object_roots(roots, |_, _, _, _| {}, None, false)
+    heap.collect_with_object_roots(roots, |_, _, _, _, _| {}, None, false)
 }
 
 #[test]
