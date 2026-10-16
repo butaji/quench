@@ -628,6 +628,13 @@ impl<H: Host> Vm<H> {
                     } else {
                         result
                     };
+                    // Object(value) can preserve an existing object or box a
+                    // primitive through that primitive's own creation path.
+                    let preserves_origin = native == Native::Object && callee == new_target
+                        && args.first().is_some_and(|value| !value.is_null() && !value.is_undefined());
+                    if native != Native::Proxy && !preserves_origin {
+                        vm.capture_constructed_value(result, callee, callee == new_target);
+                    }
                     return Ok(result);
                 }
                 let object = if derived_constructor {
