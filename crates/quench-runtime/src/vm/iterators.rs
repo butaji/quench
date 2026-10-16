@@ -30,6 +30,11 @@ impl<H: Host> Vm<H> {
         array: Value,
         source: Value,
     ) -> Result<(), JsError> {
+        if let Some(values) = self.spread_elements_directly(source) {
+            return self.with_call_roots([array, source], |vm| {
+                vm.append_array_literal_elements(p, array, values)
+            });
+        }
         self.with_call_roots([array], |vm| {
             let roots = vm.iterable_to_rooted_list(p, source)?;
             let values = roots
@@ -3136,17 +3141,110 @@ impl<H: Host> Vm<H> {
         })
     }
 
+    /// Whether `value` is the current realm's `native` function: one installed for this realm,
+    /// or one every realm shares (`shared_natives`).
+    pub(super) fn is_current_realm_native(&self, value: Value, native: Native) -> bool {
+        matches!(
+            self.heap.get(value),
+            Some(Cell::Function {
+                kind: FunctionKind::Native(kind),
+                object,
+                ..
+            }) if *kind == native
+                && (object.realm == self.realm.globals || self.shared_natives.contains(&value))
+        )
+    }
+
+    /// The own data property `key` of `object` when it has one, `None` when it has no such
+    /// own property, and `Some(None)` when the own property is an accessor or lives outside
+    /// the shape (so reading it is not a plain slot read).
+    fn own_data_slot_value(&self, object: Value, key: PropertyKey) -> Option<Option<Value>> {
+        let data = self.object_data(object)?;
+        let Some(slot) = self.property_shape_slot(data.shape(), key) else {
+            return self.property_attributes(object, key).map(|_| None);
+        };
+        let attributes = self.shape_attribute(data.shape(), slot)?;
+        Some((!attributes.accessor).then(|| self.heap.property_get(data, slot)).flatten())
+    }
+
+    /// The elements spreading `source` yields, when that is a copy of them: `source` is a
+    /// plain array of present elements (`take_present_array_values`' conditions), its
+    /// @@iterator resolves through data properties to the current realm's
+    /// %Array.prototype.values%, and the array iterators that makes step with the current
+    /// realm's %ArrayIteratorPrototype%.next as an own data property. Then GetIterator and
+    /// every step are unobservable. `None` leaves the spread to the iterator protocol.
+    pub(super) fn spread_elements_directly(&self, source: Value) -> Option<Vec<Value>> {
+        let array = self.heap.array(source)?;
+        if array.has_indexed_descriptors()
+            || array.is_arguments_object()
+            || self.heap.sparse_length(source).is_some()
+            || array.elements().iter().any(|value| value.is_deleted())
+        {
+            return None;
+        }
+        let iterator_key = PropertyKey::symbol(*self.well_known_symbols.get("iterator")?);
+        let mut holder = source;
+        let method = loop {
+            if matches!(self.heap.get(holder), Some(Cell::Proxy { .. })) {
+                return None;
+            }
+            if let Some(value) = self.own_data_slot_value(holder, iterator_key) {
+                break value?;
+            }
+            holder = self.object_data(holder)?.proto();
+            if holder.is_null() {
+                return None;
+            }
+        };
+        let next_key = PropertyKey::string(self.lookup_atom("next")?);
+        let next = self.own_data_slot_value(self.array_iterator_proto, next_key)??;
+        (self.is_current_realm_native(method, Native::ArrayValues)
+            && self.is_current_realm_native(next, Native::ArrayIteratorNext))
+        .then(|| self.heap.array(source).map(|array| array.elements().to_vec()))
+        .flatten()
+    }
+
+    /// Every value a values iterator over a plain array would still yield, taken at once and
+    /// leaving the iterator exhausted, when each remaining step is a Get of a present data
+    /// element: no indexed descriptors, sparse elements or arguments mapping, and no hole
+    /// (a hole's Get reaches the prototype chain). `None` leaves the steps to run one by one.
+    pub(super) fn take_present_array_values(&mut self, iterator: Value) -> Option<Vec<Value>> {
+        let Some(Cell::Iterator {
+            source,
+            kind: IteratorKind::Array | IteratorKind::ArrayValues,
+            index,
+            done: false,
+            ext,
+            ..
+        }) = self.heap.get(iterator)
+        else {
+            return None;
+        };
+        let (source, position) = (*source, ext.position(*index));
+        let array = self.heap.array(source)?;
+        if array.has_indexed_descriptors()
+            || array.is_arguments_object()
+            || self.heap.sparse_length(source).is_some()
+        {
+            return None;
+        }
+        let rest = array.elements().get(position..)?;
+        if rest.iter().any(|value| value.is_deleted()) {
+            return None;
+        }
+        let rest = rest.to_vec();
+        if let Some(Cell::Iterator { done, source, .. }) = self.heap.get_mut(iterator) {
+            *done = true;
+            *source = Value::UNDEFINED;
+        }
+        Some(rest)
+    }
+
     /// Whether `method` is this realm's %ArrayIteratorPrototype%.next and `iterator` one of
     /// its array iterators, so a step may run without the call and its result object.
     pub(super) fn steps_as_array_iterator(&self, iterator: Value, method: Value) -> bool {
-        matches!(
-            self.heap.get(method),
-            Some(Cell::Function {
-                kind: FunctionKind::Native(Native::ArrayIteratorNext),
-                object,
-                ..
-            }) if object.realm == self.realm.globals
-        ) && matches!(
+        self.is_current_realm_native(method, Native::ArrayIteratorNext)
+            && matches!(
             self.heap.get(iterator),
             Some(Cell::Iterator { kind, .. }) if kind.is_array_iterator()
         )
