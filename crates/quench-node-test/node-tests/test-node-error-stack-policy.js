@@ -9,7 +9,9 @@ console.log('header',error.stack.split('\n')[0],error.toString());
 for(const name of ['name','message','info','errno','syscall']){const d=Object.getOwnPropertyDescriptor(error,name);console.log('descriptor',name,d.enumerable,d.configurable,d.writable,typeof d.get,typeof d.set)}
 error.errno=42;error.syscall='changed';console.log('context',error.info.errno,error.info.syscall);
 error.stack=error.stack.split('\n')[0];console.log('inspect',util.inspect(error));
-for(const operation of [()=>require('fs').readFileSync(null)]){try{operation()}catch(e){console.log('native coded',e.name,e.code,e[errors.kIsNodeError],e.stack.split('\n')[0])}}
+const originalBrand=errors.kIsNodeError;errors.kIsNodeError=Symbol('replacement');
+for(const operation of [()=>require('fs').readFileSync(null)]){try{operation()}catch(e){console.log('native coded',e.name,e.code,e[originalBrand],e[errors.kIsNodeError],e.stack.split('\n')[0])}}
+errors.kIsNodeError=originalBrand;
 const overridden=new Error('override');errors.overrideStackTrace.set(overridden,(e,sites)=>'override:'+e.message+':'+Array.isArray(sites));console.log('internal override',overridden.stack,overridden.stack);
 const reason={};let calls=0;
 Error.prepareStackTrace=(e,sites)=>{calls++;if(e.message==='throw')throw reason;return {error:e,array:Array.isArray(sites)}};
