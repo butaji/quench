@@ -472,3 +472,20 @@ Crypto 0.00%, DeltaBlue +0.76%, EarleyBoyer +0.56%, NavierStokes 0.00%, RayTrace
 RegExp +0.67%, Richards 0.00%, Splay +0.56%: the added collections. Splay's set-up runs
 +144M (its extra collections, which take 6 MiB off its peak). Runtime lib 671/671,
 Test262 stages 29–92 and `framework-core` 43/43 pass.
+
+## The SDK console on the V8-v7 boards
+
+The trunk made the global `console` Node's SDK console. Every V8-v7 fixture prints through
+`console.log`, and the first call loads `console.js` and its requirements (inspect, errors,
+validators, buffer, util, debuglog, diagnostics_channel, trace_events) and the primordials:
+static unbolted, an empty script 3152 KiB, `console.log("x")` 12336 KiB, about 8.5 MiB of it
+anonymous and resident for the rest of the run. Bolted against QuickJS
+(`board-bolt-vs-qjs-b27-sdk-console.txt`): Richards 12104–12268 vs 3256–3484, Crypto
+12812–12964 vs 3492–3612, Splay 50724–50752 vs 146916–147164; only Splay stays lower.
+
+This batch keeps the load lazy (console, warning listener, process wrappers: an empty script
+15.5 → 5.1 MiB on the iteration build), reserves the compiler's function slots once and drops
+the parse tree before a compilation's finishing passes (Crypto 4560 → 4352 KiB unbolted,
+before the SDK console), and releases read-only pages after a library loads on first use
+(file pages after a console load 4084 → 1472 KiB). The console's own cost needs a decision
+outside this lane (TOD-123).
