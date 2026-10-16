@@ -518,6 +518,16 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "perfHooksCompareEntries" (2) => crate::modules::perf_timeline_query::compare,
         method "perfHooksNow" (0) => crate::modules::perf_hooks::now,
         method "dnsLookup" (3) => crate::modules::dns_shared_vm::lookup,
+        #[cfg(quench_icu)]
+        method "icuGetConverter" (2) => crate::modules::icu_binding_shared_vm::get_converter,
+        #[cfg(quench_icu)]
+        method "icuDecode" (4) => crate::modules::icu_binding_shared_vm::decode,
+        #[cfg(quench_icu)]
+        method "icuStringWidth" (3) => crate::modules::icu_binding_shared_vm::string_width,
+        #[cfg(quench_icu)]
+        method "icuTranscode" (3) => crate::modules::icu_binding_shared_vm::transcode,
+        #[cfg(quench_icu)]
+        method "icuErrorName" (1) => crate::modules::icu_binding_shared_vm::error_name,
         method "zlibStreamOpen" (4) => crate::modules::zlib_stream_shared_vm::open,
         method "zlibPrepare" (2) => crate::modules::zlib_options_shared_vm::prepare,
         method "zlibStreamSync" (1) => crate::modules::zlib_stream_shared_vm::sync,

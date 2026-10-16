@@ -1,0 +1,29 @@
+
+running 1 test
+test application_fs_utility_names_do_not_adopt_node_library_types_or_state ... FAILED
+
+failures:
+
+failures:
+    application_fs_utility_names_do_not_adopt_node_library_types_or_state
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 301 filtered out; finished in 2.83s
+
+
+thread 'application_fs_utility_names_do_not_adopt_node_library_types_or_state' (503592) panicked at crates/quench-node-test/tests/child_entry.rs:1639:9:
+assertion `left == right` failed: /workspace/scratch/quench-npm-file-url/tests/node/lib/internal/encoding.js:386
+ObjectDefineProperties(
+^
+
+TypeError: property descriptor is not an object
+    at /workspace/scratch/quench-npm-file-url/tests/node/lib/internal/encoding.js:386:1
+    at node:util/shared.js:300:18
+    at /workspace/scratch/quench-npm-file-url/tests/node/lib/internal/util.js:73:38
+    at /workspace/scratch/quench-npm-file-url/tests/node/lib/stream.js:32:5
+    at <eval>:2:10
+
+Node.js v22.0.0
+
+  left: Some(1)
+ right: Some(0)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

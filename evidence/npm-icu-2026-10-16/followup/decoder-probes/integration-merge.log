@@ -1,0 +1,4 @@
+Auto-merging crates/quench-runtime/src/api.rs
+Auto-merging crates/quench-runtime/src/compile.rs
+CONFLICT (content): Merge conflict in crates/quench-runtime/src/compile.rs
+Automatic merge failed; fix conflicts and then commit the result.
