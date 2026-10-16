@@ -943,6 +943,21 @@ pub(crate) fn require_for_module(
     load_with_resolution(context, &filename, Some(parent), goal, Some((directory_cache, &specifier)))
 }
 
+/// A require capability installed only in a configured SDK module wrapper.
+/// Public module.filename mutation cannot grant access to the timer adapter.
+pub(super) fn require_node_library(
+    context: &mut Context<'_>, receiver: RootId, args: &[RootId],
+) -> Result<RootId, RootedError> {
+    if let Some(value) = args.first() {
+        if context.string_text(*value)?.is_some_and(|name| {
+            name.strip_prefix("node:").unwrap_or(&name) == "internal/timers"
+        }) {
+            return cached_builtin(context, BuiltinModule::InternalTimers);
+        }
+    }
+    require(context, receiver, args)
+}
+
 pub(super) fn resolve(
     context: &mut Context<'_>,
     _: RootId,
@@ -2336,7 +2351,17 @@ fn load_with_resolution(
                     text.into()
                 };
                 let exports = get(context, module, "exports")?;
-                let require = get(context, module, "require")?;
+                let public_require = get(context, module, "require")?;
+                let require = if in_node_internal {
+                    let require = context.host_function_named_with_data(
+                        super::operation("nodeLibraryRequire"), "require", module,
+                    )?;
+                    for name in ["resolve", "main", "cache"] {
+                        let value = get(context, public_require, name)?;
+                        set(context, require, name, value)?;
+                    }
+                    require
+                } else { public_require };
                 let name = context.string_rooted(&key);
                 let directory = context.string_rooted(
                     &filename
@@ -2364,7 +2389,7 @@ const getLinkedBinding = () => ({});
                     ""
                 };
                 let prefix = if in_node_internal {
-                    format!("(function (exports, require, module, __filename, __dirname, primordials, __nativeInternalBinding) {{ {internal_binding}")
+                    format!("(function (exports, require, module, __filename, __dirname, primordials, __nativeInternalBinding) {{ 'use strict'; {internal_binding}")
                 } else {
                     format!("{WRAPPER_PREFIX}{internal_binding}")
                 };
@@ -2538,6 +2563,8 @@ pub(crate) fn node_internal_binding_source() -> &'static str {
     r#"const internalBinding = (name) => {
   switch (String(name)) {
     case "os":
+    case "timers":
+    case "contextify":
     case "credentials":
     case "config":
     case "icu":
@@ -2564,7 +2591,7 @@ pub(crate) fn node_internal_binding_source() -> &'static str {
       getExternalValue: __nativeInternalBinding("util").getExternalValue,
       constructSharedArrayBuffer: (length) => new SharedArrayBuffer(length),
       guessHandleType: () => "UNKNOWN",
-      defineLazyProperties: () => undefined,
+      defineLazyProperties: __nativeInternalBinding("util").defineLazyProperties,
       sleep: () => undefined,
     });
     case "types": return __nativeInternalBinding("types");
@@ -2600,41 +2627,7 @@ pub(crate) fn node_internal_binding_source() -> &'static str {
       constants: { NODE_PERFORMANCE_MILESTONE_TIME_ORIGIN: 0, NODE_PERFORMANCE_MILESTONE_TIME_ORIGIN_TIMESTAMP: 1 },
       milestones: [0, 0], now: () => require("perf_hooks").performance.now() * 1e6,
     };
-    case "uv": {
-      const errors = [
-        [-1, "EPERM", "operation not permitted"], [-2, "ENOENT", "no such file or directory"],
-        [-3, "ESRCH", "no such process"], [-4, "EINTR", "interrupted system call"],
-        [-5, "EIO", "i/o error"], [-6, "ENXIO", "no such device or address"],
-        [-7, "E2BIG", "argument list too long"], [-8, "ENOEXEC", "exec format error"],
-        [-9, "EBADF", "bad file descriptor"], [-10, "ECHILD", "no child processes"],
-        [-11, "EAGAIN", "resource temporarily unavailable"], [-12, "ENOMEM", "not enough memory"],
-        [-13, "EACCES", "permission denied"], [-14, "EFAULT", "bad address"],
-        [-16, "EBUSY", "resource busy or locked"], [-17, "EEXIST", "file already exists"],
-        [-18, "EXDEV", "cross-device link not permitted"], [-19, "ENODEV", "no such device"],
-        [-20, "ENOTDIR", "not a directory"], [-21, "EISDIR", "illegal operation on a directory"],
-        [-22, "EINVAL", "invalid argument"], [-23, "ENFILE", "file table overflow"],
-        [-24, "EMFILE", "too many open files"], [-25, "ENOTTY", "inappropriate ioctl for device"],
-        [-27, "EFBIG", "file too large"], [-28, "ENOSPC", "no space left on device"],
-        [-29, "ESPIPE", "invalid seek"], [-30, "EROFS", "read-only file system"],
-        [-31, "EMLINK", "too many links"], [-32, "EPIPE", "broken pipe"],
-        [-33, "EDOM", "argument out of domain"], [-34, "ERANGE", "result out of range"],
-        [-36, "ENAMETOOLONG", "name too long"], [-38, "ENOSYS", "function not implemented"],
-        [-39, "ENOTEMPTY", "directory not empty"], [-40, "ELOOP", "too many symbolic links encountered"],
-        [-75, "EOVERFLOW", "value too large for defined data type"], [-95, "ENOTSUP", "operation not supported"],
-        [-98, "EADDRINUSE", "address already in use"], [-99, "EADDRNOTAVAIL", "address not available"],
-        [-100, "ENETDOWN", "network is down"], [-101, "ENETUNREACH", "network is unreachable"],
-        [-103, "ECONNABORTED", "software caused connection abort"], [-104, "ECONNRESET", "connection reset by peer"],
-        [-105, "ENOBUFS", "no buffer space available"], [-106, "EISCONN", "socket is already connected"],
-        [-107, "ENOTCONN", "socket is not connected"], [-108, "ESHUTDOWN", "cannot send after socket shutdown"],
-        [-110, "ETIMEDOUT", "connection timed out"], [-111, "ECONNREFUSED", "connection refused"],
-        [-113, "EHOSTUNREACH", "no route to host"], [-114, "EALREADY", "operation already in progress"],
-        [-115, "EINPROGRESS", "operation now in progress"], [-125, "ECANCELED", "operation canceled"],
-      ];
-      const errmap = new Map(errors.map(([errno, code, message]) => [errno, [code, message]]));
-      const binding = { UV_UNKNOWN: -4094, UV_ENOTSOCK: -88, getErrorMap: () => errmap };
-      for (const [errno, code] of errors) binding[`UV_${code}`] = errno;
-      return binding;
-    }
+    case "uv": return __nativeInternalBinding("uv");
     default: return {};
   }
 };
@@ -2670,7 +2663,7 @@ pub(crate) fn node_library_module_in_realm(
     let name = context.string_rooted(&path.to_string_lossy());
     let directory = context.string_rooted(&path.parent().unwrap().to_string_lossy());
     let prefix = format!(
-        "(function(exports, require, module, __filename, __dirname, primordials, __nativeInternalBinding, process) {{ {}",
+        "(function(exports, require, module, __filename, __dirname, primordials, __nativeInternalBinding, process) {{ 'use strict'; {}",
         node_internal_binding_source(),
     );
     let wrapper = format!("{prefix}{source}\n}})");

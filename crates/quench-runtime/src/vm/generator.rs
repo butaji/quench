@@ -231,7 +231,7 @@ impl<H: Host> Vm<H> {
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
         let kind = self.generator_kind(generator)?;
         if kind == IteratorKind::AsyncGenerator {
-            let promise = self.promise_object();
+            let promise = self.promise_object()?;
             let running = self
                 .generator_record_mut(generator)
                 .ok_or_else(|| JsError("async generator receiver is invalid".into()))?
@@ -499,7 +499,7 @@ impl<H: Host> Vm<H> {
             on_fulfilled: Value::UNDEFINED,
             on_rejected: Value::UNDEFINED,
             next: target,
-            execution_context: self.host.capture_job_context(),
+            execution_context: self.host.capture_job_context(self.realm.promise.records.get(&target).and_then(|record| record.host_context)),
         };
         if record.state == PromiseState::Pending {
             self.realm
@@ -697,7 +697,7 @@ impl<H: Host> Vm<H> {
         destination: u16,
         value: Value,
     ) -> Result<Value, JsError> {
-        let promise = self.promise_object();
+        let promise = self.promise_object()?;
         let atom = self.intern_atom("return");
         let method = match self.get_property(p, iterator, atom) {
             Ok(method) => method,
@@ -787,7 +787,7 @@ impl<H: Host> Vm<H> {
             if let Some((iterator, destination)) = self.yield_star_iterator(generator) {
                 self.async_generator_delegate(p, generator, iterator, destination, value, true)
             } else {
-                let promise = self.promise_object();
+                let promise = self.promise_object()?;
                 let (running, done) = self
                     .generator_record_mut(generator)
                     .map(|record| (record.running, record.done))
@@ -848,7 +848,7 @@ impl<H: Host> Vm<H> {
             let reason = error
                 .thrown_value()
                 .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
-            let promise = self.promise_object();
+            let promise = self.with_call_roots([reason], |vm| vm.promise_object())?;
             self.promise_settle(p, promise, PromiseState::Rejected, reason)?;
             return Ok(promise);
         }
@@ -901,7 +901,7 @@ impl<H: Host> Vm<H> {
                     }
                     return Err(self.type_error(p, "delegated iterator has no throw method".into()));
                 }
-                let promise = self.promise_object();
+                let promise = self.promise_object()?;
                 self.await_async_generator_return(p, generator, argument, promise)?;
                 return Ok(promise);
             }
@@ -950,10 +950,10 @@ impl<H: Host> Vm<H> {
                         record.done = true;
                         record.continuation = None;
                     }
-                    let promise = self.promise_object();
                     let reason = error
                         .thrown_value()
                         .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
+                    let promise = self.with_call_roots([reason], |vm| vm.promise_object())?;
                     self.promise_settle(p, promise, PromiseState::Rejected, reason)?;
                     Ok(promise)
                 } else {
@@ -1036,7 +1036,7 @@ impl<H: Host> Vm<H> {
             }
             self.async_generator_next(p, generator, &[])
         } else {
-            let promise = self.promise_object();
+            let promise = self.promise_object()?;
             self.await_async_generator_return(p, generator, value, promise)?;
             Ok(promise)
         }
@@ -1098,15 +1098,21 @@ impl<H: Host> Vm<H> {
             None => None,
         };
         let Some(mut continuation) = continuation else {
-            let promise = self.promise_object();
+            let promise = self.with_call_roots([reason], |vm| vm.promise_object())?;
             self.promise_settle(p, promise, PromiseState::Rejected, reason)?;
             return Ok(promise);
         };
         continuation.pc += 1;
         continuation.resume_register = None;
-        let rejected = self.promise_object();
-        self.promise_settle(p, rejected, PromiseState::Rejected, reason)?;
-        let promise = self.promise_object();
+        let roots = continuation.roots().chain([generator, reason]).collect::<Vec<_>>();
+        let (rejected, promise) = self.with_call_roots(roots, |vm| {
+            let rejected = vm.promise_object()?;
+            vm.with_call_roots([rejected], |vm| {
+                vm.promise_settle(p, rejected, PromiseState::Rejected, reason)?;
+                let promise = vm.promise_object()?;
+                Ok((rejected, promise))
+            })
+        })?;
         let id = self.suspend_continuation(continuation);
         self.enqueue_async_resume(p, id, promise, Some(generator), rejected, false)?;
         Ok(promise)
@@ -1376,7 +1382,7 @@ impl<H: Host> Vm<H> {
         generator: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let promise = self.promise_object();
+        let promise = self.promise_object()?;
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
         self.async_generator_next_with_promise(p, generator, value, promise, None)?;
         self.resume_async_generator_queue(p, generator)?;
