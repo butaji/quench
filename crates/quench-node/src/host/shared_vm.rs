@@ -429,6 +429,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "utilExternalValue" (0) => crate::modules::util_shared_vm::external_value,
         method "cryptoCaptureKeyBrands" (2) => crate::modules::crypto_key_shared_vm::capture_brands,
         #[cfg(quench_openssl_provider)]
+        method "cryptoHkdfJobNew" (6) => crate::modules::crypto_secret_job_shared_vm::create_hkdf,
+        #[cfg(quench_openssl_provider)]
         method "cryptoHashJobNew" (3) => crate::modules::crypto_secret_job_shared_vm::create_hash,
         #[cfg(quench_openssl_provider)]
         method "cryptoNativeHashNew" (0) => crate::modules::crypto_hash_shared_vm::create_hash,

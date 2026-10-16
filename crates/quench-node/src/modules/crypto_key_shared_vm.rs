@@ -510,31 +510,18 @@ pub(crate) fn generated_secret(
     } else { Ok(handle) }
 }
 
-/// Temporary secret bytes copied from the canonical key-slot authority.
 #[cfg(quench_openssl_provider)]
-pub(crate) struct SecretBytes(Vec<u8>);
-#[cfg(quench_openssl_provider)]
-impl std::ops::Deref for SecretBytes {
-    type Target = [u8];
-    fn deref(&self) -> &[u8] { &self.0 }
-}
-#[cfg(quench_openssl_provider)]
-impl Drop for SecretBytes {
-    fn drop(&mut self) {
-        unsafe extern "C" { fn OPENSSL_cleanse(pointer: *mut std::ffi::c_void, length: usize); }
-        unsafe { OPENSSL_cleanse(self.0.as_mut_ptr().cast(),self.0.len()) }
-    }
-}
+use super::crypto_secret_material::Material as SecretBytes;
 /// A native Hmac receives either SDK-normalized BufferSource bytes or an actual
 /// native KeyObjectHandle. Guest properties never grant access to a key slot.
 #[cfg(quench_openssl_provider)]
 pub(crate) fn secret_bytes(c: &mut Context<'_>, value: RootId) -> Result<SecretBytes,RootedError> {
-    if let Some(bytes)=c.bytes_prefix_rooted(value,usize::MAX) { return Ok(SecretBytes(bytes)); }
+    if let Some(bytes)=c.bytes_prefix_rooted(value,usize::MAX) { return Ok(SecretBytes::new(bytes)); }
     let state=state(c)?;
     let record=lookup(c,state,"handles",value)?;
     if !c.is_object_rooted(record)? { return Err(fail(c,"Invalid native secret key handle")); }
     let kind=get(c,record,"type")?;
     if c.rooted_value(kind).and_then(|value|value.as_number())!=Some(KEY_TYPE_SECRET) { return Err(fail(c,"Native key must be a secret key")); }
     let bytes=get(c,record,"bytes")?;
-    c.bytes_prefix_rooted(bytes,usize::MAX).map(SecretBytes).ok_or_else(||fail(c,"Native secret key material is unavailable"))
+    c.bytes_prefix_rooted(bytes,usize::MAX).map(SecretBytes::new).ok_or_else(||fail(c,"Native secret key material is unavailable"))
 }
