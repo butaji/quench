@@ -2327,6 +2327,7 @@ const getLinkedBinding = () => ({});
       getProxyDetails: __nativeInternalBinding("util").getProxyDetails,
       previewEntries: __nativeInternalBinding("util").previewEntries,
       getConstructorName: __nativeInternalBinding("util").getConstructorName,
+      getCallSites: __nativeInternalBinding("util").getCallSites,
       getExternalValue: __nativeInternalBinding("util").getExternalValue,
       constructSharedArrayBuffer: (length) => new SharedArrayBuffer(length),
       guessHandleType: () => "UNKNOWN",

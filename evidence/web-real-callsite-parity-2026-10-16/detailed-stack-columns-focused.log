@@ -1,0 +1,6 @@
+
+running 1 test
+test callsite_columns_follow_member_parenthesized_and_constructor_call_syntax ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 355 filtered out; finished in 0.29s
+

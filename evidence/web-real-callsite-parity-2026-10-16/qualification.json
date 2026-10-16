@@ -1,0 +1,42 @@
+{
+  "base_source": "dbac9a48104da3f73a81dffb8f1b41c56b563508",
+  "patch": "work/detailed-stack-source.patch",
+  "patch_sha256": "22b5ddd759856387ec623b06ac51ef1999e4c1bc04b7a9cc16adf44b3ee3671d",
+  "extra_fixture_sha256": {
+    "test-callsite-call-columns.js": "5ee10b019171f7534d199d5da7183bcedb560e76627c1aa12e234a72ed97a894",
+    "test-util-real-call-sites.js": "4e659c7326a31cee6a36fbd400d45129ea79f350a511b3d93a2c9f9dd8c5c7da"
+  },
+  "binaries": {
+    "cli": {
+      "path": "work/quench-detailed-stack-qualified",
+      "sha256": "fcfa7b69b859c068bd5208a0c98c3628595957ca42cbbee657d3cf6d3e5a4cdc",
+      "sha256_after": "fcfa7b69b859c068bd5208a0c98c3628595957ca42cbbee657d3cf6d3e5a4cdc"
+    },
+    "runner": {
+      "path": "work/host-build/iteration/run-parallel",
+      "sha256": "62f216134c8d248ea707e29dd7c23b5a2000c1bd87f85007ef1244b931d2b84a",
+      "sha256_after": "62f216134c8d248ea707e29dd7c23b5a2000c1bd87f85007ef1244b931d2b84a"
+    },
+    "api_tests": {
+      "path": "work/host-build/iteration/deps/child_entry-70660f0a4dee9e77",
+      "sha256": "878e4b5e492004e1903f445d965813d9023f16d3ddf87ccd3f345b19d23bc85c",
+      "sha256_after": "878e4b5e492004e1903f445d965813d9023f16d3ddf87ccd3f345b19d23bc85c"
+    }
+  },
+  "identity_checks": {
+    "cli": true,
+    "runner": true,
+    "api_tests": true
+  },
+  "api_exit_code": 0,
+  "reconciled_candidate_source": "0a6037fc7173ccd8b39b75eca28d9b03ece5753c",
+  "candidate_source": "0a6037fc7173ccd8b39b75eca28d9b03ece5753c",
+  "api_cases_passed": 356,
+  "runtime_tests": 651,
+  "framework_fixtures": 43,
+  "web_correctness_targets": 9,
+  "generator_cleanup_regression_passed": true,
+  "all_instrumented_executions_valid": true,
+  "instruction_limit_met": false,
+  "later_operation_pc_and_token_location_work_excluded": true
+}
