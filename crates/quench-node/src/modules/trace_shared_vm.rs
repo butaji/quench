@@ -369,6 +369,12 @@ pub(crate) fn internal_binding(
         "util" => return super::util_shared_vm::key_binding(context),
         "string_decoder" => return super::string_decoder_shared_vm::binding(context),
         "encoding_binding" => return super::encoding_binding_shared_vm::binding(context),
+        #[cfg(quench_icu)]
+        "icu" => return super::icu_binding_shared_vm::binding(context),
+        "config" => {
+            let has_intl = context.boolean(cfg!(quench_icu));
+            put(context, binding, "hasIntl", has_intl)?;
+        }
         "symbols" => return super::util_shared_vm::symbols_binding(context),
         "http2" => return crate::host::shared_vm::commonjs::http2_binding(context),
         "buffer" => return super::buffer_fill_shared_vm::binding(context),
