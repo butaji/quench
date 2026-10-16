@@ -3,6 +3,7 @@
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
+#[cfg(not(quench_icu))]
 const FACTORY: &str = quench_js_check::checked_js!(
     r#"(canonicalEncoding, decodeBytes) => {
   const decoders = new WeakMap();
@@ -100,13 +101,22 @@ pub(crate) fn initialize(
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let canonical = context.host_function(crate::host::shared_vm::operation(
-        "textDecoderCanonicalEncoding",
-    ))?;
-    let decode = context.host_function(crate::host::shared_vm::operation("textDecoderDecode"))?;
-    let factory = context.evaluate_script_rooted(FACTORY, "node:text-decoder/shared-vm.js")?;
+    #[cfg(quench_icu)]
+    let constructors = crate::host::shared_vm::commonjs::node_library_module(
+        context, "util.js", "internal/encoding.js"
+    )?;
+    #[cfg(not(quench_icu))]
+    let constructors = {
+        let canonical = context.host_function(crate::host::shared_vm::operation(
+            "textDecoderCanonicalEncoding",
+        ))?;
+        let decode = context.host_function(crate::host::shared_vm::operation("textDecoderDecode"))?;
+        let factory = context.evaluate_script_rooted(FACTORY, "node:text-decoder/shared-vm.js")?;
+        let undefined = context.undefined();
+        let constructors = context.call_rooted(factory, undefined, &[canonical, decode])?;
+        constructors
+    };
     let undefined = context.undefined();
-    let constructors = context.call_rooted(factory, undefined, &[canonical, decode])?;
     let decoder_key = context.string_rooted("TextDecoder");
     let constructor = context.get_property_rooted(constructors, decoder_key)?;
     let encoder_key = context.string_rooted("TextEncoder");
