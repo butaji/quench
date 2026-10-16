@@ -9612,3 +9612,8 @@ fn function_constructor_sources_preserve_whitespace_parameter_positions_and_synt
 fn private_fields_keep_class_creation_identity_and_atomic_internal_initialization() {
     compare_node_source_with_args(include_str!("../node-tests/test-private-field-identity.js"), &[]);
 }
+
+#[test]
+fn private_eval_environments_cross_static_instance_and_ordinary_function_boundaries() {
+    compare_node_source_with_args(include_str!("../node-tests/test-private-eval-environments.js"), &[]);
+}

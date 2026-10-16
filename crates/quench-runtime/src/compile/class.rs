@@ -149,6 +149,25 @@ impl FunctionCompiler<'_, '_> {
             });
         let class_home_atom =
             self.hidden_local(&format!("\0quench:home:class:{}", class.span.start));
+        let mut private_bindings = FxHashMap::default();
+        for element in &class.body.body {
+            let (key, is_static) = match element {
+                ClassElement::PropertyDefinition(field) => (&field.key, field.r#static),
+                ClassElement::MethodDefinition(method) => (&method.key, method.r#static),
+                ClassElement::AccessorProperty(accessor) => (&accessor.key, accessor.r#static),
+                _ => continue,
+            };
+            if let PropertyKey::PrivateIdentifier(identifier) = key {
+                let atom = self.owner.private_name_atom(identifier.span);
+                if !self.owner.private_name_is_overridden(atom) {
+                    private_bindings.insert(atom, if is_static { class_home_atom } else { constructor_home_atom });
+                }
+            }
+        }
+        let has_private_bindings = !private_bindings.is_empty();
+        if has_private_bindings {
+            self.push_private_bindings(private_bindings);
+        }
         for field in &fields {
             if class_field_value(*field).is_some() {
                 self.hidden_local(&class_field_initializer_name(
@@ -618,6 +637,7 @@ impl FunctionCompiler<'_, '_> {
                 _ => {}
             }
         }
+        if has_private_bindings { self.pop_lexical_scope(); }
         if super_atom.is_some() {
             self.pop_lexical_scope();
         }
