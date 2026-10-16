@@ -277,7 +277,12 @@ pub(crate) fn operation(
                 },
                 true,
             )?;
-            c.call_rooted(arg, missing, &[base])
+            let classes = c.call_rooted(arg, missing, &[base])?;
+            if op == "cryptoClass" {
+                let internal = get(c, classes, "1")?;
+                set(c, state, "internalCryptoKeyConstructor", internal)?;
+            }
+            Ok(classes)
         }
         "handle" => {
             let value = c.null_object_rooted()?;
@@ -291,7 +296,7 @@ pub(crate) fn operation(
             }
             let kind = c.to_number(arg)?;
             let bytes = args.get(1).copied().unwrap_or(missing);
-            let Some(bytes) = c.view_bytes_rooted(bytes) else {
+            let Some(bytes) = c.bytes_prefix_rooted(bytes, usize::MAX) else {
                 return Err(fail(c, "Key material must be a byte view"));
             };
             // Secret key bytes have no ASN.1 policy; asymmetric parsing remains on the
@@ -333,6 +338,16 @@ pub(crate) fn operation(
                 receiver,
                 slots,
             )?;
+            // Source-created secrets and the existing cipher/KDF provider share
+            // this exact native byte owner. No second material copy or key ID.
+            if op == "keyBase" && c.rooted_value(kind).and_then(|value| value.as_number()) == Some(KEY_TYPE_SECRET) {
+                let brands = get(c, state, "secretBrands")?;
+                if c.is_object_rooted(brands)? {
+                    let bytes = get(c, handle, "bytes")?;
+                    let setter = get(c, state, "set")?;
+                    c.call_rooted(setter, brands, &[receiver, bytes])?;
+                }
+            }
             Ok(receiver)
         }
         "getKeyObjectHandle" | "getKeyObjectType" => {
@@ -469,4 +484,57 @@ fn public_material(
                 PKey::private_key_from_der(bytes).or_else(|_| PKey::private_key_from_pem(bytes))?;
             PKey::public_key_from_der(&private.public_key_to_der()?)
         })
+}
+
+/// Build actual generated-key handles using the same secret ownership/slot path.
+/// No new brand map, global key IDs, or duplicated key material representation.
+pub(crate) fn generated_secret(
+    c: &mut Context<'_>, bytes: &[u8],
+    crypto: Option<(RootId, RootId, RootId)>,
+) -> Result<RootId, RootedError> {
+    let binding = binding(c)?;
+    let constructor = get(c, binding, "KeyObjectHandle")?;
+    let handle = c.construct_rooted(constructor, constructor, &[])?;
+    let state = state(c)?;
+    let record = lookup(c, state, "handles", handle)?;
+    let bytes = c.uint8_array_rooted(bytes)?;
+    let kind = c.number(KEY_TYPE_SECRET);
+    set(c, record, "bytes", bytes)?;
+    set(c, record, "type", kind)?;
+    if let Some((algorithm, usages, extractable)) = crypto {
+        let constructor = get(c, state, "internalCryptoKeyConstructor")?;
+        if !c.is_callable_rooted(constructor)? {
+            return Err(RootedError::host("SDK InternalCryptoKey not initialized"));
+        }
+        c.construct_rooted(constructor, constructor, &[handle, algorithm, usages, extractable])
+    } else { Ok(handle) }
+}
+
+/// Temporary secret bytes copied from the canonical key-slot authority.
+#[cfg(quench_openssl_provider)]
+pub(crate) struct SecretBytes(Vec<u8>);
+#[cfg(quench_openssl_provider)]
+impl std::ops::Deref for SecretBytes {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] { &self.0 }
+}
+#[cfg(quench_openssl_provider)]
+impl Drop for SecretBytes {
+    fn drop(&mut self) {
+        unsafe extern "C" { fn OPENSSL_cleanse(pointer: *mut std::ffi::c_void, length: usize); }
+        unsafe { OPENSSL_cleanse(self.0.as_mut_ptr().cast(),self.0.len()) }
+    }
+}
+/// A native Hmac receives either SDK-normalized BufferSource bytes or an actual
+/// native KeyObjectHandle. Guest properties never grant access to a key slot.
+#[cfg(quench_openssl_provider)]
+pub(crate) fn secret_bytes(c: &mut Context<'_>, value: RootId) -> Result<SecretBytes,RootedError> {
+    if let Some(bytes)=c.bytes_prefix_rooted(value,usize::MAX) { return Ok(SecretBytes(bytes)); }
+    let state=state(c)?;
+    let record=lookup(c,state,"handles",value)?;
+    if !c.is_object_rooted(record)? { return Err(fail(c,"Invalid native secret key handle")); }
+    let kind=get(c,record,"type")?;
+    if c.rooted_value(kind).and_then(|value|value.as_number())!=Some(KEY_TYPE_SECRET) { return Err(fail(c,"Native key must be a secret key")); }
+    let bytes=get(c,record,"bytes")?;
+    c.bytes_prefix_rooted(bytes,usize::MAX).map(SecretBytes).ok_or_else(||fail(c,"Native secret key material is unavailable"))
 }

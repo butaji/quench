@@ -62,6 +62,8 @@ pub(crate) enum CommonJsCache {
 pub(crate) struct SharedNodeState {
     pub(crate) vm_scripts: crate::modules::contextify_shared_vm::State,
     pub(crate) async_hooks: crate::modules::async_hooks_state::SharedAsyncHooksState,
+    pub(crate) native_tasks: crate::modules::native_task_pool::Pool,
+    pub(crate) dns: crate::modules::cares_binding::State,
     pub(crate) scheduler: crate::modules::shared_event_loop::SharedEventLoop,
     pub(crate) fs: crate::modules::fs_state::FsState,
     pub(crate) fs_watch: crate::modules::fs_watch_shared_vm::State,
@@ -94,6 +96,9 @@ pub(crate) struct SharedNodeState {
     pub(crate) stdin: crate::modules::process_stdin_shared_vm::State,
     pub(crate) process_ipc: crate::modules::child_process_ipc_shared_vm::State,
     pub(crate) zlib_streams: crate::modules::zlib_stream_shared_vm::State,
+    #[cfg(quench_openssl_provider)]
+    pub(crate) crypto_hashes: crate::modules::crypto_hash_shared_vm::State,
+    pub(crate) crypto_secret_jobs: crate::modules::crypto_secret_job_shared_vm::State,
     pub(crate) zlib_native: crate::modules::zlib_native_shared_vm::State,
     pub(crate) unhandled_rejection_mode: crate::modules::process_state::UnhandledRejectionMode,
     pub(crate) output: Option<NodeOutputSink>,
@@ -120,6 +125,8 @@ pub(crate) struct SharedNodeState {
     pub(crate) net_sockets: std::collections::HashMap<u64, NetSocket>,
     pub(crate) net_closing_sockets: std::collections::HashMap<u64, quench_runtime::RootId>,
     pub(crate) net_socket_close_completed: Option<quench_runtime::RootId>,
+    pub(crate) native_stream: crate::modules::stream_binding::State,
+    pub(crate) native_tcp_listeners: std::collections::HashMap<u64, quench_runtime::RootId>,
     pub(crate) net_servers: std::collections::HashMap<u64, NetServer>,
     pub(crate) child_process_shell_args_warning_emitted: bool,
     pub(crate) child_processes: std::collections::HashMap<u64, SharedChildProcess>,
@@ -155,6 +162,7 @@ pub(crate) enum ChildHandlePhase {
 }
 
 pub(crate) struct SharedChildProcess {
+    pub(crate) cancel: crate::modules::child_process_shared_vm::Cancellation,
     pub(crate) handle_phase: ChildHandlePhase,
     pub(crate) referenced: bool,
     pub(crate) close_dispatched: bool,
@@ -207,6 +215,8 @@ impl SharedNodeState {
         self.net_server_on_connection = None;
         self.net_handle_onclose_symbol = None;
         self.net_socket_option_keys = None;
+        self.native_stream = Default::default();
+        self.native_tcp_listeners.clear();
         self.net_handle_identities.clear();
         self.net_handle_close_callbacks.clear();
         self.fs_watch = crate::modules::fs_watch_shared_vm::State::default();
@@ -230,6 +240,8 @@ impl SharedNodeState {
             async_hooks: crate::modules::async_hooks_state::SharedAsyncHooksState::new(
                 async_identity,
             ),
+            native_tasks: Default::default(),
+            dns: Default::default(),
             scheduler: crate::modules::shared_event_loop::SharedEventLoop::new(),
             fs,
             fs_watch: crate::modules::fs_watch_shared_vm::State::default(),
@@ -258,6 +270,9 @@ impl SharedNodeState {
             stdin: crate::modules::process_stdin_shared_vm::State::default(),
             process_ipc: crate::modules::child_process_ipc_shared_vm::State::default(),
             zlib_streams: crate::modules::zlib_stream_shared_vm::State::default(),
+            #[cfg(quench_openssl_provider)]
+            crypto_hashes: crate::modules::crypto_hash_shared_vm::State::default(),
+            crypto_secret_jobs: crate::modules::crypto_secret_job_shared_vm::State::default(),
             zlib_native: crate::modules::zlib_native_shared_vm::State::default(),
             unhandled_rejection_mode: crate::modules::process_state::UnhandledRejectionMode::Throw,
             output: None,
@@ -285,6 +300,8 @@ impl SharedNodeState {
             net_sockets: std::collections::HashMap::new(),
             net_closing_sockets: std::collections::HashMap::new(),
             net_socket_close_completed: None,
+            native_stream: Default::default(),
+            native_tcp_listeners: std::collections::HashMap::new(),
             net_servers: std::collections::HashMap::new(),
             child_process_shell_args_warning_emitted: false,
             child_processes: std::collections::HashMap::new(),

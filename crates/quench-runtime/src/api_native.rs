@@ -890,6 +890,13 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.scoped_value(symbol)
     }
 
+    /// Create a native host-private symbol. Explicit key operations work, while
+    /// ordinary reflection and property copying never expose the key.
+    pub fn private_symbol_rooted(&mut self, description: Option<&str>) -> RootId {
+        let symbol = self.vm.embedding_private_symbol(description.map(str::to_owned));
+        self.scoped_value(symbol)
+    }
+
     pub fn null(&mut self) -> RootId {
         self.scoped_value(Value::NULL)
     }
