@@ -988,3 +988,25 @@ including prepared realm wrappers. Binding setup must not invalidate the SDK's
 strict directive: assignment errors on primitive targets, rejected proxy writes
 and nonwritable properties retain Node's behavior. Application CommonJS wrappers
 retain their source-directed strictness.
+
+## Native compiled Script foundation
+
+The internal contextify binding owns real Core CompiledScript values behind
+collector-cleared weak wrapper identities. Main-context execution reuses the
+compiled source and its realm template sites. Escaped functions retain their
+compiler source after the Script wrapper is collected. Function compilation
+parses genuine generated function input in the global lexical environment;
+it does not capture the calling CommonJS module's lexical bindings.
+
+This binding currently provides main-context Script execution and ordinary
+function compilation. Source-offset options, sandbox execution, bytecode caches
+and interrupt/deadline controls are rejected explicitly. Source-URL metadata
+and import customization remain separate work. The existing public vm surface
+and the full original test runner are not claimed complete by this foundation.
+
+Mock call records, restoration and virtual timer scheduling use the unchanged
+SDK MockTracker policy. The global test mock and per-callback mock trackers are
+real SDK instances. Configured SDK wrappers receive a private native require
+capability for the internal timer adapter; changing a public module filename
+cannot grant this capability. Ordinary guest imports keep their original
+visibility rules. Test scheduling/context lifecycle remains separate work.

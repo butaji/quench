@@ -60,6 +60,7 @@ pub(crate) enum CommonJsCache {
 
 /// Host-owned state and lifecycle data for the shared VM path.
 pub(crate) struct SharedNodeState {
+    pub(crate) vm_scripts: crate::modules::contextify_shared_vm::State,
     pub(crate) async_hooks: crate::modules::async_hooks_state::SharedAsyncHooksState,
     pub(crate) scheduler: crate::modules::shared_event_loop::SharedEventLoop,
     pub(crate) fs: crate::modules::fs_state::FsState,
@@ -182,6 +183,7 @@ pub(crate) enum ChildProcessEvent {
 impl SharedNodeState {
     /// Forget cached guest handles before bootstrapping a replacement VM heap.
     pub(crate) fn reset_cached_vm_roots(&mut self) {
+        self.vm_scripts = Default::default();
         self.builtin_cache.clear();
         self.commonjs_cache = None;
         self.module_parent_api = None;
@@ -222,6 +224,7 @@ impl SharedNodeState {
         async_identity: crate::modules::async_hooks_state::AsyncIdentity,
     ) -> Self {
         Self {
+            vm_scripts: Default::default(),
             async_hooks: crate::modules::async_hooks_state::SharedAsyncHooksState::new(
                 async_identity,
             ),

@@ -2494,6 +2494,7 @@ fn drain_shared_jobs(
             #[cfg(quench_icu)]
             super::icu_binding_shared_vm::prune(runtime);
             super::net_reference_shared_vm::prune(runtime);
+            super::contextify_shared_vm::prune(runtime);
             super::fs_stat_watch_shared_vm::prune(runtime);
             return Ok(());
         }
