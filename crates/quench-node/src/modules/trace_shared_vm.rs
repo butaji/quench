@@ -360,6 +360,10 @@ pub(crate) fn internal_binding(
     let name = context.to_string(args.first().copied().unwrap_or(absent))?;
     let binding = context.object_rooted()?;
     match name.as_str() {
+        #[cfg(target_os = "linux")]
+        "os" => return super::os_binding_shared_vm::os_binding(context),
+        #[cfg(target_os = "linux")]
+        "credentials" => return super::os_binding_shared_vm::credentials_binding(context),
         "types" => return super::util_shared_vm::types_binding(context),
         "crypto_keys" => return super::crypto_key_shared_vm::binding(context),
         "util" => return super::util_shared_vm::key_binding(context),
@@ -389,6 +393,11 @@ pub(crate) fn internal_binding(
         "constants" => {
             let fs = super::fs_shared_vm::fs_constants(context)?;
             put(context, binding, "fs", fs)?;
+            #[cfg(target_os = "linux")]
+            {
+                let os = super::os_binding_shared_vm::constants(context)?;
+                put(context, binding, "os", os)?;
+            }
             let zlib = super::zlib_shared_vm::constants(context)?;
             put(context, binding, "zlib", zlib)?;
             let trace = context.object_rooted()?;

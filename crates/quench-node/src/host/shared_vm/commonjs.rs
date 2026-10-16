@@ -501,6 +501,8 @@ pub(super) fn initialize_process_surface(
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
+    #[cfg(target_os = "linux")]
+    crate::modules::process_memory_shared_vm::install(context)?;
     evaluate_polyfill_block(
         context,
         crate::polyfills::post_bootstrap::process_surface_00::LAZY_JS,
@@ -1433,6 +1435,9 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         }
         BuiltinModule::Net => crate::modules::net_shared_vm::module(context),
         BuiltinModule::Http => crate::modules::http_shared_vm::module(context),
+        #[cfg(target_os = "linux")]
+        BuiltinModule::Os => node_library_module(context, "os.js", "os.js"),
+        #[cfg(not(target_os = "linux"))]
         BuiltinModule::Os => crate::modules::os_shared_vm::module(context),
         BuiltinModule::Buffer => {
             let module = crate::modules::buffer_shared_vm::module(context)?;
@@ -1921,6 +1926,8 @@ const getLinkedBinding = () => ({});
                 } else if in_node_internal {
                     r#"const internalBinding = (name) => {
   switch (String(name)) {
+    case "os":
+    case "credentials":
     case "encoding_binding":
     case "symbols":
     case "http2":
@@ -1944,7 +1951,7 @@ const getLinkedBinding = () => ({});
     case "constants": return {
       fs: __nativeInternalBinding("constants").fs,
       zlib: __nativeInternalBinding("constants").zlib,
-      os: { signals: (require("os").constants || {}).signals || {}, errno: { EISDIR: -21 } },
+      os: __nativeInternalBinding("constants").os || { signals: (require("os").constants || {}).signals || {}, errno: { EISDIR: -21 } },
       crypto: { ENGINE_METHOD_ALL: 0xffff },
     };
     case "string_decoder": return __nativeInternalBinding("string_decoder");

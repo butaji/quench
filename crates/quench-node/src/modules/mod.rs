@@ -76,6 +76,8 @@ pub(crate) mod net_reference_shared_vm;
 pub(crate) mod net_shared_vm;
 pub(crate) mod node_errors_shared_vm;
 pub(crate) mod os_facts;
+pub(crate) mod memory_facts;
+pub(crate) mod process_memory_shared_vm;
 pub(crate) mod os_shared_vm;
 pub(crate) mod path_algorithms;
 pub(crate) mod path_shared_vm;
@@ -135,3 +137,6 @@ pub(crate) mod buffer_inspect_shared_vm;
 pub(crate) mod encoding_binding_shared_vm;
 
 pub(crate) mod crypto_key_shared_vm;
+
+#[cfg(target_os = "linux")]
+pub(crate) mod os_binding_shared_vm;
