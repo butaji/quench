@@ -1,0 +1,4 @@
+'use strict';const assert=require('assert');const net=require('net');const {TCP,constants}=require('internal/test/binding').internalBinding('tcp_wrap');
+const server=new TCP(constants.SERVER);assert.equal(server.bind('127.0.0.1',0),0);const out={};assert.equal(server.getsockname(out),0);let count=0;let closes=0;
+server.onconnection=function(status,client){assert.equal(this,server);assert.equal(status,0);assert.strictEqual(Object.getPrototypeOf(client),TCP.prototype);assert.equal(client.writeQueueSize,0);count++;client.close(function(){assert.equal(this,client);closes++;});server.close(function(){assert.equal(this,server);closes++;});};assert.equal(server.listen(128),0);
+const socket=net.connect(out.port,'127.0.0.1');socket.on('error',()=>{});socket.on('close',()=>{assert.equal(count,1);setImmediate(()=>{assert.equal(closes,2);console.log('actual native accept/prototype/callback identity pass')});});
