@@ -991,7 +991,7 @@ mod tests {
     fn shape_compaction_preserves_creation_metadata_without_property_slots() {
         use super::{append_compacted_shape, rebuild_shape, provenance};
         let mut shapes = vec![Shape::root()];
-        let mut transitions = rustc_hash::FxHashMap::default();
+        let mut transitions = crate::vm::shape_transitions::ShapeTransitionIndex::default();
         let named = append_compacted_shape(&mut shapes, &mut transitions, 0,
             ShapeTransition::FunctionName { name: 7 }, 0);
         let created = append_compacted_shape(&mut shapes, &mut transitions, named,
@@ -1000,7 +1000,7 @@ mod tests {
             ShapeTransition::Add { key: PropertyKey::string(9), slot: 0, attributes: DEFAULT_DATA_ATTRIBUTES }, 1);
         let mut rebuilt = vec![Shape::root()];
         let shape = rebuild_shape(&shapes, &[], with_field, &mut rebuilt,
-            &mut Vec::new(), &mut rustc_hash::FxHashMap::default());
+            &mut Vec::new(), &mut crate::vm::shape_transitions::ShapeTransitionIndex::default());
         assert_eq!(provenance::shape_names(&rebuilt, shape), (Some(7), Some((Value::heap(17), false))));
         assert_eq!(rebuilt[shape as usize].storage_len(), 1);
         assert_eq!(super::active_shape_attributes(&rebuilt, shape).len(), 1);
