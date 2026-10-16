@@ -3391,6 +3391,17 @@ pub(crate) fn initialize_warning_policy(context: &mut NativeContext<'_, NodeHost
         let event = context.string_rooted("warning");
         context.call_rooted(on, process, &[event, callback])?;
     }
+    if options.enabled("--pending-deprecation") {
+        let binding = get(context, process, "binding")?;
+        let deprecate = crate::host::shared_vm::commonjs::node_library_export(
+            context, "internal/process/pre_execution.js", "internal/util.js", "deprecate",
+        )?;
+        let message = context.string_rooted("process.binding() is deprecated. Please use public APIs instead.");
+        let code = context.string_rooted("DEP0111");
+        let undefined = context.undefined();
+        let binding = context.call_rooted(deprecate, undefined, &[binding, message, code])?;
+        install(context, process, "binding", binding)?;
+    }
     Ok(())
 }
 
@@ -3407,11 +3418,7 @@ pub(crate) fn initialize_emit_warning(context: &mut NativeContext<'_, NodeHost>,
     Ok(context.undefined())
 }
 
-/// Initialize the SDK console and register its actual public warning callback.
+/// The Console module owns initialization; the SDK owns this public callback.
 fn warning_listener(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    let console = crate::host::shared_vm::commonjs::node_library_module(context, "internal/process/pre_execution.js", "internal/console/global.js")?;
-    let initialize = crate::host::shared_vm::commonjs::node_library_export(context, "internal/process/pre_execution.js", "internal/console/constructor.js", "initializeGlobalConsole")?;
-    let undefined = context.undefined();
-    context.call_rooted(initialize, undefined, &[console])?;
     warning_export(context, "onWarning")
 }

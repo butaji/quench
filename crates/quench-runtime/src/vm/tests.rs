@@ -4769,7 +4769,7 @@ fn error_data_survives_collection_without_retaining_dead_errors() {
         vm.initialize(&program).unwrap();
         let exhausted = vm.stack_exhaustion_error().thrown_value().unwrap();
         assert!(vm.error_is_error(exhausted));
-        let aggregate = vm.aggregate_error(vec![]).unwrap();
+        let aggregate = vm.aggregate_error(&program, vec![]).unwrap();
         assert!(vm.error_is_error(aggregate));
     }
 }
@@ -4808,7 +4808,7 @@ fn aggregate_error_intrinsics_and_reason_roots_follow_the_active_realm() {
             let roots = vm.heap.root_count_for_test();
             let reason = vm.object();
             let reason_weak = vm.heap.weak_handle(reason).unwrap();
-            let error = vm.aggregate_error(vec![reason]).unwrap();
+            let error = vm.aggregate_error(&program, vec![reason]).unwrap();
             assert!(vm.error_is_error(error));
             assert_eq!(vm.object_data(error).unwrap().proto(), error_prototype);
             let errors_atom = vm.intern_atom("errors");

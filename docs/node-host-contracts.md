@@ -1119,3 +1119,21 @@ These facts do not provide heap accounting: the existing full `memoryUsage()`
 heap fields and diagnostic report generation still need a Runtime memory owner.
 The native CPU/resource/RSS implementation currently applies on Linux; other
 platform paths retain their existing behavior.
+
+### Canonical SDK Console
+
+The global console, public console module and SDK internal global console share
+one object. The configured SDK owns the callable Console constructor, stream
+validation, grouping, formatting, tables, counters, timers and error handling.
+Rust installs the namespace before guest preloads and exposes its global methods
+with Node's variadic arity and namespace names; instance methods retain the SDK's
+parameter metadata. Trace requests use the real native tracing binding and its
+shared phase representation. The duplicate Console class and timing policy are
+removed; Rust process streams continue to perform the actual writes.
+
+Diagnostics-channel adapter storage uses the configured SDK's SafeMap and
+SafeWeakMap constructors, so later changes to public collection prototypes do
+not affect internal channel lookup. The internal test-binding module is the
+original SDK module and exports the same primordial owner used by SDK policies.
+It exposes cached raw native bindings and runs against current process state, so
+its warning observes guest replacements and current warning options.

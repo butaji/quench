@@ -6,6 +6,7 @@ const BOOLEAN_OPTIONS: &[(&str, bool)] = &[
     ("--expose-internals", false),
     ("--warnings", true),
     ("--deprecation", true),
+    ("--pending-deprecation", false),
     ("--trace-warnings", false),
     ("--trace-deprecation", false),
     ("--throw-deprecation", false),
@@ -39,8 +40,9 @@ impl Default for CliOptions {
     } }
 }
 impl CliOptions {
-    pub(crate) fn parse(environment: Option<&str>, invocation: &[String]) -> Result<Self, String> {
+    pub(crate) fn parse(environment: Option<&str>, invocation: &[String], pending_deprecation: bool) -> Result<Self, String> {
         let mut options=Self::default();
+        options.booleans.insert("--pending-deprecation", pending_deprecation);
         if let Some(environment)=environment { options.apply(&parse_node_options(environment).map_err(str::to_owned)?)?; }
         options.apply(invocation)?;Ok(options)
     }

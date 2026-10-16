@@ -31,16 +31,7 @@ pub(crate) fn install(context: &mut Context<'_>, fast: RootId) -> Result<RootId,
     set(context, data, "warned", no)?;
     let zero = context.number(0.0);
     set(context, data, "checks", zero)?;
-    let pending = context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .exec_argv
-        .iter()
-        .any(|argument| {
-            argument == "--pending-deprecation" || argument == "--pending-deprecation=true"
-        })
-        || std::env::var("NODE_PENDING_DEPRECATION").as_deref() == Ok("1");
+    let pending = context.host_mut().shared_state().borrow().cli_options.enabled("--pending-deprecation");
     let pending = context.boolean(pending);
     set(context, data, "pending", pending)?;
     let global = context.global_root()?;
