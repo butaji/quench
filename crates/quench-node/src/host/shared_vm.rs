@@ -31,6 +31,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "utilProxyDetails" (0) => crate::modules::util_shared_vm::proxy_details,
         method "utilGetCallerLocation" (0) => crate::modules::util_shared_vm::get_caller_location,
         method "utilGetCallSites" (0) => crate::modules::util_shared_vm::get_call_sites,
+        method "utilGuessHandleType" (1) => crate::modules::util_shared_vm::guess_handle_type,
         method "utilConstructorName" (0) => crate::modules::util_shared_vm::constructor_name,
         method "utilPreviewEntries" (0) => crate::modules::util_shared_vm::preview_entries,
         method "availableMemory" (0) => crate::modules::process_memory_shared_vm::available,
@@ -132,6 +133,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "asyncExecutionId" (0) => crate::modules::async_hooks_shared_vm::execution_id,
         method "asyncTriggerId" (0) => crate::modules::async_hooks_shared_vm::trigger_id,
         method "asyncExecutionResource" (0) => crate::modules::async_hooks_shared_vm::execution_resource,
+        method "asyncDefaultTriggerScope" (2) => crate::modules::async_hooks_shared_vm::default_trigger_scope,
+        method "asyncGetDefaultTrigger" (0) => crate::modules::async_hooks_shared_vm::get_default_trigger,
         method "asyncExternalInit" (3) => crate::modules::async_hooks_shared_vm::external_init,
         method "asyncPromisePrune" (0) => crate::modules::async_hooks_shared_vm::prune_promises,
         method "asyncTickInvoke" (0) => crate::modules::shared_event_loop::invoke_tick,
@@ -281,6 +284,36 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "nativeStreamConnect6" (0) => crate::modules::stream_binding::connect6,
         method "nativeStreamShutdown" (0) => crate::modules::stream_binding::shutdown,
         method "nativeStreamDeliverConnect" (2) => crate::modules::stream_binding::deliver_connect,
+        method "nativeOptionalCallbackSlot" (1) => crate::modules::shared_event_loop::optional_callback,
+        method "udpBroadcast" (1) => crate::modules::udp_binding::broadcast,
+        method "udpTtl" (1) => crate::modules::udp_binding::ttl,
+        method "udpMulticastTtl" (1) => crate::modules::udp_binding::multicast_ttl,
+        method "udpMulticastLoop" (1) => crate::modules::udp_binding::multicast_loop,
+        method "udpBufferSize" (3) => crate::modules::udp_binding::buffer_size,
+        method "udpDisconnect" (0) => crate::modules::udp_binding::disconnect,
+        method "udpOpen" (1) => crate::modules::udp_binding::open,
+        method "udpMulticastInterface" (1) => crate::modules::udp_binding::multicast_interface,
+        method "udpJoinMembership" (2) => crate::modules::udp_binding::join_membership,
+        method "udpLeaveMembership" (2) => crate::modules::udp_binding::leave_membership,
+        method "udpJoinSourceMembership" (3) => crate::modules::udp_binding::join_source_membership,
+        method "udpLeaveSourceMembership" (3) => crate::modules::udp_binding::leave_source_membership,
+        method "udpConstruct" (0) => crate::modules::udp_binding::construct,
+        method "udpSendWrap" (0) => crate::modules::udp_binding::send_wrap,
+        method "udpBind" (0) => crate::modules::udp_binding::bind4,
+        method "udpBind6" (0) => crate::modules::udp_binding::bind6,
+        method "udpConnect" (0) => crate::modules::udp_binding::connect4,
+        method "udpConnect6" (0) => crate::modules::udp_binding::connect6,
+        method "udpRecvStart" (0) => crate::modules::udp_binding::recv_start,
+        method "udpRecvStop" (0) => crate::modules::udp_binding::recv_stop,
+        method "udpSend" (0) => crate::modules::udp_binding::send4,
+        method "udpSend6" (0) => crate::modules::udp_binding::send6,
+        method "udpSockName" (0) => crate::modules::udp_binding::sock_name,
+        method "udpPeerName" (0) => crate::modules::udp_binding::peer_name,
+        method "udpQueueSize" (0) => crate::modules::udp_binding::queue_size,
+        method "udpQueueCount" (0) => crate::modules::udp_binding::queue_count,
+        method "udpFd" (0) => crate::modules::udp_binding::fd,
+        method "udpDeliverMessage" (0) => crate::modules::udp_binding::deliver_message,
+        method "udpDeliverSend" (0) => crate::modules::udp_binding::deliver_send,
         method "nativeStreamWriteWrap" (0) => crate::modules::stream_binding::write_wrap,
         method "nativeStreamDeliverWrite" (2) => crate::modules::stream_binding::deliver_write,
         method "nativeStreamWriteBuffer" (0) => crate::modules::stream_binding::write_buffer,
@@ -288,8 +321,11 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "nativeStreamReadStop" (0) => crate::modules::stream_binding::read_stop,
         method "nativeStreamCopyRead" (1) => crate::modules::stream_binding::copy_read,
         method "nativeStreamDeliverRead" (3) => crate::modules::stream_binding::deliver_read,
+        method "nativeTcpFd" (0) => crate::modules::tcp_binding::fd,
+        method "nativeAsyncWrapConstruct" (0) => crate::modules::native_async_wrap::abstract_constructor,
+        method "nativeAsyncWrapId" (0) => crate::modules::native_async_wrap::get_id,
+        method "nativeAsyncWrapProvider" (0) => crate::modules::native_async_wrap::get_provider,
         method "nativeTcpConstruct" (1) => crate::modules::tcp_binding::construct,
-        method "nativeTcpAbstract" (0) => crate::modules::tcp_binding::abstract_constructor,
         method "nativeTcpBind" (0) => crate::modules::tcp_binding::bind4,
         method "nativeTcpBind6" (0) => crate::modules::tcp_binding::bind6,
         method "nativeTcpListen" (0) => crate::modules::tcp_binding::listen,
@@ -430,6 +466,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "cryptoCaptureKeyBrands" (2) => crate::modules::crypto_key_shared_vm::capture_brands,
         #[cfg(quench_openssl_provider)]
         method "cryptoHkdfJobNew" (6) => crate::modules::crypto_secret_job_shared_vm::create_hkdf,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPbkdf2JobNew" (6) => crate::modules::crypto_secret_job_shared_vm::create_pbkdf2,
         #[cfg(quench_openssl_provider)]
         method "cryptoHashJobNew" (3) => crate::modules::crypto_secret_job_shared_vm::create_hash,
         #[cfg(quench_openssl_provider)]
@@ -650,12 +688,45 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "diagnosticsIsPromise" (1) => crate::modules::diagnostics_channel_shared_vm::is_promise,
         method "perfHooksEntries" (0) => crate::modules::perf_timeline_query::entries,
         method "perfHooksCompareEntries" (2) => crate::modules::perf_timeline_query::compare,
+        method "performanceNativeNow" (0) => crate::modules::performance_binding_shared_vm::now,
+        method "performanceSetupObservers" (0) => crate::modules::performance_binding_shared_vm::setup,
+        method "performanceGcTracking" (0) => crate::modules::performance_binding_shared_vm::gc_tracking,
+        method "performanceNotify" (0) => crate::modules::performance_binding_shared_vm::notify,
+        method "performanceBootstrapMark" (0) => crate::modules::performance_binding_shared_vm::bootstrap_mark,
         method "perfHooksNow" (0) => crate::modules::perf_hooks::now,
         method "dnsGetDefaultOrder" (0) => crate::modules::dns_shared_vm::get_default_order,
         method "dnsSetDefaultOrder" (1) => crate::modules::dns_shared_vm::set_default_order,
         method "dnsPromiseLookup" (2) => crate::modules::dns_shared_vm::promise_lookup,
         method "dnsPromiseComplete" (3) => crate::modules::dns_shared_vm::promise_complete,
         method "dnsAddressArray" (0) => crate::modules::cares_binding::address_array,
+        #[cfg(quench_node_cares)]
+        method "dnsChannelConstruct" (3) => crate::modules::cares_channel_shared_vm::construct,
+        #[cfg(quench_node_cares)]
+        method "dnsChannelQuery" (2) => crate::modules::cares_channel_shared_vm::query,
+        #[cfg(quench_node_cares)]
+        method "dnsChannelGetServers" (0) => crate::modules::cares_channel_shared_vm::get_servers,
+        #[cfg(quench_node_cares)]
+        method "dnsChannelSetServers" (1) => crate::modules::cares_channel_shared_vm::set_servers,
+        #[cfg(quench_node_cares)]
+        method "dnsChannelSetLocalAddress" (2) => crate::modules::cares_channel_shared_vm::set_local,
+        #[cfg(quench_node_cares)]
+        method "dnsChannelCancel" (0) => crate::modules::cares_channel_shared_vm::cancel,
+        #[cfg(quench_node_cares)]
+        method "dnsChannelStrerror" (1) => crate::modules::cares_channel_shared_vm::strerror,
+        #[cfg(quench_node_cares)]
+        method "dnsCanonicalizeIP" (1) => crate::modules::cares_channel_shared_vm::canonicalize,
+        #[cfg(quench_node_cares)]
+        method "dnsIpv6Buffer" (1) => crate::modules::cares_channel_shared_vm::ipv6_buffer,
+        #[cfg(quench_node_cares)]
+        method "dnsRrCallbackFactory" (1) => crate::modules::cares_channel_shared_vm::callback_factory,
+        #[cfg(quench_node_cares)]
+        method "dnsRrInvoke" (0) => crate::modules::cares_channel_shared_vm::invoke,
+        #[cfg(quench_node_cares)]
+        method "dnsRrArray" (0) => crate::modules::cares_channel_shared_vm::array,
+        #[cfg(quench_node_cares)]
+        method "dnsRrObject" (0) => crate::modules::cares_channel_shared_vm::object,
+        #[cfg(quench_node_cares)]
+        method "dnsRrBinary" (0) => crate::modules::cares_channel_shared_vm::binary,
         method "dnsRequestConstruct" (0) => crate::modules::cares_binding::construct,
         method "dnsLookupService" (3) => crate::modules::dns_shared_vm::lookup_service,
         method "dnsPromiseLookupService" (2) => crate::modules::dns_shared_vm::promise_lookup_service,

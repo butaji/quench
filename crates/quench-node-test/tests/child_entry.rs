@@ -10172,3 +10172,11 @@ fn crypto_native_jobs_resolve_legacy_provider_at_execution() {
         &["--no-warnings", "--expose-internals"],
     );
 }
+
+#[test]
+fn crypto_original_sdk_pbkdf2_uses_provider_jobs_and_async_context() {
+    compare_node_file_source_with_args(
+        include_str!("../node-tests/test-crypto-native-sdk-pbkdf2.js"),
+        &["--no-warnings", "--expose-internals"],
+    );
+}

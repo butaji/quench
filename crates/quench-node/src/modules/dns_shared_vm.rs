@@ -6,6 +6,7 @@ use std::net::IpAddr;
 
 use super::net_config::{ANY_FAMILY, IPV4_FAMILY, IPV6_FAMILY};
 
+#[cfg(not(quench_node_cares))]
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let module = context.object_rooted()?;
     let lookup = context.host_function(crate::host::shared_vm::operation("dnsLookup"))?;

@@ -3,6 +3,10 @@ use super::{event_constructor_shared_vm::get, net_shared_vm as net};
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 type Context<'a> = NativeContext<'a, NodeHost>;
+const TCP_PROTOTYPE: &str = "\0native:TCPPrototype";
+const HANDLE_PROTOTYPE: &str = "\0native:HandleWrapPrototype";
+const SOCKET: u32 = 0;
+const SERVER: u32 = 1;
 fn put(c: &mut Context<'_>, o: RootId, n: &str, v: RootId) -> Result<(), RootedError> {
     let k = c.string_rooted(n);
     c.define_data_property_rooted(o, k, v, true, true, true)?;
@@ -32,21 +36,25 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         )?;
         let tp = get(c, tcp, "prototype")?;
         let libuv = c.host_constructor_named(
-            crate::host::shared_vm::operation("nativeTcpAbstract"),
+            crate::host::shared_vm::operation("nativeAsyncWrapConstruct"),
             "LibuvStreamWrap",
         )?;
         let lp = get(c, libuv, "prototype")?;
         let handle = c.host_constructor_named(
-            crate::host::shared_vm::operation("nativeTcpAbstract"),
+            crate::host::shared_vm::operation("nativeAsyncWrapConstruct"),
             "HandleWrap",
         )?;
         let hp = get(c, handle, "prototype")?;
+        crate::host::shared_vm::commonjs::cached_native_binding(c, TCP_PROTOTYPE, |_| Ok(tp))?;
+        crate::host::shared_vm::commonjs::cached_native_binding(c, HANDLE_PROTOTYPE, |_| Ok(hp))?;
         c.set_prototype_rooted(tp, lp)?;
         c.set_prototype_rooted(lp, hp)?;
+        let ap = super::native_async_wrap::prototype(c)?;
+        c.set_prototype_rooted(hp, ap)?;
         for (p, n, op) in [
-            (tp,"connect","nativeStreamConnect"),
-            (tp,"connect6","nativeStreamConnect6"),
-            (lp,"shutdown","nativeStreamShutdown"),
+            (tp, "connect", "nativeStreamConnect"),
+            (tp, "connect6", "nativeStreamConnect6"),
+            (lp, "shutdown", "nativeStreamShutdown"),
             (lp, "writeBuffer", "nativeStreamWriteBuffer"),
             (lp, "readStart", "nativeStreamReadStart"),
             (lp, "readStop", "nativeStreamReadStop"),
@@ -62,6 +70,13 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
             let f = c.host_function_named(crate::host::shared_vm::operation(op), n)?;
             put(c, p, n, f)?;
         }
+        let getter = c.host_function(crate::host::shared_vm::operation("nativeTcpFd"))?;
+        let descriptor = c.null_object_rooted()?;
+        put(c, descriptor, "get", getter)?;
+        let yes = c.boolean(true);
+        put(c, descriptor, "enumerable", yes)?;
+        let key = c.string_rooted("fd");
+        c.define_property_descriptor_rooted(tp, key, descriptor)?;
         let getter = c.host_function(crate::host::shared_vm::operation("nativeTcpQueue"))?;
         let d = c.null_object_rooted()?;
         put(c, d, "get", getter)?;
@@ -70,12 +85,15 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         let k = c.string_rooted("writeQueueSize");
         c.define_property_descriptor_rooted(lp, k, d)?;
         put(c, b, "TCP", tcp)?;
-        let connect=c.host_constructor_named(crate::host::shared_vm::operation("nativeStreamConnectWrap"),"TCPConnectWrap")?;
-        put(c,b,"TCPConnectWrap",connect)?;
+        let connect = c.host_constructor_named(
+            crate::host::shared_vm::operation("nativeStreamConnectWrap"),
+            "TCPConnectWrap",
+        )?;
+        put(c, b, "TCPConnectWrap", connect)?;
         let constants = c.object_rooted()?;
         for (n, v) in [
-            ("SOCKET", 0),
-            ("SERVER", 1),
+            ("SOCKET", SOCKET),
+            ("SERVER", SERVER),
             ("UV_TCP_IPV6ONLY", 1),
             ("UV_TCP_REUSEPORT", 2),
         ] {
@@ -86,29 +104,31 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         Ok(b)
     })
 }
-pub(crate) fn prototype(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    let b = binding(c)?;
-    let tcp = get(c, b, "TCP")?;
-    get(c, tcp, "prototype")
+/// Original native-template prototypes have host ownership independent of
+/// guest edits to a constructor's public prototype property or prototype chain.
+fn canonical_prototype(c: &mut Context<'_>, key: &'static str) -> Result<RootId, RootedError> {
+    binding(c)?;
+    crate::host::shared_vm::commonjs::cached_native_binding(c, key, |_| {
+        Err(RootedError::host("native TCP prototype authority missing"))
+    })
 }
-pub(crate) fn abstract_constructor(
-    c: &mut Context<'_>,
-    _: RootId,
-    _: &[RootId],
-) -> Result<RootId, RootedError> {
-    let e = c.type_error_rooted("Illegal constructor")?;
-    Err(c.throw(e))
+pub(crate) fn prototype(c: &mut Context<'_>) -> Result<RootId, RootedError> {
+    canonical_prototype(c, TCP_PROTOTYPE)
+}
+pub(crate) fn handle_prototype(c: &mut Context<'_>) -> Result<RootId, RootedError> {
+    canonical_prototype(c, HANDLE_PROTOTYPE)
 }
 pub(crate) fn construct(
     c: &mut Context<'_>,
     receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
+    super::native_async_wrap::require_construct(c)?;
     let kind = args
         .first()
         .and_then(|r| c.rooted_value(*r))
         .and_then(|v| v.as_number());
-    if !matches!(kind, Some(0.0) | Some(1.0)) {
+    if !(kind == Some(f64::from(SOCKET)) || kind == Some(f64::from(SERVER))) {
         let e = c.type_error_rooted("Invalid TCP socket type")?;
         return Err(c.throw(e));
     }
@@ -122,6 +142,12 @@ pub(crate) fn construct(
     put(c, receiver, "onconnection", null)?;
     let owner = super::net_reference_shared_vm::owner_symbol(c)?;
     c.set_property_rooted(receiver, owner, null, receiver)?;
+    super::native_async_wrap::initialize_tcp(
+        c,
+        receiver,
+        endpoint,
+        kind == Some(f64::from(SERVER)),
+    )?;
     Ok(receiver)
 }
 fn bind(
@@ -215,6 +241,9 @@ pub(crate) fn close(
     receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
+    if super::udp_binding::identity(c, receiver)?.is_some() {
+        return super::udp_binding::close(c, receiver, args);
+    }
     let endpoint = id(c, receiver)?;
     let shared = c.host_mut().shared_state();
     if !net::native_tcp_is_open(&shared.borrow().tcp, endpoint) {
@@ -240,6 +269,9 @@ pub(crate) fn close(
     Ok(c.undefined())
 }
 fn reference(c: &mut Context<'_>, receiver: RootId, value: bool) -> Result<RootId, RootedError> {
+    if super::udp_binding::identity(c, receiver)?.is_some() {
+        return super::udp_binding::reference(c, receiver, value);
+    }
     let endpoint = id(c, receiver)?;
     let shared = c.host_mut().shared_state();
     net::native_tcp_reference(&mut shared.borrow_mut().tcp, endpoint, value);
@@ -264,8 +296,22 @@ pub(crate) fn has_ref(
     receiver: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
+    if super::udp_binding::identity(c, receiver)?.is_some() {
+        return super::udp_binding::has_ref(c, receiver);
+    }
     let endpoint = id(c, receiver)?;
     let shared = c.host_mut().shared_state();
     let v = net::native_tcp_has_ref(&shared.borrow().tcp, endpoint);
     Ok(c.boolean(v))
+}
+
+pub(crate) fn fd(
+    c: &mut Context<'_>,
+    receiver: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let id = id(c, receiver)?;
+    let shared = c.host_mut().shared_state();
+    let fd = net::native_tcp_fd(&shared.borrow().tcp, id);
+    Ok(c.number(fd as f64))
 }
