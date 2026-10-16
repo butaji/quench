@@ -1164,6 +1164,12 @@ impl Host for FunctionMetadataHost {
             let key = context.string_rooted(name);
             context.define_data_property_rooted(global, key, function, true, true, true)?;
         }
+        let named_constructor = context.host_constructor_named(HostFunctionId(0), "")?;
+        let key = context.string_rooted("MetadataAnonymousCtor");
+        context.define_data_property_rooted(global, key, named_constructor, true, true, true)?;
+        let captured_constructor = context.host_constructor_named_with_data(HostFunctionId(0), "", data)?;
+        let key = context.string_rooted("MetadataAnonymousCapturedCtor");
+        context.define_data_property_rooted(global, key, captured_constructor, true, true, true)?;
         let anonymous = context.host_function_named(HostFunctionId(0), "")?;
         let key = context.string_rooted("MetadataAnonymous");
         context.define_data_property_rooted(global, key, anonymous, true, true, true)?;
@@ -1180,10 +1186,10 @@ fn empty_metadata_callback(
 #[test]
 fn native_function_metadata_preserves_standard_key_order_and_constructor_views() {
     let source = r#"
-for(const [functionValue,constructor] of [[metadataCallback,false],[MetadataCaptured,false],[MetadataCtor,true],[MetadataAnonymous,false]]) {
+for(const [functionValue,constructor] of [[metadataCallback,false],[MetadataCaptured,false],[MetadataCtor,true],[MetadataAnonymous,false],[MetadataAnonymousCtor,true],[MetadataAnonymousCapturedCtor,true]]) {
  const keys=Reflect.ownKeys(functionValue).join(',');
  if(keys!==(constructor?'length,name,prototype':'length,name'))throw Error(keys);
- if(functionValue.name!==(functionValue===MetadataAnonymous?'':'metadataCallback')||functionValue.length!==2)throw Error('metadata values');
+ if(functionValue.name!==(functionValue===MetadataAnonymous||functionValue===MetadataAnonymousCtor||functionValue===MetadataAnonymousCapturedCtor?'':'metadataCallback')||functionValue.length!==2)throw Error('metadata values');
  for(const name of ['length','name']){
   const d=Object.getOwnPropertyDescriptor(functionValue,name);
   if(d.writable||d.enumerable||!d.configurable)throw Error('metadata attributes');
