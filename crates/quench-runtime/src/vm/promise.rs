@@ -991,6 +991,8 @@ impl PromiseRecord {
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct PromiseJob {
+    /// The realm current when the reaction was queued, where the job runs.
+    pub(super) realm: Value,
     pub(super) handler: Value,
     pub(super) next: Value,
     pub(super) rejected: bool,
@@ -1085,7 +1087,6 @@ pub(super) struct PromiseRuntime {
     pub(super) records: FxHashMap<Value, PromiseRecord>,
     pub(super) rejection_notifications: VecDeque<RejectionNotification>,
     pub(super) last_rejection_id: u64,
-    pub(super) jobs: FxHashMap<Value, PromiseJob>,
     pub(super) thenable_jobs: FxHashMap<Value, ThenableJob>,
     pub(super) finally_handler_callbacks: FxHashMap<Value, FinallyHandlerCallback>,
     pub(super) finally_continuation_callbacks: FxHashMap<Value, FinallyContinuationCallback>,
@@ -1111,7 +1112,6 @@ impl PromiseRuntime {
             };
         }
         edges!(self.records, |record| record.roots())
-            .chain(edges!(self.jobs, |job| [job.handler, job.next, job.value]))
             .chain(edges!(self.thenable_jobs, |job| [
                 job.then,
                 job.thenable,
@@ -1577,9 +1577,6 @@ impl<H: Host> Vm<H> {
                 self.promise_aggregate(p, this, args, AggregateMode::AllSettledKeyed)
             }
             Native::PromiseAny => self.promise_aggregate(p, this, args, AggregateMode::Any),
-            Native::PromiseReactionJob => {
-                self.promise_reaction_job(p, args.first().copied().unwrap_or(Value::UNDEFINED))
-            }
             Native::PromiseThenableJob => self.promise_thenable_job(p),
             Native::PromiseAggregateJob => {
                 self.promise_aggregate_job(p, args.first().copied().unwrap_or(Value::UNDEFINED))

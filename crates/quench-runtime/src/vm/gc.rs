@@ -601,11 +601,7 @@ impl<H: Host> Vm<H> {
                 .iter()
                 .map(|job| job.promise),
         );
-        roots.extend(self.realm.jobs.iter().flat_map(|job| {
-            std::iter::once(job.callback)
-                .chain(std::iter::once(job.this))
-                .chain(job.args.iter().copied())
-        }));
+        roots.extend(self.realm.jobs.iter().flat_map(PendingJob::roots));
         roots.extend(self.realm.template_objects.values().copied());
         roots.extend(
             self.realm
@@ -740,7 +736,7 @@ impl<H: Host> Vm<H> {
         self.realm.jobs.extend(
             finalization_jobs
                 .into_iter()
-                .map(|(callback, held)| PendingJob {
+                .map(|(callback, held)| PendingJob::Call {
                     callback,
                     this: Value::UNDEFINED,
                     args: vec![held],
@@ -758,13 +754,6 @@ impl<H: Host> Vm<H> {
                         .iter()
                         .filter_map(|reaction| reaction.execution_context),
                 );
-            }
-            live
-        });
-        self.realm.promise.jobs.retain(|job, record| {
-            let live = self.heap.is_live(*job);
-            if !live {
-                abandoned_job_contexts.extend(record.execution_context);
             }
             live
         });
@@ -923,14 +912,17 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
         job: PendingJob,
     ) -> Result<(), JsError> {
-        let roots = [job.callback, job.this]
-            .into_iter()
-            .chain(job.args.iter().copied());
-        self.with_call_roots(roots, |vm| {
-            vm.call_value(program, job.callback, job.this, &job.args)
-                .map(|_| ())
+        let roots = job.roots();
+        self.with_call_roots(roots, |vm| match job {
+            PendingJob::Call {
+                callback,
+                this,
+                args,
+            } => vm.call_value(program, callback, this, &args).map(|_| ()),
+            PendingJob::Reaction(reaction) => vm.run_promise_reaction(program, reaction),
         })
     }
+
 
     pub(crate) fn drain_host_jobs(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
         self.advance_static_module_jobs(program)?;
