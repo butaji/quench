@@ -9222,3 +9222,8 @@ fn implemented_cli_option_snapshots_tokenization_and_stream_iterator_policy_matc
 fn stream_iterator_webidl_uses_genuine_original_abort_signal_brands() {
     compare_node_source_with_args(include_str!("../node-tests/test-stream-iter-abort-brand.js"),&["--no-warnings","--expose-internals","--experimental-stream-iter"]);
 }
+
+#[test]
+fn internal_abort_operation_uses_original_provider_state_reason_and_dependent_delivery() {
+    compare_node_source_with_args(include_str!("../node-tests/test-internal-abort-provider.js"),&["--no-warnings","--expose-internals"]);
+}

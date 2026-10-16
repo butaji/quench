@@ -1510,8 +1510,14 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::Internal("internal/buffer") => crate::modules::buffer_constructor_shared_vm::internal_module(context),
         BuiltinModule::Internal("internal/worker/io") =>
             native_global_namespace(context, &["MessageChannel", "MessagePort"]),
-        BuiltinModule::Internal("internal/abort_controller") =>
-            native_global_namespace(context, &["AbortController", "AbortSignal"]),
+        BuiltinModule::Internal("internal/abort_controller") => {
+            let module=native_global_namespace(context, &["AbortController", "AbortSignal"])?;
+            let data=context.host_mut().shared_state().borrow().event_targets_api
+                .ok_or_else(||RootedError::host("EventTarget API missing"))?;
+            let operation=get(context,data,"abortSignal")?;
+            set(context,module,"abortSignal",operation)?;
+            Ok(module)
+        },
         BuiltinModule::Internal("internal/process/task_queues") =>
             native_global_namespace(context, &["queueMicrotask"]),
         BuiltinModule::Internal("_http_incoming") => {
