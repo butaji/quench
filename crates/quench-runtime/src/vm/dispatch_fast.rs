@@ -1284,13 +1284,13 @@ lane_handler! {
 
 lane_handler! {
     /// `GetField` of a register or `this` at a site past one shape
-    /// (`Vm::field_site_polymorphic`): its inline own entries; any other read takes
+    /// (`Vm::field_site_polymorphic`): its inline entries; any other read takes
     /// `lane_get_field`.
     fn lane_get_field_polymorphic<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) })
-            .and_then(|object| (unsafe { vm(cx) }).polymorphic_own_field_hit(code, object, i.c))
+            .and_then(|object| (unsafe { vm(cx) }).polymorphic_field_hit(code, object, i.c))
         else {
             sibling!(lane_get_field::<H>, r, ip, Carried::SCRIPT)
         };
@@ -1302,14 +1302,14 @@ lane_handler! {
 lane_handler! {
     /// `GetField` of a register or `this` at a site whose primary entry names a prototype
     /// holder (`Vm::field_site_holder`), a method read: that entry inline; any other read
-    /// takes `lane_get_field`.
+    /// takes `lane_get_field_miss`, which moves a site gone polymorphic.
     fn lane_get_field_holder<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) })
             .and_then(|object| (unsafe { vm(cx) }).primary_holder_field_hit(code, object, i.c))
         else {
-            sibling!(lane_get_field::<H>, r, ip, Carried::SCRIPT)
+            sibling!(lane_get_field_miss::<H>, r, ip, Carried::SCRIPT)
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::SCRIPT)
@@ -1319,14 +1319,14 @@ lane_handler! {
 lane_handler! {
     /// `GetField` of a register or `this` at a site with an inherited entry
     /// (`Vm::field_site_inherited`), a method read beyond the immediate prototype: that entry
-    /// inline; any other read takes `lane_get_field`.
+    /// inline; any other read takes `lane_get_field_miss`.
     fn lane_get_field_inherited<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) })
             .and_then(|object| (unsafe { vm(cx) }).inherited_field_hit(code, object, i.c))
         else {
-            sibling!(lane_get_field::<H>, r, ip, Carried::SCRIPT)
+            sibling!(lane_get_field_miss::<H>, r, ip, Carried::SCRIPT)
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::SCRIPT)
@@ -1334,7 +1334,7 @@ lane_handler! {
 }
 
 lane_handler! {
-    /// A primary-entry miss of `lane_get_field_own`: a nested record moves to
+    /// A miss of a single-entry read (`lane_get_field_own`, `_holder`, `_inherited`): a nested record moves to
     /// `lane_get_field`, one whose site went polymorphic to `lane_get_field_polymorphic`,
     /// one whose primary entry names a prototype holder to `lane_get_field_holder`, one with
     /// an inherited entry to `lane_get_field_inherited`; the read itself takes

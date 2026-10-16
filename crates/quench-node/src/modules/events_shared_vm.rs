@@ -292,6 +292,11 @@ pub(crate) fn initialize_event_globals(
         "node:events/abort-handler.js",
     )?;
     set(context, data, "abortHandlerFactory", handler_factory)?;
+    let rejection_factory = context.evaluate_script_rooted(
+        "(report) => function(err) { report(err); }",
+        "node:events/abort-rejection.js",
+    )?;
+    set(context, data, "abortRejectionFactory", rejection_factory)?;
     let abort_factory = context.evaluate_script_rooted(
         crate::polyfills::shared_vm::ABORT,
         "node:bootstrap/shared-vm/abort.js",
