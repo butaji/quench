@@ -363,17 +363,17 @@ impl<H: Host> Vm<H> {
         records: &[CallSiteRecord],
     ) -> Result<Value, JsError> {
         let target = self.heap.root_value(receiver).unwrap();
-        let mut stack = if self.error_is_error(target) {
-            let header = self.error_to_string(program, target)?;
-            self.to_string(program, header)?
-        } else {
-            "Error".to_owned()
-        };
+        let header = self.error_to_string(program, target)?;
+        let header = self.coerce_js_string(program, header)?;
+        let mut stack = super::wtf16::JsStringBuilder::default();
+        stack.append(&header);
+        let prefix = JsString::from_str("\n    at ");
         for record in records {
-            stack.push_str("\n    at ");
-            stack.push_str(&self.format_call_site(record));
+            stack.append(&prefix);
+            stack.append(&self.format_call_site(program, record)?);
         }
-        Ok(self.heap.alloc(Cell::String(JsString::from_str(&stack))))
+        let stack = self.string_build_result(program, stack.finish())?;
+        Ok(self.heap.alloc(Cell::String(stack)))
     }
 
     fn error_call_site_array(
@@ -587,17 +587,19 @@ impl<H: Host> Vm<H> {
         (name.len() != 0).then_some(name)
     }
 
-    fn format_call_site(&self, record: &CallSiteRecord) -> String {
+    fn format_call_site(&mut self, program: &ResidualProgram, record: &CallSiteRecord) -> Result<JsString, JsError> {
         let location = match &record.location {
-            CallSiteLocation::Source {
-                file_name,
-                line,
-                column,
-            } => format!("{file_name}:{line}:{column}"),
+            CallSiteLocation::Source { file_name, line, column } => format!("{file_name}:{line}:{column}"),
             CallSiteLocation::Native => "native".to_owned(),
         };
-        self.call_site_name(record)
-            .map_or(location.clone(), |name| format!("{name} ({location})"))
+        let location = JsString::from_str(&location);
+        let Some(name) = self.call_site_name(record) else { return Ok(location); };
+        let mut text = super::wtf16::JsStringBuilder::default();
+        text.append(&name);
+        text.append(&JsString::from_str(" ("));
+        text.append(&location);
+        text.append(&JsString::from_str(")"));
+        self.string_build_result(program, text.finish())
     }
 
     pub(super) fn call_site_native(
@@ -644,9 +646,10 @@ impl<H: Host> Vm<H> {
                 })
             }
             Native::CallSiteGetTypeName | Native::CallSiteGetEvalOrigin => Ok(Value::UNDEFINED),
-            Native::CallSiteToString => Ok(self
-                .heap
-                .alloc(Cell::String(self.format_call_site(&record).into()))),
+            Native::CallSiteToString => {
+                let text = self.format_call_site(program, &record)?;
+                Ok(self.heap.alloc(Cell::String(text)))
+            },
             _ => Err(JsError::validation(
                 "invalid CallSite native dispatch".into(),
             )),
@@ -692,22 +695,28 @@ impl<H: Host> Vm<H> {
         let message_atom = self.intern_atom("message");
         let name = self.get_property(program, receiver, name_atom)?;
         let name = if name.is_undefined() {
-            "Error".to_owned()
+            JsString::from_str("Error")
         } else {
-            self.to_string(program, name)?
+            self.coerce_js_string(program, name)?
         };
         let message = self.get_property(program, receiver, message_atom)?;
         let message = if message.is_undefined() {
-            String::new()
+            JsString::from_str("")
         } else {
-            self.to_string(program, message)?
+            self.coerce_js_string(program, message)?
         };
-        let text = match (name.is_empty(), message.is_empty()) {
-            (true, _) => message,
-            (false, true) => name,
-            (false, false) => format!("{name}: {message}"),
+        let text = if name.len() == 0 {
+            message
+        } else if message.len() == 0 {
+            name
+        } else {
+            let mut text = super::wtf16::JsStringBuilder::default();
+            text.append(&name);
+            text.append(&JsString::from_str(": "));
+            text.append(&message);
+            self.string_build_result(program, text.finish())?
         };
-        Ok(self.heap.alloc(Cell::String(JsString::from_str(&text))))
+        Ok(self.heap.alloc(Cell::String(text)))
     }
 
     pub(crate) fn format_error(&mut self, program: &ResidualProgram, error: &JsError) -> String {
@@ -2156,8 +2165,8 @@ impl<H: Host> Vm<H> {
         let outcome = (|| {
             if let Some(message) = message {
                 let value = self.heap.root_value(message).unwrap();
-                let message = self.to_string(program, value)?;
-                let message = self.heap.alloc(Cell::String(JsString::from_str(&message)));
+                let message = self.coerce_js_string(program, value)?;
+                let message = self.heap.alloc(Cell::String(message));
                 let object = self.heap.root_value(root).unwrap();
                 self.set_builtin_value_named(object, "message", message)?;
             }
@@ -2237,8 +2246,8 @@ impl<H: Host> Vm<H> {
             object = Some(root);
             if let Some(message) = message {
                 let message = self.heap.root_value(message).unwrap();
-                let message = self.to_string(program, message)?;
-                let message = self.heap.alloc(Cell::String(JsString::from_str(&message)));
+                let message = self.coerce_js_string(program, message)?;
+                let message = self.heap.alloc(Cell::String(message));
                 let value = self.heap.root_value(root).unwrap();
                 self.set_builtin_value_named(value, "message", message)?;
             }
