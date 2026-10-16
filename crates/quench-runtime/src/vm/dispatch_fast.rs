@@ -1239,17 +1239,14 @@ unsafe fn lane_single_field_base<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
     base: u16,
-    atom: Atom,
 ) -> Option<Value> {
     if base == crate::bytecode::FieldBase::NESTED {
         return None;
     }
-    let object = match crate::bytecode::FieldBase(base).register_index() {
+    match crate::bytecode::FieldBase(base).register_index() {
         Some(register) => Some(r.get(register)),
         None => unsafe { lane_fixed_this(cx) },
-    }?;
-    unsafe { vm(cx) }.prepare_named_function_info_lookup(object, atom);
-    Some(object)
+    }
 }
 
 /// `this` where the lane holds it or the frame fixed it; `None` for a lexical `this`, which
@@ -1275,7 +1272,7 @@ lane_handler! {
     fn lane_get_field_own<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b, i.imm()) })
+        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) })
             .and_then(|object| (unsafe { vm(cx) }).primary_own_field_hit(code, object, i.c))
         else {
             sibling!(lane_get_field_miss::<H>, r, ip, Carried::SCRIPT)
@@ -1292,7 +1289,7 @@ lane_handler! {
     fn lane_get_field_polymorphic<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b, i.imm()) })
+        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) })
             .and_then(|object| (unsafe { vm(cx) }).polymorphic_field_hit(code, object, i.c))
         else {
             sibling!(lane_get_field::<H>, r, ip, Carried::SCRIPT)
@@ -1309,7 +1306,7 @@ lane_handler! {
     fn lane_get_field_holder<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b, i.imm()) })
+        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) })
             .and_then(|object| (unsafe { vm(cx) }).primary_holder_field_hit(code, object, i.c))
         else {
             sibling!(lane_get_field_miss::<H>, r, ip, Carried::SCRIPT)
@@ -1326,13 +1323,28 @@ lane_handler! {
     fn lane_get_field_inherited<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b, i.imm()) })
+        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) })
             .and_then(|object| (unsafe { vm(cx) }).inherited_field_hit(code, object, i.c))
         else {
             sibling!(lane_get_field_miss::<H>, r, ip, Carried::SCRIPT)
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::SCRIPT)
+    }
+}
+
+lane_handler! {
+    /// A `GetField`'s first run: a read of `name` or `length` can enter prototype lookup
+    /// mode (`Vm::reads_function_info`), which only `lane_get_field`'s general probe
+    /// prepares, so such a site keeps it; any other takes `lane_get_field_own`.
+    #[inline(never)]
+    fn lane_get_field_first<>(cx, r, ip, i, view) {
+        if unsafe { vm(cx) }.reads_function_info(i.imm()) {
+            requicken(ip, lane_get_field::<H>);
+            sibling!(lane_get_field::<H>, r, ip, Carried::SCRIPT)
+        }
+        requicken(ip, lane_get_field_own::<H>);
+        sibling!(lane_get_field_own::<H>, r, ip, Carried::SCRIPT)
     }
 }
 
@@ -4151,7 +4163,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::StoreLocalPlain => Some(lane_store_local_plain::<H>),
         Op::StoreLocal | Op::StoreEnvLocal => Some(lane_store_local::<H>),
         Op::LoadThis => Some(lane_load_this::<H>),
-        Op::GetField => Some(lane_get_field_own::<H>),
+        Op::GetField => Some(lane_get_field_first::<H>),
         Op::SetField | Op::SetFieldStrict => Some(lane_set_object_field::<H>),
         Op::SetThisField | Op::SetThisFieldStrict => Some(lane_set_this_field::<H>),
         Op::ToNumeric => Some(lane_to_numeric::<H>),

@@ -1263,6 +1263,8 @@ pub(crate) struct Vm<H> {
     to_fixed_atom: Atom,
     to_precision_atom: Atom,
     runtime_atoms: RuntimeAtoms,
+    /// `Vm::constructed_shape` answers; cleared by every collection.
+    constructed_shapes: [provenance::ConstructedShape; provenance::CONSTRUCTED_SHAPE_ENTRIES],
     method_caches: Vec<[MethodCache; 2]>,
     megamorphic_methods: Vec<MethodCacheSet>,
     /// A filter over the atoms method caches may name: bit `atom % u64::BITS` is set when an
