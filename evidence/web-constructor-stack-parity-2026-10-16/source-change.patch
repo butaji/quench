@@ -1,0 +1,1696 @@
+diff --git a/crates/quench-node-test/node-tests/test-callsite-type-construction.js b/crates/quench-node-test/node-tests/test-callsite-type-construction.js
+new file mode 100644
+index 000000000..a1e3a9d15
+--- /dev/null
++++ b/crates/quench-node-test/node-tests/test-callsite-type-construction.js
+@@ -0,0 +1,19 @@
++Error.prepareStackTrace=(_,frames)=>frames[0];
++function Capture(){return new Error().stack}
++function StrictCapture(){'use strict';return new Error().stack}
++function Other(){}
++const Unnamed=(0,function(){return new Error().stack});
++function Receiver(){}
++let calls=0;const proxy=new Proxy({},{get(){calls++;throw Error('proxy get')},getPrototypeOf(){calls++;throw Error('proxy prototype')}});
++const revoked=Proxy.revocable(()=>{},{});revoked.revoke();
++const tagged=Object.create(null);tagged[Symbol.toStringTag]='Tagged';
++const values=[undefined,null,{},[],1,'x',true,Symbol('s'),1n,Receiver,Array,Receiver.bind(null),(async()=>{}).bind(null),proxy,revoked.proxy,tagged];
++const out=[];
++function row(site){const type=site.getTypeName();return[site.getFunctionName(),type,type===null,site.isConstructor(),site.getFunction()===Capture,site.getFunction()===undefined,site.getThis()===undefined,site.isConstructor()&&site.toString().startsWith('new ')]}
++for(const fn of [Capture,StrictCapture])for(const value of values)out.push(row(fn.call(value)));
++for(const C of [Capture,StrictCapture,Unnamed])for(let i=0;i<4;i++){out.push(row(new C),row(Reflect.construct(C,[],Other)))}
++Object.defineProperty(Receiver,'name',{get(){calls++;throw Error('receiver name')}});out.push(row(Capture.call(Receiver)),calls);
++delete Receiver.name;Object.setPrototypeOf(Receiver,{name:'InheritedReceiver'});out.push(row(Capture.call(Receiver)),calls);
++const target=new Proxy(Other,{get(object,key,receiver){if(key==='prototype')out.push(row(new Error().stack));return Reflect.get(object,key,receiver)}});
++out.push(row(Reflect.construct(Capture,[],target)));
++console.log(JSON.stringify(out));
+diff --git a/crates/quench-node-test/node-tests/test-constructor-class-data.js b/crates/quench-node-test/node-tests/test-constructor-class-data.js
+new file mode 100644
+index 000000000..db613801c
+--- /dev/null
++++ b/crates/quench-node-test/node-tests/test-constructor-class-data.js
+@@ -0,0 +1,13 @@
++const get=require('internal/test/binding').internalBinding('util').getConstructorName;
++const factories=[['map iterator',()=>new Map().keys()],['set iterator',()=>new Set().values()],['array iterator',()=>[].values()],['string iterator',()=>''[Symbol.iterator]()],['generator',()=>(function* Named(){})()],['anonymous generator',()=>(function*(){})()],['async generator',()=>(async function* Named(){})()],['proxy',()=>new Proxy({}, {})],['callable proxy',()=>new Proxy(()=>{}, {})],['DataView',()=>new DataView(new ArrayBuffer(0))],['Promise',()=>new Promise(()=>{})]];
++const out=[];for(const [name,make]of factories){const value=make();out.push([name,get(value)]);Object.setPrototypeOf(value,null);out.push(get(value));Object.create(value);out.push(get(value));}
++console.log(JSON.stringify(out));
++{
++ Error.prepareStackTrace=(_,frames)=>frames[0].getFunctionName();let calls=0;
++ function Frame(){return new Error().stack}function Base(){};delete Frame.name;delete Base.name;
++ const names=[];
++ for(const prototype of [{name:'Inherited'},{name:1},{get name(){calls++;throw Error('getter')}},new Proxy({name:'Proxy'},{get(){calls++;throw Error('trap')}})]){
++  Object.setPrototypeOf(Frame,prototype);Object.setPrototypeOf(Base,prototype);names.push(Frame(),get(new Base),calls);
++ }
++ console.log(JSON.stringify(names));
++}
+diff --git a/crates/quench-node-test/node-tests/test-inferred-function-debug-names.js b/crates/quench-node-test/node-tests/test-inferred-function-debug-names.js
+new file mode 100644
+index 000000000..77c4c03ae
+--- /dev/null
++++ b/crates/quench-node-test/node-tests/test-inferred-function-debug-names.js
+@@ -0,0 +1,7 @@
++const vm=require('vm'),out=[];
++const actions=['','void f.name;','Object.getOwnPropertyDescriptor(f,"name");','Object.defineProperty(f,"name",{});','Object.defineProperty(f,"name",{enumerable:false});','Object.defineProperty(f,"name",{enumerable:true});','Object.defineProperty(f,"name",{writable:true});','Object.defineProperty(f,"name",{value:""});','Object.defineProperty(f,"name",{value:"Changed"});','Object.defineProperty(f,"name",{get(){calls++;throw Error("getter")}});','Object.defineProperty(f,"name",{configurable:false});','delete f.name;','f.extra=1;','Object.freeze(f);','Object.seal(f);','Object.preventExtensions(f);','Object.freeze(f);Object.defineProperty(f,"name",{value:""});'];
++for(const action of actions){out.push([action,vm.runInNewContext('Error.prepareStackTrace=(_,s)=>s[0].getFunctionName();let calls=0;const f=(0,function(){return new Error().stack});'+action+'const name=f(),d=Object.getOwnPropertyDescriptor(f,"name");[name,!!d,!!d&&"value"in d,d&&d.value,calls]')])}
++for(const expression of ['(0,function(){return new Error().stack})','true?function(){return new Error().stack}:null','null||function(){return new Error().stack}','null??function(){return new Error().stack}','(0,()=>new Error().stack)','(0,function Named(){return new Error().stack})']){
++ out.push(vm.runInNewContext('Error.prepareStackTrace=(_,s)=>s[0].getFunctionName();const selected='+expression+';[selected(),selected.name]'));
++}
++console.log(JSON.stringify(out));
+diff --git a/crates/quench-node-test/tests/child_entry.rs b/crates/quench-node-test/tests/child_entry.rs
+index 94ce808d5..a419a74da 100644
+--- a/crates/quench-node-test/tests/child_entry.rs
++++ b/crates/quench-node-test/tests/child_entry.rs
+@@ -9367,3 +9367,49 @@ console.log(JSON.stringify(out));
+ fn abort_listener_errors_are_reported_on_ticks_without_replacing_source_errors() {
+     compare_node_source_with_args(include_str!("../node-tests/test-abort-listener-errors.js"), &["--no-warnings", "--experimental-stream-iter"]);
+ }
++
++#[test]
++fn function_factory_constructor_names_follow_original_realms_and_ignore_public_links() {
++    compare_node_source_with_args(r#"
++const get=require('internal/test/binding').internalBinding('util').getConstructorName,out=[];
++const factories=[()=>function(){},()=>()=>{},()=>async function(){},()=>function*(){},()=>async function*(){}];
++for(const factory of factories){
++ const first=factory(),prototype=Object.getPrototypeOf(first),C=prototype.constructor;
++ const name=Object.getOwnPropertyDescriptor(C,'name'),descriptor=Object.getOwnPropertyDescriptor(prototype,'constructor');
++ Object.defineProperty(C,'name',{value:'Changed'+name.value});Object.defineProperty(prototype,'constructor',{value:null});
++ const second=factory();out.push(Object.getPrototypeOf(second)===prototype);
++ for(const value of [first,second]){Object.setPrototypeOf(value,null);out.push(get(value))}
++ Object.defineProperty(C,'name',{value:''});out.push(get(first));
++ let calls=0;Object.defineProperty(C,'name',{get(){calls++;throw Error('constructor name')}});out.push(get(first),calls);
++ Object.defineProperty(prototype,'constructor',descriptor);Object.defineProperty(C,'name',name);
++}
++const prototypes=factories.map(factory=>Object.getPrototypeOf(factory()));
++for(const name of ['AsyncFunction','GeneratorFunction','AsyncGeneratorFunction'])globalThis[name]={prototype:{fake:true}};
++out.push(factories.map((factory,index)=>Object.getPrototypeOf(factory())===prototypes[index]));
++for(const expression of ['function(){}','()=>{}','async function(){}','function*(){}','async function*(){}']){
++ const values=require('vm').runInNewContext(`const make=()=>(${expression}),first=make(),p=Object.getPrototypeOf(first),C=p.constructor;Object.defineProperty(C,'name',{value:'Foreign'+C.name});Object.defineProperty(p,'constructor',{value:null});const second=make(),same=Object.getPrototypeOf(second)===p;Object.setPrototypeOf(first,null);Object.setPrototypeOf(second,null);[first,second,same]`);
++ out.push(get(values[0]),get(values[1]),values[2]);
++}
++for(const value of [Array.prototype.map,Math.max,(()=>{}).bind(null),(async()=>{}).bind(null),(function*(){}).bind(null)]){
++ const prototype=Object.getPrototypeOf(value),C=prototype.constructor,name=Object.getOwnPropertyDescriptor(C,'name');
++ Object.setPrototypeOf(value,null);Object.defineProperty(C,'name',{value:'Changed'+name.value});
++ try{out.push(get(value))}finally{Object.defineProperty(C,'name',name);Object.setPrototypeOf(value,prototype)}
++}
++console.log(JSON.stringify(out));
++"#, &["--expose-internals","--no-warnings"]);
++}
++
++#[test]
++fn constructor_class_names_preserve_iterator_origins_proxy_kinds_and_prototype_roles() {
++    compare_node_source_with_args(include_str!("../node-tests/test-constructor-class-data.js"), &["--expose-internals", "--no-warnings"]);
++}
++
++#[test]
++fn callsite_type_names_and_constructor_flags_follow_actual_activation_and_receiver_identity() {
++    compare_node_source_with_args(include_str!("../node-tests/test-callsite-type-construction.js"), &[]);
++}
++
++#[test]
++fn inferred_debug_names_preserve_empty_public_names_and_native_name_property_state() {
++    compare_node_source_with_args(include_str!("../node-tests/test-inferred-function-debug-names.js"), &[]);
++}
+diff --git a/crates/quench-node/src/modules/util_shared_vm.rs b/crates/quench-node/src/modules/util_shared_vm.rs
+index 8e09fb8e9..e9e589d6a 100644
+--- a/crates/quench-node/src/modules/util_shared_vm.rs
++++ b/crates/quench-node/src/modules/util_shared_vm.rs
+@@ -808,14 +808,7 @@ fn build_key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
+         ("markPromiseAsHandled", "utilMarkPromiseHandled"),
+     ] {
+         let operation = crate::host::shared_vm::operation(operation);
+-        let function = if name == "getConstructorName" {
+-            let global = context.global_root()?;
+-            let symbol = context.startup_data_property_rooted(global, "Symbol")
+-                .ok_or_else(|| RootedError::host("original Symbol constructor missing"))?;
+-            let tag = context.startup_data_property_rooted(symbol, "toStringTag")
+-                .ok_or_else(|| RootedError::host("original toStringTag symbol missing"))?;
+-            context.host_function_named_with_data(operation, name, tag)?
+-        } else { context.host_function_named(operation, name)? };
++        let function = context.host_function_named(operation, name)?;
+         let key = context.string_rooted(name);
+         context.define_data_property_rooted(binding, key, function, true, true, true)?;
+     }
+@@ -942,102 +935,15 @@ pub(crate) fn preview_entries(
+     }
+ }
+ 
+-/// Read an own data property without inheriting descriptor-object getters.
+-fn inspection_data_property(
+-    context: &mut NativeContext<'_, NodeHost>, object: RootId, key: RootId,
+-) -> Result<Option<RootId>, RootedError> {
+-    let descriptor = context.own_property_descriptor_rooted(object, key)?;
+-    if context.is_object_rooted(descriptor)? {
+-        for key in context.own_keys_rooted(descriptor)? {
+-            if context.string_text(key)?.as_deref() == Some("value") {
+-                return context.get_property_rooted(descriptor, key).map(Some);
+-            }
+-        }
+-    }
+-    Ok(None)
+-}
+-
+-/// Native class fallback for inspection, without public constructor/tag getters.
+-/// User base-constructor provenance is captured by Core at actual allocation.
++/// Core owns creation identity, safe prototype lookup and intrinsic class display.
+ pub(crate) fn constructor_name(
+     context: &mut NativeContext<'_, NodeHost>,
+     _: RootId,
+     args: &[RootId],
+ ) -> Result<RootId, RootedError> {
+-    let absent = context.undefined();
+-    let value = args.first().copied().unwrap_or(absent);
+-    if let Some(name) = context.constructed_name_rooted(value)? {
+-        if context
+-            .string_text(name)?
+-            .is_some_and(|name| !name.is_empty() && name != "Object")
+-        {
+-            return Ok(name);
+-        }
+-    }
+-    if context.proxy_target_rooted(value)?.is_some() {
+-        return Ok(context.string_rooted("Object"));
+-    }
+-    let mut fallback = if context.is_array_rooted(value)? {
+-        "Array"
+-    } else {
+-        "Object"
+-    };
+-    for &(name, brand) in TYPE_PREDICATES {
+-        use BuiltinBrand as B;
+-        if matches!(
+-            brand,
+-            B::Proxy
+-                | B::AnyArrayBuffer
+-                | B::BoxedPrimitive
+-                | B::NativeError
+-                | B::GeneratorObject
+-                | B::MapIterator
+-                | B::SetIterator
+-                | B::ModuleNamespaceObject
+-        ) {
+-            continue;
+-        }
+-        if context.has_builtin_brand_rooted(value, brand)? {
+-            let name = name.strip_prefix("is").expect("type predicate prefix");
+-            let name = name.strip_suffix("Object").unwrap_or(name);
+-            fallback = name;
+-            break;
+-        }
+-    }
+-    if fallback == "Object" && context.is_callable_rooted(value)? {
+-        fallback = "Function";
+-    }
+-    if fallback == "Object" && context.has_builtin_brand_rooted(value, BuiltinBrand::NativeError)? {
+-        fallback = "Error";
+-    }
+-    let tag = context.host_function_data()?;
+-    let constructor_key = context.string_rooted("constructor");
+-    let mut current = value;
+-    while context.is_object_rooted(current)? {
+-        if context.proxy_target_rooted(current)?.is_some() {
+-            break;
+-        }
+-        if let Some(data) = inspection_data_property(context, current, tag)? {
+-            if context.string_text(data)?.is_some() {
+-                return Ok(data);
+-            }
+-        }
+-        if !context.strict_equal_rooted(current, value)? {
+-            if let Some(constructor) = inspection_data_property(context, current, constructor_key)?
+-            {
+-                if let Some(name) = context.original_function_name_rooted(constructor)? {
+-                    if context
+-                        .string_text(name)?
+-                        .is_some_and(|name| !name.is_empty() && name != "Object")
+-                    {
+-                        return Ok(name);
+-                    }
+-                }
+-            }
+-        }
+-        current = context.prototype_rooted(current)?;
+-    }
+-    Ok(context.string_rooted(fallback))
++    let value = args.first().copied().unwrap_or_else(|| context.undefined());
++    Ok(context.constructor_name_rooted(value)?
++        .unwrap_or_else(|| context.string_rooted("Object")))
+ }
+ 
+ /// External wrappers expose the stored address, without touching native memory.
+diff --git a/crates/quench-runtime/src/api_native.rs b/crates/quench-runtime/src/api_native.rs
+index 88798adfc..1a75bea9b 100644
+--- a/crates/quench-runtime/src/api_native.rs
++++ b/crates/quench-runtime/src/api_native.rs
+@@ -283,6 +283,13 @@ impl<'a, H: Host> NativeContext<'a, H> {
+         Ok(name.map(|name| self.string_units_rooted(&name.units().to_vec())))
+     }
+ 
++    /// Constructor display from creation identity and safe prototype data.
++    pub fn constructor_name_rooted(&mut self, root: RootId) -> Result<Option<RootId>, RootedError> {
++        let result = self.vm.embedding_constructor_name(root);
++        let name = result.map_err(|error| self.error(error))?;
++        Ok(name.map(|name| self.string_units_rooted(&name.units().to_vec())))
++    }
++
+     /// Snapshot collection entries without advancing iterators or invoking hooks.
+     pub fn collection_preview_rooted(&mut self, root: RootId) -> Result<Option<CollectionPreview>, RootedError> {
+         let result = self.vm.embedding_collection_preview(root);
+diff --git a/crates/quench-runtime/src/api_native_tests.rs b/crates/quench-runtime/src/api_native_tests.rs
+index 8343646f9..75fa20819 100644
+--- a/crates/quench-runtime/src/api_native_tests.rs
++++ b/crates/quench-runtime/src/api_native_tests.rs
+@@ -1463,3 +1463,64 @@ check();
+         Runtime::new(ProtectedStartupHost).execute(&program).unwrap();
+     }
+ }
++
++#[test]
++fn function_factories_preserve_original_intrinsic_constructor_and_prototype_identity() {
++    let source = r#"
++const factories=[()=>function(){},()=>()=>{},()=>async function(){},()=>function*(){},()=>async function*(){}];
++for(const factory of factories){
++ const first=factory(),prototype=Object.getPrototypeOf(first),C=prototype.constructor;
++ const name=Object.getOwnPropertyDescriptor(C,'name'),descriptor=Object.getOwnPropertyDescriptor(prototype,'constructor');
++ Object.defineProperty(C,'name',{value:'Changed'+name.value});
++ Object.defineProperty(prototype,'constructor',{value:null});
++ const second=factory();
++ if(Object.getPrototypeOf(second)!==prototype)throw Error('factory prototype follows public constructor');
++ for(const value of [first,second]){Object.setPrototypeOf(value,null);if(constructedName(value)!=='Changed'+name.value)throw Error('factory lost original constructor')}
++ Object.defineProperty(prototype,'constructor',descriptor);Object.defineProperty(C,'name',name);
++}
++const asyncPrototype=Object.getPrototypeOf(async function(){}),generatorPrototype=Object.getPrototypeOf(function*(){}),asyncGeneratorPrototype=Object.getPrototypeOf(async function*(){});
++globalThis.AsyncFunction={prototype:{fake:true}};globalThis.GeneratorFunction={prototype:{fake:true}};globalThis.AsyncGeneratorFunction={prototype:{fake:true}};
++if(Object.getPrototypeOf(async function(){})!==asyncPrototype||Object.getPrototypeOf(function*(){})!==generatorPrototype||Object.getPrototypeOf(async function*(){})!==asyncGeneratorPrototype)throw Error('factory follows mutable globals');
++"#;
++    for program in [
++        Engine::specialize_unspecialized(source, "function-factory-origins.js").unwrap(),
++        Engine::specialize(source, "function-factory-origins.js").unwrap(),
++    ] {
++        Runtime::new(ConstructorProvenanceHost::default())
++            .execute(&program)
++            .unwrap();
++    }
++}
++
++#[test]
++fn completed_generator_creation_origin_retains_then_releases_its_function_identity() {
++    let source = r#"
++var state;
++function createIterator(){function* Creator(){};rememberConstructor(Creator);const value=Creator();state={value,next:value.next};Object.setPrototypeOf(value,null);Object.defineProperty(Creator,'name',{value:'Changed'})}
++function closeIterator(){state.next.call(state.value);if(constructedName(state.value)!=='Changed')throw Error('lost completed generator origin')}
++function dropIterator(){state=null}
++"#;
++    for program in [
++        Engine::specialize_unspecialized(source, "generator-origin-roots.js").unwrap(),
++        Engine::specialize(source, "generator-origin-roots.js").unwrap(),
++    ] {
++        let mut runtime = Runtime::new(ConstructorProvenanceHost::default());
++        runtime.execute(&program).unwrap();
++        for (operation, alive) in [
++            ("createIterator", true),
++            ("closeIterator", true),
++            ("dropIterator", false),
++        ] {
++            let global = runtime.global_root().unwrap();
++            let key = runtime.string_rooted(operation);
++            let function = runtime.get_property_rooted(global, key).unwrap();
++            let result = runtime.call_rooted(function, global, &[]).unwrap();
++            for root in [result, function, key, global] {
++                assert!(runtime.release_root(root));
++            }
++            runtime.collect(&program).unwrap();
++            let weak = runtime.host_mut().constructor.unwrap();
++            assert_eq!(runtime.host_weak_root_is_live(weak), alive, "{operation}");
++        }
++    }
++}
+diff --git a/crates/quench-runtime/src/bytecode.rs b/crates/quench-runtime/src/bytecode.rs
+index f78e8e277..af7409995 100644
+--- a/crates/quench-runtime/src/bytecode.rs
++++ b/crates/quench-runtime/src/bytecode.rs
+@@ -820,6 +820,7 @@ opcodes!(
+ 
+     WasmAtomicAccess => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmAtomicOperator, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
+     WasmAtomicFence => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning Unused, @ Register, @ fields(Unused, Unused, Unused),
++    SetFunctionDebugName => Effect::WRITES_HEAP; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Unused, Unused),
+ 
+ );
+ 
+@@ -2088,7 +2089,7 @@ impl ResidualProgram {
+         Some(position)
+     }
+ 
+-    pub const FORMAT_VERSION: u8 = 89;
++    pub const FORMAT_VERSION: u8 = 90;
+     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
+         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
+         const FORMAT_VERSION_SHIFT: u32 = 16;
+diff --git a/crates/quench-runtime/src/compile/ast/call.rs b/crates/quench-runtime/src/compile/ast/call.rs
+index d811dfb94..5ea52c583 100644
+--- a/crates/quench-runtime/src/compile/ast/call.rs
++++ b/crates/quench-runtime/src/compile/ast/call.rs
+@@ -108,37 +108,37 @@ impl FunctionCompiler<'_, '_> {
+         self.literal(Constant::Undefined)
+     }
+ 
+-    pub(super) fn logical(&mut self, value: &LogicalExpression<'_>) -> Register {
++    pub(super) fn logical(&mut self, value: &LogicalExpression<'_>, debug_name: Option<Atom>) -> Register {
+         if value.operator.is_coalesce() {
+-            return self.coalesce(value);
++            return self.coalesce(value, debug_name);
+         }
+-        let left = self.expression(&value.left);
++        let left = self.expression_with_debug_name(&value.left, debug_name);
+         let dst = self.reg();
+         self.emit(Op::Move, dst, left, 0, 0);
+         let jump = self.emit(Op::JumpFalse, left, 0, 0, 0);
+         if value.operator.is_or() {
+             let skip = self.emit(Op::Jump, 0, 0, 0, 0);
+             self.patch(jump);
+-            let right = self.expression(&value.right);
++            let right = self.expression_with_debug_name(&value.right, debug_name);
+             self.emit(Op::Move, dst, right, 0, 0);
+             self.patch(skip);
+         } else {
+-            let right = self.expression(&value.right);
++            let right = self.expression_with_debug_name(&value.right, debug_name);
+             self.emit(Op::Move, dst, right, 0, 0);
+             self.patch(jump);
+         }
+         dst
+     }
+ 
+-    pub(super) fn conditional(&mut self, value: &ConditionalExpression<'_>) -> Register {
++    pub(super) fn conditional(&mut self, value: &ConditionalExpression<'_>, debug_name: Option<Atom>) -> Register {
+         let dst = self.reg();
+         let test = self.expression(&value.test);
+         let other = self.emit(Op::JumpFalse, test, 0, 0, 0);
+-        let yes = self.expression(&value.consequent);
++        let yes = self.expression_with_debug_name(&value.consequent, debug_name);
+         self.emit(Op::Move, dst, yes, 0, 0);
+         let end = self.emit(Op::Jump, 0, 0, 0, 0);
+         self.patch(other);
+-        let no = self.expression(&value.alternate);
++        let no = self.expression_with_debug_name(&value.alternate, debug_name);
+         self.emit(Op::Move, dst, no, 0, 0);
+         self.patch(end);
+         dst
+diff --git a/crates/quench-runtime/src/compile/ast/expression.rs b/crates/quench-runtime/src/compile/ast/expression.rs
+index 55e0d3632..75b9866c4 100644
+--- a/crates/quench-runtime/src/compile/ast/expression.rs
++++ b/crates/quench-runtime/src/compile/ast/expression.rs
+@@ -5,16 +5,20 @@ use super::*;
+ const ASSIGNMENT_TO_CONSTANT: &str = "Assignment to constant variable.";
+ impl FunctionCompiler<'_, '_> {
+     pub(crate) fn expression(&mut self, expression: &Expression<'_>) -> Register {
++        self.expression_with_debug_name(expression, None)
++    }
++
++    pub(crate) fn expression_with_debug_name(&mut self, expression: &Expression<'_>, debug_name: Option<Atom>) -> Register {
+         let position = self.owner.source_position(expression.span().start);
+         let previous = self
+             .current_source_position
+             .replace((position.line, position.column));
+-        let result = self.expression_at_current_position(expression);
++        let result = self.expression_at_current_position(expression, debug_name);
+         self.current_source_position = previous;
+         result
+     }
+ 
+-    fn expression_at_current_position(&mut self, expression: &Expression<'_>) -> Register {
++    fn expression_at_current_position(&mut self, expression: &Expression<'_>, debug_name: Option<Atom>) -> Register {
+         // Only a direct read or update of a local consumes the last-operand mark; every
+         // nested operand starts unmarked.
+         let last_operand = std::mem::take(&mut self.last_operand);
+@@ -45,8 +49,16 @@ impl FunctionCompiler<'_, '_> {
+                 result
+             }
+             Expression::Super(_) => self.super_base(),
+-            Expression::FunctionExpression(value) => self.function_expression(value),
+-            Expression::ArrowFunctionExpression(value) => self.arrow_function_expression(value),
++            Expression::FunctionExpression(value) => {
++                let function = self.function_expression(value);
++                if value.id.is_none() { if let Some(name) = debug_name { self.emit(Op::SetFunctionDebugName, function, 0, 0, name); } }
++                function
++            },
++            Expression::ArrowFunctionExpression(value) => {
++                let function = self.arrow_function_expression(value);
++                if let Some(name) = debug_name { self.emit(Op::SetFunctionDebugName, function, 0, 0, name); }
++                function
++            },
+             Expression::ClassExpression(value) => self.class_expression(value),
+             Expression::ArrayExpression(value) => self.array_expression(value),
+             Expression::ObjectExpression(value) => self.object_expression(value),
+@@ -71,8 +83,8 @@ impl FunctionCompiler<'_, '_> {
+                 result
+             }
+             Expression::UnaryExpression(value) => self.unary(value),
+-            Expression::LogicalExpression(value) => self.logical(value),
+-            Expression::ConditionalExpression(value) => self.conditional(value),
++            Expression::LogicalExpression(value) => self.logical(value, debug_name),
++            Expression::ConditionalExpression(value) => self.conditional(value, debug_name),
+             Expression::CallExpression(value) if value.optional => self.optional_call(value),
+             Expression::CallExpression(value) => self.call(value),
+             Expression::ImportExpression(value) => {
+@@ -110,8 +122,8 @@ impl FunctionCompiler<'_, '_> {
+                 result
+             }
+             Expression::NewExpression(value) => self.construct(value),
+-            Expression::SequenceExpression(value) => self.sequence_expression(value),
+-            Expression::ParenthesizedExpression(value) => self.expression(&value.expression),
++            Expression::SequenceExpression(value) => self.sequence_expression(value, debug_name),
++            Expression::ParenthesizedExpression(value) => self.expression_with_debug_name(&value.expression, debug_name),
+             Expression::AwaitExpression(value) if self.async_function => {
+                 let source = self.expression(&value.argument);
+                 let destination = self.reg();
+diff --git a/crates/quench-runtime/src/compile/ast/statement.rs b/crates/quench-runtime/src/compile/ast/statement.rs
+index 29237e5b9..9ba293f69 100644
+--- a/crates/quench-runtime/src/compile/ast/statement.rs
++++ b/crates/quench-runtime/src/compile/ast/statement.rs
+@@ -396,7 +396,12 @@ impl FunctionCompiler<'_, '_> {
+             {
+                 self.named_class_expression(class, identifier.name.as_str())
+             }
+-            _ => self.expression(initializer),
++            _ => {
++                let debug_name = if !is_anonymous_function_definition(initializer) {
++                    if let BindingPattern::BindingIdentifier(identifier) = binding { Some(self.owner.atom(identifier.name.as_str())) } else { None }
++                } else { None };
++                self.expression_with_debug_name(initializer, debug_name)
++            },
+         };
+         if is_anonymous_function_definition(initializer)
+             && let BindingPattern::BindingIdentifier(identifier) = binding
+diff --git a/crates/quench-runtime/src/compile/sequence.rs b/crates/quench-runtime/src/compile/sequence.rs
+index 70ca70bd1..ad9e00bac 100644
+--- a/crates/quench-runtime/src/compile/sequence.rs
++++ b/crates/quench-runtime/src/compile/sequence.rs
+@@ -1,8 +1,8 @@
+ use super::*;
+ 
+ impl FunctionCompiler<'_, '_> {
+-    pub(super) fn coalesce(&mut self, value: &oxc_ast::ast::LogicalExpression<'_>) -> Register {
+-        let left = self.expression(&value.left);
++    pub(super) fn coalesce(&mut self, value: &oxc_ast::ast::LogicalExpression<'_>, debug_name: Option<Atom>) -> Register {
++        let left = self.expression_with_debug_name(&value.left, debug_name);
+         let result = self.literal(Constant::Undefined);
+         self.emit(Op::Move, result, left, 0, 0);
+ 
+@@ -25,7 +25,7 @@ impl FunctionCompiler<'_, '_> {
+         let use_left = self.emit(Op::JumpFalse, is_undefined, 0, 0, 0);
+ 
+         self.patch_instruction(use_right_from_null, self.code.len() as u32);
+-        let right = self.expression(&value.right);
++        let right = self.expression_with_debug_name(&value.right, debug_name);
+         self.emit(Op::Move, result, right, 0, 0);
+         self.patch_instruction(use_left, self.code.len() as u32);
+         result
+@@ -34,10 +34,11 @@ impl FunctionCompiler<'_, '_> {
+     pub(super) fn sequence_expression(
+         &mut self,
+         sequence: &oxc_ast::ast::SequenceExpression<'_>,
++        debug_name: Option<Atom>,
+     ) -> Register {
+         let mut result = self.literal(Constant::Undefined);
+-        for expression in &sequence.expressions {
+-            result = self.expression(expression);
++        for (index, expression) in sequence.expressions.iter().enumerate() {
++            result = self.expression_with_debug_name(expression, if index + 1 == sequence.expressions.len() { debug_name } else { None });
+         }
+         result
+     }
+diff --git a/crates/quench-runtime/src/heap/cell.rs b/crates/quench-runtime/src/heap/cell.rs
+index a97418638..01b529ffb 100644
+--- a/crates/quench-runtime/src/heap/cell.rs
++++ b/crates/quench-runtime/src/heap/cell.rs
+@@ -1234,6 +1234,7 @@ pub(crate) struct CallSiteRecord {
+     pub(crate) name: CallSiteName,
+     pub(crate) this_value: Value,
+     pub(crate) hide_identity: bool,
++    pub(crate) is_constructor: bool,
+ }
+ 
+ impl CallSiteRecord {
+diff --git a/crates/quench-runtime/src/vm.rs b/crates/quench-runtime/src/vm.rs
+index 35945abfd..5326e6e4b 100644
+--- a/crates/quench-runtime/src/vm.rs
++++ b/crates/quench-runtime/src/vm.rs
+@@ -23,7 +23,7 @@ use crate::heap::{
+ use crate::host::{CapabilityId, Host, HostContext};
+ use crate::profile::Profile;
+ use crate::value::number_to_u32;
+-use activation::CallContext;
++use activation::{CallContext, ConstructionTarget};
+ use atomics::Test262AgentState;
+ use rustc_hash::{FxHashMap, FxHashSet};
+ use std::cell::OnceCell;
+@@ -79,6 +79,7 @@ mod dispatch_wasm;
+ mod dynamic_strings;
+ mod embedding;
+ mod provenance;
++mod inspection;
+ mod environment;
+ mod equality;
+ mod error;
+@@ -461,6 +462,8 @@ struct RealmIntrinsics {
+     arguments_objects: FxHashMap<(Value, bool), ArgumentsObjectTemplate>,
+     iterator_prototypes: FxHashMap<Value, IteratorRealmPrototypes>,
+     builtin_prototypes: FxHashMap<(Value, Native), Value>,
++    /// Original per-realm constructors for function factory allocations.
++    function_constructors: FxHashMap<(Value, Native), Value>,
+     promise_constructors: FxHashMap<Value, Value>,
+     error_intrinsics: FxHashMap<Value, ErrorRealmIntrinsics>,
+     regexp_intrinsics: FxHashMap<Value, regexp::RegExpIntrinsics>,
+@@ -695,6 +698,7 @@ struct StringConcatCache {
+ enum ShapeTransition {
+     Root,
+     FunctionName { name: Atom },
++    FunctionNameReconfigured,
+     Constructed { constructor: Value, new_target_is_base: bool },
+     Add {
+         key: property_key::PropertyKey,
+@@ -717,6 +721,7 @@ enum ShapeTransition {
+ #[derive(Clone, Copy, PartialEq, Eq, Hash)]
+ enum ShapeTransitionKey {
+     FunctionName(Atom),
++    FunctionNameReconfigured,
+     Constructed(Value, bool),
+     AddString(Atom, DataAttributes),
+     /// A descriptor without accessor functions (`ShapeAttributes::accessors` is
+@@ -826,13 +831,14 @@ impl ShapeTransition {
+         match self {
+             Self::Add { key, .. } => key.symbol_value().is_some(),
+             Self::Descriptor { attributes, .. } => attributes.accessors != NO_SHAPE_ACCESSORS,
+-            Self::Root | Self::FunctionName { .. } | Self::Constructed { .. } | Self::Delete { .. } | Self::Vacant | Self::Dictionary { .. } => false,
++            Self::Root | Self::FunctionName { .. } | Self::FunctionNameReconfigured | Self::Constructed { .. } | Self::Delete { .. } | Self::Vacant | Self::Dictionary { .. } => false,
+         }
+     }
+ 
+     fn cache_key(self) -> Option<ShapeTransitionKey> {
+         match self {
+             Self::FunctionName { name } => Some(ShapeTransitionKey::FunctionName(name)),
++            Self::FunctionNameReconfigured => Some(ShapeTransitionKey::FunctionNameReconfigured),
+             Self::Constructed { constructor, new_target_is_base } => Some(ShapeTransitionKey::Constructed(constructor, new_target_is_base)),
+             Self::Add {
+                 key: PropertyKey::String(atom),
+@@ -1233,7 +1239,7 @@ pub(crate) struct Vm<H> {
+     parameter_eval: bool,
+     eval_script_context: bool,
+     deferred_dependency_batch: bool,
+-    construct_target: Option<Value>,
++    construct_target: Option<ConstructionTarget>,
+     random_state: u64,
+ }
+ 
+@@ -2207,7 +2213,7 @@ impl<H: Host> Vm<H> {
+                     .functions
+                     .get(id as usize)
+                     .is_some_and(|function| function.is_class_constructor)
+-                    && self.construct_target.is_none()
++                    && !self.construct_target.is_some_and(|target| target.callee == callee)
+                 {
+                     Err(self.type_error(p, "class constructor cannot be called without new".into()))
+                 } else {
+diff --git a/crates/quench-runtime/src/vm/activation.rs b/crates/quench-runtime/src/vm/activation.rs
+index 049d5f8b8..f6205dbca 100644
+--- a/crates/quench-runtime/src/vm/activation.rs
++++ b/crates/quench-runtime/src/vm/activation.rs
+@@ -37,9 +37,28 @@ pub(crate) enum CallContext {
+     DirectEval(Value),
+     IndirectEval(Value),
+     Internal,
++    Constructor(Value),
++}
++
++/// A pending constructor entry belongs only to its actual callee.
++#[derive(Clone, Copy)]
++pub(super) struct ConstructionTarget {
++    pub(super) callee: Value,
++    pub(super) new_target: Value,
+ }
+ 
+ impl CallContext {
++    pub(super) fn constructed(self) -> Self {
++        match self {
++            Self::Function(value) | Self::Constructor(value) => Self::Constructor(value),
++            other => other,
++        }
++    }
++
++    pub(super) fn is_constructor(self) -> bool {
++        matches!(self, Self::Constructor(_))
++    }
++
+     pub(super) fn user_function(id: u32, callable: Value) -> Self {
+         if id == super::ROOT_FUNCTION_ID {
+             Self::Internal
+@@ -50,7 +69,7 @@ impl CallContext {
+ 
+     pub(super) fn callee(self) -> Option<Value> {
+         match self {
+-            Self::Function(value) | Self::DirectEval(value) | Self::IndirectEval(value) => {
++            Self::Function(value) | Self::Constructor(value) | Self::DirectEval(value) | Self::IndirectEval(value) => {
+                 Some(value)
+             }
+             Self::Internal => None,
+@@ -59,7 +78,7 @@ impl CallContext {
+ 
+     pub(super) fn callable(self) -> Option<Value> {
+         match self {
+-            Self::Function(value) => Some(value),
++            Self::Function(value) | Self::Constructor(value) => Some(value),
+             Self::DirectEval(_) | Self::IndirectEval(_) | Self::Internal => None,
+         }
+     }
+diff --git a/crates/quench-runtime/src/vm/construction.rs b/crates/quench-runtime/src/vm/construction.rs
+index bcef7cd84..b8dd092fe 100644
+--- a/crates/quench-runtime/src/vm/construction.rs
++++ b/crates/quench-runtime/src/vm/construction.rs
+@@ -281,27 +281,13 @@ impl<H: Host> Vm<H> {
+         }
+         let has_instance_prototype = function_plan.constructible || function_plan.is_generator;
+         let prototype = if has_instance_prototype {
+-            let generator_prototype_parent = if function_plan.is_async && function_plan.is_generator
+-            {
+-                let constructor_atom = self.intern_atom("AsyncGeneratorFunction");
+-                let prototype_atom = self.prototype_atom();
+-                self.own_property(realm, constructor_atom)
+-                    .and_then(|constructor| self.own_property(constructor, prototype_atom))
+-                    .and_then(|function_prototype| {
+-                        self.own_property(function_prototype, prototype_atom)
+-                    })
+-                    .filter(|prototype| self.object_data(*prototype).is_some())
+-                    .unwrap_or(self.async_generator_proto)
+-            } else if function_plan.is_generator {
+-                let constructor_atom = self.intern_atom("GeneratorFunction");
+-                let prototype_atom = self.prototype_atom();
+-                self.own_property(realm, constructor_atom)
+-                    .and_then(|constructor| self.own_property(constructor, prototype_atom))
+-                    .and_then(|function_prototype| {
+-                        self.own_property(function_prototype, prototype_atom)
+-                    })
+-                    .filter(|prototype| self.object_data(*prototype).is_some())
+-                    .unwrap_or(self.generator_proto)
++            let generator_prototype_parent = if function_plan.is_generator {
++                let prototypes = &self.realm.intrinsics.iterator_prototypes[&realm];
++                if function_plan.is_async {
++                    prototypes.async_generator
++                } else {
++                    prototypes.generator
++                }
+             } else {
+                 self.realm_object_prototype(realm)
+             };
+@@ -312,31 +298,13 @@ impl<H: Host> Vm<H> {
+         } else {
+             None
+         };
+-        let function_prototype_atom = self.prototype_atom();
+         let intrinsic = match (function_plan.is_async, function_plan.is_generator) {
+-            (true, true) => Some(Native::AsyncGeneratorFunction),
+-            (false, true) => Some(Native::GeneratorFunction),
+-            (true, false) => Some(Native::AsyncFunction),
+-            (false, false) => None,
+-        };
+-        let function_object_prototype = if let Some(intrinsic) = intrinsic {
+-            let name = match intrinsic {
+-                Native::AsyncFunction => "AsyncFunction",
+-                Native::GeneratorFunction => "GeneratorFunction",
+-                Native::AsyncGeneratorFunction => "AsyncGeneratorFunction",
+-                _ => unreachable!(),
+-            };
+-            let name = self.intern_atom(name);
+-            self.own_property(realm, name)
+-                .and_then(|constructor| self.own_property(constructor, function_prototype_atom))
+-                .filter(|prototype| self.object_data(*prototype).is_some())
+-                .or_else(|| {
+-                    self.own_property(self.native_value(intrinsic), function_prototype_atom)
+-                })
+-                .unwrap_or(self.function_proto)
+-        } else {
+-            self.realm_function_prototype(realm)
++            (true, true) => Native::AsyncGeneratorFunction,
++            (false, true) => Native::GeneratorFunction,
++            (true, false) => Native::AsyncFunction,
++            (false, false) => Native::Function,
+         };
++        let function_object_prototype = self.realm.intrinsics.builtin_prototypes[&(realm, intrinsic)];
+         let function = self.heap.alloc(Cell::Function {
+             object: Box::new(crate::heap::FunctionObject {
+                 object: Self::empty_object(function_object_prototype),
+@@ -433,22 +401,10 @@ impl<H: Host> Vm<H> {
+                 },
+             )?;
+         }
+-        let constructor = match (function_plan.is_async, function_plan.is_generator) {
+-            (true, true) => self
+-                .realm_constructor(realm, "AsyncGeneratorFunction")
+-                .unwrap_or_else(|| self.native_value(Native::AsyncGeneratorFunction)),
+-            (true, false) => self
+-                .realm_constructor(realm, "AsyncFunction")
+-                .unwrap_or_else(|| self.native_value(Native::AsyncFunction)),
+-            (false, true) => self
+-                .realm_constructor(realm, "GeneratorFunction")
+-                .unwrap_or_else(|| self.native_value(Native::GeneratorFunction)),
+-            (false, false) => function,
+-        };
+         if !function_plan.is_generator
+             && let Some(prototype) = prototype
+         {
+-            self.set_builtin_value_named(prototype, "constructor", constructor)?;
++            self.set_builtin_value_named(prototype, "constructor", function)?;
+             recorded.prototype =
+                 Some((self.closure_shape(function), self.closure_shape(prototype)));
+         }
+@@ -474,11 +430,6 @@ impl<H: Host> Vm<H> {
+             .shape()
+     }
+ 
+-    fn realm_constructor(&mut self, realm: Value, name: &str) -> Option<Value> {
+-        let atom = self.intern_atom(name);
+-        self.own_property(realm, atom)
+-    }
+-
+     pub(super) fn realm_object_prototype(&self, realm: Value) -> Value {
+         self.realm
+             .intrinsics
+@@ -647,7 +598,7 @@ impl<H: Host> Vm<H> {
+                     vm.heap.alloc(Cell::Object(object))
+                 };
+                 let previous_target = vm.construct_target;
+-                vm.construct_target = Some(new_target);
++                vm.construct_target = Some(ConstructionTarget { callee, new_target });
+                 let result = if derived_constructor {
+                     vm.call_user_for_construct(p, callee, args)
+                         .map(|(value, this)| (value, Some(this)))
+diff --git a/crates/quench-runtime/src/vm/dispatch.rs b/crates/quench-runtime/src/vm/dispatch.rs
+index c4c8d0196..a465a8bf1 100644
+--- a/crates/quench-runtime/src/vm/dispatch.rs
++++ b/crates/quench-runtime/src/vm/dispatch.rs
+@@ -826,6 +826,9 @@ impl<H: Host> Vm<H> {
+                     .pop()
+                     .ok_or_else(|| JsError("iterator cleanup stack underflow".into()))?;
+             }
++            Op::SetFunctionDebugName => {
++                self.set_function_debug_name(self.read(f, i.register_a()), i.atom_index());
++            }
+             Op::SetFunctionName => {
+                 self.set_function_name(p, self.read(f, i.register_a()), i.atom_index())?;
+             }
+@@ -1434,7 +1437,7 @@ impl<H: Host> Vm<H> {
+                     if let Some((id, env, this)) = self.inline_construct_target(p, f, callee) {
+                         let arguments: *const [Value] = self.register_window(f, window);
+                         self.frames[f].pc = *pc;
+-                        self.construct_target = Some(callee);
++                        self.construct_target = Some(ConstructionTarget { callee, new_target: callee });
+                         // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
+                         let pushed = self.push_general_user_frame(
+                             p,
+diff --git a/crates/quench-runtime/src/vm/dispatch_fast.rs b/crates/quench-runtime/src/vm/dispatch_fast.rs
+index fa3f750a7..8b6a81a2a 100644
+--- a/crates/quench-runtime/src/vm/dispatch_fast.rs
++++ b/crates/quench-runtime/src/vm/dispatch_fast.rs
+@@ -3148,7 +3148,11 @@ impl<H: Host> Vm<H> {
+                         activation.function,
+                         script.env,
+                         script.this,
+-                        script.callee,
++                        if script.constructs {
++                            CallContext::user_function(activation.function, script.callee).constructed()
++                        } else {
++                            CallContext::user_function(activation.function, script.callee)
++                        },
+                         passed,
+                         window,
+                     );
+@@ -3450,6 +3454,9 @@ lane_handler! {
+ #[inline(always)]
+ fn lane_script_target<H: Host>(cx: *mut LaneContext<H>, callee: Value) -> Option<ScriptCallTarget> {
+     let vm = unsafe { vm(cx) };
++    if vm.construct_target.is_some_and(|target| target.callee == callee) {
++        return None;
++    }
+     vm.script_call_target(callee)
+         .or_else(|| vm.resolve_script_call_target(unsafe { &*(*cx).code }, callee))
+ }
+@@ -3500,8 +3507,6 @@ fn lane_activate<H: Host>(
+     let Ok(guard) = crate::stack::GuestCallGuard::enter() else {
+         return Err(exit(ip));
+     };
+-    // A `new.target` set for this activation has no observable binding to land in.
+-    vm.construct_target = None;
+     let stack = &mut vm.lane_stack;
+     let window = stack.values.len();
+     // SAFETY: capacity holds the window; each slot is written before the length covers
+@@ -3611,8 +3616,6 @@ fn lane_activate_keeping<H: Host>(
+     let Ok(guard) = crate::stack::GuestCallGuard::enter() else {
+         return Err(exit(ip));
+     };
+-    // A `new.target` set for this activation has no observable binding to land in.
+-    vm.construct_target = None;
+     let stack = &mut vm.lane_stack;
+     let window = stack.values.len();
+     // SAFETY: capacity holds the window; each slot is written before the length covers
+@@ -4129,9 +4132,8 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) ->
+     }
+ }
+ 
+-/// The handler table covers one opcode byte; the opcode set must fit in it.
++/// Dense fast handlers cover the first opcode byte; later opcodes use general dispatch.
+ const TABLE_SLOTS: usize = 1 << u8::BITS;
+-const _: () = assert!(Op::COUNT <= TABLE_SLOTS);
+ 
+ /// Opcodes per generated table row.
+ const TABLE_ROW: u16 = 16;
+@@ -4462,7 +4464,7 @@ fn derive_lane_view<H: Host>(
+                 && F64UnaryOperator::from_tag(instruction.imm())
+                     == Some(F64UnaryOperator::SquareRoot)
+             {
+-                tables[usize::from(backward_jump)][usize::from(acc)][op as usize].and_then(|_| {
++                tables[usize::from(backward_jump)][usize::from(acc)].get(op as usize).copied().flatten().and_then(|_| {
+                     LaneHandler::producer(match acc {
+                         ACC_NONE => lane_f64_sqrt::<H, ACC_NONE> as Handler,
+                         ACC_A => lane_f64_sqrt::<H, ACC_A> as Handler,
+@@ -4472,7 +4474,7 @@ fn derive_lane_view<H: Host>(
+                     })
+                 })
+             } else if let Some(arith) = float_arithmetic(op, instruction.imm()) {
+-                tables[usize::from(backward_jump)][usize::from(acc)][op as usize].and_then(|_| {
++                tables[usize::from(backward_jump)][usize::from(acc)].get(op as usize).copied().flatten().and_then(|_| {
+                     LaneHandler::producer(
+                         FloatArithmetic::<H>::HANDLERS[usize::from(op == Op::WasmF64Binary)]
+                             [usize::from(arith)][usize::from(acc)],
+@@ -4505,7 +4507,7 @@ fn derive_lane_view<H: Host>(
+                     produces: false,
+                 })
+             } else {
+-                tables[usize::from(backward_jump)][usize::from(acc)][op as usize]
++                tables[usize::from(backward_jump)][usize::from(acc)].get(op as usize).copied().flatten()
+             });
+             producer = selected
+                 .filter(|selected| selected.produces)
+@@ -4528,7 +4530,7 @@ fn derive_lane_view<H: Host>(
+     let selected: Vec<*const ()> = records.iter().map(|record| record.handler).collect();
+     // Whether a record's handler serves `op` with accumulator field `acc`.
+     let serves = |handler: *const (), op: Op, acc: u8| {
+-        tables[0][usize::from(acc)][op as usize]
++        tables[0][usize::from(acc)].get(op as usize).copied().flatten()
+             .is_some_and(|served| handler == served.handler as *const ())
+     };
+     // A table follows its selected entry's jump, so every entry must run in
+diff --git a/crates/quench-runtime/src/vm/dispatch_frame.rs b/crates/quench-runtime/src/vm/dispatch_frame.rs
+index e060197be..9581f78fa 100644
+--- a/crates/quench-runtime/src/vm/dispatch_frame.rs
++++ b/crates/quench-runtime/src/vm/dispatch_frame.rs
+@@ -109,6 +109,15 @@ impl<H: Host> Vm<H> {
+         }
+     }
+ 
++    fn take_construction_target(&mut self, context: CallContext) -> Option<Value> {
++        let target = self.construct_target?;
++        if context.callee() != Some(target.callee) {
++            return None;
++        }
++        self.construct_target = None;
++        Some(target.new_target)
++    }
++
+     #[inline(always)]
+     pub(super) fn initialize_activation_bindings(
+         &mut self,
+@@ -117,6 +126,9 @@ impl<H: Host> Vm<H> {
+         new_target: Value,
+         observable: bool,
+     ) {
++        if !arrow && !new_target.is_undefined() {
++            frame.context = frame.context.constructed();
++        }
+         if !observable {
+             // Nothing reads the implicit bindings, and the frame's own `this` is authoritative.
+             frame.fixed_this = !arrow && !frame.this.is_deleted();
+@@ -425,7 +437,9 @@ impl<H: Host> Vm<H> {
+                 .extend(self.captured_with_objects_for_function(parent, function, p.kind));
+         }
+         // A `new.target` set for this activation has no observable binding to land in.
+-        self.construct_target = None;
++        if self.take_construction_target(context).is_some() {
++            frame.context = frame.context.constructed();
++        }
+         frame.prepare_registers_for(function);
+         frame.place_plain_parameters(function, args);
+         self.frames.push(frame);
+@@ -442,13 +456,13 @@ impl<H: Host> Vm<H> {
+         id: u32,
+         env: Value,
+         this: Value,
+-        callee: Value,
++        context: CallContext,
+         passed: &[Value],
+         registers: &[Value],
+     ) {
+         // The receiver is already coerced and the body binds no `arguments` object, so
+         // activation cannot fail; the registers below replace what it placed in them.
+-        self.activate_user_frame(p, id, env, this, passed, CallContext::user_function(id, callee))
++        self.activate_user_frame(p, id, env, this, passed, context)
+             .expect("a frameless activation's frame activates without error");
+         let frame = self.frames.last_mut().expect("the activation pushed a frame");
+         frame.registers.copy_from_slice(registers);
+@@ -514,7 +528,7 @@ impl<H: Host> Vm<H> {
+         if id == super::ROOT_FUNCTION_ID {
+             self.bind_module_imports(&mut frame)?;
+         }
+-        let new_target = self.construct_target.take().unwrap_or(Value::UNDEFINED);
++        let new_target = self.take_construction_target(context).unwrap_or(Value::UNDEFINED);
+         self.initialize_activation_bindings(
+             &mut frame,
+             arrow,
+@@ -589,7 +603,7 @@ impl<H: Host> Vm<H> {
+         frame.with_base = self.with_stack.len();
+         self.with_stack
+             .extend(self.captured_with_objects_for_function(parent, function, p.kind));
+-        let new_target = self.construct_target.take().unwrap_or(Value::UNDEFINED);
++        let new_target = self.take_construction_target(context).unwrap_or(Value::UNDEFINED);
+         self.initialize_activation_bindings(
+             &mut frame,
+             arrow,
+diff --git a/crates/quench-runtime/src/vm/error.rs b/crates/quench-runtime/src/vm/error.rs
+index 64f6f1fd4..c5d60b95d 100644
+--- a/crates/quench-runtime/src/vm/error.rs
++++ b/crates/quench-runtime/src/vm/error.rs
+@@ -483,6 +483,34 @@ impl<H: Host> Vm<H> {
+         Ok(found.map(|name| self.atom_value(name)))
+     }
+ 
++    fn call_site_type_name(&mut self, record: &CallSiteRecord) -> Result<Option<JsString>, JsError> {
++        let receiver = record.this_value;
++        if record.is_constructor
++            || receiver.is_null()
++            || receiver.is_undefined()
++            || self
++                .realm
++                .intrinsics
++                .function_constructors
++                .contains_key(&(receiver, Native::Function))
++        {
++            return Ok(None);
++        }
++        let receiver = self.box_object(receiver)?;
++        if self.proxy_parts(receiver).is_some() {
++            return Ok(Some(JsString::from_str("Proxy")));
++        }
++        if matches!(self.heap.get(receiver), Some(Cell::Function { kind, .. }) if !matches!(kind, FunctionKind::Native(Native::FunctionBoundCall)))
++        {
++            if let Some(name) = self.debug_function_name(receiver) {
++                if !name.units().is_empty() {
++                    return Ok(Some(name));
++                }
++            }
++        }
++        Ok(self.constructor_name(receiver))
++    }
++
+     pub(super) fn error_capture_stack_trace(
+         &mut self,
+         program: &ResidualProgram,
+@@ -514,6 +542,7 @@ impl<H: Host> Vm<H> {
+                         name: CallSiteName::Static(JsString::from_str(name)),
+                         this_value: Value::UNDEFINED,
+                         hide_identity: true,
++                        is_constructor: false,
+                     });
+                 }
+             }
+@@ -557,6 +586,7 @@ impl<H: Host> Vm<H> {
+                 },
+                 name,
+                 hide_identity,
++                is_constructor: frame.context.is_constructor(),
+                 this_value: if frame.this == Value::DELETED {
+                     Value::UNDEFINED
+                 } else {
+@@ -572,6 +602,7 @@ impl<H: Host> Vm<H> {
+                     name: CallSiteName::Static(JsString::from_str(name)),
+                     this_value: Value::UNDEFINED,
+                     hide_identity: true,
++                    is_constructor: false,
+                 });
+             }
+         }
+@@ -668,8 +699,12 @@ impl<H: Host> Vm<H> {
+             CallSiteLocation::Native => "native".to_owned(),
+         };
+         let location = JsString::from_str(&location);
+-        let Some(name) = self.call_site_name(record) else { return Ok(location); };
++        let name = self.call_site_name(record).or_else(|| {
++            record.is_constructor.then(|| JsString::from_str("<anonymous>"))
++        });
++        let Some(name) = name else { return Ok(location); };
+         let mut text = super::wtf16::JsStringBuilder::default();
++        if record.is_constructor { text.append(&JsString::from_str("new ")); }
+         text.append(&name);
+         text.append(&JsString::from_str(" ("));
+         text.append(&location);
+@@ -731,7 +766,7 @@ impl<H: Host> Vm<H> {
+                 CallSiteLocation::Native => Value::NULL,
+             }),
+             Native::CallSiteIsEval => Ok(Value::FALSE),
+-            Native::CallSiteIsConstructor => Ok(Value::FALSE),
++            Native::CallSiteIsConstructor => Ok(if record.is_constructor { Value::TRUE } else { Value::FALSE }),
+             Native::CallSiteIsNative => {
+                 Ok(if matches!(record.location, CallSiteLocation::Native) {
+                     Value::TRUE
+@@ -739,7 +774,10 @@ impl<H: Host> Vm<H> {
+                     Value::FALSE
+                 })
+             }
+-            Native::CallSiteGetTypeName | Native::CallSiteGetEvalOrigin => Ok(Value::UNDEFINED),
++            Native::CallSiteGetTypeName => Ok(self.call_site_type_name(&record)?
++                .map(|name| self.heap.alloc(Cell::String(name)))
++                .unwrap_or(Value::NULL)),
++            Native::CallSiteGetEvalOrigin => Ok(Value::UNDEFINED),
+             Native::CallSiteToString => {
+                 let text = self.format_call_site(program, &record)?;
+                 Ok(self.heap.alloc(Cell::String(text)))
+@@ -1019,6 +1057,10 @@ impl<H: Host> Vm<H> {
+     ) -> Result<(), JsError> {
+         self.global(program, "globalThis", self.realm.globals)?;
+         let function = self.native_value(Native::Function);
++        self.realm
++            .intrinsics
++            .function_constructors
++            .insert((self.realm.globals, Native::Function), function);
+         self.set_builtin_value_named(function, "prototype", self.function_proto)?;
+         let prototype = self.prototype_atom();
+         self.set_property_attributes(
+@@ -1575,6 +1617,11 @@ impl<H: Host> Vm<H> {
+                 .builtin_prototypes
+                 .insert((global, native), prototype);
+             let constructor = self.native_with_realm(native, global, global);
++            self.set_builtin_function_name(constructor, name)?;
++            self.realm
++                .intrinsics
++                .function_constructors
++                .insert((global, native), constructor);
+             self.object_data_mut(constructor)
+                 .expect("realm dynamic function")
+                 .set_proto(function);
+@@ -1988,6 +2035,10 @@ impl<H: Host> Vm<H> {
+             .intrinsics
+             .builtin_prototypes
+             .insert((global, Native::Function), prototype);
++        self.realm
++            .intrinsics
++            .function_constructors
++            .insert((global, Native::Function), constructor);
+         self.set_builtin_value_named(constructor, "prototype", prototype)?;
+         let prototype_atom = self.prototype_atom();
+         self.set_property_attributes(
+diff --git a/crates/quench-runtime/src/vm/function.rs b/crates/quench-runtime/src/vm/function.rs
+index f9a6c3014..13ccf953e 100644
+--- a/crates/quench-runtime/src/vm/function.rs
++++ b/crates/quench-runtime/src/vm/function.rs
+@@ -92,7 +92,7 @@ impl<H: Host> Vm<H> {
+             match self.frames[index].context {
+                 CallContext::DirectEval(_) => continue,
+                 CallContext::Internal | CallContext::IndirectEval(_) => return Value::NULL,
+-                CallContext::Function(caller) => {
++                CallContext::Function(caller) | CallContext::Constructor(caller) => {
+                     let Some(Cell::Function {
+                         kind:
+                             FunctionKind::User(program_id, id)
+diff --git a/crates/quench-runtime/src/vm/gc.rs b/crates/quench-runtime/src/vm/gc.rs
+index 4990e1b1f..c0c8c3806 100644
+--- a/crates/quench-runtime/src/vm/gc.rs
++++ b/crates/quench-runtime/src/vm/gc.rs
+@@ -43,7 +43,7 @@ pub(super) fn active_shape_attributes(
+                 }
+             }
+             ShapeTransition::Vacant => entries.push(None),
+-            ShapeTransition::Root | ShapeTransition::FunctionName { .. } | ShapeTransition::Constructed { .. } | ShapeTransition::Dictionary { .. } => {}
++            ShapeTransition::Root | ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured | ShapeTransition::Constructed { .. } | ShapeTransition::Dictionary { .. } => {}
+         }
+     }
+     entries
+@@ -183,9 +183,10 @@ fn rebuild_shape(
+     transitions: &mut super::shape_transitions::ShapeTransitionIndex,
+ ) -> u32 {
+     let mut parent = 0;
+-    let (function_name, constructed_name) = provenance::shape_names(old_shapes, old_shape);
++    let (function_name, constructed_name, name_reconfigured) = provenance::shape_names(old_shapes, old_shape);
+     for transition in [
+         function_name.map(|name| ShapeTransition::FunctionName { name }),
++        name_reconfigured.then_some(ShapeTransition::FunctionNameReconfigured),
+         constructed_name.map(|(constructor, new_target_is_base)| ShapeTransition::Constructed { constructor, new_target_is_base }),
+     ].into_iter().flatten() {
+         parent = append_compacted_shape(shapes, transitions, parent, transition, 0);
+@@ -409,6 +410,13 @@ impl<H: Host> Vm<H> {
+                 .iter()
+                 .flat_map(|((realm, _), prototype)| [*realm, *prototype]),
+         );
++        roots.extend(
++            self.realm
++                .intrinsics
++                .function_constructors
++                .iter()
++                .flat_map(|((realm, _), constructor)| [*realm, *constructor]),
++        );
+         roots.extend(
+             self.realm
+                 .intrinsics
+@@ -995,14 +1003,16 @@ mod tests {
+         let mut transitions = crate::vm::shape_transitions::ShapeTransitionIndex::default();
+         let named = append_compacted_shape(&mut shapes, &mut transitions, 0,
+             ShapeTransition::FunctionName { name: 7 }, 0);
+-        let created = append_compacted_shape(&mut shapes, &mut transitions, named,
++        let reconfigured = append_compacted_shape(&mut shapes, &mut transitions, named,
++            ShapeTransition::FunctionNameReconfigured, 0);
++        let created = append_compacted_shape(&mut shapes, &mut transitions, reconfigured,
+             ShapeTransition::Constructed { constructor: Value::heap(17), new_target_is_base: false }, 0);
+         let with_field = append_compacted_shape(&mut shapes, &mut transitions, created,
+             ShapeTransition::Add { key: PropertyKey::string(9), slot: 0, attributes: DEFAULT_DATA_ATTRIBUTES }, 1);
+         let mut rebuilt = vec![Shape::root()];
+         let shape = rebuild_shape(&shapes, &[], with_field, &mut rebuilt,
+             &mut Vec::new(), &mut crate::vm::shape_transitions::ShapeTransitionIndex::default());
+-        assert_eq!(provenance::shape_names(&rebuilt, shape), (Some(7), Some((Value::heap(17), false))));
++        assert_eq!(provenance::shape_names(&rebuilt, shape), (Some(7), Some((Value::heap(17), false)), true));
+         assert_eq!(rebuilt[shape as usize].storage_len(), 1);
+         assert_eq!(super::active_shape_attributes(&rebuilt, shape).len(), 1);
+     }
+diff --git a/crates/quench-runtime/src/vm/generator.rs b/crates/quench-runtime/src/vm/generator.rs
+index 2282a565c..51143cd45 100644
+--- a/crates/quench-runtime/src/vm/generator.rs
++++ b/crates/quench-runtime/src/vm/generator.rs
+@@ -173,8 +173,12 @@ impl<H: Host> Vm<H> {
+             .and_then(|function| self.own_property(function, prototype_atom))
+             .filter(|prototype| self.object_data(*prototype).is_some())
+             .unwrap_or(default_prototype);
++        let mut object = Self::empty_object(generator_prototype);
++        if let Some(function) = function_object {
++            self.capture_constructed_name(&mut object, function, true);
++        }
+         let generator = self.heap.alloc(Cell::Iterator {
+-            object: Box::new(Self::empty_object(generator_prototype)),
++            object: Box::new(object),
+             source: Value::NULL,
+             kind: if function.is_async {
+                 IteratorKind::AsyncGenerator
+diff --git a/crates/quench-runtime/src/vm/inspection.rs b/crates/quench-runtime/src/vm/inspection.rs
+new file mode 100644
+index 000000000..8fc8a68c2
+--- /dev/null
++++ b/crates/quench-runtime/src/vm/inspection.rs
+@@ -0,0 +1,142 @@
++//! Getter-free constructor display, shared by host inspection and stack APIs.
++use super::object_get::DiagnosticProperty;
++use super::*;
++
++// Generic Object/empty names defer to prototype or intrinsic class lookup.
++fn constructor_name_is_specific(name: &JsString) -> bool {
++    !name.units().is_empty() && !name.units().iter().eq("Object".encode_utf16())
++}
++
++impl<H: Host> Vm<H> {
++    pub(super) fn constructor_name(&self, value: Value) -> Option<JsString> {
++        let object = self.object_data(value)?;
++        if self.proxy_parts(value).is_some() {
++            return Some(JsString::from_str(if self.is_function(value) {
++                "Function"
++            } else {
++                "Object"
++            }));
++        }
++        if let Some(name) = self.constructed_name(value) {
++            if constructor_name_is_specific(&name) {
++                return Some(name);
++            }
++        }
++        let tag = self.well_known_symbols.get("toStringTag").copied();
++        let constructor = self.lookup_atom("constructor");
++        let mut current = value;
++        while let Some(data) = self.object_data(current) {
++            if self.proxy_parts(current).is_some() {
++                break;
++            }
++            if let Some(tag) = tag {
++                if let DiagnosticProperty::Data(tag) =
++                    self.diagnostic_own_property(current, PropertyKey::symbol(tag))
++                {
++                    if let Some(Cell::String(name)) = self.heap.get(tag) {
++                        return Some(name.clone());
++                    }
++                }
++            }
++            if current != value {
++                if let Some(key) = constructor {
++                    if let DiagnosticProperty::Data(constructor) =
++                        self.diagnostic_own_property(current, PropertyKey::string(key))
++                    {
++                        if matches!(self.heap.get(constructor), Some(Cell::Function { kind, .. }) if !matches!(kind, FunctionKind::Native(Native::FunctionBoundCall)))
++                        {
++                            if let Some(name) = self
++                                .original_function_name(constructor)
++                                .map(|name| self.atom_value(name))
++                            {
++                                if constructor_name_is_specific(&name) {
++                                    return Some(name);
++                                }
++                            }
++                        }
++                    }
++                }
++            }
++            current = data.proto();
++        }
++        Some(JsString::from_str(self.intrinsic_class_name(value, object)))
++    }
++
++    fn intrinsic_class_name(&self, value: Value, object: &Object) -> &'static str {
++        if object.is_arguments_object() {
++            return "Arguments";
++        }
++        // Arrays may live in the direct-record arena rather than a legacy Cell.
++        if self.heap.array(value).is_some() {
++            return "Array";
++        }
++        if self.error_is_error(value) {
++            return "Error";
++        }
++        if let Some((brand, _)) = self.boxed_primitive_data(value) {
++            use crate::BuiltinBrand as B;
++            return match brand {
++                B::BooleanObject => "Boolean",
++                B::NumberObject => "Number",
++                B::StringObject => "String",
++                B::SymbolObject => "Symbol",
++                B::BigIntObject => "BigInt",
++                _ => unreachable!("boxed primitive brand"),
++            };
++        }
++        // Explicit construction/prototype roles have a physical-class fallback.
++        // Uncaptured intrinsic factories retain their existing class display;
++        // their mutable constructor identity is a separate provenance gap.
++        let uncaptured_factory = !object.was_used_as_prototype()
++            && super::provenance::shape_names(&self.shapes, object.shape())
++                .1
++                .is_none();
++        if self.realm.promise.records.contains_key(&value) {
++            return if uncaptured_factory {
++                "Promise"
++            } else {
++                "Object"
++            };
++        }
++        match self.heap.get(value) {
++            Some(Cell::ArrayBuffer { shared: true, .. }) => "SharedArrayBuffer",
++            Some(Cell::ArrayBuffer { .. }) => "ArrayBuffer",
++            Some(Cell::TypedArray { kind, .. }) => super::typed_array_install::TYPED_ARRAY_INSTALLS
++                .iter()
++                .find_map(|(installed, _, name)| (installed == kind).then_some(*name))
++                .expect("typed array intrinsic"),
++            Some(Cell::DataView { .. }) => {
++                if uncaptured_factory {
++                    "DataView"
++                } else {
++                    "Object"
++                }
++            }
++            Some(Cell::Map { .. }) => "Map",
++            Some(Cell::Set { .. }) => "Set",
++            Some(Cell::WeakMap { .. }) => "WeakMap",
++            Some(Cell::WeakSet { .. }) => "WeakSet",
++            Some(Cell::Date { .. }) => "Date",
++            Some(Cell::RegExp { .. }) => "RegExp",
++            Some(Cell::Function { .. }) => "Function",
++            Some(Cell::Iterator { kind, .. }) => match kind {
++                kind if kind.is_array_iterator() => "Array Iterator",
++                IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::MapEntries => {
++                    "Map Iterator"
++                }
++                IteratorKind::SetValues | IteratorKind::SetEntries => "Set Iterator",
++                IteratorKind::Generator | IteratorKind::AsyncGenerator => "Generator",
++                _ => "Object",
++            },
++            Some(Cell::Error(_)) => "Error",
++            _ => "Object",
++        }
++    }
++
++    pub(crate) fn embedding_constructor_name(
++        &self,
++        root: RootId,
++    ) -> Result<Option<JsString>, JsError> {
++        Ok(self.constructor_name(self.embedding_value(root)?))
++    }
++}
+diff --git a/crates/quench-runtime/src/vm/iterators.rs b/crates/quench-runtime/src/vm/iterators.rs
+index 3a2c49363..8e22222c4 100644
+--- a/crates/quench-runtime/src/vm/iterators.rs
++++ b/crates/quench-runtime/src/vm/iterators.rs
+@@ -225,6 +225,10 @@ impl<H: Host> Vm<H> {
+                 .builtin_prototypes
+                 .insert((self.realm.globals, native), prototype);
+             let constructor = self.native_value(native);
++            self.realm
++                .intrinsics
++                .function_constructors
++                .insert((self.realm.globals, native), constructor);
+             self.set_builtin_function_name(constructor, name)?;
+             let function = self.native_value(Native::Function);
+             self.object_data_mut(constructor)
+diff --git a/crates/quench-runtime/src/vm/object.rs b/crates/quench-runtime/src/vm/object.rs
+index df91aebc6..33d9c80d0 100644
+--- a/crates/quench-runtime/src/vm/object.rs
++++ b/crates/quench-runtime/src/vm/object.rs
+@@ -89,7 +89,7 @@ fn derive_shape_lookup_index(shapes: &[Shape], shape: u32) -> ShapeLookupIndex {
+                     attributes.insert(slot, value);
+                 }
+             }
+-            ShapeTransition::FunctionName { .. }
++            ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured
+             | ShapeTransition::Constructed { .. }
+             | ShapeTransition::Root
+             | ShapeTransition::Vacant
+@@ -196,7 +196,7 @@ impl<H: Host> Vm<H> {
+                     ..
+                 } if candidate == key => break Some(slot as usize),
+                 ShapeTransition::Delete { key: candidate, .. } if candidate == key => break None,
+-                ShapeTransition::FunctionName { .. }
++                ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured
+                 | ShapeTransition::Constructed { .. }
+                 | ShapeTransition::Root
+                 | ShapeTransition::Add { .. }
+@@ -268,7 +268,7 @@ impl<H: Host> Vm<H> {
+                 ShapeTransition::Delete {
+                     slot: candidate, ..
+                 } if candidate as usize == slot => return Some(DEFAULT_PROPERTY_ATTRIBUTES),
+-                ShapeTransition::FunctionName { .. }
++                ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured
+                 | ShapeTransition::Constructed { .. }
+                 | ShapeTransition::Root
+                 | ShapeTransition::Add { .. }
+@@ -2384,7 +2384,7 @@ impl<H: Host> Vm<H> {
+                 .checked_add(1)
+                 .filter(|length| u32::try_from(*length).is_ok())
+                 .expect("object property storage exhausted"),
+-            ShapeTransition::Descriptor { .. } | ShapeTransition::FunctionName { .. } | ShapeTransition::Constructed { .. } => storage_len,
++            ShapeTransition::Descriptor { .. } | ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured | ShapeTransition::Constructed { .. } => storage_len,
+             ShapeTransition::Root
+             | ShapeTransition::Delete { .. }
+             | ShapeTransition::Vacant
+@@ -2445,6 +2445,7 @@ impl<H: Host> Vm<H> {
+         self.object_data_mut(object)
+             .expect("object survived property deletion")
+             .set_shape(next_id);
++        self.reconfigure_function_name(object, key);
+         self.invalidate_method_caches_for_key(key);
+     }
+ }
+diff --git a/crates/quench-runtime/src/vm/object_get.rs b/crates/quench-runtime/src/vm/object_get.rs
+index 0ded06265..e865b48f2 100644
+--- a/crates/quench-runtime/src/vm/object_get.rs
++++ b/crates/quench-runtime/src/vm/object_get.rs
+@@ -2,21 +2,37 @@ use super::property_key::PropertyKey;
+ use super::*;
+ use crate::heap::PrivateBrand;
+ 
++pub(super) enum DiagnosticProperty {
++    Absent,
++    Data(Value),
++    Blocked,
++}
++
+ impl<H: Host> Vm<H> {
++    pub(super) fn diagnostic_own_property(&self, object: Value, key: PropertyKey) -> DiagnosticProperty {
++        if self.default_function_name_info(object, key)
++            || self.proxy_parts(object).is_some()
++            || self.property_attributes(object, key).is_some_and(|attributes| attributes.accessor)
++        {
++            return DiagnosticProperty::Blocked;
++        }
++        let value = match key {
++            PropertyKey::String(atom) => self.own_property(object, atom),
++            PropertyKey::Symbol(symbol) => self.symbol_property(object, symbol),
++            PropertyKey::Private(_) => return DiagnosticProperty::Blocked,
++        };
++        value.map_or(DiagnosticProperty::Absent, DiagnosticProperty::Data)
++    }
++
+     /// Inspect data properties for diagnostics without invoking accessors or Proxy traps.
+     pub(super) fn diagnostic_data_property(&self, mut object: Value, key: PropertyKey) -> Option<Value> {
+         loop {
+-            if self.proxy_parts(object).is_some() { return None; }
+             let data = self.object_data(object)?;
+-            if self.property_attributes(object, key).is_some_and(|attributes| attributes.accessor) {
+-                return None;
++            match self.diagnostic_own_property(object, key) {
++                DiagnosticProperty::Data(value) => return Some(value),
++                DiagnosticProperty::Blocked => return None,
++                DiagnosticProperty::Absent => {}
+             }
+-            let value = match key {
+-                PropertyKey::String(atom) => self.own_property(object, atom),
+-                PropertyKey::Symbol(symbol) => self.symbol_property(object, symbol),
+-                PropertyKey::Private(_) => None,
+-            };
+-            if value.is_some() { return value; }
+             object = data.proto();
+             if object.is_null() { return None; }
+         }
+diff --git a/crates/quench-runtime/src/vm/object_static.rs b/crates/quench-runtime/src/vm/object_static.rs
+index 38d600bc2..9439872e5 100644
+--- a/crates/quench-runtime/src/vm/object_static.rs
++++ b/crates/quench-runtime/src/vm/object_static.rs
+@@ -846,6 +846,9 @@ impl<H: Host> Vm<H> {
+         if !descriptor.compatible_with(current_record, extensible, |a, b| self.same_value(a, b)) {
+             return Ok(false);
+         }
++        if current.configurable && (descriptor_value.is_some() || descriptor_accessor || attributes != current) {
++            self.reconfigure_function_name(target, key);
++        }
+         if descriptor_accessor {
+             if is_new {
+                 self.set_shape_property(target, key, Value::UNDEFINED)?;
+diff --git a/crates/quench-runtime/src/vm/provenance.rs b/crates/quench-runtime/src/vm/provenance.rs
+index 0f7d34b69..5c64c1b28 100644
+--- a/crates/quench-runtime/src/vm/provenance.rs
++++ b/crates/quench-runtime/src/vm/provenance.rs
+@@ -1,13 +1,14 @@
+ //! Immutable creation names share the shape's lifetime and property transitions.
+ use super::*;
+ 
+-pub(super) fn shape_names(shapes: &[Shape], shape: u32) -> (Option<Atom>, Option<(Value, bool)>) {
+-    let (mut function, mut constructed) = (None, None);
++pub(super) fn shape_names(shapes: &[Shape], shape: u32) -> (Option<Atom>, Option<(Value, bool)>, bool) {
++    let (mut function, mut constructed, mut reconfigured) = (None, None, false);
+     let mut current = Some(shape);
+     while let Some(id) = current {
+         let shape = &shapes[id as usize];
+         match shape.transition {
+             ShapeTransition::FunctionName { name } if function.is_none() => function = Some(name),
++            ShapeTransition::FunctionNameReconfigured => reconfigured = true,
+             ShapeTransition::Constructed {
+                 constructor,
+                 new_target_is_base,
+@@ -16,7 +17,7 @@ pub(super) fn shape_names(shapes: &[Shape], shape: u32) -> (Option<Atom>, Option
+         }
+         current = shape.parent();
+     }
+-    (function, constructed)
++    (function, constructed, reconfigured)
+ }
+ 
+ impl<H: Host> Vm<H> {
+@@ -29,15 +30,37 @@ impl<H: Host> Vm<H> {
+         if self.original_function_name(function) == Some(name) {
+             return;
+         }
+-        let Some(object) = self.object_data(function) else {
+-            return;
+-        };
+-        let shape = object.shape();
+-        let shape =
+-            self.append_cached_shape_transition(shape, ShapeTransition::FunctionName { name });
+-        self.object_data_mut(function)
+-            .expect("function object")
+-            .set_shape(shape);
++        self.capture_function_name_atom(function, name);
++    }
++
++    fn capture_function_name_atom(&mut self, function: Value, name: Atom) {
++        let Some(shape) = self.object_data(function).map(Object::shape) else { return; };
++        let shape = self.append_cached_shape_transition(shape, ShapeTransition::FunctionName { name });
++        self.object_data_mut(function).expect("function object").set_shape(shape);
++    }
++
++    pub(super) fn set_function_debug_name(&mut self, function: Value, name: Atom) {
++        if matches!(self.heap.get(function), Some(Cell::Function { kind: FunctionKind::User(..) | FunctionKind::NumericUser(..), .. }))
++            && self.original_function_name(function).is_some_and(|original| self.atom_units_equal_str(original, ""))
++        {
++            self.capture_function_name_atom(function, name);
++        }
++    }
++
++    pub(super) fn default_function_name_info(&self, function: Value, key: PropertyKey) -> bool {
++        if !matches!(key, PropertyKey::String(atom) if self.atom_units_equal_str(atom, "name"))
++            || !matches!(self.heap.get(function), Some(Cell::Function { .. }))
++        { return false; }
++        let Some(object) = self.object_data(function) else { return false; };
++        let (name, _, reconfigured) = shape_names(&self.shapes, object.shape());
++        name.is_some() && !reconfigured && !object.was_used_as_prototype()
++    }
++
++    pub(super) fn reconfigure_function_name(&mut self, function: Value, key: PropertyKey) {
++        if !self.default_function_name_info(function, key) { return; }
++        let shape = self.object_data(function).expect("function object").shape();
++        let shape = self.append_cached_shape_transition(shape, ShapeTransition::FunctionNameReconfigured);
++        self.object_data_mut(function).expect("function object").set_shape(shape);
+     }
+ 
+     pub(super) fn original_function_name(&self, function: Value) -> Option<Atom> {
+@@ -51,25 +74,11 @@ impl<H: Host> Vm<H> {
+             self.atom_units_equal_str(atom, "name")
+         });
+         if let Some(name_key) = name_key {
+-            let mut current = function;
+-            while let Some(object) = self.object_data(current) {
+-                if matches!(self.heap.get(current), Some(Cell::Proxy { .. })) {
+-                    break;
+-                }
+-                if let Some(attributes) =
+-                    self.property_attributes(current, PropertyKey::string(name_key))
+-                {
+-                    if !attributes.accessor {
+-                        if let Some(Cell::String(name)) = self
+-                            .own_property(current, name_key)
+-                            .and_then(|value| self.heap.get(value))
+-                        {
+-                            return Some(name.clone());
+-                        }
+-                    }
+-                    break;
+-                }
+-                current = object.proto();
++            if let Some(Cell::String(name)) = self
++                .diagnostic_data_property(function, PropertyKey::string(name_key))
++                .and_then(|value| self.heap.get(value))
++            {
++                return Some(name.clone());
+             }
+         }
+         self.original_function_name(function)
+@@ -134,20 +143,71 @@ impl<H: Host> Vm<H> {
+             .map(|name| self.atom_value(name)))
+     }
+ 
++    /// A function's existing code kind and creation realm own its factory origin.
++    /// Bound functions have no such ordinary-function constructor projection.
++    fn function_factory_constructor(&self, value: Value) -> Option<Value> {
++        let Cell::Function { object, kind, .. } = self.heap.get(value)? else {
++            return None;
++        };
++        let intrinsic = match *kind {
++            FunctionKind::User(program, id) | FunctionKind::NumericUser(program, id) => {
++                let program = self.programs.get(program)?;
++                let function = program.functions.get(id as usize)?;
++                match (function.is_async, function.is_generator) {
++                    (true, true) => Native::AsyncGeneratorFunction,
++                    (false, true) => Native::GeneratorFunction,
++                    (true, false) => Native::AsyncFunction,
++                    (false, false) => Native::Function,
++                }
++            }
++            FunctionKind::Native(Native::FunctionBoundCall) => return None,
++            FunctionKind::Native(_) => Native::Function,
++        };
++        self.realm
++            .intrinsics
++            .function_constructors
++            .get(&(object.realm, intrinsic))
++            .copied()
++    }
++
+     pub(crate) fn embedding_constructed_name(
+         &self,
+         root: RootId,
+     ) -> Result<Option<JsString>, JsError> {
+-        let value = self.embedding_value(root)?;
+-        let Some(object) = self.object_data(value) else {
+-            return Ok(None);
+-        };
++        Ok(self.constructed_name(self.embedding_value(root)?))
++    }
++
++    pub(super) fn constructed_name(&self, value: Value) -> Option<JsString> {
++        let object = self.object_data(value)?;
+         if object.was_used_as_prototype() {
+-            return Ok(None);
++            return None;
++        }
++        if let Some((constructor, new_target_is_base)) = shape_names(&self.shapes, object.shape()).1 {
++            return new_target_is_base
++                .then(|| self.debug_function_name(constructor))
++                .flatten();
+         }
+-        Ok(shape_names(&self.shapes, object.shape())
+-            .1
+-            .filter(|(_, new_target_is_base)| *new_target_is_base)
+-            .and_then(|(constructor, _)| self.debug_function_name(constructor)))
++        if let Some(constructor) = self.function_factory_constructor(value) {
++            return self.debug_function_name(constructor);
++        }
++        // These iterator maps have inaccessible intrinsic constructors. Their
++        // immutable names derive from the existing iterator kind.
++        let name = match self.heap.get(value) {
++            Some(Cell::Iterator {
++                kind: IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::MapEntries,
++                ..
++            }) => "MapIterator",
++            Some(Cell::Iterator {
++                kind: IteratorKind::SetValues | IteratorKind::SetEntries,
++                ..
++            }) => "SetIterator",
++            Some(Cell::Iterator {
++                kind: IteratorKind::String,
++                ..
++            }) => "StringIterator",
++            _ => return None,
++        };
++        Some(JsString::from_str(name))
+     }
++
+ }
+diff --git a/docs/node-host-contracts.md b/docs/node-host-contracts.md
+index 81bbf04e9..0b82c79eb 100644
+--- a/docs/node-host-contracts.md
++++ b/docs/node-host-contracts.md
+@@ -15,9 +15,31 @@ receiver. Strict-frame visibility controls `getFunction` and `getThis`; function
+ debug names are derived when read. Method names inspect receiver descriptors
+ without executing accessors or Proxy traps, including inherited properties and
+ ambiguous enumerable aliases. CallSites share a realm-owned native prototype.
++Constructor flags come from actual activation entry, including materialized
++specialized frames. A pending `new.target` belongs to its callee, so reentrant
++ordinary callbacks cannot inherit a constructor entry. Receiver type names use
++the shared safe constructor-name operation; constructor/global receivers report
++null, and Proxy receivers do not invoke traps.
++
++Public function names and inferred debug names remain distinct. Variable
++initializer inference follows result-producing sequence, conditional and logical
++expressions without changing the public `.name`. A slotless shape transition
++records when the native name-property state is reconfigured; reading the name
++or inspecting its descriptor does not materialize it. Shape compaction preserves
++both creation names and that transition. The added metadata opcode requires
++bytecode format 90; opcodes outside the dense fast table use general dispatch.
++This covers those inference contexts, not every V8 debug-name inference rule.
++
+ This describes the implemented subset; complete Node stack APIs and eval frames
+ still require conformance work.
+ 
++Function factory origins derive from the existing function kind and creation
++realm. The realm owns its original constructors and intrinsic prototypes, so
++changing public globals or prototype `constructor` properties cannot redirect
++later factory allocations. Constructor debug names observe data properties and
++preserve original names when accessors would otherwise execute. Native and bound
++functions retain their distinct constructor-name behavior.
++
+ ## Event listeners
+ 
+ EventEmitter dispatch and listener inspection use the same `_events` records.
