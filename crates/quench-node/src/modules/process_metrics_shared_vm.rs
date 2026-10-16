@@ -196,6 +196,31 @@ pub(crate) fn rss(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId
 }
 pub(crate) fn install(c: &mut Context<'_>) -> Result<(), RootedError> {
     let native = binding(c)?;
+    let process = process(c)?;
+    // Node's wrappers load with `internal/process/per_thread.js` on the first read of one.
+    let initializer = c.host_function(crate::host::shared_vm::operation("processMethodsInitialize"))?;
+    c.define_lazy_data_properties_rooted(process, &WRAPPED_METHODS, true, initializer)?;
+    // Only install native RSS; heap metrics require the Runtime's real accounting.
+    let memory = get(c, process, "memoryUsage")?;
+    let rss = get(c, native, "rss")?;
+    put(c, memory, "rss", rss)?;
+    Ok(())
+}
+
+/// The process methods Node's `wrapProcessMethods` makes over the native binding.
+const WRAPPED_METHODS: [&str; 3] = ["cpuUsage", "threadCpuUsage", "resourceUsage"];
+
+fn process(c: &mut Context<'_>) -> Result<RootId, RootedError> {
+    c.host_mut()
+        .shared_state()
+        .borrow()
+        .process_module
+        .ok_or_else(|| RootedError::host("process is not initialized"))
+}
+
+/// Defines the wrapped process methods as Node's.
+pub(crate) fn initialize_methods(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let native = binding(c)?;
     let wrapper = crate::host::shared_vm::commonjs::node_library_export(
         c,
         "internal/bootstrap/node.js",
@@ -204,19 +229,10 @@ pub(crate) fn install(c: &mut Context<'_>) -> Result<(), RootedError> {
     )?;
     let undefined = c.undefined();
     let methods = c.call_rooted(wrapper, undefined, &[native])?;
-    let process = c
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .process_module
-        .ok_or_else(|| RootedError::host("process is not initialized"))?;
-    for name in ["cpuUsage", "threadCpuUsage", "resourceUsage"] {
+    let process = process(c)?;
+    for name in WRAPPED_METHODS {
         let function = get(c, methods, name)?;
         put(c, process, name, function)?;
     }
-    // Only install native RSS; heap metrics require the Runtime's real accounting.
-    let memory = get(c, process, "memoryUsage")?;
-    let rss = get(c, native, "rss")?;
-    put(c, memory, "rss", rss)?;
-    Ok(())
+    Ok(c.undefined())
 }

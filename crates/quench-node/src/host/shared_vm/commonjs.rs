@@ -209,10 +209,11 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     // Builtins built after this point see the intrinsics as they are now, whatever a
     // preload or the entry script does to them (`cached_builtin`).
     context.seal_startup_intrinsics();
-    // The SDK console reads its primordial snapshot, so initialize it after the
-    // well-known symbols and original globals above, before any guest preloads.
-    let console = cached_builtin(context, BuiltinModule::Console)?;
-    set(context, global, "console", console)?;
+    // The SDK console reads its primordial snapshot. It loads on the first read of
+    // `console`, inside the startup intrinsics, so it sees the original globals whatever a
+    // preload or the entry script has done; most of a run that never logs never loads it.
+    let initializer = context.host_function(crate::host::shared_vm::operation("consoleGlobalInitialize"))?;
+    context.define_lazy_data_properties_rooted(global, &["console"], false, initializer)?;
     context.seal_startup_intrinsics();
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_console_global");
@@ -916,6 +917,19 @@ pub(crate) fn require_for_module(
         context.call_rooted(map_set, paths, &[parent_path, directory_cache])?;
     }
     load_with_resolution(context, &filename, Some(parent), goal, Some((directory_cache, &specifier)))
+}
+
+/// Defines the global `console` as the SDK console.
+pub(crate) fn initialize_console_global(
+    context: &mut Context<'_>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let console = cached_builtin(context, BuiltinModule::Console)?;
+    let global = context.global_root()?;
+    let key = context.string_rooted("console");
+    context.define_data_property_rooted(global, key, console, true, false, true)?;
+    Ok(context.undefined())
 }
 
 /// A require capability installed only in a configured SDK module wrapper.
@@ -2413,6 +2427,18 @@ const getLinkedBinding = () => ({});
             let debug = initial.map(|value| context.string_rooted(&value)).unwrap_or_else(|| context.undefined());
             let absent = context.undefined();
             context.call_rooted(initialize, absent, &[debug])?;
+        }
+        if library_relative == Some(Path::new("lib/internal/console/global.js")) {
+            // Node's bootstrap initializes the global console as it loads it; one loaded on
+            // first use binds its streams before any module writes to it.
+            let initialize = node_library_export(
+                context,
+                "internal/process/pre_execution.js",
+                "internal/console/constructor.js",
+                "initializeGlobalConsole",
+            )?;
+            let undefined = context.undefined();
+            context.call_rooted(initialize, undefined, &[exports])?;
         }
         let loaded = context.boolean(true);
         set(context, module, "loaded", loaded)?;
