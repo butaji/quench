@@ -103,6 +103,14 @@ impl ModuleRecord {
         }
     }
 
+    /// A statically requested module that is loaded but not yet linked.
+    pub(crate) fn loading_static() -> Self {
+        Self {
+            outcome: ModuleOutcome::Pending(ModulePhase::Loading),
+            ..Self::evaluating_static()
+        }
+    }
+
     pub(crate) fn deferred(namespace: Value) -> Self {
         Self {
             program: None,
@@ -142,9 +150,21 @@ impl ModuleRecord {
         let ModuleOutcome::Deferred(namespace) = self.outcome else {
             return None;
         };
+        // The deferred namespace is a distinct exotic object; linking allocates
+        // the module's own namespace as the pending namespace.
         self.outcome = ModuleOutcome::Pending(ModulePhase::Evaluating);
-        self.pending_namespace = Some(namespace);
         Some(namespace)
+    }
+
+    /// Leave a module reached only through a deferred request unevaluated
+    /// until its deferred namespace is first observed.
+    pub(crate) fn defer_evaluation(&mut self) -> bool {
+        let (ModulePhase::Loading, Some(namespace)) = (self.phase(), self.deferred_namespace)
+        else {
+            return false;
+        };
+        self.outcome = ModuleOutcome::Deferred(namespace);
+        true
     }
 
     pub(crate) fn deferred_namespace(&self) -> Option<Value> {

@@ -92,10 +92,10 @@ impl<H: Host> Vm<H> {
             },
         );
         let number_value = self.intern_atom("\0quench:number-value");
-        self.set_property(prototype, number_value, Value::number(0.0))?;
-        self.set_property_attributes(
+        self.set_property_with_attributes(
             prototype,
-            PropertyKey::string(number_value),
+            number_value,
+            Value::number(0.0),
             PropertyAttributes {
                 writable: false,
                 enumerable: false,
@@ -104,7 +104,7 @@ impl<H: Host> Vm<H> {
                 getter: None,
                 setter: None,
             },
-        );
+        )?;
         self.set_builtin_value_named(prototype, "constructor", number)?;
         self.set_builtin_named(program, prototype, "toString", Native::NumberString)?;
         self.set_builtin_named(program, prototype, "valueOf", Native::NumberValueOf)?;
@@ -569,7 +569,7 @@ pub(super) fn math_unary(native: Native, value: f64) -> f64 {
         Native::MathSqrt => value.sqrt(),
         Native::MathAcos => value.acos(),
         Native::MathAsin => value.asin(),
-        Native::MathAtan => value.atan(),
+        Native::MathAtan => super::fdlibm_math::atan(value),
         Native::MathCos => value.cos(),
         Native::MathExp => value.exp(),
         Native::MathSin => value.sin(),
@@ -577,7 +577,7 @@ pub(super) fn math_unary(native: Native, value: f64) -> f64 {
         Native::MathAcosh => value.acosh(),
         Native::MathAsinh => value.asinh(),
         Native::MathAtanh => math_atanh(value),
-        Native::MathCbrt => value.cbrt(),
+        Native::MathCbrt => super::fdlibm_math::cbrt(value),
         Native::MathCosh => value.cosh(),
         Native::MathExpm1 => value.exp_m1(),
         Native::MathFround => f64::from(value as f32),

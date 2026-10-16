@@ -159,7 +159,7 @@ fn visit_system_errors(mut visit: impl FnMut(i32, &'static str)) {
     }
 }
 
-pub(crate) fn system_error_name(number: f64) -> String {
+pub(crate) fn system_error_code(number: f64) -> Option<&'static str> {
     let mut found = None;
     visit_system_errors(|code, name| {
         if found.is_none() && f64::from(code) == number {
@@ -167,7 +167,10 @@ pub(crate) fn system_error_name(number: f64) -> String {
         }
     });
     found
-        .map(str::to_owned)
+}
+
+pub(crate) fn system_error_name(number: f64) -> String {
+    system_error_code(number).map(str::to_owned)
         .unwrap_or_else(|| format!("Unknown system error {number}"))
 }
 
