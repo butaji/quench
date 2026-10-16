@@ -15,7 +15,6 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "utilCallbackified" (2) => crate::modules::util_callbackify_shared_vm::callbackified,
         method "utilCallbackifySettled" (1) => crate::modules::util_callbackify_shared_vm::settled,
         method "utilCallbackifyInvoke" (0) => crate::modules::util_callbackify_shared_vm::invoke,
-        method "stripVTControlCharacters" (1) => crate::modules::util_shared_vm::strip_vt,
         method "uvErrName" (0) => crate::modules::util_system_error_shared_vm::errname,
         method "uvGetErrorMap" (0) => crate::modules::util_system_error_shared_vm::error_map,
         method "uvGetErrorMessage" (0) => crate::modules::util_system_error_shared_vm::error_message,
