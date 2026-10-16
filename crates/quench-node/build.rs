@@ -36,6 +36,7 @@ fn on_path(program: &str) -> bool {
 fn main() {
     embed_node_sources();
     configure_icu();
+    configure_native_zlib();
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed={X86_64_LINUX_ORDER}");
     println!("cargo:rerun-if-changed={X86_64_LINUX_STATIC_ORDER}");
@@ -159,5 +160,16 @@ fn configure_icu() {
     }
     for name in library.libs {
         println!("cargo:rustc-link-lib={name}");
+    }
+}
+
+/// Link the matching Node codec when explicitly available; other hosts keep
+/// the portable Rust codec rather than gaining a new system dependency.
+fn configure_native_zlib() {
+    println!("cargo:rustc-check-cfg=cfg(quench_node_zlib)");
+    let Ok(library) = pkg_config::Config::new().cargo_metadata(false).probe("quench-node-zlib") else { return; };
+    println!("cargo:rustc-cfg=quench_node_zlib");
+    for directory in library.link_paths {
+        println!("cargo:rustc-link-search=native={}", directory.display());
     }
 }

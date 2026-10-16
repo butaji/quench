@@ -369,6 +369,7 @@ pub(crate) fn internal_binding(
         "util" => return super::util_shared_vm::key_binding(context),
         "options" => return super::cli_options_shared_vm::binding(context),
         "string_decoder" => return super::string_decoder_shared_vm::binding(context),
+        "zlib" => return super::zlib_native_shared_vm::binding(context),
         "encoding_binding" => return super::encoding_binding_shared_vm::binding(context),
         #[cfg(quench_icu)]
         "icu" => return super::icu_binding_shared_vm::binding(context),
