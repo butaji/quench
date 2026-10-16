@@ -1203,6 +1203,17 @@ impl<H: Host> Vm<H> {
         )
     }
 
+    pub(crate) fn materialize_lazy_data_property_rooted(
+        &mut self,
+        holder: RootId,
+        name: &str,
+    ) -> Result<(), JsError> {
+        let holder = self.embedding_value(holder)?;
+        let program = self.embedding_program()?;
+        let key = PropertyKey::string(self.intern_atom(name));
+        self.materialize_lazy_data_property(&program, holder, key)
+    }
+
     pub(crate) fn define_lazy_data_properties_rooted(
         &mut self,
         holder: RootId,
