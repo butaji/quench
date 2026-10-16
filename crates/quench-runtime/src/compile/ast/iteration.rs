@@ -238,6 +238,7 @@ impl FunctionCompiler<'_, '_> {
         };
         self.iterator_closures.push(IteratorClosure {
             iterator: iterator_atom,
+            asynchronous: await_values,
             control_depth: self.controls.len(),
         });
         self.push_control(ControlKind::Loop, label);
@@ -333,17 +334,6 @@ impl FunctionCompiler<'_, '_> {
             .collect::<Vec<_>>();
         let slot = self.local_slot(error);
         let with_depth = self.with_depth;
-        self.push_handlers_excluding(start, end, &exclusions, |start, end| {
-            crate::bytecode::Handler {
-                start,
-                end,
-                target: cleanup,
-                slot,
-                return_target: None,
-                return_slot: None,
-                with_depth,
-            }
-        });
 
         if tracks_iterator_cleanup {
             self.emit(Op::IteratorCleanupPop, 0, 0, 0, 0);
@@ -370,6 +360,39 @@ impl FunctionCompiler<'_, '_> {
 
         let original_error = self.load_atom(error);
         self.emit(Op::Throw, original_error, 0, 0, 0);
+        let (return_target, return_slot) = if self.generator {
+            let return_atom = self.hidden_local("\0quench:for-of-body-return");
+            let return_target = self.code.len() as u32;
+            if tracks_iterator_cleanup {
+                self.emit(Op::IteratorCleanupPop, 0, 0, 0, 0);
+            }
+            let close_iterator = self.load_atom(iterator);
+            let close_result = self.close_iterator(close_iterator);
+            if await_values {
+                let awaited = self.reg();
+                self.emit(Op::Await, awaited, close_result, 0, 0);
+            }
+            // This loop has closed. Compile the original return through the
+            // remaining loop/finally owners, as for an explicit return statement.
+            let closure = self.iterator_closures.pop().expect("loop cleanup owner");
+            let value = self.load_atom(return_atom);
+            self.emit_return(value);
+            self.iterator_closures.push(closure);
+            (Some(return_target), self.local_slot(return_atom))
+        } else {
+            (None, None)
+        };
+        self.push_handlers_excluding(start, end, &exclusions, |start, end| {
+            crate::bytecode::Handler {
+                start,
+                end,
+                target: cleanup,
+                slot,
+                return_target,
+                return_slot,
+                with_depth,
+            }
+        });
         let continuation = self.code.len() as u32;
         self.patch_to(skip_cleanup, continuation);
         self.patch_to(close_ok, close_error);
