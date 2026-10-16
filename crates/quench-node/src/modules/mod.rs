@@ -193,3 +193,7 @@ pub(crate) mod crypto_hash_source_shared_vm;
 pub(crate) mod crypto_hash_source;
 #[cfg(quench_openssl_provider)]
 pub(crate) mod crypto_digest_state;
+
+pub(crate) mod abort_dependencies_shared_vm;
+
+pub(crate) mod abort_timeout_shared_vm;
