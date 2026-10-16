@@ -467,7 +467,11 @@ impl<H: Host> Vm<H> {
         let Some(object) = self.heap.array_mut(this) else {
             unreachable!("matched an array above");
         };
-        super::index::mutable_array_elements(object.elements_mut()).extend_from_slice(args);
+        let elements = super::index::mutable_array_elements(object.elements_mut());
+        let capacity = elements.capacity();
+        elements.extend_from_slice(args);
+        let grown = elements.capacity() - capacity;
+        self.heap.charge_payload_growth(grown * size_of::<Value>());
         Some(Value::number(final_length as f64))
     }
 
