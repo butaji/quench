@@ -9377,3 +9377,8 @@ fn native_zlib_streaming_counts_bytes_pending_close_and_iterable_pipelines_match
 fn native_brotli_streaming_bytes_dictionaries_and_errors_match_node() {
     compare_node_source_with_args(include_str!("../node-tests/test-native-brotli-streaming.js"), &["--no-warnings", "--expose-internals", "--experimental-stream-iter"]);
 }
+
+#[test]
+fn native_zstd_streaming_frames_dictionaries_pledges_and_errors_match_node() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-zstd-streaming.js"), &["--no-warnings", "--expose-internals", "--experimental-stream-iter"]);
+}
