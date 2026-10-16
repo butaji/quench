@@ -43,5 +43,10 @@ resource must already be inflated next to itself (JetStream's
 are JetStream's and are never altered.
 
 The no-JIT bars are Node `--jitless` and Bun with `BUN_JSC_useJIT=0`, with the
-same proofs as V8-v7. QuickJS is not measured: it has no realm API, and
+same proofs as V8-v7. The preflight also probes each engine for `WebAssembly` with its
+measurement arguments. A test JetStream's driver tags `Wasm` is not run on an
+engine without it: the fixture records the engine under `unsupported_engines`
+with the reason, and the analysis measures that fixture only against the
+engines that can run it. Node `--jitless` has no `WebAssembly`, so Bun no-JIT
+is the bar for the Wasm tests. QuickJS is not measured: it has no realm API, and
 JetStream evaluates every benchmark in a fresh realm.
