@@ -505,6 +505,59 @@ impl<H: Host> Vm<H> {
         self.invalidate_field_caches();
         self.invalidate_method_caches_for_key(key);
     }
+    /// `set_property_attributes` of each of `keys` (distinct) to `update` of its current
+    /// attributes. A descriptor transition moves no slot and changes no other key, so every
+    /// slot and current attribute set is read from the shape the object starts with, and the
+    /// transitions then append without a lookup on each intermediate shape.
+    pub(super) fn update_property_attributes(
+        &mut self,
+        object: Value,
+        keys: &[PropertyKey],
+        update: impl Fn(PropertyAttributes) -> PropertyAttributes,
+    ) {
+        let Some(original) = self.object_data(object).map(Object::shape) else {
+            return;
+        };
+        let resolved = keys
+            .iter()
+            .map(|&key| {
+                let slot = self.property_shape_slot(original, key);
+                let current = slot
+                    .and_then(|slot| self.shape_attribute(original, slot))
+                    .or_else(|| self.property_attributes(object, key))
+                    .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
+                (key, slot, current)
+            })
+            .collect::<Vec<_>>();
+        let mut shape = original;
+        for (key, slot, current) in resolved {
+            let attributes = update(current);
+            match slot {
+                Some(_) if attributes == current => {}
+                Some(slot) => {
+                    let attributes = ShapeAttributes::record(attributes, &mut self.shape_accessors);
+                    shape = self.append_cached_shape_transition(
+                        shape,
+                        ShapeTransition::Descriptor {
+                            slot: slot as u32,
+                            attributes,
+                        },
+                    );
+                    self.invalidate_method_caches_for_key(key);
+                }
+                None => {
+                    self.insert_descriptor(object, key, attributes);
+                    self.invalidate_field_caches();
+                    self.invalidate_method_caches_for_key(key);
+                }
+            }
+        }
+        if shape != original {
+            self.object_data_mut(object)
+                .expect("object survived descriptor transitions")
+                .set_shape(shape);
+        }
+    }
     pub(super) fn remove_property_attributes(&mut self, object: Value, key: PropertyKey) {
         if let Some((shape, slot)) = self.object_property_slot(object, key) {
             let next_id = self.append_cached_shape_transition(
