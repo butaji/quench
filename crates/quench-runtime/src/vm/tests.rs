@@ -1151,7 +1151,7 @@ fn json_parse_builds_the_same_values_with_and_without_a_reviver() {
 #[test]
 fn promise_record_edges_follow_promise_and_resolver_lifetime() {
     let mut vm = Vm::new(SilentHost);
-    let promise = vm.promise_object();
+    let promise = vm.promise_object().unwrap();
     let result = vm.object();
     let program = Engine::specialize("print(0);", "realm-promises.js").unwrap();
     let owner_atom = vm.intern_atom("owner");
@@ -4421,7 +4421,7 @@ fn dynamic_import_waiters_are_rooted_while_queued_and_during_batch_evaluation() 
         vm.execute(&program).unwrap();
         let mut promises = Vec::new();
         for index in 0..2 {
-            let promise = vm.promise_object();
+            let promise = vm.promise_object().unwrap();
             promises.push((promise, vm.heap.weak_handle(promise).unwrap()));
             let name = format!("dynamic-job-{index}.js");
             let source = "$262.gc(); export const value = 57;".to_owned();
@@ -4927,7 +4927,7 @@ fn promise_constructor_intrinsics_survive_guest_binding_and_prototype_mutation()
             .unwrap();
         vm.collect_now(&program);
         assert_eq!(vm.heap.weak_value(weak), Some(constructor));
-        let source = vm.promise_object();
+        let source = vm.promise_object().unwrap();
         vm.set_property(source, constructor_atom, Value::UNDEFINED)
             .unwrap();
         let roots = vm.heap.root_count_for_test();
