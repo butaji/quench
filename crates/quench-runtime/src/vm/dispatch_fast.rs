@@ -1010,11 +1010,14 @@ lane_handler! {
 }
 
 lane_handler! {
-    /// `lane_set_index` past a record array.
+    /// `lane_set_index` past a record array, or appending to a dense array at its length.
     #[inline(never)]
     fn lane_set_index_slot<>(cx, r, ip, i, view) {
-        let (object, key) = (r.get(i.b), r.get(i.c));
-        if !(unsafe { vm(cx) }).try_replace_dense_element(object, key, r.get(i.a)) {
+        let (object, key, value) = (r.get(i.b), r.get(i.c), r.get(i.a));
+        let vm = unsafe { vm(cx) };
+        if !vm.try_replace_dense_element(object, key, value)
+            && !vm.try_append_dense_element(object, key, value)
+        {
             return exit(ip);
         }
         next!(cx, r, following(ip), view)
