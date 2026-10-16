@@ -471,16 +471,17 @@ pub(crate) fn source_positions(
     };
     let result = context.null_object_rooted()?;
     let source_line = context.string_rooted(position.source_line.as_deref().unwrap_or(""));
-    super::event_constructor_shared_vm::set(context, result, "sourceLine", source_line)?;
     let resource = match position.script_name {
         Some(name) => context.string_rooted(&name),
         None => context.undefined(),
     };
-    super::event_constructor_shared_vm::set(context, result, "scriptResourceName", resource)?;
     let line = context.number(f64::from(position.line_number));
-    super::event_constructor_shared_vm::set(context, result, "lineNumber", line)?;
     let column = context.number(f64::from(position.column_number.saturating_sub(1)));
-    super::event_constructor_shared_vm::set(context, result, "startColumn", column)?;
+    for (name, value) in [("sourceLine", source_line), ("scriptResourceName", resource),
+        ("lineNumber", line), ("startColumn", column)] {
+        let key = context.string_rooted(name);
+        context.define_data_property_rooted(result, key, value, true, true, true)?;
+    }
     Ok(result)
 }
 
@@ -493,6 +494,7 @@ fn build_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, Ro
     let function = context.host_function_named(
         crate::host::shared_vm::operation("errorSourcePositions"), "getErrorSourcePositions",
     )?;
-    super::event_constructor_shared_vm::set(context, binding, "getErrorSourcePositions", function)?;
+    let key = context.string_rooted("getErrorSourcePositions");
+    context.define_data_property_rooted(binding, key, function, true, true, true)?;
     Ok(binding)
 }
