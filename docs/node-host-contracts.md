@@ -890,6 +890,39 @@ adapters capture a Rust forwarding function to this same policy, initialized
 after the filesystem module is cached. Their outer asynchronous validation and
 scheduling remain separate compatibility work.
 
+## Configured CLI version and flag order
+
+The Node-compatible CLI derives --version/-v from the same configured SDK
+version as process.version and process.versions.node. It handles version flags
+while parsing startup options, before evaluating guest source. An explicit -- or
+the first guest argument ends option parsing, so later version spellings remain
+guest arguments. The oracle checks aliases, jitless ordering, eval side effects
+and both argument boundaries. General help/unknown-option parity remains open.
+
+## Diagnostic-report configuration and one process listener store
+
+The lazy process.report getter returns the configured Node library's report
+object. Rust owns its mutable configuration, initialized from the same parsed
+startup options used by native option queries. The original SDK owns public
+validation, property/method descriptors, signal changes and field order.
+Report directory aliases, option/environment precedence, and report-signal's
+ordered implication of report-on-signal are covered against the oracle.
+
+Capture installation snapshots reportOnUncaughtException with strict true and
+then disables it. Clearing restores the saved flag only when auxiliary length
+is strictly numeric zero. The process.report reference is evaluated before the
+saved-flag getter on restoration; installation reads process.report separately
+for the read and write. Slot mutation precedes report getter failures.
+
+Process uses the common EventEmitter store for registration, dispatch,
+inspection, symbols, borrowed methods, prepending and mutable _events records.
+Signal watching and IPC counted references are actual listener add/remove
+observers; no second scheduler listener map mirrors those facts. Exit dispatch
+uses the public process emit hook after entering the named exit state.
+The Node26 ordinary once-wrapper shape is retained. Report generation/file I/O,
+abort toggles, default warning listener/source fidelity and the broader Node
+compatibility backlog remain unqualified.
+
 ## Private data fields
 
 Private data lives with its receiver, keyed by the actual declaring home and
@@ -994,77 +1027,3 @@ including prepared realm wrappers. Binding setup must not invalidate the SDK's
 strict directive: assignment errors on primitive targets, rejected proxy writes
 and nonwritable properties retain Node's behavior. Application CommonJS wrappers
 retain their source-directed strictness.
-
-The utility caller-location binding projects genuine compiler-owned activations,
-skipping its immediate JavaScript caller. Error hooks, public function-name
-getters and stack limits do not participate. Missing callers and unnamed eval
-Scripts produce undefined rather than fabricated bootstrap frames.
-
-The original promises glob policy materializes as a lazy data property, keeping
-its real function descriptor and identity. Merely loading native fs no longer
-imports the promises implementation's readline/history/OS dependencies. This
-preserves Node's binding-capture order and avoids loading unrelated modules.
-
-## Owned host Script code
-
-Core's `CompiledScript` handle owns one logical source record, while each realm
-uses a separate execution instance and caches. Detailed captures project the
-actual source record identity across those instances. Repeated runs in one realm
-reuse its template sites while producing fresh objects and functions.
-
-The opaque owner retains compiler code only. Realm associations are weak and
-pruned immediately after collection, before heap slot reuse. Reclamation retains
-live owners and the source records of escaped functions; dropping owners allows
-unused code and execution caches to be collected. Runtime reset or a foreign
-runtime rejects the handle through the existing atom-sequence ownership guard.
-This Core primitive does not by itself implement native `ContextifyScript`, VM
-timeouts, cached bytecode or code-generation restrictions.
-
-## Configured synchronous directory policy
-
-`fs.readdirSync` executes the configured Node SDK policy over native Rust
-`readdir` and `readdirRecursive` bindings. Linux scanning preserves raw filename
-bytes and reported directory types. Recursive walks follow directory symlinks,
-resolve unknown types with real metadata, and flatten lexical directory scans in
-breadth-first order. Actual scan errors retain their syscall and input path.
-
-Encoding uses the shared Buffer codecs; Buffer results retain the original
-filename bytes. Recursive Dirent results use Node's packed native layout, with
-Uint8 types and aligned Uint32 directory counts sharing one ArrayBuffer. The
-unchanged SDK owns validation and Dirent construction. Existing filesystem
-adapters capture a Rust forwarding function to this same policy, initialized
-after the filesystem module is cached. Their outer asynchronous validation and
-scheduling remain separate compatibility work.
-
-## Configured CLI version and flag order
-
-The Node-compatible CLI derives --version/-v from the same configured SDK
-version as process.version and process.versions.node. It handles version flags
-while parsing startup options, before evaluating guest source. An explicit -- or
-the first guest argument ends option parsing, so later version spellings remain
-guest arguments. The oracle checks aliases, jitless ordering, eval side effects
-and both argument boundaries. General help/unknown-option parity remains open.
-
-## Diagnostic-report configuration and one process listener store
-
-The lazy process.report getter returns the configured Node library's report
-object. Rust owns its mutable configuration, initialized from the same parsed
-startup options used by native option queries. The original SDK owns public
-validation, property/method descriptors, signal changes and field order.
-Report directory aliases, option/environment precedence, and report-signal's
-ordered implication of report-on-signal are covered against the oracle.
-
-Capture installation snapshots reportOnUncaughtException with strict true and
-then disables it. Clearing restores the saved flag only when auxiliary length
-is strictly numeric zero. The process.report reference is evaluated before the
-saved-flag getter on restoration; installation reads process.report separately
-for the read and write. Slot mutation precedes report getter failures.
-
-Process uses the common EventEmitter store for registration, dispatch,
-inspection, symbols, borrowed methods, prepending and mutable _events records.
-Signal watching and IPC counted references are actual listener add/remove
-observers; no second scheduler listener map mirrors those facts. Exit dispatch
-uses the public process emit hook after entering the named exit state.
-The Node26 ordinary once-wrapper shape is retained. Report generation/file I/O,
-abort toggles, default warning listener/source fidelity and the broader Node
-compatibility backlog remain unqualified.
