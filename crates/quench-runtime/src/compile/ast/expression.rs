@@ -10,11 +10,10 @@ impl FunctionCompiler<'_, '_> {
 
     pub(crate) fn expression_with_debug_name(&mut self, expression: &Expression<'_>, debug_name: Option<Atom>) -> Register {
         let start = match expression {
-            Expression::CallExpression(call) => match &call.callee {
-                Expression::StaticMemberExpression(member) => member.property.span.start,
-                Expression::ComputedMemberExpression(_) | Expression::ParenthesizedExpression(_) => call.callee.span().end,
-                _ => expression.span().start,
-            },
+            Expression::CallExpression(call) => self.call_source_offset(call),
+            Expression::StaticMemberExpression(member) => self.static_access_source_offset(member),
+            Expression::ComputedMemberExpression(member) => self.computed_access_source_offset(member),
+            Expression::PrivateFieldExpression(member) => member.field.span.start,
             _ => expression.span().start,
         };
         let position = self.owner.source_position(start);
@@ -559,8 +558,9 @@ impl FunctionCompiler<'_, '_> {
             let second = self.owner.atom(key);
             let site = self.owner.cache_site();
             let second_site = self.owner.cache_site();
-            let access =
-                self.field_site(FieldBase::THIS, (first, site), Some((second, second_site)));
+            let access = self.field_site(FieldBase::THIS, (first, site), Some((second, second_site)));
+            let first_position = self.owner.source_position(inner.property.span.start);
+            self.owner.field_sites[access as usize].sources[0] = Some((first_position.line, first_position.column));
             self.emit(Op::GetField, dst, FieldBase::NESTED, 0, access);
             return dst;
         }
@@ -589,6 +589,7 @@ impl FunctionCompiler<'_, '_> {
             first,
             second,
             sink: None,
+            sources: [self.current_source_position, second.and(self.current_source_position), None],
         });
         site
     }
@@ -684,6 +685,17 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn update(&mut self, value: &UpdateExpression<'_>, result_used: bool) -> Register {
+        let write_source = if value.prefix {
+            match &value.argument {
+                SimpleAssignmentTarget::StaticMemberExpression(member) => self.static_access_source_offset(member),
+                SimpleAssignmentTarget::ComputedMemberExpression(member) => self.computed_access_source_offset(member),
+                SimpleAssignmentTarget::PrivateFieldExpression(member) => member.field.span.start,
+                _ => value.argument.span().start,
+            }
+        } else {
+            self.owner.source_delimiter(value.argument.span().end, value.span.end,
+                value.operator.as_str().chars().next().expect("update operator"))
+        };
         let last_operand = std::mem::take(&mut self.last_operand);
         let reference = self.prepare_assignment_reference(&value.argument);
         if let AssignmentReference::Abrupt(result) = reference {
@@ -698,7 +710,7 @@ impl FunctionCompiler<'_, '_> {
         // whose value is unused, increments the register in place.
         if value.prefix && (last_operand || !result_used) && self.is_promoted_register(old) {
             self.emit(Op::IncDec, old, old, 0, u32::from(value.operator as u8));
-            self.store_assignment_reference(reference, old);
+            self.with_source_offset(write_source, |compiler| compiler.store_assignment_reference(reference, old));
             return old;
         }
         // A postfix update whose value is used yields the old value after ToNumeric.
@@ -717,7 +729,7 @@ impl FunctionCompiler<'_, '_> {
             0,
             u32::from(value.operator as u8),
         );
-        self.store_assignment_reference(reference, next);
+        self.with_source_offset(write_source, |compiler| compiler.store_assignment_reference(reference, next));
         if value.prefix || !result_used {
             next
         } else {
