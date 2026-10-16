@@ -16,6 +16,23 @@ impl Host for StackHost {
     fn error_stack_formatter(&self) -> Option<RootId> {
         self.formatter
     }
+    fn initialize_shadow_realm(
+        context: &mut NativeContext<'_, Self>,
+        global: RootId,
+    ) -> Result<Option<RootId>, RootedError> {
+        context.collect()?;
+        context
+            .evaluate_script_in_realm_rooted(
+                global,
+                r#"(global, error, sites) => {
+            const prepare = global.Error.prepareStackTrace;
+            if (typeof prepare === 'function') return prepare(error, sites);
+            return [global === globalThis, error.message, sites[0].getFunctionName()].join(':');
+        }"#,
+                "host-shadow-stack.js",
+            )
+            .map(Some)
+    }
     fn functions(&self) -> &[crate::HostFunction<Self>] {
         crate::host_functions![method "collect" (0) => collect]
     }
@@ -87,6 +104,40 @@ fn host_default_stack_policy_roots_callbacks_and_preserves_override_cache_and_th
                 "42:3",
                 "last:4"
             ]
+        );
+    }
+}
+
+#[test]
+fn per_realm_host_stack_policy_is_rooted_and_keeps_shadow_hooks_isolated() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        let host = StackHost::default();
+        let output = host.output.clone();
+        let mut runtime = Runtime::new(host);
+        let program = compile(r#"
+            let calls = 0;
+            Error.prepareStackTrace = () => { calls++; return 'principal'; };
+            const target = new Proxy(function Target() {}, {
+                get(target, key, receiver) {
+                    return key === 'prototype' ? {tag: 42} : Reflect.get(target, key, receiver);
+                }
+            });
+            print(Reflect.construct(ShadowRealm, [], target).tag);
+            const realm = new ShadowRealm();
+            collect();
+            const ordinary = realm.evaluate("function inner() { return new Error('inside').stack; } inner();");
+            print([ordinary, calls].join('|'));
+            const custom = realm.evaluate("Error.prepareStackTrace = () => 29; new Error().stack;");
+            print([custom, calls].join('|'));
+            print([new Error().stack, calls].join('|'));
+        "#, "shadow-stack-policy.js").unwrap();
+        runtime.execute(&program).unwrap();
+        assert_eq!(
+            &*output.borrow(),
+            &["42", "true:inside:inner|0", "29|0", "principal|1"]
         );
     }
 }
