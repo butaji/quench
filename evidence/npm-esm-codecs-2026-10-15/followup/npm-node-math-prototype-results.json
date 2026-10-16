@@ -1,0 +1,502 @@
+{
+  "prototype_only": true,
+  "not_integrated_or_qualified": true,
+  "results": [
+    {
+      "name": "atan2",
+      "args": [
+        67.20319651585301,
+        80.09245959641109
+      ],
+      "node_bits": "3fe656f4142df3de",
+      "rust_bits": "3fe656f4142df3de",
+      "matches_node": true
+    },
+    {
+      "name": "atan2",
+      "args": [
+        67.20319651585301,
+        80.09245959641109
+      ],
+      "node_bits": "3fe656f4142df3de",
+      "rust_bits": "3fe656f4142df3de",
+      "matches_node": true
+    },
+    {
+      "name": "cbrt",
+      "args": [
+        0.6352716034043686
+      ],
+      "node_bits": "3feb8239061698bf",
+      "rust_bits": "3feb8239061698bf",
+      "matches_node": true
+    },
+    {
+      "name": "cbrt",
+      "args": [
+        0.6352716034043686
+      ],
+      "node_bits": "3feb8239061698bf",
+      "rust_bits": "3feb8239061698bf",
+      "matches_node": true
+    },
+    {
+      "name": "atan2",
+      "args": [
+        67.20319651585301,
+        80.09245959641109
+      ],
+      "node_bits": "3fe656f4142df3de",
+      "rust_bits": "3fe656f4142df3de",
+      "matches_node": true
+    },
+    {
+      "name": "atan2",
+      "args": [
+        -15.26473197319591,
+        6.0653687985606215
+      ],
+      "node_bits": "bff314cf69bf2a7f",
+      "rust_bits": "bff314cf69bf2a7f",
+      "matches_node": true
+    },
+    {
+      "name": "atan2",
+      "args": [
+        67.20319651585301,
+        80.09245959641109
+      ],
+      "node_bits": "3fe656f4142df3de",
+      "rust_bits": "3fe656f4142df3de",
+      "matches_node": true
+    },
+    {
+      "name": "atan2",
+      "args": [
+        -15.26473197319591,
+        6.0653687985606215
+      ],
+      "node_bits": "bff314cf69bf2a7f",
+      "rust_bits": "bff314cf69bf2a7f",
+      "matches_node": true
+    },
+    {
+      "name": "cbrt",
+      "args": [
+        0.6352716034043686
+      ],
+      "node_bits": "3feb8239061698bf",
+      "rust_bits": "3feb8239061698bf",
+      "matches_node": true
+    },
+    {
+      "name": "cbrt",
+      "args": [
+        0.6352716034043686
+      ],
+      "node_bits": "3feb8239061698bf",
+      "rust_bits": "3feb8239061698bf",
+      "matches_node": true
+    },
+    {
+      "name": "atan2",
+      "args": [
+        67.20319651585301,
+        80.09245959641109
+      ],
+      "node_bits": "3fe656f4142df3de",
+      "rust_bits": "3fe656f4142df3de",
+      "matches_node": true
+    },
+    {
+      "name": "atan2",
+      "args": [
+        -8.679646471362235,
+        -28.101769361342843
+      ],
+      "node_bits": "c006bc769044e224",
+      "rust_bits": "c006bc769044e224",
+      "matches_node": true
+    },
+    {
+      "name": "atan2",
+      "args": [
+        67.20319651585301,
+        80.09245959641109
+      ],
+      "node_bits": "3fe656f4142df3de",
+      "rust_bits": "3fe656f4142df3de",
+      "matches_node": true
+    },
+    {
+      "name": "atan2",
+      "args": [
+        -8.679646471362235,
+        -28.101769361342843
+      ],
+      "node_bits": "c006bc769044e224",
+      "rust_bits": "c006bc769044e224",
+      "matches_node": true
+    },
+    {
+      "name": "atan2",
+      "args": [
+        67.20319651585301,
+        80.09245959641109
+      ],
+      "node_bits": "3fe656f4142df3de",
+      "rust_bits": "3fe656f4142df3de",
+      "matches_node": true
+    },
+    {
+      "name": "atan2",
+      "args": [
+        67.20319651585301,
+        80.09245959641109
+      ],
+      "node_bits": "3fe656f4142df3de",
+      "rust_bits": "3fe656f4142df3de",
+      "matches_node": true
+    },
+    {
+      "name": "cbrt",
+      "args": [
+        0.18417393460249554
+      ],
+      "node_bits": "3fe234dbff747097",
+      "rust_bits": "3fe234dbff747097",
+      "matches_node": true
+    },
+    {
+      "name": "cbrt",
+      "args": [
+        0.18424839856754216
+      ],
+      "node_bits": "3fe2357cc849720d",
+      "rust_bits": "3fe2357cc849720d",
+      "matches_node": true
+    },
+    {
+      "name": "cbrt",
+      "args": [
+        0.19345719033613076
+      ],
+      "node_bits": "3fe281e3a42d3184",
+      "rust_bits": "3fe281e3a42d3184",
+      "matches_node": true
+    },
+    {
+      "name": "cbrt",
+      "args": [
+        0.18417393460249554
+      ],
+      "node_bits": "3fe234dbff747097",
+      "rust_bits": "3fe234dbff747097",
+      "matches_node": true
+    },
+    {
+      "name": "cbrt",
+      "args": [
+        0.18424839856754216
+      ],
+      "node_bits": "3fe2357cc849720d",
+      "rust_bits": "3fe2357cc849720d",
+      "matches_node": true
+    },
+    {
+      "name": "cbrt",
+      "args": [
+        0.19345719033613076
+      ],
+      "node_bits": "3fe281e3a42d3184",
+      "rust_bits": "3fe281e3a42d3184",
+      "matches_node": true
+    },
+    {
+      "name": "atan2",
+      "args": [
+        -35,
+        25
+      ],
+      "node_bits": "bfee6ae1355353cf",
+      "rust_bits": "bfee6ae1355353cf",
+      "matches_node": true
+    },
+    {
+      "name": "atan2",
+      "args": [
+        -35,
+        25
+      ],
+      "node_bits": "bfee6ae1355353cf",
+      "rust_bits": "bfee6ae1355353cf",
+      "matches_node": true
+    },
+    {
+      "name": "cbrt",
+      "args": [
+        0.18417393460249554
+      ],
+      "node_bits": "3fe234dbff747097",
+      "rust_bits": "3fe234dbff747097",
+      "matches_node": true
+    },
+    {
+      "name": "cbrt",
+      "args": [
+        0.18424839856754216
+      ],
+      "node_bits": "3fe2357cc849720d",
+      "rust_bits": "3fe2357cc849720d",
+      "matches_node": true
+    },
+    {
+      "name": "cbrt",
+      "args": [
+        0.19345719033613076
+      ],
+      "node_bits": "3fe281e3a42d3184",
+      "rust_bits": "3fe281e3a42d3184",
+      "matches_node": true
+    },
+    {
+      "name": "cbrt",
+      "args": [
+        0.18417393460249554
+      ],
+      "node_bits": "3fe234dbff747097",
+      "rust_bits": "3fe234dbff747097",
+      "matches_node": true
+    },
+    {
+      "name": "cbrt",
+      "args": [
+        0.18424839856754216
+      ],
+      "node_bits": "3fe2357cc849720d",
+      "rust_bits": "3fe2357cc849720d",
+      "matches_node": true
+    },
+    {
+      "name": "cbrt",
+      "args": [
+        0.19345719033613076
+      ],
+      "node_bits": "3fe281e3a42d3184",
+      "rust_bits": "3fe281e3a42d3184",
+      "matches_node": true
+    },
+    {
+      "name": "cbrt",
+      "args": [
+        0.18123466739458963
+      ],
+      "node_bits": "3fe21bee885535e5",
+      "rust_bits": "3fe21bee885535e5",
+      "matches_node": true
+    },
+    {
+      "name": "cbrt",
+      "args": [
+        0.18123466739458963
+      ],
+      "node_bits": "3fe21bee885535e5",
+      "rust_bits": "3fe21bee885535e5",
+      "matches_node": true
+    },
+    {
+      "name": "cbrt",
+      "args": [
+        0.18123466739458963
+      ],
+      "node_bits": "3fe21bee885535e5",
+      "rust_bits": "3fe21bee885535e5",
+      "matches_node": true
+    },
+    {
+      "name": "cbrt",
+      "args": [
+        0.18123466739458963
+      ],
+      "node_bits": "3fe21bee885535e5",
+      "rust_bits": "3fe21bee885535e5",
+      "matches_node": true
+    },
+    {
+      "name": "atan2",
+      "args": [
+        67.20319651585301,
+        80.09245959641109
+      ],
+      "node_bits": "3fe656f4142df3de",
+      "rust_bits": "3fe656f4142df3de",
+      "matches_node": true
+    },
+    {
+      "name": "atan2",
+      "args": [
+        67.20319651585301,
+        80.09245959641109
+      ],
+      "node_bits": "3fe656f4142df3de",
+      "rust_bits": "3fe656f4142df3de",
+      "matches_node": true
+    },
+    {
+      "name": "atan2",
+      "args": [
+        67.20319651585301,
+        80.09245959641109
+      ],
+      "node_bits": "3fe656f4142df3de",
+      "rust_bits": "3fe656f4142df3de",
+      "matches_node": true
+    },
+    {
+      "name": "atan2",
+      "args": [
+        67.20319651585301,
+        80.09245959641109
+      ],
+      "node_bits": "3fe656f4142df3de",
+      "rust_bits": "3fe656f4142df3de",
+      "matches_node": true
+    },
+    {
+      "name": "cbrt",
+      "args": [
+        0.09084171117432352
+      ],
+      "node_bits": "3fdcc526e2c3fc86",
+      "rust_bits": "3fdcc526e2c3fc86",
+      "matches_node": true
+    },
+    {
+      "name": "cbrt",
+      "args": [
+        0.09084171117432352
+      ],
+      "node_bits": "3fdcc526e2c3fc86",
+      "rust_bits": "3fdcc526e2c3fc86",
+      "matches_node": true
+    },
+    {
+      "name": "atan2",
+      "args": [
+        7.5278830789214854,
+        13.450875013694747
+      ],
+      "node_bits": "3fe053c8b9f71a08",
+      "rust_bits": "3fe053c8b9f71a08",
+      "matches_node": true
+    },
+    {
+      "name": "cbrt",
+      "args": [
+        0.09084171117432352
+      ],
+      "node_bits": "3fdcc526e2c3fc86",
+      "rust_bits": "3fdcc526e2c3fc86",
+      "matches_node": true
+    },
+    {
+      "name": "atan2",
+      "args": [
+        7.5278830789214854,
+        13.450875013694747
+      ],
+      "node_bits": "3fe053c8b9f71a08",
+      "rust_bits": "3fe053c8b9f71a08",
+      "matches_node": true
+    },
+    {
+      "name": "cbrt",
+      "args": [
+        0.09084171117432352
+      ],
+      "node_bits": "3fdcc526e2c3fc86",
+      "rust_bits": "3fdcc526e2c3fc86",
+      "matches_node": true
+    },
+    {
+      "name": "atan2",
+      "args": [
+        28.699381242425183,
+        19.58135724504159
+      ],
+      "node_bits": "3fef1b1125e23e41",
+      "rust_bits": "3fef1b1125e23e41",
+      "matches_node": true
+    },
+    {
+      "name": "atan2",
+      "args": [
+        67.20319651585301,
+        80.09245959641109
+      ],
+      "node_bits": "3fe656f4142df3de",
+      "rust_bits": "3fe656f4142df3de",
+      "matches_node": true
+    },
+    {
+      "name": "atan2",
+      "args": [
+        28.699381242425183,
+        19.58135724504159
+      ],
+      "node_bits": "3fef1b1125e23e41",
+      "rust_bits": "3fef1b1125e23e41",
+      "matches_node": true
+    },
+    {
+      "name": "atan2",
+      "args": [
+        67.20319651585301,
+        80.09245959641109
+      ],
+      "node_bits": "3fe656f4142df3de",
+      "rust_bits": "3fe656f4142df3de",
+      "matches_node": true
+    },
+    {
+      "name": "atan2",
+      "args": [
+        67.20319651585301,
+        80.09245959641109
+      ],
+      "node_bits": "3fe656f4142df3de",
+      "rust_bits": "3fe656f4142df3de",
+      "matches_node": true
+    },
+    {
+      "name": "atan2",
+      "args": [
+        67.20319651585301,
+        80.09245959641109
+      ],
+      "node_bits": "3fe656f4142df3de",
+      "rust_bits": "3fe656f4142df3de",
+      "matches_node": true
+    },
+    {
+      "name": "atan2",
+      "args": [
+        67.20319651585301,
+        80.09245959641109
+      ],
+      "node_bits": "3fe656f4142df3de",
+      "rust_bits": "3fe656f4142df3de",
+      "matches_node": true
+    },
+    {
+      "name": "atan2",
+      "args": [
+        67.20319651585301,
+        80.09245959641109
+      ],
+      "node_bits": "3fe656f4142df3de",
+      "rust_bits": "3fe656f4142df3de",
+      "matches_node": true
+    }
+  ]
+}

@@ -14,6 +14,15 @@ impl Host for CapturingHost {
         crate::host_functions![method "captured" (0) => captured]
     }
     fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
+        let external = context.external_rooted(0x1234)?;
+        assert_eq!(context.external_address_rooted(external), Some(0x1234));
+        assert!(context.has_builtin_brand_rooted(external, BuiltinBrand::External)?);
+        let object = context.object_rooted()?;
+        assert!(!context.has_builtin_brand_rooted(object, BuiltinBrand::External)?);
+        assert_eq!(context.external_address_rooted(object), None);
+        let global = context.global_root()?;
+        let key = context.string_rooted("external");
+        context.set_property_rooted(global, key, external, global)?;
         let data = context.object_rooted()?;
         let key = context.string_rooted("answer");
         let answer = context.number(42.0);
@@ -33,6 +42,13 @@ fn captured(
 ) -> Result<RootId, RootedError> {
     let data = context.host_function_data()?;
     context.collect()?;
+    let global = context.global_root()?;
+    let key = context.string_rooted("external");
+    let external = context.get_property_rooted(global, key)?;
+    assert_eq!(context.external_address_rooted(external), Some(0x1234));
+    assert!(context.has_builtin_brand_rooted(external, BuiltinBrand::External)?);
+    let fake = context.evaluate_script_rooted("Object.create(external)", "external-prototype.js")?;
+    assert!(!context.has_builtin_brand_rooted(fake, BuiltinBrand::External)?);
     // Named host re-entry must neither reset roots nor capture the calling frame.
     let wrapper = context.evaluate_script_rooted(
         "(function(value) { if (typeof callerLocal !== 'undefined') throw 1; return value; });",
@@ -61,6 +77,9 @@ fn captured_host_environment_survives_scope_drop_collection_and_guest_reentry() 
     runtime.execute(&program).unwrap();
     runtime.collect(&program).unwrap();
     let global = runtime.global_root().unwrap();
+    let key = runtime.string_rooted("external");
+    let external = runtime.get_property_rooted(global, key).unwrap();
+    assert!(runtime.rooted_value(external).is_some());
     let key = runtime.string_rooted("result");
     let data = runtime.get_property_rooted(global, key).unwrap();
     let key = runtime.string_rooted("answer");
@@ -634,6 +653,34 @@ fn collect_json(
 #[derive(Default)]
 struct LazyHost;
 
+struct RestartIntrinsicsHost;
+
+impl Host for RestartIntrinsicsHost {
+    fn write_line(&mut self, _: &str) {}
+    fn clock_millis(&mut self) -> f64 { 0.0 }
+    fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
+        context.with_startup_intrinsics(|context| {
+            context.evaluate_script_rooted(
+                "Array.bootstrapRealmMarker = { fresh: true };",
+                "restart-intrinsics-bootstrap.js",
+            )
+        })?;
+        context.seal_startup_intrinsics();
+        Ok(())
+    }
+}
+
+#[test]
+fn startup_intrinsics_are_reset_before_a_replacement_realm_bootstraps() {
+    let source = "if (!Array.bootstrapRealmMarker.fresh) throw new Error('stale bootstrap'); Array.bootstrapRealmMarker.fresh = false;";
+    for program in [Engine::compile(crate::ExecutionRequest { source, name: "restart-intrinsics.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "restart-intrinsics.js").unwrap()] {
+        let mut runtime = Runtime::new(RestartIntrinsicsHost);
+        for _ in 0..2 {
+            runtime.execute(&program).unwrap();
+        }
+    }
+}
+
 const LAZY_GROUP_SCRIPT: &str = "globalThis.inits = (globalThis.inits || 0) + 1; \
     globalThis.A = 'a'; globalThis.B = 'b'; \
     Object.defineProperty(globalThis, 'C', { value: 'c', writable: true, configurable: true });";
@@ -647,6 +694,7 @@ impl Host for LazyHost {
         crate::host_functions![
             method "initializeGroup" (0) => initialize_lazy_group,
             method "initializeSingle" (0) => initialize_lazy_single,
+            method "initializeIntegrity" (0) => initialize_lazy_integrity,
         ]
     }
     fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
@@ -660,6 +708,15 @@ impl Host for LazyHost {
         }
         let key = context.string_rooted("after");
         assert!(context.set_property_rooted(global, key, marker, global)?);
+        for (name, property, indexed) in [("lazyIntegrity", "value", false), ("lazyArrayIntegrity", "0", true)] {
+            let holder = if indexed { context.array_rooted(&[])? } else { context.object_rooted()? };
+            let key = context.string_rooted(property);
+            let data = context.array_rooted(&[holder, key])?;
+            let initializer = context.host_function_with_data(HostFunctionId(2), data)?;
+            context.define_lazy_data_properties_rooted(holder, &[property], true, initializer)?;
+            let key = context.string_rooted(name);
+            assert!(context.set_property_rooted(global, key, holder, global)?);
+        }
         context.seal_startup_intrinsics();
         Ok(())
     }
@@ -679,6 +736,67 @@ fn initialize_lazy_single(
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     context.evaluate_script_rooted("globalThis.D = 'd';", "lazy-single.js")
+}
+
+fn initialize_lazy_integrity(
+    context: &mut NativeContext<'_, LazyHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    context.evaluate_script_rooted(
+        "globalThis.integrityInits=(globalThis.integrityInits||0)+1",
+        "lazy-integrity.js",
+    )?;
+    let data = context.host_function_data()?;
+    let key = context.string_rooted("0");
+    let holder = context.get_property_rooted(data, key)?;
+    let key = context.string_rooted("1");
+    let key = context.get_property_rooted(data, key)?;
+    let value = context.number(42.0);
+    context.define_data_property_rooted(holder, key, value, true, true, true)?;
+    Ok(context.undefined())
+}
+
+#[test]
+fn lazy_data_properties_materialize_before_integrity_descriptor_changes() {
+    for (holder, key) in [("lazyIntegrity", "value"), ("lazyArrayIntegrity", "0")] {
+        for (operation, writable, configurable) in [
+            ("Object.freeze(target)", false, false),
+            ("Object.seal(target)", true, false),
+            (
+                "Object.preventExtensions(target); if(Object.isFrozen(target))throw Error('frozen')",
+                true,
+                true,
+            ),
+            (
+                "Object.preventExtensions(target); if(Object.isSealed(target))throw Error('sealed')",
+                true,
+                true,
+            ),
+        ] {
+            let source = format!(
+                r#"
+          const target=globalThis[{holder:?}],key={key:?};
+          {operation};
+          if(integrityInits!==1)throw Error('integrity query did not observe the descriptor');
+          const descriptor=Object.getOwnPropertyDescriptor(target,key);
+          if(descriptor.value!==42||descriptor.writable!=={writable}||descriptor.configurable!=={configurable}||!descriptor.enumerable)throw Error('integrity descriptor');
+          if(target[key]!==42||integrityInits!==1)throw Error('repeated initialization');
+        "#
+            );
+            for program in [
+                Engine::compile(crate::ExecutionRequest {
+                    source: &source,
+                    name: "lazy-integrity.js",
+                    kind: crate::SourceKind::Script,
+                })
+                .unwrap(),
+                Engine::specialize(&source, "lazy-integrity.js").unwrap(),
+            ] {
+                Runtime::new(LazyHost).execute(&program).unwrap_or_else(|error| panic!("{holder}: {operation}: {error:?}"));
+            }
+        }
+    }
 }
 
 #[test]

@@ -100,7 +100,7 @@ pub(crate) fn install(c: &mut Context<'_>, prototype: RootId) -> Result<(), Root
 pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     const CACHE_KEY: &str = "\0binding:buffer";
     let shared = c.host_mut().shared_state();
-    if let Some(binding) = shared.borrow().module_cache.get(CACHE_KEY).copied() {
+    if let Some(binding) = shared.borrow().builtin_cache.get(CACHE_KEY).copied() {
         return Ok(binding);
     }
     let binding = c.with_startup_intrinsics(|c| {
@@ -108,6 +108,12 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         let function = function(c, true)?;
         let key = c.string_rooted("fill");
         c.define_data_property_rooted(result, key, function, true, true, true)?;
+        let compare = c.host_function(crate::host::shared_vm::operation("bufferCompareRaw"))?;
+        let key = c.string_rooted("name");
+        let name = c.string_rooted("compare");
+        c.define_data_property_rooted(compare, key, name, false, false, true)?;
+        let key = c.string_rooted("compare");
+        c.define_data_property_rooted(result, key, compare, true, true, true)?;
         let data = intrinsics(c)?;
         let copy = c.host_function_with_data(crate::host::shared_vm::operation("bufferCopyArrayBuffer"), data)?;
         let key = c.string_rooted("name");
@@ -120,7 +126,7 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let binding = c.retain(binding)?;
     shared
         .borrow_mut()
-        .module_cache
+        .builtin_cache
         .insert(CACHE_KEY.to_owned(), binding);
     Ok(binding)
 }
