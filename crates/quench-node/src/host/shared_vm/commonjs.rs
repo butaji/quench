@@ -2598,6 +2598,8 @@ pub(crate) fn node_internal_binding_source() -> &'static str {
     case "buffer": return Object.assign({}, require("buffer"), __nativeInternalBinding("buffer"));
     case "fs": return __nativeInternalBinding("fs");
     case "crypto": {
+      const native = __nativeInternalBinding("crypto");
+      if (native.getFipsCryptoGeneration) return native;
       const crypto = require("crypto");
       return Object.assign({}, crypto, __nativeInternalBinding("crypto_keys"), {
         setEngine: __nativeInternalBinding("crypto").setEngine,
