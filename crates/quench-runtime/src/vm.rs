@@ -79,6 +79,7 @@ mod dispatch_wasm;
 mod dynamic_strings;
 mod embedding;
 mod provenance;
+mod inspection;
 mod environment;
 mod equality;
 mod error;
