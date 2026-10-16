@@ -1284,6 +1284,7 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
+        self.capture_function_name(function, value);
         if matches!(
             self.heap.get(function),
             Some(Cell::Function { kind: FunctionKind::Native(native), .. })
