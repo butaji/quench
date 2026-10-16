@@ -317,11 +317,13 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
 /// endpoint IDs and parsed state; this is the one owner of socket bytes and
 /// OS handles for that execution path.
 pub(crate) struct Transport {
+    native_tcp_connecting: HashMap<u64, NativeConnecting>,
+    native_tcp_unbound: HashMap<u64, super::tcp_owned::TcpOwned>,
     next_id: u64,
     listeners: HashMap<u64, Listener>,
     sockets: HashMap<u64, SharedSocket>,
     connecting: HashMap<u64, ConnectingSocket>,
-    closing_sockets: HashMap<u64, ClosingSocket>,
+    closing_sockets: VecDeque<(u64, ClosingSocket)>,
 }
 
 pub(crate) enum RawStream {
@@ -400,7 +402,7 @@ impl SocketStream {
     fn shutdown_write(&mut self) -> std::io::Result<bool> {
         match self {
             Self::Plain(raw) => {
-                let _ = raw.shutdown(std::net::Shutdown::Write);
+                raw.shutdown(std::net::Shutdown::Write)?;
                 Ok(true)
             }
             Self::Encrypted(tls) => tls.shutdown_write(),
@@ -529,12 +531,26 @@ struct SharedSocket {
     delivery: DeliveryPhase,
     referenced: bool,
     pending_write: Vec<u8>,
+    write_failure: Option<std::io::Error>,
     write_offset: usize,
-    completions: VecDeque<usize>,
+    completions: VecDeque<WriteBoundary>,
     end_after_write: bool,
     read_ended: bool,
     write_ended: bool,
+    shutdown_request: Option<RootId>,
 }
+
+impl SharedSocket {
+    fn new(stream: SocketStream, read_demand: ReadDemand, referenced: bool) -> Self {
+        Self { stream, read_demand, delivery: DeliveryPhase::Pending, referenced,
+            pending_write: Vec::new(), write_failure: None, write_offset: 0,
+            completions: VecDeque::new(), end_after_write: false, read_ended: false,
+            write_ended: false, shutdown_request: None }
+    }
+}
+
+struct WriteBoundary { end: usize, owner: WriteOwner }
+enum WriteOwner { Guest, Native(RootId) }
 
 pub(crate) enum TransportEvent {
     Accepted {
@@ -550,6 +566,9 @@ pub(crate) enum TransportEvent {
     WriteComplete {
         socket: u64,
     },
+    NativeWriteComplete { request: RootId },
+    NativeConnectComplete { request: RootId, status: i32 },
+    NativeShutdownComplete { request: RootId },
     ConnectError {
         socket: u64,
         failure: TcpConnectFailure,
@@ -580,11 +599,13 @@ pub(crate) enum TransportEvent {
 impl Transport {
     pub(crate) fn new() -> Self {
         Self {
+            native_tcp_connecting: HashMap::new(),
+            native_tcp_unbound: HashMap::new(),
             next_id: FIRST_TRANSPORT_ID,
             listeners: HashMap::new(),
             sockets: HashMap::new(),
             connecting: HashMap::new(),
-            closing_sockets: HashMap::new(),
+            closing_sockets: VecDeque::new(),
         }
     }
 
@@ -825,8 +846,29 @@ pub(crate) fn write_with_completion(
         .sockets
         .get_mut(&socket)
         .expect("write checked live socket");
-    stream.completions.push_back(stream.pending_write.len());
+    stream.completions.push_back(WriteBoundary { end: stream.pending_write.len(), owner: WriteOwner::Guest });
+    // Match uv_try_write admission for plain native streams. Keep callback
+    // boundaries until poll, including completely synchronous writes.
+    if stream.write_failure.is_none() && matches!(&stream.stream, SocketStream::Plain(_))
+        && stream.write_offset < stream.pending_write.len()
+    {
+        match stream.stream.write(&stream.pending_write, stream.write_offset) {
+            Ok(0) => stream.write_failure = Some(std::io::ErrorKind::WriteZero.into()),
+            Ok(written) => stream.write_offset += written,
+            Err(error) if matches!(error.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted) => {},
+            Err(error) => stream.write_failure = Some(error),
+        }
+    }
     Ok(())
+}
+
+/// Application bytes accepted by the native transport but not yet written.
+/// Derive this from the write buffer: advancing/clearing it is the only owner
+/// of transport progress. Connecting and closed sockets have no native queue.
+pub(crate) fn socket_write_queue_size(transport: &Transport, id: u64) -> usize {
+    transport.sockets.get(&id).map_or(0, |socket| {
+        socket.pending_write.len() - socket.write_offset
+    })
 }
 
 pub(crate) fn socket_is_open(transport: &Transport, id: u64) -> bool {
@@ -864,13 +906,7 @@ pub(crate) fn close_socket(transport: &mut Transport, id: u64) {
                 .map(|socket| socket.referenced)
         });
     if let Some(referenced) = referenced {
-        transport.closing_sockets.insert(
-            id,
-            ClosingSocket {
-                referenced,
-                phase: SocketClosePhase::Requested,
-            },
-        );
+        request_socket_close(transport, id, referenced);
     }
 }
 
@@ -888,7 +924,7 @@ pub(crate) fn poll(transport: &mut Transport) -> Vec<TransportEvent> {
     let mut events = Vec::new();
     transport
         .closing_sockets
-        .retain(|id, socket| match socket.phase {
+        .retain_mut(|(id, socket)| match socket.phase {
             SocketClosePhase::Closing => {
                 events.push(TransportEvent::CloseCompleted { socket: *id });
                 false
@@ -899,13 +935,14 @@ pub(crate) fn poll(transport: &mut Transport) -> Vec<TransportEvent> {
             }
         });
     events.extend(poll_connects(transport));
+    events.extend(poll_native_connects(transport));
     events.extend(poll_accepts(transport));
     events.extend(poll_sockets(transport));
     events
 }
 
 pub(crate) fn has_work(transport: &Transport) -> bool {
-    transport
+    !transport.native_tcp_connecting.is_empty() || transport
         .listeners
         .values()
         .any(|listener| match listener.state {
@@ -927,6 +964,8 @@ pub(crate) fn has_work(transport: &Transport) -> bool {
 
 pub(crate) fn cleanup(transport: &mut Transport) {
     transport.listeners.clear();
+    transport.native_tcp_connecting.clear();
+    transport.native_tcp_unbound.clear();
     transport.sockets.clear();
     transport.connecting.clear();
     transport.closing_sockets.clear();
@@ -968,29 +1007,12 @@ fn poll_connects(transport: &mut Transport) -> Vec<TransportEvent> {
                 }
                 transport.sockets.insert(
                     id,
-                    SharedSocket {
-                        stream,
-                        read_demand: connection.read_demand,
-                        delivery: DeliveryPhase::Pending,
-                        referenced,
-                        pending_write: Vec::new(),
-                        completions: VecDeque::new(),
-                        write_offset: 0,
-                        end_after_write: false,
-                        read_ended: false,
-                        write_ended: false,
-                    },
+                    SharedSocket::new(stream, connection.read_demand, referenced),
                 );
                 events.push(TransportEvent::Connected { socket: id });
             }
             Err(ConnectFailure::Tcp(failure)) => {
-                transport.closing_sockets.insert(
-                    id,
-                    ClosingSocket {
-                        referenced,
-                        phase: SocketClosePhase::Requested,
-                    },
-                );
+                request_socket_close(transport, id, referenced);
                 events.push(TransportEvent::ConnectError {
                     socket: id,
                     failure,
@@ -998,13 +1020,7 @@ fn poll_connects(transport: &mut Transport) -> Vec<TransportEvent> {
             }
             #[cfg(unix)]
             Err(ConnectFailure::Local { error, path }) => {
-                transport.closing_sockets.insert(
-                    id,
-                    ClosingSocket {
-                        referenced,
-                        phase: SocketClosePhase::Requested,
-                    },
-                );
+                request_socket_close(transport, id, referenced);
                 events.push(TransportEvent::LocalConnectError {
                     socket: id,
                     error,
@@ -1045,18 +1061,7 @@ fn poll_accepts(transport: &mut Transport) -> Vec<TransportEvent> {
         };
         transport.sockets.insert(
             socket,
-            SharedSocket {
-                stream,
-                read_demand: ReadDemand::Active,
-                delivery: DeliveryPhase::Pending,
-                referenced: true,
-                pending_write: Vec::new(),
-                completions: VecDeque::new(),
-                write_offset: 0,
-                end_after_write: false,
-                read_ended: false,
-                write_ended: false,
-            },
+            SharedSocket::new(stream, ReadDemand::Active, true),
         );
         events.push(TransportEvent::Accepted {
             listener,
@@ -1096,6 +1101,13 @@ fn poll_sockets(transport: &mut Transport) -> Vec<TransportEvent> {
                 continue;
             }
         }
+        // Deliver completed requests before attempting a later failing write.
+        poll_write_completions(socket, id, &mut events);
+        if let Some(error) = socket.write_failure.take() {
+            events.push(TransportEvent::Error { socket: id, error, syscall: "write" });
+            terminal.push(id);
+            continue;
+        }
         if socket.write_offset < socket.pending_write.len() {
             match socket
                 .stream
@@ -1127,14 +1139,7 @@ fn poll_sockets(transport: &mut Transport) -> Vec<TransportEvent> {
                 }
             }
         }
-        while socket
-            .completions
-            .front()
-            .is_some_and(|end| *end <= socket.write_offset)
-        {
-            socket.completions.pop_front();
-            events.push(TransportEvent::WriteComplete { socket: id });
-        }
+        poll_write_completions(socket, id, &mut events);
         if socket.write_offset == socket.pending_write.len() {
             socket.pending_write.clear();
             socket.write_offset = 0;
@@ -1144,6 +1149,7 @@ fn poll_sockets(transport: &mut Transport) -> Vec<TransportEvent> {
                 Ok(true) => {
                     socket.end_after_write = false;
                     socket.write_ended = true;
+                    if let Some(request)=socket.shutdown_request.take() { events.push(TransportEvent::NativeShutdownComplete {request}); }
                 }
                 Ok(false) => {}
                 Err(error) => {
@@ -1682,7 +1688,16 @@ pub(crate) fn write_operation(
         .expect("checked live socket")
         .write_callbacks
         .push_back(callback);
-    context.host_mut().net_pending_writes.push((id, bytes));
+    // The transport owns accepted writes from admission onwards. In particular
+    // writeQueueSize excludes bytes synchronously accepted by the OS.
+    let connected = is_connected(&state.borrow().tcp, id);
+    if connected {
+        write_with_completion(&mut state.borrow_mut().tcp, id, &bytes)
+            .map_err(RootedError::host)?;
+    } else {
+        // Connecting sockets keep their existing deferred submission path.
+        context.host_mut().net_pending_writes.push((id, bytes));
+    }
     Ok(context.boolean(true))
 }
 
@@ -1986,6 +2001,8 @@ pub(super) fn register_socket(
             write_callbacks: VecDeque::new(),
         },
     );
+    // A public Socket now owns delivery even when it adopts an active raw handle.
+    super::stream_binding::release_reader(context, id);
     super::net_reference_shared_vm::install_socket_handle(context, id, socket)?;
     Ok(socket)
 }
@@ -2146,7 +2163,7 @@ pub(crate) fn socket_reference(transport: &mut Transport, id: u64, referenced: b
         socket.referenced = referenced;
     } else if let Some(socket) = transport.sockets.get_mut(&id) {
         socket.referenced = referenced;
-    } else if let Some(socket) = transport.closing_sockets.get_mut(&id) {
+    } else if let Some(socket) = transport.closing_sockets.iter_mut().find_map(|(existing, socket)| (*existing == id).then_some(socket)) {
         socket.referenced = referenced;
     }
 }
@@ -2159,8 +2176,8 @@ pub(crate) fn socket_has_ref(transport: &Transport, id: u64) -> Option<bool> {
         .or_else(|| {
             transport
                 .closing_sockets
-                .get(&id)
-                .map(|socket| socket.referenced)
+                .iter()
+                .find_map(|(existing, socket)| (*existing == id).then_some(socket.referenced))
         })
 }
 
@@ -2214,13 +2231,7 @@ pub(crate) fn encrypt(
             Ok(())
         }
         Err(error) => {
-            transport.closing_sockets.insert(
-                id,
-                ClosingSocket {
-                    referenced,
-                    phase: SocketClosePhase::Requested,
-                },
-            );
+            request_socket_close(transport, id, referenced);
             Err(EncryptError::OpenSsl(error))
         }
     }
@@ -2499,4 +2510,264 @@ pub(crate) fn read_active(transport: &Transport, id: u64) -> bool {
     transport.sockets.get(&id).map(|socket| socket.read_demand)
         .or_else(|| transport.connecting.get(&id).map(|socket| socket.read_demand))
         == Some(ReadDemand::Active)
+}
+
+fn poll_write_completions(socket: &mut SharedSocket, id: u64, events: &mut Vec<TransportEvent>) {
+    while socket.completions.front().is_some_and(|boundary| boundary.end <= socket.write_offset) {
+        let boundary = socket.completions.pop_front().expect("checked completion boundary");
+        events.push(match boundary.owner {
+            WriteOwner::Guest => TransportEvent::WriteComplete { socket: id },
+            WriteOwner::Native(request) => TransportEvent::NativeWriteComplete { request },
+        });
+    }
+}
+pub(crate) fn native_tcp_create(transport: &mut Transport) -> std::io::Result<u64> {
+    let socket = super::tcp_owned::TcpOwned::new()?;
+    let id = transport.id().map_err(std::io::Error::other)?;
+    transport.native_tcp_unbound.insert(id, socket);
+    Ok(id)
+}
+pub(crate) fn native_tcp_bind(
+    transport: &mut Transport,
+    id: u64,
+    address: SocketAddr,
+    flags: u32,
+) -> std::io::Result<()> {
+    if transport.listeners.contains_key(&id) || transport.sockets.contains_key(&id) {
+        return Err(std::io::Error::from_raw_os_error(libc::EINVAL));
+    }
+    transport
+        .native_tcp_unbound
+        .get_mut(&id)
+        .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EBADF))?
+        .bind(address, flags)
+}
+pub(crate) fn native_tcp_listen(
+    transport: &mut Transport,
+    id: u64,
+    backlog: i32,
+) -> std::io::Result<()> {
+    if let Some(listener) = transport.listeners.get(&id).and_then(Listener::socket) {
+        // Existing descriptor remains the only socket owner on repeat listen.
+        return match listener {
+            ListenerSocket::Tcp(listener) => socket2::SockRef::from(listener).listen(backlog),
+            #[cfg(unix)]
+            _ => Err(std::io::Error::from_raw_os_error(libc::EINVAL)),
+        };
+    }
+    let socket = transport
+        .native_tcp_unbound
+        .get(&id)
+        .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EBADF))?;
+    socket.start_listening(backlog)?;
+    let socket = transport
+        .native_tcp_unbound
+        .remove(&id)
+        .expect("validated live socket");
+    let referenced = socket.referenced;
+    let mut listener = Listener::new(ListenerSocket::Tcp(socket.into_listener()));
+    listener.referenced = referenced;
+    transport.listeners.insert(id, listener);
+    Ok(())
+}
+pub(crate) fn native_tcp_address(transport: &Transport, id: u64) -> std::io::Result<SocketAddr> {
+    if let Some(socket) = transport.native_tcp_unbound.get(&id) {
+        return socket.address();
+    }
+    if let Some(connection)=transport.native_tcp_connecting.get(&id) { return connection.socket.address(); }
+    if let Some(address) = address(transport, id) {
+        return Ok(address);
+    }
+    socket_address(transport, id, false)
+}
+pub(crate) fn native_tcp_is_open(transport: &Transport, id: u64) -> bool {
+    transport.native_tcp_connecting.contains_key(&id) || transport.native_tcp_unbound.contains_key(&id)
+        || transport.listeners.contains_key(&id)
+        || socket_is_open(transport, id)
+}
+pub(crate) fn native_tcp_close(transport: &mut Transport, id: u64) {
+    // Removing the pre-listen/listener owner physically closes its descriptor.
+    // Reuse the same close completion machine as connected endpoints.
+    let referenced = transport
+        .native_tcp_unbound
+        .remove(&id)
+        .map(|socket| socket.referenced)
+        .or_else(|| transport.native_tcp_connecting.remove(&id).map(|connection|connection.socket.referenced))
+        .or_else(|| {
+            transport
+                .listeners
+                .remove(&id)
+                .map(|listener| listener.referenced)
+        });
+    if let Some(referenced) = referenced {
+        request_socket_close(transport, id, referenced);
+    } else {
+        close_socket(transport, id);
+    }
+}
+pub(crate) fn native_tcp_reference(transport: &mut Transport, id: u64, referenced: bool) {
+    if let Some(socket) = transport.native_tcp_unbound.get_mut(&id) {
+        socket.referenced = referenced;
+    } else if let Some(connection)=transport.native_tcp_connecting.get_mut(&id) {
+        connection.socket.referenced=referenced;
+    } else if transport.listeners.contains_key(&id) {
+        listener_reference(transport, id, referenced);
+    } else {
+        socket_reference(transport, id, referenced);
+    }
+}
+pub(crate) fn native_tcp_has_ref(transport: &Transport, id: u64) -> bool {
+    transport
+        .native_tcp_unbound
+        .get(&id)
+        .map(|socket| socket.referenced)
+        .or_else(|| transport.native_tcp_connecting.get(&id).map(|connection|connection.socket.referenced))
+        .or_else(|| listener_has_ref(transport, id))
+        .or_else(|| socket_has_ref(transport, id))
+        .unwrap_or(false)
+}
+
+/// Request identity is the actual retained guest WriteWrap root, never a fake fd.
+pub(crate) fn write_native_request(
+    transport: &mut Transport,
+    socket: u64,
+    request: RootId,
+    bytes: &[u8],
+) -> std::io::Result<bool> {
+    let stream = transport
+        .sockets
+        .get_mut(&socket)
+        .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EBADF))?;
+    // TLSWrap needs its own encrypted-stream submission contract.
+    if !matches!(&stream.stream, SocketStream::Plain(_)) {
+        return Err(std::io::Error::from_raw_os_error(libc::ENOTSUP));
+    }
+    if let Some(error) = &stream.write_failure {
+        return Err(std::io::Error::from_raw_os_error(
+            error.raw_os_error().unwrap_or(libc::EPIPE),
+        ));
+    }
+    let previous_end = stream.pending_write.len();
+    let queued_before = stream.write_offset < previous_end;
+    stream.pending_write.extend_from_slice(bytes);
+    // libuv cannot try-write past an already outstanding write request.
+    if !queued_before && !bytes.is_empty() {
+        match stream
+            .stream
+            .write(&stream.pending_write, stream.write_offset)
+        {
+            Ok(0) => {
+                stream.pending_write.truncate(previous_end);
+                return Err(std::io::ErrorKind::WriteZero.into());
+            }
+            Ok(written) => stream.write_offset += written,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
+                ) => {}
+            Err(error) => {
+                stream.pending_write.truncate(previous_end);
+                return Err(error);
+            }
+        }
+    }
+    let asynchronous = stream.write_offset < stream.pending_write.len();
+    if asynchronous {
+        stream.completions.push_back(WriteBoundary {
+            end: stream.pending_write.len(),
+            owner: WriteOwner::Native(request),
+        });
+    }
+    Ok(asynchronous)
+}
+
+struct NativeConnecting {
+    socket: super::tcp_owned::TcpOwned,
+    request: RootId,
+}
+pub(crate) fn native_tcp_connect(
+    transport: &mut Transport,
+    id: u64,
+    request: RootId,
+    address: SocketAddr,
+) -> std::io::Result<()> {
+    if transport.native_tcp_connecting.contains_key(&id) {
+        return Err(std::io::Error::from_raw_os_error(libc::EALREADY));
+    }
+    let socket = transport
+        .native_tcp_unbound
+        .get_mut(&id)
+        .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EBADF))?;
+    socket.start_connect(address)?;
+    let socket = transport
+        .native_tcp_unbound
+        .remove(&id)
+        .expect("submitted native connect owns socket");
+    transport
+        .native_tcp_connecting
+        .insert(id, NativeConnecting { socket, request });
+    Ok(())
+}
+fn poll_native_connects(transport: &mut Transport) -> Vec<TransportEvent> {
+    let ids = transport
+        .native_tcp_connecting
+        .keys()
+        .copied()
+        .collect::<Vec<_>>();
+    let mut events = Vec::new();
+    for id in ids {
+        let result = transport.native_tcp_connecting[&id].socket.connect_ready();
+        if matches!(result, Ok(false)) {
+            continue;
+        }
+        let connection = transport
+            .native_tcp_connecting
+            .remove(&id)
+            .expect("observed native connect");
+        let request = connection.request;
+        let status = match result {
+            Ok(true) => {
+                let referenced = connection.socket.referenced;
+                let stream = SocketStream::Plain(RawStream::Tcp(connection.socket.into_stream()));
+                transport
+                    .sockets
+                    .insert(id, SharedSocket::new(stream, ReadDemand::Idle, referenced));
+                0
+            }
+            Err(error) => {
+                // libuv keeps the actual failed TCP descriptor alive until close.
+                transport.native_tcp_unbound.insert(id, connection.socket);
+                -error.raw_os_error().unwrap_or(libc::EIO)
+            }
+            Ok(false) => unreachable!("pending connection skipped"),
+        };
+        events.push(TransportEvent::NativeConnectComplete { request, status });
+    }
+    events
+}
+pub(crate) fn native_shutdown_request(
+    transport: &mut Transport,
+    id: u64,
+    request: RootId,
+) -> std::io::Result<()> {
+    let socket = transport
+        .sockets
+        .get_mut(&id)
+        .ok_or_else(|| std::io::Error::from_raw_os_error(libc::ENOTCONN))?;
+    if socket.end_after_write || socket.write_ended {
+        return Err(std::io::Error::from_raw_os_error(libc::ENOTCONN));
+    }
+    socket.shutdown_request = Some(request);
+    socket.end_after_write = true;
+    Ok(())
+}
+
+/// libuv prepends genuine close requests to its closing-handle list. Keep
+/// lifecycle metadata in that same authoritative order until completion.
+fn request_socket_close(transport: &mut Transport, id: u64, referenced: bool) {
+    transport.closing_sockets.push_front((id, ClosingSocket {
+        referenced,
+        phase: SocketClosePhase::Requested,
+    }));
 }
