@@ -988,8 +988,9 @@ pub(crate) fn get_call_sites(
 pub(crate) fn get_caller_location(
     context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let mut frames = context.source_stack_frames(2);
-    let Some(frame) = (frames.len() == 2).then(|| frames.pop().unwrap()) else {
+    const CALLER_LOCATION_FRAME_COUNT: usize = 2;
+    let mut frames = context.source_stack_frames(CALLER_LOCATION_FRAME_COUNT);
+    let Some(frame) = (frames.len() == CALLER_LOCATION_FRAME_COUNT).then(|| frames.pop().unwrap()) else {
         return Ok(context.undefined());
     };
     // An unnamed eval has no ScriptNameOrSourceURL. Do not fabricate an
