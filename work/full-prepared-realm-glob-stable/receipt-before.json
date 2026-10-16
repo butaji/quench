@@ -1,0 +1,29 @@
+{
+  "source_commit": "e9ec2e9c1372e8640ef1ab027bbe5f9a5f5e3e33",
+  "checkout_commit": "e9ec2e9c1372e8640ef1ab027bbe5f9a5f5e3e33",
+  "release": "v26.12.0",
+  "fixture_commit": "26e72d85a611e222e3f06025de8a3c496923bacd",
+  "command": [
+    "/workspace/quench/work/prepared-realm-bin/run-parallel",
+    "--all",
+    "--parallel-dir",
+    "/workspace/work/node-stable-release/node-v26.12.0/test/parallel",
+    "--jobs",
+    "4",
+    "--timeout-secs",
+    "30",
+    "--results",
+    "/workspace/quench/work/full-prepared-realm-glob-stable/results.json"
+  ],
+  "binaries_before": {
+    "quench-node": "1dfe43a65ed00c041d702879a8333ebdac9c7c2dda80e0dd395f108d9b7754ac",
+    "run-parallel": "84070b947e44ef12389605505816f659326119c24ba4f91b828f71ece9265851",
+    "openssl-cli": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1"
+  },
+  "protected_before": {
+    "restored": true,
+    "sha256": "b0e78cd4bb13929391b33a2ad7d80f61d8b2f1d66533aaf31d95807e5f3863eb"
+  },
+  "memory_before": "low 0\nhigh 0\nmax 820107\noom 0\noom_kill 0\noom_group_kill 0\n",
+  "started_utc": "2026-10-16T09:52:53.574958+00:00"
+}

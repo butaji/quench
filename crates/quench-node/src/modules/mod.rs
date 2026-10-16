@@ -80,6 +80,7 @@ pub(crate) mod net_reference_shared_vm;
 pub(crate) mod net_shared_vm;
 pub(crate) mod net_server_listen;
 pub(crate) mod node_errors_shared_vm;
+pub(crate) mod node_protocol_constants;
 pub(crate) mod os_facts;
 pub(crate) mod memory_facts;
 pub(crate) mod process_memory_shared_vm;

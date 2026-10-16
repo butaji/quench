@@ -1,0 +1,13 @@
+{
+  "status": "complete",
+  "commands": [
+    [
+      "bash",
+      "/workspace/quench/work/sdk-primitives-policy/qualify-remainder.sh"
+    ]
+  ],
+  "exit": 0,
+  "supervisor_pid": 3265029,
+  "session_id": 3265028,
+  "utc": "2026-10-16T10:56:29.819658+00:00"
+}

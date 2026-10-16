@@ -48,6 +48,8 @@ struct RuntimeAtoms {
     /// Read by every promise resolution and species lookup.
     then: Atom,
     constructor: Atom,
+    /// Canonical key for named function-info lookup; paired with length_atom.
+    name: Atom,
 }
 pub(crate) mod activation;
 mod activation_lifecycle;
@@ -132,7 +134,8 @@ mod property_key;
 use activation::{Continuation, SuspendedEntry};
 use call_arguments::CallArguments;
 use object::AtomClass;
-use program_store::{ModuleImport, ProgramId, ProgramStore};
+pub(crate) use program_store::ProgramId;
+use program_store::{ModuleImport, ProgramStore};
 use promise::PromiseRuntime;
 use property_key::PropertyKey;
 mod operations;
@@ -897,15 +900,47 @@ impl DictionaryTrigger {
     }
 }
 struct ShapeLookupIndex {
+    /// The shape's live properties in definition order, with their slots.
     entries: Vec<(property_key::PropertyKey, u32)>,
-    slots: FxHashMap<property_key::PropertyKey, u32>,
+    /// Positions in `entries`, hashed by key: the pairs themselves are stored once.
+    positions: hashbrown::HashTable<u32>,
     attributes: FxHashMap<u32, ShapeAttributes>,
 }
-#[cfg(feature = "profile-memory")]
 impl ShapeLookupIndex {
+    fn key_hash(key: property_key::PropertyKey) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = rustc_hash::FxHasher::default();
+        key.hash(&mut hasher);
+        hasher.finish()
+    }
+    fn new(
+        entries: Vec<(property_key::PropertyKey, u32)>,
+        attributes: FxHashMap<u32, ShapeAttributes>,
+    ) -> Self {
+        let mut positions = hashbrown::HashTable::with_capacity(entries.len());
+        for (position, &(key, _)) in entries.iter().enumerate() {
+            let position = u32::try_from(position).expect("shape width fits u32");
+            positions.insert_unique(Self::key_hash(key), position, |&position| {
+                Self::key_hash(entries[position as usize].0)
+            });
+        }
+        Self {
+            entries,
+            positions,
+            attributes,
+        }
+    }
+    fn slot(&self, key: property_key::PropertyKey) -> Option<u32> {
+        self.positions
+            .find(Self::key_hash(key), |&position| {
+                self.entries[position as usize].0 == key
+            })
+            .map(|&position| self.entries[position as usize].1)
+    }
+    #[cfg(feature = "profile-memory")]
     fn payload_capacity_bytes(&self) -> usize {
         self.entries.capacity() * size_of::<(property_key::PropertyKey, u32)>()
-            + self.slots.capacity() * size_of::<(property_key::PropertyKey, u32)>()
+            + self.positions.capacity() * (size_of::<u32>() + 1)
             + self.attributes.capacity() * size_of::<(u32, ShapeAttributes)>()
     }
 }
@@ -1923,6 +1958,7 @@ impl<H: Host> Vm<H> {
             regexp_flag_accessors,
             then: self.intern_atom("then"),
             constructor: self.intern_atom("constructor"),
+            name: self.intern_atom("name"),
         };
         self.field_caches = vec![EMPTY_CACHE; program.cache_sites as usize];
         Self::prime_loop_decoding(program);
