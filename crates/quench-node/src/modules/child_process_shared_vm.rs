@@ -19,8 +19,29 @@ const FACTORY: &str = quench_js_check::checked_js!(
     r#"(spawnSync, spawnNative, register, write, end, Buffer, warnShellArgs, forkPlan, requestRead, flushStdio, prepareOptions, validateFile, syncOptions, disposeNative, disposeKey, referenceNative, destroyInput, prepareExit) => {
     const { EventEmitter } = globalThis.process.getBuiltinModule("events");
     class ChildProcess extends EventEmitter {
-      constructor(file, args, started, options) {
+      constructor() {
         super();
+        this.connected = false;
+        this.signalCode = null;
+        this.exitCode = null;
+        this.killed = false;
+        this.spawnfile = null;
+      }
+
+      kill(signal = "SIGTERM") {
+        if (this.exitCode !== null || this.signalCode !== null) return false;
+        try {
+          const result = globalThis.process.kill(this.pid, signal);
+          this.killed = true;
+          return result;
+        } catch {
+          return false;
+        }
+      }
+
+
+    }
+  function initialize(file, args, started, options) {
         const { Readable, Writable } = globalThis.process.getBuiltinModule("stream");
       this.pid = started.pid ?? undefined;
       this.spawnfile = file;
@@ -108,21 +129,7 @@ const FACTORY: &str = quench_js_check::checked_js!(
           }
         }, timeout);
       }
-      }
-
-      kill(signal = "SIGTERM") {
-        if (this.exitCode !== null || this.signalCode !== null) return false;
-        try {
-          const result = globalThis.process.kill(this.pid, signal);
-          this.killed = true;
-          return result;
-        } catch {
-          return false;
-        }
-      }
-
-
-    }
+  }
   ChildProcess.prototype[disposeKey] = function() { disposeNative(this); };
   ChildProcess.prototype.ref = function ref() { referenceNative(this, true); };
   ChildProcess.prototype.unref = function unref() { referenceNative(this, false); };
@@ -154,9 +161,9 @@ const FACTORY: &str = quench_js_check::checked_js!(
       const shellArgs = globalThis.process.platform === "win32"
         ? ["/d", "/s", "/c", command]
         : ["-c", command];
-      return new ChildProcess(shell, shellArgs, spawnNative(shell, shellArgs, options), options);
+      return spawnNative(shell, shellArgs, options);
     }
-    return new ChildProcess(file, args, spawnNative(file, args, options), options);
+    return spawnNative(file, args, options);
   };
   const spawnSyncFunction = (command, args, options) => {
     command = validateFile(command);
@@ -246,7 +253,7 @@ const FACTORY: &str = quench_js_check::checked_js!(
     }
     return synchronousCommand(file, args, options, false);
   };
-  return { ChildProcess, spawn, spawnSync: spawnSyncFunction, fork, execSync, execFileSync };
+  return [{ ChildProcess, spawn, spawnSync: spawnSyncFunction, fork, execSync, execFileSync }, initialize];
 }"#
 );
 
@@ -259,7 +266,10 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         crate::host::shared_vm::operation("childProcessSpawnSync"),
         prototype,
     )?;
-    let spawn = context.host_function(crate::host::shared_vm::operation("childProcessSpawn"))?;
+    let spawn_data = context.object_rooted()?;
+    let spawn = context.host_function_with_data(
+        crate::host::shared_vm::operation("childProcessConstruct"), spawn_data,
+    )?;
     let register =
         context.host_function(crate::host::shared_vm::operation("childProcessRegister"))?;
     let write = context.host_function(crate::host::shared_vm::operation("childProcessWrite"))?;
@@ -299,7 +309,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let prepare_exit = context.host_function(crate::host::shared_vm::operation("childProcessPrepareExit"))?;
     let factory = context.evaluate_script_rooted(FACTORY, "node:child_process/shared.js")?;
     let undefined = context.undefined();
-    let module = context.call_rooted(
+    let factory_result = context.call_rooted(
         factory,
         undefined,
         &[
@@ -323,7 +333,19 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
             prepare_exit,
         ],
     )?;
+    let module = property(context, factory_result, "0")?;
+    let initialize = property(context, factory_result, "1")?;
+    let constructor = property(context, module, "ChildProcess")?;
+    set(context, spawn_data, "constructor", constructor)?;
+    let prototype = property(context, constructor, "prototype")?;
+    let method = context.host_function_with_data(
+        crate::host::shared_vm::operation("childProcessPrototypeSpawn"), initialize,
+    )?;
+    let key = context.string_rooted("name");
+    let name = context.string_rooted("spawn");
+    context.define_data_property_rooted(method, key, name, false, false, true)?;
     let key = context.string_rooted("spawn");
+    context.define_data_property_rooted(prototype, key, method, true, true, true)?;
     let spawn = context.get_property_rooted(module, key)?;
     let exec_file = super::child_process_exec_shared_vm::function(context, spawn, buffer)?;
     let key = context.string_rooted("execFile");
@@ -423,18 +445,52 @@ pub(crate) fn spawn_child(
             if let Some(stderr) = child.stderr.take() {
                 spawn_reader(stderr, sender.clone(), false);
             }
-            std::thread::Builder::new()
+            // Keep cancellation ownership if OS wait-thread creation fails.
+            let wait_owner = std::sync::Arc::new(std::sync::Mutex::new(Some(child)));
+            let thread_owner = wait_owner.clone();
+            let (cancel, cancellation) = mpsc::channel::<()>();
+            let wait_thread = std::thread::Builder::new()
                 .name("quench-child-wait".into())
                 .spawn(move || {
-                    let (code, signal) = match child.wait() {
-                        Ok(status) => (status.code(), signal_name(&status).map(str::to_owned)),
-                        Err(_) => (None, None),
+                    let mut child = thread_owner.lock().expect("child ownership poisoned")
+                        .take().expect("child waiter owns process");
+                    // Cancellation is serialized with try_wait against the actual Child.
+                    // The waiter remains its sole owner and always reaps after kill.
+                    let status = loop {
+                        match child.try_wait() {
+                            Ok(Some(status)) => break Some(status),
+                            Err(_) => break None,
+                            Ok(None) => {}
+                        }
+                        match cancellation.recv_timeout(poll_interval()) {
+                            Ok(()) => {
+                                let _ = child.kill();
+                                break child.wait().ok();
+                            }
+                            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                                // Normal removal follows observed exit. If initialization
+                                // failed first, still stop/reap the actual process.
+                                let _ = child.kill();
+                                break child.wait().ok();
+                            }
+                            Err(mpsc::RecvTimeoutError::Timeout) => {}
+                        }
                     };
+                    let (code, signal) = status.map(|status|
+                        (status.code(), signal_name(&status).map(str::to_owned)))
+                        .unwrap_or((None, None));
                     let _ = sender.send(crate::host::node_host::ChildProcessEvent::Exit(
                         code, signal,
                     ));
                 })
-                .map_err(|error| RootedError::host(error.to_string()))?;
+                ;
+            if let Err(error) = wait_thread {
+                if let Some(mut child) = wait_owner.lock().expect("child ownership poisoned").take() {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+                return Err(RootedError::host(error.to_string()));
+            }
             context
                 .host_mut()
                 .shared_state()
@@ -443,6 +499,7 @@ pub(crate) fn spawn_child(
                 .insert(
                     id,
                     SharedChildProcess {
+                        cancel,
                         referenced: true,
                         close_dispatched: false,
                         handle_phase: crate::host::node_host::ChildHandlePhase::Open,
@@ -1904,4 +1961,135 @@ pub(crate) fn handle_has_ref(
         Some(reference) => context.boolean(reference),
         None => context.undefined(),
     })
+}
+
+pub(crate) fn prototype_spawn(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let undefined = context.undefined();
+    let options = args.first().copied().unwrap_or(undefined);
+    if !context.is_object_rooted(options)? || context.is_array_rooted(options)? {
+        return Err(super::util_shared_vm::argument_type_error(
+            context, options, "options", "object",
+        )?);
+    }
+    let file = property(context, options, "file")?;
+    let _ = super::child_process_options_shared_vm::file_text(context, file)?;
+    let argv = property(context, options, "args")?;
+    let values = if context.rooted_value(argv).is_some_and(|v| v.is_undefined()) {
+        Vec::new()
+    } else {
+        if !context.is_array_rooted(argv)? {
+            return Err(super::util_shared_vm::argument_type_error(
+                context, argv, "options.args", "Array",
+            )?);
+        }
+        string_array(context, argv)?
+    };
+    // Command's executable is options.file; SDK options.args includes argv[0].
+    // Preserve the original argv array identity on the child.
+    let tail = values.iter().skip(1).map(|s| context.string_rooted(s)).collect::<Vec<_>>();
+    let tail = context.array_rooted(&tail)?;
+    // Snapshot normalized data so backend adaptation cannot mutate SDK options.
+    let backend = context.object_rooted()?;
+    for name in ["cwd", "stdio", "uid", "gid", "detached", "serialization",
+                 "windowsHide", "windowsVerbatimArguments", "signal", "timeout", "killSignal", "env"] {
+        let value = property(context, options, name)?;
+        set(context, backend, name, value)?;
+    }
+    if let Some(argv0) = values.first() {
+        let argv0 = context.string_rooted(argv0);
+        set(context, backend, "argv0", argv0)?;
+    }
+    let pairs = property(context, options, "envPairs")?;
+    if !context.rooted_value(pairs).is_some_and(|v| v.is_undefined()) {
+        let env = context.object_rooted()?;
+        // Null prototype prevents __proto__ keys changing environment semantics.
+        let null = context.null();
+        context.set_prototype_rooted(env, null)?;
+        for pair in string_array(context, pairs)? {
+            // Windows '=C:=...' entries require splitting after the initial '='.
+            let offset = usize::from(pair.starts_with('='));
+            if let Some(index) = pair[offset..].find('=').map(|i| i + offset) {
+                let key = context.string_rooted(&pair[..index]);
+                let value = context.string_rooted(&pair[index + 1..]);
+                context.define_data_property_rooted(env, key, value, true, true, true)?;
+            }
+        }
+        set(context, backend, "env", env)?;
+    }
+    let started = spawn_child(context, undefined, &[file, tail, backend])?;
+    let errno = property(context, started, "errorNumber")?;
+    let failed = context.rooted_value(errno).is_some_and(|v| !v.is_null());
+    let lifecycle = context.host_function_data()?;
+    // Existing initializer owns real Readable/Writable construction, register_child,
+    // output/exit/close dispatch, timeout/abort hooks, and stream-close accounting.
+    if let Err(error) = context.call_rooted(lifecycle, receiver, &[file, tail, started, backend]) {
+        cleanup_failed_initialization(context, started);
+        return Err(error);
+    }
+    let spawnargs = if context.rooted_value(argv).is_some_and(|v| v.is_undefined()) {
+        context.array_rooted(&[])?
+    } else { argv };
+    set(context, receiver, "spawnargs", spawnargs)?;
+    Ok(if failed { errno } else { context.number(0.0) })
+}
+
+/// The backend waiter owns the actual Child; cancellation cannot target a reused pid.
+/// Drop real pipe/IPC owners and retained receiver roots even after partial register.
+fn cleanup_failed_initialization(context: &mut NativeContext<'_, NodeHost>, started: RootId) {
+    let id = property(context, started, "id").ok().and_then(|root|
+        context.rooted_value(root).and_then(|v| v.as_number())).map(|v| v as u64);
+    let process = id.and_then(|id| context.host_mut().shared_state().borrow_mut()
+        .child_processes.remove(&id));
+    if let Some(process) = process {
+        let _ = process.cancel.send(());
+        for root in [process.child, process.stdout, process.stderr, process.stdin_stream]
+            .into_iter().flatten() {
+            context.release_root(root);
+        }
+        // Dropping process closes native pipes and IPC transport.
+    }
+}
+
+/// Public projection constructs first, then observes the mutable prototype hook.
+/// This keeps real SDK MockTracker interception on the actual child receiver.
+pub(crate) fn construct_child(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let data = context.host_function_data()?;
+    let constructor = property(context, data, "constructor")?;
+    let child = context.construct_rooted(constructor, constructor, &[])?;
+    let file = args[0];
+    let tail = args[1];
+    let undefined = context.undefined();
+    let original = args.get(2).copied().unwrap_or(undefined);
+    let options = context.object_rooted()?;
+    for name in ["cwd", "stdio", "uid", "gid", "detached", "serialization", "env",
+                 "windowsHide", "windowsVerbatimArguments", "signal", "timeout", "killSignal"] {
+        let value = if context.is_object_rooted(original)? {
+            property(context, original, name)?
+        } else { undefined };
+        set(context, options, name, value)?;
+    }
+    let argv0 = if context.is_object_rooted(original)? {
+        property(context, original, "argv0")?
+    } else { undefined };
+    let argv0 = if context.rooted_value(argv0).is_some_and(|v| v.is_undefined()) {
+        file
+    } else { argv0 };
+    let mut argv = vec![argv0];
+    for text in string_array(context, tail)? {
+        argv.push(context.string_rooted(&text));
+    }
+    let argv = context.array_rooted(&argv)?;
+    set(context, options, "args", argv)?;
+    set(context, options, "file", file)?;
+    let spawn = property(context, child, "spawn")?;
+    context.call_rooted(spawn, child, &[options])?;
+    Ok(child)
 }
