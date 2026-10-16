@@ -907,6 +907,27 @@ impl FunctionCompiler<'_, '_> {
         (self.code.len() as u32, error_atom)
     }
 
+    /// A generator resumed with `return` while suspended inside the pattern
+    /// closes the pattern's iterator first, then returns through the enclosing
+    /// loop and finally owners, as an explicit return statement would.
+    fn binding_iterator_return_path(
+        &mut self,
+        iterator: BindingIterator,
+    ) -> (Option<u32>, Option<u16>) {
+        if !self.generator {
+            return (None, None);
+        }
+        let return_atom = self.hidden_local("\0quench:binding-iterator-return");
+        let return_target = self.code.len() as u32;
+        self.emit(Op::IteratorCleanupPop, 0, 0, 0, 0);
+        self.binding_iterator_close(iterator);
+        let closure = self.iterator_closures.pop().expect("pattern cleanup owner");
+        let value = self.load_atom(return_atom);
+        self.emit_return(value);
+        self.iterator_closures.push(closure);
+        (Some(return_target), self.local_slot(return_atom))
+    }
+
     fn end_binding_iterator_protection(
         &mut self,
         iterator: BindingIterator,
@@ -915,14 +936,15 @@ impl FunctionCompiler<'_, '_> {
     ) {
         let end = self.code.len() as u32;
         let normal_exit = self.emit(Op::Jump, 0, 0, 0, 0);
+        let (return_target, return_slot) = self.binding_iterator_return_path(iterator);
         let abrupt_target = self.code.len() as u32;
         self.handlers.push(crate::bytecode::Handler {
             start,
             end,
             target: abrupt_target,
             slot: self.local_slot(error_atom),
-            return_target: None,
-            return_slot: None,
+            return_target,
+            return_slot,
             with_depth: self.with_depth,
         });
 
