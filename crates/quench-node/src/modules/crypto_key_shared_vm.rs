@@ -338,6 +338,16 @@ pub(crate) fn operation(
                 receiver,
                 slots,
             )?;
+            // Source-created secrets and the existing cipher/KDF provider share
+            // this exact native byte owner. No second material copy or key ID.
+            if op == "keyBase" && c.rooted_value(kind).and_then(|value| value.as_number()) == Some(KEY_TYPE_SECRET) {
+                let brands = get(c, state, "secretBrands")?;
+                if c.is_object_rooted(brands)? {
+                    let bytes = get(c, handle, "bytes")?;
+                    let setter = get(c, state, "set")?;
+                    c.call_rooted(setter, brands, &[receiver, bytes])?;
+                }
+            }
             Ok(receiver)
         }
         "getKeyObjectHandle" | "getKeyObjectType" => {
