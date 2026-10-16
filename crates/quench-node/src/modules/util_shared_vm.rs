@@ -441,55 +441,11 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     context.set_property_rooted(module, parse_args_key, parse_args, module)?;
     let callbackify_key = context.string_rooted("callbackify");
     context.set_property_rooted(module, callbackify_key, callbackify, module)?;
+    let native_types = types_binding(context)?;
     let types = context.object_rooted()?;
-    for (index, &(name, brand)) in TYPE_PREDICATES.iter().enumerate() {
-        let data = context.number(index as f64);
-        let predicate = context
-            .host_function_with_data(crate::host::shared_vm::operation("utilTypeCheck"), data)?;
-        let name_key = context.string_rooted("name");
-        let (function_name, length) = match brand {
-            BuiltinBrand::ArrayBufferView => ("isView", 1),
-            BuiltinBrand::External
-            | BuiltinBrand::Date
-            | BuiltinBrand::RegExp
-            | BuiltinBrand::NativeError
-            | BuiltinBrand::Promise
-            | BuiltinBrand::Map
-            | BuiltinBrand::Set
-            | BuiltinBrand::WeakMap
-            | BuiltinBrand::WeakSet
-            | BuiltinBrand::Proxy
-            | BuiltinBrand::ArrayBuffer
-            | BuiltinBrand::SharedArrayBuffer
-            | BuiltinBrand::AnyArrayBuffer
-            | BuiltinBrand::ArgumentsObject
-            | BuiltinBrand::AsyncFunction
-            | BuiltinBrand::GeneratorFunction
-            | BuiltinBrand::GeneratorObject
-            | BuiltinBrand::MapIterator
-            | BuiltinBrand::SetIterator
-            | BuiltinBrand::ModuleNamespaceObject
-            | BuiltinBrand::BooleanObject
-            | BuiltinBrand::NumberObject
-            | BuiltinBrand::StringObject
-            | BuiltinBrand::SymbolObject
-            | BuiltinBrand::BigIntObject
-            | BuiltinBrand::BoxedPrimitive => ("", 0),
-            _ => (name, 1),
-        };
-        let name_value = context.string_rooted(function_name);
-        context.define_data_property_rooted(predicate, name_key, name_value, false, false, true)?;
-        let length_key = context.string_rooted("length");
-        let length_value = context.number(f64::from(length));
-        context.define_data_property_rooted(
-            predicate,
-            length_key,
-            length_value,
-            false,
-            false,
-            true,
-        )?;
+    for &(name, _) in TYPE_PREDICATES {
         let key = context.string_rooted(name);
+        let predicate = context.get_property_rooted(native_types, key)?;
         context.set_property_rooted(types, key, predicate, types)?;
     }
     super::crypto_key_shared_vm::public_predicates(context, types)?;
@@ -498,14 +454,6 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     // Retain original identities before publishing mutable util exports. Console
     // can request these lazily without observing later public export replacement.
     let formatters = context.null_object_rooted()?;
-    let native_types = context.object_rooted()?;
-    for &(name, _) in TYPE_PREDICATES {
-        let key = context.string_rooted(name);
-        let predicate = context.get_property_rooted(types, key)?;
-        context.define_data_property_rooted(native_types, key, predicate, true, true, true)?;
-    }
-    let key = context.string_rooted("nativeTypes");
-    context.define_data_property_rooted(formatters, key, native_types, false, false, false)?;
     for name in ["format", "formatWithOptions"] {
         let key = context.string_rooted(name);
         let function = context.get_property_rooted(module, key)?;
@@ -1129,12 +1077,14 @@ pub(crate) fn mark_promise_handled(
     Ok(context.undefined())
 }
 
-/// Cache the genuine internal key binding in Core-owned private formatter data.
+/// The native binding can initialize while internal/errors is still evaluating.
+/// Keep its identity independent of the public util module and its decoder exports.
 pub(crate) fn key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    let data = internal_formatters(context)?;
-    let cache_key = context.string_rooted("nativeKeyBinding");
-    let cached = context.own_property_descriptor_rooted(data, cache_key)?;
-    if context.is_object_rooted(cached)? { return get(context, cached, "value"); }
+    const CACHE_KEY: &str = "\0binding:util";
+    let shared = context.host_mut().shared_state();
+    if let Some(binding) = shared.borrow().builtin_cache.get(CACHE_KEY).copied() {
+        return Ok(binding);
+    }
     let binding = context.object_rooted()?;
     let function = context.host_function(crate::host::shared_vm::operation("utilOwnNonIndexProperties"))?;
     let key = context.string_rooted("name");
@@ -1181,29 +1131,89 @@ pub(crate) fn key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<R
     }
     let key = context.string_rooted("constants");
     context.define_data_property_rooted(binding, key, constants, true, true, true)?;
-    context.define_data_property_rooted(data, cache_key, binding, false, false, false)?;
+    let retained = context.retain(binding)?;
+    shared.borrow_mut().builtin_cache.insert(CACHE_KEY.to_owned(), retained);
     Ok(binding)
 }
 
 /// Messaging hooks use realm-owned unique symbols, never registry aliases.
 pub(crate) fn symbols_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    let data = internal_formatters(context)?;
-    let key = context.string_rooted("nativeSymbolsBinding");
-    let cached = context.own_property_descriptor_rooted(data, key)?;
-    if context.is_object_rooted(cached)? { return get(context, cached, "value"); }
+    const CACHE_KEY: &str = "\0binding:symbols";
+    let shared = context.host_mut().shared_state();
+    if let Some(binding) = shared.borrow().builtin_cache.get(CACHE_KEY).copied() {
+        return Ok(binding);
+    }
     let binding = context.object_rooted()?;
     for name in ["messaging_deserialize_symbol", "messaging_transfer_symbol", "messaging_clone_symbol", "messaging_transfer_list_symbol"] {
         let key = context.string_rooted(name);
         let symbol = context.symbol_rooted(Some(name));
         context.define_data_property_rooted(binding, key, symbol, true, true, true)?;
     }
-    context.define_data_property_rooted(data, key, binding, false, false, false)?;
+    let retained = context.retain(binding)?;
+    shared.borrow_mut().builtin_cache.insert(CACHE_KEY.to_owned(), retained);
     Ok(binding)
 }
 
 pub(crate) fn types_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    let data = internal_formatters(context)?;
-    get(context, data, "nativeTypes")
+    const CACHE_KEY: &str = "\0binding:types";
+    let shared = context.host_mut().shared_state();
+    if let Some(types) = shared.borrow().builtin_cache.get(CACHE_KEY).copied() {
+        return Ok(types);
+    }
+    let types = context.object_rooted()?;
+    for (index, &(name, brand)) in TYPE_PREDICATES.iter().enumerate() {
+        let data = context.number(index as f64);
+        let predicate = context
+            .host_function_with_data(crate::host::shared_vm::operation("utilTypeCheck"), data)?;
+        let name_key = context.string_rooted("name");
+        let (function_name, length) = match brand {
+            BuiltinBrand::ArrayBufferView => ("isView", 1),
+            BuiltinBrand::External
+            | BuiltinBrand::Date
+            | BuiltinBrand::RegExp
+            | BuiltinBrand::NativeError
+            | BuiltinBrand::Promise
+            | BuiltinBrand::Map
+            | BuiltinBrand::Set
+            | BuiltinBrand::WeakMap
+            | BuiltinBrand::WeakSet
+            | BuiltinBrand::Proxy
+            | BuiltinBrand::ArrayBuffer
+            | BuiltinBrand::SharedArrayBuffer
+            | BuiltinBrand::AnyArrayBuffer
+            | BuiltinBrand::ArgumentsObject
+            | BuiltinBrand::AsyncFunction
+            | BuiltinBrand::GeneratorFunction
+            | BuiltinBrand::GeneratorObject
+            | BuiltinBrand::MapIterator
+            | BuiltinBrand::SetIterator
+            | BuiltinBrand::ModuleNamespaceObject
+            | BuiltinBrand::BooleanObject
+            | BuiltinBrand::NumberObject
+            | BuiltinBrand::StringObject
+            | BuiltinBrand::SymbolObject
+            | BuiltinBrand::BigIntObject
+            | BuiltinBrand::BoxedPrimitive => ("", 0),
+            _ => (name, 1),
+        };
+        let name_value = context.string_rooted(function_name);
+        context.define_data_property_rooted(predicate, name_key, name_value, false, false, true)?;
+        let length_key = context.string_rooted("length");
+        let length_value = context.number(f64::from(length));
+        context.define_data_property_rooted(
+            predicate,
+            length_key,
+            length_value,
+            false,
+            false,
+            true,
+        )?;
+        let key = context.string_rooted(name);
+        context.set_property_rooted(types, key, predicate, types)?;
+    }
+    let retained = context.retain(types)?;
+    shared.borrow_mut().builtin_cache.insert(CACHE_KEY.to_owned(), retained);
+    Ok(types)
 }
 
 /// External wrappers expose the stored address, without touching native memory.

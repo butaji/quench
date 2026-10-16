@@ -2260,11 +2260,13 @@ const getLinkedBinding = () => ({});
   switch (String(name)) {
     case "os":
     case "credentials":
+    case "config":
+    case "icu":
     case "encoding_binding":
     case "symbols":
     case "http2":
     case "fs_event_wrap": return __nativeInternalBinding(name);
-    case "util": return Object.assign({}, require("util"), {
+    case "util": return Object.assign({}, __nativeInternalBinding("util"), {
       privateSymbols: __nativeInternalBinding("util").privateSymbols,
       constants: __nativeInternalBinding("util").constants,
       getOwnNonIndexProperties: __nativeInternalBinding("util").getOwnNonIndexProperties,
