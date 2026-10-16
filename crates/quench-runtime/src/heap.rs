@@ -2608,7 +2608,7 @@ impl Heap {
                 }
                 Cell::String(value) => value.capacity(),
                 Cell::BigInt(value) | Cell::Error(value) => value.capacity(),
-                Cell::Symbol(value) => value.as_ref().map_or(0, String::capacity),
+                Cell::Symbol(value) => value.as_ref().map_or(0, |description| description.len()),
             }
     }
     #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
