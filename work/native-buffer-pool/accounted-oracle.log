@@ -1,0 +1,12 @@
+pool size 65536
+pooled true true 8 8 65600 0 0 0
+bytes 616263 010203 02010403
+marked true
+transfer DataCloneError
+empty 0 0
+zero copy true 9
+changed true false abc 20 4
+exhaustion 192 true 8 192
+snapshot 1 77
+reentrant 0304 0304 true true
+consumer Uint8Array false 98,105,110,97,114,121,32,100,97,116,97,32,104,101,114,101

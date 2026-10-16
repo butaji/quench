@@ -1,0 +1,16 @@
+{
+  "utc": "2026-10-16T06:10:28.577171+00:00",
+  "signal": "SIGTERM",
+  "processes": [
+    {
+      "pid": 2845185,
+      "command": "/workspace/quench/work/native-zstd-bin/run-parallel --case-worker /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-tls-certcb-sync-write.js /tmp/.tmpTZqQWU/result.json ",
+      "reason": "Orphan of interrupted earlier full inventory; parent exited, separate process group; no active run depends on this process."
+    },
+    {
+      "pid": 2845427,
+      "command": "/workspace/quench/work/native-zstd-bin/run-parallel --case-worker /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-tls-client-cert-resumption.js /tmp/.tmpB7n1L4/result.json ",
+      "reason": "Orphan of interrupted earlier full inventory; parent exited, separate process group; no active run depends on this process."
+    }
+  ]
+}

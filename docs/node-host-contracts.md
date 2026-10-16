@@ -38,8 +38,14 @@ both creation names and that transition. The added metadata opcode requires
 bytecode format 90; opcodes outside the dense fast table use general dispatch.
 This covers those inference contexts, not every V8 debug-name inference rule.
 
-This describes the implemented subset; complete Node stack APIs and eval frames
-still require conformance work.
+CallSite `isEval` derives from the stored program's compilation origin, which
+is independent of its binding environment. Full eval, expression eval and
+Function-constructor bodies retain that origin across escaped closures and
+collection. Ordinary functions called from eval and host-compiled scripts remain
+source code, including host scripts with eval-like filenames. Captured CallSites
+copy the classification before their program can be reclaimed. Eval origins,
+filenames, source URLs and the complete Node stack API still require conformance
+work.
 
 Function factory origins derive from the existing function kind and creation
 realm. The realm owns its original constructors and intrinsic prototypes, so
@@ -56,6 +62,55 @@ are cached after success; a thrown formatter leaves the capture available for a
 later attempt. Native coded errors share the library's private Node error symbol.
 UDP buffer-size errors construct the original `ERR_SOCKET_BUFFER_SIZE` class,
 which owns its context getters and custom inspection behavior.
+
+## Parsed eval execution
+
+Direct and indirect eval execute the existing OXC-compiled Eval goal, retaining
+the original source and statement completion values. Host Script evaluation
+uses the Script goal, including single expressions. Neither path interprets
+source substrings or inserts an expression-return wrapper. Binding scopes,
+strictness, early errors and captured environments share the compiler and VM
+operations used by other code. A lone regexp expression uses OXC's literal span
+and flags with the original UTF-16 pattern units, preserving lone surrogates.
+Eval-origin descriptions, synthetic filenames and Function-constructor wrapper
+positions still need separate conformance work.
+
+## Detailed source stack capture
+
+The public `util.getCallSites` function comes from the unmodified configured
+Node `util.js`; its native binding captures actual VM source activations,
+independently of `Error.prepareStackTrace` and `Error.stackTraceLimit`. Results
+are null-prototype records with copied UTF-16 function names, compiled-source
+identities, mapped filenames, positions and the column alias. Native helper
+frames are excluded. Error CallSites and detailed capture share the source-frame
+projection; host filename mapping stays an explicit mutable host boundary.
+
+The frame cursor explicitly distinguishes an executing guest-capable operation
+from a saved call continuation. Source inspection uses that state; GC root-map
+and lexical-binding projections keep their existing owners. General calls,
+materialized lane calls and restored activations preserve the distinction.
+
+Call positions use OXC expression/comment spans to identify method names and
+actual argument parentheses, including optional/private calls, returned
+functions, comments and line breaks. Property reads and writes have distinct
+operation positions, including assignments and updates. Source lines recognize
+all JavaScript line terminators and columns count UTF-16 units. Fused
+field sites retain separate read/read/write source coordinates. A scoped active
+component selects the correct location while executing a getter or setter and
+restores the previous source context after success or failure. Bytecode format 91
+serializes these locations and rejects invalid coordinates. Complete eval/sourceURL,
+source-map and Node host-stack conformance remains open. Source IDs denote actual compiled units; missing host frames are not
+fabricated.
+
+## Boxed primitive identity
+
+Primitive wrappers carry their actual value in an object-internal payload.
+Builtin brands, primitive methods, constructor display, structured cloning and
+JSON unboxing derive from that payload. Public properties cannot manufacture or
+replace wrapper data, and Proxy wrappers do not inherit the target's brand.
+The payload follows the shared object-extras GC root visitor and releases when
+the wrapper dies. Intrinsic Boolean, Number and String prototypes have their
+specified primitive data; Symbol and BigInt prototypes do not.
 
 ## Event listeners
 

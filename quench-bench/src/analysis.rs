@@ -69,6 +69,9 @@ struct FixtureInput {
     source: ArtifactInput,
     valid: bool,
     output_equal: bool,
+    /// Engines that cannot run the fixture; they are neither measured nor bars on it.
+    #[serde(default)]
+    unsupported_engines: BTreeMap<String, String>,
     rounds: Vec<RoundInput>,
 }
 
@@ -199,9 +202,14 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let engines = input.suite.engine_names();
     for name in input.suite.fixture_names() {
         let (fixture_path, fixture) = find_fixture(&input.fixtures, name)?;
+        let measured = engines
+            .iter()
+            .copied()
+            .filter(|engine| !fixture.unsupported_engines.contains_key(*engine))
+            .collect::<Vec<_>>();
         fixtures.insert(
             (*name).to_string(),
-            analyze_fixture(fixture_path, fixture, input.rounds_requested, engines)?,
+            analyze_fixture(fixture_path, fixture, input.rounds_requested, &measured)?,
         );
     }
     let qualified = fixtures.values().all(|fixture| fixture.qualified);

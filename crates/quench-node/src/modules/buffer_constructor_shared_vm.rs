@@ -4,7 +4,6 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 type Context<'a> = NativeContext<'a, NodeHost>;
 const FAST_BUFFER_CACHE: &str = "\0builtin:buffer/FastBuffer";
 const MAX_DEPRECATION_LOCATION_CHECKS: f64 = 10_000.0;
-const DEFAULT_BUFFER_POOL_SIZE: usize = 64 * 1024;
 const WARNING: &str = "Buffer() is deprecated due to security and usability issues. Please use the Buffer.alloc(), Buffer.allocUnsafe(), or Buffer.from() methods instead.";
 fn get(context: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, RootedError> {
     let key = context.string_rooted(name);
@@ -50,7 +49,7 @@ pub(crate) fn install(context: &mut Context<'_>, fast: RootId) -> Result<RootId,
     let constructor = context
         .host_constructor_with_data(crate::host::shared_vm::operation("bufferLegacyConstruct"), data)?;
     name(context, constructor, "Buffer")?;
-    let pool_size = context.number(DEFAULT_BUFFER_POOL_SIZE as f64);
+    let pool_size = context.number(super::buffer_pool_shared_vm::DEFAULT_POOL_SIZE as f64);
     set(context, constructor, "poolSize", pool_size)?;
     set(context, data, "constructor", constructor)?;
     for key in context.own_keys_rooted(fast)? {

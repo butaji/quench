@@ -1,0 +1,83 @@
+{
+  "scope": "Complete unchanged latest-stable parallel inventory after genuine native compression backends",
+  "source_commit": "c4ad13141380166a761b91359e0519cdeb51292c",
+  "latest_stable": "v26.12.0",
+  "fixture_commit": "26e72d85a611e222e3f06025de8a3c496923bacd",
+  "counts": {
+    "timeout": 93,
+    "fail": 2502,
+    "pass": 1783,
+    "skip": 637
+  },
+  "total": 5015,
+  "inventory_hash": "a3820c977f97ed07",
+  "baseline": {
+    "source_commit": "63bb54bdda93af01b71838e18c26bb9c9afb3340",
+    "pass_count": 1770
+  },
+  "gained": [
+    "test-async-hooks-stack-overflow-try-catch.js",
+    "test-async-hooks-stack-overflow.js",
+    "test-stream-iter-pull-async.js",
+    "test-stream-iter-to-readable.js",
+    "test-stream-iter-transform-buffering.js",
+    "test-stream-iter-transform-compat.js",
+    "test-stream-iter-transform-coverage.js",
+    "test-stream-iter-transform-errors.js",
+    "test-stream-iter-transform-params.js",
+    "test-stream-iter-transform-roundtrip.js",
+    "test-stream-iter-transform-sync.js",
+    "test-stream-iter-validation.js",
+    "test-stream-iter-writable-interop.js"
+  ],
+  "lost": [],
+  "memory_events_delta": {
+    "low": 0,
+    "high": 0,
+    "max": 0,
+    "oom": 0,
+    "oom_kill": 0,
+    "oom_group_kill": 0
+  },
+  "elapsed_seconds": 1628.4251121139969,
+  "raw": {
+    "results.json": {
+      "path": "work/full-native-codecs-restart-stable/results.json",
+      "bytes": 12676527,
+      "sha256": "620f6b1a782787412ed699e83162221929bd68bcc5b83fa1216fab907e716a82"
+    },
+    "runner.log": {
+      "path": "work/full-native-codecs-restart-stable/runner.log",
+      "bytes": 516179,
+      "sha256": "ac13c3bea1f323157d7228a0381a1e2963696076656314dc37197b5b1c40a0d5"
+    },
+    "receipt-before.json": {
+      "path": "work/full-native-codecs-restart-stable/receipt-before.json",
+      "bytes": 1114,
+      "sha256": "d4a3cc899dd5b48a9068c3ba3097118fcb2aafb837ff01b8ad57fea608defb46"
+    },
+    "receipt.json": {
+      "path": "work/full-native-codecs-restart-stable/receipt.json",
+      "bytes": 1758,
+      "sha256": "0917a54c7cfe4dc616a58a7b04b1924d14457488e5143b9038a390279af84213"
+    },
+    "summary.json": {
+      "path": "work/full-native-codecs-restart-stable/summary.json",
+      "bytes": 150,
+      "sha256": "0a950879c2cccd651eca5ab0458e62d626228226f382891c2b1360c43dff8a4d"
+    },
+    "comparison.json": {
+      "path": "work/full-native-codecs-restart-stable/comparison.json",
+      "bytes": 602,
+      "sha256": "7a9f216ace7d32201701c96a5e8416bc7618c10995355f04d9ea820f9df2cdd1"
+    }
+  },
+  "limitations": [
+    "Goal remains open:1783passes/5015,2502failures,93timeouts and637skips; this is not full Node parity.",
+    "This frozen c4ad source excludes later6a/bf Node error stack/compatibility-target recovery. Selected restored fixtures are not added to full totals.",
+    "Skip count decreases638to637 because test-icu-env.js now FAILS after truthful incoming native ICU version exposure. No new skips; this is not a pass or removed capability gap.",
+    "First same-source attempt was terminated by exec-server reset before completion receipts; interrupted work/full-native-codecs-stable logs remain partial, not full results. This complete rerun used a separate-session supervisor.",
+    "Lower-priority Native compilation overlapped part of this run. No speed or isolated source attribution claim; jobs4/deadline30 unchanged and all memory-event deltas0.",
+    "Pinned full is running sequentially from the same immutable bundle; do not infer its total from this stable inventory."
+  ]
+}

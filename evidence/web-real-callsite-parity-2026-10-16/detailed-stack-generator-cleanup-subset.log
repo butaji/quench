@@ -1,0 +1,10 @@
+   Compiling quench-regexp v0.1.0 (/workspace/quench/crates/quench-regexp)
+   Compiling quench-runtime v0.1.0 (/workspace/quench/crates/quench-runtime)
+    Finished `iteration` profile [optimized] target(s) in 1m 37s
+     Running tests/subset.rs (work/host-build/iteration/deps/subset-107851cdba84a6d4)
+
+running 1 test
+test generator_return_inside_loop_head_pattern_closes_pattern_iterator ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.01s
+

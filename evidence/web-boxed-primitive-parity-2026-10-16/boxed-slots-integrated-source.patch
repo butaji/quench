@@ -1,0 +1,600 @@
+diff --git a/crates/quench-node-test/tests/child_entry.rs b/crates/quench-node-test/tests/child_entry.rs
+index 1807fb00e..d5ed57f47 100644
+--- a/crates/quench-node-test/tests/child_entry.rs
++++ b/crates/quench-node-test/tests/child_entry.rs
+@@ -9438,3 +9438,8 @@ fn default_node_stack_policy_uses_real_coded_brands_and_system_errors() {
+ fn node_compatibility_version_follows_bundled_library_target() {
+     compare_node_source_with_args(include_str!("../node-tests/test-node-compatibility-version.js"), &[]);
+ }
++
++#[test]
++fn boxed_primitive_brands_use_internal_values_and_reject_forged_properties_and_proxies() {
++    compare_node_source_with_args(include_str!("../node-tests/test-boxed-primitive-slots.js"), &[]);
++}
+diff --git a/crates/quench-runtime/src/api_native_tests.rs b/crates/quench-runtime/src/api_native_tests.rs
+index 75fa20819..680d2abd3 100644
+--- a/crates/quench-runtime/src/api_native_tests.rs
++++ b/crates/quench-runtime/src/api_native_tests.rs
+@@ -1524,3 +1524,50 @@ function dropIterator(){state=null}
+         }
+     }
+ }
++
++#[derive(Default)]
++struct BoxedPrimitiveHost {
++    payload: Option<HostWeakRoot>,
++}
++impl Host for BoxedPrimitiveHost {
++    fn write_line(&mut self, _: &str) {}
++    fn clock_millis(&mut self) -> f64 { 0.0 }
++    fn functions(&self) -> &[HostFunction<Self>] {
++        crate::host_functions![global "rememberPayload" (1) => remember_boxed_payload]
++    }
++}
++fn remember_boxed_payload(
++    context: &mut NativeContext<'_, BoxedPrimitiveHost>,
++    _: RootId,
++    args: &[RootId],
++) -> Result<RootId, RootedError> {
++    let weak = context.host_weak_root(args[0])?;
++    context.host_mut().payload = Some(weak);
++    Ok(context.undefined())
++}
++#[test]
++fn boxed_primitive_internal_values_survive_collection_and_release_with_the_wrapper() {
++    let source = r#"
++var wrapper;
++function createWrapper(){const value=Symbol('payload');rememberPayload(value);wrapper=Object(value);Object.setPrototypeOf(wrapper,null)}
++function readWrapper(){const value=Symbol.prototype.valueOf.call(wrapper);if(typeof value!=='symbol'||value.description!=='payload')throw Error('lost wrapper payload')}
++function dropWrapper(){wrapper=null}
++"#;
++    for program in [
++        Engine::specialize_unspecialized(source, "boxed-primitive-roots.js").unwrap(),
++        Engine::specialize(source, "boxed-primitive-roots.js").unwrap(),
++    ] {
++        let mut runtime = Runtime::new(BoxedPrimitiveHost::default());
++        runtime.execute(&program).unwrap();
++        for (operation, alive) in [("createWrapper", true), ("readWrapper", true), ("dropWrapper", false)] {
++            let global = runtime.global_root().unwrap();
++            let key = runtime.string_rooted(operation);
++            let function = runtime.get_property_rooted(global, key).unwrap();
++            let result = runtime.call_rooted(function, global, &[]).unwrap();
++            for root in [result, function, key, global] { assert!(runtime.release_root(root)); }
++            runtime.collect(&program).unwrap();
++            let payload = runtime.host_mut().payload.unwrap();
++            assert_eq!(runtime.host_weak_root_is_live(payload), alive, "{operation}");
++        }
++    }
++}
+diff --git a/crates/quench-runtime/src/heap/cell.rs b/crates/quench-runtime/src/heap/cell.rs
+index 01b529ffb..e37d99570 100644
+--- a/crates/quench-runtime/src/heap/cell.rs
++++ b/crates/quench-runtime/src/heap/cell.rs
+@@ -1264,6 +1264,7 @@ struct ObjectExtras {
+     error_data: bool,
+     module_namespace: bool,
+     external_address: Option<usize>,
++    boxed_primitive: Option<Value>,
+     structured_clone_forbidden: bool,
+     structured_transfer_forbidden: bool,
+     module_bindings: Vec<(Atom, ProgramId, u16)>,
+@@ -1598,6 +1599,15 @@ impl Object {
+         self.extras().is_some_and(|extras| extras.error_data)
+     }
+ 
++    /// Genuine primitive-wrapper data; guest properties cannot supply this slot.
++    pub(crate) fn boxed_primitive(&self) -> Option<Value> {
++        self.extras()?.boxed_primitive
++    }
++
++    pub(crate) fn set_boxed_primitive(&mut self, value: Value) {
++        self.extras_mut().boxed_primitive = Some(value);
++    }
++
+     pub(crate) fn stack_data(&self) -> Option<&StackData> {
+         self.extras()?.stack_data.as_ref()
+     }
+@@ -1606,11 +1616,12 @@ impl Object {
+         self.extras_mut().stack_data = Some(data);
+     }
+ 
+-    /// Visit the values an object's extras keep alive: private-name homes and stack data.
++    /// Visit internal primitive data, private-name homes and captured stack roots.
+     pub(crate) fn visit_extras_roots(&self, mut visit: impl FnMut(Value)) {
+         let Some(extras) = self.extras() else {
+             return;
+         };
++        if let Some(value) = extras.boxed_primitive { visit(value); }
+         for brand in &extras.private_names {
+             visit(brand.home);
+         }
+diff --git a/crates/quench-runtime/src/vm/bigint.rs b/crates/quench-runtime/src/vm/bigint.rs
+index cb3d9bb6a..e169836d4 100644
+--- a/crates/quench-runtime/src/vm/bigint.rs
++++ b/crates/quench-runtime/src/vm/bigint.rs
+@@ -97,13 +97,11 @@ impl<H: Host> Vm<H> {
+         }
+     }
+ 
+-    fn bigint_value_of(&mut self, p: &ResidualProgram, this: Value) -> Result<Value, JsError> {
++    pub(super) fn bigint_value_of(&mut self, p: &ResidualProgram, this: Value) -> Result<Value, JsError> {
+         if matches!(self.heap.get(this), Some(Cell::BigInt(_))) {
+             return Ok(this);
+         }
+-        let value_atom = self.intern_atom("\0quench:bigint-value");
+-        let value = self
+-            .own_property(this, value_atom)
++        let value = self.boxed_primitive_value(this)
+             .unwrap_or(Value::UNDEFINED);
+         if matches!(self.heap.get(value), Some(Cell::BigInt(_))) {
+             Ok(value)
+diff --git a/crates/quench-runtime/src/vm/boolean.rs b/crates/quench-runtime/src/vm/boolean.rs
+index bd0be7527..e3b7c7ded 100644
+--- a/crates/quench-runtime/src/vm/boolean.rs
++++ b/crates/quench-runtime/src/vm/boolean.rs
+@@ -19,20 +19,7 @@ impl<H: Host> Vm<H> {
+             .heap
+             .alloc(Cell::Object(Self::empty_object(object_prototype)));
+         self.realm.intrinsics.builtin_prototypes.insert((global, Native::Boolean), prototype);
+-        let boolean_value = self.intern_atom("\0quench:boolean-value");
+-        self.set_property_with_attributes(
+-            prototype,
+-            boolean_value,
+-            Value::FALSE,
+-            PropertyAttributes {
+-                writable: false,
+-                enumerable: false,
+-                configurable: false,
+-                accessor: false,
+-                getter: None,
+-                setter: None,
+-            },
+-        )?;
++        self.object_data_mut(prototype).expect("primitive prototype").set_boxed_primitive(Value::FALSE);
+         self.set_builtin_value_named(constructor, "prototype", prototype)?;
+         let prototype_atom = self.prototype_atom();
+         self.set_property_attributes(
+@@ -81,9 +68,7 @@ impl<H: Host> Vm<H> {
+         if receiver.as_bool().is_some() {
+             return Some(receiver);
+         }
+-        let value_atom = self.intern_atom("\0quench:boolean-value");
+-        if let Some(value) = self
+-            .own_property(receiver, value_atom)
++        if let Some(value) = self.boxed_primitive_value(receiver)
+             .filter(|value| value.as_bool().is_some())
+         {
+             return Some(value);
+diff --git a/crates/quench-runtime/src/vm/embedding.rs b/crates/quench-runtime/src/vm/embedding.rs
+index 5c829ffb1..aa27000c0 100644
+--- a/crates/quench-runtime/src/vm/embedding.rs
++++ b/crates/quench-runtime/src/vm/embedding.rs
+@@ -1,12 +1,5 @@
+ use super::*;
+ 
+-const BOXED_MARKERS: &[(crate::BuiltinBrand, &str)] = &[
+-    (crate::BuiltinBrand::BooleanObject, "\0quench:boolean-value"),
+-    (crate::BuiltinBrand::NumberObject, "\0quench:number-value"),
+-    (crate::BuiltinBrand::StringObject, "\0quench:string-value"),
+-    (crate::BuiltinBrand::SymbolObject, "\0quench:symbol-value"),
+-    (crate::BuiltinBrand::BigIntObject, "\0quench:bigint-value"),
+-];
+ const TYPED_BRANDS: &[(crate::BuiltinBrand, TypedArrayKind)] = &[
+     (crate::BuiltinBrand::Uint8Array, TypedArrayKind::Uint8),
+     (
+@@ -36,15 +29,22 @@ fn typed_array_brand(kind: TypedArrayKind) -> crate::BuiltinBrand {
+ }
+ 
+ impl<H: Host> Vm<H> {
+-    pub(super) fn boxed_primitive_data(
+-        &self,
+-        value: Value,
+-    ) -> Option<(crate::BuiltinBrand, Value)> {
+-        BOXED_MARKERS.iter().find_map(|&(brand, marker)| {
+-            self.lookup_atom(marker)
+-                .and_then(|atom| self.own_property(value, atom))
+-                .map(|payload| (brand, payload))
+-        })
++    pub(super) fn boxed_primitive_value(&self, value: Value) -> Option<Value> {
++        self.object_data(value)?.boxed_primitive()
++    }
++
++    pub(super) fn boxed_primitive_data(&self, value: Value) -> Option<(crate::BuiltinBrand, Value)> {
++        let payload = self.boxed_primitive_value(value)?;
++        use crate::BuiltinBrand as B;
++        let brand = match self.heap.get(payload) {
++            Some(Cell::String(_)) => B::StringObject,
++            Some(Cell::Symbol(_)) => B::SymbolObject,
++            Some(Cell::BigInt(_)) => B::BigIntObject,
++            _ if payload.as_bool().is_some() => B::BooleanObject,
++            _ if payload.as_number().is_some() => B::NumberObject,
++            _ => unreachable!("primitive wrapper contains primitive data"),
++        };
++        Some((brand, payload))
+     }
+ 
+     pub(crate) fn embedding_host_weak_root(&mut self, target: RootId) -> Result<RootId, JsError> {
+@@ -287,17 +287,8 @@ impl<H: Host> Vm<H> {
+             | B::SymbolObject
+             | B::BigIntObject
+             | B::BoxedPrimitive => {
+-                if value.direct_object_index().is_none() && !matches!(cell, Some(Cell::Object(_))) {
+-                    false
+-                } else {
+-                    BOXED_MARKERS.iter().copied().any(|(candidate, marker)| {
+-                        (brand == B::BoxedPrimitive || brand == candidate)
+-                            && self
+-                                .lookup_atom(marker)
+-                                .and_then(|atom| self.own_property(value, atom))
+-                                .is_some()
+-                    })
+-                }
++                self.boxed_primitive_data(value)
++                    .is_some_and(|(actual, _)| brand == B::BoxedPrimitive || brand == actual)
+             }
+             typed => {
+                 let kind = TYPED_BRANDS
+diff --git a/crates/quench-runtime/src/vm/error.rs b/crates/quench-runtime/src/vm/error.rs
+index bc2048c49..76e666d29 100644
+--- a/crates/quench-runtime/src/vm/error.rs
++++ b/crates/quench-runtime/src/vm/error.rs
+@@ -1014,14 +1014,9 @@ impl<H: Host> Vm<H> {
+     }
+ 
+     pub(super) fn box_primitive_object(&mut self, value: Value) -> Result<Value, JsError> {
+-        let marker = match self.heap.get(value) {
+-            Some(Cell::String(_)) => "\0quench:string-value",
+-            Some(Cell::Symbol(_)) => "\0quench:symbol-value",
+-            Some(Cell::BigInt(_)) => "\0quench:bigint-value",
+-            _ if value.as_number().is_some() => "\0quench:number-value",
+-            _ if value.as_bool().is_some() => "\0quench:boolean-value",
+-            _ => return Ok(self.object()),
+-        };
++        if !matches!(self.heap.get(value), Some(Cell::String(_) | Cell::Symbol(_) | Cell::BigInt(_)))
++            && value.as_number().is_none() && value.as_bool().is_none()
++        { return Ok(self.object()); }
+         let prototype = self.primitive_prototype(value).unwrap_or(self.object_proto);
+         let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+         if let Some(Cell::String(text)) = self.heap.get(value).cloned() {
+@@ -1059,8 +1054,7 @@ impl<H: Host> Vm<H> {
+                 },
+             )?;
+         }
+-        let marker_atom = self.intern_atom(marker);
+-        self.set_property(object, marker_atom, value)?;
++        self.object_data_mut(object).expect("primitive wrapper").set_boxed_primitive(value);
+         Ok(object)
+     }
+ 
+@@ -1073,8 +1067,7 @@ impl<H: Host> Vm<H> {
+         let prototype = self.realm.intrinsics.builtin_prototypes.get(&(realm, Native::BigInt)).copied()
+             .or_else(|| self.primitive_prototype(value)).unwrap_or(self.object_proto);
+         let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+-        let value_atom = self.intern_atom("\0quench:bigint-value");
+-        self.set_property(object, value_atom, value)?;
++        self.object_data_mut(object).expect("bigint wrapper").set_boxed_primitive(value);
+         Ok(object)
+     }
+ 
+diff --git a/crates/quench-runtime/src/vm/json.rs b/crates/quench-runtime/src/vm/json.rs
+index cf1a181de..95cfb7d82 100644
+--- a/crates/quench-runtime/src/vm/json.rs
++++ b/crates/quench-runtime/src/vm/json.rs
+@@ -37,7 +37,6 @@ struct JsonSerialization {
+     property_list: Option<Vec<Atom>>,
+     gap: String,
+     ancestors: Vec<Value>,
+-    wrappers: JsonWrapperSlots,
+     to_json: Atom,
+ }
+ 
+@@ -49,15 +48,6 @@ enum JsonKey {
+     Name(Atom),
+ }
+ 
+-/// The internal-slot atoms of the primitive wrappers SerializeJSONProperty unboxes, resolved
+-/// once per stringify call instead of hashed for every serialized object.
+-struct JsonWrapperSlots {
+-    string: Atom,
+-    number: Atom,
+-    boolean: Atom,
+-    bigint: Atom,
+-}
+-
+ fn write_json_string(value: &JsString, output: &mut String) {
+     output.push('"');
+     match value.units() {
+@@ -912,12 +902,6 @@ impl<H: Host> Vm<H> {
+             property_list,
+             gap,
+             ancestors: Vec::new(),
+-            wrappers: JsonWrapperSlots {
+-                string: self.intern_atom("\0quench:string-value"),
+-                number: self.intern_atom("\0quench:number-value"),
+-                boolean: self.intern_atom("\0quench:boolean-value"),
+-                bigint: self.intern_atom("\0quench:bigint-value"),
+-            },
+             to_json: self.intern_atom("toJSON"),
+         };
+         let holder = self.json_object();
+@@ -981,24 +965,15 @@ impl<H: Host> Vm<H> {
+     }
+ 
+     fn json_boxed_string_or_number(&self, value: Value) -> Option<Value> {
+-        for marker in ["\0quench:string-value", "\0quench:number-value"] {
+-            let Some(atom) = self.lookup_atom(marker) else {
+-                continue;
+-            };
+-            if let Some(value) = self.own_property(value, atom) {
+-                return Some(value);
+-            }
+-        }
+-        None
++        self.boxed_primitive_data(value).and_then(|(brand, payload)| {
++            matches!(brand, crate::BuiltinBrand::StringObject | crate::BuiltinBrand::NumberObject).then_some(payload)
++        })
+     }
+ 
+     fn json_gap(&mut self, p: &ResidualProgram, value: Value) -> Result<String, JsError> {
+-        let number_box = self
+-            .json_boxed_value(value, "\0quench:number-value")
+-            .is_some();
+-        let string_box = self
+-            .json_boxed_value(value, "\0quench:string-value")
+-            .is_some();
++        let brand = self.boxed_primitive_data(value).map(|(brand, _)| brand);
++        let number_box = brand == Some(crate::BuiltinBrand::NumberObject);
++        let string_box = brand == Some(crate::BuiltinBrand::StringObject);
+         let value = if number_box {
+             Value::number(self.to_number(p, value)?)
+         } else if string_box {
+@@ -1023,11 +998,6 @@ impl<H: Host> Vm<H> {
+         Ok(String::new())
+     }
+ 
+-    fn json_boxed_value(&self, value: Value, marker: &str) -> Option<Value> {
+-        self.lookup_atom(marker)
+-            .and_then(|atom| self.own_property(value, atom))
+-    }
+-
+     fn json_serialize_property(
+         &mut self,
+         p: &ResidualProgram,
+@@ -1124,7 +1094,7 @@ impl<H: Host> Vm<H> {
+             }
+             return Ok(Some(JsonValue::Number(value)));
+         }
+-        let unboxed = self.json_unbox(p, value, &state.wrappers)?;
++        let unboxed = self.json_unbox(p, value)?;
+         if unboxed != value {
+             return self.json_serialize_value(p, unboxed, state);
+         }
+@@ -1196,23 +1166,17 @@ impl<H: Host> Vm<H> {
+         }
+     }
+ 
+-    fn json_unbox(
+-        &mut self,
+-        p: &ResidualProgram,
+-        value: Value,
+-        wrappers: &JsonWrapperSlots,
+-    ) -> Result<Value, JsError> {
+-        if self.own_property(value, wrappers.string).is_some() {
+-            let text = self.to_string(p, value)?;
+-            return Ok(self.heap.alloc(Cell::String(text.into())));
+-        }
+-        if self.own_property(value, wrappers.number).is_some() {
+-            return Ok(Value::number(self.to_number(p, value)?));
++    fn json_unbox(&mut self, p: &ResidualProgram, value: Value) -> Result<Value, JsError> {
++        use crate::BuiltinBrand as B;
++        match self.boxed_primitive_data(value) {
++            Some((B::StringObject, _)) => {
++                let text = self.to_string(p, value)?;
++                Ok(self.heap.alloc(Cell::String(text.into())))
++            }
++            Some((B::NumberObject, _)) => Ok(Value::number(self.to_number(p, value)?)),
++            Some((B::BooleanObject | B::BigIntObject, payload)) => Ok(payload),
++            _ => Ok(value),
+         }
+-        Ok(self
+-            .own_property(value, wrappers.boolean)
+-            .or_else(|| self.own_property(value, wrappers.bigint))
+-            .unwrap_or(value))
+     }
+ 
+     fn json_raw_text(&self, value: Value) -> Option<String> {
+diff --git a/crates/quench-runtime/src/vm/number.rs b/crates/quench-runtime/src/vm/number.rs
+index 2da4e7c72..0f2599fd4 100644
+--- a/crates/quench-runtime/src/vm/number.rs
++++ b/crates/quench-runtime/src/vm/number.rs
+@@ -91,20 +91,7 @@ impl<H: Host> Vm<H> {
+                 setter: None,
+             },
+         );
+-        let number_value = self.intern_atom("\0quench:number-value");
+-        self.set_property_with_attributes(
+-            prototype,
+-            number_value,
+-            Value::number(0.0),
+-            PropertyAttributes {
+-                writable: false,
+-                enumerable: false,
+-                configurable: false,
+-                accessor: false,
+-                getter: None,
+-                setter: None,
+-            },
+-        )?;
++        self.object_data_mut(prototype).expect("primitive prototype").set_boxed_primitive(Value::number(0.0));
+         self.set_builtin_value_named(prototype, "constructor", number)?;
+         self.set_builtin_named(program, prototype, "toString", Native::NumberString)?;
+         self.set_builtin_named(program, prototype, "valueOf", Native::NumberValueOf)?;
+@@ -175,8 +162,7 @@ impl<H: Host> Vm<H> {
+             },
+         );
+         self.set_builtin_value_named(prototype, "constructor", constructor)?;
+-        let number_value = self.intern_atom("\0quench:number-value");
+-        self.set_property(prototype, number_value, Value::number(0.0))?;
++        self.object_data_mut(prototype).expect("primitive prototype").set_boxed_primitive(Value::number(0.0));
+         let methods = [
+             ("toString", Native::NumberString),
+             ("valueOf", Native::NumberValueOf),
+@@ -233,8 +219,7 @@ impl<H: Host> Vm<H> {
+         if let Some(number) = receiver.as_number() {
+             return Ok(number);
+         }
+-        let value_atom = self.intern_atom("\0quench:number-value");
+-        self.own_property(receiver, value_atom)
++        self.boxed_primitive_value(receiver)
+             .and_then(Value::as_number)
+             .ok_or_else(|| {
+                 self.type_error(p, "Number method called on incompatible receiver".into())
+diff --git a/crates/quench-runtime/src/vm/object_static.rs b/crates/quench-runtime/src/vm/object_static.rs
+index 9439872e5..80241e02f 100644
+--- a/crates/quench-runtime/src/vm/object_static.rs
++++ b/crates/quench-runtime/src/vm/object_static.rs
+@@ -109,14 +109,9 @@ impl<H: Host> Vm<H> {
+             let text = self.to_string(p, this)?;
+             return Ok(self.heap.alloc(Cell::String(text.into())));
+         }
+-        for marker in ["\0quench:number-value", "\0quench:bigint-value"] {
+-            if let Some(value) = self
+-                .lookup_atom(marker)
+-                .and_then(|atom| self.own_property(this, atom))
+-            {
+-                let text = self.to_string(p, value)?;
+-                return Ok(self.heap.alloc(Cell::String(text.into())));
+-            }
++        if let Some((crate::BuiltinBrand::NumberObject | crate::BuiltinBrand::BigIntObject, value)) = self.boxed_primitive_data(this) {
++            let text = self.to_string(p, value)?;
++            return Ok(self.heap.alloc(Cell::String(text.into())));
+         }
+         let to_string = self.intern_atom("toString");
+         let method = self.get_property(p, this, to_string)?;
+@@ -133,16 +128,9 @@ impl<H: Host> Vm<H> {
+     ) -> Result<Value, JsError> {
+         let proxy_array =
+             matches!(self.heap.get(value), Some(Cell::Proxy { .. })) && self.is_array(p, value)?;
+-        let boxed_brand = [
+-            ("\0quench:string-value", "String"),
+-            ("\0quench:boolean-value", "Boolean"),
+-            ("\0quench:number-value", "Number"),
+-        ]
+-        .into_iter()
+-        .find_map(|(marker, brand)| {
+-            self.lookup_atom(marker)
+-                .and_then(|atom| self.own_property(value, atom))
+-                .map(|_| brand)
++        let boxed_brand = self.boxed_primitive_data(value).and_then(|(brand, _)| {
++            use crate::BuiltinBrand as B;
++            match brand { B::StringObject => Some("String"), B::BooleanObject => Some("Boolean"), B::NumberObject => Some("Number"), _ => None }
+         });
+         let brand = if value.is_undefined() || value.is_deleted() {
+             "Undefined"
+diff --git a/crates/quench-runtime/src/vm/primitives.rs b/crates/quench-runtime/src/vm/primitives.rs
+index a5a591fc3..db7206068 100644
+--- a/crates/quench-runtime/src/vm/primitives.rs
++++ b/crates/quench-runtime/src/vm/primitives.rs
+@@ -125,21 +125,12 @@ impl<H: Host> Vm<H> {
+                 }
+                 self.string_from_units(&well_formed)
+             }
+-            Native::BigIntValueOf => {
+-                if matches!(self.heap.get(this), Some(Cell::BigInt(_))) {
+-                    return Ok(this);
+-                }
+-                let value_atom = self.intern_atom("\0quench:bigint-value");
+-                self.own_property(this, value_atom).ok_or_else(|| {
+-                    JsError("BigInt.prototype.valueOf called on incompatible receiver".into())
+-                })
+-            }
++            Native::BigIntValueOf => self.bigint_value_of(p, this),
+             Native::StringToString | Native::StringValueOf => {
+                 if matches!(self.heap.get(this), Some(Cell::String(_))) {
+                     Ok(this)
+                 } else {
+-                    let value_atom = self.intern_atom("\0quench:string-value");
+-                    self.own_property(this, value_atom).ok_or_else(|| {
++                    self.boxed_primitive_value(this).filter(|value| matches!(self.heap.get(*value), Some(Cell::String(_)))).ok_or_else(|| {
+                         self.type_error(p, "String method called on incompatible receiver".into())
+                     })
+                 }
+@@ -148,8 +139,7 @@ impl<H: Host> Vm<H> {
+                 if this.as_number().is_some() {
+                     Ok(this)
+                 } else {
+-                    let value_atom = self.intern_atom("\0quench:number-value");
+-                    self.own_property(this, value_atom).ok_or_else(|| {
++                    self.boxed_primitive_value(this).filter(|value| value.as_number().is_some()).ok_or_else(|| {
+                         self.type_error(
+                             p,
+                             "Number.prototype.valueOf called on incompatible receiver".into(),
+diff --git a/crates/quench-runtime/src/vm/string.rs b/crates/quench-runtime/src/vm/string.rs
+index 108063f30..bf442edd7 100644
+--- a/crates/quench-runtime/src/vm/string.rs
++++ b/crates/quench-runtime/src/vm/string.rs
+@@ -279,8 +279,7 @@ impl<H: Host> Vm<H> {
+         let prototype = self
+             .heap
+             .alloc(Cell::Object(Self::empty_object(object_proto)));
+-        let value_atom = self.intern_atom("\0quench:string-value");
+-        self.set_property(prototype, value_atom, empty)?;
++        self.object_data_mut(prototype).expect("primitive prototype").set_boxed_primitive(empty);
+         self.set_named_constant(program, prototype, "length", Value::number(0.0))?;
+         self.set_builtin_value_named(prototype, "constructor", constructor)?;
+         self.set_builtin_value_named(constructor, "prototype", prototype)?;
+diff --git a/crates/quench-runtime/src/vm/symbol.rs b/crates/quench-runtime/src/vm/symbol.rs
+index 6302afa65..0a0f4a85c 100644
+--- a/crates/quench-runtime/src/vm/symbol.rs
++++ b/crates/quench-runtime/src/vm/symbol.rs
+@@ -117,8 +117,7 @@ impl<H: Host> Vm<H> {
+                 let value = if matches!(self.heap.get(this), Some(Cell::Symbol(_))) {
+                     this
+                 } else {
+-                    let value_atom = self.intern_atom("\0quench:symbol-value");
+-                    self.own_property(this, value_atom)
++                    self.boxed_primitive_value(this)
+                         .filter(|value| matches!(self.heap.get(*value), Some(Cell::Symbol(_))))
+                         .ok_or_else(|| {
+                             self.type_error(p, "Symbol method receiver is not a symbol".into())
+@@ -134,8 +133,7 @@ impl<H: Host> Vm<H> {
+                 if matches!(self.heap.get(this), Some(Cell::Symbol(_))) {
+                     Ok(this)
+                 } else {
+-                    let value_atom = self.intern_atom("\0quench:symbol-value");
+-                    self.own_property(this, value_atom).ok_or_else(|| {
++                    self.boxed_primitive_value(this).filter(|value| matches!(self.heap.get(*value), Some(Cell::Symbol(_)))).ok_or_else(|| {
+                         self.type_error(
+                             p,
+                             "Symbol.prototype.valueOf called on incompatible receiver".into(),
+@@ -147,8 +145,7 @@ impl<H: Host> Vm<H> {
+                 let symbol = if matches!(self.heap.get(this), Some(Cell::Symbol(_))) {
+                     this
+                 } else {
+-                    let value_atom = self.intern_atom("\0quench:symbol-value");
+-                    self.own_property(this, value_atom)
++                    self.boxed_primitive_value(this)
+                         .filter(|value| matches!(self.heap.get(*value), Some(Cell::Symbol(_))))
+                         .ok_or_else(|| {
+                             self.type_error(
+diff --git a/docs/node-host-contracts.md b/docs/node-host-contracts.md
+index 6f89ee2c7..e6bd2e744 100644
+--- a/docs/node-host-contracts.md
++++ b/docs/node-host-contracts.md
+@@ -57,6 +57,16 @@ later attempt. Native coded errors share the library's private Node error symbol
+ UDP buffer-size errors construct the original `ERR_SOCKET_BUFFER_SIZE` class,
+ which owns its context getters and custom inspection behavior.
+ 
++## Boxed primitive identity
++
++Primitive wrappers carry their actual value in an object-internal payload.
++Builtin brands, primitive methods, constructor display, structured cloning and
++JSON unboxing derive from that payload. Public properties cannot manufacture or
++replace wrapper data, and Proxy wrappers do not inherit the target's brand.
++The payload follows the shared object-extras GC root visitor and releases when
++the wrapper dies. Intrinsic Boolean, Number and String prototypes have their
++specified primitive data; Symbol and BigInt prototypes do not.
++
+ ## Event listeners
+ 
+ EventEmitter dispatch and listener inspection use the same `_events` records.

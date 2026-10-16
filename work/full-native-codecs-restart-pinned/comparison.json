@@ -1,0 +1,36 @@
+{
+  "previous_counts": {
+    "timeout": 81,
+    "fail": 2169,
+    "pass": 1799,
+    "skip": 678
+  },
+  "current_counts": {
+    "timeout": 82,
+    "fail": 2159,
+    "pass": 1809,
+    "skip": 677
+  },
+  "gained": [
+    "test-async-hooks-stack-overflow-try-catch.js",
+    "test-async-hooks-stack-overflow.js",
+    "test-stream-iter-pull-async.js",
+    "test-stream-iter-to-readable.js",
+    "test-stream-iter-transform-compat.js",
+    "test-stream-iter-transform-coverage.js",
+    "test-stream-iter-transform-errors.js",
+    "test-stream-iter-transform-params.js",
+    "test-stream-iter-transform-roundtrip.js",
+    "test-stream-iter-transform-sync.js",
+    "test-stream-iter-validation.js",
+    "test-stream-iter-writable-interop.js"
+  ],
+  "lost": [
+    "test-stream2-read-sync-stack.js",
+    "test-stringbytes-external.js"
+  ],
+  "new_skips": [],
+  "removed_skips": [
+    "test-icu-env.js"
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "base_source": "ecd9f3a714c93291c94373f7983423ede5c2846c",
+  "compiled_base_source": "bf7bcf5964cd0fc87fabba8461f1b0e1c42c909c",
+  "publication_base_has_identical_production_source": true,
+  "patch": "work/compiled-eval-source.patch",
+  "patch_sha256": "064c1dbb235e2b52e80da301f465ece6d69aeaa632816be508405717ed5dee2d",
+  "extra_fixture_sha256": {
+    "test-compiled-eval-source.js": "8e1463f494910a4b0de6d0299c9be852ceb6d00a9826088bab74a966811ae24e"
+  },
+  "binaries": {
+    "cli": {
+      "path": "work/quench-compiled-eval-qualified",
+      "sha256": "1fb54afc13326c213ad01fecd90aa70e51c9d0905be29ad748acb5160566b58f",
+      "sha256_after": "1fb54afc13326c213ad01fecd90aa70e51c9d0905be29ad748acb5160566b58f"
+    },
+    "runner": {
+      "path": "work/host-build/iteration/run-parallel",
+      "sha256": "cd6bacff2d68edab3369826319609e595c8d2523a9f38406ce70bdc319f4652c",
+      "sha256_after": "cd6bacff2d68edab3369826319609e595c8d2523a9f38406ce70bdc319f4652c"
+    },
+    "api_tests": {
+      "path": "work/host-build/iteration/deps/child_entry-70660f0a4dee9e77",
+      "sha256": "974f36c77e24a9ffb815043be355ef557e2b262d7abbdaddc5170b4e6ab805ce",
+      "sha256_after": "974f36c77e24a9ffb815043be355ef557e2b262d7abbdaddc5170b4e6ab805ce"
+    }
+  },
+  "identity_checks": {
+    "cli": true,
+    "runner": true,
+    "api_tests": true
+  },
+  "api_exit_code": 0,
+  "reconciled_candidate_source": "bae787fce7e5638a50d7cb94809a942583460f6e",
+  "candidate_source": "bae787fce7e5638a50d7cb94809a942583460f6e",
+  "api_cases_passed": 365,
+  "runtime_tests": 654,
+  "framework_fixtures": 43,
+  "web_correctness_targets": 9,
+  "instruction_limit_met": false,
+  "subsequent_source_excerpt_and_eval_origin_changes_excluded": true
+}

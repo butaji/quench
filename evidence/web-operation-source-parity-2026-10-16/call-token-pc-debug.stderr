@@ -1,0 +1,15 @@
+sourcepc /workspace/quench/work/optional-private-call-columns-probe.cjs fn=2 pc=2 resume=true source=1 1:142
+sourcepc /workspace/quench/work/optional-private-call-columns-probe.cjs fn=1 pc=35 resume=true source=34 2:18
+sourcepc /workspace/quench/work/optional-private-call-columns-probe.cjs fn=2 pc=2 resume=true source=1 1:142
+sourcepc /workspace/quench/work/optional-private-call-columns-probe.cjs fn=1 pc=48 resume=true source=47 3:21
+sourcepc /workspace/quench/work/optional-private-call-columns-probe.cjs fn=2 pc=2 resume=true source=1 1:142
+sourcepc /workspace/quench/work/optional-private-call-columns-probe.cjs fn=1 pc=62 resume=true source=61 4:24
+sourcepc /workspace/quench/work/optional-private-call-columns-probe.cjs fn=2 pc=2 resume=true source=1 1:142
+sourcepc /workspace/quench/work/optional-private-call-columns-probe.cjs fn=1 pc=76 resume=true source=75 5:24
+sourcepc /workspace/quench/work/optional-private-call-columns-probe.cjs fn=2 pc=2 resume=true source=1 1:142
+sourcepc /workspace/quench/work/optional-private-call-columns-probe.cjs fn=1 pc=91 resume=true source=90 6:22
+sourcepc /workspace/quench/work/optional-private-call-columns-probe.cjs fn=2 pc=2 resume=true source=1 1:142
+sourcepc /workspace/quench/work/optional-private-call-columns-probe.cjs fn=1 pc=103 resume=true source=102 7:23
+sourcepc /workspace/quench/work/optional-private-call-columns-probe.cjs fn=2 pc=2 resume=true source=1 1:142
+sourcepc /workspace/quench/work/optional-private-call-columns-probe.cjs fn=7 pc=3 resume=true source=2 8:47
+sourcepc /workspace/quench/work/optional-private-call-columns-probe.cjs fn=1 pc=129 resume=true source=128 9:23

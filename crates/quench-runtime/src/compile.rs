@@ -156,12 +156,6 @@ pub(crate) enum DynamicFunctionKind {
     AsyncGenerator,
 }
 
-pub(crate) enum EvalExpressionKind {
-    Identifier(String),
-    Import,
-    Other,
-}
-
 #[derive(Clone, Copy, Default)]
 pub(crate) struct EvalContext {
     pub in_function: bool,
@@ -177,11 +171,6 @@ enum ParsedProgramShape {
     Eval(EvalContext),
 }
 
-#[derive(Clone, Copy)]
-enum DynamicFunctionValidation {
-    None,
-    ParameterBoundary,
-}
 pub(crate) struct EvalRegExpLiteral {
     pub(crate) span: Range<usize>,
     pub(crate) flags: String,
@@ -200,39 +189,7 @@ pub(crate) struct StaticModulePlan {
     pub(crate) has_top_level_await: bool,
 }
 pub(crate) use crate::bytecode::ModuleReexport as StaticModuleReexport;
-fn eval_expression_span(body: &[Statement<'_>], directives: &[Directive<'_>]) -> Option<Span> {
-    match body {
-        [Statement::ExpressionStatement(statement)] if directives.is_empty() => {
-            Some(statement.expression.span())
-        }
-        [] if directives.len() == 1 => Some(directives[0].expression.span()),
-        _ => None,
-    }
-}
-
 impl Engine {
-    pub(crate) fn eval_single_string_constant(source: &str) -> Option<Constant> {
-        let allocator = Allocator::with_capacity(source.len());
-        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
-        if stack::validate_parsed(&parsed).is_err() || !parsed.diagnostics.is_empty() {
-            return None;
-        }
-        let literal = match (
-            parsed.program.body.as_slice(),
-            parsed.program.directives.as_slice(),
-        ) {
-            ([], [directive]) => &directive.expression,
-            ([Statement::ExpressionStatement(statement)], []) => {
-                let Expression::StringLiteral(literal) = &statement.expression else {
-                    return None;
-                };
-                literal
-            }
-            _ => return None,
-        };
-        Some(string::constant(literal))
-    }
-
     pub(crate) fn eval_single_regexp_literal(source: &str) -> Option<EvalRegExpLiteral> {
         let allocator = Allocator::with_capacity(source.len());
         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
@@ -245,7 +202,7 @@ impl Engine {
         let Statement::ExpressionStatement(statement) = &parsed.program.body[0] else {
             return None;
         };
-        let Expression::RegExpLiteral(literal) = &statement.expression else {
+        let Expression::RegExpLiteral(literal) = statement.expression.without_parentheses() else {
             return None;
         };
         let flags = [
@@ -267,19 +224,6 @@ impl Engine {
         })
     }
 
-    pub(crate) fn strict_octal_numeric_early_error(source: &str) -> Option<String> {
-        let allocator = Allocator::with_capacity(source.len());
-        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
-        if stack::validate_parsed(&parsed).is_err() {
-            return None;
-        }
-        parsed
-            .diagnostics
-            .is_empty()
-            .then(|| early::strict_octal_numeric_early_error(&parsed.program))
-            .flatten()
-    }
-
     pub(crate) fn field_eval_references_arguments(source: &str) -> bool {
         let context = eval_context_source(source, &[], true);
         let allocator = Allocator::with_capacity(context.len());
@@ -289,150 +233,6 @@ impl Engine {
         }
         eval_method_body(&mut parsed.program)
             .is_some_and(|body| early::field_eval_references_arguments(&body.statements))
-    }
-
-    pub(crate) fn eval_has_use_strict_directive(source: &str) -> bool {
-        let allocator = Allocator::with_capacity(source.len());
-        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
-        if stack::validate_parsed(&parsed).is_err() || !parsed.diagnostics.is_empty() {
-            return false;
-        }
-        parsed
-            .program
-            .directives
-            .iter()
-            .any(|directive| directive.directive == "use strict")
-    }
-
-    pub(crate) fn eval_expression_kind(source: &str) -> EvalExpressionKind {
-        let allocator = Allocator::with_capacity(source.len());
-        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
-        if stack::validate_parsed(&parsed).is_err() || !parsed.diagnostics.is_empty() {
-            return EvalExpressionKind::Other;
-        }
-        match parsed.program.body.as_slice() {
-            [Statement::ExpressionStatement(statement)] => {
-                match statement.expression.without_parentheses() {
-                    Expression::Identifier(identifier) => {
-                        EvalExpressionKind::Identifier(identifier.name.to_string())
-                    }
-                    Expression::ImportExpression(_) => EvalExpressionKind::Import,
-                    _ => EvalExpressionKind::Other,
-                }
-            }
-            _ => EvalExpressionKind::Other,
-        }
-    }
-
-    pub(crate) fn eval_single_expression(source: &str) -> Option<&str> {
-        let allocator = Allocator::with_capacity(source.len());
-        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
-        if stack::validate_parsed(&parsed).is_err() {
-            return None;
-        }
-        if !parsed.diagnostics.is_empty() {
-            return None;
-        }
-        let span = eval_expression_span(&parsed.program.body, &parsed.program.directives)?;
-        source.get(span.start as usize..span.end as usize)
-    }
-
-    /// Classify the body of the synthetic eval method in its private-name
-    /// grammar context instead of reparsing that body as a standalone Script.
-    pub(crate) fn eval_method_expression(source: &str) -> Option<&str> {
-        let allocator = Allocator::with_capacity(source.len());
-        let mut parsed = Parser::new(&allocator, source, SourceType::script()).parse();
-        if stack::validate_parsed(&parsed).is_err() || !parsed.diagnostics.is_empty() {
-            return None;
-        }
-        let body = eval_method_body(&mut parsed.program)?;
-        // The synthetic class method is already strict. Literal directives
-        // have no effects before its sole expression.
-        let span = eval_expression_span(&body.statements, &[])?;
-        source.get(span.start as usize..span.end as usize)
-    }
-
-    pub(crate) fn eval_statement_slices(source: &str) -> Option<Vec<&str>> {
-        let allocator = Allocator::with_capacity(source.len());
-        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
-        if stack::validate_parsed(&parsed).is_err() {
-            return None;
-        }
-        if !parsed.diagnostics.is_empty() {
-            return None;
-        }
-        let mut statements =
-            Vec::with_capacity(parsed.program.directives.len() + parsed.program.body.len());
-        for directive in &parsed.program.directives {
-            let span = directive.expression.span();
-            statements.push(source.get(span.start as usize..span.end as usize)?);
-        }
-        for statement in &parsed.program.body {
-            if matches!(statement, Statement::EmptyStatement(_)) {
-                continue;
-            }
-            let span = match statement {
-                Statement::ExpressionStatement(expression) => expression.expression.span(),
-                _ => statement.span(),
-            };
-            let text = source.get(span.start as usize..span.end as usize)?;
-            statements.push(if matches!(statement, Statement::VariableDeclaration(_)) {
-                text.strip_suffix(';').unwrap_or(text)
-            } else {
-                text
-            });
-        }
-        Some(statements)
-    }
-
-    pub(crate) fn eval_requires_compiled_program(source: &str) -> bool {
-        use oxc_ast_visit::Visit;
-
-        struct ResidualSyntax(bool);
-        impl<'a> Visit<'a> for ResidualSyntax {
-            fn visit_reg_exp_literal(&mut self, _: &RegExpLiteral<'a>) {
-                self.0 = true;
-            }
-            fn visit_assignment_expression(&mut self, _: &AssignmentExpression<'a>) {
-                self.0 = true;
-            }
-            fn visit_update_expression(&mut self, _: &UpdateExpression<'a>) {
-                self.0 = true;
-            }
-        }
-
-        let allocator = Allocator::with_capacity(source.len());
-        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
-        if stack::validate_parsed(&parsed).is_err() {
-            return true;
-        }
-        // OXC lowering owns reference writes and RegExp token contents.
-        let mut residual = ResidualSyntax(false);
-        residual.visit_program(&parsed.program);
-        !parsed.diagnostics.is_empty()
-            || !parsed.program.comments.is_empty()
-            || residual.0
-            || parsed.program.body.iter().any(|statement| {
-                matches!(
-                    statement,
-                    Statement::VariableDeclaration(_)
-                        | Statement::ClassDeclaration(_)
-                        | Statement::FunctionDeclaration(_)
-                        | Statement::BlockStatement(_)
-                        | Statement::DoWhileStatement(_)
-                        | Statement::ForStatement(_)
-                        | Statement::ForInStatement(_)
-                        | Statement::ForOfStatement(_)
-                        | Statement::WhileStatement(_)
-                        | Statement::SwitchStatement(_)
-                        | Statement::IfStatement(_)
-                        | Statement::TryStatement(_)
-                        | Statement::LabeledStatement(_)
-                        | Statement::WithStatement(_)
-                ) || matches!(statement, Statement::ExpressionStatement(statement)
-                        if matches!(statement.expression.without_parentheses(), Expression::UnaryExpression(unary)
-                            if unary.operator == oxc_syntax::operator::UnaryOperator::Delete))
-            })
     }
 
     pub(crate) fn static_module_has_early_error(source: &str) -> bool {
@@ -783,59 +583,12 @@ impl Engine {
     }
     /// Compile already-coerced Function-constructor parameter and body strings
     /// through the same OXC script pipeline used by ordinary source.
-    pub(crate) fn specialize_dynamic_function(
-        parameters: &str,
-        body: &str,
-        name: &str,
-        atom_prefix: &dyn AtomPrefix,
-    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        Self::specialize_dynamic_function_with_kind(
-            parameters,
-            body,
-            name,
-            atom_prefix,
-            DynamicFunctionKind::Ordinary,
-        )
-    }
-    pub(crate) fn specialize_dynamic_function_with_kind(
-        parameters: &str,
-        body: &str,
-        name: &str,
-        atom_prefix: &dyn AtomPrefix,
-        kind: DynamicFunctionKind,
-    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        Self::specialize_dynamic_function_source(
-            parameters,
-            body,
-            name,
-            atom_prefix,
-            kind,
-            DynamicFunctionValidation::None,
-        )
-    }
     pub(crate) fn specialize_function_constructor(
         parameters: &str,
         body: &str,
         name: &str,
         atom_prefix: &dyn AtomPrefix,
         kind: DynamicFunctionKind,
-    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        Self::specialize_dynamic_function_source(
-            parameters,
-            body,
-            name,
-            atom_prefix,
-            kind,
-            DynamicFunctionValidation::ParameterBoundary,
-        )
-    }
-    fn specialize_dynamic_function_source(
-        parameters: &str,
-        body: &str,
-        name: &str,
-        atom_prefix: &dyn AtomPrefix,
-        kind: DynamicFunctionKind,
-        validation: DynamicFunctionValidation,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let body = early::normalize_dynamic_function_body(body);
         let parameters = early::normalize_dynamic_function_parameters(parameters);
@@ -850,12 +603,7 @@ impl Engine {
         let parameter_list_end =
             expression_wrapper.len() + function_prefix.len() + parameters.len() + ")".len();
         let source = format!("{expression_wrapper}{function_prefix}{parameters}) {{{body}\n}})");
-        let expected_shape = match validation {
-            DynamicFunctionValidation::None => ParsedProgramShape::Any,
-            DynamicFunctionValidation::ParameterBoundary => {
-                ParsedProgramShape::DynamicFunction { parameter_list_end }
-            }
-        };
+        let expected_shape = ParsedProgramShape::DynamicFunction { parameter_list_end };
         Self::specialize_with_program_shape(
             &source,
             name,
@@ -866,29 +614,6 @@ impl Engine {
             false,
             false,
             expected_shape,
-        )
-    }
-    pub(crate) fn specialize_dynamic_function_with_private_names(
-        parameters: &str,
-        body: &str,
-        name: &str,
-        atom_prefix: &dyn AtomPrefix,
-        private_names: &[(String, String)],
-    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        let body = early::normalize_dynamic_function_body(body);
-        let source = format!("(function({parameters}) {{{body}\n}})");
-        Self::specialize_with_mode_and_private_names(
-            &source,
-            name,
-            SpecializationMode::of(atom_prefix),
-            atom_prefix,
-            SourceType::script(),
-            false,
-            false,
-            false,
-            private_names,
-            &[],
-            ParsedProgramShape::Any,
         )
     }
     fn specialize_module_with_mode(
@@ -1153,18 +878,6 @@ impl Engine {
             );
         }
         program
-    }
-
-    pub(crate) fn eval_parameter_early_error(source: &str, strict: bool) -> Option<String> {
-        let allocator = Allocator::with_capacity(source.len().saturating_mul(2));
-        let parsed = Parser::new(&allocator, source, SourceType::unambiguous()).parse();
-        if stack::validate_parsed(&parsed).is_err() {
-            return None;
-        }
-        if !parsed.diagnostics.is_empty() {
-            return Some(format!("SyntaxError: {}", parsed.diagnostics[0]));
-        }
-        early::parameter_early_error(&parsed.program, strict)
     }
 
     pub(crate) fn strict_eval_syntax_error(source: &str, in_function: bool) -> Option<String> {
@@ -1552,6 +1265,7 @@ struct Compiler<'a> {
     source: &'a str,
     text: &'a str,
     source_line_starts: Vec<usize>,
+    source_comments: Vec<Span>,
     /// Byte offset of each non-ASCII character with the running excess of
     /// UTF-8 bytes over UTF-16 units through it; columns count UTF-16 units.
     source_utf16_excess: Vec<(usize, usize)>,
@@ -1833,10 +1547,11 @@ impl<'a> Compiler<'a> {
     ) -> Self {
         let atoms = CompilerAtoms::new(atom_prefix);
         let mut source_line_starts = vec![0];
-        source_line_starts.extend(
-            text.match_indices('\n')
-                .map(|(index, _)| index.saturating_add(1)),
-        );
+        source_line_starts.extend(text.char_indices().filter_map(|(index, character)| {
+            let crlf_prefix = character == '\r' && text.as_bytes().get(index + 1) == Some(&b'\n');
+            (matches!(character, '\n' | '\r' | '\u{2028}' | '\u{2029}') && !crlf_prefix)
+                .then_some(index + character.len_utf8())
+        }));
         let mut excess = 0;
         let source_utf16_excess = text
             .char_indices()
@@ -1850,6 +1565,7 @@ impl<'a> Compiler<'a> {
             source,
             text,
             source_line_starts,
+            source_comments: Vec::new(),
             source_utf16_excess,
             mode,
             root_strict: false,
@@ -1874,6 +1590,27 @@ impl<'a> Compiler<'a> {
             superinstructions: vec![],
             captured_name_scopes: FxHashMap::default(),
         }
+    }
+
+    /// Locate a delimiter between OXC-owned expression boundaries. Comment text
+    /// is excluded using OXC's own spans, including comments containing delimiters.
+    fn source_delimiter(&self, start: u32, end: u32, delimiter: char) -> u32 {
+        let mut cursor = start as usize;
+        let end = (end as usize).min(self.text.len());
+        let mut comment = self.source_comments.partition_point(|span| span.end <= start);
+        while cursor < end {
+            if let Some(span) = self.source_comments.get(comment) {
+                if span.start as usize <= cursor && cursor < span.end as usize {
+                    cursor = span.end as usize;
+                    comment += 1;
+                    continue;
+                }
+            }
+            let Some(character) = self.text[cursor..end].chars().next() else { break; };
+            if character == delimiter { return cursor as u32; }
+            cursor += character.len_utf8();
+        }
+        start
     }
 
     fn source_position(&self, offset: u32) -> SourcePosition {
@@ -1905,6 +1642,7 @@ impl<'a> Compiler<'a> {
         module_goal: bool,
         inherited_strict: bool,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        self.source_comments = program.comments.iter().map(|comment| comment.span).collect();
         self.module_goal = module_goal;
         let module_requests = if module_goal {
             module_requests(&program.body)
