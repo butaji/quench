@@ -17,6 +17,77 @@ impl Host for SilentHost {
 }
 
 #[test]
+fn collection_construction_survives_gc_in_iterator_and_entry_callbacks() {
+    let source = r#"
+      const out=[];
+      for (const C of [Map, Set, WeakMap, WeakSet]) {
+        const pair=C===Map || C===WeakMap;
+        const key={rank:1}, value={answer:42}; let once=false, observed;
+        const method=pair?'set':'add';
+        const descriptor=Object.getOwnPropertyDescriptor(C.prototype,method);
+        Object.defineProperty(C.prototype,method,{configurable:true,get(){
+          $262.gc();
+          return function(k,v){observed=k;$262.gc();return Reflect.apply(descriptor.value,this,pair?[k,v]:[k])};
+        }});
+        const iterable={ [Symbol.iterator]() {
+          $262.gc();
+          return {next() {
+            $262.gc();
+            if (once) return {done:true}; once=true;
+            return {done:false,value:pair?{
+              get 0() {$262.gc();return {rank:1}},
+              get 1() {$262.gc();return value}
+            }:key};
+          }};
+        }};
+        const result=new C(iterable);
+        Object.defineProperty(C.prototype,method,descriptor);
+        out.push(pair?result.get(observed)===value && observed.rank===1:result.has(key) && observed===key);
+      }
+      let closed=0;
+      try { new Map({[Symbol.iterator](){return {next(){return {value:17,done:false}},return(){$262.gc();closed++;return {done:true}}}}}); }
+      catch(error) {out.push(error.name,closed);}
+      if (JSON.stringify(out)!=='[true,true,true,true,"TypeError",1]') throw new Error(JSON.stringify(out));
+    "#;
+    for specialized in [false, true] {
+        let mut vm = Vm::new(Test262Host);
+        let program = if specialized {
+            Engine::specialize(source, "collection-constructor-gc.js")
+        } else {
+            Engine::compile(crate::ExecutionRequest {
+                source,
+                name: "collection-constructor-gc.js",
+                kind: crate::SourceKind::Script,
+            })
+        }
+        .unwrap();
+        vm.execute(&program).unwrap();
+    }
+}
+
+#[test]
+fn array_definitions_reuse_accessor_slots_and_allow_frozen_same_values() {
+    let source = r#"
+      for(const index of [0,100000]) {
+        const array=[];let reads=0;
+        Object.defineProperty(array,index,{get(){reads++;return 7},configurable:true,enumerable:true});
+        Object.preventExtensions(array);
+        Object.defineProperty(array,index,{value:42,writable:true});
+        if(array[index]!==42||reads!==0)throw Error('accessor conversion');
+        Object.freeze(array);
+        if(!Reflect.defineProperty(array,index,{value:42}))throw Error('compatible frozen value');
+        if(Reflect.defineProperty(array,index,{value:43}))throw Error('incompatible frozen value');
+        if(Reflect.set(array,index,42)||Reflect.set(array,index,43))throw Error('frozen assignment');
+        const descriptor=Object.getOwnPropertyDescriptor(array,index);
+        if(descriptor.value!==42||descriptor.writable||descriptor.configurable||!descriptor.enumerable)throw Error('frozen descriptor');
+      }
+    "#;
+    for program in [Engine::compile(crate::ExecutionRequest { source, name: "array-definition-integrity.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source,"array-definition-integrity.js").unwrap()] {
+        Vm::new(SilentHost).execute(&program).unwrap();
+    }
+}
+
+#[test]
 fn strict_terminal_calls_preserve_catch_and_finally_handlers() {
     let source = r#"
       'use strict';
@@ -9977,6 +10048,36 @@ check('setter-original',()=>field({set x(v){throw marker}}));const hostile={get 
         let mut vm = Vm::new(RecordingHost(output.clone()));
         vm.execute(&program).unwrap();
         assert_eq!(output.borrow().as_slice(), [r#"[["undefined","TypeError","Cannot set properties of undefined (setting 'x')",false],["undefined","TypeError","Cannot set properties of undefined (setting 'x')",false],["null","TypeError","Cannot set properties of null (setting 'x')",false],["null","TypeError","Cannot set properties of null (setting 'x')",false],["boolean","TypeError","Cannot create property 'x' on boolean 'false'",false],["boolean","TypeError","Cannot create property 'x' on boolean 'false'",false],["number","TypeError","Cannot create property 'x' on number '1'",false],["number","TypeError","Cannot create property 'x' on number '1'",false],["string","TypeError","Cannot create property 'x' on string 'abc'",false],["string","TypeError","Cannot create property 'x' on string 'abc'",false],["symbol","TypeError","Cannot create property 'x' on symbol 'Symbol(s)'",false],["symbol","TypeError","Cannot create property 'x' on symbol 'Symbol(s)'",false],["bigint","TypeError","Cannot create property 'x' on bigint '1'",false],["bigint","TypeError","Cannot create property 'x' on bigint '1'",false],["frozen","TypeError","Cannot assign to read only property 'x' of object '#<Object>'",false],["frozen","TypeError","Cannot assign to read only property 'x' of object '#<Object>'",false],["sealed","TypeError","Cannot add property x, object is not extensible",false],["sealed","TypeError","Cannot add property x, object is not extensible",false],["getter","TypeError","Cannot set property x of #<Object> which has only a getter",false],["getter","TypeError","Cannot set property x of #<Object> which has only a getter",false],["proxy","TypeError","'set' on proxy: trap returned falsish for property 'x'",false],["proxy-readonly","TypeError","Cannot assign to read only property 'x' of object '#<Object>'",false],["proxy-extend","TypeError","Cannot define property x, object is not extensible",false],["nested","TypeError","'set' on proxy: trap returned falsish for property 'x'",false],["setter-original",null,null,true],["hostile","TypeError","Cannot assign to read only property 'x' of object '[object Object]'",false],[["string","0"],"TypeError","Cannot assign to read only property '0' of string 'abc'",false],[["string","length"],"TypeError","Cannot assign to read only property 'length' of string 'abc'",false],[["string","5"],"TypeError","Cannot create property '5' on string 'abc'",false],["primitive-getter","TypeError","Cannot set property x of [object Boolean] which has only a getter",false],["reflect",false],["trap-get","trap-call","inner"]]"#]);
+    }
+}
+
+#[test]
+fn private_field_initialization_does_not_follow_proxy_prototypes() {
+    let source = r#"
+      const events=[];
+      const prototype=new Proxy({}, {
+        get(){events.push('get');throw Error('public get');},
+        set(){events.push('set');throw Error('public set');},
+        getOwnPropertyDescriptor(){events.push('descriptor');throw Error('public descriptor');},
+        getPrototypeOf(){events.push('prototype');throw Error('public prototype');}
+      });
+      class ReturnValue { constructor(value){return value;} }
+      class Stamp extends ReturnValue {
+        #value;
+        constructor(value){super(value);this.#value=42;}
+        static read(value){return value.#value;}
+        static has(value){return #value in value;}
+      }
+      const object=Object.create(prototype);
+      const result=new Stamp(object);
+      print(JSON.stringify([result===object,Stamp.has(object),Stamp.read(object),events]));
+    "#;
+    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
+        let program=compile(source,"private-proxy-prototype.js").unwrap();
+        let output=Rc::new(RefCell::new(Vec::new()));
+        let mut vm=Vm::new(RecordingHost(output.clone()));
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(),["[true,true,42,[]]"]);
     }
 }
 

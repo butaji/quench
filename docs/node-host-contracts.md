@@ -469,6 +469,20 @@ Assignment or deletion before materialization needs no value; the group's later
 initialization keeps the script's value or absence. A polyfill runs as a block,
 so its declarations never become global lexical bindings.
 
+TextDecoder label resolution and complete-buffer Unicode/single-byte decoding
+use Rust `encoding_rs`. The Unicode BOM policy applies only to UTF-8 and UTF-16;
+legacy encodings retain a decoded U+FEFF. Legacy multibyte mappings and error
+consumption follow ICU's converter C API, matching Node's backend. Cargo detects
+`icu-uc` through `pkg-config` and links the reported libraries; an ICU development
+package (for example, Debian's `libicu-dev`) enables this backend. Cross builds
+must provide target-compatible pkg-config metadata and libraries. Without ICU,
+Unicode and single-byte codecs remain available and unsupported multibyte labels
+throw `ERR_ENCODING_NOT_SUPPORTED`.
+
+Qualification must record both engines' ICU versions: converter tables can vary
+between releases. Complete-buffer comparisons do not qualify streaming decode,
+all input coercions, detached/shared buffers, or constructor metadata.
+
 ## Buffer string construction byte projection
 
 `Buffer.from(string, encoding)` obtains encoded bytes from the shared Rust
