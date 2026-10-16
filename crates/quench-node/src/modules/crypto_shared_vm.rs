@@ -8,7 +8,7 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
-    r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf2, scryptNative, Transform, cipherProcess, generateRsaKeyPairNative, rsaCryptNative, ecdhNative, setEngineNative, captureKeyBrands, handleSymbol) => {
+    r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf2, scryptNative, Transform, cipherProcess, generateRsaKeyPairNative, rsaCryptNative, ecdhNative, setEngineNative, captureKeyBrands, handleSymbol, getWebCrypto, randomValuesSource) => {
   const states = new WeakMap();
   const secretKeys = new WeakMap();
   let repeatedHmacDigestWarningEmitted = false;
@@ -1760,8 +1760,8 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
       process.nextTick(bindAsyncCallback(callback), null, result.publicKey, result.privateKey);
     } catch (error) { process.nextTick(bindAsyncCallback(callback), error); }
   };
-  const webCrypto = {};
-  webCrypto.getRandomValues = function(values) {
+  const webCrypto = getWebCrypto ? null : {};
+  if (!getWebCrypto) webCrypto.getRandomValues = function(values) {
       if (this !== webCrypto) {
         const error = new TypeError("Illegal invocation");
         error.code = "ERR_INVALID_THIS";
@@ -1851,10 +1851,15 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
     DH_NOT_SUITABLE_GENERATOR: 8,
   });
   Object.defineProperties(api, {
-    webcrypto: { enumerable: true, get() { return webCrypto; } },
+    webcrypto: { enumerable: true, get() { return getWebCrypto ? getWebCrypto() : webCrypto; } },
     pseudoRandomBytes: { configurable: true, writable: true, value: pseudoRandomBuffer },
     prng: { configurable: true, value: randomBuffer },
     rng: { configurable: true, value: randomBuffer },
+  });
+
+  if (getWebCrypto) Object.defineProperties(api, {
+    subtle: { enumerable: true, get() { return getWebCrypto().subtle; } },
+    getRandomValues: { enumerable: true, get() { return randomValuesSource; } },
   });
   return api;
 }"#
@@ -1865,6 +1870,12 @@ pub(crate) fn install_global(
     context: &mut NativeContext<'_, NodeHost>,
 ) -> Result<(), RootedError> {
     let global = context.global_root()?;
+
+    #[cfg(quench_openssl_provider)]
+    {
+        let initialize=context.host_function(crate::host::shared_vm::operation("cryptoWebClasses"))?;
+        context.define_lazy_data_properties_rooted(global,&["Crypto","SubtleCrypto","CryptoKey"],false,initialize)?;
+    }
     let getter = context.host_function(crate::host::shared_vm::operation("get crypto"))?;
     let descriptor = context.null_object_rooted()?;
     set(context, descriptor, "get", getter)?;
@@ -1889,6 +1900,15 @@ pub(crate) fn module(
     context: &mut NativeContext<'_, NodeHost>,
     transform: RootId,
 ) -> Result<RootId, RootedError> {
+
+    #[cfg(quench_openssl_provider)]
+    let (webcrypto, random_values) = {
+        let getter=context.host_function(crate::host::shared_vm::operation("cryptoWebNamespace"))?;
+        let random=crate::host::shared_vm::commonjs::node_library_export(context,"crypto.js","internal/crypto/random.js","getRandomValues")?;
+        (getter,random)
+    };
+    #[cfg(not(quench_openssl_provider))]
+    let (webcrypto,random_values)=(context.undefined(),context.undefined());
     let factory = context.evaluate_script_rooted(CRYPTO_FACTORY, "node:crypto/shared.js")?;
     let hash = context.host_function(crate::host::shared_vm::operation("cryptoHash"))?;
     let hmac = context.host_function(crate::host::shared_vm::operation("cryptoHmac"))?;
@@ -1911,7 +1931,7 @@ pub(crate) fn module(
     let global = context.global_root()?;
     let buffer = get(context, global, "Buffer")?;
     let undefined = context.undefined();
-    context.call_rooted(
+    let module = context.call_rooted(
         factory,
         undefined,
         &[
@@ -1931,8 +1951,17 @@ pub(crate) fn module(
             set_engine,
             capture_brands,
             handle_symbol,
+            webcrypto,
+            random_values,
         ],
-    )
+    )?;
+    #[cfg(quench_openssl_provider)]
+    {
+        let binding=super::tls_shared_vm::facade::binding(context)?;
+        let get_fips=get(context,binding,"getFipsCrypto")?;
+        set(context,module,"getFips",get_fips)?;
+    }
+    Ok(module)
 }
 
 fn private_key_from_pem(

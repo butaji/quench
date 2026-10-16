@@ -296,7 +296,7 @@ pub(crate) fn operation(
             }
             let kind = c.to_number(arg)?;
             let bytes = args.get(1).copied().unwrap_or(missing);
-            let Some(bytes) = c.view_bytes_rooted(bytes) else {
+            let Some(bytes) = c.bytes_prefix_rooted(bytes, usize::MAX) else {
                 return Err(fail(c, "Key material must be a byte view"));
             };
             // Secret key bytes have no ASN.1 policy; asymmetric parsing remains on the
