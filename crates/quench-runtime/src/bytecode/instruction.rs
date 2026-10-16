@@ -259,10 +259,10 @@ macro_rules! layout_accessors {
 
             #[allow(dead_code)]
             pub(crate) fn optional_register_b(self) -> Option<Register> {
-                debug_assert_eq!(
+                debug_assert!(matches!(
                     self.op().field_layout(InstructionField::B),
-                    FieldLayout::OptionalRegister
-                );
+                    FieldLayout::OptionalRegister | FieldLayout::OptionalReadRegister
+                ));
                 match self.b() {
                     super::NO_OPTIONAL_REGISTER => None,
                     encoded => encoded.checked_sub(super::OPTIONAL_REGISTER_BIAS),
@@ -271,10 +271,10 @@ macro_rules! layout_accessors {
 
             #[allow(dead_code)]
             pub(crate) fn set_optional_register_b(&mut self, register: Option<Register>) {
-                debug_assert_eq!(
+                debug_assert!(matches!(
                     self.op().field_layout(InstructionField::B),
-                    FieldLayout::OptionalRegister
-                );
+                    FieldLayout::OptionalRegister | FieldLayout::OptionalReadRegister
+                ));
                 self.set_b(super::encode_optional_register(register));
             }
 
