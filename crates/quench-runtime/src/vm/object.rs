@@ -89,7 +89,7 @@ fn derive_shape_lookup_index(shapes: &[Shape], shape: u32) -> ShapeLookupIndex {
                     attributes.insert(slot, value);
                 }
             }
-            ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured
+            ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured | ShapeTransition::FunctionLengthReconfigured
             | ShapeTransition::Constructed { .. }
             | ShapeTransition::Root
             | ShapeTransition::Vacant
@@ -196,7 +196,7 @@ impl<H: Host> Vm<H> {
                     ..
                 } if candidate == key => break Some(slot as usize),
                 ShapeTransition::Delete { key: candidate, .. } if candidate == key => break None,
-                ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured
+                ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured | ShapeTransition::FunctionLengthReconfigured
                 | ShapeTransition::Constructed { .. }
                 | ShapeTransition::Root
                 | ShapeTransition::Add { .. }
@@ -268,7 +268,7 @@ impl<H: Host> Vm<H> {
                 ShapeTransition::Delete {
                     slot: candidate, ..
                 } if candidate as usize == slot => return Some(DEFAULT_PROPERTY_ATTRIBUTES),
-                ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured
+                ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured | ShapeTransition::FunctionLengthReconfigured
                 | ShapeTransition::Constructed { .. }
                 | ShapeTransition::Root
                 | ShapeTransition::Add { .. }
@@ -643,6 +643,7 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         site: u16,
     ) -> Result<Value, JsError> {
+        self.prepare_named_function_info_lookup(object, atom);
         match self.cached_field_hit(p, object, site) {
             FieldCacheProbe::Hit(value) => Ok(value),
             FieldCacheProbe::OrdinaryMiss => match self.array_length_field(object, atom) {
@@ -2384,7 +2385,7 @@ impl<H: Host> Vm<H> {
                 .checked_add(1)
                 .filter(|length| u32::try_from(*length).is_ok())
                 .expect("object property storage exhausted"),
-            ShapeTransition::Descriptor { .. } | ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured | ShapeTransition::Constructed { .. } => storage_len,
+            ShapeTransition::Descriptor { .. } | ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured | ShapeTransition::FunctionLengthReconfigured | ShapeTransition::Constructed { .. } => storage_len,
             ShapeTransition::Root
             | ShapeTransition::Delete { .. }
             | ShapeTransition::Vacant

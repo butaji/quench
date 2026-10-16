@@ -41,8 +41,13 @@ Public function names and inferred debug names remain distinct. Variable
 initializer inference follows result-producing sequence, conditional and logical
 expressions without changing the public `.name`. A slotless shape transition
 records when the native name-property state is reconfigured; reading the name
-or inspecting its descriptor does not materialize it. Shape compaction preserves
-both creation names and that transition. The added metadata opcode requires
+or inspecting its descriptor does not reconfigure it. Shape compaction preserves
+creation names and the name/length descriptor transitions. Prototype setup and
+named native-info lookup are separate lifecycle states. A named native name or
+length read prepares the prototype chain; computed reads and Reflect.get retain
+the setup view. Getter-free diagnostics derive native-name accessor visibility
+from that state and the actual ordered descriptor position, including deletion
+and restoration of length. The added metadata opcode requires
 bytecode format 90; opcodes outside the dense fast table use general dispatch.
 This covers those inference contexts, not every V8 debug-name inference rule.
 
@@ -84,7 +89,11 @@ cache rules. Parser-owned syntax includes nested template sites. Entries use the
 program store's existing reclamation lifecycle, validate the program identity
 on lookup and disappear when their program is reclaimed or the store resets.
 Complete V8 cache ageing, contextual direct-eval identity, sourceURL/source-map
-metadata and Function-constructor default debug names/positions remain open.
+metadata, complete prototype-cache transitions and Function-constructor body
+positions remain open. Function-constructor public names are initialized as
+creation data: public anonymous is distinct from the empty default source/debug
+name. Stack names and native constructor display share this distinction across
+all four constructor kinds without invoking public name getters.
 
 ## Parsed eval execution
 
