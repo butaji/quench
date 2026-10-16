@@ -41,8 +41,9 @@ const LARGE_HEAP_MINIMUM_LIVE_CELLS: usize = 1 << 16;
 /// further gain (Linux x86_64, 4 vCPU, paired non-PGO rounds); at that minimum, fixed-work
 /// max RSS rose 22% to 36% on DeltaBlue, EarleyBoyer and RayTrace.
 const MINIMUM_GC_ALLOCATION_HEADROOM: usize = 384;
-/// String payload bytes that weigh as one more allocation toward the next collection.
-const STRING_BYTES_PER_ALLOCATION: usize = 64;
+/// Payload bytes beside a cell (string units, array elements) that weigh as one more
+/// allocation toward the next collection.
+const PAYLOAD_BYTES_PER_ALLOCATION: usize = 64;
 const PARALLEL_MARK_MINIMUM_SLOTS: usize = 50_000;
 const PARALLEL_MARK_MAX_THREADS: usize = 4;
 // Paired Splay screens on the 4-vCPU Linux host favored the collector thread;
@@ -357,6 +358,8 @@ pub(crate) struct Heap {
     external_bytes: usize,
     allocations: usize,
     allocations_since_full: usize,
+    /// Payload bytes grown since the last charge, below one allocation's weight.
+    uncharged_payload_bytes: usize,
     full_collection_growth_limit: usize,
     old_live: usize,
     threshold: usize,
@@ -790,7 +793,10 @@ impl Heap {
             self.gc_profile.allocated_size_buckets[kind][Self::size_bucket(bytes)] += 1;
         }
         let weight = 1 + match &cell {
-            Cell::String(text) => text.flat_unit_bytes() / STRING_BYTES_PER_ALLOCATION,
+            Cell::String(text) => text.flat_unit_bytes() / PAYLOAD_BYTES_PER_ALLOCATION,
+            Cell::Array { object } => {
+                object.elements().capacity() * size_of::<Value>() / PAYLOAD_BYTES_PER_ALLOCATION
+            }
             _ => 0,
         };
         self.allocations += weight;
@@ -1039,6 +1045,15 @@ impl Heap {
     #[inline(always)]
     pub(crate) fn collection_epoch(&self) -> u64 {
         self.collections
+    }
+    /// Charges payload a live cell grew outside `alloc` (array elements) toward the next
+    /// collection, at the weight `alloc` gives a cell's own payload.
+    pub(crate) fn charge_payload_growth(&mut self, bytes: usize) {
+        let pending = self.uncharged_payload_bytes.saturating_add(bytes);
+        let weight = pending / PAYLOAD_BYTES_PER_ALLOCATION;
+        self.uncharged_payload_bytes = pending % PAYLOAD_BYTES_PER_ALLOCATION;
+        self.allocations += weight;
+        self.allocations_since_full = self.allocations_since_full.saturating_add(weight);
     }
     pub fn should_collect(&self) -> bool {
         self.allocations >= self.threshold
