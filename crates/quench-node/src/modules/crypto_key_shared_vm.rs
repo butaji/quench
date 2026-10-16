@@ -203,17 +203,6 @@ pub(crate) fn install_provider_accessors(
     }
     Ok(())
 }
-pub(crate) fn public_predicates(c: &mut Context<'_>, types: RootId) -> Result<(), RootedError> {
-    let state = state(c)?;
-    for (name, op) in [("isKeyObject", "isKey"), ("isCryptoKey", "isCryptoKey")] {
-        let function = function(c, state, op, false)?;
-        let key = c.string_rooted("length");
-        let length = c.number(1.0);
-        c.define_data_property_rooted(function, key, length, false, false, true)?;
-        set(c, types, name, function)?;
-    }
-    Ok(())
-}
 pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let state = state(c)?;
     let cached = get(c, state, "binding")?;

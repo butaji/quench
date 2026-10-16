@@ -1,0 +1,8 @@
+    Finished `iteration` profile [optimized] target(s) in 0.10s
+     Running tests/child_entry.rs (work/host-build/iteration/deps/child_entry-7867450a38a5862c)
+
+running 1 test
+test getter_stack_frames_preserve_original_names_and_inline_source_labels ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 321 filtered out; finished in 0.28s
+
