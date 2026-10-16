@@ -9843,3 +9843,8 @@ fn process_report_native_compact_uses_truthiness_without_coercion_hooks() {
 fn process_native_cpu_resource_and_rss_facts_use_sdk_validation_and_live_os_data() {
     compare_node_source_with_args(include_str!("../node-tests/test-process-native-metrics.js"), &["--expose-internals", "--no-warnings"]);
 }
+
+#[test]
+fn process_default_warning_listener_preserves_sdk_source_without_internal_exposure() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-warning-listener-source.js"), &[]);
+}
