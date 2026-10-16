@@ -9,16 +9,21 @@ pub(crate) use commonjs::source_kind;
 
 pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
     quench_runtime::host_functions![
+        method "nodeLibraryRequire" (1) => commonjs::require_node_library,
+        method "nodeTestMock" (0) => crate::modules::test_shared_vm::mock,
+        method "nodeTestNamespace" (0) => crate::modules::test_shared_vm::namespace,
+        method "contextifyScript" (0) => crate::modules::contextify_shared_vm::script,
+        method "contextifyRunInContext" (0) => crate::modules::contextify_shared_vm::run_in_context,
+        method "contextifyCompileFunction" (0) => crate::modules::contextify_shared_vm::compile_function,
         method "nodePrintEvalScript" (1) => crate::shared_run::print_eval_script,
         method "callbackify" (1) => crate::modules::util_callbackify_shared_vm::callbackify,
         method "gc" (0) => crate::modules::process_shared_vm::collect_garbage,
         method "utilCallbackified" (2) => crate::modules::util_callbackify_shared_vm::callbackified,
         method "utilCallbackifySettled" (1) => crate::modules::util_callbackify_shared_vm::settled,
         method "utilCallbackifyInvoke" (0) => crate::modules::util_callbackify_shared_vm::invoke,
-        method "utilExtend" (2) => crate::modules::util_extend_shared_vm::extend,
-        method "utilExtendDeprecated" (2) => crate::modules::util_extend_shared_vm::deprecated,
-        method "stripVTControlCharacters" (1) => crate::modules::util_shared_vm::strip_vt,
-        method "getSystemErrorName" (1) => crate::modules::util_system_error_shared_vm::get_system_error_name,
+        method "uvErrName" (0) => crate::modules::util_system_error_shared_vm::errname,
+        method "uvGetErrorMap" (0) => crate::modules::util_system_error_shared_vm::error_map,
+        method "uvGetErrorMessage" (0) => crate::modules::util_system_error_shared_vm::error_message,
         method "parseEnv" (1) => crate::modules::util_shared_vm::parse_env,
         method "parseArgs" (0) => crate::modules::util_parse_args_shared_vm::parse,
         method "utilParseArgsPositional" (1) => crate::modules::util_parse_args_shared_vm::positional_map,
@@ -31,6 +36,18 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "availableMemory" (0) => crate::modules::process_memory_shared_vm::available,
         method "constrainedMemory" (0) => crate::modules::process_memory_shared_vm::constrained,
         method "uptime" (0) => crate::modules::process_shared_vm::uptime,
+        #[cfg(target_os = "linux")]
+        method "processMetricsHrtime" (0) => crate::modules::process_metrics_shared_vm::hrtime,
+        #[cfg(target_os = "linux")]
+        method "processMetricsHrtimeBigInt" (0) => crate::modules::process_metrics_shared_vm::hrtime_bigint,
+        #[cfg(target_os = "linux")]
+        method "processMetricsCpu" (0) => crate::modules::process_metrics_shared_vm::process_cpu,
+        #[cfg(target_os = "linux")]
+        method "processMetricsThreadCpu" (0) => crate::modules::process_metrics_shared_vm::thread_cpu,
+        #[cfg(target_os = "linux")]
+        method "processMetricsResources" (0) => crate::modules::process_metrics_shared_vm::resources,
+        #[cfg(target_os = "linux")]
+        method "processMetricsRss" (0) => crate::modules::process_metrics_shared_vm::rss,
         method "processExitCodeGet" (0) => crate::modules::process_shared_vm::exit_code_get,
         method "processExitCodeSet" (1) => crate::modules::process_shared_vm::exit_code_set,
         method "processExit" (1) => crate::modules::process_shared_vm::exit,
@@ -79,6 +96,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "processLoadEnvFile" (1) => crate::modules::process_shared_vm::load_env_file,
         method "processSetEnv" (2) => crate::modules::process_shared_vm::set_env,
         method "processDeleteEnv" (1) => crate::modules::process_shared_vm::delete_env,
+        method "processBinding" (1) => crate::modules::process_binding_shared_vm::binding,
         method "processSetUncaughtExceptionCaptureCallback" (1) => crate::modules::process_shared_vm::set_uncaught_exception_capture_callback,
         method "processHasUncaughtExceptionCaptureCallback" (0) => crate::modules::process_shared_vm::has_uncaught_exception_capture_callback,
         method "processGetActiveHandles" (0) => crate::modules::process_shared_vm::get_active_handles,
@@ -89,7 +107,6 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "processIpcListenerReference" (1) => crate::modules::child_process_ipc_shared_vm::listener_reference,
         method "require" (1) => commonjs::require,
         method "resolve" (2) => commonjs::resolve,
-        method "isDeepStrictEqual" (3) => crate::modules::assert_shared_vm::is_deep_strict_equal,
         method "childProcessSyncOptions" (2) => crate::modules::child_process_options_shared_vm::sync_options,
         method "childProcessReference" (2) => crate::modules::child_process_shared_vm::reference_child,
         method "childProcessHandleReference" (0) => crate::modules::child_process_shared_vm::reference_handle,
@@ -107,7 +124,6 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "errorStackFormat" (3) => crate::modules::node_errors_shared_vm::format_stack,
         method "errorPrepareStackTraceInitialize" (0) => crate::modules::node_errors_shared_vm::initialize_prepare_stack_trace,
         method "processEmitWarningInitialize" (0) => crate::modules::process_shared_vm::initialize_emit_warning,
-        method "processWarningListener" (0) => crate::modules::process_shared_vm::warning_listener,
         method "nodeErrorBrand" (0) => crate::modules::node_errors_shared_vm::brand,
         method "asyncHookInit" (7) => crate::modules::async_hook_registry_shared_vm::initialize_hook,
         method "asyncHookEnable" (1) => crate::modules::async_hook_registry_shared_vm::enable,
@@ -117,6 +133,9 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "asyncTriggerId" (0) => crate::modules::async_hooks_shared_vm::trigger_id,
         method "asyncExecutionResource" (0) => crate::modules::async_hooks_shared_vm::execution_resource,
         method "asyncExternalInit" (3) => crate::modules::async_hooks_shared_vm::external_init,
+        method "asyncPromisePrune" (0) => crate::modules::async_hooks_shared_vm::prune_promises,
+        method "asyncTickInvoke" (0) => crate::modules::shared_event_loop::invoke_tick,
+        method "asyncHookDispatch" (2) => crate::modules::async_hook_registry_shared_vm::dispatch,
         method "asyncDestroyDispatch" (0) => crate::modules::async_hooks_shared_vm::destroy_dispatch,
         method "emitterAsyncConstructor" (0) => crate::modules::emitter_async_resource_shared_vm::constructor,
         method "emitterAsyncPrepare" (2) => crate::modules::emitter_async_resource_shared_vm::prepare,
@@ -278,7 +297,6 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "emitterOnce" (4) => crate::modules::event_emitter_shared_vm::once,
         method "emitterOnceInvoke" (0) => crate::modules::event_emitter_shared_vm::once_invoke,
         method "eventsDefaultMaxGet" (0) => crate::modules::event_limits_shared_vm::default_get,
-        method "consoleLoadUtil" (0) => crate::modules::console_shared_vm::load_util,
         method "eventGlobalsInitialize" (0) => crate::modules::events_shared_vm::initialize_event_globals,
         method "eventAbortStateInitialize" (0) => crate::modules::events_shared_vm::initialize_abort_state,
         method "eventsDefaultMaxSet" (1) => crate::modules::event_limits_shared_vm::default_set,
@@ -436,9 +454,11 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "cliOptionsValues" (0) => crate::modules::cli_options_shared_vm::values,
         method "cliParseNodeOptions" (0) => crate::modules::cli_options_shared_vm::parse_environment,
         method "fsFileHandleReadParameters" (0) => crate::modules::fs_shared_vm::file_handle_read::parameters,
+        method "fsBindingInternalModuleStat" (0) => crate::modules::fs_directory_shared_vm::internal_module_stat,
         method "fsBindingReaddir" (0) => crate::modules::fs_directory_shared_vm::readdir,
         method "fsBindingReaddirRecursive" (0) => crate::modules::fs_directory_shared_vm::readdir_recursive,
         method "fsPromisesGlobInitialize" (0) => crate::modules::fs_shared_vm::initialize_promises_glob_policy,
+        method "fsVfsExistsSync" (1) => crate::modules::fs_policy_shared_vm::vfs_exists_sync,
         method "fsReadFileSync" (2) => crate::modules::fs_shared_vm::read_file_sync,
         method "fsValidateAbortSignal" (1) => crate::modules::fs_shared_vm::validate_read_signal,
         method "fsReadFileComplete" (5) => crate::modules::fs_shared_vm::complete_read_file,
@@ -508,6 +528,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "encodingInto" (0) => crate::modules::encoding_binding_shared_vm::encode_into,
         method "encodingDecodeUtf8" (0) => crate::modules::encoding_binding_shared_vm::decode,
         method "utilPromiseDetails" (0) => crate::modules::util_shared_vm::promise_details,
+        method "utilDefineLazyProperties" (0) => crate::modules::util_shared_vm::define_lazy_properties,
+        method "utilLazyPropertyInitialize" (0) => crate::modules::util_shared_vm::initialize_lazy_property,
         method "utilMarkPromiseHandled" (0) => crate::modules::util_shared_vm::mark_promise_handled,
         method "utilOwnNonIndexProperties" (0) => crate::modules::util_shared_vm::own_non_index_properties,
         method "cryptoSetEngineBinding" (0) => crate::modules::crypto_engine_shared_vm::set_engine_binding,
@@ -638,7 +660,6 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "timersPromiseSchedule" (2) => crate::modules::timers_shared_vm::schedule_promise_timeout,
         method "timersPromiseComplete" (0) => crate::modules::timers_shared_vm::complete_promise_operation,
         method "timersPromiseAbort" (0) => crate::modules::timers_shared_vm::abort_promise_operation,
-        method "nodeTest" (2) => crate::modules::test_shared_vm::run,
         method "isBuiltin" (1) => crate::modules::module_shared_vm::is_builtin,
         method "createRequire" (1) => crate::modules::module_shared_vm::create_require,
         method "moduleNodePaths" (1) => crate::modules::module_shared_vm::node_module_paths,
@@ -648,10 +669,6 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "fileURLToPathBuffer" (2) => crate::modules::url_shared_vm::file_url_to_path_buffer,
         global "structuredClone" (1) => crate::modules::clone_shared_vm::structured_clone,
         method "ttyIsatty" (1) => crate::modules::tty_shared_vm::isatty,
-        method "consoleNoop" (0) => crate::modules::console_shared_vm::noop,
-        method "consoleInitializeWrite" (3) => crate::modules::console_shared_vm::initialize_write,
-        method "consoleWrite" (3) => crate::modules::console_shared_vm::write,
-        method "consoleWriteError" (1) => crate::modules::console_shared_vm::write_error,
         method "traceInitialize" (2) => crate::modules::trace_shared_vm::initialize,
         method "traceInspect" (3) => crate::modules::trace_shared_vm::inspect,
         method "traceInternal" (1) => crate::modules::trace_shared_vm::internal_binding,
@@ -664,12 +681,6 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "traceCategories" (0) => crate::modules::trace_shared_vm::categories,
         method "traceEnabled" (0) => crate::modules::trace_shared_vm::enabled,
         method "traceGetEnabledCategories" (0) => crate::modules::trace_shared_vm::get_enabled_categories,
-        method "consoleTime" (2) => crate::modules::console_timing_shared_vm::time,
-        method "consoleTimeEnd" (2) => crate::modules::console_timing_shared_vm::time_end,
-        method "consoleTimeLog" (2) => crate::modules::console_timing_shared_vm::time_log,
-        method "consoleCount" (2) => crate::modules::console_timing_shared_vm::count,
-        method "consoleCountReset" (2) => crate::modules::console_timing_shared_vm::count_reset,
-        method "consoleTrace" (0) => crate::modules::console_shared_vm::trace,
     ]
 }
 
@@ -682,6 +693,8 @@ pub(crate) fn operation(name: &str) -> HostFunctionId {
 }
 
 impl quench_runtime::Host for NodeHost {
+    const OBSERVE_PROMISE_LIFECYCLE: bool = true;
+
     fn proper_tail_calls(&self) -> bool {
         false
     }
@@ -908,8 +921,38 @@ impl quench_runtime::Host for NodeHost {
         }
     }
 
-    fn capture_job_context(&mut self) -> Option<quench_runtime::HostExecutionContext> {
-        crate::modules::async_hooks_shared_vm::capture_job_context(&self.shared_state)
+    fn create_promise_context(
+        &mut self,
+        parent: Option<quench_runtime::HostExecutionContext>,
+    ) -> Option<quench_runtime::HostExecutionContext> {
+        Some(crate::modules::async_hooks_shared_vm::create_promise_context(&self.shared_state, parent))
+    }
+
+    fn initialize_promise(
+        context: &mut NativeContext<'_, Self>,
+        promise: quench_runtime::RootId,
+        resource: quench_runtime::HostExecutionContext,
+    ) -> Result<(), RootedError> {
+        crate::modules::async_hooks_shared_vm::initialize_promise(context, promise, resource)
+    }
+
+    fn promise_job_boundary(
+        context: &mut NativeContext<'_, Self>,
+        resource: quench_runtime::HostExecutionContext,
+        before: bool,
+    ) -> Result<(), RootedError> {
+        crate::modules::async_hooks_shared_vm::promise_job_boundary(context, resource, before)
+    }
+
+    fn promise_settled(
+        context: &mut NativeContext<'_, Self>,
+        resource: quench_runtime::HostExecutionContext,
+    ) -> Result<(), RootedError> {
+        crate::modules::async_hooks_shared_vm::promise_settled(context, resource)
+    }
+
+    fn capture_job_context(&mut self, resource: Option<quench_runtime::HostExecutionContext>) -> Option<quench_runtime::HostExecutionContext> {
+        crate::modules::async_hooks_shared_vm::capture_job_context(&self.shared_state, resource)
             .map(quench_runtime::HostExecutionContext)
     }
 

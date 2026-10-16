@@ -292,6 +292,7 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn collect_slow(&mut self, _program: &ResidualProgram, full: bool) {
         let full = self.heap.collection_is_full(full);
+        self.constructed_shapes.fill(super::provenance::ConstructedShape::EMPTY);
         #[cfg(feature = "profile-aggregate")]
         for (index, frame) in self.frames.iter().enumerate() {
             self.profile.gc_frame(

@@ -342,7 +342,6 @@ impl Heap {
         self.get(value).is_some()
     }
 
-    #[cfg(feature = "profile-memory")]
     pub(super) fn for_each_live_value(&self, mut visit: impl FnMut(Value)) {
         self.object_records
             .for_each_live(|record_id, _| visit(Value::direct_object(record_id)));
