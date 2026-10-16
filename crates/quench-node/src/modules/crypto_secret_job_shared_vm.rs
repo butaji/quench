@@ -285,13 +285,11 @@ pub(crate) fn create_hash(
     let Some(name) = c.string_text(arg(1))? else {
         return Err(fail(c, "Hash algorithm must be a string"));
     };
-    let shared = c.host_mut().shared_state();
-    let fetched = shared
-        .borrow_mut()
-        .crypto_secret_jobs
-        .digests
-        .resolve(&name, super::crypto_provider_shared_vm::fips_generation);
-    let digest = fetched.map_err(|_| invalid_digest(c, &format!("Invalid digest: {name}")))?;
+    // Native jobs use ncrypto::Digest::FromName, not the public Hash cache.
+    // A known legacy descriptor resolves its provider at actual execution;
+    // a provider-only algorithm retains the fetched Md it genuinely owns.
+    let digest=super::crypto_digest::Digest::from_sdk_name(&name).map(std::sync::Arc::new)
+        .map_err(|_|invalid_digest(c,&format!("Invalid digest: {}",super::crypto_strings::null_terminated_prefix(&name))))?;
     let Some(bytes) = c.bytes_prefix_rooted(arg(2), usize::MAX) else {
         return Err(fail(c, "Hash input must be a BufferSource"));
     };
