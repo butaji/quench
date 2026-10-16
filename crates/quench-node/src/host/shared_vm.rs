@@ -402,6 +402,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "fsPromiseWatchCancel" (0) => crate::modules::fs_watch_shared_vm::promise::cancel,
         method "urlIsURL" (1) => crate::modules::url_shared_vm::is_url,
         method "toPathIfFileURL" (1) => crate::modules::url_shared_vm::to_path_if_file_url,
+        method "fsFileHandleReadParameters" (0) => crate::modules::fs_shared_vm::file_handle_read::parameters,
         method "fsReadFileSync" (2) => crate::modules::fs_shared_vm::read_file_sync,
         method "fsValidateAbortSignal" (1) => crate::modules::fs_shared_vm::validate_read_signal,
         method "fsReadFileComplete" (5) => crate::modules::fs_shared_vm::complete_read_file,
