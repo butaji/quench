@@ -471,4 +471,3 @@ pub(crate) fn read_stop(context: &mut NativeContext<'_, NodeHost>, receiver: Roo
     super::net_shared_vm::stop_read(&mut context.host_mut().shared_state().borrow_mut().tcp, id);
     Ok(context.number(0.0))
 }
-

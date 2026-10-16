@@ -884,6 +884,7 @@ pub(crate) fn require_for_module(
             | BuiltinModule::Https
             | BuiltinModule::Http2
             | BuiltinModule::DnsPromises
+            | BuiltinModule::CaresBinding
             | BuiltinModule::Http2Binding
             | BuiltinModule::Inspector
             | BuiltinModule::Repl
