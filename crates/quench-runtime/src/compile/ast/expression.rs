@@ -558,8 +558,9 @@ impl FunctionCompiler<'_, '_> {
             let second = self.owner.atom(key);
             let site = self.owner.cache_site();
             let second_site = self.owner.cache_site();
-            let access =
-                self.field_site(FieldBase::THIS, (first, site), Some((second, second_site)));
+            let access = self.field_site(FieldBase::THIS, (first, site), Some((second, second_site)));
+            let first_position = self.owner.source_position(inner.property.span.start);
+            self.owner.field_sites[access as usize].sources[0] = Some((first_position.line, first_position.column));
             self.emit(Op::GetField, dst, FieldBase::NESTED, 0, access);
             return dst;
         }
@@ -588,6 +589,7 @@ impl FunctionCompiler<'_, '_> {
             first,
             second,
             sink: None,
+            sources: [self.current_source_position, second.and(self.current_source_position), None],
         });
         site
     }

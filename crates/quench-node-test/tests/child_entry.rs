@@ -9493,3 +9493,8 @@ fn property_reads_and_writes_capture_their_own_operation_positions() {
 fn source_positions_use_javascript_line_terminators_and_utf16_columns() {
     compare_node_source_with_args(include_str!("../node-tests/test-source-line-terminators.js"), &[]);
 }
+
+#[test]
+fn fused_field_reads_preserve_each_getter_operation_source() {
+    compare_node_source_with_args(include_str!("../node-tests/test-fused-field-source-positions.js"), &[]);
+}
