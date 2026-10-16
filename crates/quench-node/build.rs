@@ -121,6 +121,8 @@ fn configure_node_compat_version(root: &std::path::Path) {
     );
 }
 
+include!("src/node_source_dependencies.rs");
+
 /// Node's pinned library runs as guest JavaScript in the shared VM. Embedding
 /// its immutable sources makes built-ins independent of a development checkout.
 fn embed_node_sources() {
@@ -130,7 +132,7 @@ fn embed_node_sources() {
         .expect("initialize tests/node submodule");
     configure_node_compat_version(&root);
     let mut pending = vec![root.join("lib")];
-    let mut files = vec![root.join("deps/undici/undici.js")];
+    let mut files = BUNDLED_DEPENDENCIES.iter().map(|(_, path)| root.join(path)).collect::<Vec<_>>();
     while let Some(directory) = pending.pop() {
         println!("cargo:rerun-if-changed={}", directory.display());
         for entry in std::fs::read_dir(directory).expect("read pinned Node library") {

@@ -908,7 +908,10 @@ pub(crate) fn require_for_module(
         None => {}
     }
     let filename = resolve_filename(context, &specifier, parent)?;
-    let goal = if filename.starts_with(context.host_mut().node_library_root.join("lib")) {
+    let root = context.host_mut().node_library_root.clone();
+    let bundled = crate::node_sources::BUNDLED_DEPENDENCIES
+        .iter().any(|(_, relative)| filename == root.join(relative));
+    let goal = if filename.starts_with(root.join("lib")) || bundled {
         EntryGoal::CommonJs
     } else {
         EntryGoal::Node
@@ -1370,8 +1373,12 @@ fn cached_builtin(
     let retained = context.retain(module)?;
     let previous = roots.borrow_mut().builtin_cache.insert(key.clone(), retained);
     if let Some(previous) = previous { context.release_root(previous); }
-    if matches!(builtin, BuiltinModule::Crypto | BuiltinModule::Events) {
+    if matches!(builtin, BuiltinModule::Crypto | BuiltinModule::Events | BuiltinModule::Fs) {
         let policy = context.with_startup_intrinsics(|context| {
+            if matches!(builtin, BuiltinModule::Fs) {
+                crate::modules::fs_shared_vm::initialize_directory_policy(context, module)?;
+                return crate::modules::fs_shared_vm::initialize_glob_policy(context, module);
+            }
             if matches!(builtin, BuiltinModule::Events) {
                 let listener = get(context, module, "addAbortListener")?;
                 let data = context.array_rooted(&[module, listener])?;
@@ -1801,6 +1808,17 @@ fn resolve_filename(
                 .join(internal_specifier)
                 .with_extension("js")
                 .is_file());
+    if node_internal {
+        if let Some((_, relative)) = crate::node_sources::BUNDLED_DEPENDENCIES
+            .iter().find(|(name, _)| *name == internal_specifier)
+        {
+            let root = context.host_mut().node_library_root.clone();
+            let path = root.join(relative);
+            if path.is_file() || crate::node_sources::source(&path, &root).is_some() {
+                return Ok(path);
+            }
+        }
+    }
     let virtual_path = if node_internal {
         Some(node_lib.join(internal_specifier).with_extension("js"))
     } else if specifier.starts_with("./") || specifier.starts_with("../") {
