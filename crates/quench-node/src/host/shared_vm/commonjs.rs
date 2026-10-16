@@ -672,7 +672,7 @@ pub(crate) fn require_for_module(
         let builtin_ids = serde_json::to_string(&builtin_ids)
             .map_err(|error| RootedError::host(error.to_string()))?;
         let source = format!(
-            r#"((nativeUtil) => {{
+            r#"(() => {{
   const ids = new Set({builtin_ids});
   class BuiltinModule {{
     static map = new Map(Array.from(ids, (id) => [id, new BuiltinModule(id)]));
@@ -695,16 +695,19 @@ pub(crate) fn require_for_module(
     }};
     if (name === "types") return {{ isNativeError: (value) => value instanceof Error, isPromise: (value) => value instanceof Promise }};
     if (name === "string_decoder") return {{ encodings: ["ascii", "utf8", "utf-8", "utf16le", "ucs2", "ucs-2", "base64", "base64url", "latin1", "binary", "hex"] }};
-    if (name === "util") return nativeUtil;
+    if (name === "util") return {{
+      constructSharedArrayBuffer: () => {{ throw new Error("SharedArrayBuffer construction is unavailable"); }},
+      guessHandleType: () => "UNKNOWN",
+      defineLazyProperties: (target, properties) => {{ for (const [key, getter] of Object.entries(properties)) Object.defineProperty(target, key, {{ configurable: true, get: getter }}); }},
+      privateSymbols: {{ arrow_message_private_symbol: Symbol("arrow_message"), decorated_private_symbol: Symbol("decorated") }},
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+    }};
     return {{}};
   }};
   return {{ BuiltinModule, internalBinding, require: () => {{ throw new Error("builtin source loading is unavailable"); }} }};
-}})"#
+}})()"#
         );
-        let factory = context.evaluate_script_rooted(&source, "internal/bootstrap/realm.js")?;
-        let util = crate::modules::util_shared_vm::key_binding(context)?;
-        let undefined = context.undefined();
-        return context.call_rooted(factory, undefined, &[util]);
+        return context.evaluate_script_rooted(&source, "internal/bootstrap/realm.js");
     }
     match requested_builtin(context, &specifier) {
         Some(BuiltinModule::Process) => {
@@ -1553,6 +1556,8 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
                 .ok_or_else(||RootedError::host("EventTarget API missing"))?;
             let operation=get(context,data,"abortSignal")?;
             set(context,module,"abortSignal",operation)?;
+            let aborted = crate::modules::util_aborted_source_shared_vm::original_aborted(context)?;
+            set(context,module,"aborted",aborted)?;
             Ok(module)
         },
         BuiltinModule::Internal("internal/process/task_queues") =>
