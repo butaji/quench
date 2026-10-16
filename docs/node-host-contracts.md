@@ -912,6 +912,12 @@ collection during coercion. The retained Runtime subtraction adapter shares the
 same VM operation as native contexts. Public capture methods have Node's public
 names and ordinary constructor shapes. Diagnostic report integration and
 internal auxiliary registration remain unqualified.
+A thrown monitor, primary, auxiliary or uncaught listener enters a distinct
+fatal-handler exit state, using the configured SDK's typed exit code and
+suppressing normal exit events. Explicit exits retain their own status and event
+policy, including an explicitly requested code 7. The protocol enum and public
+binding table derive from the same header declaration. A 19-child oracle matrix
+covers top-level, next-tick, promise, auxiliary and explicit-exit paths.
 Bound-handle error/reentry details, original native-source/stack fidelity,
 diagnostic report flags and the wider Node lifecycle backlog remain open.
 
