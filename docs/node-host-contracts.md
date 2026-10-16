@@ -824,3 +824,20 @@ native reentry and collection. Node policy derives display strings from them.
 The native class fallback reads builtin slots and data tags without public
 constructor or tag getters. Original user-constructor provenance after mutation
 and exact Node stack rendering remain separate compatibility gaps.
+
+## Native SDK protocol tables and caller capture
+
+The errors binding's exit codes and modules binding's compile-cache status names
+are generated from the configured SDK's C++ macro tables. Property descriptors,
+ordering and binding identity follow Node. These protocol declarations do not
+claim implementation of compile-cache operations or other missing bindings.
+
+The utility caller-location binding projects genuine compiler-owned activations,
+skipping its immediate JavaScript caller. Error hooks, public function-name
+getters and stack limits do not participate. Missing callers and unnamed eval
+Scripts produce undefined rather than fabricated bootstrap frames.
+
+The original promises glob policy materializes as a lazy data property, keeping
+its real function descriptor and identity. Merely loading native fs no longer
+imports the promises implementation's readline/history/OS dependencies. This
+preserves Node's binding-capture order and avoids loading unrelated modules.

@@ -37,6 +37,8 @@ pub struct SourceStackFrame {
     /// Positive, non-reused compiled-source identity; zero is reserved for no script.
     pub script_id: u64,
     pub script_name: String,
+    /// True when the activation belongs to an unnamed eval Script.
+    pub is_eval: bool,
     pub line_number: u32,
     pub column_number: u32,
 }
