@@ -262,7 +262,7 @@ impl<H: Host> Vm<H> {
                         )?;
                     }
                 } else if mode == AggregateMode::Any {
-                    let error = self.aggregate_error(values)?;
+                    let error = self.aggregate_error(p, values)?;
                     self.call_value(
                         p,
                         self.heap.root_value(capability.reject).unwrap(),
@@ -426,7 +426,7 @@ impl<H: Host> Vm<H> {
                 };
                 if let Some((values, keys)) = completion {
                     if mode == AggregateMode::Any {
-                        let error = self.aggregate_error(values)?;
+                        let error = self.aggregate_error(p, values)?;
                         self.call_value(p, reject, Value::UNDEFINED, &[error])?;
                     } else {
                         let values = self.aggregate_result(keys, values)?;

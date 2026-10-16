@@ -5,6 +5,7 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 #[derive(Default)]
 pub(crate) struct State {
     utilities: Option<RootId>,
+    vfs_state: Option<RootId>,
 }
 const EXPORTS: &[&str] = &[
     "BigIntStats",
@@ -75,6 +76,9 @@ pub(crate) fn adopt(
     let key = context.string_rooted("ERR_INVALID_ARG_VALUE");
     context.define_data_property_rooted(utilities, key, constructor, false, false, false)?;
     let utilities = context.retain(utilities)?;
+    let vfs_state = get(context, exports, "vfsState")?;
+    let vfs_state = context.retain(vfs_state)?;
+    shared.borrow_mut().fs_policy.vfs_state = Some(vfs_state);
     shared.borrow_mut().fs_policy.utilities = Some(utilities);
     let constructor = get(context, utilities, "BigIntStats")?;
     super::fs_shared_vm::stat::types::adopt_bigint_stats(context, constructor)
@@ -134,4 +138,34 @@ pub(super) fn invalid_value(
     let constructor = export(context, "ERR_INVALID_ARG_VALUE")?;
     let error = context.construct_rooted(constructor, constructor, &[name, value, reason])?;
     Ok(context.throw(error))
+}
+
+/// Project the configured SDK fs.js dispatch literally: only null handlers
+/// skip dispatch; direct property lookup preserves inherited/accessor behavior.
+/// Only an undefined handler result selects the native fallback.
+pub(super) fn vfs_read(
+    context: &mut NativeContext<'_, NodeHost>,
+    name: &str,
+    args: &[RootId],
+) -> Result<Option<RootId>, RootedError> {
+    let state = context.host_mut().shared_state().borrow().fs_policy.vfs_state;
+    let Some(state) = state else { return Ok(None); };
+    let handlers = get(context, state, "handlers")?;
+    if context.rooted_value(handlers).is_some_and(|v| v.is_null()) {
+        return Ok(None);
+    }
+    let function = get(context, handlers, name)?;
+    let result = context.call_rooted(function, handlers, args)?;
+    Ok((!context.rooted_value(result).is_some_and(|v| v.is_undefined())).then_some(result))
+}
+
+pub(crate) fn vfs_exists_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    this: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let path = args.first().copied().unwrap_or_else(|| context.undefined());
+    if let Some(result) = vfs_read(context, "existsSync", &[path])? { return Ok(result); }
+    let original = context.host_function_data()?;
+    context.call_rooted(original, this, args)
 }

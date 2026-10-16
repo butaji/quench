@@ -1,0 +1,11 @@
+'use strict';
+const assert=require('node:assert');
+Object.prototype.warned=true;
+const warnings=[];
+process.removeAllListeners('warning');
+process.on('warning',warning=>warnings.push([warning.name,warning.code,warning.message]));
+const uv=process.binding('uv');
+assert.strictEqual(uv.errname(-1),'EPERM');
+assert.strictEqual(process.binding('uv'),uv);
+assert.strictEqual(uv.errname(-2),'ENOENT');
+setImmediate(()=>{delete Object.prototype.warned;console.log(JSON.stringify(warnings));});

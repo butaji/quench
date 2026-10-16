@@ -36,7 +36,6 @@ pub(crate) mod child_process_sync;
 pub(crate) mod clone_shared_vm;
 pub(crate) mod eval_globals_shared_vm;
 pub(crate) mod console_shared_vm;
-pub(crate) mod console_source;
 pub(crate) mod crypto_engine_shared_vm;
 pub(crate) mod crypto_error_shared_vm;
 pub(crate) mod crypto_sha1;
@@ -136,7 +135,6 @@ pub(crate) mod zlib_stream_shared_vm;
 pub(crate) mod trace_shared_vm;
 pub(crate) mod trace_state;
 
-pub(crate) mod console_timing_shared_vm;
 
 pub(crate) mod buffer_write_shared_vm;
 
