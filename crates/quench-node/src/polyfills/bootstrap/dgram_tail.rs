@@ -420,12 +420,6 @@ class __QuenchUDPHandle {
   }
 }
 __quenchDgramInternals.UDP = __QuenchUDPHandle;
-class __QuenchTCPHandle {
-  constructor() { this.fd = 60000 + __quenchDgramNextPort++; }
-  listen() { return 0; }
-  close() { globalThis.__quenchDgramActiveFds.delete(this.fd); }
-}
-__quenchDgramInternals.TCP = __QuenchTCPHandle;
 const __quenchDgramValidateType = (type) => {
   if (type === "udp4" || type === "udp6") return type;
   throw Object.assign(
@@ -501,10 +495,6 @@ globalThis.require = (specifier) =>
     ? {
       internalBinding(name) {
         if (name === "udp_wrap") return { UDP: __QuenchUDPHandle };
-        if (name === "tcp_wrap") return {
-          TCP: __QuenchTCPHandle,
-          constants: { SOCKET: 0 },
-        };
         if (name === "uv") return {
           UV_UDP_REUSEADDR: 4,
           UV_UNKNOWN: -4094,
