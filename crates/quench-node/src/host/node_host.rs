@@ -99,6 +99,7 @@ pub(crate) struct SharedNodeState {
     pub(crate) net_auto_select_family_attempt_timeout: u64,
     pub(crate) net_auto_select_family: bool,
     pub(crate) process_module: Option<quench_runtime::RootId>,
+    pub(crate) process_capture_state: Option<quench_runtime::RootId>,
     pub(crate) path_module: Option<quench_runtime::RootId>,
     pub(crate) url_constructor: Option<quench_runtime::RootId>,
     pub(crate) url_state: Option<quench_runtime::RootId>,
@@ -190,6 +191,7 @@ impl SharedNodeState {
         self.crypto_handle_symbol = None;
         self.event_targets_api = None;
         self.process_module = None;
+        self.process_capture_state = None;
         self.path_module = None;
         self.url_constructor = None;
         self.url_state = None;
@@ -258,6 +260,7 @@ impl SharedNodeState {
             net_auto_select_family_attempt_timeout:
                 crate::modules::net_config::DEFAULT_AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT,
             process_module: None,
+            process_capture_state: None,
             path_module: None,
             url_constructor: None,
             url_state: None,
