@@ -78,6 +78,8 @@ pub(crate) fn source_kind(path: &Path) -> Result<quench_runtime::SourceKind, Str
     match path.extension().and_then(|extension| extension.to_str()) {
         Some("mjs") => return Ok(quench_runtime::SourceKind::Module),
         Some("cjs") => return Ok(quench_runtime::SourceKind::Script),
+        Some("json" | "node") => return Ok(quench_runtime::SourceKind::Script),
+        Some(extension) if extension != "js" => return detect_source_kind(path),
         _ => {}
     }
     let path = std::fs::canonicalize(path).map_err(|error| error.to_string())?;
@@ -100,9 +102,10 @@ pub(crate) fn source_kind(path: &Path) -> Result<quench_runtime::SourceKind, Str
         let package_json: serde_json::Value =
             serde_json::from_str(text.strip_prefix('\u{feff}').unwrap_or(&text))
                 .map_err(|_| format!("Invalid package config {}.", package.display()))?;
-        let module = match package_json.get("type") {
-            Some(serde_json::Value::String(kind)) => kind == "module",
-            None => false,
+        let explicit = match package_json.get("type") {
+            Some(serde_json::Value::String(kind)) if kind == "module" => Some(quench_runtime::SourceKind::Module),
+            Some(serde_json::Value::String(kind)) if kind == "commonjs" => Some(quench_runtime::SourceKind::Script),
+            Some(serde_json::Value::String(_)) | None => None,
             Some(_) => {
                 return Err(format!(
                     "Invalid package config {}. \"type\" key must be a string",
@@ -110,18 +113,42 @@ pub(crate) fn source_kind(path: &Path) -> Result<quench_runtime::SourceKind, Str
                 ))
             }
         };
-        return Ok(
-            if (path.extension().is_none()
-                || path.extension().is_some_and(|extension| extension == "js"))
-                && module
-            {
-                quench_runtime::SourceKind::Module
-            } else {
-                quench_runtime::SourceKind::Script
-            },
-        );
+        return match explicit {
+            Some(kind) => Ok(kind),
+            None => detect_source_kind(&path),
+        };
     }
-    Ok(quench_runtime::SourceKind::Script)
+    detect_source_kind(&path)
+}
+
+/// Node first accepts the CommonJS wrapper. Only syntax that cannot live in
+/// that wrapper triggers ESM detection, including top-level await and lexical
+/// declarations of wrapper parameters. OXC owns both grammar and early errors.
+fn detect_source_kind(path: &Path) -> Result<quench_runtime::SourceKind, String> {
+    let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
+    let text = String::from_utf8_lossy(&bytes);
+    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
+    let text = if text.starts_with("#!") {
+        text.find('\n').map_or("", |newline| &text[newline..])
+    } else { text };
+    let wrapper = format!("{WRAPPER_PREFIX}{text}{WRAPPER_SUFFIX}");
+    if valid_source(&wrapper, oxc_span::SourceType::cjs()) {
+        return Ok(quench_runtime::SourceKind::Script);
+    }
+    let allocator = oxc_allocator::Allocator::default();
+    let parsed = oxc_parser::Parser::new(&allocator, text, oxc_span::SourceType::unambiguous()).parse();
+    if parsed.program.source_type.is_module() || valid_source(text, oxc_span::SourceType::mjs()) {
+        Ok(quench_runtime::SourceKind::Module)
+    } else {
+        Ok(quench_runtime::SourceKind::Script)
+    }
+}
+
+fn valid_source(source: &str, source_type: oxc_span::SourceType) -> bool {
+    let allocator = oxc_allocator::Allocator::default();
+    let parsed = oxc_parser::Parser::new(&allocator, source, source_type).parse();
+    parsed.diagnostics.is_empty() && oxc_semantic::SemanticBuilder::new()
+        .with_check_syntax_error(true).build(&parsed.program).diagnostics.is_empty()
 }
 
 pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
@@ -558,6 +585,39 @@ pub(crate) fn require_for_module(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let specifier = specifier(context, args, Request::Require)?;
+    let parent_path = get(context, parent, "path")?;
+    let api = module_parent_api(context)?;
+    let paths = get(context, api, "relativePaths")?;
+    let map_get = get(context, api, "mapGet")?;
+    let mut directory_cache = context.call_rooted(map_get, paths, &[parent_path])?;
+    if !context.rooted_value(directory_cache).is_some_and(|value| value.is_undefined()) {
+        let resolved = get(context, directory_cache, &specifier)?;
+        if let Some(filename) = context.string_text(resolved)? {
+            let cache = commonjs_cache(context)?;
+            let cached = get(context, cache, &filename)?;
+            if !context.rooted_value(cached).is_some_and(|value| value.is_undefined()) {
+                if context.host_mut().shared_state().borrow().active_esm_requires.contains_key(&filename) {
+                    return load(context, Path::new(&filename), Some(parent), EntryGoal::Node);
+                }
+                transition_child(context, parent, cached, ChildTransition::Attach)?;
+                return get(context, cached, "exports");
+            }
+            delete_relative_resolution(context, directory_cache, &specifier)?;
+        }
+    }
+    // Node's explicit node: spelling bypasses CommonJS cache substitutions.
+    // Bare builtins participate in Module._cache just like resolved filenames.
+    if !specifier.starts_with("node:")
+        && !specifier.starts_with("internal/")
+        && BuiltinModule::from_specifier(&specifier).is_some()
+    {
+        let cache = commonjs_cache(context)?;
+        let cached = get(context, cache, &specifier)?;
+        if !context.rooted_value(cached).is_some_and(|value| value.is_undefined()) {
+            transition_child(context, parent, cached, ChildTransition::Attach)?;
+            return get(context, cached, "exports");
+        }
+    }
     if specifier == "vfs" {
         let error = context.error_rooted("Cannot find module 'vfs'")?;
         let code = context.string_rooted("MODULE_NOT_FOUND");
@@ -840,7 +900,15 @@ pub(crate) fn require_for_module(
     } else {
         EntryGoal::Node
     };
-    load(context, &filename, Some(parent), goal)
+    if crate::node_sources::source(&filename, &context.host_mut().node_library_root).is_some() {
+        return load(context, &filename, Some(parent), goal);
+    }
+    if context.rooted_value(directory_cache).is_some_and(|value| value.is_undefined()) {
+        directory_cache = context.null_object_rooted()?;
+        let map_set = get(context, api, "mapSet")?;
+        context.call_rooted(map_set, paths, &[parent_path, directory_cache])?;
+    }
+    load_with_resolution(context, &filename, Some(parent), goal, Some((directory_cache, &specifier)))
 }
 
 pub(super) fn resolve(
@@ -1273,26 +1341,50 @@ fn cached_builtin(
         .ok_or_else(|| RootedError::host("builtin module has no canonical cache key"))?;
     let key = format!("\0builtin:{canonical}");
     let roots = context.host_mut().shared_state();
-    if let Some(module) = roots.borrow().module_cache.get(&key).copied() {
+    if let Some(module) = roots.borrow().builtin_cache.get(&key).copied() {
         return Ok(module);
     }
 
     let module = context.with_startup_intrinsics(|context| build_builtin(context, builtin))?;
     let retained = context.retain(module)?;
-    let previous = roots.borrow_mut().module_cache.insert(key.clone(), retained);
+    let previous = roots.borrow_mut().builtin_cache.insert(key.clone(), retained);
     if let Some(previous) = previous { context.release_root(previous); }
-    if matches!(builtin, BuiltinModule::Crypto) {
+    if matches!(builtin, BuiltinModule::Crypto | BuiltinModule::Events) {
         let policy = context.with_startup_intrinsics(|context| {
+            if matches!(builtin, BuiltinModule::Events) {
+                let listener = get(context, module, "addAbortListener")?;
+                let data = context.array_rooted(&[module, listener])?;
+                let initialize = context.host_function_with_data(
+                    crate::host::shared_vm::operation("eventsOnInitialize"), data,
+                )?;
+                return context.define_lazy_data_properties_rooted(module, &["on"], true, initialize);
+            }
             let setter = node_library_export(context, "crypto.js", "internal/crypto/util.js", "setEngine")?;
             set(context, module, "setEngine", setter)
         });
         if let Err(error) = policy {
-            roots.borrow_mut().module_cache.remove(&key);
+            roots.borrow_mut().builtin_cache.remove(&key);
             context.release_root(retained);
             return Err(error);
         }
     }
     Ok(module)
+}
+
+pub(crate) fn events_on_initialize(
+    context: &mut Context<'_>, _: RootId, _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let data = context.host_function_data()?;
+    let module = get(context, data, "0")?;
+    let listener = get(context, data, "1")?;
+    // The pinned public policy uses the same native abort authority as events.
+    // Capture it before guest replacement of the public alias, and load policy
+    // only when `on` is observed, through the VM's ordinary data-property model.
+    let abort = node_library_module(context, "events.js", "internal/events/abort_listener.js")?;
+    set(context, abort, "addAbortListener", listener)?;
+    let on = node_library_export(context, "events.js", "events.js", "on")?;
+    set(context, module, "on", on)?;
+    Ok(context.undefined())
 }
 
 /// Load a real configured standard-library export over this VM's native bindings.
@@ -1725,6 +1817,154 @@ fn resolve_filename(
     }
 }
 
+/// Captured once by bootstrap's first module, before preloads or guest code.
+/// The weak keys preserve Node's private first-parent relation independently of
+/// the mutable public module.parent projection.
+fn module_parent_api(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    if let Some(api) = context.host_mut().shared_state().borrow().module_parent_api { return Ok(api); }
+    let global = context.global_root()?;
+    let constructor = get(context, global, "WeakMap")?;
+    let map = context.construct_rooted(constructor, constructor, &[])?;
+    let prototype = get(context, constructor, "prototype")?;
+    let setter = get(context, prototype, "set")?;
+    let api = context.null_object_rooted()?;
+    set(context, api, "map", map)?;
+    set(context, api, "set", setter)?;
+    let array = get(context, global, "Array")?;
+    let prototype = get(context, array, "prototype")?;
+    for name in ["push", "join"] {
+        let method = get(context, prototype, name)?;
+        set(context, api, name, method)?;
+    }
+    let reflect = get(context, global, "Reflect")?;
+    let delete = get(context, reflect, "deleteProperty")?;
+    set(context, api, "deleteProperty", delete)?;
+    let map_constructor = get(context, global, "Map")?;
+    let paths = context.construct_rooted(map_constructor, map_constructor, &[])?;
+    set(context, api, "relativePaths", paths)?;
+    let prototype = get(context, map_constructor, "prototype")?;
+    for (key, name) in [("mapGet", "get"), ("mapSet", "set")] {
+        let method = get(context, prototype, name)?;
+        set(context, api, key, method)?;
+    }
+    let api = context.retain(api)?;
+    context.host_mut().shared_state().borrow_mut().module_parent_api = Some(api);
+    Ok(api)
+}
+
+fn delete_relative_resolution(context: &mut Context<'_>, cache: RootId, specifier: &str) -> Result<(), RootedError> {
+    let api = module_parent_api(context)?;
+    let delete = get(context, api, "deleteProperty")?;
+    let key = context.string_rooted(specifier);
+    let undefined = context.undefined();
+    context.call_rooted(delete, undefined, &[cache, key])?;
+    Ok(())
+}
+
+pub(crate) fn commonjs_cache(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    use crate::host::node_host::CommonJsCache;
+    let shared = context.host_mut().shared_state();
+    let owner = shared.borrow().commonjs_cache;
+    match owner {
+        Some(CommonJsCache::Bootstrap(cache)) => Ok(cache),
+        Some(CommonJsCache::Module(module)) => get(context, module, "_cache"),
+        None => {
+            let cache = context.null_object_rooted()?;
+            let cache = context.retain(cache)?;
+            shared.borrow_mut().commonjs_cache = Some(CommonJsCache::Bootstrap(cache));
+            Ok(cache)
+        }
+    }
+}
+
+pub(crate) fn attach_module_cache(context: &mut Context<'_>, module: RootId) -> Result<(), RootedError> {
+    use crate::host::node_host::CommonJsCache;
+    let cache = commonjs_cache(context)?;
+    set(context, module, "_cache", cache)?;
+    let owner = context.retain(module)?;
+    let previous = context.host_mut().shared_state().borrow_mut().commonjs_cache.replace(CommonJsCache::Module(owner));
+    if let Some(CommonJsCache::Bootstrap(root) | CommonJsCache::Module(root)) = previous {
+        context.release_root(root);
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum ModuleCache {
+    NodeLibrary,
+    CommonJs,
+}
+
+impl ModuleCache {
+    fn get(self, context: &mut Context<'_>, name: &str) -> Result<RootId, RootedError> {
+        match self {
+            Self::NodeLibrary => Ok(context.host_mut().shared_state().borrow().builtin_cache.get(name).copied().unwrap_or_else(|| context.undefined())),
+            Self::CommonJs => {
+                let cache = commonjs_cache(context)?;
+                get(context, cache, name)
+            }
+        }
+    }
+
+    fn insert(self, context: &mut Context<'_>, name: &str, module: RootId) -> Result<(), RootedError> {
+        match self {
+            Self::NodeLibrary => {
+                let root = context.retain(module)?;
+                let old = context.host_mut().shared_state().borrow_mut().builtin_cache.insert(name.to_owned(), root);
+                if let Some(old) = old { context.release_root(old); }
+                Ok(())
+            }
+            Self::CommonJs => {
+                let cache = commonjs_cache(context)?;
+                context.assign_named_property_rooted(cache, name, module)
+            }
+        }
+    }
+
+    fn remove(self, context: &mut Context<'_>, name: &str) -> Result<(), RootedError> {
+        match self {
+            Self::NodeLibrary => {
+                let old = context.host_mut().shared_state().borrow_mut().builtin_cache.remove(name);
+                if let Some(old) = old { context.release_root(old); }
+                Ok(())
+            }
+            Self::CommonJs => {
+                let cache = commonjs_cache(context)?;
+                let api = module_parent_api(context)?;
+                let delete = get(context, api, "deleteProperty")?;
+                let key = context.string_rooted(name);
+                let undefined = context.undefined();
+                let deleted = context.call_rooted(delete, undefined, &[cache, key])?;
+                if !context.truthy_rooted(deleted)? {
+                    let error = context.type_error_rooted(&format!("Cannot delete property '{name}' of [object Object]"))?;
+                    return Err(context.throw(error));
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+fn first_module_parent(context: &mut Context<'_>, module: RootId) -> Result<RootId, RootedError> {
+    let api = module_parent_api(context)?;
+    let map = get(context, api, "map")?;
+    context.weak_map_get_rooted(map, module)
+}
+
+fn require_stack(context: &mut Context<'_>, parent: RootId) -> Result<RootId, RootedError> {
+    let api = module_parent_api(context)?;
+    let push = get(context, api, "push")?;
+    let stack = context.array_rooted(&[])?;
+    let mut cursor = parent;
+    while context.truthy_rooted(cursor)? {
+        let filename = get(context, cursor, "filename")?;
+        let name = if context.truthy_rooted(filename)? { filename } else { get(context, cursor, "id")? };
+        context.call_rooted(push, stack, &[name])?;
+        cursor = first_module_parent(context, cursor)?;
+    }
+    Ok(stack)
+}
+
 fn module_record(
     context: &mut Context<'_>,
     filename: &Path,
@@ -1754,6 +1994,10 @@ fn module_record(
     set(context, module, "path", path)?;
     let parent = parent.unwrap_or_else(|| context.undefined());
     set(context, module, "parent", parent)?;
+    let api = module_parent_api(context)?;
+    let map = get(context, api, "map")?;
+    let setter = get(context, api, "set")?;
+    context.call_rooted(setter, map, &[module, parent])?;
     let loaded = context.boolean(false);
     set(context, module, "loaded", loaded)?;
     let children = context.array_rooted(&[])?;
@@ -1783,6 +2027,8 @@ fn module_record(
     set(context, require, "resolve", resolve)?;
     let main = get(context, process, "mainModule")?;
     set(context, require, "main", main)?;
+    let cache = commonjs_cache(context)?;
+    set(context, require, "cache", cache)?;
     set(context, module, "require", require)?;
     Ok(module)
 }
@@ -1793,6 +2039,65 @@ pub(crate) fn create_require(
 ) -> Result<RootId, RootedError> {
     let module = module_record(context, filename, None, false)?;
     get(context, module, "require")
+}
+
+fn require_module_error(context: &mut Context<'_>, code: &'static str, message: &str) -> Result<RootedError, RootedError> {
+    let error = context.error_rooted(message)?;
+    crate::modules::node_errors_shared_vm::decorate_error(context, error, code)?;
+    Ok(context.throw(error))
+}
+
+fn require_es_module(context: &mut Context<'_>, filename: &Path, parent: Option<RootId>) -> Result<RootId, RootedError> {
+    let url = url::Url::from_file_path(filename).map_err(|_| RootedError::host("invalid ES module filename"))?;
+    let module = quench_runtime::Host::resolve_dynamic_import(context.host_mut(), &filename.to_string_lossy(), url.as_str())
+        .map_err(RootedError::host)?.ok_or_else(|| RootedError::host("ES module source unavailable"))?;
+    let namespace = match context.evaluate_module_sync_rooted(&module)? {
+        quench_runtime::SynchronousModule::Namespace(namespace) => namespace,
+        quench_runtime::SynchronousModule::AsyncGraph => {
+            let mut units = format!("require() cannot be used on an ESM graph with top-level await. Use import() instead. To see where the top-level await comes from, use --experimental-print-required-tla.\nRequired module: {}", filename.display()).encode_utf16().collect::<Vec<_>>();
+            let stack = if let Some(parent) = parent { Some(require_stack(context, parent)?) } else { None };
+            if let Some(stack) = stack {
+                let length = get(context, stack, "length")?;
+                if context.truthy_rooted(length)? {
+                    let api = module_parent_api(context)?;
+                    let join = get(context, api, "join")?;
+                    let separator = context.string_rooted("\n- ");
+                    let joined = context.call_rooted(join, stack, &[separator])?;
+                    units.extend("\nRequire stack:\n- ".encode_utf16());
+                    units.extend(context.to_string_code_units(joined)?);
+                }
+            }
+            let error = context.error_rooted("")?;
+            let message = context.string_units_rooted(&units);
+            context.assign_named_property_rooted(error, "message", message)?;
+            crate::modules::node_errors_shared_vm::decorate_error(context, error, "ERR_REQUIRE_ASYNC_MODULE")?;
+            if let Some(stack) = stack {
+                let key = context.string_rooted("requireStack");
+                context.define_data_property_rooted(error, key, stack, true, false, true)?;
+            }
+            return Err(context.throw(error));
+        }
+        quench_runtime::SynchronousModule::Evaluating => {
+            let mut message = format!("Cannot require() ES Module {} in a cycle.", filename.display());
+            if let Some(parent) = parent {
+                let name = get(context, parent, "filename")?;
+                message.push_str(&format!(" (from {})", context.to_string(name)?));
+            }
+            message.push_str(" A cycle involving require(esm) is not allowed to maintain invariants mandated by the ECMAScript specification. Try making at least part of the dependency in the graph lazily loaded.");
+            return Err(require_module_error(context, "ERR_REQUIRE_CYCLE_MODULE", &message)?);
+        }
+    };
+    let key = context.string_rooted("module.exports");
+    if context.has_property_rooted(namespace, key)? {
+        return context.get_property_rooted(namespace, key);
+    }
+    let default = context.string_rooted("default");
+    let marker = context.string_rooted("__esModule");
+    if context.has_property_rooted(namespace, default)? && !context.has_property_rooted(namespace, marker)? {
+        let yes = context.boolean(true);
+        context.module_namespace_with_export_rooted(namespace, "__esModule", yes)
+    } else { Ok(namespace) }
+
 }
 
 /// The pinned Node library's primordials module, when the library is present.
@@ -1827,28 +2132,63 @@ fn load(
     parent: Option<RootId>,
     goal: EntryGoal,
 ) -> Result<RootId, RootedError> {
+    load_with_resolution(context, filename, parent, goal, None)
+}
+
+fn load_with_resolution(
+    context: &mut Context<'_>,
+    filename: &Path,
+    parent: Option<RootId>,
+    goal: EntryGoal,
+    resolution: Option<(RootId, &str)>,
+) -> Result<RootId, RootedError> {
     let key = filename.to_string_lossy().into_owned();
     let roots = context.host_mut().shared_state();
-    let cached = roots.borrow().module_cache.get(&key).copied();
-    if let Some(module) = cached {
-        if let Some(parent) = parent {
-            transition_child(context, parent, module, ChildTransition::Attach)?;
+    let active = roots.borrow().active_esm_requires.get(&key).copied();
+    if let Some(active) = active {
+        let mut message = format!("Cannot require() ES Module {key} in a cycle.");
+        let parent = first_module_parent(context, active)?;
+        if context.truthy_rooted(parent)? {
+            let name = get(context, parent, "filename")?;
+            message.push_str(&format!(" (from {})", context.to_string(name)?));
         }
-        return get(context, module, "exports");
+        return Err(require_module_error(context, "ERR_REQUIRE_CYCLE_MODULE", &message)?);
     }
     let library_root = context.host_mut().node_library_root.clone();
     let library_relative = filename.strip_prefix(&library_root).ok();
+    let cache = if crate::node_sources::source(filename, &context.host_mut().node_library_root).is_some() {
+        ModuleCache::NodeLibrary
+    } else { ModuleCache::CommonJs };
+    let cached = cache.get(context, &key)?;
+    if !context.rooted_value(cached).is_some_and(|value| value.is_undefined()) {
+        if let Some(parent) = parent {
+            transition_child(context, parent, cached, ChildTransition::Attach)?;
+        }
+        return get(context, cached, "exports");
+    }
+    let is_esm = goal == EntryGoal::Node && source_kind(filename).map_err(RootedError::host)? == quench_runtime::SourceKind::Module;
     let is_main = parent.is_none() && context.host_mut().commonjs_entry.is_some();
     let module = module_record(context, filename, parent, is_main)?;
     if let Some(parent) = parent {
         transition_child(context, parent, module, ChildTransition::Attach)?;
     }
-    let retained = context.retain(module)?;
-    roots
-        .borrow_mut()
-        .module_cache
-        .insert(key.clone(), retained);
+    cache.insert(context, &key, module)?;
+    if let Some((directory, specifier)) = resolution {
+        let name = context.string_rooted(&key);
+        set(context, directory, specifier, name)?;
+    }
+    if is_esm {
+        let retained = context.retain(module)?;
+        roots.borrow_mut().active_esm_requires.insert(key.clone(), retained);
+    }
     let result = (|| {
+        if is_esm {
+            let exports = require_es_module(context, filename, parent)?;
+            set(context, module, "exports", exports)?;
+            let loaded = context.boolean(true);
+            set(context, module, "loaded", loaded)?;
+            return Ok(exports);
+        }
         let file_text = match std::fs::read(filename) {
             Ok(bytes) => String::from_utf8(bytes)
                 .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned()),
@@ -1870,14 +2210,6 @@ fn load(
                 ));
             }
             _ => {
-                if goal == EntryGoal::Node
-                    && source_kind(filename).map_err(RootedError::host)?
-                        == quench_runtime::SourceKind::Module
-                {
-                    return Err(RootedError::host(
-                        "requiring an ES module is not implemented on the shared VM",
-                    ));
-                }
                 let is_primordials = library_relative
                     == Some(Path::new("lib/internal/per_context/primordials.js"));
                 let text = if text.starts_with("#!") {
@@ -2063,9 +2395,16 @@ const getLinkedBinding = () => ({});
         set(context, module, "loaded", loaded)?;
         Ok(exports)
     })();
+    if is_esm {
+        if let Some(retained) = roots.borrow_mut().active_esm_requires.remove(&key) {
+            context.release_root(retained);
+        }
+    }
     if result.is_err() {
-        roots.borrow_mut().module_cache.remove(&key);
-        context.release_root(retained);
+        cache.remove(context, &key)?;
+        if let Some((directory, specifier)) = resolution {
+            delete_relative_resolution(context, directory, specifier)?;
+        }
         if let Some(parent) = parent {
             transition_child(context, parent, module, ChildTransition::Detach)?;
         }

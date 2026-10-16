@@ -6,12 +6,12 @@ use std::collections::VecDeque;
 
 const PROMISE_CAPABILITY_RESOLVE: &str = "\0quench:promise-capability-resolve";
 const PROMISE_CAPABILITY_REJECT: &str = "\0quench:promise-capability-reject";
-use crate::ModuleSource;
+use crate::{ModuleSource, module_identity::ModuleIdentity};
 use rustc_hash::FxHashSet;
 
 fn module_cache_key(name: &str, module_type: &str) -> String {
     let name = crate::module_identity::normalize(std::path::Path::new(name));
-    format!("{}:{module_type}", name.display())
+    format!("{}:{module_type}", name.text())
 }
 
 fn self_import_referrer(referrer: &str, resolved: &str) -> bool {
@@ -39,10 +39,10 @@ enum StaticModuleValue {
     },
 }
 
-type ActiveModuleExports = FxHashMap<std::path::PathBuf, Vec<(String, StaticModuleValue)>>;
+type ActiveModuleExports = FxHashMap<ModuleIdentity, Vec<(String, StaticModuleValue)>>;
 
-type StaticModuleNodes = FxHashMap<std::path::PathBuf, StaticModuleNode>;
-type StaticModuleResolveSet = FxHashSet<(std::path::PathBuf, String)>;
+type StaticModuleNodes = FxHashMap<ModuleIdentity, StaticModuleNode>;
+type StaticModuleResolveSet = FxHashSet<(ModuleIdentity, String)>;
 
 #[derive(Clone)]
 enum StaticModuleNode {
@@ -1096,7 +1096,7 @@ pub(super) struct PromiseRuntime {
     pub(super) modules: FxHashMap<String, ModuleRecord>,
     pub(super) dynamic_import_jobs: Vec<DynamicImportJob>,
     pub(super) async_module_order: VecDeque<String>,
-    pub(super) module_sources: FxHashMap<std::path::PathBuf, Value>,
+    pub(super) module_sources: FxHashMap<ModuleIdentity, Value>,
     pub(super) waiting_static_modules: Vec<ModuleSource>,
     pub(super) active_native: Vec<super::activation::NativeActivation>,
 }
@@ -1717,6 +1717,7 @@ impl<H: Host> Vm<H> {
                                 vm.queue_dynamic_import_job(cache_key, module, promise);
                                 return Ok(Value::UNDEFINED);
                             }
+                            ModuleOutcome::Pending(ModulePhase::Instantiated) => {}
                             ModuleOutcome::Pending(_) => {
                                 let joined = vm
                                     .realm
@@ -2171,6 +2172,69 @@ impl<H: Host> Vm<H> {
         Ok(value)
     }
 
+    fn synchronous_graph_has_await(&self, key: &str, seen: &mut FxHashSet<String>) -> Result<bool, ()> {
+        let _stack = quench_stack::StackGuard::enter()?;
+        if !seen.insert(key.to_owned()) { return Ok(false); }
+        let Some(record) = self.realm.promise.modules.get(key) else { return Ok(false); };
+        let Some(program) = record.program.and_then(|program| self.programs.get(program)) else { return Ok(false); };
+        if program.functions.first().is_some_and(|function| function.is_async) { return Ok(true); }
+        for (request, dependency) in program.module_requests.iter().zip(&record.resolved_requests) {
+            if request.phase == crate::bytecode::ModuleRequestPhase::Evaluation
+                && request.module_type.as_deref().unwrap_or("javascript") == "javascript"
+                && self.synchronous_graph_has_await(&module_cache_key(dependency, "javascript"), seen)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    pub(super) fn synchronous_module_namespace(
+        &mut self,
+        p: &ResidualProgram,
+        module: &ModuleSource,
+    ) -> Result<crate::SynchronousModule<Value>, JsError> {
+        use crate::SynchronousModule;
+        let key = module_cache_key(&module.name, "javascript");
+        let linked = match self.instantiate_static_module_graph(p, module, None) {
+            Ok(linked) => linked,
+            Err(error) => {
+                self.reject_module_instantiation(p, &key, error)?;
+                unreachable!("failed instantiation throws");
+            }
+        };
+        if self.synchronous_graph_has_await(&key, &mut FxHashSet::default()).map_err(|()| self.stack_exhaustion_error())? {
+            for (linked_module, _) in linked {
+                if let Some(record) = self.realm.promise.modules.get_mut(&module_cache_key(&linked_module.name, "javascript")) {
+                    record.retain_instantiation();
+                }
+            }
+            return Ok(SynchronousModule::AsyncGraph);
+        }
+        drop(linked);
+        if self.realm.promise.modules.get(&key).is_some_and(|record| matches!(record.phase(), ModulePhase::Evaluating | ModulePhase::EvaluatingAsync | ModulePhase::WaitingForDependencies)) {
+            return Ok(SynchronousModule::Evaluating);
+        }
+        self.evaluate_static_module_source(p, module.clone(), &mut ModuleEvaluationStack::default())?;
+        match self.realm.promise.modules.get(&key).map(|record| record.outcome) {
+            Some(ModuleOutcome::Evaluated(namespace)) => Ok(SynchronousModule::Namespace(namespace)),
+            Some(ModuleOutcome::Errored(reason)) => Err(JsError::thrown(reason, "synchronous module evaluation failed".into())),
+            _ => Ok(SynchronousModule::Evaluating),
+        }
+    }
+
+    pub(super) fn module_namespace_with_export(
+        &mut self,
+        p: &ResidualProgram,
+        namespace: Value,
+        name: &str,
+        value: Value,
+    ) -> Result<Value, JsError> {
+        let mut exports = self.cached_static_exports(namespace)
+            .ok_or_else(|| self.type_error(p, "module namespace required".into()))?;
+        exports.push((name.to_owned(), StaticModuleValue::Cached(value)));
+        self.module_namespace_from_static(exports)
+    }
+
     fn evaluate_javascript_module(
         &mut self,
         p: &ResidualProgram,
@@ -2194,7 +2258,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         module: &ModuleSource,
-        seen: &mut FxHashSet<std::path::PathBuf>,
+        seen: &mut FxHashSet<ModuleIdentity>,
         output: &mut Vec<ModuleSource>,
     ) -> Result<(), JsError> {
         let identity = crate::module_identity::normalize(std::path::Path::new(&module.name));
@@ -2364,7 +2428,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         module: &ModuleSource,
-        seen: &mut FxHashSet<std::path::PathBuf>,
+        seen: &mut FxHashSet<ModuleIdentity>,
     ) -> Result<bool, JsError> {
         let identity = crate::module_identity::normalize(std::path::Path::new(&module.name));
         if !seen.insert(identity) {
@@ -2641,7 +2705,7 @@ impl<H: Host> Vm<H> {
             .modules
             .get(cache_key)?
             .async_cycle_root()?;
-        let root_key = module_cache_key(&cycle_root.to_string_lossy(), "javascript");
+        let root_key = module_cache_key(&cycle_root.text(), "javascript");
         match self.realm.promise.modules.get(&root_key)?.outcome {
             ModuleOutcome::Errored(reason) => Some(reason),
             ModuleOutcome::Pending(_)
@@ -2985,13 +3049,13 @@ impl<H: Host> Vm<H> {
 
     fn async_cycle_merge_for_dependency(
         &self,
-        dependency: &std::path::Path,
+        dependency: &ModuleIdentity,
         active: &ModuleEvaluationStack,
-    ) -> Option<(std::path::PathBuf, Vec<std::path::PathBuf>)> {
+    ) -> Option<(ModuleIdentity, Vec<ModuleIdentity>)> {
         if let Some(cycle) = active.cycle_to(dependency) {
             return Some((cycle.first()?.clone(), cycle.to_vec()));
         }
-        let key = module_cache_key(&dependency.to_string_lossy(), "javascript");
+        let key = module_cache_key(&dependency.text(), "javascript");
         let dependency_root = self
             .realm
             .promise
@@ -3000,7 +3064,7 @@ impl<H: Host> Vm<H> {
             .async_cycle_root()?
             .clone();
         let start = active.members().iter().position(|member| {
-            let key = module_cache_key(&member.to_string_lossy(), "javascript");
+            let key = module_cache_key(&member.text(), "javascript");
             self.realm
                 .promise
                 .modules
@@ -3010,7 +3074,7 @@ impl<H: Host> Vm<H> {
         })?;
         let cycle = active.members()[start..].to_vec();
         let extends_component = cycle.iter().any(|member| {
-            let key = module_cache_key(&member.to_string_lossy(), "javascript");
+            let key = module_cache_key(&member.text(), "javascript");
             self.realm
                 .promise
                 .modules
@@ -3021,11 +3085,11 @@ impl<H: Host> Vm<H> {
         extends_component.then_some((dependency_root, cycle))
     }
 
-    fn merge_async_cycle_root(&mut self, root: &std::path::Path, cycle: &[std::path::PathBuf]) {
+    fn merge_async_cycle_root(&mut self, root: &ModuleIdentity, cycle: &[ModuleIdentity]) {
         let previous_roots = cycle
             .iter()
             .filter_map(|member| {
-                let key = module_cache_key(&member.to_string_lossy(), "javascript");
+                let key = module_cache_key(&member.text(), "javascript");
                 self.realm
                     .promise
                     .modules
@@ -3034,7 +3098,7 @@ impl<H: Host> Vm<H> {
                     .cloned()
             })
             .collect::<FxHashSet<_>>();
-        let root = root.to_path_buf();
+        let root = root.clone();
         for record in self.realm.promise.modules.values_mut() {
             if record
                 .async_cycle_root()
@@ -3044,7 +3108,7 @@ impl<H: Host> Vm<H> {
             }
         }
         for member in cycle {
-            let key = module_cache_key(&member.to_string_lossy(), "javascript");
+            let key = module_cache_key(&member.text(), "javascript");
             if let Some(record) = self.realm.promise.modules.get_mut(&key) {
                 record.set_async_cycle_root(root.clone());
             }
@@ -3254,7 +3318,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         module: &ModuleSource,
         precompiled: Option<ProgramId>,
-    ) -> Result<(), JsError> {
+    ) -> Result<Vec<(ModuleSource, ProgramId)>, JsError> {
         let mut graph = Vec::new();
         self.collect_static_module_programs(p, module, precompiled, &mut graph)?;
         let mut nodes = StaticModuleNodes::default();
@@ -3267,7 +3331,7 @@ impl<H: Host> Vm<H> {
             else {
                 return self
                     .syntax_error_result(p, "module export could not be resolved unambiguously")
-                    .map(|_| ());
+                    .map(|_| Vec::new());
             };
             let linked = self.module_namespace_from_static(exports)?;
             let key = module_cache_key(&module.name, "javascript");
@@ -3322,13 +3386,13 @@ impl<H: Host> Vm<H> {
             )?;
             self.programs.set_module_imports(*program, imports);
         }
-        for (module, _) in graph {
+        for (module, _) in &graph {
             let key = module_cache_key(&module.name, "javascript");
             if let Some(record) = self.realm.promise.modules.get_mut(&key) {
                 record.begin_linking();
             }
         }
-        Ok(())
+        Ok(graph)
     }
 
     fn collect_static_module_programs(
@@ -3487,7 +3551,7 @@ impl<H: Host> Vm<H> {
             .map(|record| record.outcome)
         {
             Some(ModuleOutcome::Evaluated(_)) => return Ok(()),
-            Some(ModuleOutcome::Pending(ModulePhase::Linking)) => {
+            Some(ModuleOutcome::Pending(ModulePhase::Linking | ModulePhase::Instantiated)) => {
                 self.realm
                     .promise
                     .modules
@@ -3874,7 +3938,7 @@ impl<H: Host> Vm<H> {
                     self.realm
                         .promise
                         .modules
-                        .get(&module_cache_key(&root.to_string_lossy(), "javascript"))
+                        .get(&module_cache_key(&root.text(), "javascript"))
                 })
                 .map(ModuleRecord::phase);
             if matches!(
@@ -4228,7 +4292,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         module: &ModuleSource,
         nodes: &mut StaticModuleNodes,
-        visited: &mut FxHashSet<std::path::PathBuf>,
+        visited: &mut FxHashSet<ModuleIdentity>,
     ) -> Result<Option<Vec<String>>, JsError> {
         let identity = crate::module_identity::normalize(std::path::Path::new(&module.name));
         if !visited.insert(identity.clone()) {
@@ -4448,7 +4512,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         module: &ModuleSource,
         nodes: &mut StaticModuleNodes,
-        visited: &mut FxHashSet<std::path::PathBuf>,
+        visited: &mut FxHashSet<ModuleIdentity>,
     ) -> Result<Option<bool>, JsError> {
         let identity = crate::module_identity::normalize(std::path::Path::new(&module.name));
         if !visited.insert(identity.clone()) {

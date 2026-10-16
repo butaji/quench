@@ -130,6 +130,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "ipcDisconnect" (0) => crate::modules::child_process_ipc_shared_vm::disconnect,
         method "ipcDescriptor" (0) => crate::modules::child_process_ipc_shared_vm::descriptor,
         method "ipcReference" (0) => crate::modules::child_process_ipc_shared_vm::reference,
+        method "ipcReferenceCounted" (0) => crate::modules::child_process_ipc_shared_vm::reference_counted,
+        method "eventsOnInitialize" (0) => commonjs::events_on_initialize,
         method "ipcComplete" (2) => crate::modules::child_process_ipc_shared_vm::complete,
         method "ipcDecode" (2) => crate::modules::child_process_ipc_shared_vm::decode,
         method "ipcEmit" (3) => crate::modules::child_process_ipc_shared_vm::emit,
@@ -142,6 +144,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "childProcessWrite" (3) => crate::modules::child_process_shared_vm::write_child,
         method "childProcessInputComplete" (2) => crate::modules::child_process_input_shared_vm::complete,
         method "childProcessEnd" (2) => crate::modules::child_process_shared_vm::end_child,
+        method "childProcessDestroyInput" (3) => crate::modules::child_process_shared_vm::destroy_input,
+        method "childProcessPrepareExit" (3) => crate::modules::child_process_shared_vm::prepare_exit,
         method "vmCreateRealm" (0) => crate::modules::vm_shared_vm::create_realm,
         method "vmEvaluateScript" (3) => crate::modules::vm_shared_vm::evaluate_script,
         method "pathJoin" (0) => crate::modules::path_shared_vm::join_operation,
@@ -548,7 +552,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "bufferDecode" (2) => crate::modules::buffer_shared_vm::decode,
         method "bufferCanonicalEncoding" (1) => crate::modules::buffer_shared_vm::canonical_encoding,
         method "textDecoderCanonicalEncoding" (1) => crate::modules::text_decoder_shared_vm::canonical_encoding,
-        method "textDecoderDecode" (3) => crate::modules::text_decoder_shared_vm::decode,
+        method "textDecoderDecode" (4) => crate::modules::text_decoder_shared_vm::decode,
         method "textDecoderInitialize" (0) => crate::modules::text_decoder_shared_vm::initialize,
         method "stringDecoderDecode" (0) => crate::modules::string_decoder_shared_vm::decode,
         method "stringDecoderFlush" (0) => crate::modules::string_decoder_shared_vm::flush,
@@ -694,18 +698,43 @@ impl quench_runtime::Host for NodeHost {
             }));
         }
 
-        let referrer = Path::new(referrer);
+        // Node resolves filesystem specifiers as URLs before accessing a file.
+        // The URL suffix belongs to module identity, never to the disk path.
+        let referrer_url = if referrer.starts_with("file:") {
+            Some(url::Url::parse(referrer).map_err(|error| error.to_string())?)
+        } else { None };
+        let referrer_path = match &referrer_url {
+            Some(url) => url.to_file_path().map_err(|_| "invalid file URL referrer".to_owned())?,
+            None => std::path::PathBuf::from(referrer),
+        };
         let internal = specifier.starts_with("internal/");
         let base = if internal {
             self.node_library_root.join("lib")
         } else {
-            referrer.parent().unwrap_or(Path::new(".")).to_path_buf()
+            referrer_path.parent().unwrap_or(Path::new(".")).to_path_buf()
         };
-        let path = if !internal {
+        let file_url = if specifier.get(..5).is_some_and(|prefix| prefix.eq_ignore_ascii_case("file:")) {
+            Some(url::Url::parse(specifier).map_err(|error| error.to_string())?)
+        } else if !internal && (specifier.starts_with("./") || specifier.starts_with("../") || Path::new(specifier).is_absolute()) {
+            let base_url = match referrer_url {
+                Some(url) => url,
+                None => {
+                    let absolute = if referrer_path.is_absolute() { referrer_path.clone() }
+                        else { std::env::current_dir().map_err(|error| error.to_string())?.join(&referrer_path) };
+                    url::Url::from_file_path(absolute).map_err(|_| "invalid file module referrer".to_owned())?
+                }
+            };
+            Some(base_url.join(specifier).map_err(|error| error.to_string())?)
+        } else { None };
+        let path = if let Some(url) = &file_url {
+            let encoded = url.path().to_ascii_lowercase();
+            if encoded.contains("%2f") || (cfg!(windows) && encoded.contains("%5c")) {
+                return Err("File URL path must not include encoded path separators".into());
+            }
+            Some(url.to_file_path().map_err(|_| "invalid file module URL".to_owned())?)
+        } else if !internal {
             commonjs::exact_file_path(&base, specifier)
-        } else {
-            None
-        };
+        } else { None };
         let path = match path {
             Some(path) => path,
             None => {
@@ -741,7 +770,12 @@ impl quench_runtime::Host for NodeHost {
         if extension == "node" {
             return Ok(None);
         }
-        let name = path.to_string_lossy().into_owned();
+        let name = if let Some(original) = file_url.as_ref().filter(|url| url.query().is_some_and(|value| !value.is_empty()) || url.fragment().is_some_and(|value| !value.is_empty())) {
+            let mut canonical = url::Url::from_file_path(&path).map_err(|_| "invalid canonical module path".to_owned())?;
+            canonical.set_query(original.query().filter(|value| !value.is_empty()));
+            canonical.set_fragment(original.fragment().filter(|value| !value.is_empty()));
+            canonical.to_string()
+        } else { path.to_string_lossy().into_owned() };
         let source = if extension == "json" {
             String::from_utf8_lossy(&bytes).into_owned()
         } else {
@@ -750,7 +784,7 @@ impl quench_runtime::Host for NodeHost {
                 String::from_utf8(bytes.clone())
                     .map_err(|error| format!("module {} is not UTF-8: {error}", path.display()))?
             } else {
-                let filename = serde_json::to_string(&name).map_err(|error| error.to_string())?;
+                let filename = serde_json::to_string(&path.to_string_lossy()).map_err(|error| error.to_string())?;
                 let mut source = format!(
                     "import {{ createRequire as __quenchCreateRequire }} from 'node:module';\nconst __quenchRequire = __quenchCreateRequire({filename});\nconst __quenchModule = __quenchRequire({filename});\nexport default __quenchModule;\n"
                 );
@@ -785,7 +819,7 @@ impl quench_runtime::Host for NodeHost {
     }
 
     fn import_meta_url(&mut self, source_name: &str) -> String {
-        if source_name.starts_with("node:") || source_name.starts_with("<") {
+        if source_name.starts_with("node:") || source_name.starts_with("file:") || source_name.starts_with("<") {
             return source_name.to_owned();
         }
         let path = std::path::Path::new(source_name);

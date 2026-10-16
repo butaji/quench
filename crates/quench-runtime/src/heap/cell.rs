@@ -1366,7 +1366,8 @@ impl Object {
         self.meta = (self.meta & !PROTO_INDEX_BITS) | Self::encode_proto(proto);
     }
 
-    fn is_array(&self) -> bool {
+    /// Whether this object is an array's, whose payload holds the element backing.
+    pub(crate) fn is_array(&self) -> bool {
         self.meta & OBJECT_ARRAY != 0
     }
 

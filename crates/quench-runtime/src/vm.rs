@@ -81,6 +81,7 @@ mod environment;
 mod equality;
 mod error;
 mod eval;
+mod fdlibm_math;
 mod field_cache;
 mod finalization;
 mod function;
@@ -1819,6 +1820,9 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         self.specialized = program.specialized;
         self.realm.intrinsics.arguments_objects.clear();
+        // The snapshot contains heap values, shapes and atom ids from one realm.
+        // A host may build a builtin before sealing the replacement realm.
+        self.startup_intrinsics = Default::default();
         self.heap.reset();
         self.natives.clear();
         self.shared_natives.clear();
