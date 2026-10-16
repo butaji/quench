@@ -1077,3 +1077,16 @@ uses the public process emit hook after entering the named exit state.
 The Node26 ordinary once-wrapper shape is retained. Report generation/file I/O,
 abort toggles, default warning listener/source fidelity and the broader Node
 compatibility backlog remain unqualified.
+
+## Warning listener policy
+
+The configured SDK's onWarning function is the actual default listener. Native
+warning dispatch only emits the warning event, so listener removal and warning
+suppression follow the common EventEmitter store. The original global console
+is initialized with its lazy process streams before this policy can write.
+The CLI option owner supplies repeatable disable-warning values, redirect paths
+and trace/deprecation flags. Truthy startup aliases have Node's read-only,
+configurable descriptors; absent flags do not create false-valued properties.
+Native warning construction retains its explicit internal rejection metadata;
+public emitWarning metadata has Node's name, length and ordinary constructor
+shape and accesses the canonical process independently of global replacement.
