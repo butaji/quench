@@ -1,0 +1,13 @@
+{
+  "status": "complete",
+  "commands": [
+    [
+      "bash",
+      "/workspace/quench/work/shadow-stack-isolation/extras.sh"
+    ]
+  ],
+  "exit": 0,
+  "supervisor_pid": 2981959,
+  "session_id": 2981958,
+  "utc": "2026-10-16T07:56:42.873642+00:00"
+}

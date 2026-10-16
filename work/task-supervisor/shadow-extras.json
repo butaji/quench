@@ -1,0 +1,11 @@
+{
+  "cwd": "/workspace/quench",
+  "commands": [
+    [
+      "bash",
+      "/workspace/quench/work/shadow-stack-isolation/extras.sh"
+    ]
+  ],
+  "state": "/workspace/quench/work/task-supervisor/shadow-extras-state.json",
+  "log": "/workspace/quench/work/task-supervisor/shadow-extras.log"
+}

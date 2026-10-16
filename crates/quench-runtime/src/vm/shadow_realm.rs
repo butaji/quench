@@ -357,24 +357,34 @@ impl<H: Host> Vm<H> {
             let constructor = self.get_property(p, realm, constructor_atom)?;
             self.get_property(p, constructor, prototype_atom)?
         };
-        let caller_global = self.realm.globals;
-        let realm_record = self.create_realm(p)?;
-        let realm_record_root = self.heap.root(realm_record);
-        let global_atom = self.intern_atom("global");
-        let realm_global = self.get_property(p, realm_record, global_atom)?;
-        let realm_global_root = self.heap.root(realm_global);
-        let object = Self::empty_object(prototype);
-        let shadow_realm = self.heap.alloc(Cell::ShadowRealm {
-            object: Box::new(object),
-            caller_global,
-            realm_global: self
-                .heap
-                .root_value(realm_global_root)
-                .unwrap_or(realm_global),
-        });
-        self.heap.release_root(realm_record_root);
-        self.heap.release_root(realm_global_root);
-        Ok(shadow_realm)
+        let prototype_root = self.heap.root(prototype);
+        let caller_root = self.heap.root(self.realm.globals);
+        let result = (|| {
+            let realm_record = self.create_realm(p)?;
+            let record_root = self.heap.root(realm_record);
+            let global_atom = self.intern_atom("global");
+            let global = self.get_property(p, realm_record, global_atom);
+            self.heap.release_root(record_root);
+            let global_root = self.heap.root(global?);
+            let result = (|| {
+                let formatter = self.initialize_host_shadow_realm(global_root)?;
+                let global = self.heap.root_value(global_root).unwrap();
+                self.realm.intrinsics.error_intrinsics.get_mut(&global)
+                    .expect("new realm Error intrinsics").host_formatter = formatter;
+                let prototype = self.heap.root_value(prototype_root).unwrap();
+                let caller_global = self.heap.root_value(caller_root).unwrap();
+                Ok(self.heap.alloc(Cell::ShadowRealm {
+                    object: Box::new(Self::empty_object(prototype)),
+                    caller_global,
+                    realm_global: global,
+                }))
+            })();
+            self.heap.release_root(global_root);
+            result
+        })();
+        self.heap.release_root(caller_root);
+        self.heap.release_root(prototype_root);
+        result
     }
 
     fn call_shadow_wrapped_function(

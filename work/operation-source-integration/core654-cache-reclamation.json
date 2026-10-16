@@ -1,0 +1,7 @@
+{
+  "path": "target/debug/deps/quench_runtime-faba0c2c63dca90b",
+  "bytes": 558889200,
+  "sha256": "d8c1d33d9a0b31c2f01b07748e55f27bc010dc3e2b991ffa00d8a90b699e58de",
+  "utc": "2026-10-16T08:01:37.788423+00:00",
+  "reason": "Completed owned Core654 test cache, passing log and qualified source published; incoming Core ABI91 requires rebuild. Immutable bundles retained."
+}

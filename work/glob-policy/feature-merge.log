@@ -1,0 +1,3 @@
+Auto-merging crates/quench-node-test/tests/child_entry.rs
+CONFLICT (content): Merge conflict in crates/quench-node-test/tests/child_entry.rs
+Automatic merge failed; fix conflicts and then commit the result.

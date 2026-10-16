@@ -1,0 +1,8 @@
+{
+  "source": "crates/quench-node/src/host/shared_vm/commonjs.rs",
+  "before_sha256": "23aff0090afed8b0b796aba216ecdaaf7c18199a920fd67585bbe07af26d02fc",
+  "after_sha256": "23aff0090afed8b0b796aba216ecdaaf7c18199a920fd67585bbe07af26d02fc",
+  "bytes": 5797,
+  "identical": true,
+  "note": "Existing ordinary Node CJS interop shim moved unchanged into one reusable function; separate legacy realm-bootstrap shim preserved."
+}

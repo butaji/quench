@@ -1,0 +1,13 @@
+{
+  "status": "complete",
+  "commands": [
+    [
+      "bash",
+      "/workspace/quench/work/glob-policy/extras.sh"
+    ]
+  ],
+  "exit": 0,
+  "supervisor_pid": 3194055,
+  "session_id": 3194054,
+  "utc": "2026-10-16T09:05:27.460704+00:00"
+}

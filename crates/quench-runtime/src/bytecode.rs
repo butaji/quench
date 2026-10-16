@@ -47,6 +47,14 @@ pub(crate) const MAX_ARRAY_LENGTH: usize = u32::MAX as usize;
 pub(crate) const NO_REGISTER_ROOT_MAP: u32 = u32::MAX;
 pub(crate) const NO_OPTIONAL_REGISTER: Register = 0;
 pub(crate) const OPTIONAL_REGISTER_BIAS: Register = 1;
+
+/// The field encoding of an optional register operand.
+pub(crate) const fn encode_optional_register(register: Option<Register>) -> Register {
+    match register {
+        Some(register) => register + OPTIONAL_REGISTER_BIAS,
+        None => NO_OPTIONAL_REGISTER,
+    }
+}
 pub(crate) const SINGLE_ARGUMENT_CALL_ARGUMENT_COUNT: u16 = 1;
 pub(crate) const NUMERIC_LOCAL_DECREMENT_FLAG: Register = RETURN_REGISTER;
 pub(crate) const NUMERIC_LOCAL_INC_STORE: u16 = 1;
@@ -199,6 +207,16 @@ impl Op {
         matches!(
             self.field_layout(InstructionField::A),
             FieldLayout::ResultRegister
+        )
+    }
+
+    /// Whether the call immediate carries direct-eval flags, which make the call site reach
+    /// bindings by name when its callee is the realm's `eval`.
+    pub(crate) const fn is_call_with_eval_flags(self) -> bool {
+        matches!(
+            self.immediate_layout(),
+            ImmediateLayout::CallWindowWithEvalFlags
+                | ImmediateLayout::SingleArgumentCallWindowWithEvalFlags
         )
     }
 }
@@ -586,7 +604,9 @@ opcodes!(
     GetAsyncIterator => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
     CreateRegExpLiteral => CALL_EFFECT; layout Scalar; meaning RegExpLiteralSiteIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
     IteratorClose => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
-    SpreadToArray => CALL_EFFECT; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
+    // ArrayAccumulation past a literal's static prefix: `length` elisions, then the optional
+    // value (iterated when the flag marks a spread), appended at the array's length.
+    AppendArray => CALL_EFFECT; layout Scalar; meaning ArrayLength, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
     RequireObjectCoercible => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(Unused, Register, Unused),
     RequireIteratorResult => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(Unused, Register, Unused),
     SuperCallCheck => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(Unused, Unused, Unused),
@@ -617,7 +637,7 @@ opcodes!(
     PrivateIn => READ_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(ResultRegister, Register, Unused),
     Move => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
     Call => CALL_EFFECT; layout CallWindowWithEvalFlags; flow Call, @ Returnable, @ fields(ResultRegister, Register, Register),
-    CallDirectEvalArray => CALL_EFFECT; layout SingleArgumentCallWindowWithEvalFlags; flow Call, @ Returnable, @ fields(ResultRegister, Register, Register),
+    CallArray => CALL_EFFECT; layout SingleArgumentCallWindowWithEvalFlags; flow Call, @ Returnable, @ fields(ResultRegister, Register, Register),
     CallKnown => CALL_EFFECT; layout CallWindow; flow Call, @ Returnable, @ fields(ResultRegister, FunctionIndex, Unused),
     CallMethod => CALL_EFFECT; layout Scalar; meaning MethodSiteIndex; flow Call, @ Returnable, @ fields(ResultRegister, Register, Unused),
     CallThisMethod => CALL_EFFECT; layout Scalar; meaning MethodSiteIndex; flow Call, @ Returnable, @ fields(ResultRegister, Unused, Unused),
@@ -1205,11 +1225,12 @@ impl Function {
             return Some(PlainLocalContextIneligibility::LegacyCaptureLayout);
         }
         let has_dynamic_name_resolution = self.code.iter().any(|instruction| {
-            matches!(instruction.op(), Op::CallDirectEvalArray | Op::ResolveName)
-                || instruction.op() == Op::Call && instruction.direct_eval()
+            instruction.op() == Op::ResolveName
+                || instruction.op().is_call_with_eval_flags() && instruction.direct_eval()
         }) || self.wide.iter().any(|instruction| {
-            matches!(instruction.op(), Op::CallDirectEvalArray | Op::ResolveName)
-                || instruction.op() == Op::Call && ImmediateLayout::direct_eval(instruction.imm())
+            instruction.op() == Op::ResolveName
+                || instruction.op().is_call_with_eval_flags()
+                    && ImmediateLayout::direct_eval(instruction.imm())
         });
         has_dynamic_name_resolution.then_some(PlainLocalContextIneligibility::DynamicNameResolution)
     }
@@ -1284,11 +1305,10 @@ impl Function {
                                 | Op::StoreVarBinding
                                 | Op::MakeClosure
                                 | Op::CloneEnv
-                                | Op::CallDirectEvalArray
                                 | Op::InitializeThis
                                 | Op::SuperCallCheck
                         )
-                        || (instruction.op() == Op::Call
+                        || (instruction.op().is_call_with_eval_flags()
                             && (instruction.direct_eval() || instruction.parameter_eval()))
                 })
         })
@@ -1470,8 +1490,8 @@ impl Function {
         self.inherited_with_scope
             || !self.binding_sites.is_empty()
             || self.instructions().any(|instruction| {
-                matches!(instruction.op(), Op::ResolveName | Op::CallDirectEvalArray)
-                    || (instruction.op() == Op::Call
+                instruction.op() == Op::ResolveName
+                    || (instruction.op().is_call_with_eval_flags()
                         && (ImmediateLayout::direct_eval(instruction.imm())
                             || ImmediateLayout::parameter_eval(instruction.imm())))
             })

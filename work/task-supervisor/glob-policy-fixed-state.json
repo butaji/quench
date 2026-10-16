@@ -1,0 +1,12 @@
+{
+  "status": "failed",
+  "index": 0,
+  "command": [
+    "bash",
+    "/workspace/quench/work/glob-policy/qualify-node-fix.sh"
+  ],
+  "exit": 101,
+  "supervisor_pid": 3170467,
+  "session_id": 3170466,
+  "utc": "2026-10-16T08:48:14.042298+00:00"
+}

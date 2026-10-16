@@ -1,6 +1,7 @@
 //! Immutable, pinned Node library input for the shared JavaScript interpreter.
 use std::path::{Component, Path, PathBuf};
 include!(concat!(env!("OUT_DIR"), "/node_sources.rs"));
+include!("node_source_dependencies.rs");
 
 pub(crate) fn resolve(path: &Path, root: &Path) -> Option<(PathBuf, &'static str)> {
     let relative = path.strip_prefix(root).ok()?;

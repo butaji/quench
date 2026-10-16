@@ -64,6 +64,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "markAsUncloneable" (1) => crate::modules::clone_shared_vm::mark_as_uncloneable,
         method "createUnsafeArrayBuffer" (0) => crate::modules::buffer_alloc_shared_vm::allocate,
         method "arrayBufferAlignedOffset" (0) => crate::modules::buffer_alloc_shared_vm::aligned_offset,
+        method "bufferIsLatin1" (1) => crate::modules::buffer_latin1_shared_vm::public,
+        method "bufferBindingIsLatin1" (0) => crate::modules::buffer_latin1_shared_vm::binding,
         method "markAsUntransferable" (1) => crate::modules::clone_shared_vm::mark_as_untransferable,
         method "isMarkedAsUntransferable" (1) => crate::modules::clone_shared_vm::is_marked_as_untransferable,
         method "webApisInitialize" (0) => commonjs::initialize_web_apis,
@@ -102,6 +104,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "childProcessPromiseExec" (1) => crate::modules::child_process_exec_shared_vm::promise_exec,
         method "childProcessPromiseExecSettled" (3) => crate::modules::child_process_exec_shared_vm::promise_settled,
         method "nodeErrorConstructor" (0) => crate::modules::node_errors_shared_vm::constructor,
+        method "errorStackFormat" (3) => crate::modules::node_errors_shared_vm::format_stack,
+        method "errorPrepareStackTraceInitialize" (0) => crate::modules::node_errors_shared_vm::initialize_prepare_stack_trace,
         method "nodeErrorBrand" (0) => crate::modules::node_errors_shared_vm::brand,
         method "asyncHookInit" (7) => crate::modules::async_hook_registry_shared_vm::initialize_hook,
         method "asyncHookEnable" (1) => crate::modules::async_hook_registry_shared_vm::enable,
@@ -362,6 +366,9 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "bufferEquals" (1) => crate::modules::buffer_compare_shared_vm::equals,
         method "bufferStringSlice" (2) => crate::modules::buffer_string_shared_vm::string_slice,
         method "bufferFrom" (3) => crate::modules::buffer_from_shared_vm::from,
+        method "bufferAllocUnsafe" (2) => crate::modules::buffer_pool_shared_vm::alloc_unsafe,
+        method "bufferAllocUnsafeSlow" (2) => crate::modules::buffer_pool_shared_vm::alloc_unsafe_slow,
+        method "bufferConcat" (2) => crate::modules::buffer_pool_shared_vm::concat,
         method "bufferCopyBytesFrom" (3) => crate::modules::buffer_from_shared_vm::copy_bytes,
         method "nodeEvalBuiltinGet" (0) => crate::modules::eval_globals_shared_vm::load,
         method "nodeEvalBuiltinCachedGet" (0) => crate::modules::eval_globals_shared_vm::cached,
@@ -668,6 +675,13 @@ pub(crate) fn operation(name: &str) -> HostFunctionId {
 impl quench_runtime::Host for NodeHost {
     fn proper_tail_calls(&self) -> bool {
         false
+    }
+
+    fn initialize_shadow_realm(
+        context: &mut quench_runtime::NativeContext<'_, Self>,
+        global: quench_runtime::RootId,
+    ) -> Result<Option<quench_runtime::RootId>, quench_runtime::RootedError> {
+        crate::modules::node_errors_shared_vm::initialize_shadow_policy(context, global).map(Some)
     }
 
     fn error_stack_formatter(&self) -> Option<quench_runtime::RootId> {

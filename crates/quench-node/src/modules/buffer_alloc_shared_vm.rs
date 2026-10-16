@@ -23,6 +23,11 @@ pub(crate) fn install(c: &mut Context<'_>, binding: RootId) -> Result<(), Rooted
         "arrayBufferAlignedOffset",
     ))?;
     put(c, binding, "arrayBufferAlignedOffset", aligned)?;
+    let latin1 = c.host_function_named(
+        crate::host::shared_vm::operation("bufferBindingIsLatin1"),
+        "",
+    )?;
+    put(c, binding, "isLatin1", latin1)?;
     Ok(())
 }
 pub(crate) fn allocate(

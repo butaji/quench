@@ -9505,6 +9505,46 @@ fn callsite_eval_classification_follows_compilation_origin_and_survives_escaped_
 }
 
 #[test]
+fn native_buffer_unsafe_allocations_preserve_alignment_pooling_snapshots_and_errors() {
+    compare_node_source_with_args(
+        include_str!("../node-tests/test-native-buffer-unsafe-alignment.js"),
+        &["--no-warnings", "--expose-internals", "--expose-gc"],
+    );
+}
+
+#[test]
+fn native_buffer_concat_preserves_pooling_proxy_reads_reentrancy_and_padding() {
+    compare_node_source_with_args(
+        include_str!("../node-tests/test-native-buffer-concat-pool.js"),
+        &[],
+    );
+}
+
+#[test]
+fn native_buffer_latin1_classifies_actual_units_and_preserves_original_validation() {
+    compare_node_source_with_args(
+        include_str!("../node-tests/test-native-buffer-latin1.js"),
+        &["--no-warnings", "--expose-internals"],
+    );
+}
+
+#[test]
+fn native_buffer_public_policy_captures_original_validators_and_coded_constructors() {
+    compare_node_source_with_args(
+        include_str!("../node-tests/test-native-buffer-policy-captures.js"),
+        &["--no-warnings", "--expose-internals"],
+    );
+}
+
+#[test]
+fn shadow_realms_own_original_node_error_policy_default_hooks_and_private_fallbacks() {
+    compare_node_source_with_args(
+        include_str!("../node-tests/test-shadow-stack-policy-isolation.js"),
+        &["--no-warnings", "--expose-internals", "--experimental-shadow-realm", "--expose-gc"],
+    );
+}
+
+#[test]
 fn eval_uses_parsed_program_completion_grammar_and_original_source_positions() {
     compare_node_source_with_args(include_str!("../node-tests/test-compiled-eval-source.js"), &[]);
 }
@@ -9544,4 +9584,10 @@ fn eval_call_sites_capture_original_compiling_callers_and_hide_absent_script_nam
 #[test]
 fn indirect_eval_script_identity_preserves_origins_fresh_values_templates_and_realm_isolation() {
     compare_node_source_with_args(include_str!("../node-tests/test-indirect-eval-script-identity.js"), &[]);
+}
+
+#[test]
+fn fs_glob_uses_original_policy_and_real_dirent_types_across_all_three_apis() {
+    compare_node_source_with_args(include_str!("../node-tests/test-fs-original-glob-policy.js"), &[]);
+
 }

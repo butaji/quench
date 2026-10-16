@@ -602,6 +602,17 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.completion(result)
     }
 
+    /// Compile a host wrapper in its target realm, retaining original-source positions.
+    pub fn evaluate_specialized_script_in_realm_with_origin_rooted(
+        &mut self, global: RootId, source: &str, name: &str,
+        line_offset: u32, column_offset: u32,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.evaluate_embedding_specialized_script_in_realm_with_origin(
+            global, source, name, (line_offset, column_offset),
+        );
+        self.completion(result)
+    }
+
     /// Compile and evaluate host-owned Script source through the specializer.
     /// Dynamic eval remains on `evaluate_script_rooted`.
     pub fn evaluate_specialized_script_rooted(
@@ -1023,6 +1034,18 @@ impl<'a, H: Host> NativeContext<'a, H> {
     ) -> Result<bool, RootedError> {
         self.vm
             .define_data_property_rooted(object, key, value, writable, enumerable, configurable)
+            .map_err(|error| self.error(error))
+    }
+
+    /// Runs the initializer of `name`'s lazy group on `holder` if it is still lazy; otherwise
+    /// does nothing, and runs no guest code.
+    pub fn materialize_lazy_data_property_rooted(
+        &mut self,
+        holder: RootId,
+        name: &str,
+    ) -> Result<(), RootedError> {
+        self.vm
+            .materialize_lazy_data_property_rooted(holder, name)
             .map_err(|error| self.error(error))
     }
 

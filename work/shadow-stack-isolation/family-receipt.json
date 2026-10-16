@@ -1,0 +1,46 @@
+[
+  {
+    "label": "before",
+    "exit": 1,
+    "counts": {
+      "fail": 7,
+      "pass": 2
+    },
+    "command": [
+      "/workspace/quench/work/native-buffer-unsafe-bin/run-parallel",
+      "--all",
+      "--parallel-dir",
+      "/workspace/work/node-stable-release/node-v26.12.0/test/parallel",
+      "--filter",
+      "test-shadow-realm-",
+      "--jobs",
+      "4",
+      "--timeout-secs",
+      "30",
+      "--results",
+      "/workspace/quench/work/shadow-stack-isolation/family-before.json"
+    ]
+  },
+  {
+    "label": "candidate",
+    "exit": 1,
+    "counts": {
+      "fail": 6,
+      "pass": 3
+    },
+    "command": [
+      "/workspace/quench/target/iteration/run-parallel",
+      "--all",
+      "--parallel-dir",
+      "/workspace/work/node-stable-release/node-v26.12.0/test/parallel",
+      "--filter",
+      "test-shadow-realm-",
+      "--jobs",
+      "4",
+      "--timeout-secs",
+      "30",
+      "--results",
+      "/workspace/quench/work/shadow-stack-isolation/family-candidate.json"
+    ]
+  }
+]

@@ -302,10 +302,16 @@ impl<H: Host> Vm<H> {
         let receiver_root = self.heap.root(receiver);
         let mut roots = Vec::with_capacity(2);
         let outcome = (|| {
-            if let Some(formatter) = self.host.error_stack_formatter() {
-                let formatter = self.heap.root_value(formatter).ok_or_else(|| {
-                    self.type_error(program, "Host stack formatter root expired".into())
-                })?;
+            let formatter = match self.realm.intrinsics.error_intrinsics[&self.realm.globals].host_formatter {
+                Some(formatter) => Some(formatter),
+                None => match self.host.error_stack_formatter() {
+                    Some(root) => Some(self.heap.root_value(root).ok_or_else(|| {
+                        self.type_error(program, "Host stack formatter root expired".into())
+                    })?),
+                    None => None,
+                },
+            };
+            if let Some(formatter) = formatter {
                 let formatter_root = self.heap.root(formatter);
                 let global_root = self.heap.root(self.realm.globals);
                 let result = (|| {
@@ -2301,6 +2307,7 @@ impl<H: Host> Vm<H> {
         self.realm.intrinsics.error_intrinsics.insert(
             global,
             ErrorRealmIntrinsics {
+                host_formatter: None,
                 constructor,
                 stack_getter,
                 stack_setter,
