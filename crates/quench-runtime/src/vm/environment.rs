@@ -496,6 +496,21 @@ impl<H: Host> Vm<H> {
             .contains(&atom)
             .then(|| frame.checked_sub(1))
             .flatten()
+            .map(|caller| self.variable_environment_frame(caller))
+    }
+
+    /// The frame owning the variable environment `frame` runs in: itself, or,
+    /// for the root of a sloppy direct eval in its caller's scope, its caller's.
+    pub(super) fn variable_environment_frame(&self, mut frame: usize) -> usize {
+        while frame > 0
+            && self.frames[frame].function == super::ROOT_FUNCTION_ID
+            && self
+                .programs
+                .runs_in_caller_scope(self.frames[frame].program)
+        {
+            frame -= 1;
+        }
+        frame
     }
 
     fn direct_eval_catch_binding(

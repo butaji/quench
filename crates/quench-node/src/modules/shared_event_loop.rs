@@ -3,7 +3,6 @@
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::hash::{Hash, Hasher};
 
 /// Callback queues and scheduler state for the shared Node host.
 pub struct SharedEventLoop {
@@ -58,8 +57,6 @@ struct SharedCallbacks {
     /// Live scheduler projections of each timer handle's private `refed` slot.
     firing_timers: HashMap<u64, SharedFiringTimer>,
     cancelled_timers: HashSet<u64>,
-    listeners: HashMap<SharedEventKey, Vec<SharedProcessListener>>,
-    next_listener_id: u64,
     exiting: bool,
 }
 
@@ -67,20 +64,6 @@ struct SharedFiringTimer {
     refed: bool,
     refreshed_due: Option<std::time::Instant>,
     repeat_started: Option<std::time::Instant>,
-}
-
-struct SharedProcessListener {
-    id: u64,
-    once: bool,
-    callback: SharedCallback,
-}
-
-#[derive(Clone, Copy)]
-pub struct SharedListenerSnapshot {
-    pub id: u64,
-    pub once: bool,
-    pub callback: quench_runtime::RootId,
-    pub receiver: quench_runtime::RootId,
 }
 
 pub struct SharedImmediate {
@@ -104,49 +87,7 @@ pub struct SharedTimer {
     pub callback: SharedCallback,
 }
 
-#[derive(Clone, Debug)]
-pub enum SharedEventKey {
-    String(String),
-    Symbol {
-        identity: quench_runtime::Value,
-        root: quench_runtime::RootId,
-    },
-}
-
-impl PartialEq for SharedEventKey {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::String(left), Self::String(right)) => left == right,
-            (
-                Self::Symbol { identity: left, .. },
-                Self::Symbol {
-                    identity: right, ..
-                },
-            ) => left == right,
-            _ => false,
-        }
-    }
-}
-
-impl Eq for SharedEventKey {}
-
-impl Hash for SharedEventKey {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        match self {
-            Self::String(value) => {
-                0_u8.hash(state);
-                value.hash(state);
-            }
-            Self::Symbol { identity, .. } => {
-                1_u8.hash(state);
-                identity.hash(state);
-            }
-        }
-    }
-}
-
 const FIRST_SHARED_IMMEDIATE_ID: u64 = 1;
-const FIRST_SHARED_LISTENER_ID: u64 = 1;
 
 impl Default for SharedCallbacks {
     fn default() -> Self {
@@ -160,8 +101,6 @@ impl Default for SharedCallbacks {
             next_timer_id: FIRST_SHARED_IMMEDIATE_ID,
             firing_timers: HashMap::new(),
             cancelled_timers: HashSet::new(),
-            listeners: HashMap::new(),
-            next_listener_id: FIRST_SHARED_LISTENER_ID,
             exiting: false,
         }
     }
@@ -192,11 +131,6 @@ impl SharedEventLoop {
         Some(id)
     }
 
-    pub fn reserve_shared_listener_id(&mut self) -> Option<u64> {
-        let id = self.shared.next_listener_id;
-        self.shared.next_listener_id = id.checked_add(1)?;
-        Some(id)
-    }
 
     pub fn queue_shared_immediate(
         &mut self,
@@ -431,117 +365,6 @@ impl SharedEventLoop {
         None
     }
 
-    pub fn add_shared_listener(
-        &mut self,
-        event: SharedEventKey,
-        id: u64,
-        callback: SharedCallback,
-        once: bool,
-    ) -> (bool, Option<quench_runtime::RootId>) {
-        let new_event = !self.shared.listeners.contains_key(&event);
-        let duplicate_root = match (&event, new_event) {
-            (SharedEventKey::Symbol { root, .. }, false) => Some(*root),
-            _ => None,
-        };
-        self.shared
-            .listeners
-            .entry(event)
-            .or_default()
-            .push(SharedProcessListener { id, once, callback });
-        (new_event, duplicate_root)
-    }
-
-    pub(crate) fn shared_string_listener_count(&self, name: &str) -> usize {
-        self.shared.listeners.iter().find_map(|(event, listeners)| {
-            matches!(event,SharedEventKey::String(event) if event==name).then_some(listeners.len())
-        }).unwrap_or(0)
-    }
-
-    pub fn shared_listener_snapshots(&self, event: &SharedEventKey) -> Vec<SharedListenerSnapshot> {
-        self.shared
-            .listeners
-            .get(event)
-            .into_iter()
-            .flatten()
-            .map(|listener| SharedListenerSnapshot {
-                id: listener.id,
-                once: listener.once,
-                callback: listener.callback.callback,
-                receiver: listener.callback.receiver,
-            })
-            .collect()
-    }
-
-    pub fn take_shared_once_listener(
-        &mut self,
-        event: &SharedEventKey,
-        id: u64,
-    ) -> Option<(SharedCallback, Option<quench_runtime::RootId>, bool)> {
-        let listeners = self.shared.listeners.get_mut(event)?;
-        let index = listeners
-            .iter()
-            .position(|listener| listener.id == id && listener.once)?;
-        let listener = listeners.remove(index);
-        if !listeners.is_empty() {
-            return Some((listener.callback, None, false));
-        }
-        let (event, _) = self.shared.listeners.remove_entry(event)?;
-        let event_root = match event {
-            SharedEventKey::Symbol { root, .. } => Some(root),
-            SharedEventKey::String(_) => None,
-        };
-        Some((listener.callback, event_root, true))
-    }
-
-    pub fn remove_shared_listener(
-        &mut self,
-        event: &SharedEventKey,
-        id: u64,
-    ) -> Option<(SharedCallback, Option<quench_runtime::RootId>, bool)> {
-        let listeners = self.shared.listeners.get_mut(event)?;
-        let index = listeners.iter().position(|listener| listener.id == id)?;
-        let listener = listeners.remove(index);
-        if !listeners.is_empty() {
-            return Some((listener.callback, None, false));
-        }
-        let (event, _) = self.shared.listeners.remove_entry(event)?;
-        let event_root = match event {
-            SharedEventKey::Symbol { root, .. } => Some(root),
-            SharedEventKey::String(_) => None,
-        };
-        Some((listener.callback, event_root, true))
-    }
-
-    pub fn remove_all_shared_listeners(
-        &mut self,
-        event: Option<&SharedEventKey>,
-    ) -> (Vec<SharedCallback>, Vec<quench_runtime::RootId>) {
-        let listeners: Vec<(SharedEventKey, Vec<SharedProcessListener>)> = match event {
-            Some(event) => self
-                .shared
-                .listeners
-                .remove_entry(event)
-                .into_iter()
-                .collect(),
-            None => std::mem::take(&mut self.shared.listeners)
-                .into_iter()
-                .collect(),
-        };
-        let mut callbacks = Vec::new();
-        let mut event_roots = Vec::new();
-        for (event, listeners) in listeners {
-            if let SharedEventKey::Symbol { root, .. } = event {
-                event_roots.push(root);
-            }
-            callbacks.extend(listeners.into_iter().map(|listener| listener.callback));
-        }
-        (callbacks, event_roots)
-    }
-
-    pub fn shared_listener_count(&self) -> usize {
-        self.shared.listeners.len()
-    }
-
     pub fn take_shared_next_tick(&mut self) -> Option<SharedCallback> {
         self.shared.next_ticks.pop_front()
     }
@@ -554,19 +377,10 @@ impl SharedEventLoop {
         self.shared.exiting
     }
 
-    pub fn begin_shared_exit(&mut self) -> Vec<SharedCallback> {
-        if self.shared.exiting {
-            return Vec::new();
-        }
+    pub fn begin_shared_exit(&mut self) -> bool {
+        if self.shared.exiting { return false; }
         self.shared.exiting = true;
-        let key = SharedEventKey::String("exit".to_owned());
-        self.shared
-            .listeners
-            .remove(&key)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|listener| listener.callback)
-            .collect()
+        true
     }
 
     pub fn reset_shared(&mut self) {

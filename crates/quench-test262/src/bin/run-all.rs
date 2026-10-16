@@ -119,7 +119,7 @@ fn run() -> ExitCode {
     println!(
         "passed={} waived={} failed={} total={} discovered={discovered} ratchet={}",
         report.passed,
-        report.waived,
+        report.waived.len(),
         report.failures.len(),
         report.total,
         ratchet.verdict
@@ -211,7 +211,7 @@ fn collect_report(
         }
         match waivers.adjudicate(&report_path(path, test_root), outcome) {
             Adjudication::Pass => {}
-            Adjudication::Waived(_) => report.waived += 1,
+            Adjudication::Waived(_) => report.waived.push(path.clone()),
             Adjudication::Failed(reason) => report.failures.push((path.clone(), reason)),
         }
     }
@@ -429,7 +429,7 @@ fn write_report(
         "total": report.total,
         "passed": report.passed,
         "failed": report.failed,
-        "waived": report.waived,
+        "waived": report.waived.len(),
         "failures": failures,
         "families": families,
         "metadata_families": metadata_families,
@@ -505,25 +505,36 @@ fn update_ratchet(
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(DEFAULT_RATCHET));
     let accepted = report.failures.is_empty();
+    let test_root = root.join("test");
+    let waived = report
+        .waived
+        .iter()
+        .map(|path| report_path(path, &test_root))
+        .collect::<HashSet<_>>();
     update_ratchet_at(
         &path,
         root,
         files,
         outcomes,
         accepted,
+        &waived,
         timeout,
         full_inventory,
     )
 }
 
 /// `accepted` says every outcome passed or failed exactly as its Node waiver
-/// records; a clean run freezes only the observed passes.
+/// records; a clean run freezes only the observed passes. A formerly passing
+/// case that now fails as its waiver records (`waived`) is no regression: the
+/// manifest records that Node arbitrated it.
+#[allow(clippy::too_many_arguments)]
 fn update_ratchet_at(
     path: &Path,
     root: &Path,
     files: &[PathBuf],
     outcomes: &[Result<(), String>],
     accepted: bool,
+    waived: &HashSet<String>,
     timeout: Duration,
     full_inventory: bool,
 ) -> Result<RatchetResult, String> {
@@ -544,7 +555,8 @@ fn update_ratchet_at(
     if path.exists() {
         let baseline = PassSet::read(path)?;
         if outcomes.len() == files.len() && !files.is_empty() {
-            regressions = baseline.regressions(&current_passes, |_| true);
+            let settled = current_passes.union(waived).cloned().collect();
+            regressions = baseline.regressions(&settled, |_| true);
         }
     }
     let clean = outcomes.len() == files.len() && accepted && !files.is_empty();
@@ -719,6 +731,7 @@ mod tests {
             &files,
             &[Ok(()), Ok(())],
             true,
+            &HashSet::new(),
             timeout,
             true,
         )
@@ -730,8 +743,17 @@ mod tests {
         saved["test_marker"] = serde_json::json!("keep on incomplete run");
         fs::write(&baseline, format!("{saved}\n")).unwrap();
 
-        let truncated =
-            update_ratchet_at(&baseline, &root, &files, &[Ok(())], true, timeout, true).unwrap();
+        let truncated = update_ratchet_at(
+            &baseline,
+            &root,
+            &files,
+            &[Ok(())],
+            true,
+            &HashSet::new(),
+            timeout,
+            true,
+        )
+        .unwrap();
         assert_eq!(truncated.verdict, "incomplete");
         assert!(truncated.regressions.is_empty());
 
@@ -742,6 +764,7 @@ mod tests {
             &[files[0].clone(), files[1].clone(), added_file],
             &[Ok(()), Ok(()), Err("new test failed".into())],
             false,
+            &HashSet::new(),
             timeout,
             true,
         )
@@ -758,6 +781,7 @@ mod tests {
             &files,
             &[Ok(()), Err("expected failure".into())],
             false,
+            &HashSet::new(),
             timeout,
             true,
         )
@@ -789,7 +813,10 @@ mod tests {
         let test_root = root.join("test");
         let outcomes = [Ok(()), Err("FAIL: as Node".to_owned())];
         let report = collect_report(&files, &outcomes, &waivers, &test_root);
-        assert_eq!((report.passed, report.failed, report.waived), (1, 1, 1));
+        assert_eq!(
+            (report.passed, report.failed, report.waived.len()),
+            (1, 1, 1)
+        );
         assert!(report.failures.is_empty());
         let timeout = Duration::from_millis(900_000);
         let created = update_ratchet_at(
@@ -798,6 +825,7 @@ mod tests {
             &files,
             &outcomes,
             report.failures.is_empty(),
+            &HashSet::new(),
             timeout,
             true,
         )
@@ -806,6 +834,38 @@ mod tests {
         let saved: serde_json::Value =
             serde_json::from_slice(&fs::read(&baseline).unwrap()).unwrap();
         assert_eq!(saved["passes"], serde_json::json!(["a.js"]));
+
+        // A case that passed when frozen and is now waived is settled, not lost.
+        let all_passed = [Ok(()), Ok(())];
+        update_ratchet_at(
+            &baseline,
+            &root,
+            &files,
+            &all_passed,
+            true,
+            &HashSet::new(),
+            timeout,
+            true,
+        )
+        .unwrap();
+        let lost = update_ratchet_at(
+            &baseline,
+            &root,
+            &files,
+            &outcomes,
+            true,
+            &HashSet::new(),
+            timeout,
+            true,
+        )
+        .unwrap();
+        assert_eq!(lost.regressions, ["waived.js"]);
+        let waived = HashSet::from(["waived.js".to_owned()]);
+        let settled = update_ratchet_at(
+            &baseline, &root, &files, &outcomes, true, &waived, timeout, true,
+        )
+        .unwrap();
+        assert!(settled.regressions.is_empty());
 
         let drifted = [Ok(()), Err("FAIL: different".to_owned())];
         let report = collect_report(&files, &drifted, &waivers, &test_root);
