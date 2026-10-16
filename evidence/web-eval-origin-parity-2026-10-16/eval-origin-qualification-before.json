@@ -1,0 +1,22 @@
+{
+  "base_source": "58b4d199f3864e843faa24f4bac4260fc27f091e",
+  "patch": "work/eval-origin-source.patch",
+  "patch_sha256": "1f6afd0ad7fd38f95171594fc0001121b50064b358aa5a0ddf95136b8de39871",
+  "extra_fixture_sha256": {
+    "test-callsite-eval-origin.js": "29cccf4afcba7e9e14cba1dea0ac1b04d47dd6250b9c7816c3044818d355ea35"
+  },
+  "binaries": {
+    "cli": {
+      "path": "work/quench-eval-origin-qualified",
+      "sha256": "f929f9791f1fdd4bd3e7ecc5237a60cbdb9459b566dd74d82135c03ff3f4ed00"
+    },
+    "runner": {
+      "path": "work/host-build/iteration/run-parallel",
+      "sha256": "dabc465d23da383a71f1c5406ea192cb539d0b20813c67ba84c6ee01744b602e"
+    },
+    "api_tests": {
+      "path": "work/host-build/iteration/deps/child_entry-70660f0a4dee9e77",
+      "sha256": "6c651c8ccac04369732673f11aec44a465fde60bdee3f87cbf6a8ab0235be39a"
+    }
+  }
+}
