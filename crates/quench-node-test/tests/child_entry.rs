@@ -9656,3 +9656,8 @@ fn tcp_default_listen_backlog_matches_node_when_syscall_tracing_is_available() {
 fn tcp_option_listen_backlog_matches_node_truthiness_and_int32_when_tracing_is_available() {
     compare_node_source_with_args(include_str!("../node-tests/test-tcp-option-listen-backlog.js"), &[]);
 }
+
+#[test]
+fn filesystem_readdir_sync_uses_sdk_policy_with_raw_names_and_recursive_native_layout() {
+    compare_node_source_with_args(include_str!("../node-tests/test-fs-readdir-sdk-policy.js"), &["--expose-internals", "--no-warnings"]);
+}
