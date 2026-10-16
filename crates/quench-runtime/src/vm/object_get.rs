@@ -606,7 +606,7 @@ impl<H: Host> Vm<H> {
                                 return Ok(description
                                     .as_ref()
                                     .map(|value| {
-                                        self.heap.alloc(Cell::String(value.clone().into()))
+                                        self.heap.alloc(Cell::String(value.as_ref().into()))
                                     })
                                     .unwrap_or(Value::UNDEFINED));
                             }
