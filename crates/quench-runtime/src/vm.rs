@@ -48,6 +48,8 @@ struct RuntimeAtoms {
     /// Read by every promise resolution and species lookup.
     then: Atom,
     constructor: Atom,
+    /// Canonical key for named function-info lookup; paired with length_atom.
+    name: Atom,
 }
 pub(crate) mod activation;
 mod activation_lifecycle;
@@ -1924,6 +1926,7 @@ impl<H: Host> Vm<H> {
             regexp_flag_accessors,
             then: self.intern_atom("then"),
             constructor: self.intern_atom("constructor"),
+            name: self.intern_atom("name"),
         };
         self.field_caches = vec![EMPTY_CACHE; program.cache_sites as usize];
         Self::prime_loop_decoding(program);
