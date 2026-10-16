@@ -271,7 +271,9 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     let ppid = context.number(ppid as f64);
     install(context, process, "ppid", ppid)?;
     let version = format!("v{}", process_state::NODE_VERSION);
-    set_text(context, process, "version", &version)?;
+    let version = context.string_rooted(&version);
+    let key = context.string_rooted("version");
+    context.define_data_property_rooted(process, key, version, false, true, true)?;
     let global = context.global_root()?;
     let symbol_key = context.string_rooted("Symbol");
     let symbol = context.get_property_rooted(global, symbol_key)?;
@@ -436,9 +438,12 @@ fn install_versions(
     let versions = context.object_rooted()?;
     for (name, version) in process_state::version_facts() {
         let value = context.string_rooted(version);
-        install(context, versions, name, value)?;
+        let key = context.string_rooted(name);
+        context.define_data_property_rooted(versions, key, value, false, true, true)?;
     }
-    install(context, process, "versions", versions)
+    let key = context.string_rooted("versions");
+    context.define_data_property_rooted(process, key, versions, false, true, true)?;
+    Ok(())
 }
 
 fn set_text(

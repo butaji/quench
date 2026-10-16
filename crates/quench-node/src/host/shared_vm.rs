@@ -667,6 +667,10 @@ impl quench_runtime::Host for NodeHost {
         false
     }
 
+    fn error_stack_formatter(&self) -> Option<quench_runtime::RootId> {
+        self.shared_state().borrow().builtin_cache.get(crate::modules::node_errors_shared_vm::DEFAULT_STACK_FORMATTER).copied()
+    }
+
     fn write_line(&mut self, text: &str) {
         let output = self.shared_state().borrow().output.clone();
         match output {
