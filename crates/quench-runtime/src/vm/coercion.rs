@@ -16,25 +16,43 @@ pub(super) fn numeric_unary(op: u32) -> bool {
 }
 
 impl<H: Host> Vm<H> {
+    /// The ECMAScript language type of `value`, with callable objects distinguished.
+    pub(crate) fn value_type(&self, value: Value) -> crate::ValueType {
+        use crate::ValueType as T;
+        if value.is_undefined() || value.is_deleted() {
+            T::Undefined
+        } else if value.is_null() {
+            T::Null
+        } else if value.as_bool().is_some() {
+            T::Boolean
+        } else if value.as_number().is_some() {
+            T::Number
+        } else {
+            match self.heap.get(value) {
+                Some(Cell::String(_)) => T::String,
+                Some(Cell::BigInt(_)) => T::BigInt,
+                Some(Cell::Symbol(_)) => T::Symbol,
+                _ if self.is_function(value) => T::Function,
+                _ => T::Object,
+            }
+        }
+    }
+
     pub(super) fn typeof_value(&mut self, value: Value) -> Value {
+        use crate::ValueType as T;
         let text = if self.is_html_dda(value) {
             "undefined"
-        } else if value.is_undefined() || value.is_deleted() {
-            "undefined"
-        } else if value.as_bool().is_some() {
-            "boolean"
-        } else if value.as_number().is_some() {
-            "number"
-        } else if matches!(self.heap.get(value), Some(Cell::String(_))) {
-            "string"
-        } else if matches!(self.heap.get(value), Some(Cell::BigInt(_))) {
-            "bigint"
-        } else if matches!(self.heap.get(value), Some(Cell::Symbol(_))) {
-            "symbol"
-        } else if self.is_function(value) {
-            "function"
         } else {
-            "object"
+            match self.value_type(value) {
+                T::Undefined => "undefined",
+                T::Null | T::Object => "object",
+                T::Boolean => "boolean",
+                T::Number => "number",
+                T::String => "string",
+                T::BigInt => "bigint",
+                T::Symbol => "symbol",
+                T::Function => "function",
+            }
         };
         self.intern_dynamic_ascii(text)
     }

@@ -52,6 +52,80 @@ impl<H: Host> Vm<H> {
         Ok(offset)
     }
 
+    /// Pin and describe the bytes an ArrayBuffer or view names (see
+    /// [`crate::NativeContext::buffer_storage_rooted`]); `None` for other values.
+    pub(crate) fn embedding_buffer_storage(
+        &mut self,
+        root: RootId,
+    ) -> Result<Option<(crate::BufferStorage, Value)>, JsError> {
+        use crate::BuiltinBrand as B;
+        let program = self.embedding_program()?;
+        let value = self
+            .heap
+            .root_value(root)
+            .ok_or_else(|| self.type_error(&program, "buffer root expired".into()))?;
+        let (kind, buffer, byte_offset, byte_length, length) = match self.heap.get(value) {
+            Some(Cell::ArrayBuffer { shared, .. }) => {
+                let kind = if *shared { B::SharedArrayBuffer } else { B::ArrayBuffer };
+                let byte_length = self.array_buffer_byte_length(value);
+                (kind, value, 0, byte_length, byte_length)
+            }
+            Some(Cell::TypedArray { object, buffer, kind, .. }) => {
+                let (kind, buffer, offset, width) =
+                    (super::embedding::typed_array_brand(*kind), *buffer, object.offset, kind.width());
+                let length = self.typed_array_length(value).unwrap_or(0);
+                (kind, buffer, offset, length * width, length)
+            }
+            Some(Cell::DataView { .. }) => {
+                let Some(Cell::DataView { object, buffer, .. }) = self.heap.get(value) else {
+                    unreachable!("matched DataView");
+                };
+                let (buffer, offset) = (*buffer, object.offset);
+                let byte_length = self.embedding_view_bytes_length(value);
+                (B::DataView, buffer, offset, byte_length, byte_length)
+            }
+            _ => return Ok(None),
+        };
+        let base = match self.heap.get_mut(buffer) {
+            Some(Cell::ArrayBuffer { bytes, detached: false, resizable, .. }) if !bytes.is_empty() => {
+                let before = bytes.capacity();
+                let address = if *resizable { bytes.as_ptr_bytes() as usize } else { bytes.pin_address() };
+                let after = bytes.capacity();
+                self.heap.adjust_external_bytes(before, after);
+                address as *mut u8
+            }
+            _ => std::ptr::null_mut(),
+        };
+        let data = if base.is_null() { base } else { base.wrapping_add(byte_offset) };
+        Ok(Some((
+            crate::BufferStorage { kind, data, byte_offset, byte_length, length, buffer: root },
+            buffer,
+        )))
+    }
+
+    fn array_buffer_byte_length(&self, buffer: Value) -> usize {
+        match self.heap.get(buffer) {
+            Some(Cell::ArrayBuffer { bytes, detached: false, .. }) => bytes.len(),
+            _ => 0,
+        }
+    }
+
+    /// A DataView's current byte length, zero once detached or out of bounds.
+    fn embedding_view_bytes_length(&self, view: Value) -> usize {
+        let Some(Cell::DataView { object, buffer, length, length_tracking, .. }) = self.heap.get(view) else {
+            return 0;
+        };
+        if self.array_buffer_detached(*buffer) {
+            0
+        } else if *length_tracking {
+            self.array_buffer_byte_length(*buffer).saturating_sub(object.offset)
+        } else if self.array_buffer_out_of_bounds(*buffer, object.offset, *length) {
+            0
+        } else {
+            *length
+        }
+    }
+
     pub(crate) fn embedding_uint8_array(&mut self, bytes: &[u8]) -> Result<Value, JsError> {
         let program = self.embedding_program()?;
         let buffer = self.new_fixed_array_buffer(&program, bytes.len(), false)?;
@@ -98,29 +172,8 @@ impl<H: Host> Vm<H> {
                 object.offset,
                 self.typed_array_length(value)?.checked_mul(kind.width())?,
             ),
-            Cell::DataView {
-                object,
-                buffer,
-                length,
-                length_tracking,
-                ..
-            } => {
-                let offset = &object.offset;
-                let byte_length = if self.array_buffer_detached(*buffer) {
-                    0
-                } else if *length_tracking {
-                    match self.heap.get(*buffer) {
-                        Some(Cell::ArrayBuffer { bytes, .. }) => {
-                            bytes.len().saturating_sub(*offset)
-                        }
-                        _ => return None,
-                    }
-                } else if self.array_buffer_out_of_bounds(*buffer, *offset, *length) {
-                    0
-                } else {
-                    *length
-                };
-                (*buffer, *offset, byte_length)
+            Cell::DataView { object, buffer, .. } => {
+                (*buffer, object.offset, self.embedding_view_bytes_length(value))
             }
             _ => return None,
         };
