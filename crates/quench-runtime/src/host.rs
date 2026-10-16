@@ -52,6 +52,10 @@ pub struct ModuleSource {
 pub struct HostExecutionContext(pub u64);
 
 pub trait Host {
+    /// Opt in to Promise lifecycle observations. Hosts without observers keep
+    /// Promise allocation and optimized await free of embedding callbacks.
+    const OBSERVE_PROMISE_LIFECYCLE: bool = false;
+
     fn write_line(&mut self, text: &str);
     fn clock_millis(&mut self) -> f64;
 
@@ -100,10 +104,39 @@ pub trait Host {
         Ok(None)
     }
 
+    /// Allocate host metadata before Promise creation becomes observable. This
+    /// phase cannot call guest code; reentrant init hooks see the stored identity.
+    fn create_promise_context(&mut self, _parent: Option<HostExecutionContext>) -> Option<HostExecutionContext> {
+        None
+    }
+
+    /// Observe creation of an actual Promise with its installed host identity.
+    fn initialize_promise(
+        _context: &mut crate::NativeContext<'_, Self>,
+        _promise: crate::RootId,
+        _resource: HostExecutionContext,
+    ) -> Result<(), crate::RootedError>
+    where Self: Sized,
+    {
+        Ok(())
+    }
+
+    /// Observe execution boundaries and settlement of genuine Promise resources.
+    fn promise_job_boundary(
+        _context: &mut crate::NativeContext<'_, Self>,
+        _resource: HostExecutionContext,
+        _before: bool,
+    ) -> Result<(), crate::RootedError> where Self: Sized { Ok(()) }
+
+    fn promise_settled(
+        _context: &mut crate::NativeContext<'_, Self>,
+        _resource: HostExecutionContext,
+    ) -> Result<(), crate::RootedError> where Self: Sized { Ok(()) }
+
     /// Capture the host context when the VM creates a Promise or thenable job.
     /// The returned token remains owned by that job until it runs or the VM
     /// collects it.
-    fn capture_job_context(&mut self) -> Option<HostExecutionContext> {
+    fn capture_job_context(&mut self, _resource: Option<HostExecutionContext>) -> Option<HostExecutionContext> {
         None
     }
 

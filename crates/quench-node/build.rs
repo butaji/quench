@@ -133,6 +133,7 @@ fn embed_node_sources() {
     configure_node_compat_version(&root);
     embed_node_protocol_constants(&root);
     embed_uv_error_constants(&root);
+    embed_empty_string_list_options(&root);
     let mut pending = vec![root.join("lib")];
     let mut files = BUNDLED_DEPENDENCIES.iter().map(|(_, path)| root.join(path)).collect::<Vec<_>>();
     while let Some(directory) = pending.pop() {
@@ -327,5 +328,37 @@ QUENCH_UV_ERRORS_END
     let path = out.join("node_uv_errors.rs");
     if std::fs::read_to_string(&path).ok().as_deref() != Some(&output) {
         std::fs::write(path, output).expect("write libuv protocol constants");
+    }
+}
+
+/// Empty std::vector defaults and their CLI names are SDK protocol facts.
+fn embed_empty_string_list_options(root: &Path) {
+    use std::collections::BTreeSet;
+    let header_path = root.join("src/node_options.h");
+    let source_path = root.join("src/node_options.cc");
+    println!("cargo:rerun-if-changed={}", header_path.display());
+    println!("cargo:rerun-if-changed={}", source_path.display());
+    let header = std::fs::read_to_string(header_path).expect("read Node option declarations");
+    let source = std::fs::read_to_string(source_path).expect("read Node option registrations");
+    let fields = header.lines().filter_map(|line| {
+        let field = line.trim().strip_prefix("std::vector<std::string> ")?.strip_suffix(';')?.trim();
+        (!field.is_empty() && field.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')).then_some(field)
+    }).collect::<BTreeSet<_>>();
+    let mut names = BTreeSet::new();
+    for registration in source.split("AddOption(").skip(1) {
+        let Some((registration, _)) = registration.split_once(");") else { continue; };
+        let Some(rest) = registration.trim_start().strip_prefix('"') else { continue; };
+        let Some((name, _)) = rest.split_once('"') else { continue; };
+        let Some((_, member)) = registration.split_once("&EnvironmentOptions::") else { continue; };
+        let field = member.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect::<String>();
+        if fields.contains(field.as_str()) { names.insert(name); }
+    }
+    assert!(!names.is_empty(), "SDK empty string-list option inventory");
+    let mut generated = String::from("const EMPTY_STRING_LIST_OPTIONS: &[&str] = &[\n");
+    for name in names { generated.push_str(&format!("    {name:?},\n")); }
+    generated.push_str("];\n");
+    let path = Path::new(&env::var("OUT_DIR").expect("build output")).join("node_option_defaults.rs");
+    if std::fs::read_to_string(&path).ok().as_deref() != Some(&generated) {
+        std::fs::write(path, generated).expect("write SDK option inventory");
     }
 }

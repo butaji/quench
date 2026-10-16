@@ -9734,3 +9734,28 @@ fn native_contextify_scripts_compile_once_keep_template_sites_and_return_global_
 fn sdk_mock_tracker_preserves_call_records_restoration_and_virtual_timer_queue() {
     compare_node_source_with_args(include_str!("../node-tests/test-sdk-mock-tracker.js"), &["--no-warnings"]);
 }
+
+#[test]
+fn original_sdk_test_harness_runs_hooks_subtests_contexts_and_mock_cleanup() {
+    compare_node_source_with_args(include_str!("../node-tests/test-sdk-test-harness.js"), &["--no-warnings", "--test-reporter=dot"]);
+}
+
+#[test]
+fn promise_async_hooks_observe_real_resources_trigger_identity_and_job_order() {
+    compare_node_source_with_args(include_str!("../node-tests/test-promise-async-hooks-lifecycle.js"), &[]);
+}
+
+#[test]
+fn promise_hooks_keep_suspended_continuations_and_reactions_live_during_gc() {
+    compare_node_source_with_args(include_str!("../node-tests/test-promise-hooks-gc-roots.js"), &["--expose-gc"]);
+}
+
+#[test]
+fn promise_init_hooks_can_settle_await_sources_reentrantly() {
+    compare_node_source_with_args(include_str!("../node-tests/test-promise-init-reentry.js"), &[]);
+}
+
+#[test]
+fn fs_internal_module_stat_follows_links_returns_errno_and_resolves_node_cwd() {
+    compare_node_source_with_args(include_str!("../node-tests/test-fs-internal-module-stat.js"), &["--no-warnings"]);
+}

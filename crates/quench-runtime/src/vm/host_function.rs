@@ -1,5 +1,5 @@
 use super::*;
-use crate::{HostFunctionId, NativeContext};
+use crate::{HostExecutionContext, HostFunctionId, NativeContext};
 
 // Native environments have no bytecode-function binding metadata.
 const NATIVE_ENVIRONMENT_FUNCTION: u32 = u32::MAX;
@@ -183,6 +183,17 @@ impl<H: Host> Vm<H> {
         self.heap
             .environment_slot(environment, HostEnvironmentSlot::Data as usize)
             .ok_or_else(|| JsError("invalid host function data environment".into()))
+    }
+
+    pub(super) fn promise_job_boundary(
+        &mut self,
+        resource: Option<HostExecutionContext>,
+        before: bool,
+    ) -> Result<(), JsError> {
+        let Some(resource) = resource else { return Ok(()); };
+        let mut context = NativeContext::new(self);
+        H::promise_job_boundary(&mut context, resource, before)
+            .map_err(|error| context.finish_error(error))
     }
 
     pub(super) fn initialize_host(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
