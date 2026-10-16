@@ -1374,6 +1374,29 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
     }
 
     #[test]
+    fn implicit_derived_constructor_has_zero_formal_length_and_forwards_arguments() {
+        assert_output_in_execution_modes(
+            r#"
+            function Base(a,b,c) { this.args = Array.from(arguments); }
+            class Derived extends Base {}
+            class Further extends Derived {}
+            class Bytes extends Uint8Array {}
+            class List extends Array {}
+            for (const C of [Derived,Further,Bytes,List]) {
+                const d=Object.getOwnPropertyDescriptor(C,'length');
+                print([C.length,d.writable,d.enumerable,d.configurable].join(','));
+            }
+            const value=new Further(1,2,3);
+            print(value.args.join(','));
+            print(value instanceof Derived && value instanceof Base);
+            print(new Bytes([1,2,3]).join(','));
+            print(new List('a','b').join(','));
+            "#,
+            &["0,false,false,true","0,false,false,true","0,false,false,true","0,false,false,true","1,2,3","true","1,2,3","a,b"],
+        );
+    }
+
+    #[test]
     fn regression_derived_constructors_preserve_the_actual_superclass() {
         assert_output_in_execution_modes(
             r#"

@@ -1246,6 +1246,7 @@ struct ObjectExtras {
     raw_json: bool,
     error_data: bool,
     module_namespace: bool,
+    external_address: Option<usize>,
     structured_clone_forbidden: bool,
     structured_transfer_forbidden: bool,
     module_bindings: Vec<(Atom, ProgramId, u16)>,
@@ -1666,6 +1667,15 @@ impl Object {
     }
     pub(crate) fn set_raw_json(&mut self) {
         self.extras_mut().raw_json = true;
+    }
+
+    pub(crate) fn external_address(&self) -> Option<usize> {
+        self.extras()?.external_address
+    }
+    pub(crate) fn set_external_address(&mut self, address: usize) {
+        let extras = self.extras_mut();
+        extras.external_address = Some(address);
+        extras.structured_clone_forbidden = true;
     }
 
     pub(crate) fn is_module_namespace(&self) -> bool {

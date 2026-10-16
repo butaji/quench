@@ -365,7 +365,9 @@ pub(crate) fn internal_binding(
         #[cfg(target_os = "linux")]
         "credentials" => return super::os_binding_shared_vm::credentials_binding(context),
         "types" => return super::util_shared_vm::types_binding(context),
+        "crypto_keys" => return super::crypto_key_shared_vm::binding(context),
         "util" => return super::util_shared_vm::key_binding(context),
+        "string_decoder" => return super::string_decoder_shared_vm::binding(context),
         "encoding_binding" => return super::encoding_binding_shared_vm::binding(context),
         "symbols" => return super::util_shared_vm::symbols_binding(context),
         "http2" => return crate::host::shared_vm::commonjs::http2_binding(context),
