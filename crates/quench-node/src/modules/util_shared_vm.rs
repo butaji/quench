@@ -615,6 +615,34 @@ pub(crate) fn mark_promise_handled(
 pub(crate) fn key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     crate::host::shared_vm::commonjs::cached_native_binding(context, "\0binding:util", build_key_binding)
 }
+// Node src/env_properties.h: PER_ISOLATE_PRIVATE_SYMBOL_PROPERTIES.
+// Every entry is a distinct host-private primitive. The cached util binding
+// owns the table's roots for this environment; repeat consumers share identity.
+const PRIVATE_SYMBOL_PROPERTIES: &[(&str, &str)] = &[
+    ("arrow_message_private_symbol", "node:arrowMessage"),
+    ("contextify_context_private_symbol", "node:contextify:context"),
+    ("decorated_private_symbol", "node:decorated"),
+    ("empty_context_frame_sentinel_symbol", "node:empty_context_frame_sentinel"),
+    ("ffi_pointer_address_private_symbol", "node:ffi:pointer_address"),
+    ("transfer_mode_private_symbol", "node:transfer_mode"),
+    ("host_defined_option_symbol", "node:host_defined_option_symbol"),
+    ("js_transferable_wrapper_private_symbol", "node:js_transferable_wrapper"),
+    ("entry_point_module_private_symbol", "node:entry_point_module"),
+    ("entry_point_promise_private_symbol", "node:entry_point_promise"),
+    ("module_source_private_symbol", "node:module_source"),
+    ("module_export_names_private_symbol", "node:module_export_names"),
+    ("module_circular_visited_private_symbol", "node:module_circular_visited"),
+    ("module_export_private_symbol", "node:module_export"),
+    ("module_first_parent_private_symbol", "node:module_first_parent"),
+    ("module_last_parent_private_symbol", "node:module_last_parent"),
+    ("napi_type_tag", "node:napi:type_tag"),
+    ("napi_wrapper", "node:napi:wrapper"),
+    ("untransferable_object_private_symbol", "node:untransferableObject"),
+    ("exit_info_private_symbol", "node:exit_info_private_symbol"),
+    ("promise_trace_id", "node:promise_trace_id"),
+    ("source_map_data_private_symbol", "node:source_map_data_private_symbol"),
+];
+
 fn build_key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let binding = context.object_rooted()?;
     for (name, operation) in [
@@ -635,11 +663,7 @@ fn build_key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         context.define_data_property_rooted(binding, key, function, true, true, true)?;
     }
     let symbols = context.object_rooted()?;
-    for (name, description) in [
-        ("arrow_message_private_symbol", "node:arrowMessage"),
-        ("decorated_private_symbol", "node:decorated"),
-        ("transfer_mode_private_symbol", "node:transfer_mode"),
-    ] {
+    for &(name, description) in PRIVATE_SYMBOL_PROPERTIES {
         let key = context.string_rooted(name);
         let symbol = context.private_symbol_rooted(Some(description));
         context.define_data_property_rooted(symbols, key, symbol, true, true, true)?;

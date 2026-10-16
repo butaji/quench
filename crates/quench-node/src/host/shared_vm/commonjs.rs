@@ -672,7 +672,7 @@ pub(crate) fn require_for_module(
         let builtin_ids = serde_json::to_string(&builtin_ids)
             .map_err(|error| RootedError::host(error.to_string()))?;
         let source = format!(
-            r#"(() => {{
+            r#"((nativeUtil) => {{
   const ids = new Set({builtin_ids});
   class BuiltinModule {{
     static map = new Map(Array.from(ids, (id) => [id, new BuiltinModule(id)]));
@@ -695,19 +695,16 @@ pub(crate) fn require_for_module(
     }};
     if (name === "types") return {{ isNativeError: (value) => value instanceof Error, isPromise: (value) => value instanceof Promise }};
     if (name === "string_decoder") return {{ encodings: ["ascii", "utf8", "utf-8", "utf16le", "ucs2", "ucs-2", "base64", "base64url", "latin1", "binary", "hex"] }};
-    if (name === "util") return {{
-      constructSharedArrayBuffer: () => {{ throw new Error("SharedArrayBuffer construction is unavailable"); }},
-      guessHandleType: () => "UNKNOWN",
-      defineLazyProperties: (target, properties) => {{ for (const [key, getter] of Object.entries(properties)) Object.defineProperty(target, key, {{ configurable: true, get: getter }}); }},
-      privateSymbols: {{ arrow_message_private_symbol: Symbol("arrow_message"), decorated_private_symbol: Symbol("decorated") }},
-      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-    }};
+    if (name === "util") return nativeUtil;
     return {{}};
   }};
   return {{ BuiltinModule, internalBinding, require: () => {{ throw new Error("builtin source loading is unavailable"); }} }};
-}})()"#
+}})"#
         );
-        return context.evaluate_script_rooted(&source, "internal/bootstrap/realm.js");
+        let factory = context.evaluate_script_rooted(&source, "internal/bootstrap/realm.js")?;
+        let util = crate::modules::util_shared_vm::key_binding(context)?;
+        let undefined = context.undefined();
+        return context.call_rooted(factory, undefined, &[util]);
     }
     match requested_builtin(context, &specifier) {
         Some(BuiltinModule::Process) => {
