@@ -98,12 +98,8 @@ fn derive_shape_lookup_index(shapes: &[Shape], shape: u32) -> ShapeLookupIndex {
         current = shape.parent();
     }
     entries.reverse();
-    let slots = entries.iter().copied().collect();
-    ShapeLookupIndex {
-        entries,
-        slots,
-        attributes,
-    }
+    entries.shrink_to_fit();
+    ShapeLookupIndex::new(entries, attributes)
 }
 
 /// What the inline field caches know about one read.
@@ -177,10 +173,10 @@ impl<H: Host> Vm<H> {
             let index = self.shapes[shape as usize]
                 .lookup_index
                 .get_or_init(|| Box::new(derive_shape_lookup_index(&self.shapes, shape)));
-            return index.slots.get(&key).map(|slot| *slot as usize);
+            return index.slot(key).map(|slot| slot as usize);
         }
         if let Some(index) = self.shapes[shape as usize].lookup_index.get() {
-            return index.slots.get(&key).map(|slot| *slot as usize);
+            return index.slot(key).map(|slot| slot as usize);
         }
         let mut current = Some(shape);
         let mut distance = 0;
@@ -365,7 +361,6 @@ impl<H: Host> Vm<H> {
         key: PropertyKey,
         attributes: PropertyAttributes,
     ) {
-        self.note_array_index_accessor(key, attributes);
         if let PropertyKey::String(atom) = key
             && self.atom_class(atom).contains(AtomClass::ARRAY_INDEX)
             && let Some(data) = self.object_data_mut(object)
@@ -375,39 +370,70 @@ impl<H: Host> Vm<H> {
         self.descriptors.insert((object, key), attributes);
     }
 
-    fn note_array_index_accessor(&mut self, key: PropertyKey, attributes: PropertyAttributes) {
-        if attributes.accessor
-            && let PropertyKey::String(atom) = key
-            && self.atom_class(atom).contains(AtomClass::ARRAY_INDEX)
-        {
-            self.array_index_accessor_defined = true;
-        }
-    }
-
-    /// The accessor an index store or append at `index` would meet on `object` or its
-    /// prototypes, when it holds no own element there. An index no atom names keys no named
-    /// property.
-    pub(super) fn inherited_index_accessor(
+    /// The attributes of `holder`'s own property at array index `index`, named by `atom` when
+    /// one exists (an index no atom names keys no named property): an element of an array or
+    /// arguments object, or a named property such as a String wrapper's character. A frozen
+    /// holder's elements are read-only.
+    pub(super) fn own_index_attributes(
         &self,
-        object: Value,
+        holder: Value,
         index: usize,
+        atom: Option<Atom>,
     ) -> Option<PropertyAttributes> {
-        if !self.array_index_accessor_defined || self.has_own_array_index(object, index) {
-            return None;
+        let named = atom.and_then(|atom| self.property_attributes(holder, PropertyKey::string(atom)));
+        let element = self.heap.array_elements(holder).is_some_and(|elements| {
+            elements.get(index).is_some_and(|value| !value.is_deleted())
+        }) || self
+            .heap
+            .sparse_get(holder, index)
+            .is_some_and(|value| !value.is_deleted());
+        if element {
+            let attributes = named.unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
+            let frozen = self.object_data(holder).is_some_and(Object::is_frozen);
+            return Some(PropertyAttributes {
+                writable: attributes.writable && !frozen,
+                ..attributes
+            });
         }
-        self.property_accessor(object, self.lookup_array_index_atom(index)?)
+        let held = atom.is_some_and(|atom| self.own_property(holder, atom).is_some());
+        named.filter(|attributes| held || attributes.accessor)
     }
 
-    /// Whether storing each index of `indices` on `array` is CreateDataProperty: no proxy or
-    /// typed array on the prototype chain answers the [[Set]], and no inherited accessor does.
+    /// Whether OrdinarySet of array index `index` on `object`, which holds no own property
+    /// there, ends in a plain data definition on `object`: no prototype answers it with an
+    /// accessor, read-only data or an exotic [[Set]] (proxy, typed array, module namespace).
+    pub(super) fn inherited_index_unclaimed(&self, object: Value, index: usize) -> bool {
+        let atom = self.lookup_array_index_atom(index);
+        let mut current = self.object_data(object).map(|data| data.proto());
+        while let Some(holder) = current.filter(|value| !value.is_null()) {
+            if matches!(
+                self.heap.get(holder),
+                Some(Cell::Proxy { .. } | Cell::TypedArray { .. })
+            ) {
+                return false;
+            }
+            let Some(data) = self.object_data(holder) else {
+                return false;
+            };
+            if data.is_module_namespace() {
+                return false;
+            }
+            if let Some(attributes) = self.own_index_attributes(holder, index, atom) {
+                return !attributes.accessor && attributes.writable;
+            }
+            current = Some(data.proto());
+        }
+        true
+    }
+
+    /// Whether storing each index of `indices`, none of them own, on `array` is a plain
+    /// data definition (`inherited_index_unclaimed`).
     pub(super) fn array_indices_store_plainly(
         &self,
         array: Value,
         mut indices: std::ops::Range<usize>,
     ) -> bool {
-        indices.is_empty()
-            || (!self.prototype_chain_has_indexed_set_exotic(array)
-                && !indices.any(|index| self.inherited_index_accessor(array, index).is_some()))
+        indices.all(|index| self.inherited_index_unclaimed(array, index))
     }
 
     pub(super) fn set_property_attributes(
@@ -420,7 +446,6 @@ impl<H: Host> Vm<H> {
             if self.shape_attribute(shape, slot) == Some(attributes) {
                 return;
             }
-            self.note_array_index_accessor(key, attributes);
             let attributes = ShapeAttributes::record(attributes, &mut self.shape_accessors);
             let next_id = self.append_cached_shape_transition(
                 shape,
@@ -1409,6 +1434,7 @@ impl<H: Host> Vm<H> {
         let _stack = self.enter_stack()?;
         if self.is_private_name(atom) {
             self.check_private_brand(p, target, atom)?;
+            if self.set_private_field_value(p, target, atom, value) { return Ok(true); }
         }
         let typed_array_index = if matches!(self.heap.get(target), Some(Cell::TypedArray { .. })) {
             match Self::typed_array_index_key(self.atom_name(atom)) {
@@ -1493,9 +1519,15 @@ impl<H: Host> Vm<H> {
                     value,
                 );
             }
-            if let Some(attributes) = self.property_attributes(current, PropertyKey::string(atom))
-                && (self.own_property(current, atom).is_some() || attributes.accessor)
+            let held = if self.atom_class(atom).contains(AtomClass::ARRAY_INDEX)
+                && let Some(index) = super::object_static::array_index(self.atom_name(atom))
             {
+                self.own_index_attributes(current, index as usize, Some(atom))
+            } else {
+                self.property_attributes(current, PropertyKey::string(atom))
+                    .filter(|attributes| self.own_property(current, atom).is_some() || attributes.accessor)
+            };
+            if let Some(attributes) = held {
                 found = Some((current, attributes));
                 break;
             }
@@ -1888,6 +1920,7 @@ impl<H: Host> Vm<H> {
             let key = self.atom_name(atom).to_owned();
             return Err(self.nullish_assignment_error(p, object, &key));
         }
+        if self.is_private_name(atom) && self.set_private_field_value(p, object, atom, value) { return Ok(()); }
         if let Some((target, handler)) = self.proxy_parts(object) {
             if self.is_private_name(atom) {
                 if self.own_property(object, atom).is_none() {
@@ -2246,31 +2279,6 @@ impl<H: Host> Vm<H> {
         let mut current = self.object_data(object).map(|data| data.proto());
         while let Some(value) = current.filter(|value| !value.is_null()) {
             if matches!(self.heap.get(value), Some(Cell::Proxy { .. })) {
-                return true;
-            }
-            current = self.object_data(value).map(|data| data.proto());
-        }
-        false
-    }
-
-    pub(super) fn prototype_chain_has_typed_array(&self, object: Value) -> bool {
-        let mut current = self.object_data(object).map(|data| data.proto());
-        while let Some(value) = current.filter(|value| !value.is_null()) {
-            if matches!(self.heap.get(value), Some(Cell::TypedArray { .. })) {
-                return true;
-            }
-            current = self.object_data(value).map(|data| data.proto());
-        }
-        false
-    }
-
-    pub(super) fn prototype_chain_has_indexed_set_exotic(&self, object: Value) -> bool {
-        let mut current = self.object_data(object).map(|data| data.proto());
-        while let Some(value) = current.filter(|value| !value.is_null()) {
-            if matches!(
-                self.heap.get(value),
-                Some(Cell::Proxy { .. } | Cell::TypedArray { .. })
-            ) {
                 return true;
             }
             current = self.object_data(value).map(|data| data.proto());

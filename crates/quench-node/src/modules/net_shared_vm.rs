@@ -613,21 +613,22 @@ impl Default for Transport {
     }
 }
 
-pub(crate) fn listen(transport: &mut Transport, address: SocketAddr) -> Result<u64, String> {
-    listen_with_reuse_port(transport, address, false)
+pub(crate) fn listen_with_backlog(
+    transport: &mut Transport,
+    address: SocketAddr,
+    backlog: i32,
+) -> Result<u64, String> {
+    listen_with_reuse_port(transport, address, false, backlog)
 }
 
 fn listen_with_reuse_port(
     transport: &mut Transport,
     address: SocketAddr,
     reuse_port: bool,
+    backlog: i32,
 ) -> Result<u64, String> {
-    let listener = if reuse_port {
-        bind_reusable_listener(address)
-    } else {
-        TcpListener::bind(address)
-    }
-    .map_err(|error| error.to_string())?;
+    let listener = bind_listener(address, reuse_port, backlog)
+        .map_err(|error| error.to_string())?;
     listener
         .set_nonblocking(true)
         .map_err(|error| error.to_string())?;
@@ -639,52 +640,60 @@ fn listen_with_reuse_port(
 }
 
 // Node's net.Server.listen uses 511 when no backlog was supplied.
-#[cfg(any(
-    target_os = "linux",
-    target_os = "android",
-    target_os = "freebsd",
-    target_os = "dragonfly",
-    target_os = "aix"
-))]
 const DEFAULT_TCP_LISTEN_BACKLOG: i32 = 511;
 
-fn bind_reusable_listener(address: SocketAddr) -> std::io::Result<TcpListener> {
-    #[cfg(any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "freebsd",
-        target_os = "dragonfly",
-        target_os = "aix"
-    ))]
-    {
-        let socket = socket2::Socket::new(
-            socket2::Domain::for_address(address),
-            socket2::Type::STREAM,
-            Some(socket2::Protocol::TCP),
-        )?;
-        socket.set_reuse_address(true)?;
-        #[cfg(target_os = "freebsd")]
-        socket.set_reuse_port_lb(true)?;
-        #[cfg(not(target_os = "freebsd"))]
-        socket.set_reuse_port(true)?;
-        socket.bind(&address.into())?;
-        socket.listen(DEFAULT_TCP_LISTEN_BACKLOG)?;
-        Ok(socket.into())
-    }
+pub(crate) fn listen_backlog(
+    context: &mut NativeContext<'_, NodeHost>,
+    options: Option<RootId>,
+) -> Result<i32, RootedError> {
+    let Some(options) = options else { return Ok(DEFAULT_TCP_LISTEN_BACKLOG); };
+    let key = context.string_rooted("backlog");
+    let value = context.get_property_rooted(options, key)?;
+    if !context.truthy_rooted(value)? { return Ok(DEFAULT_TCP_LISTEN_BACKLOG); }
+    // TCPWrap::Listen uses ToInt32 after the JavaScript truthy default.
+    // Apply ToNumber first so BigInt and Symbol preserve that conversion's error.
+    let number = context.to_number(value)?;
+    let number = context.number(number);
+    let mask = context.number(super::net_socket_options::SIGNED_INTEGER_MASK);
+    let bits = context.arithmetic_rooted(quench_runtime::NativeArithmetic::BitwiseAnd, number, mask)?;
+    Ok(context.to_number(bits)? as i32)
+}
+
+fn bind_listener(address: SocketAddr, reuse_port: bool, backlog: i32) -> std::io::Result<TcpListener> {
     #[cfg(not(any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "freebsd",
-        target_os = "dragonfly",
-        target_os = "aix"
+        target_os = "linux", target_os = "android", target_os = "freebsd",
+        target_os = "dragonfly", target_os = "aix"
     )))]
-    {
-        let _ = address;
-        Err(std::io::Error::new(
+    if reuse_port {
+        return Err(std::io::Error::new(
             std::io::ErrorKind::Unsupported,
             "TCP reusePort is unsupported on this platform",
-        ))
+        ));
     }
+    let socket = socket2::Socket::new(
+        socket2::Domain::for_address(address),
+        socket2::Type::STREAM,
+        Some(socket2::Protocol::TCP),
+    )?;
+    // libuv enables address reuse for Unix TCP listeners and keeps
+    // SO_REUSEADDR disabled for Windows TCP binds.
+    #[cfg(unix)]
+    socket.set_reuse_address(true)?;
+    if reuse_port {
+        #[cfg(any(
+            target_os = "linux", target_os = "android", target_os = "freebsd",
+            target_os = "dragonfly", target_os = "aix"
+        ))]
+        {
+            #[cfg(target_os = "freebsd")]
+            socket.set_reuse_port_lb(true)?;
+            #[cfg(not(target_os = "freebsd"))]
+            socket.set_reuse_port(true)?;
+        }
+    }
+    socket.bind(&address.into())?;
+    socket.listen(backlog)?;
+    Ok(socket.into())
 }
 
 pub(crate) fn connect(transport: &mut Transport, host: String, port: u16) -> Result<u64, String> {
@@ -1846,7 +1855,9 @@ pub(crate) fn server_listen_operation(
     } else {
         false
     };
-    let listener = listen_with_reuse_port(&mut shared.borrow_mut().tcp, address, reuse_port);
+    let options = args.get(3).copied().filter(|root| context.is_object_rooted(*root).unwrap_or(false));
+    let backlog = listen_backlog(context, options)?;
+    let listener = listen_with_reuse_port(&mut shared.borrow_mut().tcp, address, reuse_port, backlog);
     // Node tries the IPv6 wildcard first when no host was requested, then
     // falls back to the IPv4 wildcard if that platform cannot bind IPv6.
     let listener = match listener {
@@ -1854,6 +1865,7 @@ pub(crate) fn server_listen_operation(
             &mut shared.borrow_mut().tcp,
             SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port),
             reuse_port,
+            backlog,
         ),
         result => result,
     }.map_err(RootedError::host)?;
