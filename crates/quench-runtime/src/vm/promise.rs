@@ -5182,28 +5182,7 @@ impl<H: Host> Vm<H> {
         if !self.is_object_like(constructor) {
             return Err(self.type_error(p, "Promise constructor is not an object".into()));
         }
-        let Some(species) = self.well_known_symbols.get("species").copied() else {
-            return Ok(self.intrinsic_promise_constructor());
-        };
-        // The intrinsic `get [Symbol.species]` returns its receiver and observes nothing, so
-        // an own accessor that still holds it answers without a call.
-        let intrinsic_getter = self
-            .property_attributes(constructor, property_key::PropertyKey::symbol(species))
-            .and_then(|attributes| attributes.getter.filter(|_| attributes.accessor))
-            .is_some_and(|getter| {
-                matches!(
-                    self.heap.get(getter),
-                    Some(Cell::Function {
-                        kind: FunctionKind::Native(Native::PromiseSpeciesGetter),
-                        ..
-                    })
-                )
-            });
-        let species = if intrinsic_getter {
-            constructor
-        } else {
-            self.get_index(p, constructor, species)?
-        };
+        let species = self.species_of(p, constructor)?;
         if species.is_undefined() || species.is_null() {
             Ok(self.intrinsic_promise_constructor())
         } else if self.is_constructable(p, species) {
