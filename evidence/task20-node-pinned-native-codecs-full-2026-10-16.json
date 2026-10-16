@@ -1,0 +1,121 @@
+{
+  "scope": "Complete unchanged pinned parallel inventory after genuine native compression backends",
+  "source_commit": "c4ad13141380166a761b91359e0519cdeb51292c",
+  "node_release": "v27.0.0-nightly20260819c79868f102",
+  "fixture_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+  "counts": {
+    "timeout": 82,
+    "fail": 2159,
+    "pass": 1809,
+    "skip": 677
+  },
+  "total": 4727,
+  "inventory_hash": "1e51ca4121020d14",
+  "jobs": 4,
+  "timeout_seconds": 30,
+  "baseline_passes": 1799,
+  "gained": [
+    "test-async-hooks-stack-overflow-try-catch.js",
+    "test-async-hooks-stack-overflow.js",
+    "test-stream-iter-pull-async.js",
+    "test-stream-iter-to-readable.js",
+    "test-stream-iter-transform-compat.js",
+    "test-stream-iter-transform-coverage.js",
+    "test-stream-iter-transform-errors.js",
+    "test-stream-iter-transform-params.js",
+    "test-stream-iter-transform-roundtrip.js",
+    "test-stream-iter-transform-sync.js",
+    "test-stream-iter-validation.js",
+    "test-stream-iter-writable-interop.js"
+  ],
+  "lost": [
+    "test-stream2-read-sync-stack.js",
+    "test-stringbytes-external.js"
+  ],
+  "new_skips": [],
+  "removed_skips": [
+    "test-icu-env.js"
+  ],
+  "isolated_lost_controls": {
+    "test-stream2-read-sync-stack.js": {
+      "pass": 1
+    },
+    "test-stringbytes-external.js": {
+      "pass": 1
+    }
+  },
+  "memory_events_delta": {
+    "low": 0,
+    "high": 0,
+    "max": 54032,
+    "oom": 0,
+    "oom_kill": 0,
+    "oom_group_kill": 0
+  },
+  "elapsed_seconds": 1631.3933039700496,
+  "raw": {
+    "comparison.json": {
+      "path": "work/full-native-codecs-restart-pinned/comparison.json",
+      "bytes": 896,
+      "sha256": "771ae178a32bb862125784349649ab660edcd75cfdd5a6e8012667fcd6509cef"
+    },
+    "lost-controls.json": {
+      "path": "work/full-native-codecs-restart-pinned/lost-controls.json",
+      "bytes": 3245,
+      "sha256": "1407946173470d595d88fa13ef0d5eb1ca73b2bdc6a1bdb8b9eaa1c421f91256"
+    },
+    "receipt-before.json": {
+      "path": "work/full-native-codecs-restart-pinned/receipt-before.json",
+      "bytes": 1119,
+      "sha256": "031b67a470839e22f29f6a69ae4366f2fd8bda8364513683312bd97f40a34aa6"
+    },
+    "receipt.json": {
+      "path": "work/full-native-codecs-restart-pinned/receipt.json",
+      "bytes": 1763,
+      "sha256": "2070654e5481adc93704e3fa74a916cdb81c4cce4dfa49dcf0cd2e9d56a2dd1d"
+    },
+    "results.json": {
+      "path": "work/full-native-codecs-restart-pinned/results.json",
+      "bytes": 13361556,
+      "sha256": "26f8085ed83632112e2e6059f7ec5f248d7b3e27cd805a2cdec804e70e3bf15a"
+    },
+    "runner.log": {
+      "path": "work/full-native-codecs-restart-pinned/runner.log",
+      "bytes": 391276,
+      "sha256": "991c3d5f7568625a31fd935a81872a2aaed6ddb93378276a03bb122f2ff58830"
+    },
+    "summary.json": {
+      "path": "work/full-native-codecs-restart-pinned/summary.json",
+      "bytes": 150,
+      "sha256": "6764a30706e5328744b855a8dc57e0f83b99127a03d732bf422b3b8ac77976cb"
+    },
+    "test-stream2-read-sync-stack.js.control.json": {
+      "path": "work/full-native-codecs-restart-pinned/test-stream2-read-sync-stack.js.control.json",
+      "bytes": 1171,
+      "sha256": "11973aa5e157c2a683f79e80be5fcaeba718daba9348662a393c83429efb1ae7"
+    },
+    "test-stream2-read-sync-stack.js.control.log": {
+      "path": "work/full-native-codecs-restart-pinned/test-stream2-read-sync-stack.js.control.log",
+      "bytes": 180,
+      "sha256": "cf9c13f36e7d7bdb900e8f1d5b458cd52dc4dcd8f16362b4ddc60297583096ad"
+    },
+    "test-stringbytes-external.js.control.json": {
+      "path": "work/full-native-codecs-restart-pinned/test-stringbytes-external.js.control.json",
+      "bytes": 716,
+      "sha256": "7a0f7ce9d878daf7f11f3b03e417aadc0f14d07251e2bb6df49d7c09cba8070d"
+    },
+    "test-stringbytes-external.js.control.log": {
+      "path": "work/full-native-codecs-restart-pinned/test-stringbytes-external.js.control.log",
+      "bytes": 177,
+      "sha256": "4cdb85731d481180999a1c078da55519ec0e326acf41f0aca565fb59248ebdd1"
+    }
+  },
+  "limitations": [
+    "Goal remains open:1809/4727 passes,2159 failures,82 timeouts,677 skips.",
+    "12 gained and2 lost passes; both lost cases timed out in the complete run. Isolated controls are separate observations and do not replace full-run outcomes.",
+    "Compilation overlapped this run; memory max events increased by54032 with zero OOM or OOM kills. No speed or isolated source attribution claim.",
+    "No new skips. test-icu-env.js changed skip\u2192failure after truthful ICU metadata; this is not a pass.",
+    "Frozen c4ad source excludes later source6a error/version fixes and current Buffer allocation/pool work. Selected recoveries are not added to this full total.",
+    "All625 source hashes and all3 binaries unchanged before/after; protected permission fixture restored and bytechecked. Original jobs4 and deadline30."
+  ]
+}

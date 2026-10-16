@@ -105,6 +105,7 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     }
     let binding = c.with_startup_intrinsics(|c| {
         let result = c.object_rooted()?;
+        super::buffer_alloc_shared_vm::install(c, result)?;
         let function = function(c, true)?;
         let key = c.string_rooted("fill");
         c.define_data_property_rooted(result, key, function, true, true, true)?;
