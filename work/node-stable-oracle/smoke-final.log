@@ -1,0 +1,12 @@
+TAP version 13
+1..2
+ok 1 /workspace/quench/work/node-stable-oracle-root/test/parallel/test-fs-glob-throw
+  ---
+  duration_ms: 92.40500
+  ...
+ok 2 /workspace/quench/work/node-stable-oracle-root/test/parallel/test-abortcontroller
+  ---
+  duration_ms: 185.60200
+  ...
+
+All tests passed.

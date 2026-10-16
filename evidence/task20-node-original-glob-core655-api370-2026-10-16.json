@@ -1,0 +1,508 @@
+{
+  "source_commit": "9dec2d57951a865ead5fb94615967461cb7d9ac8",
+  "scope": "Original Node glob policy and real filesystem directory types, combined with incoming eval-origin metadata",
+  "oracle": "Node v26.12.0 latest stable",
+  "checks": {
+    "core": 655,
+    "api": 370,
+    "framework": 43,
+    "shared": 7,
+    "workspace_all_targets": true,
+    "focused_glob": 1,
+    "original_300ms_child_deadline_control": 1,
+    "empty_differentials": 5
+  },
+  "upstream_family": {
+    "before": {
+      "fail": 7,
+      "pass": 9,
+      "skip": 2
+    },
+    "candidate": {
+      "fail": 6,
+      "pass": 10,
+      "skip": 2
+    },
+    "total": 18,
+    "gained": [
+      "test-fs-glob-throw.mjs"
+    ],
+    "lost": [],
+    "skip_changes": {}
+  },
+  "fixed_work": {
+    "valid": 8,
+    "clean": 0,
+    "speed_claim": false
+  },
+  "design": [
+    "Unchanged configured Node fs.js glob/globSync and internal/fs/promises.glob execute over genuine host filesystem primitives.",
+    "One bundled-dependency table drives physical resolution and immutable embedding; original bundles use CommonJS regardless of vendor package scope.",
+    "Original Node Dirent owns shape, methods and parentPath; native file_type supplies real file/directory/symlink/device/FIFO/socket data. Internal metadata has a null prototype and directory names use native lexical ordering.",
+    "Native fs is cached before original utilities initialize; a private directory-policy owner captures the actual constructor without a circular second fs instance.",
+    "Original glob exports install when fs is required. Programs without fs avoid policy initialization; traversal keeps the original lazy import."
+  ],
+  "limitations": [
+    "All-parallel goal remains open: newest completed frozen c4f stable1789/5015 and pinned1817/4727 exclude this newer source. Selected gains are not added to full scores.",
+    "Six existing failures remain in the18-case selected family. Full glob suite currently reaches node:test suite-skip behavior; permission and other filesystem gaps remain.",
+    "First focused run exposed bundled-source format detection before embedded fallback and was fixed. First complete369/370 exposed eager initialization increasing child startup cost; initialization moved to fs. Same final source then369/370 during a concurrent full audit, but unchanged isolated300ms control passes and a complete quiet370/370 qualifies final source. All actual failing attempts retained; no deadline changed.",
+    "No speed claim: fixed-work8valid0clean."
+  ],
+  "raw": [
+    {
+      "path": "work/glob-policy/all-api-eager-startup-deadline-failure.log",
+      "bytes": 31144,
+      "sha256": "624f8f163a121a32a74d6ebf4312d4a91f18655a260f83bf3a25f86829f0e3f7"
+    },
+    {
+      "path": "work/glob-policy/all-api-lazy-concurrent-deadline-failure.log",
+      "bytes": 31144,
+      "sha256": "bac754f2648b4dcb6854819fa3626ff4e90d1969c48e890544c3d01b85cec37a"
+    },
+    {
+      "path": "work/glob-policy/all-api.log",
+      "bytes": 30341,
+      "sha256": "7cae2e7bb34dff3df88ce252a3e31108b13866f330055744665e93539664cbe3"
+    },
+    {
+      "path": "work/glob-policy/basic-candidate.log",
+      "bytes": 222,
+      "sha256": "6c5ec814bfc4341513beb92ac92f7c12ddb7d0116baacebd84742c1287fb1756"
+    },
+    {
+      "path": "work/glob-policy/buffer-concat-oracle.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/glob-policy/buffer-concat-oracle.log",
+      "bytes": 945,
+      "sha256": "6952b631101e34ed06edc5159ea6b526493f0567d64f94710f686417c70d0b7d"
+    },
+    {
+      "path": "work/glob-policy/buffer-latin1-oracle.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/glob-policy/buffer-latin1-oracle.log",
+      "bytes": 1863,
+      "sha256": "09939bcf717a24a1d1193e5d2dbf4d0d6b23ecbde28bc8e551a3afaef73c562a"
+    },
+    {
+      "path": "work/glob-policy/buffer-oracle.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/glob-policy/buffer-oracle.log",
+      "bytes": 4169,
+      "sha256": "f9d0f3418b5812dbcd7e927283a12ea6ff35b6b736c9073a3243ad20342338ce"
+    },
+    {
+      "path": "work/glob-policy/buffer-poison-oracle.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/glob-policy/buffer-poison-oracle.log",
+      "bytes": 476,
+      "sha256": "13189736a66e7b1615619955feaa462064b24ed73d07b84b76bd4d5c21fd39e8"
+    },
+    {
+      "path": "work/glob-policy/candidate-commit.log",
+      "bytes": 306,
+      "sha256": "0a9b32299c1c05af7288aad81bf267c298032177af283f5bbd5173f20023f6f6"
+    },
+    {
+      "path": "work/glob-policy/candidate-reduction-commit.log",
+      "bytes": 125,
+      "sha256": "d07cfc8ad96e334c751a97e90fa93d14669659f02386f332f63573a3ca819bfd"
+    },
+    {
+      "path": "work/glob-policy/check-shadow-baseline-losses.py",
+      "bytes": 1087,
+      "sha256": "7146a68a1e13b7870a4e4ff73e443562ee1feb9150eecb5995b83fc1d98004d2"
+    },
+    {
+      "path": "work/glob-policy/check-shadow-full-losses.py",
+      "bytes": 1144,
+      "sha256": "a16952719e5c5ba90b3f30fc9bd57ead5b8b3262841c1171e66726f096e44149"
+    },
+    {
+      "path": "work/glob-policy/check-shadow-post-oracle-losses.py",
+      "bytes": 1254,
+      "sha256": "8c22150525295fa33b8c59c06046b16132dd0115e8d20a71bdcb62af2e50cc2e"
+    },
+    {
+      "path": "work/glob-policy/core.log",
+      "bytes": 57741,
+      "sha256": "b939404a6e5aea65a8e4d2efb5bcdf2dc5ce97ad08151c51934fb8201a6c6c52"
+    },
+    {
+      "path": "work/glob-policy/core655-cache-reclamation.json",
+      "bytes": 331,
+      "sha256": "d41299d5b692356b95b3f77b657e9bba9795fcfd54129d7d816a1c930380be0b"
+    },
+    {
+      "path": "work/glob-policy/core655-source-sha256.json",
+      "bytes": 28722,
+      "sha256": "4b61d6ecb401b30e8997fc091e161efd8d5b804f48b92c17eac3c0a21dabb538"
+    },
+    {
+      "path": "work/glob-policy/extras-before-quiet-state.json",
+      "bytes": 234,
+      "sha256": "ffe8570863b8c00ee2249a2c6cf78ec7620f7d933ae97478612939873658f4d1"
+    },
+    {
+      "path": "work/glob-policy/extras.sh",
+      "bytes": 2392,
+      "sha256": "4eb3a926d272d0f3c51dc3863808d8a8225046c664c873cbe2190a85999a9290"
+    },
+    {
+      "path": "work/glob-policy/family-before-test-fs-glob.json",
+      "bytes": 2312,
+      "sha256": "af28dd9f3cf6619c7e2acda3f8822d6bbf2dfbc23194295eb6e1ec6e8a03a9ae"
+    },
+    {
+      "path": "work/glob-policy/family-before-test-fs-glob.log",
+      "bytes": 390,
+      "sha256": "cac391ea8af33bec1a36a4d674a9b9319acf4cc3cc642d8e215a5ecee6d3c611"
+    },
+    {
+      "path": "work/glob-policy/family-before-test-fs-opendir.json",
+      "bytes": 668,
+      "sha256": "68bdadf6cb680985c483d4116c1ab5eac63fb055c2e20706a4c4b151ccfb9bfc"
+    },
+    {
+      "path": "work/glob-policy/family-before-test-fs-opendir.log",
+      "bytes": 187,
+      "sha256": "091034aa56795c26af19f660e1ef60fe33ac1d52c88087b1d91a22800af16243"
+    },
+    {
+      "path": "work/glob-policy/family-before-test-fs-readdir.json",
+      "bytes": 10429,
+      "sha256": "78c692c672220d59790aa3a6f246a28228da5e1066f347f4ec2a1247afc5fd7a"
+    },
+    {
+      "path": "work/glob-policy/family-before-test-fs-readdir.log",
+      "bytes": 1422,
+      "sha256": "c343879185d23a956b8914698040ce0f8dff44848a4731a8a59a8b6e1d987ed7"
+    },
+    {
+      "path": "work/glob-policy/family-before-test-fs-utils-get-dirents.json",
+      "bytes": 2300,
+      "sha256": "3daf9334b2ba9b64b5e430386856d11fb680fd417790fe01a56c21ca80e54b85"
+    },
+    {
+      "path": "work/glob-policy/family-before-test-fs-utils-get-dirents.log",
+      "bytes": 197,
+      "sha256": "4686a5a442f48cde24fcfa6cf244e5e74796fbd6f3327f650d249da5ddb1eee5"
+    },
+    {
+      "path": "work/glob-policy/family-candidate-test-fs-glob.json",
+      "bytes": 2574,
+      "sha256": "4902cd9e38fab2feefe0266be8db1ce399e53c32ed3fa0b76375228a847e62b1"
+    },
+    {
+      "path": "work/glob-policy/family-candidate-test-fs-glob.log",
+      "bytes": 390,
+      "sha256": "a168b3aea42f3a4a2a811e141ca465715690a84fc74510f45e06faa534058787"
+    },
+    {
+      "path": "work/glob-policy/family-candidate-test-fs-opendir.json",
+      "bytes": 668,
+      "sha256": "68bdadf6cb680985c483d4116c1ab5eac63fb055c2e20706a4c4b151ccfb9bfc"
+    },
+    {
+      "path": "work/glob-policy/family-candidate-test-fs-opendir.log",
+      "bytes": 187,
+      "sha256": "091034aa56795c26af19f660e1ef60fe33ac1d52c88087b1d91a22800af16243"
+    },
+    {
+      "path": "work/glob-policy/family-candidate-test-fs-readdir.json",
+      "bytes": 12150,
+      "sha256": "ba59e639d17c8c4719af7eaebcd13befb626bdbd37191c6298d0a836af26778a"
+    },
+    {
+      "path": "work/glob-policy/family-candidate-test-fs-readdir.log",
+      "bytes": 1422,
+      "sha256": "43d8bcf30784df15b83f642d3e30fbcdd957572d0c50a678a86b2b62926048ce"
+    },
+    {
+      "path": "work/glob-policy/family-candidate-test-fs-utils-get-dirents.json",
+      "bytes": 2300,
+      "sha256": "2059642218719e5e7a3cb1c6299c32473e8dadbc256e99ea75c83a1c5d71d124"
+    },
+    {
+      "path": "work/glob-policy/family-candidate-test-fs-utils-get-dirents.log",
+      "bytes": 197,
+      "sha256": "4686a5a442f48cde24fcfa6cf244e5e74796fbd6f3327f650d249da5ddb1eee5"
+    },
+    {
+      "path": "work/glob-policy/family-driver.log",
+      "bytes": 3841,
+      "sha256": "44fb76ce0d85124f4ed3a5f6a7e7fdb7950a87fe49395e4a049c4c3d89aea4b0"
+    },
+    {
+      "path": "work/glob-policy/family-receipt.json",
+      "bytes": 5269,
+      "sha256": "6360141ee94c5dc086551fcd7bc0e25125a0b079182cbc4b9dbad14a4e77753c"
+    },
+    {
+      "path": "work/glob-policy/family.py",
+      "bytes": 1869,
+      "sha256": "b2a6c781b4f16baf008df11dd50191c15a3a15c4bc22677a9db7d4552a2aa552"
+    },
+    {
+      "path": "work/glob-policy/feature-merge-commit.log",
+      "bytes": 85,
+      "sha256": "3c81537b580f9b2d5e5240a07fdd89940c70ffcc54a5f21d068ca57eb0c1d8f0"
+    },
+    {
+      "path": "work/glob-policy/feature-merge.log",
+      "bytes": 207,
+      "sha256": "0bfb10b9e5ab48fac3fa7c16d61591f71044dbde4541749f7cf8ddc49d6c7fec"
+    },
+    {
+      "path": "work/glob-policy/fixed-work.json",
+      "bytes": 153651,
+      "sha256": "b0741e57c80027520d78fb65a3d02b8e11ef28503489cfa1dfed1c78e3145126"
+    },
+    {
+      "path": "work/glob-policy/fixed-work.log",
+      "bytes": 1120,
+      "sha256": "62bbaefa819a795a1907dc3b2f460595be7c1b7162c620baa7754376857d8d37"
+    },
+    {
+      "path": "work/glob-policy/fixture-node.log",
+      "bytes": 1807,
+      "sha256": "17ee8ac7d17845321da74a08066800d8dcf0b3508a8eeee9c5ea3f7003587e0b"
+    },
+    {
+      "path": "work/glob-policy/focused-before-startup-reduction.log",
+      "bytes": 431,
+      "sha256": "e5dd9a759277dc6bbc745514895f790a5022e9af006c64cfadfea583cfe31358"
+    },
+    {
+      "path": "work/glob-policy/focused-initial-bundled-goal-failure.log",
+      "bytes": 1094,
+      "sha256": "e324727366b1c30055e87a08799a9defbee88f58d48a97afa6dd2657cacb4d9b"
+    },
+    {
+      "path": "work/glob-policy/focused.log",
+      "bytes": 432,
+      "sha256": "b9cba5a3631c4d23513eee1f1687725f295d070bba9b74dbc01cbdd038f9ab64"
+    },
+    {
+      "path": "work/glob-policy/framework.log",
+      "bytes": 3798,
+      "sha256": "b41881f94821125815bc87efbbbd7d26b13fd072686394014795864fa55f2ae8"
+    },
+    {
+      "path": "work/glob-policy/incoming-merge.log",
+      "bytes": 43266,
+      "sha256": "1a2d98f4369373e90dc02597fc9e16250e0af90a55a0839026b43a0eccfd75fe"
+    },
+    {
+      "path": "work/glob-policy/lazy-policy-commit.log",
+      "bytes": 147,
+      "sha256": "89f87e59672363e2357947e549a44d393d9d120c6fcc65b909b806c86395a2a5"
+    },
+    {
+      "path": "work/glob-policy/loader-fix-commit.log",
+      "bytes": 160,
+      "sha256": "76ff53069abad9397208d0591bfa605038bf218a9994c482e501b288e07fea89"
+    },
+    {
+      "path": "work/glob-policy/minimatch-physical.log",
+      "bytes": 20,
+      "sha256": "4bdd9d35286d03341a12629bc1b76d3db28e19141f6e898ff5c4421aa65cedcf"
+    },
+    {
+      "path": "work/glob-policy/paired-before-startup-reduction.log",
+      "bytes": 217,
+      "sha256": "cf99254ece513a0610f63de731e9ba537b0d569282079f31b1b3ff5240c13113"
+    },
+    {
+      "path": "work/glob-policy/paired-build.log",
+      "bytes": 217,
+      "sha256": "11c9bc3a00394009d67c58a4abb7278cc87981c738e6b22092d12afecef58ef2"
+    },
+    {
+      "path": "work/glob-policy/paired-initial-build.log",
+      "bytes": 365,
+      "sha256": "63792bdbf775984e21d8d786b04cd9cb84822a2eaaa75f5470c5da8fe2c8148c"
+    },
+    {
+      "path": "work/glob-policy/physical-candidate.log",
+      "bytes": 391,
+      "sha256": "5e490a4ac153f6f99c0cd848980b5e742d77d7f285989eb0e9423371580b3c06"
+    },
+    {
+      "path": "work/glob-policy/private-entry-commit.log",
+      "bytes": 126,
+      "sha256": "4ebda880a5af92433ee854f71bc7001a967addb8f52d5a8a7dd6f049d4e9d7e6"
+    },
+    {
+      "path": "work/glob-policy/qualify-core.sh",
+      "bytes": 1127,
+      "sha256": "cedc1e7d583461b1f3efc8c0d668dcd63769a793959cac363b035f3c662fd763"
+    },
+    {
+      "path": "work/glob-policy/qualify-lazy-policy.sh",
+      "bytes": 1580,
+      "sha256": "23e89e5e967d4f3bb181aea032c0ee9ca08928379ee4099e03f61b110980744e"
+    },
+    {
+      "path": "work/glob-policy/qualify-node-fix.sh",
+      "bytes": 1357,
+      "sha256": "9c4029be20ccf91ff176bb5aa7992401c7cbd7430dc3aeff81bef660f1f99bc2"
+    },
+    {
+      "path": "work/glob-policy/qualify-quiet.sh",
+      "bytes": 1061,
+      "sha256": "ae3f495df02809cad47bf2efa5ddc4b7899e72f0e461622e28d4b39c57f1e317"
+    },
+    {
+      "path": "work/glob-policy/qualify.sh",
+      "bytes": 1390,
+      "sha256": "2c46e009bfc96adff53dd4f6cf8ee943045dc293f8a794675479167e37519651"
+    },
+    {
+      "path": "work/glob-policy/quiet-source-sha256.json",
+      "bytes": 83073,
+      "sha256": "99bebdb7bf759ebc07b284d61f03c17e2c9f31c636156f666be62b7f8b0b2bf5"
+    },
+    {
+      "path": "work/glob-policy/retain-shadow-full.py",
+      "bytes": 2775,
+      "sha256": "9df0f922186f425388d00e68d3b003b9b055cc7684c7d1f33003371a64b629b3"
+    },
+    {
+      "path": "work/glob-policy/shadow-node.log",
+      "bytes": 195,
+      "sha256": "5bb1c6f6a341403cc0fb9a357f431916fbbeb47d4b36b6b0a8179f599a2f7a1f"
+    },
+    {
+      "path": "work/glob-policy/shadow-quench.log",
+      "bytes": 195,
+      "sha256": "5bb1c6f6a341403cc0fb9a357f431916fbbeb47d4b36b6b0a8179f599a2f7a1f"
+    },
+    {
+      "path": "work/glob-policy/shadow.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/glob-policy/shared.log",
+      "bytes": 882,
+      "sha256": "c4a8814432701d317da52a9bccc3cc3881ce1a0d5348bb1435faeb0fcf83b67e"
+    },
+    {
+      "path": "work/glob-policy/startup-control.log",
+      "bytes": 354,
+      "sha256": "03644fbe0d19f314eac099e74b08a6699af4b6b124559810123a8909d212afd7"
+    },
+    {
+      "path": "work/glob-policy/startup-measurements.json",
+      "bytes": 543,
+      "sha256": "b624028a7367c62cb48d73e47d9022ccb497d490798f007ac08596839996430a"
+    },
+    {
+      "path": "work/glob-policy/workspace.log",
+      "bytes": 519,
+      "sha256": "5ac40d7e2ce6ca2531222f18c74e2e0ce2a924402453c107bddab8637d1a00b2"
+    },
+    {
+      "path": "work/glob-policy-bin/source-commit.txt",
+      "bytes": 41,
+      "sha256": "8a16dbd0d791a21c5cca16216e5b1c1c80c3426d3bc692d1b412776336dab9ad"
+    },
+    {
+      "path": "work/glob-policy-bin/source-sha256.json",
+      "bytes": 83073,
+      "sha256": "99bebdb7bf759ebc07b284d61f03c17e2c9f31c636156f666be62b7f8b0b2bf5"
+    },
+    {
+      "path": "work/glob-policy-bin/sha256.txt",
+      "bytes": 235,
+      "sha256": "852056aadae959cb1766ac26e44d068de184e6c83d4b53a1bf97ca13aed0d0dd"
+    },
+    {
+      "path": "work/task-supervisor/glob-policy-state.json",
+      "bytes": 242,
+      "sha256": "d6022a7345f7e2b0bb4836ef2b280862eb5dbdff52cff405bafe7b3a7a613e3c"
+    },
+    {
+      "path": "work/task-supervisor/glob-policy.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/task-supervisor/glob-policy-config.json",
+      "bytes": 245,
+      "sha256": "204fe29912283dd5a55ce4ac6d70a49586568a1d1bc9eb5be8da474072d2effd"
+    },
+    {
+      "path": "work/task-supervisor/glob-policy-fixed-state.json",
+      "bytes": 246,
+      "sha256": "fdd55f05443f55dd21599907625d25eff518efb65f20bbd629040673ff9b4c60"
+    },
+    {
+      "path": "work/task-supervisor/glob-policy-fixed.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/task-supervisor/glob-policy-fixed-config.json",
+      "bytes": 261,
+      "sha256": "756ca7deda9202e308d6d321b33f91f780faf5b659a2ae4a761aaf412338e4c0"
+    },
+    {
+      "path": "work/task-supervisor/glob-policy-lazy-state.json",
+      "bytes": 249,
+      "sha256": "81e3440b1f3b244d57e9576a1fb3a04e6f1906734e227b751290eab0bf7397e6"
+    },
+    {
+      "path": "work/task-supervisor/glob-policy-lazy.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/task-supervisor/glob-policy-lazy-config.json",
+      "bytes": 262,
+      "sha256": "5eb18a573dd366606455c4f290c36a813d98100dc58d549d43421f196c4b7cc6"
+    },
+    {
+      "path": "work/task-supervisor/glob-policy-quiet-state.json",
+      "bytes": 246,
+      "sha256": "ae8f91e48a64e6953d4c146304dc836a1e6594bcc649202de84965a361c2071f"
+    },
+    {
+      "path": "work/task-supervisor/glob-policy-quiet.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/task-supervisor/glob-policy-quiet-config.json",
+      "bytes": 258,
+      "sha256": "aaa5b5dc8b7c17669a7a023ea10fb781daf4d1a7087be9daceb529a5225b418d"
+    },
+    {
+      "path": "work/task-supervisor/glob-policy-extras-state.json",
+      "bytes": 239,
+      "sha256": "73adb8df94f4f2944441b36dc6535759aa72b6fedcacfac9ef5cc7f1cbe3e9b1"
+    },
+    {
+      "path": "work/task-supervisor/glob-policy-extras.log",
+      "bytes": 617,
+      "sha256": "1edb28bf12057119a150ca1160cf69a55f618444ed870da2b4b054f6d8777fba"
+    },
+    {
+      "path": "work/task-supervisor/glob-policy-extras-config.json",
+      "bytes": 253,
+      "sha256": "5e1267d08f2dea6a344106f3182b07c8a2d3c70688fba05027632f882b84798d"
+    }
+  ]
+}

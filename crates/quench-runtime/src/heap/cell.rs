@@ -1235,6 +1235,7 @@ pub(crate) struct CallSiteRecord {
     pub(crate) this_value: Value,
     pub(crate) hide_identity: bool,
     pub(crate) is_constructor: bool,
+    pub(crate) is_eval: bool,
 }
 
 impl CallSiteRecord {

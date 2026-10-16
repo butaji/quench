@@ -1,0 +1,4 @@
+Fail /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-glob-no-follow-symlink-globstar.mjs
+Fail /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-glob-throw.mjs
+Fail /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-glob.mjs
+all: pass=0 skip=0 fail=3 timeout=0 crash=0 unclassified=0 total=3 inventory_hash=a1cc5539923e9a17

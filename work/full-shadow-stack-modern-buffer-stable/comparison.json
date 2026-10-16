@@ -1,0 +1,15 @@
+{
+  "gained": [
+    "test-buffer-alloc-alignment.js",
+    "test-buffer-islatin1.js",
+    "test-common-must-not-call.js",
+    "test-shadow-realm-prepare-stack-trace.js",
+    "test-startup-empty-regexp-statics.js"
+  ],
+  "lost": [
+    "test-shadow-realm-gc-module.js",
+    "test-stream2-read-sync-stack.js",
+    "test-stringbytes-external.js"
+  ],
+  "skip_changes": {}
+}
