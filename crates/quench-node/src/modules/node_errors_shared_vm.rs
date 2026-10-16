@@ -496,5 +496,13 @@ fn build_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, Ro
     )?;
     let key = context.string_rooted("getErrorSourcePositions");
     context.define_data_property_rooted(binding, key, function, true, true, true)?;
+    let codes = context.object_rooted()?;
+    for &(name, code) in super::node_protocol_constants::EXIT_CODES {
+        let key = context.string_rooted(name);
+        let value = context.number(f64::from(code));
+        context.define_data_property_rooted(codes, key, value, false, true, false)?;
+    }
+    let key = context.string_rooted("exitCodes");
+    context.define_data_property_rooted(binding, key, codes, false, true, true)?;
     Ok(binding)
 }
