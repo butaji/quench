@@ -1239,14 +1239,17 @@ unsafe fn lane_single_field_base<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
     base: u16,
+    atom: Atom,
 ) -> Option<Value> {
     if base == crate::bytecode::FieldBase::NESTED {
         return None;
     }
-    match crate::bytecode::FieldBase(base).register_index() {
+    let object = match crate::bytecode::FieldBase(base).register_index() {
         Some(register) => Some(r.get(register)),
         None => unsafe { lane_fixed_this(cx) },
-    }
+    }?;
+    unsafe { vm(cx) }.prepare_named_function_info_lookup(object, atom);
+    Some(object)
 }
 
 /// `this` where the lane holds it or the frame fixed it; `None` for a lexical `this`, which
@@ -1272,7 +1275,7 @@ lane_handler! {
     fn lane_get_field_own<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) })
+        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b, i.imm()) })
             .and_then(|object| (unsafe { vm(cx) }).primary_own_field_hit(code, object, i.c))
         else {
             sibling!(lane_get_field_miss::<H>, r, ip, Carried::SCRIPT)
@@ -1289,7 +1292,7 @@ lane_handler! {
     fn lane_get_field_polymorphic<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) })
+        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b, i.imm()) })
             .and_then(|object| (unsafe { vm(cx) }).polymorphic_field_hit(code, object, i.c))
         else {
             sibling!(lane_get_field::<H>, r, ip, Carried::SCRIPT)
@@ -1306,7 +1309,7 @@ lane_handler! {
     fn lane_get_field_holder<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) })
+        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b, i.imm()) })
             .and_then(|object| (unsafe { vm(cx) }).primary_holder_field_hit(code, object, i.c))
         else {
             sibling!(lane_get_field_miss::<H>, r, ip, Carried::SCRIPT)
@@ -1323,7 +1326,7 @@ lane_handler! {
     fn lane_get_field_inherited<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) })
+        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b, i.imm()) })
             .and_then(|object| (unsafe { vm(cx) }).inherited_field_hit(code, object, i.c))
         else {
             sibling!(lane_get_field_miss::<H>, r, ip, Carried::SCRIPT)
@@ -1423,6 +1426,7 @@ fn lane_cached_field<H: Host>(
     site: u16,
 ) -> Option<Value> {
     let vm = unsafe { vm(cx) };
+    vm.prepare_named_function_info_lookup(object, atom);
     match vm.cached_field_hit(code, object, site) {
         super::object::FieldCacheProbe::Hit(value) => Some(value),
         probe => lane_cached_field_miss(vm, code, object, atom, site, probe),
