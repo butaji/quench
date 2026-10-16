@@ -1226,6 +1226,10 @@ impl<H: Host> Vm<H> {
             // call, or at the residual `current_program` keeps alive until it is replaced,
             // and it is re-derived at that replacement.
             let p = unsafe { &*executing_residual };
+            if let Err(error)=self.check_execution_interrupt() {
+                return self.unwind_general_loop(p,frame,pc,pc as u32,error,&mut pending_calls,&mut cursor,executing_program,fast_lane)
+                    .map(|_|unreachable!("host termination cannot select a guest handler"));
+            }
             if Self::lane_runs(cursor.lane, pc) {
                 pc = self.run_fast_lane(
                     p,
@@ -1731,6 +1735,7 @@ impl<H: Host> Vm<H> {
         throwing_pc: u32,
         error: JsError,
     ) -> Result<usize, JsError> {
+        if error.is_execution_terminated() { return Err(error); }
         let wasm = program.kind == crate::bytecode::ProgramKind::Wasm;
         if wasm && error.wasm_exception().is_none() {
             return Err(error);

@@ -387,7 +387,7 @@ impl<H: Host> Vm<H> {
                 } else {
                     length * kind.width()
                 };
-                let backed_by_resizable = self.array_buffer_resizable(buffer);
+                let backed_by_resizable = self.array_buffer_resizable(buffer) && matches!(self.heap.get(buffer),Some(Cell::ArrayBuffer{shared:false,..}));
                 let buffer = self.structured_clone_value(program, buffer, graph)?;
                 let prototype = self.typed_array_proto(kind);
                 let target = self.heap.alloc(Cell::TypedArray {
@@ -424,7 +424,7 @@ impl<H: Host> Vm<H> {
                     ));
                 }
                 let required = if length_tracking { 0 } else { length };
-                let backed_by_resizable = self.array_buffer_resizable(buffer);
+                let backed_by_resizable = self.array_buffer_resizable(buffer) && matches!(self.heap.get(buffer),Some(Cell::ArrayBuffer{shared:false,..}));
                 if (!detached || backed_by_resizable)
                     && self.array_buffer_out_of_bounds(buffer, object.offset, required)
                 {
@@ -543,7 +543,7 @@ impl<H: Host> Vm<H> {
                 copied_bytes.try_reserve_exact(bytes.len()).map_err(|_| {
                     self.range_error(program, "ArrayBuffer is too large to clone".into())
                 })?;
-                copied_bytes.extend_from_slice(&bytes);
+                copied_bytes.extend_from_slice(&bytes.read());
                 let prototype = self.intrinsic_builtin_prototype(Native::ArrayBuffer);
                 let target = self.heap.alloc(Cell::ArrayBuffer {
                     object: Box::new(Self::empty_object(prototype)),
@@ -562,6 +562,10 @@ impl<H: Host> Vm<H> {
                 graph.remember(source, target_root);
                 Ok(self.heap.root_value(target_root).unwrap())
             }
+            Cell::ArrayBuffer{bytes,shared:true,detached:false,max_byte_length,resizable,immutable,..}=>{
+                if bytes.shared_backing().is_none(){return Err(self.data_clone_error(program,"SharedArrayBuffer has no shared backing"))}
+                graph.root(self,source);let prototype=self.intrinsic_builtin_prototype(Native::SharedArrayBuffer);let target=self.heap.alloc(Cell::ArrayBuffer{object:Box::new(Self::empty_object(prototype)),bytes,shared:true,detached:false,max_byte_length,resizable,immutable});let target_root=graph.root(self,target);graph.remember(source,target_root);Ok(self.heap.root_value(target_root).unwrap())
+            },
             Cell::ArrayBuffer { detached: true, .. } => Err(self.data_clone_error(
                 program,
                 "An ArrayBuffer is detached and could not be cloned.",

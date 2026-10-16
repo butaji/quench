@@ -598,6 +598,7 @@ impl<H: Host> Vm<H> {
             },
         ));
         roots.extend(self.test262_agent.roots());
+        roots.extend(self.shared_async_waiters.iter().map(|w|w.promise));
         roots.extend(
             self.realm
                 .promise
@@ -937,10 +938,16 @@ impl<H: Host> Vm<H> {
     }
 
     pub(crate) fn drain_jobs(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
-        while let Some(job) = self.realm.jobs.pop_front() {
-            self.run_pending_job(program, job)?;
-            self.advance_static_module_jobs(program)?;
-            self.advance_dynamic_import_jobs(program, true)?;
+        self.check_execution_interrupt()?;
+        loop{
+            while let Some(job)=self.realm.jobs.pop_front(){
+                self.check_execution_interrupt()?;self.run_pending_job(program,job)?;
+                self.advance_static_module_jobs(program)?;self.advance_dynamic_import_jobs(program,true)?;
+            }
+            // Async futex completion is an agent task: settle only after the
+            // existing microtask queue drains, then run its Promise reactions.
+            self.poll_shared_async_waiters(program)?;
+            if self.realm.jobs.is_empty(){break}
         }
         Ok(Value::UNDEFINED)
     }

@@ -6,8 +6,10 @@
 //! memory detaches the view (replacing it with an empty owned store) before the linear bytes
 //! can move, so a live view's pointer always names the memory's current bytes.
 
+use crate::shared_backing::{SharedBacking, State};
 use crate::wasm::memory::MemoryStorage;
 use std::rc::Rc;
+use std::sync::{Arc, MutexGuard};
 
 /// One word, so an ArrayBuffer cell stays within the heap's cell size.
 #[derive(Debug, Default)]
@@ -23,6 +25,7 @@ enum BufferStore {
     /// copied into an owned store on the first write.
     Shared(Rc<Vec<u8>>),
     Wasm(WasmView),
+    AtomicShared(Arc<SharedBacking>),
 }
 
 impl Clone for BufferBytes {
@@ -85,7 +88,10 @@ impl BufferBytes {
     /// Whether the store holds a reference counted outside its own allocation (shared
     /// bytes or a memory), which the striped drop locks do not cover.
     pub(crate) fn holds_external_rc(&self) -> bool {
-        !matches!(*self.0, BufferStore::Owned(_) | BufferStore::AddressPinned(_))
+        !matches!(
+            *self.0,
+            BufferStore::Owned(_) | BufferStore::AddressPinned(_)
+        )
     }
 
     /// The store's allocation, which identifies it across the cells sharing it.
@@ -103,7 +109,7 @@ impl BufferBytes {
     pub(crate) fn capacity(&self) -> usize {
         match &*self.0 {
             BufferStore::Owned(bytes) | BufferStore::AddressPinned(bytes) => bytes.capacity(),
-            BufferStore::Shared(_) | BufferStore::Wasm(_) => 0,
+            BufferStore::Shared(_) | BufferStore::Wasm(_) | BufferStore::AtomicShared(_) => 0,
         }
     }
 
@@ -119,28 +125,70 @@ impl BufferBytes {
                 *store = BufferStore::AddressPinned(bytes.to_vec());
             }
             BufferStore::AddressPinned(_) | BufferStore::Wasm(_) => {}
+            BufferStore::AtomicShared(_) => {
+                panic!("shared backing cannot expose an unguarded address")
+            }
         }
         self.as_ptr_bytes() as usize
     }
 
     pub(crate) fn as_ptr_bytes(&self) -> *const u8 {
-        std::ops::Deref::deref(self).as_ptr()
+        match &*self.0 {
+            BufferStore::AtomicShared(_) => {
+                panic!("shared backing cannot expose unguarded pointer")
+            }
+            _ => self.read().as_ptr(),
+        }
     }
 
     /// The bytes for writing; an owned store is unshared from other cells first.
-    pub(crate) fn make_mut(&mut self) -> &mut [u8] {
+    pub(crate) fn make_mut(&mut self) -> BufferWrite<'_> {
         let store = Rc::make_mut(&mut self.0);
         if let BufferStore::Shared(bytes) = store {
             *store = BufferStore::Owned(bytes.to_vec());
         }
         match store {
-            BufferStore::Owned(bytes) | BufferStore::AddressPinned(bytes) => bytes,
+            BufferStore::Owned(bytes) | BufferStore::AddressPinned(bytes) => {
+                BufferWrite::Borrowed(bytes)
+            }
+            BufferStore::AtomicShared(backing) => BufferWrite::Shared(backing.lock()),
             BufferStore::Shared(_) => unreachable!("unshared above"),
-            // SAFETY: a live view names the memory's current bytes (see the module
-            // comment), and no other borrow of them is held while JavaScript runs.
-            BufferStore::Wasm(view) => unsafe {
+            BufferStore::Wasm(view) => BufferWrite::Borrowed(unsafe {
                 std::slice::from_raw_parts_mut(view.base, view.len)
-            },
+            }),
+        }
+    }
+    pub(crate) fn from_shared(backing: Arc<SharedBacking>) -> Self {
+        Self(Rc::new(BufferStore::AtomicShared(backing)))
+    }
+    pub(crate) fn shared_backing(&self) -> Option<Arc<SharedBacking>> {
+        match &*self.0 {
+            BufferStore::AtomicShared(b) => Some(b.clone()),
+            _ => None,
+        }
+    }
+    pub(crate) fn len(&self) -> usize {
+        match &*self.0 {
+            BufferStore::AtomicShared(b) => b.length().expect("shared backing length"),
+            _ => self.read().len(),
+        }
+    }
+    pub(crate) fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    pub(crate) fn to_vec(&self) -> Vec<u8> {
+        self.read().to_vec()
+    }
+    pub(crate) fn read(&self) -> BufferRead<'_> {
+        match &*self.0 {
+            BufferStore::Owned(bytes) | BufferStore::AddressPinned(bytes) => {
+                BufferRead::Borrowed(bytes)
+            }
+            BufferStore::Shared(bytes) => BufferRead::Borrowed(bytes),
+            BufferStore::AtomicShared(b) => BufferRead::Shared(b.lock()),
+            BufferStore::Wasm(v) => {
+                BufferRead::Borrowed(unsafe { std::slice::from_raw_parts(v.base, v.len) })
+            }
         }
     }
 
@@ -152,22 +200,49 @@ impl BufferBytes {
         }
         match store {
             BufferStore::Owned(bytes) => bytes,
-            BufferStore::AddressPinned(_) => unreachable!("address-pinned ArrayBuffer is fixed length"),
+            BufferStore::AddressPinned(_) => {
+                unreachable!("address-pinned ArrayBuffer is fixed length")
+            }
             BufferStore::Shared(_) => unreachable!("unshared above"),
             BufferStore::Wasm(_) => unreachable!("a Wasm memory view is not resizable"),
+            BufferStore::AtomicShared(_) => {
+                unreachable!("shared grows through synchronized backing")
+            }
         }
     }
 }
 
-impl std::ops::Deref for BufferBytes {
+pub(crate) enum BufferRead<'a> {
+    Borrowed(&'a [u8]),
+    Shared(MutexGuard<'a, State>),
+}
+impl std::ops::Deref for BufferRead<'_> {
     type Target = [u8];
-
     fn deref(&self) -> &[u8] {
-        match &*self.0 {
-            BufferStore::Owned(bytes) | BufferStore::AddressPinned(bytes) => bytes,
-            BufferStore::Shared(bytes) => bytes,
-            // SAFETY: as for `make_mut`.
-            BufferStore::Wasm(view) => unsafe { std::slice::from_raw_parts(view.base, view.len) },
+        match self {
+            Self::Borrowed(b) => b,
+            Self::Shared(s) => &s.bytes,
+        }
+    }
+}
+pub(crate) enum BufferWrite<'a> {
+    Borrowed(&'a mut [u8]),
+    Shared(MutexGuard<'a, State>),
+}
+impl std::ops::Deref for BufferWrite<'_> {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        match self {
+            Self::Borrowed(b) => b,
+            Self::Shared(s) => &s.bytes,
+        }
+    }
+}
+impl std::ops::DerefMut for BufferWrite<'_> {
+    fn deref_mut(&mut self) -> &mut [u8] {
+        match self {
+            Self::Borrowed(b) => b,
+            Self::Shared(s) => &mut s.bytes,
         }
     }
 }
@@ -183,10 +258,10 @@ mod address_tests {
         original.make_mut()[0] = 42;
         snapshot.make_mut()[1] = 17;
         assert_eq!(original.as_ptr_bytes() as usize, address);
-        assert_eq!(original[0], 42);
-        assert_eq!(original[1], 0);
-        assert_eq!(snapshot[0], 0);
-        assert_eq!(snapshot[1], 17);
+        assert_eq!(original.read()[0], 42);
+        assert_eq!(original.read()[1], 0);
+        assert_eq!(snapshot.read()[0], 0);
+        assert_eq!(snapshot.read()[1], 17);
         assert_eq!(original.pin_address(), address);
     }
 }

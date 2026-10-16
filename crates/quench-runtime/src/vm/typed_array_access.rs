@@ -86,6 +86,12 @@ impl<H: Host> Vm<H> {
             }
             _ => return Ok(None),
         };
+        // A naked pointer cannot carry the synchronized shared store's guard.
+        // Reject this host boundary explicitly rather than copy or expose bytes
+        // while other runtimes may access them concurrently.
+        if matches!(self.heap.get(buffer),Some(Cell::ArrayBuffer{bytes,shared:true,..}) if bytes.shared_backing().is_some()) {
+            return Err(self.type_error(&program,"Raw pointer access to synchronized shared backing requires a native lifetime protocol".into()));
+        }
         let base = match self.heap.get_mut(buffer) {
             Some(Cell::ArrayBuffer { bytes, detached: false, resizable, .. }) if !bytes.is_empty() => {
                 let before = bytes.capacity();
@@ -155,7 +161,7 @@ impl<H: Host> Vm<H> {
 
     pub(crate) fn embedding_bytes_prefix(&self, value: Value, maximum: usize) -> Option<Vec<u8>> {
         if let Some(Cell::ArrayBuffer { bytes, detached, .. }) = self.heap.get(value) {
-            return Some(if *detached { Vec::new() } else { bytes[..bytes.len().min(maximum)].to_vec() });
+            let length=bytes.len().min(maximum);return Some(if *detached { Vec::new() } else { bytes.read()[..length].to_vec() });
         }
         self.embedding_view_bytes_prefix(value, maximum)
     }
@@ -187,7 +193,7 @@ impl<H: Host> Vm<H> {
             return Some(Vec::new());
         }
         let end = offset.checked_add(byte_length.min(maximum))?;
-        Some(bytes.get(offset..end)?.to_vec())
+        Some(bytes.read().get(offset..end)?.to_vec())
     }
 
     pub(super) fn typed_array_get(&mut self, object: Value, index: usize) -> Option<Value> {
@@ -207,7 +213,8 @@ impl<H: Host> Vm<H> {
         let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get(buffer) else {
             return Some(Value::UNDEFINED);
         };
-        let bytes = bytes.clone();
+        let owned_bytes=bytes.clone();
+        let bytes=owned_bytes.read();
         let start = offset + index * kind.width();
         let Some(bytes) = bytes.get(start..start + kind.width()) else {
             return Some(Value::UNDEFINED);
@@ -446,7 +453,7 @@ impl<H: Host> Vm<H> {
         }
         let encoded = Self::typed_array_element_bytes(kind, value);
         if let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(buffer) {
-            let bytes = bytes.make_mut();
+            let mut bytes = bytes.make_mut();
             let start = offset + index * kind.width();
             bytes[start..start + kind.width()].copy_from_slice(&encoded[..kind.width()]);
         }
@@ -580,7 +587,7 @@ impl<H: Host> Vm<H> {
         if source_kind == target_kind {
             let target_offset = target_offset + target_start * target_kind.width();
             let byte_length = length * source_kind.width();
-            if source_buffer == target_buffer {
+            if self.array_buffers_share_data_block(source_buffer,target_buffer) {
                 let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(target_buffer) else {
                     unreachable!("typed copy backing buffer was validated");
                 };
@@ -591,7 +598,7 @@ impl<H: Host> Vm<H> {
                 let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get(source_buffer) else {
                     unreachable!("typed copy source backing buffer was validated");
                 };
-                let source_bytes = bytes.clone();
+                let source_bytes = bytes.to_vec();
                 let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(target_buffer) else {
                     unreachable!("typed copy target backing buffer was validated");
                 };
@@ -600,7 +607,7 @@ impl<H: Host> Vm<H> {
             }
             return Ok(());
         }
-        let snapshot = if source_buffer == target_buffer {
+        let snapshot = if self.array_buffers_share_data_block(source_buffer,target_buffer) {
             let mut values = Vec::with_capacity(length);
             for index in 0..length {
                 let value = self.typed_array_get(source, index).unwrap();
@@ -661,7 +668,7 @@ mod backing_address_tests {
         let Cell::ArrayBuffer { bytes, .. } = snapshot else {
             panic!("ArrayBuffer snapshot");
         };
-        assert_eq!(bytes[offset], 0);
+        assert_eq!(bytes.read()[offset], 0);
         assert_eq!(
             vm.embedding_array_buffer_aligned_offset(root, 64).unwrap(),
             offset
