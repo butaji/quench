@@ -9592,6 +9592,25 @@ fn indirect_eval_script_identity_preserves_origins_fresh_values_templates_and_re
     compare_node_source_with_args(include_str!("../node-tests/test-indirect-eval-script-identity.js"), &[]);
 }
 
+#[test]
+fn error_source_positions_preserve_captured_compiler_metadata_without_guest_hooks() {
+    compare_node_source_with_args(include_str!("../node-tests/test-error-source-positions.js"), &["--expose-gc", "--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn native_protocol_constants_derive_from_configured_sdk_headers_and_preserve_descriptors() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-protocol-constants.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn native_caller_location_uses_original_activations_independently_of_error_hooks() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-caller-location.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn filesystem_glob_policy_defers_promises_dependencies_and_preserves_data_descriptors() {
+    compare_node_source_with_args(include_str!("../node-tests/test-fs-promises-glob-lazy-policy.js"), &["--expose-internals", "--no-warnings"]);
+}
 
 #[test]
 fn function_constructor_default_debug_names_remain_distinct_from_public_names_and_descriptors() {

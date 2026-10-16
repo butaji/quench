@@ -1,7 +1,8 @@
 use crate::Value;
 use super::wtf16::JsString;
 use crate::bytecode::ResidualProgram;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
+use crate::heap::WeakHandle;
 use rustc_hash::FxHashMap;
 
 struct ProgramEntry {
@@ -36,6 +37,8 @@ pub(super) const ANONYMOUS_EVAL_ORIGIN: &str = "eval at <anonymous>";
 #[derive(Clone)]
 pub(super) enum CompilationOrigin {
     Source,
+    /// Execution state in another realm of one logical host Script.
+    SharedScript { source: ProgramId },
     Eval { caller: Option<JsString> },
     FunctionConstructor { caller: JsString },
 }
@@ -81,6 +84,11 @@ impl ProgramId {
     }
 }
 
+struct OwnedScript {
+    owner: Weak<crate::api::CompiledScriptState>,
+    instances: Vec<(WeakHandle, ProgramId)>,
+}
+
 #[derive(Default)]
 pub(crate) struct ProgramStore {
     /// Indexed by `ProgramId`; a reclaimed program leaves an empty slot, so an
@@ -88,6 +96,7 @@ pub(crate) struct ProgramStore {
     programs: Vec<Option<ProgramEntry>>,
     /// Weak compiled-script identities for global eval; contexts are supplied per call.
     global_eval_programs: FxHashMap<JsString, ProgramId>,
+    owned_scripts: FxHashMap<ProgramId, OwnedScript>,
     /// Completed reclamation passes; see `reclaim_unreferenced`.
     reclaim_passes: u64,
     /// Reclaimable programs inserted since the last reclamation pass.
@@ -131,16 +140,31 @@ impl ProgramStore {
         self.programs.iter().flatten().count()
     }
 
-    /// Whether reclaimable programs arrived since the last reclamation pass.
+    /// Whether dynamic code may be reclaimable, including dropped host owners.
     pub(crate) fn has_unchecked_reclaimable(&self) -> bool {
         self.unchecked_reclaimable > 0
+            || self.owned_scripts.values().any(|script| script.owner.strong_count() == 0)
     }
 
     /// Drops every reclaimable program that `referenced` does not mark and that
     /// predates the previous pass. A program therefore survives the first pass
     /// after its insertion, while its first closure or frame is still being
     /// created. Returns the reclaimed ids.
-    pub(crate) fn reclaim_unreferenced(&mut self, referenced: &[bool]) -> Vec<ProgramId> {
+    pub(crate) fn reclaim_unreferenced(&mut self, mut referenced: Vec<bool>) -> Vec<ProgramId> {
+        // Owning a Script retains its code and live-realm execution state. An
+        // escaped function retains its source record even after the owner drops.
+        for (&source, script) in &self.owned_scripts {
+            let owned = script.owner.strong_count() != 0;
+            let live_instance = script.instances.iter().any(|(_, id)| {
+                referenced.get(id.index()).copied().unwrap_or(false)
+            });
+            if (owned || live_instance) && let Some(mark) = referenced.get_mut(source.index()) { *mark = true; }
+            if owned {
+                for (_, id) in &script.instances {
+                    if let Some(mark) = referenced.get_mut(id.index()) { *mark = true; }
+                }
+            }
+        }
         let previous_pass = self.reclaim_passes;
         self.reclaim_passes += 1;
         let mut reclaimed = Vec::new();
@@ -161,12 +185,14 @@ impl ProgramStore {
         if !reclaimed.is_empty() {
             let programs = &self.programs;
             self.global_eval_programs.retain(|_, id| programs.get(id.index()).is_some_and(Option::is_some));
+            self.owned_scripts.retain(|source, _| programs.get(source.index()).is_some_and(Option::is_some));
         }
         reclaimed
     }
 
     pub(crate) fn reset(&mut self, main: Rc<ResidualProgram>) -> ProgramId {
         self.global_eval_programs.clear();
+        self.owned_scripts.clear();
         self.programs.clear();
         self.unchecked_reclaimable = 0;
         let module = main.is_module();
@@ -177,13 +203,51 @@ impl ProgramStore {
         id
     }
 
+    pub(super) fn register_owned_script(&mut self, script: &Rc<crate::api::CompiledScriptState>) {
+        self.owned_scripts.insert(script.source, OwnedScript { owner: Rc::downgrade(script), instances: Vec::new() });
+    }
+
+    pub(super) fn owns_script(&self, script: &Rc<crate::api::CompiledScriptState>) -> bool {
+        self.owned_scripts.get(&script.source).is_some_and(|entry| {
+            std::ptr::eq(entry.owner.as_ptr(), Rc::as_ptr(script))
+        })
+    }
+
+    pub(super) fn owned_script_instance(&self, source: ProgramId, realm: WeakHandle) -> Option<ProgramId> {
+        self.owned_scripts.get(&source)?.instances.iter()
+            .find_map(|(owner, id)| (*owner == realm).then_some(*id))
+    }
+
+    pub(super) fn bind_script_instance(&mut self, source: ProgramId, realm: WeakHandle, id: ProgramId) {
+        self.set_origin(id, CompilationOrigin::SharedScript { source });
+        self.owned_scripts.get_mut(&source).expect("registered Script source")
+            .instances.push((realm, id));
+    }
+
+    pub(super) fn source_identity(&self, id: ProgramId) -> ProgramId {
+        match self.entry(id).map(|entry| &entry.origin) {
+            Some(CompilationOrigin::SharedScript { source }) => *source,
+            _ => id,
+        }
+    }
+
+    /// Prune realm identities before swept heap slots can be reused. Compiled
+    /// Script ownership must never keep a realm global alive through this cache.
+    pub(super) fn prune_owned_script_realms(&mut self, mut live: impl FnMut(WeakHandle) -> bool) {
+        for script in self.owned_scripts.values_mut() {
+            let before = script.instances.len();
+            script.instances.retain(|(realm, _)| live(*realm));
+            self.unchecked_reclaimable += before - script.instances.len();
+        }
+    }
+
     pub(super) fn set_origin(&mut self, id: ProgramId, origin: CompilationOrigin) {
         if let Some(entry) = self.entry_mut(id) { entry.origin = origin; }
     }
 
     pub(super) fn eval_origin(&self, id: ProgramId) -> Option<JsString> {
         match &self.entry(id)?.origin {
-            CompilationOrigin::Source => None,
+            CompilationOrigin::Source | CompilationOrigin::SharedScript { .. } => None,
             CompilationOrigin::Eval { caller } => Some(caller.clone()
                 .unwrap_or_else(|| JsString::from_str(ANONYMOUS_EVAL_ORIGIN))),
             CompilationOrigin::FunctionConstructor { caller } => Some(caller.clone()),
