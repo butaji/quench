@@ -127,8 +127,8 @@ pub struct HostFunction<H: Host> {
 /// Declare global and module-owned native descriptors from one binding table.
 #[macro_export]
 macro_rules! host_functions {
-    ($( $scope:ident $name:literal ($length:literal) => $callback:path ),* $(,)?) => {
-        &[$($crate::HostFunction {
+    ($( $(#[$attribute:meta])* $scope:ident $name:literal ($length:literal) => $callback:path ),* $(,)?) => {
+        &[$($(#[$attribute])* $crate::HostFunction {
             name: $name,
             length: $length,
             global: $crate::host_functions!(@global $scope $name),
@@ -839,6 +839,17 @@ impl<'a, H: Host> NativeContext<'a, H> {
 
     pub fn host_function(&mut self, id: HostFunctionId) -> Result<RootId, RootedError> {
         let result = self.vm.create_host_function(id);
+        self.completion(result)
+    }
+
+    /// Create a callback with an intrinsic JavaScript name independent of its
+    /// private dispatch-table key, including unnamed native bindings.
+    pub fn host_function_named(
+        &mut self,
+        id: HostFunctionId,
+        name: &str,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.create_named_host_function(id, name);
         self.completion(result)
     }
 
