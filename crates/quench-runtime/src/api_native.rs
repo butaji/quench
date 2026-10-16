@@ -78,6 +78,13 @@ pub enum PromiseSnapshot<T = RootId> {
     Rejected(T),
 }
 
+/// Flat native collection entries, preserving the current iterator position.
+#[derive(Debug)]
+pub struct CollectionPreview<T = RootId> {
+    pub entries: Vec<T>,
+    pub is_key_value: bool,
+}
+
 /// Intrinsic payload snapshot. Value roots remain scoped to the native callback.
 #[derive(Debug)]
 pub enum BuiltinData<T = RootId> {
@@ -244,6 +251,23 @@ impl<'a, H: Host> NativeContext<'a, H> {
         let result = self.vm.embedding_proxy_target(root);
         let value = result.map_err(|error| self.error(error))?;
         Ok(value.map(|value| self.scoped_value(value)))
+    }
+
+    /// Snapshot original target and handler without traps, including revoked nulls.
+    pub fn proxy_details_rooted(&mut self, root: RootId) -> Result<Option<(RootId, RootId)>, RootedError> {
+        let result = self.vm.embedding_proxy_details(root);
+        let details = result.map_err(|error| self.error(error))?;
+        Ok(details.map(|(target, handler)| (self.scoped_value(target), self.scoped_value(handler))))
+    }
+
+    /// Snapshot collection entries without advancing iterators or invoking hooks.
+    pub fn collection_preview_rooted(&mut self, root: RootId) -> Result<Option<CollectionPreview>, RootedError> {
+        let result = self.vm.embedding_collection_preview(root);
+        let preview = result.map_err(|error| self.error(error))?;
+        Ok(preview.map(|preview| CollectionPreview {
+            entries: preview.entries.into_iter().map(|value| self.scoped_value(value)).collect(),
+            is_key_value: preview.is_key_value,
+        }))
     }
 
     /// Test an internal-slot brand without invoking guest getters or proxy traps.
