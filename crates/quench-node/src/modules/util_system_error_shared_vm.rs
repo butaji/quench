@@ -22,7 +22,12 @@ pub(crate) const UV_UDP_REUSEADDR: i32 = 4;
 pub(crate) fn uv_binding(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     crate::host::shared_vm::commonjs::cached_native_binding(context, "\0binding:uv", |context| {
         let binding = context.object_rooted()?;
-        method(context, binding, "errname", "uvErrName")?;
+        let warning_state = context.null_object_rooted()?;
+        let errname = context.host_function_named_with_data(
+            crate::host::shared_vm::operation("uvErrName"), "errname", warning_state,
+        )?;
+        let key = context.string_rooted("errname");
+        context.define_data_property_rooted(binding, key, errname, true, true, true)?;
         for &(code, name, _) in UV_ERRORS {
             let key = context.string_rooted(&format!("UV_{name}"));
             let value = context.number(f64::from(code));
@@ -53,6 +58,7 @@ pub(crate) fn errname(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
+    pending_errname_warning(c)?;
     let value = number(c, args)?;
     Ok(c.string_rooted(&system_error_name(value)))
 }
@@ -89,4 +95,25 @@ pub(crate) fn error_map(
         let constructor = c.get_property_rooted(global, key)?;
         c.construct_rooted(constructor, constructor, &[entries])
     })
+}
+
+// The SDK uv.cc emits once per environment, before validating the error number.
+fn pending_errname_warning(c: &mut Context<'_>) -> Result<(), RootedError> {
+    use super::event_constructor_shared_vm::get;
+    let state = c.host_mut().shared_state();
+    if !state.borrow().cli_options.enabled("--pending-deprecation") { return Ok(()); }
+    let data = c.host_function_data()?;
+    let warned = get(c, data, "warned")?;
+    if c.rooted_value(warned).is_some_and(|value| value.as_bool() == Some(true)) { return Ok(()); }
+    let key = c.string_rooted("warned");
+    let yes = c.boolean(true);
+    c.define_data_property_rooted(data, key, yes, true, false, false)?;
+    let process = state.borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))?;
+    let emit = get(c, process, "emitWarning")?;
+    if !c.is_callable_rooted(emit)? { return Ok(()); }
+    let message = c.string_rooted("Directly calling process.binding('uv').errname(<val>) is being deprecated. Please make sure to use util.getSystemErrorName() instead.");
+    let kind = c.string_rooted("DeprecationWarning");
+    let code = c.string_rooted("DEP0119");
+    c.call_rooted(emit, process, &[message, kind, code])?;
+    Ok(())
 }

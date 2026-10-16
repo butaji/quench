@@ -9853,3 +9853,16 @@ fn process_binding_uses_sdk_metadata_native_identity_and_original_legacy_type_po
 fn process_default_warning_listener_preserves_sdk_source_without_internal_exposure() {
     compare_node_source_with_args(include_str!("../node-tests/test-process-warning-listener-source.js"), &[]);
 }
+
+#[test]
+fn process_binding_pending_warnings_follow_sdk_wrapper_native_once_state_and_flag_precedence() {
+    let source = include_str!("../node-tests/test-process-binding-pending-warning.js");
+    for flags in [vec![], vec!["--pending-deprecation"], vec!["--pending-deprecation", "--no-deprecation"], vec!["--pending-deprecation", "--no-pending-deprecation"]] {
+        compare_node_source_with_args(source, &flags);
+    }
+}
+
+#[test]
+fn awaited_primitives_use_enclosing_async_promise_parent_for_real_hook_resources() {
+    compare_node_source_with_args(include_str!("../node-tests/test-await-primitive-promise-parent.js"), &[]);
+}
