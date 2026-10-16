@@ -1,0 +1,13 @@
+{
+  "base_source": "298383aabb1bb54cd68d5bdc19518f15ff8b7dd6",
+  "working_tree_patch": "work/boxed-slots-build.patch",
+  "untracked_fixture": "work/boxed-slots-fixture.js",
+  "qualification": "workspace passed; full Core and focused Node comparison pending; excludes frozen df33c1767 milestone",
+  "files": {
+    "work/boxed-slots-build.patch": "4880873ca3d1fb7d5913bba4c6c5295481068e2baec121cec22929006ffbbb12",
+    "work/boxed-slots-fixture.js": "f4ebedc52aa29ba2d9f3aebbe32674eaad15fdec41c25f887760b399fd947127",
+    "work/node-v26.12.0-linux-x64/bin/node": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943",
+    "work/host-build/iteration/run-parallel": "a0c92546b55f8374b1110c45dd557e85abef67492776f6d697675af7b8f891fc",
+    "work/host-build/iteration/deps/child_entry-a67896ab5b9c716a": "415a8bf204a2aad6d53b6a79959f72b39e61a6c4588672723a671f7eb6802816"
+  }
+}

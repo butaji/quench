@@ -292,6 +292,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "BrotliEncoder" (0) => crate::modules::zlib_native_shared_vm::create_brotli_encoder,
         #[cfg(quench_node_brotli)]
         method "BrotliDecoder" (0) => crate::modules::zlib_native_shared_vm::create_brotli_decoder,
+        method "ZstdCompress" (0) => crate::modules::zlib_native_shared_vm::create_zstd_compress,
+        method "ZstdDecompress" (0) => crate::modules::zlib_native_shared_vm::create_zstd_decompress,
         method "Zlib" (0) => crate::modules::zlib_native_shared_vm::create,
         method "zlibNativeInit" (0) => crate::modules::zlib_native_shared_vm::initialize,
         method "zlibNativeWrite" (0) => crate::modules::zlib_native_shared_vm::write,
@@ -665,6 +667,10 @@ impl quench_runtime::Host for NodeHost {
         false
     }
 
+    fn error_stack_formatter(&self) -> Option<quench_runtime::RootId> {
+        self.shared_state().borrow().builtin_cache.get(crate::modules::node_errors_shared_vm::DEFAULT_STACK_FORMATTER).copied()
+    }
+
     fn write_line(&mut self, text: &str) {
         let output = self.shared_state().borrow().output.clone();
         match output {
@@ -939,9 +945,6 @@ impl quench_runtime::Host for NodeHost {
         context.scoped(install_gc_global)?;
         context.scoped(crate::modules::timers_shared_vm::install_promisify_globals)?;
         commonjs::initialize(context)?;
-        // The original inspector initializes private state using intrinsic
-        // methods. Capture it before guests can freeze replacement methods.
-        commonjs::node_library_export(context, "util.js", "internal/util/inspect.js", "inspect")?;
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_commonjs");
         Ok(())

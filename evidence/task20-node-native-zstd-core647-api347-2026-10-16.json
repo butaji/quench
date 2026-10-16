@@ -1,0 +1,147 @@
+{
+  "scope": "Owned native Zstd streams over actual existing matching Zstd dependency",
+  "source_commit": "c4ad13141380166a761b91359e0519cdeb51292c",
+  "branch": "v2-cloud-node",
+  "latest_stable": "v26.12.0",
+  "checks": {
+    "core647_unchanged": {
+      "path": "work/native-zstd-abi/core647-source-sha256.json",
+      "bytes": 31372,
+      "sha256": "a7f64e362840a2629b6f7a95f63947eee6f9c275d4da84fd3578c87c375ba3f0"
+    },
+    "qualified_core": {
+      "path": "work/native-brotli-abi/core-default.log",
+      "bytes": 56732,
+      "sha256": "eb2f06866cfc3869a76ddeed88a701e138906094919418b2c5f45ffb0e04412a"
+    },
+    "api347": {
+      "path": "work/native-zstd-abi/all-api.log",
+      "bytes": 28340,
+      "sha256": "8b743c50a6cddcdfc4f67c5cd8bc7b8f8cb60e550dbebcb9b3214c18698f19a8"
+    },
+    "targeted": {
+      "path": "work/native-zstd-abi/targeted.log",
+      "bytes": 430,
+      "sha256": "f329ed644cc9a0e607827d8d07d8952b0e7517f6476054e3ac4c1f04f885dc60"
+    },
+    "framework43": {
+      "path": "work/native-zstd-abi/framework.log",
+      "bytes": 3798,
+      "sha256": "b41881f94821125815bc87efbbbd7d26b13fd072686394014795864fa55f2ae8"
+    },
+    "shared7": {
+      "path": "work/native-zstd-abi/shared.log",
+      "bytes": 882,
+      "sha256": "090934a5c9b162aa1a7752066b3ef2f3b4f6a6fd18d4f65f91bb859ad1ba06ce"
+    },
+    "workspace": {
+      "path": "work/native-zstd-abi/workspace.log",
+      "bytes": 309,
+      "sha256": "d17bb78ef3c7e581d2e0493cc2826c4d6516a371245c860b20875fe3945ac7e4"
+    },
+    "paired": {
+      "path": "work/native-zstd-abi/paired-final-build.log",
+      "bytes": 313,
+      "sha256": "2e2104df9f8fc6ea9949c9c2a01cd44fd2b96b88f3a7cfc0c5ba53114f70264d"
+    },
+    "portable": {
+      "path": "work/native-zstd-abi/portable-fallback.log",
+      "bytes": 231,
+      "sha256": "655e4f8e512f4dd3af8887221d7ce327b4ff48cd416ab036e61ab1503e568892"
+    }
+  },
+  "source": {
+    "path": "work/native-zstd-bin/source-sha256.json",
+    "bytes": 76438,
+    "sha256": "de4d551f0b227666884a1a572afd9fd4123df6874ae16be07d7f5a40fb8503a7"
+  },
+  "binaries": {
+    "path": "work/native-zstd-bin/sha256.txt",
+    "bytes": 298,
+    "sha256": "061df18d2bc29d861666869535798bc611546ae68489efa610e518f5506d6962"
+  },
+  "zstd": {
+    "version": "1.5.7",
+    "dependency": "zstd-sys2.1.0+zstd1.5.7",
+    "matching_node_source_files": 90,
+    "multithreading_enabled": true,
+    "provenance": {
+      "path": "work/native-zstd-bin/zstd-provenance.json",
+      "bytes": 12871,
+      "sha256": "f19d15d97daa00c900662a1457c23c1efe4a783c42a4b17b87d6e57641697151"
+    },
+    "oracle": {
+      "path": "work/native-zstd-abi/oracle.log",
+      "bytes": 1925,
+      "sha256": "00cb621955e921f3c01be0fd17efb5f40da33332619b4e559187bf9175c1575b"
+    },
+    "candidate": {
+      "path": "work/native-zstd-abi/candidate.log",
+      "bytes": 1925,
+      "sha256": "00cb621955e921f3c01be0fd17efb5f40da33332619b4e559187bf9175c1575b"
+    },
+    "tiny_window": {
+      "path": "work/native-zstd-abi/tiny-window-differential.json",
+      "bytes": 15,
+      "sha256": "69471634253a31241472b355f6f9726865bdc4fe620688a31ad1eddb7bb556ec"
+    },
+    "early_non_multithread_failure": {
+      "path": "work/native-zstd-abi/candidate-before-multithread.log",
+      "bytes": 1017,
+      "sha256": "a1f9b9c4f267581784dd07812784e713af17b086e7ba0748241fdf6cbf0b8cea"
+    }
+  },
+  "family": {
+    "counts": {
+      "pass": 51,
+      "timeout": 1,
+      "fail": 1
+    },
+    "total": 53,
+    "inventory": "647b9535ab7f6745",
+    "gained": [
+      "test-stream-iter-transform-compat.js",
+      "test-stream-iter-transform-coverage.js",
+      "test-stream-iter-transform-errors.js",
+      "test-stream-iter-transform-params.js",
+      "test-stream-iter-transform-roundtrip.js",
+      "test-stream-iter-transform-sync.js",
+      "test-stream-iter-validation.js"
+    ],
+    "lost": [],
+    "raw": {
+      "path": "work/native-zstd-abi/canonical-family.json",
+      "bytes": 129595,
+      "sha256": "9f7005a70f29c478321adb7d4e2f7ec256a8c6053f0abdb5b081c864e2788fed"
+    },
+    "official_control": {
+      "path": "work/cli-options-policy/official-family.json",
+      "bytes": 19167,
+      "sha256": "2df2983c29f673e872c96e36592c8d2d18b8f6792f56f16e18df25c658efbbff"
+    }
+  },
+  "fixed_work": {
+    "valid": 8,
+    "clean": 0,
+    "speed_claim": false,
+    "raw": {
+      "path": "work/native-zstd-fixed-work.json",
+      "bytes": 153160,
+      "sha256": "57d30b58d92f2607ba9c1549fddfcee334bd769ac5410027d4c4db5e7df3da26"
+    }
+  },
+  "design": [
+    "Reuse existing genuine Zstd dependency; all90C/header/assembly files match configured Node bundled sources. Enable zstdmt to support actual Node nbWorkers parameter.",
+    "Rust exclusively owns encoder/decoder contexts. Actual frame progress, consumed pledged bytes and trailing-frame prefix state govern output and errors. No fake counters or callbacks.",
+    "Common native WeakMap identity, reusable real worker jobs and deferred close lifecycle remain shared across codecs.",
+    "Original configured Node zlib/iter and transform source remains unmodified. Native5/6argument initialization validates actual number domain/dictionary views and emits original library errors.",
+    "Tiny7-byte output-window bytes and avail-in/out counters exactly match official Node. Differential includes actual dictionary17vs1009bytes, multithread parameter, concat/trailing, truncated/malformed input, wrong pledge,7invalid pledge types and initialization callback+exception."
+  ],
+  "limitations": [
+    "Goal remains open. Latest completed full inventories remain1770/5015stable and1799/4727pinned on earlier frozen63bb54bdd. Selected gains do not change full totals.",
+    "Selected family51/53 still has readable-interop Buffer-vs-Uint8Array failure and broadcast-waiter-cleanup timeout.",
+    "Native reset/params/CRC and full legacy public zlib-provider convergence remain incomplete. Native codecs do not establish complete Node parity.",
+    "Core647 reused only after exact260-source-file hashes plus no diff across runtime/dependencies/vendor/rootCargo/config/toolchain paths.",
+    "All8fixed-work valid, zero clean rounds, no speed claim."
+  ]
+}

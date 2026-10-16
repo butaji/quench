@@ -323,6 +323,33 @@ impl<H: Host> Vm<H> {
         let receiver_root = self.heap.root(receiver);
         let mut roots = Vec::with_capacity(2);
         let outcome = (|| {
+            if let Some(formatter) = self.host.error_stack_formatter() {
+                let formatter = self.heap.root_value(formatter).ok_or_else(|| {
+                    self.type_error(program, "Host stack formatter root expired".into())
+                })?;
+                let formatter_root = self.heap.root(formatter);
+                let global_root = self.heap.root(self.realm.globals);
+                let result = (|| {
+                    let sites = self.error_call_site_array(&records)?;
+                    let sites_root = self.heap.root(sites);
+                    let formatter = self.heap.root_value(formatter_root).unwrap();
+                    let global = self.heap.root_value(global_root).unwrap();
+                    let target = self.heap.root_value(receiver_root).unwrap();
+                    let sites = self.heap.root_value(sites_root).unwrap();
+                    let result = self.call_value(
+                        program,
+                        formatter,
+                        Value::UNDEFINED,
+                        &[global, target, sites],
+                    );
+                    self.heap.release_root(sites_root);
+                    result
+                })();
+                self.heap.release_root(global_root);
+                self.heap.release_root(formatter_root);
+                return result;
+            }
+
             let constructor =
                 self.realm.intrinsics.error_intrinsics[&self.realm.globals].constructor;
             roots.push(self.heap.root(constructor));
@@ -483,6 +510,34 @@ impl<H: Host> Vm<H> {
         Ok(found.map(|name| self.atom_value(name)))
     }
 
+    fn call_site_type_name(&mut self, record: &CallSiteRecord) -> Result<Option<JsString>, JsError> {
+        let receiver = record.this_value;
+        if record.is_constructor
+            || receiver.is_null()
+            || receiver.is_undefined()
+            || self
+                .realm
+                .intrinsics
+                .function_constructors
+                .contains_key(&(receiver, Native::Function))
+        {
+            return Ok(None);
+        }
+        let receiver = self.box_object(receiver)?;
+        if self.proxy_parts(receiver).is_some() {
+            return Ok(Some(JsString::from_str("Proxy")));
+        }
+        if matches!(self.heap.get(receiver), Some(Cell::Function { kind, .. }) if !matches!(kind, FunctionKind::Native(Native::FunctionBoundCall)))
+        {
+            if let Some(name) = self.debug_function_name(receiver) {
+                if !name.units().is_empty() {
+                    return Ok(Some(name));
+                }
+            }
+        }
+        Ok(self.constructor_name(receiver))
+    }
+
     pub(super) fn error_capture_stack_trace(
         &mut self,
         program: &ResidualProgram,
@@ -514,6 +569,7 @@ impl<H: Host> Vm<H> {
                         name: CallSiteName::Static(JsString::from_str(name)),
                         this_value: Value::UNDEFINED,
                         hide_identity: true,
+                        is_constructor: false,
                     });
                 }
             }
@@ -557,6 +613,7 @@ impl<H: Host> Vm<H> {
                 },
                 name,
                 hide_identity,
+                is_constructor: frame.context.is_constructor(),
                 this_value: if frame.this == Value::DELETED {
                     Value::UNDEFINED
                 } else {
@@ -572,6 +629,7 @@ impl<H: Host> Vm<H> {
                     name: CallSiteName::Static(JsString::from_str(name)),
                     this_value: Value::UNDEFINED,
                     hide_identity: true,
+                    is_constructor: false,
                 });
             }
         }
@@ -668,8 +726,12 @@ impl<H: Host> Vm<H> {
             CallSiteLocation::Native => "native".to_owned(),
         };
         let location = JsString::from_str(&location);
-        let Some(name) = self.call_site_name(record) else { return Ok(location); };
+        let name = self.call_site_name(record).or_else(|| {
+            record.is_constructor.then(|| JsString::from_str("<anonymous>"))
+        });
+        let Some(name) = name else { return Ok(location); };
         let mut text = super::wtf16::JsStringBuilder::default();
+        if record.is_constructor { text.append(&JsString::from_str("new ")); }
         text.append(&name);
         text.append(&JsString::from_str(" ("));
         text.append(&location);
@@ -731,7 +793,7 @@ impl<H: Host> Vm<H> {
                 CallSiteLocation::Native => Value::NULL,
             }),
             Native::CallSiteIsEval => Ok(Value::FALSE),
-            Native::CallSiteIsConstructor => Ok(Value::FALSE),
+            Native::CallSiteIsConstructor => Ok(if record.is_constructor { Value::TRUE } else { Value::FALSE }),
             Native::CallSiteIsNative => {
                 Ok(if matches!(record.location, CallSiteLocation::Native) {
                     Value::TRUE
@@ -739,7 +801,10 @@ impl<H: Host> Vm<H> {
                     Value::FALSE
                 })
             }
-            Native::CallSiteGetTypeName | Native::CallSiteGetEvalOrigin => Ok(Value::UNDEFINED),
+            Native::CallSiteGetTypeName => Ok(self.call_site_type_name(&record)?
+                .map(|name| self.heap.alloc(Cell::String(name)))
+                .unwrap_or(Value::NULL)),
+            Native::CallSiteGetEvalOrigin => Ok(Value::UNDEFINED),
             Native::CallSiteToString => {
                 let text = self.format_call_site(program, &record)?;
                 Ok(self.heap.alloc(Cell::String(text)))
@@ -949,14 +1014,9 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn box_primitive_object(&mut self, value: Value) -> Result<Value, JsError> {
-        let marker = match self.heap.get(value) {
-            Some(Cell::String(_)) => "\0quench:string-value",
-            Some(Cell::Symbol(_)) => "\0quench:symbol-value",
-            Some(Cell::BigInt(_)) => "\0quench:bigint-value",
-            _ if value.as_number().is_some() => "\0quench:number-value",
-            _ if value.as_bool().is_some() => "\0quench:boolean-value",
-            _ => return Ok(self.object()),
-        };
+        if !matches!(self.heap.get(value), Some(Cell::String(_) | Cell::Symbol(_) | Cell::BigInt(_)))
+            && value.as_number().is_none() && value.as_bool().is_none()
+        { return Ok(self.object()); }
         let prototype = self.primitive_prototype(value).unwrap_or(self.object_proto);
         let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
         if let Some(Cell::String(text)) = self.heap.get(value).cloned() {
@@ -994,8 +1054,7 @@ impl<H: Host> Vm<H> {
                 },
             )?;
         }
-        let marker_atom = self.intern_atom(marker);
-        self.set_property(object, marker_atom, value)?;
+        self.object_data_mut(object).expect("primitive wrapper").set_boxed_primitive(value);
         Ok(object)
     }
 
@@ -1008,8 +1067,7 @@ impl<H: Host> Vm<H> {
         let prototype = self.realm.intrinsics.builtin_prototypes.get(&(realm, Native::BigInt)).copied()
             .or_else(|| self.primitive_prototype(value)).unwrap_or(self.object_proto);
         let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
-        let value_atom = self.intern_atom("\0quench:bigint-value");
-        self.set_property(object, value_atom, value)?;
+        self.object_data_mut(object).expect("bigint wrapper").set_boxed_primitive(value);
         Ok(object)
     }
 
@@ -1019,6 +1077,10 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         self.global(program, "globalThis", self.realm.globals)?;
         let function = self.native_value(Native::Function);
+        self.realm
+            .intrinsics
+            .function_constructors
+            .insert((self.realm.globals, Native::Function), function);
         self.set_builtin_value_named(function, "prototype", self.function_proto)?;
         let prototype = self.prototype_atom();
         self.set_property_attributes(
@@ -1575,6 +1637,11 @@ impl<H: Host> Vm<H> {
                 .builtin_prototypes
                 .insert((global, native), prototype);
             let constructor = self.native_with_realm(native, global, global);
+            self.set_builtin_function_name(constructor, name)?;
+            self.realm
+                .intrinsics
+                .function_constructors
+                .insert((global, native), constructor);
             self.object_data_mut(constructor)
                 .expect("realm dynamic function")
                 .set_proto(function);
@@ -1988,6 +2055,10 @@ impl<H: Host> Vm<H> {
             .intrinsics
             .builtin_prototypes
             .insert((global, Native::Function), prototype);
+        self.realm
+            .intrinsics
+            .function_constructors
+            .insert((global, Native::Function), constructor);
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
         let prototype_atom = self.prototype_atom();
         self.set_property_attributes(

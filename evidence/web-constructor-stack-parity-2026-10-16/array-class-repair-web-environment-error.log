@@ -1,0 +1,2 @@
+web: rustc ["--version"]: timeout: failed to run command ‘rustc’: No such file or directory
+
