@@ -1,0 +1,62 @@
+{
+  "schema_version": 2,
+  "inventory_hash": "a1cc5539923e9a17",
+  "timeout_secs": 30,
+  "jobs": 4,
+  "node_version": "v26.12.0",
+  "runtime_commit": "e9ec2e9c1372e8640ef1ab027bbe5f9a5f5e3e33",
+  "tests_node_commit": "unknown",
+  "platform": "linux-x86_64",
+  "results": [
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-glob-no-follow-symlink-globstar.mjs",
+      "status": "fail",
+      "observation": {
+        "Ok": {
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "fail",
+            "reason": "AssertionError [ERR_ASSERTION]: /workspace/work/node-stable-release/node-v26.12.0/lib/internal/assert/utils.js:146\n  throw error;\n  ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n\nfalse !== true\n\n    at [eval]:8:12\n\nNode.js v26.12.0\n\n\n1 !== 0\n\n    at file:///workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-glob-no-follow-symlink-globstar.mjs:80:10\n\nNode.js v26.12.0"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-glob-throw.mjs",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-glob.mjs",
+      "status": "fail",
+      "observation": {
+        "Ok": {
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "fail",
+            "reason": "AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n+ actual - expected\n\n+ [\n+   'a/b'\n+ ]\n- []\n\n    at file:///workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-glob.mjs:993:12\n    at invoke (node:test/shared.js:41:63)\n    at run (node:test/shared.js:44:63)\n    at file:///workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-glob.mjs:992:3\n    at invoke (node:test/shared.js:41:63)\n    at node:test/shared.js:48:43\n    at file:///workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-glob.mjs:991:1\n\nNode.js v26.12.0"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    }
+  ]
+}
