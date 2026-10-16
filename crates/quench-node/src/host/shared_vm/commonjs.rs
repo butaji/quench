@@ -2353,7 +2353,7 @@ const getLinkedBinding = () => ({});
                     ""
                 };
                 let prefix = if in_node_internal {
-                    format!("(function (exports, require, module, __filename, __dirname, primordials, __nativeInternalBinding) {{ {internal_binding}")
+                    format!("(function (exports, require, module, __filename, __dirname, primordials, __nativeInternalBinding) {{ 'use strict'; {internal_binding}")
                 } else {
                     format!("{WRAPPER_PREFIX}{internal_binding}")
                 };
@@ -2624,7 +2624,7 @@ pub(crate) fn node_library_module_in_realm(
     let name = context.string_rooted(&path.to_string_lossy());
     let directory = context.string_rooted(&path.parent().unwrap().to_string_lossy());
     let prefix = format!(
-        "(function(exports, require, module, __filename, __dirname, primordials, __nativeInternalBinding, process) {{ {}",
+        "(function(exports, require, module, __filename, __dirname, primordials, __nativeInternalBinding, process) {{ 'use strict'; {}",
         node_internal_binding_source(),
     );
     let wrapper = format!("{prefix}{source}\n}})");
