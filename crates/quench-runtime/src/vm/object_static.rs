@@ -846,6 +846,9 @@ impl<H: Host> Vm<H> {
         if !descriptor.compatible_with(current_record, extensible, |a, b| self.same_value(a, b)) {
             return Ok(false);
         }
+        if current.configurable && (descriptor_value.is_some() || descriptor_accessor || attributes != current) {
+            self.reconfigure_function_name(target, key);
+        }
         if descriptor_accessor {
             if is_new {
                 self.set_shape_property(target, key, Value::UNDEFINED)?;

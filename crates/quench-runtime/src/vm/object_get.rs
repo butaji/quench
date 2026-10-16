@@ -10,7 +10,8 @@ pub(super) enum DiagnosticProperty {
 
 impl<H: Host> Vm<H> {
     pub(super) fn diagnostic_own_property(&self, object: Value, key: PropertyKey) -> DiagnosticProperty {
-        if self.proxy_parts(object).is_some()
+        if self.default_function_name_info(object, key)
+            || self.proxy_parts(object).is_some()
             || self.property_attributes(object, key).is_some_and(|attributes| attributes.accessor)
         {
             return DiagnosticProperty::Blocked;
