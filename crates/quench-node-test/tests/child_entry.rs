@@ -9085,3 +9085,54 @@ fn cli_signal_defaults_reset_inherited_ignores_before_vm_workers_start() {
         }
     }
 }
+
+#[test]
+fn native_constructor_names_preserve_creation_provenance_and_prototype_roles() {
+    compare_node_source_with_args(
+        r#"
+const {getConstructorName}=require('internal/test/binding').internalBinding('util'),{inspect}=require('node:util'),out=[];
+function Alpha(){this.x=1}Object.defineProperty(Alpha,'name',{value:'Changed'});Alpha.prototype.constructor=null;
+const a=new Alpha;out.push(getConstructorName(a));Object.setPrototypeOf(a,null);out.push(getConstructorName(a),inspect(a));
+const bound=Alpha.bind(null);const b=new bound;Object.setPrototypeOf(b,null);out.push(getConstructorName(b));
+function Beta(){}const reflected=Reflect.construct(Alpha,[],Beta);out.push(getConstructorName(reflected));Beta.prototype.constructor=null;out.push(getConstructorName(reflected));
+const explicit={answer:42};function Returns(){return explicit};out.push(getConstructorName(new Returns));
+const named={Computed:function(){this.y=2}};const c=new named.Computed;Object.setPrototypeOf(c,null);out.push(getConstructorName(c));
+function Base(){}class Derived extends Base{}const d=new Derived;Derived.prototype.constructor=null;out.push(getConstructorName(d));
+function Parent(){}const prototype=new Parent;Object.setPrototypeOf(prototype,null);out.push(getConstructorName(prototype));const child=Object.create(prototype);out.push(getConstructorName(prototype),getConstructorName(child));
+console.log(JSON.stringify(out));
+"#,
+        &["--expose-internals", "--no-warnings"],
+    );
+}
+
+#[test]
+fn getter_stack_frames_preserve_original_names_and_inline_source_labels() {
+    compare_node_source_with_args(
+        r#"
+const saved=Error.prepareStackTrace;Error.prepareStackTrace=(_,frames)=>frames.slice(0,2).map(f=>[f.getFunctionName(),f.getFileName()]);
+const object={get x(){return new Error('getter').stack}},getter=Object.getOwnPropertyDescriptor(object,'x').get;Object.defineProperty(getter,'name',{value:'changed getter'});
+function invoke(value){return value.x}try{console.log(JSON.stringify(invoke(object)))}finally{Error.prepareStackTrace=saved}
+"#,
+        &[],
+    );
+}
+
+#[test]
+fn native_constructor_names_use_safe_mutable_debug_names_and_original_prototype_names() {
+    compare_node_source_with_args(
+        r#"
+const {getConstructorName}=require('internal/test/binding').internalBinding('util'),out=[];let calls=0;
+for(const mode of ['empty','number','deleted','accessor','inherited']){
+ function F(){};const value=new F;Object.setPrototypeOf(value,null);
+ if(mode==='deleted')delete F.name;
+ else if(mode==='accessor')Object.defineProperty(F,'name',{get(){calls++;throw Error('name getter')}});
+ else if(mode==='inherited'){delete F.name;Object.setPrototypeOf(F,{name:'Inherited'})}
+ else Object.defineProperty(F,'name',{value:mode==='empty'?'':17});
+ out.push(getConstructorName(value));
+ const child=Object.create({constructor:F});out.push(getConstructorName(child));
+}
+out.push(calls);console.log(JSON.stringify(out));
+"#,
+        &["--expose-internals", "--no-warnings"],
+    );
+}

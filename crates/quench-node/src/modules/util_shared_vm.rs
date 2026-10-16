@@ -955,13 +955,31 @@ pub(crate) fn preview_entries(
     }
 }
 
+/// Read an own data property without inheriting descriptor-object getters.
+fn inspection_data_property(
+    context: &mut NativeContext<'_, NodeHost>, object: RootId, key: RootId,
+) -> Result<Option<RootId>, RootedError> {
+    let descriptor = context.own_property_descriptor_rooted(object, key)?;
+    if context.is_object_rooted(descriptor)? {
+        for key in context.own_keys_rooted(descriptor)? {
+            if context.string_text(key)?.as_deref() == Some("value") {
+                return context.get_property_rooted(descriptor, key).map(Some);
+            }
+        }
+    }
+    Ok(None)
+}
+
 /// Native class fallback for inspection, without public constructor/tag getters.
-/// Mutated user-constructor provenance still needs its own Core representation.
+/// User base-constructor provenance is captured by Core at actual allocation.
 pub(crate) fn constructor_name(
     context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let absent = context.undefined();
     let value = args.first().copied().unwrap_or(absent);
+    if let Some(name) = context.constructed_name_rooted(value)? {
+        if context.string_text(name)?.is_some_and(|name| !name.is_empty() && name != "Object") { return Ok(name); }
+    }
     if context.proxy_target_rooted(value)?.is_some() { return Ok(context.string_rooted("Object")); }
     if context.is_array_rooted(value)? { return Ok(context.string_rooted("Array")); }
     for &(name, brand) in TYPE_PREDICATES {
@@ -976,18 +994,18 @@ pub(crate) fn constructor_name(
     if context.is_callable_rooted(value)? { return Ok(context.string_rooted("Function")); }
     if context.has_builtin_brand_rooted(value, BuiltinBrand::NativeError)? { return Ok(context.string_rooted("Error")); }
     let tag = context.host_function_data()?;
-    let data_key = context.string_rooted("value");
+    let constructor_key = context.string_rooted("constructor");
     let mut current = value;
     while context.is_object_rooted(current)? {
         if context.proxy_target_rooted(current)?.is_some() { break; }
-        let descriptor = context.own_property_descriptor_rooted(current, tag)?;
-        if context.is_object_rooted(descriptor)? {
-            let keys = context.own_keys_rooted(descriptor)?;
-            let mut owns_value = false;
-            for key in keys { if context.string_text(key)?.as_deref() == Some("value") { owns_value = true; break; } }
-            if owns_value {
-                let data = context.get_property_rooted(descriptor, data_key)?;
-                if context.string_text(data)?.is_some() { return Ok(data); }
+        if let Some(data) = inspection_data_property(context, current, tag)? {
+            if context.string_text(data)?.is_some() { return Ok(data); }
+        }
+        if !context.strict_equal_rooted(current, value)? {
+            if let Some(constructor) = inspection_data_property(context, current, constructor_key)? {
+                if let Some(name) = context.original_function_name_rooted(constructor)? {
+                    if context.string_text(name)?.is_some_and(|name| !name.is_empty() && name != "Object") { return Ok(name); }
+                }
             }
         }
         current = context.prototype_rooted(current)?;

@@ -833,6 +833,10 @@ impl quench_runtime::Host for NodeHost {
     fn stack_source_name(&mut self, source_name: &str, is_module: bool) -> String {
         if is_module {
             self.import_meta_url(source_name)
+        } else if self.eval_builtin_globals && source_name == self.inline_source.compilation_name() {
+            self.inline_source.label().to_owned()
+        } else if let Ok(relative) = std::path::Path::new(source_name).strip_prefix(self.node_library_root.join("lib")) {
+            format!("node:{}", relative.with_extension("").to_string_lossy().replace('\\', "/"))
         } else {
             source_name.to_owned()
         }
