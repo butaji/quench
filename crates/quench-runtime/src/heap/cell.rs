@@ -602,6 +602,7 @@ pub(crate) enum Native {
     /// A Wasm function as JavaScript sees it; its environment is the Wasm closure.
     WasmExportedFunction,
     HostFunction,
+    CallSiteConstructor,
 }
 
 /// A global's cold facts, boxed with its object part so the cell stays compact.

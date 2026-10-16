@@ -455,6 +455,7 @@ const NATIVES: &[Native] = &[
     Native::CallSiteGetTypeName, Native::CallSiteGetMethodName,
     Native::CallSiteIsEval, Native::CallSiteGetEvalOrigin,
     Native::CallSiteIsConstructor, Native::CallSiteIsNative, Native::CallSiteToString,
+    Native::CallSiteConstructor,
     Native::AggregateError, Native::SuppressedError, Native::EvalError, Native::RangeError, Native::ReferenceError, Native::SyntaxError, Native::TypeError, Native::URIError, Native::ThrowTypeError,
     Native::RegExp,
     Native::RegExpCompile,

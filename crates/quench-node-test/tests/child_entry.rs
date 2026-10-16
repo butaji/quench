@@ -9275,3 +9275,17 @@ for(const [encoding,valid,invalid]of fixtures)for(const fatal of [false,true])fo
 console.log(JSON.stringify({complete:true,cases:rows.length,calls:rows.length*7,rows}));
 "#);
 }
+
+#[test]
+fn callsites_share_native_prototypes_and_supported_methods_preserve_descriptors_and_brands() {
+    compare_node_source_with_args(r#"
+Error.prepareStackTrace=(_,frames)=>frames;function Frame(){return new Error};const first=Frame().stack,second=Frame().stack,site=first[0],proto=Object.getPrototypeOf(site),C=proto.constructor,out=[];
+const methods=['getColumnNumber','getEvalOrigin','getFileName','getFunctionName','getLineNumber','getMethodName','getThis','getTypeName','isConstructor','isEval','isNative','toString'];
+out.push(Reflect.ownKeys(site),Object.getPrototypeOf(first[1])===proto,Object.getPrototypeOf(second[0])===proto,C.name,C.length,Function.prototype.toString.call(C),Object.getOwnPropertyDescriptor(C,'prototype'),Object.getOwnPropertyDescriptor(proto,'constructor'));
+for(const key of methods){const f=proto[key];out.push([key,f.name,f.length,Function.prototype.toString.call(f),Object.getOwnPropertyDescriptor(proto,key)]);}
+for(const value of [undefined,null,1,'x',true,Symbol('s'),1n,{},()=>{},proto,new Proxy({}, {})])try{proto.getFileName.call(value)}catch(e){out.push([e.name,e.message])}
+for(const invoke of [()=>C(),()=>new C])try{invoke()}catch(e){out.push([e.name,e.message])}
+const get=require('internal/test/binding').internalBinding('util').getConstructorName;out.push(get(site));Object.defineProperty(C,'name',{value:'Changed'});proto.constructor=null;out.push(get(site));
+console.log(JSON.stringify(out));
+"#, &["--expose-internals","--no-warnings"]);
+}
