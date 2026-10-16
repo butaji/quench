@@ -1463,3 +1463,31 @@ check();
         Runtime::new(ProtectedStartupHost).execute(&program).unwrap();
     }
 }
+
+#[test]
+fn function_factories_preserve_original_intrinsic_constructor_and_prototype_identity() {
+    let source = r#"
+const factories=[()=>function(){},()=>()=>{},()=>async function(){},()=>function*(){},()=>async function*(){}];
+for(const factory of factories){
+ const first=factory(),prototype=Object.getPrototypeOf(first),C=prototype.constructor;
+ const name=Object.getOwnPropertyDescriptor(C,'name'),descriptor=Object.getOwnPropertyDescriptor(prototype,'constructor');
+ Object.defineProperty(C,'name',{value:'Changed'+name.value});
+ Object.defineProperty(prototype,'constructor',{value:null});
+ const second=factory();
+ if(Object.getPrototypeOf(second)!==prototype)throw Error('factory prototype follows public constructor');
+ for(const value of [first,second]){Object.setPrototypeOf(value,null);if(constructedName(value)!=='Changed'+name.value)throw Error('factory lost original constructor')}
+ Object.defineProperty(prototype,'constructor',descriptor);Object.defineProperty(C,'name',name);
+}
+const asyncPrototype=Object.getPrototypeOf(async function(){}),generatorPrototype=Object.getPrototypeOf(function*(){}),asyncGeneratorPrototype=Object.getPrototypeOf(async function*(){});
+globalThis.AsyncFunction={prototype:{fake:true}};globalThis.GeneratorFunction={prototype:{fake:true}};globalThis.AsyncGeneratorFunction={prototype:{fake:true}};
+if(Object.getPrototypeOf(async function(){})!==asyncPrototype||Object.getPrototypeOf(function*(){})!==generatorPrototype||Object.getPrototypeOf(async function*(){})!==asyncGeneratorPrototype)throw Error('factory follows mutable globals');
+"#;
+    for program in [
+        Engine::specialize_unspecialized(source, "function-factory-origins.js").unwrap(),
+        Engine::specialize(source, "function-factory-origins.js").unwrap(),
+    ] {
+        Runtime::new(ConstructorProvenanceHost::default())
+            .execute(&program)
+            .unwrap();
+    }
+}

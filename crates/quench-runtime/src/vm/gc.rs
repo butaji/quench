@@ -412,6 +412,13 @@ impl<H: Host> Vm<H> {
         roots.extend(
             self.realm
                 .intrinsics
+                .function_constructors
+                .iter()
+                .flat_map(|((realm, _), constructor)| [*realm, *constructor]),
+        );
+        roots.extend(
+            self.realm
+                .intrinsics
                 .promise_constructors
                 .iter()
                 .flat_map(|(realm, constructor)| [*realm, *constructor]),
