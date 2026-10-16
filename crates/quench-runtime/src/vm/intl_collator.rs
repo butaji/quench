@@ -324,10 +324,10 @@ impl<H: Host> Vm<H> {
                     setter: None,
                 },
             );
-            self_.set_property(bound, name_atom, name)?;
-            self_.set_property_attributes(
+            self_.set_property_with_attributes(
                 bound,
-                PropertyKey::string(name_atom),
+                name_atom,
+                name,
                 PropertyAttributes {
                     writable: false,
                     enumerable: false,
@@ -336,7 +336,7 @@ impl<H: Host> Vm<H> {
                     getter: None,
                     setter: None,
                 },
-            );
+            )?;
             self_.set_collator_value(this, COLLATOR_BOUND_COMPARE_SLOT, bound)?;
             Ok(bound)
         })

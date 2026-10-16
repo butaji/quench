@@ -49,6 +49,15 @@ impl<H: Host> Vm<H> {
             .find(|atom| matches(*atom))
     }
 
+    /// The atom for a run of code units, interned without a string when it already exists.
+    pub(super) fn intern_unit_run_atom(&mut self, units: Units<'_>) -> Atom {
+        let hash = Self::atom_hash_units(units);
+        if let Some(atom) = self.find_atom(hash, |atom| self.atom_units_equal(atom, units)) {
+            return atom;
+        }
+        self.insert_dynamic_atom(JsString::from_unit_run(units), hash)
+    }
+
     pub(super) fn lookup_js_atom(&self, name: &JsString) -> Option<Atom> {
         let hash = Self::atom_hash_units(name.units());
         self.find_atom(hash, |atom| self.atom_units_equal(atom, name.units()))
