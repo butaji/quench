@@ -20,10 +20,10 @@ impl<H: Host> Vm<H> {
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
         self.realm.intrinsics.builtin_prototypes.insert((global, Native::Boolean), prototype);
         let boolean_value = self.intern_atom("\0quench:boolean-value");
-        self.set_property(prototype, boolean_value, Value::FALSE)?;
-        self.set_property_attributes(
+        self.set_property_with_attributes(
             prototype,
-            PropertyKey::string(boolean_value),
+            boolean_value,
+            Value::FALSE,
             PropertyAttributes {
                 writable: false,
                 enumerable: false,
@@ -32,7 +32,7 @@ impl<H: Host> Vm<H> {
                 getter: None,
                 setter: None,
             },
-        );
+        )?;
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
         let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
@@ -60,10 +60,10 @@ impl<H: Host> Vm<H> {
             self.global(p, "Boolean", constructor)
         } else {
             let atom = self.intern_atom("Boolean");
-            self.set_property(global, atom, constructor)?;
-            self.set_property_attributes(
+            self.set_property_with_attributes(
                 global,
-                PropertyKey::string(atom),
+                atom,
+                constructor,
                 PropertyAttributes {
                     writable: true,
                     enumerable: false,
@@ -72,7 +72,7 @@ impl<H: Host> Vm<H> {
                     getter: None,
                     setter: None,
                 },
-            );
+            )?;
             Ok(())
         }
     }

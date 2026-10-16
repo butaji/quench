@@ -383,10 +383,10 @@ impl<H: Host> Vm<H> {
             prototype: None,
         };
         let length = self.intern_atom("length");
-        self.set_property(function, length, length_value)?;
-        self.set_property_attributes(
+        self.set_property_with_attributes(
             function,
-            property_key::PropertyKey::string(length),
+            length,
+            length_value,
             PropertyAttributes {
                 writable: false,
                 enumerable: false,
@@ -395,13 +395,13 @@ impl<H: Host> Vm<H> {
                 getter: None,
                 setter: None,
             },
-        );
+        )?;
         recorded.length = self.closure_shape(function);
         let name = self.intern_atom("name");
-        self.set_property(function, name, name_value)?;
-        self.set_property_attributes(
+        self.set_property_with_attributes(
             function,
-            property_key::PropertyKey::string(name),
+            name,
+            name_value,
             PropertyAttributes {
                 writable: false,
                 enumerable: false,
@@ -410,16 +410,16 @@ impl<H: Host> Vm<H> {
                 getter: None,
                 setter: None,
             },
-        );
+        )?;
         recorded.name = self.closure_shape(function);
         let prototype_atom = self.known_prototype_atom();
         if let Some(prototype) = prototype
             && let Some(atom) = prototype_atom
         {
-            self.set_property(function, atom, prototype)?;
-            self.set_property_attributes(
+            self.set_property_with_attributes(
                 function,
-                property_key::PropertyKey::string(atom),
+                atom,
+                prototype,
                 PropertyAttributes {
                     writable: !function_plan.is_class_constructor,
                     enumerable: false,
@@ -428,7 +428,7 @@ impl<H: Host> Vm<H> {
                     getter: None,
                     setter: None,
                 },
-            );
+            )?;
         }
         let constructor = match (function_plan.is_async, function_plan.is_generator) {
             (true, true) => self
