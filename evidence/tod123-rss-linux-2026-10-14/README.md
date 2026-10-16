@@ -377,3 +377,29 @@ run Crypto +0.03%, DeltaBlue +0.08%, EarleyBoyer +3.54%, NavierStokes +0.02%, Ra
 differs by +11M in transition lookups (the trunk's constructed-shape transitions consult
 the index on every construction) and by collector work whose timing moves with the
 lighter start; Test262 stage 10 and stages 29–92 and Node `framework-core` 43/43 pass.
+
+## Node's stack policy on first use
+
+- The trunk had started loading `internal/errors.js` and its requirements at every start for
+  Node's stack policy: about 0.8G instructions and 5.5 MiB on an empty script (9120 KiB
+  against 3484 KiB, static unbolted). The default stack formatter is now a native
+  trampoline that loads Node's `prepareStackTraceCallback` on its first call;
+  `Error.prepareStackTrace` is a lazy data property whose initializer loads the module
+  inside the startup intrinsics and keeps its private brand as loaded.
+- A library module builds the primordials before entering the module cache, which
+  materializes the property first, so a script that requires `internal/errors` itself gets
+  the module the initializer loaded.
+
+Bolted static against QuickJS after the trunk merge (`board-bolt-vs-qjs-b23.txt`, 3 runs,
+KiB): Richards 3240 vs 3328–3428, DeltaBlue 3624 vs 3736–3896, RayTrace 3464 vs 3444–3520,
+NavierStokes 4548 vs 5028–5052, EarleyBoyer 9912–10040 vs 16048–16708, Splay 47844–48008
+vs 146948–147052; Crypto 4052–4180 vs 3424–3672 and RegExp 13212–13228 vs 6644–6816 remain.
+
+Guard (`guard-lazy-errors-raw.txt`, base `origin/v2-merged` f79a94a74, candidate this
+batch, both static unbolted): start-up −0.79G to −0.89G instructions on every fixture; per
+run Crypto +0.27%, DeltaBlue −0.85%, EarleyBoyer −0.81%, NavierStokes 0.00%, RayTrace
++1.79%, RegExp −3.69%, Richards −0.09%, Splay +0.05%. RayTrace's +8M per run is collector
+work (`active_shape_attributes` +9M) whose timing moves with the lighter start; its whole
+run is 2.30G → 1.50G. Node `framework-core` 43/43; `child_entry` error tests match the
+trunk's failures (Node 22 oracle) except the trunk's new call-site test, whose remaining
+differences are Node 27 validator messages.
