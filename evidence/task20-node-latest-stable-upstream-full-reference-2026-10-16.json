@@ -1,0 +1,68 @@
+{
+  "scope": "Official Node v26.12.0 entire original parallel suite reference oracle; separate upstream harness",
+  "counts": {
+    "pass": 4579,
+    "skip": 417,
+    "fail": 16
+  },
+  "total": 5012,
+  "planned": "1..5012",
+  "failed": [
+    "parallel/test-cluster-primary-error",
+    "parallel/test-cluster-primary-kill",
+    "parallel/test-net-boundsocket",
+    "parallel/test-node-output-console",
+    "parallel/test-repl-context",
+    "parallel/test-repl-custom-eval-previews",
+    "parallel/test-repl-empty",
+    "parallel/test-repl-eval-error-after-close",
+    "parallel/test-repl-multiline",
+    "parallel/test-repl-pretty-stack-custom-writer",
+    "parallel/test-repl-underscore",
+    "parallel/test-repl-custom-eval",
+    "parallel/test-runner-reporters",
+    "parallel/test-tls-get-ca-certificates-worker-no-use-system-ca",
+    "parallel/test-tls-get-ca-certificates-worker-use-system-ca",
+    "parallel/test-vfs"
+  ],
+  "receipt": {
+    "scope": "Entire original parallel suite on official latest stable Node; reference oracle only, never a Quench execution backend",
+    "version": "v26.12.0",
+    "command": [
+      "python3",
+      "tools/test.py",
+      "--shell",
+      "/workspace/quench/work/node-v26.12.0-linux-x64/bin/node",
+      "--mode",
+      "release",
+      "--progress",
+      "tap",
+      "--timeout",
+      "30",
+      "-j",
+      "2",
+      "parallel"
+    ],
+    "fixture_release_commit": "26e72d85a611e222e3f06025de8a3c496923bacd",
+    "fixture_provenance": "Official source archive, not a git checkout",
+    "source_archive_sha256": "ce59f9038dda0e637656fb1c36cf52c07c637922fd81d419dbba2ec129afbd35",
+    "binary_sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943",
+    "quench_stable_inventory_hash": "a3820c977f97ed07",
+    "comparison_limit": "Official upstream runner applies its original status filters/variants and timeout scale factors; preserve raw baseline, do not mix harness totals with Quench full inventory counts. No retries requested.",
+    "memory_before": "low 0\nhigh 0\nmax 933027\noom 0\noom_kill 0\noom_group_kill 0\n",
+    "started_utc": "2026-10-16T20:09:09.753920+00:00",
+    "exit": 1,
+    "protected_changed": false,
+    "memory_after": "low 0\nhigh 0\nmax 933027\noom 0\noom_kill 0\noom_group_kill 0\n",
+    "finished_utc": "2026-10-16T20:18:03.416643+00:00"
+  },
+  "raw_log": {
+    "path": "work/node-latest-stable-full-oracle/runner.log",
+    "bytes": 453072,
+    "sha256": "d60695bb367d47551170883f6e32e804fd1a7e2a384f35c174109274ec01d151"
+  },
+  "limits": [
+    "Upstream runner selects5012 cases versus Quench original recursive inventory5015; retain original status filters, variants and timeout scale factors. Do not subtract reference failures or mix harness aggregate counts.",
+    "Official source archive lacks built test addon dependencies; all reference failures retained for investigation, no retries requested."
+  ]
+}
