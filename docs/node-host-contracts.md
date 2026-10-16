@@ -876,6 +876,15 @@ static blocks and their arrows: eval forbids lexical `arguments`, preserves
 their own context. The existing serialized initializer flag represents this
 shared context; static blocks keep distinct variable scopes.
 
+TCP listeners share one native socket-creation path and Node's default backlog
+of 511, including ordinary net and HTTP listeners. Unix binds enable address
+reuse as libuv does; unsupported reuse-port requests retain their early error.
+Supplied `options.backlog` uses the JavaScript truthy default followed by shared
+ToNumber/ToInt32 conversion. Linux syscall comparisons cover default, IPv4,
+reuse-port and HTTP listeners plus numeric/string/nonfinite/wrapped options.
+The comparison explicitly reports when syscall tracing is unavailable.
+Positional backlog overloads and DNS-deferred coercion/error timing remain open.
+
 ## Native SDK protocol tables and caller capture
 
 The errors binding's exit codes and modules binding's compile-cache status names
