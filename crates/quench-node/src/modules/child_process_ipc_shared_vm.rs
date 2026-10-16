@@ -752,7 +752,7 @@ pub(crate) fn poll(
                 .host_function(crate::host::shared_vm::operation("ipcComplete"))
                 .map_err(|error| runtime.format_error(program, &error.error))?;
             state.borrow_mut().scheduler.queue_shared_next_tick(
-                super::shared_event_loop::SharedCallback {
+                super::shared_event_loop::SharedCallback { execution: None,
                     callback: complete,
                     receiver,
                     args: vec![callback, failed],
@@ -771,7 +771,7 @@ pub(crate) fn poll(
             );
             let text = runtime.string_rooted(&String::from_utf8_lossy(&bytes));
             state.borrow_mut().scheduler.queue_shared_next_tick(
-                super::shared_event_loop::SharedCallback {
+                super::shared_event_loop::SharedCallback { execution: None,
                     callback: decode,
                     receiver,
                     args: vec![target, text],
@@ -815,7 +815,7 @@ fn queue_event(
         .shared_state()
         .borrow_mut()
         .scheduler
-        .queue_shared_next_tick(super::shared_event_loop::SharedCallback {
+        .queue_shared_next_tick(super::shared_event_loop::SharedCallback { execution: None,
             callback: emit,
             receiver,
             args,

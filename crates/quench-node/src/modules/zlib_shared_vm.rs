@@ -538,7 +538,7 @@ pub(crate) fn queue_callback(
     state.borrow_mut().scheduler.queue_shared_immediate(
         id,
         crate::modules::shared_event_loop::SharedImmediateOwner::Host,
-        crate::modules::shared_event_loop::SharedCallback {
+        crate::modules::shared_event_loop::SharedCallback { execution: None,
             callback: pump,
             receiver,
             args: Vec::new(),
