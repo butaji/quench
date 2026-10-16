@@ -160,6 +160,7 @@ pub(crate) enum ChildHandlePhase {
 }
 
 pub(crate) struct SharedChildProcess {
+    pub(crate) cancel: std::sync::mpsc::Sender<()>,
     pub(crate) handle_phase: ChildHandlePhase,
     pub(crate) referenced: bool,
     pub(crate) close_dispatched: bool,
