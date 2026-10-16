@@ -224,7 +224,6 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
         context.scoped(crate::modules::node_errors_shared_vm::install_stack_formatter)?;
         context.scoped(crate::modules::buffer_policy_shared_vm::initialize)?;
         context.scoped(crate::modules::util_shared_vm::initialize_call_site_policy)?;
-        context.scoped(crate::modules::fs_shared_vm::initialize_glob_policy)?;
         context.seal_startup_intrinsics();
     }
     context.scoped(preload_modules)?;
@@ -1377,7 +1376,8 @@ fn cached_builtin(
     if matches!(builtin, BuiltinModule::Crypto | BuiltinModule::Events | BuiltinModule::Fs) {
         let policy = context.with_startup_intrinsics(|context| {
             if matches!(builtin, BuiltinModule::Fs) {
-                return crate::modules::fs_shared_vm::initialize_directory_policy(context, module);
+                crate::modules::fs_shared_vm::initialize_directory_policy(context, module)?;
+                return crate::modules::fs_shared_vm::initialize_glob_policy(context, module);
             }
             if matches!(builtin, BuiltinModule::Events) {
                 let listener = get(context, module, "addAbortListener")?;
