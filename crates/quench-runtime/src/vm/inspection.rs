@@ -66,6 +66,10 @@ impl<H: Host> Vm<H> {
         if object.is_arguments_object() {
             return "Arguments";
         }
+        // Arrays may live in the direct-record arena rather than a legacy Cell.
+        if self.heap.array(value).is_some() {
+            return "Array";
+        }
         if self.error_is_error(value) {
             return "Error";
         }
@@ -95,7 +99,6 @@ impl<H: Host> Vm<H> {
             };
         }
         match self.heap.get(value) {
-            Some(Cell::Array { .. }) => "Array",
             Some(Cell::ArrayBuffer { shared: true, .. }) => "SharedArrayBuffer",
             Some(Cell::ArrayBuffer { .. }) => "ArrayBuffer",
             Some(Cell::TypedArray { kind, .. }) => super::typed_array_install::TYPED_ARRAY_INSTALLS
