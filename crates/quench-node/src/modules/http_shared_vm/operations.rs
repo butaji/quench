@@ -371,9 +371,8 @@ pub(crate) fn create_server(
         };
         set(context, server, name, function)?;
     }
-    let listening = context.boolean(false);
-    set(context, server, "listening", listening)?;
-    set(context, server, "_unref", listening)?;
+    let unref = context.boolean(false);
+    set(context, server, "_unref", unref)?;
     let handle = context.null();
     set(context, server, "_handle", handle)?;
     let retained = context.retain(server)?;
@@ -445,8 +444,6 @@ pub(crate) fn server_listen(
             context.call_rooted(on, receiver, &[event, callback])?;
         }
     }
-    let listening = context.boolean(true);
-    set(context, receiver, "listening", listening)?;
     Ok(receiver)
 }
 
@@ -587,6 +584,7 @@ pub(crate) fn server_close(
         let mut idle_sockets = Vec::new();
         let listener = guard.http.servers.get_mut(&id).and_then(|server| {
             server.closing = true;
+            server.listening_pending = false;
             idle_sockets.extend(server.connections.iter().copied());
             server.listener.take()
         });
@@ -608,8 +606,8 @@ pub(crate) fn server_close(
             net_shared_vm::end(&mut guard.tcp, socket).map_err(RootedError::host)?;
         }
     }
-    let listening = context.boolean(false);
-    set(context, receiver, "listening", listening)?;
+    let handle = context.null();
+    set(context, receiver, "_handle", handle)?;
     Ok(receiver)
 }
 
