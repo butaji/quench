@@ -1980,6 +1980,13 @@ pub(crate) fn module(
         let binding = super::tls_shared_vm::facade::binding(context)?;
         let get_fips = get(context, binding, "getFipsCrypto")?;
         set(context, module, "getFips", get_fips)?;
+        let keygen = crate::host::shared_vm::commonjs::node_library_module(
+            context, "crypto.js", "internal/crypto/keygen.js",
+        )?;
+        for name in ["generateKey", "generateKeySync"] {
+            let function = get(context, keygen, name)?;
+            set(context, module, name, function)?;
+        }
     }
     Ok(module)
 }
