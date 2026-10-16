@@ -4,6 +4,20 @@ Node API policy belongs to `quench-node`; JavaScript coercions, property access,
 exceptions, roots and jobs use the shared VM. Existing class/function bridges
 supply observable syntax and delegate policy to native operations.
 
+## Captured JavaScript stacks
+
+The Node host disables ECMAScript proper tail calls: strict caller frames remain
+observable, as in Node. Core's default host policy and Wasm tail calls retain
+their existing contracts. General and specialized dispatch use this same policy.
+
+Captured errors and exposed CallSite objects trace the original callable and
+receiver. Strict-frame visibility controls `getFunction` and `getThis`; function
+debug names are derived when read. Method names inspect receiver descriptors
+without executing accessors or Proxy traps, including inherited properties and
+ambiguous enumerable aliases. CallSites share a realm-owned native prototype.
+This describes the implemented subset; complete Node stack APIs and eval frames
+still require conformance work.
+
 ## Event listeners
 
 EventEmitter dispatch and listener inspection use the same `_events` records.

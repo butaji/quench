@@ -9340,3 +9340,25 @@ for(const receiver of [{},undefined])try{method.call(receiver)}catch(e){out.push
 console.log(JSON.stringify(out));
 "#, &[]);
 }
+
+#[test]
+fn callsite_method_names_follow_receiver_descriptors_without_getters_or_proxy_traps() {
+    compare_node_source_with_args(
+        r#"
+Error.prepareStackTrace=(_,frames)=>frames[0];function Original(){return new Error().stack}
+const out=[];
+for(const object of [{Original},{renamed:Original},{a:Original,b:Original},Object.create({inherited:Original}),Object.defineProperty({},'hidden',{value:Original}),{0:Original},Object.defineProperty({},'Original',{value:Original})]){
+ const key=Reflect.ownKeys(object)[0]??'inherited';const site=object[key]();out.push([key,site.getFunctionName(),site.getMethodName()]);
+}
+const strict={go:function Named(){'use strict';return new Error().stack}};out.push(strict.go().getMethodName());
+const object={get value(){return new Error().stack}};out.push(object.value.getMethodName());
+let calls=0;const proxy=new Proxy({alias:Original},{get(){calls++;throw Error('trap')},ownKeys(){calls++;throw Error('keys')},getPrototypeOf(){calls++;throw Error('prototype')}});out.push(Original.call(proxy).getMethodName(),calls);
+const changing={old:Original};const site=changing.old();delete changing.old;changing.new=Original;out.push(site.getMethodName());
+Object.defineProperty(Original,'name',{get(){calls++;throw Error('function name')}});out.push(site.getMethodName(),calls);
+const wide={'\ud800':Original};out.push(wide['\ud800']().getMethodName());
+const numeric={0(){return new Error().stack}};out.push(numeric[0]().getMethodName());
+console.log(JSON.stringify(out));
+"#,
+        &[],
+    );
+}
