@@ -36,6 +36,18 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "availableMemory" (0) => crate::modules::process_memory_shared_vm::available,
         method "constrainedMemory" (0) => crate::modules::process_memory_shared_vm::constrained,
         method "uptime" (0) => crate::modules::process_shared_vm::uptime,
+        #[cfg(target_os = "linux")]
+        method "processMetricsHrtime" (0) => crate::modules::process_metrics_shared_vm::hrtime,
+        #[cfg(target_os = "linux")]
+        method "processMetricsHrtimeBigInt" (0) => crate::modules::process_metrics_shared_vm::hrtime_bigint,
+        #[cfg(target_os = "linux")]
+        method "processMetricsCpu" (0) => crate::modules::process_metrics_shared_vm::process_cpu,
+        #[cfg(target_os = "linux")]
+        method "processMetricsThreadCpu" (0) => crate::modules::process_metrics_shared_vm::thread_cpu,
+        #[cfg(target_os = "linux")]
+        method "processMetricsResources" (0) => crate::modules::process_metrics_shared_vm::resources,
+        #[cfg(target_os = "linux")]
+        method "processMetricsRss" (0) => crate::modules::process_metrics_shared_vm::rss,
         method "processExitCodeGet" (0) => crate::modules::process_shared_vm::exit_code_get,
         method "processExitCodeSet" (1) => crate::modules::process_shared_vm::exit_code_set,
         method "processExit" (1) => crate::modules::process_shared_vm::exit,
@@ -110,6 +122,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "errorSourcePositions" (0) => crate::modules::node_errors_shared_vm::source_positions,
         method "errorStackFormat" (3) => crate::modules::node_errors_shared_vm::format_stack,
         method "errorPrepareStackTraceInitialize" (0) => crate::modules::node_errors_shared_vm::initialize_prepare_stack_trace,
+        method "processEmitWarningInitialize" (0) => crate::modules::process_shared_vm::initialize_emit_warning,
+        method "processWarningListener" (0) => crate::modules::process_shared_vm::warning_listener,
         method "nodeErrorBrand" (0) => crate::modules::node_errors_shared_vm::brand,
         method "asyncHookInit" (7) => crate::modules::async_hook_registry_shared_vm::initialize_hook,
         method "asyncHookEnable" (1) => crate::modules::async_hook_registry_shared_vm::enable,
