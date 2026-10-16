@@ -1135,3 +1135,5 @@ Diagnostics-channel adapter storage uses the configured SDK's SafeMap and
 SafeWeakMap constructors, so later changes to public collection prototypes do
 not affect internal channel lookup. The internal test-binding module is the
 original SDK module and exports the same primordial owner used by SDK policies.
+It exposes cached raw native bindings and runs against current process state, so
+its warning observes guest replacements and current warning options.
