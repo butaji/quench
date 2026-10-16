@@ -23,6 +23,9 @@ pub(crate) fn values(context: &mut NativeContext<'_,NodeHost>,_:RootId,_:&[RootI
     for (name,value) in options.strings(){
         let key=context.string_rooted(name);let value=context.string_rooted(value);context.define_data_property_rooted(result,key,value,true,true,true)?;
     }
+    for (name,values) in options.lists(){
+        let key=context.string_rooted(name);let values=values.iter().map(|value|context.string_rooted(value)).collect::<Vec<_>>();let values=context.array_rooted(&values)?;context.define_data_property_rooted(result,key,values,true,true,true)?;
+    }
     Ok(result)
 }
 pub(crate) fn parse_environment(context: &mut NativeContext<'_,NodeHost>,_:RootId,args:&[RootId])->Result<RootId,RootedError>{
