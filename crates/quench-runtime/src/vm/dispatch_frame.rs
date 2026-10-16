@@ -807,10 +807,10 @@ impl<H: Host> Vm<H> {
             object.set_arguments_object();
         }
         let length = self.intern_atom("length");
-        self.set_property(arguments, length, Value::number(args.len() as f64))?;
-        self.set_property_attributes(
+        self.set_property_with_attributes(
             arguments,
-            property_key::PropertyKey::string(length),
+            length,
+            Value::number(args.len() as f64),
             PropertyAttributes {
                 writable: true,
                 enumerable: false,
@@ -819,7 +819,7 @@ impl<H: Host> Vm<H> {
                 getter: None,
                 setter: None,
             },
-        );
+        )?;
         let callee = self.intern_atom("callee");
         let value = if expose_callee {
             callable.ok_or_else(|| {

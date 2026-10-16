@@ -105,6 +105,18 @@ impl<H: Host> Runtime<H> {
         self.execute_value(program).map(drop)
     }
 
+    /// Evaluate each `(source, name)` as a global Script of the entry's realm,
+    /// in order, then execute the entry. A module entry and the modules it
+    /// loads observe the scripts' global bindings, as with host-run harnesses.
+    pub fn execute_after_scripts(
+        &mut self,
+        scripts: &[(&str, &str)],
+        program: &ResidualProgram,
+    ) -> Result<(), JsError> {
+        program.validate().map_err(JsError::validation)?;
+        self.vm.execute_after_scripts(scripts, program).map(drop)
+    }
+
     /// Execute the entry while leaving VM jobs queued for the embedder's
     /// event-loop checkpoint. Call `run_host_jobs` after host nextTick work,
     /// then `finish_deferred_execution` once the host loop is complete.
@@ -1379,8 +1391,110 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
                 }
             }
             new Explicit();
+            class ArityBase { constructor(a, b) { this.args = [a, b]; } }
+            class ArityDerived extends ArityBase {}
+            class ExplicitRest extends ArityBase { constructor(...args) { super(...args); } }
+            const NullDerived = class extends null {};
+            print(JSON.stringify([Derived.length, ArityBase.length, ArityDerived.length, ExplicitRest.length, NullDerived.length]));
+            print(JSON.stringify(new ArityDerived(1, 2).args));
+            print(JSON.stringify(Object.getOwnPropertyDescriptor(ArityDerived, 'length')));
             "#,
-            &["true", "true", "42", "true", "true", "42"],
+            &[
+                "true", "true", "42", "true", "true", "42",
+                "[0,2,0,0,0]", "[1,2]",
+                r#"{"value":0,"writable":false,"enumerable":false,"configurable":true}"#,
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_math_binary64_results_and_argument_coercion_match_node() {
+        assert_output_in_execution_modes(
+            r#"
+const view = new DataView(new ArrayBuffer(8));
+function fromBits(bits) { view.setBigUint64(0, BigInt('0x' + bits)); return view.getFloat64(0); }
+function toBits(number) { view.setFloat64(0, number); return view.getBigUint64(0).toString(16).padStart(16, '0'); }
+const cases = [
+  ["cbrt",["0000000000000000"],"0000000000000000"],
+  ["cbrt",["8000000000000000"],"8000000000000000"],
+  ["cbrt",["7ff0000000000000"],"7ff0000000000000"],
+  ["cbrt",["fff0000000000000"],"fff0000000000000"],
+  ["cbrt",["7ff8000000000000"],"7ff8000000000000"],
+  ["cbrt",["0000000000000001"],"2990000000000000"],
+  ["cbrt",["8000000000000001"],"a990000000000000"],
+  ["cbrt",["7fefffffffffffff"],"554428a2f98d728b"],
+  ["cbrt",["ffefffffffffffff"],"d54428a2f98d728b"],
+  ["cbrt",["3ff0000000000000"],"3ff0000000000000"],
+  ["cbrt",["bff0000000000000"],"bff0000000000000"],
+  ["cbrt",["4020000000000000"],"4000000000000000"],
+  ["cbrt",["c020000000000000"],"c000000000000000"],
+  ["atan2",["0000000000000000","0000000000000000"],"0000000000000000"],
+  ["atan2",["0000000000000000","8000000000000000"],"400921fb54442d18"],
+  ["atan2",["0000000000000000","7ff0000000000000"],"0000000000000000"],
+  ["atan2",["0000000000000000","fff0000000000000"],"400921fb54442d18"],
+  ["atan2",["0000000000000000","7ff8000000000000"],"7ff8000000000000"],
+  ["atan2",["0000000000000000","3ff0000000000000"],"0000000000000000"],
+  ["atan2",["0000000000000000","bff0000000000000"],"400921fb54442d18"],
+  ["atan2",["8000000000000000","0000000000000000"],"8000000000000000"],
+  ["atan2",["8000000000000000","8000000000000000"],"c00921fb54442d18"],
+  ["atan2",["8000000000000000","7ff0000000000000"],"8000000000000000"],
+  ["atan2",["8000000000000000","fff0000000000000"],"c00921fb54442d18"],
+  ["atan2",["8000000000000000","7ff8000000000000"],"7ff8000000000000"],
+  ["atan2",["8000000000000000","3ff0000000000000"],"8000000000000000"],
+  ["atan2",["8000000000000000","bff0000000000000"],"c00921fb54442d18"],
+  ["atan2",["7ff0000000000000","0000000000000000"],"3ff921fb54442d18"],
+  ["atan2",["7ff0000000000000","8000000000000000"],"3ff921fb54442d18"],
+  ["atan2",["7ff0000000000000","7ff0000000000000"],"3fe921fb54442d18"],
+  ["atan2",["7ff0000000000000","fff0000000000000"],"4002d97c7f3321d2"],
+  ["atan2",["7ff0000000000000","7ff8000000000000"],"7ff8000000000000"],
+  ["atan2",["7ff0000000000000","3ff0000000000000"],"3ff921fb54442d18"],
+  ["atan2",["7ff0000000000000","bff0000000000000"],"3ff921fb54442d18"],
+  ["atan2",["fff0000000000000","0000000000000000"],"bff921fb54442d18"],
+  ["atan2",["fff0000000000000","8000000000000000"],"bff921fb54442d18"],
+  ["atan2",["fff0000000000000","7ff0000000000000"],"bfe921fb54442d18"],
+  ["atan2",["fff0000000000000","fff0000000000000"],"c002d97c7f3321d2"],
+  ["atan2",["fff0000000000000","7ff8000000000000"],"7ff8000000000000"],
+  ["atan2",["fff0000000000000","3ff0000000000000"],"bff921fb54442d18"],
+  ["atan2",["fff0000000000000","bff0000000000000"],"bff921fb54442d18"],
+  ["atan2",["7ff8000000000000","0000000000000000"],"7ff8000000000000"],
+  ["atan2",["7ff8000000000000","8000000000000000"],"7ff8000000000000"],
+  ["atan2",["7ff8000000000000","7ff0000000000000"],"7ff8000000000000"],
+  ["atan2",["7ff8000000000000","fff0000000000000"],"7ff8000000000000"],
+  ["atan2",["7ff8000000000000","7ff8000000000000"],"7ff8000000000000"],
+  ["atan2",["7ff8000000000000","3ff0000000000000"],"7ff8000000000000"],
+  ["atan2",["7ff8000000000000","bff0000000000000"],"7ff8000000000000"],
+  ["atan2",["3ff0000000000000","0000000000000000"],"3ff921fb54442d18"],
+  ["atan2",["3ff0000000000000","8000000000000000"],"3ff921fb54442d18"],
+  ["atan2",["3ff0000000000000","7ff0000000000000"],"0000000000000000"],
+  ["atan2",["3ff0000000000000","fff0000000000000"],"400921fb54442d18"],
+  ["atan2",["3ff0000000000000","7ff8000000000000"],"7ff8000000000000"],
+  ["atan2",["3ff0000000000000","3ff0000000000000"],"3fe921fb54442d18"],
+  ["atan2",["3ff0000000000000","bff0000000000000"],"4002d97c7f3321d2"],
+  ["atan2",["bff0000000000000","0000000000000000"],"bff921fb54442d18"],
+  ["atan2",["bff0000000000000","8000000000000000"],"bff921fb54442d18"],
+  ["atan2",["bff0000000000000","7ff0000000000000"],"8000000000000000"],
+  ["atan2",["bff0000000000000","fff0000000000000"],"c00921fb54442d18"],
+  ["atan2",["bff0000000000000","7ff8000000000000"],"7ff8000000000000"],
+  ["atan2",["bff0000000000000","3ff0000000000000"],"bfe921fb54442d18"],
+  ["atan2",["bff0000000000000","bff0000000000000"],"c002d97c7f3321d2"],
+  ["cbrt",["23ace6084e030408"],"36837c37a9a62e1f"],
+  ["atan2",["a92a26b4ace7a7ea","a5ecdfd87b9f1b71"],"bff921fb54442d1a"],
+  ["atan",["c00474a752afeb7f"],"bff32afcc7fedda6"],
+  ["atan2",["55576fb73e5fd8e0","d16a68323537c0af"],"3ff921fb54442d18"]
+];
+for (const [name, args, expected] of cases) {
+  const actual = toBits(Math[name](...args.map(fromBits)));
+  if (actual !== expected) throw new Error(name + ': ' + actual + ' !== ' + expected);
+}
+const order=[];
+const value=(name,result)=>({valueOf(){order.push(name);return result;}});
+const angle=Math.atan2(value('y',1),value('x',-1));
+if(toBits(angle)!=='4002d97c7f3321d2'||order.join(',')!=='y,x')throw new Error('atan2 coercion order');
+order.length=0;
+if(!Number.isNaN(Math.atan2(value('y',NaN),value('x',1)))||order.join(',')!=='y,x')throw new Error('atan2 NaN coercion');
+print('math-bits '+cases.length+' '+order.join(','));
+            "#,
+            &["math-bits 66 y,x"],
         );
     }
 
@@ -4635,6 +4749,58 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
             let program = compile(SOURCE, "cyclic-module-graph/entry.mjs").unwrap();
             runtime.execute(&program).unwrap();
             assert_eq!(view.0.borrow().as_slice(), &["true", "[\"b\",\"a\"]", "1", "true", "true", "true", "2:2:2", "2", "true", "true", "true", "true", "true"]);
+        }
+    }
+
+    #[test]
+    fn regression_linking_leaves_deferred_and_source_requests_unevaluated() {
+        const SOURCE: &str = r#"
+            import './setup.mjs';
+            import defer * as deferred from './deferred.mjs';
+            import defer * as cyclic from './deferred-self.mjs';
+            import { source } from './source-reexport.mjs';
+            import { harness } from './harness-reader.mjs';
+            log.push('entry');
+            print(deferred.value + cyclic.value);
+            print(log.join());
+            print(globalThis.selfAccess);
+            print(source instanceof $262.AbstractModuleSource);
+            print(harness);
+        "#;
+        const MODULES: &[(&str, &str)] = &[
+            ("setup.mjs", "globalThis.log = [];"),
+            ("deferred.mjs", "import './async.mjs'; log.push('deferred'); export const value = 1;"),
+            ("async.mjs", "log.push('async start'); await 0; log.push('async end');"),
+            ("deferred-self.mjs", "import defer * as self from './deferred-self.mjs'; try { self.value; } catch (error) { globalThis.selfAccess = error instanceof TypeError; } export const value = 2;"),
+            ("source-1.mjs", "import source source from '<source>'; export { source };"),
+            ("source-2.mjs", "import source source from '<source>'; export { source };"),
+            ("source-reexport.mjs", "export * from './source-1.mjs'; export * from './source-2.mjs';"),
+            ("harness-reader.mjs", "export const harness = typeof harnessGlobal;"),
+        ];
+        struct ModuleCapture(Capture);
+        impl Host for ModuleCapture {
+            fn write_line(&mut self, text: &str) { self.0.write_line(text); }
+            fn globals(&self) -> &'static [crate::HostGlobal] { self.0.globals() }
+            fn clock_millis(&mut self) -> f64 { 0.0 }
+            fn has_module_source(&self, module: &crate::ModuleSource) -> bool { module.name == "<source>" }
+            fn resolve_dynamic_import(&mut self, _: &str, specifier: &str) -> Result<Option<crate::ModuleSource>, String> {
+                if specifier == "<source>" {
+                    return Ok(Some(crate::ModuleSource { name: specifier.into(), source: String::new(), bytes: Vec::new() }));
+                }
+                let name = specifier.rsplit('/').next().unwrap();
+                Ok(MODULES.iter().find(|(candidate, _)| *candidate == name).map(|(_, source)| crate::ModuleSource {
+                    name: format!("deferred-module-graph/{name}"), source: (*source).into(), bytes: source.as_bytes().to_vec(),
+                }))
+            }
+        }
+        for compile in [Engine::specialize_module as fn(&str, &str) -> _, Engine::specialize_module_unspecialized] {
+            let view = Capture::default();
+            let mut runtime = Runtime::new(ModuleCapture(view.clone()));
+            let program = compile(SOURCE, "deferred-module-graph/entry.mjs").unwrap();
+            runtime
+                .execute_after_scripts(&[("function harnessGlobal() {}", "harness.js")], &program)
+                .unwrap();
+            assert_eq!(view.0.borrow().as_slice(), &["3", "async start,async end,entry,deferred", "true", "true", "function"]);
         }
     }
 

@@ -2955,21 +2955,8 @@ pub(super) fn stream_io_error(
     syscall: &str,
     path: &str,
 ) -> Result<RootedError, RootedError> {
-    let code = if error.raw_os_error() == Some(libc::EBADF) {
-        "EBADF"
-    } else if error.raw_os_error() == Some(libc::EFBIG) {
-        "EFBIG"
-    } else {
-        fs_error_code(error.kind())
-    };
-    let description = match error.kind() {
-        std::io::ErrorKind::NotFound => "no such file or directory",
-        std::io::ErrorKind::PermissionDenied => "permission denied",
-        std::io::ErrorKind::IsADirectory => "illegal operation on a directory",
-        std::io::ErrorKind::NotADirectory => "not a directory",
-        _ if error.raw_os_error() == Some(libc::EBADF) => "bad file descriptor",
-        _ => "input/output error",
-    };
+    let (code, _) = super::fs_error_codes::code_for(&error);
+    let description = super::fs_error_codes::strerror(code);
     let message = format!("{code}: {description}, {syscall} '{path}'");
     let exception = context.error_rooted(&message)?;
     let code_value = context.string_rooted(code);
@@ -2983,14 +2970,4 @@ pub(super) fn stream_io_error(
         set(context, exception, "errno", errno_value)?;
     }
     Ok(context.throw(exception))
-}
-
-fn fs_error_code(kind: std::io::ErrorKind) -> &'static str {
-    match kind {
-        std::io::ErrorKind::NotFound => "ENOENT",
-        std::io::ErrorKind::PermissionDenied => "EACCES",
-        std::io::ErrorKind::IsADirectory => "EISDIR",
-        std::io::ErrorKind::NotADirectory => "ENOTDIR",
-        _ => "EIO",
-    }
 }

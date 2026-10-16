@@ -91,6 +91,11 @@ unset LLVM_PROFILE_FILE
 
 "$llvm_profdata" merge -o "$profdata" "$data_dir"/*.profraw
 rm -rf "$data_dir"
+# Indirect call promotion turns a profiled indirect call into a guarded direct call and may
+# inline the callee there. The lane's dispatches are indirect tail calls between handlers;
+# promoting one inlines a large handler (a frameless call) into a small one (a register
+# move), whose every dispatch then pays the large one's prologue: Crypto and NavierStokes
+# ran 38% more instructions once training made a call the move's most frequent successor.
 CARGO_TARGET_DIR="$target_dir" cargo build --profile "$profile" -p quench-node \
-    --config "build.rustflags=[\"-Cprofile-use=$profdata\"]"
+    --config "build.rustflags=[\"-Cprofile-use=$profdata\", \"-Cllvm-args=-disable-icp\"]"
 printf 'PGO build: %s\n' "$target_dir/$profile/quench-node"

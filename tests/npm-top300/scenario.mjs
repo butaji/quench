@@ -13,6 +13,9 @@ const inventory = JSON.parse(fs.readFileSync(fileURLToPath(new URL('inventory.js
 const installation = inventory.packages.find(p => p.name === name)?.installation ?? name;
 const compiler = inventory.packages.find(p => p.name === 'typescript')?.installation ?? 'typescript';
 const declarations = inventory.packages.find(p => p.name === name)?.types_only;
+const specifier = name === 'punycode' ? 'punycode/punycode.js'
+  : name === 'string_decoder' ? 'string_decoder/lib/string_decoder.js'
+  : name === 'buffer' ? 'buffer/index.js' : installation;
 const namespace = name === '@esbuild/linux-x64' || declarations
   ? {}
   : name === 'node-releases'
@@ -33,9 +36,7 @@ const namespace = name === '@esbuild/linux-x64' || declarations
   ? {}
   : name.startsWith('@rollup/rollup-linux-') || name === '@tailwindcss/oxide-linux-x64-gnu'
   ? { default: createRequire(import.meta.url)(name) }
-  : await import(name === 'punycode' ? 'punycode/punycode.js'
-    : name === 'string_decoder' ? 'string_decoder/lib/string_decoder.js'
-    : name === 'buffer' ? 'buffer/index.js' : installation);
+  : await import(specifier);
 const api = namespace.default ?? namespace;
 let assertions = 0;
 const equal = (actual, expected) => { assert.deepEqual(actual, expected); assertions++; };
@@ -72,6 +73,22 @@ async function requestMiddleware(handler, { method = 'GET', body, headers = {}, 
       request.on('error', reject); request.end(body);
     });
   } finally { await new Promise(resolve => server.close(resolve)); }
+}
+
+async function recordEntryContracts() {
+  const {exercise} = await import('./contracts/' + name + '.mjs');
+  const imported = await exercise(api);
+  const commonjs = createRequire(import.meta.url)(specifier);
+  const required = await exercise(commonjs.default ?? commonjs);
+  const entries = {import: imported, require: required};
+  const checks = {};
+  for (const report of Object.values(entries)) {
+    assert.equal(report.package, name);
+    for (const [id, count] of Object.entries(report.checks)) checks[id] = (checks[id] ?? 0) + count;
+  }
+  const report = {package:name, assertions:imported.assertions + required.assertions,
+    checks, entries, specifier, scope:'Separate import/require finite public API corpora; dynamic/returned APIs, arbitrary inputs and other entry points remain obligations'};
+  fs.writeFileSync('function-checks.json', JSON.stringify(report));
 }
 
 async function exercise() {
@@ -219,7 +236,7 @@ async function exercise() {
       equal(pointers, ['', '/properties/a']);
       break;
     }
-    case 'string-width': equal(api('a😀中'), 5); break;
+    case 'string-width': await recordEntryContracts(); break;
     case 'escape-string-regexp': equal(api('a+b?'), 'a\\+b\\?'); break;
     case 'globals': equal(api.node.process, false); equal(api.browser.window, false); break;
     case 'is-fullwidth-code-point': equal(api('中'.codePointAt(0)), true); equal(api(65), false); break;
@@ -248,7 +265,7 @@ async function exercise() {
       break;
     case 'js-yaml': equal(api.load('a: 1\nb: [two, three]\n'), { a: 1, b: ['two', 'three'] }); break;
     case 'resolve': equal(api.sync('./fixture.txt', { basedir: process.cwd() }), path.resolve(fixture)); break;
-    case 'mime-types': equal(api.lookup('file.json'), 'application/json'); equal(api.lookup('file.unknownxyz'), false); break;
+    case 'mime-types': await recordEntryContracts(); break;
     case 'nanoid': equal(namespace.nanoid(12).length, 12); equal(namespace.customAlphabet('a', 4)(), 'aaaa'); break;
     case 'yargs-parser': equal(api(['--count', '3', 'file']).count, 3); break;
     case 'source-map': {
@@ -264,7 +281,7 @@ async function exercise() {
       equal(decoder.write(bytes.subarray(0, 2)), '');
       equal(decoder.end(bytes.subarray(2)), '😀'); break;
     }
-    case 'color-convert': equal(api.rgb.hex(255, 0, 0), 'FF0000'); break;
+    case 'color-convert': await recordEntryContracts(); break;
     case 'estraverse': {
       const types = [];
       api.traverse({ type: 'Program', body: [{ type: 'ExpressionStatement', expression: { type: 'Literal', value: 1 } }] }, { enter: node => types.push(node.type) });
@@ -275,7 +292,7 @@ async function exercise() {
       equal(agent.proxy.hostname, 'localhost'); agent.destroy(); break;
     }
     case '@babel/helper-validator-identifier': equal(api.isIdentifierName('hello'), true); equal(api.isIdentifierName('1bad'), false); break;
-    case 'json5': equal(api.parse('{a:1, /*ok*/ b:"two",}'), { a: 1, b: 'two' }); break;
+    case 'json5': await recordEntryContracts(); break;
     case 'react-is': equal(api.isValidElementType('div'), true); equal(api.isValidElementType(42), false); break;
     case 'readdirp': {
       const entries = await namespace.readdirpPromise(process.cwd(), { depth: 0 });
@@ -295,8 +312,8 @@ async function exercise() {
       for await (const chunk of api.Readable.from(['a', 'b'])) chunks.push(chunk);
       equal(chunks, ['a', 'b']); break;
     }
-    case 'punycode': equal(api.toASCII('mañana.com'), 'xn--maana-pta.com'); break;
-    case 'tr46': equal(api.toASCII('mañana.com'), 'xn--maana-pta.com'); break;
+    case 'punycode': await recordEntryContracts(); break;
+    case 'tr46': await recordEntryContracts(); break;
     case 'find-up': equal(await namespace.findUp(fixture), path.resolve(fixture)); break;
     case 'webidl-conversions': equal(api['unsigned long'](-1), 4294967295); break;
     case 'path-exists': equal(await namespace.pathExists(fixture), true); equal(await namespace.pathExists('absent.txt'), false); break;
@@ -310,11 +327,8 @@ async function exercise() {
       const result = api.sync('/bin/echo', ['hello'], { encoding: 'utf8' });
       equal(result.status, 0); equal(result.stdout, 'hello\n'); break;
     }
-    case 'statuses': equal(api(404), 'Not Found'); equal(api('not found'), 404); break;
-    case 'whatwg-url': {
-      const coverage = (await import('./contracts/whatwg-url.mjs')).exercise(api);
-      fs.writeFileSync('function-checks.json', JSON.stringify(coverage)); break;
-    }
+    case 'statuses': await recordEntryContracts(); break;
+    case 'whatwg-url': await recordEntryContracts(); break;
     case 'fast-deep-equal': equal(api({ a: [1, 2] }, { a: [1, 2] }), true); equal(api([1], [2]), false); break;
     case 'locate-path': equal(await namespace.locatePath(['absent.txt', fixture]), fixture); break;
     case 'is-number': equal(api('42'), true); equal(api(''), false); break;
@@ -340,7 +354,7 @@ async function exercise() {
       const agent = new api.Agent(); equal(agent.getName({ host: 'example.com', port: 80 }), 'example.com:80:'); agent.destroy(); break;
     }
     case 'safe-buffer': equal(api.Buffer.from('hello').toString('hex'), '68656c6c6f'); break;
-    case 'qs': equal(api.parse('a[b]=1&a[c]=2'), { a: { b: '1', c: '2' } }); break;
+    case 'qs': await recordEntryContracts(); break;
     case 'fill-range': equal(api('a', 'c'), ['a', 'b', 'c']); break;
     case 'path-to-regexp': equal(api.match('/user/:id')('/user/42').params.id, '42'); break;
     case 'lodash': equal(api.chunk([1, 2, 3], 2), [[1, 2], [3]]); equal(api.get({ a: { b: 2 } }, 'a.b'), 2); break;
@@ -377,10 +391,8 @@ async function exercise() {
     case 'to-regex-range': { const re = new RegExp('^(?:' + api(10, 20) + ')$'); equal(re.test('15'), true); equal(re.test('21'), false); break; }
     case 'fast-json-stable-stringify': equal(api({ b: 2, a: 1 }), '{"a":1,"b":2}'); break;
     case 'get-intrinsic': equal(api('%Array.prototype.slice%'), Array.prototype.slice); break;
-    case 'eslint-visitor-keys':
-      equal(api.KEYS.MemberExpression, ['object', 'property']);
-      equal(api.getKeys({ type: 'Identifier', name: 'x', parent: null }), ['type', 'name']); break;
-    case 'path-key': equal(api({ platform: 'win32', env: { Path: 'bin' } }), 'Path'); equal(api({ platform: 'linux', env: {} }), 'PATH'); break;
+    case 'eslint-visitor-keys': await recordEntryContracts(); break;
+    case 'path-key': await recordEntryContracts(); break;
     case 'postcss': {
       const root = api.parse('a{color:red}'); root.walkDecls(d => { d.value = 'blue'; });
       equal(root.toString(), 'a{color:blue}'); break;
@@ -450,7 +462,7 @@ async function exercise() {
     case '@jridgewell/resolve-uri': equal(api('../b', 'https://example.com/a/'), 'https://example.com/b'); break;
     case 'call-bind-apply-helpers': equal(api([String.prototype.slice])('abc', 1), 'bc'); break;
     case 'call-bound': equal(api('String.prototype.slice')('abc', 1), 'bc'); break;
-    case 'is-stream': equal(api.isReadableStream(Readable.from(['a'])), true); equal(api.isStream({}), false); break;
+    case 'is-stream': await recordEntryContracts(); break;
     case 'estree-walker': {
       const names = []; api.walk({ type: 'Identifier', name: 'x' }, { enter(node) { names.push(node.name); } }); equal(names, ['x']); break;
     }
@@ -503,13 +515,13 @@ async function exercise() {
     case 'json-stable-stringify-without-jsonify': equal(api({ b: 2, a: 1 }), '{"a":1,"b":2}'); break;
     case 'mkdirp': equal(await api.mkdirp('nested/dir'), path.resolve('nested')); equal(fs.statSync('nested/dir').isDirectory(), true); break;
     case 'ansi-escapes': equal(api.cursorTo(2, 3), '\x1b[4;3H'); equal(api.cursorUp(2), '\x1b[2A'); break;
-    case 'json-buffer': { const restored = api.parse(api.stringify({ data: Buffer.from('hi') })); equal(restored.data.toString(), 'hi'); break; }
+    case 'json-buffer': await recordEntryContracts(); break;
     case 'escape-html': equal(api('<a x="hi">&'), '&lt;a x=&quot;hi&quot;&gt;&amp;'); break;
     case 'proxy-from-env': { process.env.http_proxy = 'http://localhost:1234'; equal(api.getProxyForUrl('http://example.com/'), 'http://localhost:1234'); delete process.env.http_proxy; break; }
     case 'queue-microtask': { const order = []; const promise = new Promise(resolve => api(() => { order.push(2); resolve(); })); order.push(1); await promise; equal(order, [1, 2]); break; }
     case 'is-unicode-supported': equal(api(), process.platform !== 'win32' && process.env.TERM !== 'linux'); break;
     case 'lodash.merge': equal(api({}, { a: { b: 1 } }, { a: { c: 2 } }), { a: { b: 1, c: 2 } }); break;
-    case 'ieee754': { const data = new Uint8Array(8); api.write(data, 1.5, 0, true, 52, 8); equal(api.read(data, 0, true, 52, 8), 1.5); break; }
+    case 'ieee754': await recordEntryContracts(); break;
     case 'axios': equal(api.getUri({ url: '/a', baseURL: 'https://example.com', params: { x: 1 } }), 'https://example.com/a?x=1'); break;
     case 'proxy-addr': { const trust = api.compile('loopback'); equal(trust('127.0.0.1'), true); equal(trust('8.8.8.8'), false); break; }
     case 'schema-utils': api.validate({ type: 'number' }, 3); assert.throws(() => api.validate({ type: 'number' }, 'bad')); break;
@@ -548,7 +560,7 @@ async function exercise() {
     case 'json-schema': equal(api.validate({ a: 1 }, { type: 'object' }).valid, true); equal(api.validate('bad', { type: 'number' }).valid, false); break;
     case 'p-map': equal(await api([1, 2, 3], async x => x * 2, { concurrency: 2 }), [2, 4, 6]); break;
     case 'sisteransi': equal(api.cursor.up(2), '\x1b[2A'); equal(api.erase.line, '\x1b[2K'); break;
-    case 'minimist': equal(api(['--count', '3', 'file'], { string: ['count'] }), { _: ['file'], count: '3' }); break;
+    case 'minimist': await recordEntryContracts(); break;
     case 'dotenv': equal(api.parse('A=one\nB="two words"\n'), { A: 'one', B: 'two words' }); break;
     case 'rimraf': fs.mkdirSync('remove-me'); fs.writeFileSync('remove-me/file', 'x'); equal(await api.rimraf('remove-me'), true); equal(fs.existsSync('remove-me'), false); break;
     case 'readdirp': { const files = await api.readdirpPromise('.'); equal(files.map(f => f.basename).sort(), [fixture]); break; }
@@ -608,10 +620,7 @@ async function exercise() {
     case 'serve-static': { const response = await requestMiddleware(api(process.cwd()), { url: '/fixture.txt' }); equal(response.status, 200); equal(response.text, 'hello\n'); break; }
     case 'body-parser': { const parse = api.json(); const response = await requestMiddleware((req, res, next) => parse(req, res, error => { if (error) return next(error); res.end(JSON.stringify(req.body)); }), { method: 'POST', body: '{"a":1}', headers: { 'content-type': 'application/json', 'content-length': '7' } }); equal(response.status, 200); equal(JSON.parse(response.text), { a: 1 }); break; }
     case 'cors': { const middleware = api(); const response = await requestMiddleware((req, res, next) => middleware(req, res, () => res.end('ok'))); equal(response.headers['access-control-allow-origin'], '*'); equal(response.text, 'ok'); break; }
-    case 'jackspeak': {
-      const coverage = (await import('./contracts/jackspeak.mjs')).exercise(api);
-      fs.writeFileSync('function-checks.json', JSON.stringify(coverage)); break;
-    }
+    case 'jackspeak': await recordEntryContracts(); break;
     case 'foreground-child': { const result = spawnSync(process.execPath, ['-e', `require(${JSON.stringify(createRequire(import.meta.url).resolve('foreground-child'))}).foregroundChild(process.execPath,['-e','console.log(42)']);`], { encoding: 'utf8' }); equal(result.status, 0); equal(result.stdout, '42\n'); break; }
     case 'tar-stream': { const pack = api.pack(), extract = api.extract(); const contents = []; const done = new Promise((resolve, reject) => { extract.on('finish', resolve); extract.on('error', reject); }); extract.on('entry', (header, stream, next) => { let data = ''; stream.on('data', chunk => data += chunk); stream.on('end', () => { contents.push([header.name, data]); next(); }); }); pack.pipe(extract); pack.entry({ name: 'file', mtime: new Date(0) }, 'hello'); pack.finalize(); await done; equal(contents, [['file', 'hello']]); break; }
     case 'minizlib': { const gzip = new api.Gzip(); const chunks = []; const done = new Promise((resolve, reject) => { gzip.on('end', resolve); gzip.on('error', reject); }); gzip.on('data', chunk => chunks.push(chunk)); gzip.end('hello'); await done; const zlib = await import('node:zlib'); equal(zlib.gunzipSync(Buffer.concat(chunks)).toString(), 'hello'); break; }

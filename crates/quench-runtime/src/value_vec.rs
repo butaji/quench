@@ -219,6 +219,22 @@ impl ValueArena {
         unsafe { *self.values.get_unchecked(vector.start() + index) }
     }
 
+    /// `get_unchecked` of a vector outside dictionary mode; `None` for a dictionary, whose
+    /// out-of-line read a caller may leave to its slower path to keep its own code call-free.
+    ///
+    /// # Safety
+    /// As for `get_unchecked`.
+    #[inline(always)]
+    pub(crate) unsafe fn get_shaped(&self, vector: ValueVec, index: usize) -> Option<Value> {
+        debug_assert!(!vector.has_inline_property_storage());
+        if vector.is_dictionary() {
+            return None;
+        }
+        debug_assert!(index < self.len(vector));
+        // SAFETY: as for `get_unchecked`.
+        Some(unsafe { *self.values.get_unchecked(vector.start() + index) })
+    }
+
     #[cold]
     #[inline(never)]
     fn dictionary_get(&self, vector: ValueVec, index: usize) -> Value {
