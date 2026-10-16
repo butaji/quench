@@ -55,8 +55,12 @@ impl<H: Host> Vm<H> {
             unreachable!("fresh array owner remains an array");
         };
         let elements = super::index::mutable_array_elements(elements);
+        let capacity = elements.capacity();
         elements.push(value);
-        elements.len()
+        let length = elements.len();
+        let grown = elements.capacity() - capacity;
+        self.heap.charge_payload_growth(grown * size_of::<Value>());
+        length
     }
 
     pub(super) fn new_array_with_prototype(
@@ -388,7 +392,7 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let promise = self.promise_object();
+        let promise = self.promise_object()?;
         self.with_call_roots([promise], |vm| {
             if let Err(error) = vm.array_from_async_start(p, promise, this, args) {
                 let reason = vm.thrown_value_for(p, error);
@@ -552,7 +556,7 @@ impl<H: Host> Vm<H> {
             state.awaiting = awaiting;
         }
         let result = (|| {
-            let promise = self.promise_object();
+            let promise = self.with_call_roots([value], |vm| vm.promise_object())?;
             self.with_call_roots([promise], |vm| {
                 vm.promise_resolve_value(p, promise, value)?;
                 let state_value = vm

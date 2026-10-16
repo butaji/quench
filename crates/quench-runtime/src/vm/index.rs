@@ -171,6 +171,9 @@ impl<H: Host> Vm<H> {
                 self.replace_dense_element(object, index, value);
                 return Ok(());
             }
+            if self.append_dense_element(object, index, value) {
+                return Ok(());
+            }
             // A typed array's integer-indexed [[Set]] is TypedArraySetElement: its indices
             // carry no descriptors, accessors or integrity state for the checks below.
             if self.typed_array_set(p, object, index, value)? {
@@ -292,6 +295,14 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> bool {
         self.try_replace_element_of::<true>(object, key, value, crate::heap::Heap::array_mut)
+    }
+
+    /// `object[key] = value` that appends to a dense array at its length
+    /// (`append_dense_element`); `false` leaves the store, unobserved, to the general path.
+    pub(super) fn try_append_dense_element(&mut self, object: Value, key: Value, value: Value) -> bool {
+        key.as_int()
+            .and_then(|index| usize::try_from(index).ok())
+            .is_some_and(|index| self.append_dense_element(object, index, value))
     }
 
     /// `try_replace_dense_element` of an array whose object is a record and whose elements no
@@ -484,8 +495,11 @@ impl<H: Host> Vm<H> {
             self.profile
                 .array_write_ownership(Rc::strong_count(elements) != 1);
             let elements = mutable_array_elements(elements);
+            let capacity = elements.capacity();
             elements.resize(index + 1, Value::DELETED);
             elements[index] = value;
+            let grown = elements.capacity() - capacity;
+            self.heap.charge_payload_growth(grown * size_of::<Value>());
         }
         self.sync_mapped_argument(object, index, value);
         true

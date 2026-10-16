@@ -20,7 +20,7 @@ const TYPED_BRANDS: &[(crate::BuiltinBrand, TypedArrayKind)] = &[
     (crate::BuiltinBrand::Float32Array, TypedArrayKind::Float32),
     (crate::BuiltinBrand::Float64Array, TypedArrayKind::Float64),
 ];
-fn typed_array_brand(kind: TypedArrayKind) -> crate::BuiltinBrand {
+pub(super) fn typed_array_brand(kind: TypedArrayKind) -> crate::BuiltinBrand {
     TYPED_BRANDS
         .iter()
         .find(|(_, candidate)| *candidate == kind)
@@ -29,6 +29,10 @@ fn typed_array_brand(kind: TypedArrayKind) -> crate::BuiltinBrand {
 }
 
 impl<H: Host> Vm<H> {
+    pub(crate) fn embedding_heap_memory_composition(&self) -> crate::HeapMemoryComposition {
+        self.heap.memory_composition()
+    }
+
     pub(super) fn boxed_primitive_value(&self, value: Value) -> Option<Value> {
         self.object_data(value)?.boxed_primitive()
     }

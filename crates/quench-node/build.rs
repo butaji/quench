@@ -19,6 +19,9 @@ use std::{env, path::Path};
 const X86_64_LINUX_ORDER: &str = "link/x86_64-linux.order";
 const X86_64_LINUX_STATIC_ORDER: &str = "link/x86_64-linux-static.order";
 
+/// The Node-API functions `process.dlopen`ed addons import from the executable.
+const NODE_API_DYNAMIC_LIST: &str = "link/node-api.dynamic-list";
+
 /// The C runtime's frame registration hooks. A static C runtime's start code (`crtbeginT.o`)
 /// registers `.eh_frame` with the unwinder when these weak references resolve, which makes the
 /// whole section resident at startup. Production aborts on panic and the unwinder still finds
@@ -41,6 +44,7 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed={X86_64_LINUX_ORDER}");
     println!("cargo:rerun-if-changed={X86_64_LINUX_STATIC_ORDER}");
+    println!("cargo:rerun-if-changed={NODE_API_DYNAMIC_LIST}");
     println!("cargo:rustc-check-cfg=cfg(quench_openssl_engine)");
     println!("cargo:rerun-if-env-changed=DEP_OPENSSL_CONF");
     let configuration = std::env::var("DEP_OPENSSL_CONF").unwrap_or_default();
@@ -56,6 +60,10 @@ fn main() {
     let os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let static_runtime = env::var("CARGO_CFG_TARGET_FEATURE")
         .is_ok_and(|features| features.split(',').any(|feature| feature == "crt-static"));
+    if os == "linux" && !static_runtime {
+        let list = Path::new(&env::var("CARGO_MANIFEST_DIR").unwrap_or_default()).join(NODE_API_DYNAMIC_LIST);
+        println!("cargo:rustc-link-arg-bins=-Wl,--dynamic-list={}", list.display());
+    }
     // A static C runtime chooses its own executable kind.
     if os == "linux" && static_runtime {
         for hook in FRAME_REGISTRATION_HOOKS {
@@ -119,6 +127,10 @@ fn configure_node_compat_version(root: &std::path::Path) {
         definition("NODE_MINOR_VERSION"),
         definition("NODE_PATCH_VERSION")
     );
+    // Node-API versions the runtime supports and assumes for modules that declare none.
+    for name in ["NODE_API_SUPPORTED_VERSION_MAX", "NODE_API_DEFAULT_MODULE_API_VERSION"] {
+        println!("cargo:rustc-env=QUENCH_{name}={}", definition(name));
+    }
 }
 
 include!("src/node_source_dependencies.rs");
@@ -132,6 +144,9 @@ fn embed_node_sources() {
         .expect("initialize tests/node submodule");
     configure_node_compat_version(&root);
     embed_node_protocol_constants(&root);
+    embed_uv_error_constants(&root);
+    embed_empty_string_list_options(&root);
+    embed_legacy_binding_metadata(&root);
     let mut pending = vec![root.join("lib")];
     let mut files = BUNDLED_DEPENDENCIES.iter().map(|(_, path)| root.join(path)).collect::<Vec<_>>();
     while let Some(directory) = pending.pop() {
@@ -255,17 +270,147 @@ fn embed_node_protocol_constants(root: &Path) {
     }
     let codes = entries(root, "node_exit_code.h", "EXIT_CODE_LIST");
     let statuses = entries(root, "compile_cache.h", "COMPILE_CACHE_STATUS");
-    let mut output = String::from("pub(crate) const EXIT_CODES: &[(&str, i32)] = &[\n");
-    for code in codes {
+    let cached_types = entries(root, "compile_cache.h", "CACHED_CODE_TYPES");
+    let codes = codes.iter().map(|code| {
         let (name, value) = code.split_once(',').expect("Node exit code pair");
         let value: i32 = value.trim().parse().expect("numeric Node exit code");
-        output.push_str(&format!("    ({:?}, {value}),\n", format!("k{}", name.trim())));
+        (name.trim(), value)
+    }).collect::<Vec<_>>();
+    let mut output = String::from("#[repr(i32)]\npub(crate) enum ExitCode {\n");
+    for (name, value) in &codes { output.push_str(&format!("    {name} = {value},\n")); }
+    output.push_str("}\npub(crate) const EXIT_CODES: &[(&str, i32)] = &[\n");
+    for (name, _) in &codes {
+        output.push_str(&format!("    ({:?}, ExitCode::{name} as i32),\n", format!("k{name}")));
     }
     output.push_str("];\npub(crate) const COMPILE_CACHE_STATUS: &[&str] = &[\n");
     for status in statuses { output.push_str(&format!("    {status:?},\n")); }
+    output.push_str("];\npub(crate) const CACHED_CODE_TYPES: &[(&str, u32)] = &[\n");
+    for entry in cached_types {
+        let (name, value) = entry.split_once(',').expect("Node cached code type pair");
+        let value: u32 = value.trim().parse().expect("numeric Node cached code type");
+        output.push_str(&format!("    ({:?}, {value}),\n", name.trim()));
+    }
     output.push_str("];\n");
     let path = std::path::PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("node_protocol_constants.rs");
     if std::fs::read_to_string(&path).ok().as_deref() != Some(&output) {
         std::fs::write(path, output).expect("write Node protocol constants");
+    }
+}
+
+/// Read protocol facts through the target C preprocessor; Rust owns the API.
+/// This uses libuv's own errno macros, including target-specific fallback codes.
+fn embed_uv_error_constants(root: &Path) {
+    let include = root.join("deps/uv/include");
+    for header in ["uv.h", "uv/errno.h"] {
+        println!("cargo:rerun-if-changed={}", include.join(header).display());
+    }
+    let out = std::path::PathBuf::from(env::var_os("OUT_DIR").unwrap());
+    let input = out.join("node_uv_error_constants.c");
+    let header = std::fs::read_to_string(include.join("uv.h")).expect("read libuv error macro");
+    let mut lines = header.lines().skip_while(|line| !line.starts_with("#define UV_ERRNO_MAP(XX)"));
+    let mut definition = String::new();
+    loop {
+        let line = lines.next().expect("complete libuv error macro");
+        definition.push_str(line);
+        definition.push('\n');
+        if !line.ends_with('\\') { break; }
+    }
+    // uv.h undefines UV__ERR after its enum; errno.h deliberately owns that
+    // target-specific sign operation, so preprocess its macros directly.
+    std::fs::write(&input, format!(r#"#include <uv/errno.h>
+{definition}
+#define QUENCH_UV_ROW(code, message) QUENCH_UV_ROW_BEGIN UV__##code, #code, message QUENCH_UV_ROW_END
+QUENCH_UV_ERRORS_BEGIN
+UV_ERRNO_MAP(QUENCH_UV_ROW)
+QUENCH_UV_ERRORS_END
+"#)).expect("write libuv protocol input");
+    let compiler = cc::Build::new().get_compiler();
+    let mut command = compiler.to_command();
+    if compiler.is_like_msvc() {
+        command.arg("/EP").arg("/I").arg(&include);
+    } else {
+        command.args(["-E", "-P", "-I"]).arg(&include);
+    }
+    let result = command.arg(&input).output().expect("preprocess libuv protocol facts");
+    assert!(result.status.success(), "libuv protocol preprocessor: {}", String::from_utf8_lossy(&result.stderr));
+    let source = String::from_utf8(result.stdout).expect("UTF-8 libuv protocol output");
+    let rows = source.split_once("QUENCH_UV_ERRORS_BEGIN").expect("libuv protocol start").1
+        .split_once("QUENCH_UV_ERRORS_END").expect("libuv protocol end").0;
+    let mut output = String::from("pub(crate) const UV_ERRORS: &[(i32, &str, &str)] = &[\n");
+    for row in rows.split("QUENCH_UV_ROW_END") {
+        let row = row.trim();
+        if row.is_empty() { continue; }
+        let row = row.strip_prefix("QUENCH_UV_ROW_BEGIN").expect("libuv error row");
+        let mut fields = row.splitn(3, ',');
+        let number = fields.next().expect("libuv numeric code");
+        let digits = number.chars().filter(|c| !c.is_whitespace() && *c != '(' && *c != ')').collect::<String>();
+        let number: i32 = digits.parse().expect("literal target libuv code");
+        let name = fields.next().expect("libuv error name").trim();
+        let message = fields.next().expect("libuv error message").trim();
+        output.push_str(&format!("    ({number}, {name}, {message}),\n"));
+    }
+    output.push_str("];\n");
+    let path = out.join("node_uv_errors.rs");
+    if std::fs::read_to_string(&path).ok().as_deref() != Some(&output) {
+        std::fs::write(path, output).expect("write libuv protocol constants");
+    }
+}
+
+/// Empty std::vector defaults and their CLI names are SDK protocol facts.
+fn embed_empty_string_list_options(root: &Path) {
+    use std::collections::BTreeSet;
+    let header_path = root.join("src/node_options.h");
+    let source_path = root.join("src/node_options.cc");
+    println!("cargo:rerun-if-changed={}", header_path.display());
+    println!("cargo:rerun-if-changed={}", source_path.display());
+    let header = std::fs::read_to_string(header_path).expect("read Node option declarations");
+    let source = std::fs::read_to_string(source_path).expect("read Node option registrations");
+    let fields = header.lines().filter_map(|line| {
+        let field = line.trim().strip_prefix("std::vector<std::string> ")?.strip_suffix(';')?.trim();
+        (!field.is_empty() && field.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')).then_some(field)
+    }).collect::<BTreeSet<_>>();
+    let mut names = BTreeSet::new();
+    for registration in source.split("AddOption(").skip(1) {
+        let Some((registration, _)) = registration.split_once(");") else { continue; };
+        let Some(rest) = registration.trim_start().strip_prefix('"') else { continue; };
+        let Some((name, _)) = rest.split_once('"') else { continue; };
+        let Some((_, member)) = registration.split_once("&EnvironmentOptions::") else { continue; };
+        let field = member.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect::<String>();
+        if fields.contains(field.as_str()) { names.insert(name); }
+    }
+    assert!(!names.is_empty(), "SDK empty string-list option inventory");
+    let mut generated = String::from("const EMPTY_STRING_LIST_OPTIONS: &[&str] = &[\n");
+    for name in names { generated.push_str(&format!("    {name:?},\n")); }
+    generated.push_str("];\n");
+    let path = Path::new(&env::var("OUT_DIR").expect("build output")).join("node_option_defaults.rs");
+    if std::fs::read_to_string(&path).ok().as_deref() != Some(&generated) {
+        std::fs::write(path, generated).expect("write SDK option inventory");
+    }
+}
+
+fn embed_legacy_binding_metadata(root: &Path) {
+    let path = root.join("lib/internal/bootstrap/realm.js");
+    println!("cargo:rerun-if-changed={}", path.display());
+    let source = std::fs::read_to_string(path).expect("read SDK legacy binding metadata");
+    let mut output = String::new();
+    for (name, constant) in [
+        ("processBindingAllowList", "PROCESS_BINDING_ALLOW_LIST"),
+        ("runtimeDeprecatedList", "RUNTIME_DEPRECATED_BINDINGS"),
+        ("legacyWrapperList", "LEGACY_WRAPPER_BINDINGS"),
+    ] {
+        let start = format!("const {name} = new SafeSet([");
+        let body = source.split_once(&start).expect("SDK binding metadata set").1
+            .split_once("]);").expect("SDK binding metadata end").0;
+        output.push_str(&format!("const {constant}: &[&str] = &[\n"));
+        for line in body.lines().map(str::trim).filter(|line| !line.is_empty() && !line.starts_with("//")) {
+            let value = line.strip_prefix('\'').and_then(|line| line.split_once('\'')).expect("SDK binding name literal").0;
+            assert!(!value.is_empty() && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_'));
+            output.push_str(&format!("    {value:?},\n"));
+        }
+        output.push_str("];\n");
+    }
+    let path = std::path::PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("node_legacy_bindings.rs");
+    if std::fs::read_to_string(&path).ok().as_deref() != Some(&output) {
+        std::fs::write(path, output).expect("write SDK legacy binding metadata");
     }
 }

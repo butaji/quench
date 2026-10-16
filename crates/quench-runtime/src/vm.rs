@@ -962,6 +962,9 @@ struct Shape {
     /// `PROTOTYPE_SLOT_UNKNOWN` until first derived, `PROTOTYPE_SLOT_NONE` when absent or an
     /// accessor. Dictionary shapes never memoize.
     prototype_slot: std::cell::Cell<u32>,
+    /// Memo of whether this immutable shape's keys include an array-index name: `None` until
+    /// first derived (`Vm::shape_has_index_key`). Dictionary shapes never memoize.
+    index_keys: std::cell::Cell<Option<bool>>,
 }
 // Every object layout and property key costs one shape; keep the record compact.
 #[cfg(target_pointer_width = "64")]
@@ -1010,6 +1013,7 @@ impl Shape {
             lookup_index: OnceCell::new(),
             long_walks: std::cell::Cell::new(0),
             prototype_slot: std::cell::Cell::new(PROTOTYPE_SLOT_UNKNOWN),
+            index_keys: std::cell::Cell::new(None),
         }
     }
 }
@@ -1214,8 +1218,9 @@ pub(crate) struct Vm<H> {
     shape_accessors: Vec<ShapeAccessors>,
     transitions: shape_transitions::ShapeTransitionIndex,
     atom_text: AtomTable,
-    atoms: FxHashMap<u64, Atom>,
-    atom_collisions: FxHashMap<u64, Vec<Atom>>,
+    /// Every atom, hashed by its text (`atom_keys::text_hash`); equal hashes are told apart
+    /// by comparing the texts, which the atom tables hold.
+    atoms: hashbrown::HashTable<Atom>,
     /// The atoms that spell canonical array indices, by index: index-keyed lookups find
     /// them without formatting and hashing the decimal text.
     array_index_atoms: FxHashMap<u32, Atom>,
@@ -1797,13 +1802,7 @@ impl<H: Host> Vm<H> {
             + self.field_add_indices.capacity() * size_of::<u32>()
             + self.field_add_sets.capacity() * size_of::<FieldAddCacheSet>()
             + self.method_caches.capacity() * size_of::<[MethodCache; 2]>();
-        let atom_side_table_bytes = self.atoms.capacity() * size_of::<(u64, Atom)>()
-            + self.atom_collisions.capacity() * size_of::<(u64, Vec<Atom>)>()
-            + self
-                .atom_collisions
-                .values()
-                .map(|atoms| atoms.capacity() * size_of::<Atom>())
-                .sum::<usize>()
+        let atom_side_table_bytes = self.atoms.capacity() * (size_of::<Atom>() + 1)
             + self.dynamic_atoms.capacity() * size_of::<JsString>()
             + self
                 .dynamic_atoms
@@ -1934,7 +1933,6 @@ impl<H: Host> Vm<H> {
         self.atom_text = program.atoms.clone();
         self.atom_sequence = Rc::new(crate::bytecode::AtomSequence::new(self.atom_text.clone()));
         self.atoms.clear();
-        self.atom_collisions.clear();
         self.array_index_atoms.clear();
         self.dynamic_atoms.clear();
         self.atom_classes.clear();

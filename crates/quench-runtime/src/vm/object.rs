@@ -380,14 +380,11 @@ impl<H: Host> Vm<H> {
         index: usize,
         atom: Option<Atom>,
     ) -> Option<PropertyAttributes> {
+        if self.lacks_own_index(holder, index) {
+            return None;
+        }
         let named = atom.and_then(|atom| self.property_attributes(holder, PropertyKey::string(atom)));
-        let element = self.heap.array_elements(holder).is_some_and(|elements| {
-            elements.get(index).is_some_and(|value| !value.is_deleted())
-        }) || self
-            .heap
-            .sparse_get(holder, index)
-            .is_some_and(|value| !value.is_deleted());
-        if element {
+        if self.own_element_present(holder, index) {
             let attributes = named.unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
             let frozen = self.object_data(holder).is_some_and(Object::is_frozen);
             return Some(PropertyAttributes {
@@ -399,11 +396,52 @@ impl<H: Host> Vm<H> {
         named.filter(|attributes| held || attributes.accessor)
     }
 
+    /// Whether `holder` provably has no own property at array index `index` without naming
+    /// it: no element there, no index-keyed descriptor and no index name among its shape's
+    /// keys.
+    fn lacks_own_index(&self, holder: Value, index: usize) -> bool {
+        self.object_data(holder).is_some_and(|data| {
+            !data.has_indexed_descriptors() && !self.shape_has_index_key(data.shape())
+        }) && !self.own_element_present(holder, index)
+    }
+
+    /// Whether any key of `shape` is an array-index name, memoized on the immutable shape
+    /// from its nearest known ancestor. A dictionary shape answers conservatively.
+    fn shape_has_index_key(&self, shape: u32) -> bool {
+        if self.shape_is_dictionary(shape) {
+            return true;
+        }
+        if let Some(known) = self.shapes[shape as usize].index_keys.get() {
+            return known;
+        }
+        let mut current = Some(shape);
+        let found = loop {
+            let Some(id) = current else {
+                break false;
+            };
+            let candidate = &self.shapes[id as usize];
+            if let Some(known) = candidate.index_keys.get() {
+                break known;
+            }
+            if let ShapeTransition::Add {
+                key: PropertyKey::String(atom),
+                ..
+            } = candidate.transition
+                && self.atom_class(atom).contains(AtomClass::ARRAY_INDEX)
+            {
+                break true;
+            }
+            current = candidate.parent();
+        };
+        self.shapes[shape as usize].index_keys.set(Some(found));
+        found
+    }
+
     /// Whether OrdinarySet of array index `index` on `object`, which holds no own property
     /// there, ends in a plain data definition on `object`: no prototype answers it with an
     /// accessor, read-only data or an exotic [[Set]] (proxy, typed array, module namespace).
     pub(super) fn inherited_index_unclaimed(&self, object: Value, index: usize) -> bool {
-        let atom = self.lookup_array_index_atom(index);
+        let mut atom = None;
         let mut current = self.object_data(object).map(|data| data.proto());
         while let Some(holder) = current.filter(|value| !value.is_null()) {
             if matches!(
@@ -418,8 +456,11 @@ impl<H: Host> Vm<H> {
             if data.is_module_namespace() {
                 return false;
             }
-            if let Some(attributes) = self.own_index_attributes(holder, index, atom) {
-                return !attributes.accessor && attributes.writable;
+            if !self.lacks_own_index(holder, index) {
+                let atom = *atom.get_or_insert_with(|| self.lookup_array_index_atom(index));
+                if let Some(attributes) = self.own_index_attributes(holder, index, atom) {
+                    return !attributes.accessor && attributes.writable;
+                }
             }
             current = Some(data.proto());
         }
@@ -463,6 +504,59 @@ impl<H: Host> Vm<H> {
         self.insert_descriptor(object, key, attributes);
         self.invalidate_field_caches();
         self.invalidate_method_caches_for_key(key);
+    }
+    /// `set_property_attributes` of each of `keys` (distinct) to `update` of its current
+    /// attributes. A descriptor transition moves no slot and changes no other key, so every
+    /// slot and current attribute set is read from the shape the object starts with, and the
+    /// transitions then append without a lookup on each intermediate shape.
+    pub(super) fn update_property_attributes(
+        &mut self,
+        object: Value,
+        keys: &[PropertyKey],
+        update: impl Fn(PropertyAttributes) -> PropertyAttributes,
+    ) {
+        let Some(original) = self.object_data(object).map(Object::shape) else {
+            return;
+        };
+        let resolved = keys
+            .iter()
+            .map(|&key| {
+                let slot = self.property_shape_slot(original, key);
+                let current = slot
+                    .and_then(|slot| self.shape_attribute(original, slot))
+                    .or_else(|| self.property_attributes(object, key))
+                    .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
+                (key, slot, current)
+            })
+            .collect::<Vec<_>>();
+        let mut shape = original;
+        for (key, slot, current) in resolved {
+            let attributes = update(current);
+            match slot {
+                Some(_) if attributes == current => {}
+                Some(slot) => {
+                    let attributes = ShapeAttributes::record(attributes, &mut self.shape_accessors);
+                    shape = self.append_cached_shape_transition(
+                        shape,
+                        ShapeTransition::Descriptor {
+                            slot: slot as u32,
+                            attributes,
+                        },
+                    );
+                    self.invalidate_method_caches_for_key(key);
+                }
+                None => {
+                    self.insert_descriptor(object, key, attributes);
+                    self.invalidate_field_caches();
+                    self.invalidate_method_caches_for_key(key);
+                }
+            }
+        }
+        if shape != original {
+            self.object_data_mut(object)
+                .expect("object survived descriptor transitions")
+                .set_shape(shape);
+        }
     }
     pub(super) fn remove_property_attributes(&mut self, object: Value, key: PropertyKey) {
         if let Some((shape, slot)) = self.object_property_slot(object, key) {
@@ -1832,7 +1926,7 @@ impl<H: Host> Vm<H> {
         self.create_shape_data_property(object, key, value, DEFAULT_DATA_ATTRIBUTES)
     }
 
-    fn create_shape_data_property(
+    pub(super) fn create_shape_data_property(
         &mut self,
         object: Value,
         key: PropertyKey,
