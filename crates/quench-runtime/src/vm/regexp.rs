@@ -1384,14 +1384,7 @@ impl<H: Host> Vm<H> {
                 return Err(vm.type_error(p, "RegExp constructor is not an object".into()));
             }
             vm.with_call_roots([constructor], |vm| {
-                let symbol = vm
-                    .well_known_symbols
-                    .get("species")
-                    .copied()
-                    .ok_or_else(|| {
-                        vm.type_error(p, "RegExp species symbol is unavailable".into())
-                    })?;
-                let species = vm.get_index(p, constructor, symbol)?;
+                let species = vm.species_of(p, constructor)?;
                 if species.is_undefined() || species.is_null() {
                     return Ok(vm.regexp_intrinsic_constructor());
                 }
