@@ -1,0 +1,18 @@
+{
+  "gained": [
+    "test-async-hooks-stack-overflow-try-catch.js",
+    "test-async-hooks-stack-overflow.js",
+    "test-stream-iter-pull-async.js",
+    "test-stream-iter-to-readable.js",
+    "test-stream-iter-transform-buffering.js",
+    "test-stream-iter-transform-compat.js",
+    "test-stream-iter-transform-coverage.js",
+    "test-stream-iter-transform-errors.js",
+    "test-stream-iter-transform-params.js",
+    "test-stream-iter-transform-roundtrip.js",
+    "test-stream-iter-transform-sync.js",
+    "test-stream-iter-validation.js",
+    "test-stream-iter-writable-interop.js"
+  ],
+  "lost": []
+}
