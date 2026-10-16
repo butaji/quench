@@ -1,0 +1,9 @@
+# fixture: node, node --jitless, bun, bun with BUN_JSC_useJIT=0 (maxrss KiB, one run)
+crypto node 53696 node-jitless 43876 bun 47256 bun-nojit 24744
+deltablue node 65556 node-jitless 45808 bun 44992 bun-nojit 24356
+earley-boyer node 86420 node-jitless 75240 bun 73964 bun-nojit 28524
+navier-stokes node 55824 node-jitless 48196 bun 38308 bun-nojit 23812
+raytrace node 67584 node-jitless 50328 bun 55632 bun-nojit 25344
+regexp node 65192 node-jitless 53652 bun 54120 bun-nojit 32512
+richards node 52772 node-jitless 43732 bun 41152 bun-nojit 23556
+splay node 447064 node-jitless 333956 bun 198216 bun-nojit 63180
