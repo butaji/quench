@@ -24,6 +24,9 @@ struct ProgramEntry {
     scope: ProgramScope,
     /// Source provenance is independent of the root binding environment.
     origin: CompilationOrigin,
+    /// The Script or Module an eval program's code belongs to, which resolves
+    /// its `import()` specifiers; `None` for a program that is its own.
+    script_or_module: Option<Rc<str>>,
     /// Dynamic code (eval, `Function`, host scripts): reclaimed once nothing
     /// can run it. The main program and modules stay for the realm's life.
     reclaimable: bool,
@@ -50,6 +53,9 @@ enum ProgramScope {
     /// An eval program evaluated in the global environment (indirect eval or a
     /// host script), whose names resolve as script code's do.
     Global,
+    /// A sloppy direct eval in a function's or module's scope: its variables
+    /// belong to its caller's variable environment.
+    Caller,
 }
 
 #[derive(Clone, Copy)]
@@ -177,6 +183,23 @@ impl ProgramStore {
         id
     }
 
+    pub(super) fn set_script_or_module(&mut self, id: ProgramId, name: Rc<str>) {
+        if let Some(entry) = self.entry_mut(id) {
+            entry.script_or_module = Some(name);
+        }
+    }
+
+    /// The name of the Script or Module the program's code belongs to.
+    pub(super) fn script_or_module(&self, id: ProgramId) -> Option<Rc<str>> {
+        let entry = self.entry(id)?;
+        Some(
+            entry
+                .script_or_module
+                .clone()
+                .unwrap_or_else(|| Rc::from(entry.residual.source_name.as_str())),
+        )
+    }
+
     pub(super) fn set_origin(&mut self, id: ProgramId, origin: CompilationOrigin) {
         if let Some(entry) = self.entry_mut(id) { entry.origin = origin; }
     }
@@ -202,6 +225,16 @@ impl ProgramStore {
         self.set_scope(id, ProgramScope::Global);
     }
 
+    pub(crate) fn mark_caller_scope(&mut self, id: ProgramId) {
+        self.set_scope(id, ProgramScope::Caller);
+    }
+
+    /// Whether the program's root variables belong to its caller.
+    pub(crate) fn runs_in_caller_scope(&self, id: ProgramId) -> bool {
+        self.entry(id)
+            .is_some_and(|entry| entry.scope == ProgramScope::Caller)
+    }
+
     fn set_scope(&mut self, id: ProgramId, scope: ProgramScope) {
         if let Some(entry) = self.entry_mut(id) {
             entry.scope = scope;
@@ -213,6 +246,7 @@ impl ProgramStore {
         self.entry(id).is_some_and(|entry| match entry.scope {
             ProgramScope::Own => entry.residual.kind == crate::bytecode::ProgramKind::Script,
             ProgramScope::Global => true,
+            ProgramScope::Caller => false,
         })
     }
 
@@ -256,6 +290,7 @@ impl ProgramStore {
             compiled: None,
             scope: ProgramScope::Own,
             origin,
+            script_or_module: None,
             reclaimable: false,
             pass: self.reclaim_passes,
         }));

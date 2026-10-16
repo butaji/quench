@@ -380,3 +380,11 @@ fn generator_return_inside_loop_head_pattern_closes_pattern_iterator() {
         ]
     );
 }
+
+#[test]
+fn nested_direct_eval_vars_belong_to_the_calling_function() {
+    assert_eq!(
+        output("function u(code) { return eval(code); } u(\"eval('var z = 2;')\"); function v() { eval(\"eval('var y = 3;')\"); return typeof y; } function w() { 'use strict'; eval(\"eval('var x = 1;')\"); return typeof x; } print([typeof z, 'z' in globalThis, v(), typeof y, w()].join()); "),
+        ["undefined,false,number,undefined,undefined"]
+    );
+}
