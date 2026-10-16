@@ -175,3 +175,6 @@ pub(crate) mod stream_binding;
 
 #[cfg(quench_openssl_provider)]
 pub(crate) mod dom_exception_shared_vm;
+
+pub(crate) mod events_weak_shared_vm;
+pub(crate) mod util_aborted_source_shared_vm;
