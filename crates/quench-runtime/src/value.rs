@@ -313,12 +313,23 @@ impl Value {
     }
 }
 
+/// ToUint32's modulus, 2^32.
+const UINT32_MODULUS: f64 = 4_294_967_296.0;
+/// Magnitudes below 2^63 truncate exactly into an `i64`, whose low 32 bits are the value
+/// modulo 2^32.
+const EXACT_I64_TRUNCATION_LIMIT: f64 = 9_223_372_036_854_775_808.0;
+
+/// ToUint32 (ToInt32 is its bits reinterpreted as `i32`).
 #[inline]
 pub(crate) fn number_to_u32(value: f64) -> u32 {
-    if !value.is_finite() || value == 0.0 {
+    if value.abs() < EXACT_I64_TRUNCATION_LIMIT {
+        // NaN fails the comparison; -0 and small fractions truncate to 0.
+        return value as i64 as u32;
+    }
+    if !value.is_finite() {
         return 0;
     }
-    value.trunc().rem_euclid(4_294_967_296.0) as u32
+    value.trunc().rem_euclid(UINT32_MODULUS) as u32
 }
 
 impl fmt::Debug for Value {

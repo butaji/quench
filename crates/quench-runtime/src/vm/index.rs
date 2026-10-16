@@ -531,6 +531,39 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// ArrayAccumulation's CreateDataPropertyOrThrow at the literal's next index, which is its
+    /// length: the literal is still unreachable from user code, so no hook observes it.
+    pub(super) fn append_array_literal_elements(
+        &mut self,
+        p: &ResidualProgram,
+        array: Value,
+        values: impl IntoIterator<Item = Value>,
+    ) -> Result<(), JsError> {
+        let mut index = self
+            .own_array_length(array)
+            .ok_or_else(|| JsError("array literal is not an array".into()))?;
+        for value in values {
+            self.define_array_literal_element(p, array, index, value)?;
+            index += 1;
+        }
+        Ok(())
+    }
+
+    /// ArrayAccumulation of elisions: each advances the literal's next index without an element.
+    pub(super) fn append_array_literal_holes(
+        &mut self,
+        array: Value,
+        count: usize,
+    ) -> Result<(), JsError> {
+        let length = self
+            .own_array_length(array)
+            .ok_or_else(|| JsError("array literal is not an array".into()))?;
+        if count > 0 {
+            self.heap.sparse_set_length(array, length + count);
+        }
+        Ok(())
+    }
+
     fn array_index_uses_sparse_storage(
         &self,
         object: Value,
