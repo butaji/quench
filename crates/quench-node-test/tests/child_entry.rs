@@ -9881,3 +9881,18 @@ fn console_global_and_constructor_use_sdk_identity_namespace_and_output_policy()
 fn errors_reserve_native_stack_before_fields_and_capture_after_observable_conversions() {
     compare_node_source_with_args(include_str!("../node-tests/test-error-stack-layout.js"), &["--no-warnings", "--expose-internals"]);
 }
+
+#[test]
+fn sdk_vfs_mount_lifecycle_and_native_reads_use_canonical_handler_state() {
+    compare_node_source_with_args(include_str!("../node-tests/test-sdk-vfs-read-bridge.js"), &["--experimental-vfs", "--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn sdk_vfs_handlers_preserve_receiver_argument_counts_results_and_errors() {
+    compare_node_source_with_args(include_str!("../node-tests/test-sdk-vfs-handler-protocol.js"), &["--experimental-vfs", "--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn private_promise_job_snapshots_preserve_public_async_ids_and_isolated_stores() {
+    compare_node_source_with_args(include_str!("../node-tests/test-async-private-job-identities.js"), &["--no-warnings"]);
+}
