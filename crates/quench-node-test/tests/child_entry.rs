@@ -9227,3 +9227,8 @@ for(const [encoding,valid,invalid]of fixtures)for(const fatal of [false,true])fo
 console.log(JSON.stringify({complete:true,cases:rows.length,calls:rows.length*7,rows}));
 "#);
 }
+
+#[test]
+fn async_iterator_protocol_and_secondary_realm_inheritance_match_node() {
+    compare_node_stream_source(include_str!("../node-tests/test-async-iterator-protocol.js"));
+}
