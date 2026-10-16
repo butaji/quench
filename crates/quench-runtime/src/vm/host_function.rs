@@ -57,6 +57,23 @@ impl<H: Host> Vm<H> {
         self.create_host_function_with_capture(id, Some(data), false, None)
     }
 
+    pub(crate) fn create_named_host_constructor(
+        &mut self,
+        id: HostFunctionId,
+        name: &str,
+    ) -> Result<Value, JsError> {
+        self.create_host_function_with_capture(id, None, true, Some(name))
+    }
+
+    pub(crate) fn create_named_host_constructor_with_data(
+        &mut self,
+        id: HostFunctionId,
+        name: &str,
+        data: Value,
+    ) -> Result<Value, JsError> {
+        self.create_host_function_with_capture(id, Some(data), true, Some(name))
+    }
+
     pub(crate) fn create_named_host_function(
         &mut self,
         id: HostFunctionId,

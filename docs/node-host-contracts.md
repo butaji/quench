@@ -883,7 +883,30 @@ Supplied `options.backlog` uses the JavaScript truthy default followed by shared
 ToNumber/ToInt32 conversion. Linux syscall comparisons cover default, IPv4,
 reuse-port and HTTP listeners plus numeric/string/nonfinite/wrapped options.
 The comparison explicitly reports when syscall tracing is unavailable.
-Positional backlog overloads and DNS-deferred coercion/error timing remain open.
+The native net.Server lifecycle receives the complete argument list, retains
+positional backlog/callback overloads, and delegates supplied-host lookup to the
+same public DNS module. Lookup callbacks retain traced data and compare the
+public listening generation before touching a cancelled server. New servers
+report a null address; listening derives from the actual handle. Closing before
+lookup completion and closing an already closed server complete through the
+canonical callback queue. Ordinary method/getter/wrapper constructor shapes and
+coded close errors remain separate from source-text/host-frame fidelity.
+
+DNS address selection uses the shared IP classifier and iterator protocol.
+Abrupt getters close the iterator without replacing the original thrown value;
+normal iterator-close failures remain observable. Tests collect during return
+and before callback delivery. Exception capture permits null reset before its
+occupied-slot check and uses the shared argument-type/coded-error policy.
+Its primary slot belongs to one retained process state object, reset with the
+VM heap. Set/has ignore their receiver; callback delivery uses that state as its
+receiver, so captureFn mutation remains observable. Guest string properties
+cannot impersonate the slot. GC and repeated-execution checks cover its roots.
+Uncaught delivery emits uncaughtExceptionMonitor before selecting the primary
+callback, then re-reads captureFn for the property call after its null check.
+Monitor results are ignored; uncaught event results use JavaScript truthiness.
+Both events share the canonical process-event dispatch operation.
+Bound-handle error/reentry details, original native-source/stack fidelity,
+diagnostic report flags and the wider Node lifecycle backlog remain open.
 
 ## Native SDK protocol tables and caller capture
 
@@ -916,3 +939,19 @@ unused code and execution caches to be collected. Runtime reset or a foreign
 runtime rejects the handle through the existing atom-sequence ownership guard.
 This Core primitive does not by itself implement native `ContextifyScript`, VM
 timeouts, cached bytecode or code-generation restrictions.
+
+## Configured synchronous directory policy
+
+`fs.readdirSync` executes the configured Node SDK policy over native Rust
+`readdir` and `readdirRecursive` bindings. Linux scanning preserves raw filename
+bytes and reported directory types. Recursive walks follow directory symlinks,
+resolve unknown types with real metadata, and flatten lexical directory scans in
+breadth-first order. Actual scan errors retain their syscall and input path.
+
+Encoding uses the shared Buffer codecs; Buffer results retain the original
+filename bytes. Recursive Dirent results use Node's packed native layout, with
+Uint8 types and aligned Uint32 directory counts sharing one ArrayBuffer. The
+unchanged SDK owns validation and Dirent construction. Existing filesystem
+adapters capture a Rust forwarding function to this same policy, initialized
+after the filesystem module is cached. Their outer asynchronous validation and
+scheduling remain separate compatibility work.

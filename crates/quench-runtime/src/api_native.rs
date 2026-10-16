@@ -1043,6 +1043,28 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.completion(result)
     }
 
+    /// Create an ordinary constructor with its immutable JavaScript creation name.
+    pub fn host_constructor_named(
+        &mut self,
+        id: HostFunctionId,
+        name: &str,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.create_named_host_constructor(id, name);
+        self.completion(result)
+    }
+
+    /// Retain traced private data on a named ordinary constructor.
+    pub fn host_constructor_named_with_data(
+        &mut self,
+        id: HostFunctionId,
+        name: &str,
+        data: RootId,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.embedding_value(data)
+            .and_then(|value| self.vm.create_named_host_constructor_with_data(id, name, value));
+        self.completion(result)
+    }
+
     pub fn host_constructor_with_data(
         &mut self,
         id: HostFunctionId,
