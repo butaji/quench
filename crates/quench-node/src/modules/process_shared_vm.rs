@@ -111,6 +111,7 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     let raw_debug = context.host_function(crate::host::shared_vm::operation("processRawDebug"))?;
     install(context, process, "_rawDebug", raw_debug)?;
     for (name, operation) in [
+        ("binding", "processBinding"),
         ("setUncaughtExceptionCaptureCallback", "processSetUncaughtExceptionCaptureCallback"),
         ("hasUncaughtExceptionCaptureCallback", "processHasUncaughtExceptionCaptureCallback"),
     ] {

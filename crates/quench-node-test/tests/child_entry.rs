@@ -9796,39 +9796,13 @@ fn process_events_share_emitter_storage_inspection_borrowed_methods_and_once_wra
 }
 
 #[test]
-fn process_warning_policy_preserves_default_listener_removal_suppression_and_startup_descriptors() {
-    compare_node_source_with_args(include_str!("../node-tests/test-process-warning-policy.js"), &[]);
-}
-
-#[test]
 fn module_cache_protocol_types_come_from_configured_sdk_and_preserve_native_descriptors() {
     compare_node_source_with_args(include_str!("../node-tests/test-module-cache-protocol.js"), &["--expose-internals", "--no-warnings"]);
 }
 
 #[test]
-fn process_warning_uses_sdk_identity_and_only_public_option_getters() {
-    compare_node_source_with_args(include_str!("../node-tests/test-process-warning-sdk-authority.js"), &["--expose-internals", "--no-warnings"]);
-}
-
-#[test]
-fn process_rejection_warnings_pass_public_arguments_and_preserve_original_stack() {
-    compare_node_source_with_args(include_str!("../node-tests/test-process-rejection-warning-arguments.js"), &["--unhandled-rejections=warn", "--no-warnings"]);
-}
-
-#[test]
-fn process_report_native_compact_uses_truthiness_without_coercion_hooks() {
-    compare_node_source_with_args(include_str!("../node-tests/test-process-report-native-compact.js"), &["--expose-internals", "--no-warnings"]);
-}
-
-#[cfg(target_os = "linux")]
-#[test]
-fn process_native_cpu_resource_and_rss_facts_use_sdk_validation_and_live_os_data() {
-    compare_node_source_with_args(include_str!("../node-tests/test-process-native-metrics.js"), &["--expose-internals", "--no-warnings"]);
-}
-
-#[test]
-fn process_default_warning_listener_preserves_sdk_source_without_internal_exposure() {
-    compare_node_source_with_args(include_str!("../node-tests/test-process-warning-listener-source.js"), &[]);
+fn process_warning_policy_preserves_default_listener_removal_suppression_and_startup_descriptors() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-warning-policy.js"), &[]);
 }
 
 #[test]
@@ -9844,4 +9818,38 @@ fn native_callback_uncaught_handlers_observe_resource_before_after_hook_and_scop
 #[test]
 fn native_tick_resources_own_mutable_callback_slots_and_complete_actual_hook_lifecycle() {
     compare_node_source_with_args(include_str!("../node-tests/test-tick-resource-canonical-slots.js"), &[]);
+}
+
+#[test]
+fn process_warning_uses_sdk_identity_and_only_public_option_getters() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-warning-sdk-authority.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+
+#[test]
+fn process_rejection_warnings_pass_public_arguments_and_preserve_original_stack() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-rejection-warning-arguments.js"), &["--unhandled-rejections=warn", "--no-warnings"]);
+}
+
+
+#[test]
+fn process_report_native_compact_uses_truthiness_without_coercion_hooks() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-report-native-compact.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+#[cfg(target_os = "linux")]
+
+#[test]
+fn process_native_cpu_resource_and_rss_facts_use_sdk_validation_and_live_os_data() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-native-metrics.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn process_binding_uses_sdk_metadata_native_identity_and_original_legacy_type_policy() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-binding-native.js"), &["--no-warnings"]);
+}
+
+#[test]
+fn process_default_warning_listener_preserves_sdk_source_without_internal_exposure() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-warning-listener-source.js"), &[]);
 }
