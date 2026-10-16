@@ -1,0 +1,22 @@
+    Checking oxc_regular_expression v0.153.0 (/workspace/quench/vendor/oxc-regular-expression)
+    Checking oxc_ast v0.153.0
+    Checking oxc_ecmascript v0.153.0
+    Checking oxc_parser v0.153.0 (/workspace/quench/vendor/oxc-parser)
+    Checking oxc v0.153.0
+    Checking oxc_ast_visit v0.153.0
+    Checking quench-regexp v0.1.0 (/workspace/quench/crates/quench-regexp)
+    Checking oxc_semantic v0.153.0
+    Checking quench-runtime v0.1.0 (/workspace/quench/crates/quench-runtime)
+   Compiling quench-js-check v0.1.0 (/workspace/quench/crates/quench-js-check)
+    Checking quench-wasm v0.1.0 (/workspace/quench/crates/quench-wasm)
+    Checking quench-node v0.1.0 (/workspace/quench/crates/quench-node)
+error: function `listen` is never used
+   --> crates/quench-node/src/modules/net_shared_vm.rs:616:15
+    |
+616 | pub(crate) fn listen(transport: &mut Transport, address: SocketAddr) -> Result<u64, String> {
+    |               ^^^^^^
+    |
+    = note: `-D dead-code` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
+
+error: could not compile `quench-node` (lib) due to 1 previous error
