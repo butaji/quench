@@ -1,5 +1,5 @@
 //! Derive callable obligations from oracle discovery and successful contract reports.
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::{collections::BTreeMap, fs};
 
 fn stdout(observation: &Value) -> Result<Value, Box<dyn std::error::Error>> {
@@ -12,43 +12,71 @@ fn stdout(observation: &Value) -> Result<Value, Box<dyn std::error::Error>> {
 // Contract tags describe public root functions, methods and accessors.
 // A scenario pass without tags supplies no callable coverage.
 fn contract_id(package: &str, function: &Value) -> Option<String> {
-    let path = function["path"].as_str()?;
+    let observed_path = function["path"].as_str()?;
+    let symbol = function["well_known_symbol"].as_str();
+    let path = match symbol {
+        Some(name) => observed_path.strip_suffix(&format!("[[Symbol(Symbol.{name})]]"))?,
+        None => observed_path,
+    };
     let package = serde_json::to_string(package).ok()?;
-    if path == format!("import({package})") || path == format!("require({package})") {
-        return (function["kind"] == "call").then(String::new);
-    }
-    let (entry, selectors) = path.split_once(")[")?;
-    if entry != format!("import({package}") && entry != format!("require({package}") {
+    let root = path == format!("import({package})") || path == format!("require({package})");
+    let kind = function["kind"].as_str()?;
+    if root && symbol.is_none() && kind != "call" {
         return None;
     }
-    let selectors = format!("[{selectors}");
     let mut keys = Vec::new();
-    for selector in selectors.split("][") {
-        let key: String =
-            serde_json::from_str(selector.trim_start_matches('[').trim_end_matches(']')).ok()?;
-        if !matches!(key.as_str(), "default" | "module.exports") {
-            if key.is_empty()
-                || !key.chars().enumerate().all(|(index, ch)| {
-                    ch.is_ascii_alphabetic()
-                        || matches!(ch, '_' | '$')
-                        || (index > 0 && ch.is_ascii_digit())
-                })
-            {
-                return None;
+    if !root {
+        let (entry, selectors) = path.split_once(")[")?;
+        if entry != format!("import({package}") && entry != format!("require({package}") {
+            return None;
+        }
+        let selectors = format!("[{selectors}");
+        for selector in selectors.split("][") {
+            let key: String =
+                serde_json::from_str(selector.trim_start_matches('[').trim_end_matches(']'))
+                    .ok()?;
+            if !matches!(key.as_str(), "default" | "module.exports") {
+                if key.is_empty()
+                    || !key.chars().enumerate().all(|(index, ch)| {
+                        ch.is_ascii_alphabetic()
+                            || matches!(ch, '_' | '$')
+                            || (index > 0 && ch.is_ascii_digit())
+                    })
+                {
+                    return None;
+                }
+                keys.push(key);
             }
-            keys.push(key);
         }
     }
     if keys.ends_with(&["prototype".into(), "constructor".into()]) {
         keys.truncate(keys.len() - 2);
     }
     let mut id = keys.join(".");
-    let kind = function["kind"].as_str()?;
+    if let Some(name) = symbol {
+        id.push_str(&format!("[Symbol.{name}]"));
+    }
     if kind != "call" {
         id.push(':');
         id.push_str(kind);
     }
     Some(id)
+}
+
+// New receipts keep conditional entry branches separate. Historical receipts
+// remain explicitly finite projections, never package qualification.
+fn contract_checks<'a>(contract: &'a Value, path: &str) -> &'a Value {
+    if !contract["entries"].is_object() {
+        return &contract["checks"];
+    }
+    let mode = if path.starts_with("import(") {
+        "import"
+    } else if path.starts_with("require(") {
+        "require"
+    } else {
+        return &Value::Null;
+    };
+    &contract["entries"][mode]["checks"]
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -98,9 +126,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map(|function| {
                 let id = contract_id(name, function);
                 let checked = contract_pass
-                    && id
-                        .as_ref()
-                        .is_some_and(|id| contract["checks"][id].as_u64().is_some_and(|n| n > 0));
+                    && id.as_ref().is_some_and(|id| {
+                        contract_checks(contract, function["path"].as_str().unwrap_or(""))[id]
+                            .as_u64()
+                            .is_some_and(|n| n > 0)
+                    });
                 json!({ "function": function, "contract_id": id,
                 "status": if checked { "behavior-checked" } else { "uncovered" } })
             })
@@ -112,6 +142,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let requirements = json!({
             "discovered_callable_contracts": observed.is_ok() && checked == obligations.len(),
             "surface_parity": record["verdict"] == "surface-match-unqualified",
+            "explicit_entry_contracts": contract["entries"].is_object(),
             "upstream_and_dynamic_api_contracts": false
         });
         let qualified = requirements
@@ -140,5 +171,47 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     } else {
         Err("function-level qualification incomplete; see coverage obligations".into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verified_symbols_are_distinct_from_lookalike_private_symbols() {
+        let path =
+            "import(\"whatwg-url\")[\"URLSearchParams\"][\"prototype\"][[Symbol(Symbol.iterator)]]";
+        let mut function = json!({"path":path,"kind":"call"});
+        assert_eq!(contract_id("whatwg-url", &function), None);
+        function["well_known_symbol"] = json!("iterator");
+        assert_eq!(
+            contract_id("whatwg-url", &function).as_deref(),
+            Some("URLSearchParams.prototype[Symbol.iterator]")
+        );
+        function["well_known_symbol"] = json!("asyncIterator");
+        assert_eq!(contract_id("whatwg-url", &function), None);
+    }
+
+    #[test]
+    fn receipts_do_not_project_import_calls_onto_an_unexecuted_require_branch() {
+        let receipt = json!({"checks":{"parse":99},"entries":{"import":{"checks":{"parse":3}}}});
+        assert_eq!(contract_checks(&receipt, "import(\"example\")")["parse"], 3);
+        assert_eq!(
+            contract_checks(&receipt, "require(\"example\")")["parse"],
+            Value::Null
+        );
+    }
+
+    #[test]
+    fn root_and_accessor_identifiers_remain_stable() {
+        assert_eq!(
+            contract_id(
+                "example",
+                &json!({"path":"require(\"example\")","kind":"call"})
+            ),
+            Some(String::new())
+        );
+        assert_eq!(contract_id("example", &json!({"path":"import(\"example\")[\"default\"][\"Item\"][\"prototype\"][\"value\"]","kind":"get"})).as_deref(), Some("Item.prototype.value:get"));
     }
 }
