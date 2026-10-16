@@ -7,8 +7,8 @@ pub use embedding::RootedError;
 #[path = "api_native.rs"]
 mod native;
 pub use native::{
-    BuiltinBrand, BuiltinData, PromiseSnapshot, HostFunction, HostFunctionId, HostWeakRoot, NativeArithmetic,
-    NativeContext, RootedIterator,
+    BuiltinBrand, BuiltinData, CollectionPreview, PromiseSnapshot, HostFunction, HostFunctionId, HostWeakRoot, NativeArithmetic,
+    NativeContext, RootedIterator, SynchronousModule,
 };
 
 /// The syntax context used when compiling source. Script and Module use
@@ -1183,6 +1183,103 @@ mod tests {
     }
 
     #[test]
+    fn regression_async_iterator_protocol_is_separate_from_sync_iterator_helpers() {
+        assert_output_in_execution_modes(
+            r#"
+function check(make) {
+  var value = make();
+  var generator = Object.getPrototypeOf(Object.getPrototypeOf(value));
+  var asyncIterator = Object.getPrototypeOf(generator);
+  print(typeof value[Symbol.iterator]);
+  print(typeof value[Symbol.asyncIterator]);
+  print(Object.getPrototypeOf(asyncIterator) === Object.prototype);
+  print(Object.hasOwn(generator, Symbol.asyncIterator));
+  print([typeof value.map, typeof value.take, typeof value[Symbol.dispose]].join(' '));
+  print(value[Symbol.asyncIterator]() === value);
+  print(Object.keys(Object.getOwnPropertyDescriptor(asyncIterator, Symbol.asyncIterator)).join(','));
+}
+check(function () { return (async function* () { yield 1; })(); });
+check(function () { return new (Object.getPrototypeOf(async function* () {}).constructor)('yield 1')(); });
+            "#,
+            &[
+                "undefined",
+                "function",
+                "true",
+                "false",
+                "undefined undefined undefined",
+                "true",
+                "value,writable,enumerable,configurable",
+                "undefined",
+                "function",
+                "true",
+                "false",
+                "undefined undefined undefined",
+                "true",
+                "value,writable,enumerable,configurable",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_generator_loop_return_closes_before_finally_and_awaits_async_cleanup() {
+        assert_output_in_execution_modes(
+            r#"
+'use strict';
+async function scenario(mode) {
+ const events=[],reason={};
+ const source={
+  [Symbol.asyncIterator](){return this},
+  async next(){events.push('next');return {done:false,value:1}},
+  async return(){events.push('close-start');await Promise.resolve();events.push('close-end');if(mode==='reject')throw reason;return {done:true}}
+ };
+ async function* generator(){try{for await(const value of source){yield value;if(mode==='explicit')return 'explicit'}}finally{events.push('outer-finally')}}
+ if(mode==='function'){async function fn(){try{for await(const value of source)return 'function'}finally{events.push('outer-finally')}}const result=await fn();events.push('result:'+result,'observed');print(mode+' '+JSON.stringify(events));return;}
+ const iterator=generator();await iterator.next();
+ try{const result=await(mode==='explicit'?iterator.next():iterator.return('return'));events.push('result:'+result.value)}catch(error){events.push('reason:'+(error===reason))}
+ events.push('observed');print(mode+' '+JSON.stringify(events));
+ await Promise.resolve();await Promise.resolve();print(mode+' settled '+JSON.stringify(events));
+}
+const events=[];const syncSource={[Symbol.iterator](){return this},next(){return {done:false,value:1}},return(){events.push('sync-close');return {done:true}}};function* syncGenerator(){try{for(const value of syncSource)yield value}finally{events.push('sync-finally')}}const sync=syncGenerator();sync.next();print('sync '+JSON.stringify(sync.return('result'))+' '+JSON.stringify(events));
+(async()=>{for(const mode of ['return','explicit','reject','function'])await scenario(mode)})().catch(e=>{print('unexpected '+String(e))});
+
+            "#,
+            &[
+                "sync {\"value\":\"result\",\"done\":true} [\"sync-close\",\"sync-finally\"]",
+                "return [\"next\",\"close-start\",\"close-end\",\"outer-finally\",\"result:return\",\"observed\"]",
+                "return settled [\"next\",\"close-start\",\"close-end\",\"outer-finally\",\"result:return\",\"observed\"]",
+                "explicit [\"next\",\"close-start\",\"close-end\",\"outer-finally\",\"result:explicit\",\"observed\"]",
+                "explicit settled [\"next\",\"close-start\",\"close-end\",\"outer-finally\",\"result:explicit\",\"observed\"]",
+                "reject [\"next\",\"close-start\",\"close-end\",\"outer-finally\",\"reason:true\",\"observed\"]",
+                "reject settled [\"next\",\"close-start\",\"close-end\",\"outer-finally\",\"reason:true\",\"observed\"]",
+                "function [\"next\",\"close-start\",\"close-end\",\"outer-finally\",\"result:function\",\"observed\"]",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_async_delegated_return_unwinds_outer_finally() {
+        assert_output_in_execution_modes(
+            r#"
+'use strict';
+(async()=>{
+ for(const mode of ['sync','async','missing']){
+  const events=[];
+  const inner=mode==='missing'?{[Symbol.iterator](){return this},next(){return{done:false,value:1}}}:mode==='sync'?(function*(){try{yield 1}finally{events.push('inner-finally')}})():(async function*(){try{yield 1}finally{events.push('inner-finally')}})();
+  async function* outer(){try{yield* inner}finally{events.push('outer-finally')}}
+  const g=outer();await g.next();print(mode+' '+JSON.stringify(await g.return('return'))+' '+JSON.stringify(events));
+ }
+})().catch(e=>{print('unexpected '+String(e))});
+
+            "#,
+            &[
+                "sync {\"value\":\"return\",\"done\":true} [\"inner-finally\",\"outer-finally\"]",
+                "async {\"value\":\"return\",\"done\":true} [\"inner-finally\",\"outer-finally\"]",
+                "missing {\"value\":\"return\",\"done\":true} [\"outer-finally\"]",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_generator_activation_binds_this_and_new_target() {
         assert_output_in_execution_modes(
             r#"
@@ -1374,6 +1471,29 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
     }
 
     #[test]
+    fn implicit_derived_constructor_has_zero_formal_length_and_forwards_arguments() {
+        assert_output_in_execution_modes(
+            r#"
+            function Base(a,b,c) { this.args = Array.from(arguments); }
+            class Derived extends Base {}
+            class Further extends Derived {}
+            class Bytes extends Uint8Array {}
+            class List extends Array {}
+            for (const C of [Derived,Further,Bytes,List]) {
+                const d=Object.getOwnPropertyDescriptor(C,'length');
+                print([C.length,d.writable,d.enumerable,d.configurable].join(','));
+            }
+            const value=new Further(1,2,3);
+            print(value.args.join(','));
+            print(value instanceof Derived && value instanceof Base);
+            print(new Bytes([1,2,3]).join(','));
+            print(new List('a','b').join(','));
+            "#,
+            &["0,false,false,true","0,false,false,true","0,false,false,true","0,false,false,true","1,2,3","true","1,2,3","a,b"],
+        );
+    }
+
+    #[test]
     fn regression_derived_constructors_preserve_the_actual_superclass() {
         assert_output_in_execution_modes(
             r#"
@@ -1391,8 +1511,110 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
                 }
             }
             new Explicit();
+            class ArityBase { constructor(a, b) { this.args = [a, b]; } }
+            class ArityDerived extends ArityBase {}
+            class ExplicitRest extends ArityBase { constructor(...args) { super(...args); } }
+            const NullDerived = class extends null {};
+            print(JSON.stringify([Derived.length, ArityBase.length, ArityDerived.length, ExplicitRest.length, NullDerived.length]));
+            print(JSON.stringify(new ArityDerived(1, 2).args));
+            print(JSON.stringify(Object.getOwnPropertyDescriptor(ArityDerived, 'length')));
             "#,
-            &["true", "true", "42", "true", "true", "42"],
+            &[
+                "true", "true", "42", "true", "true", "42",
+                "[0,2,0,0,0]", "[1,2]",
+                r#"{"value":0,"writable":false,"enumerable":false,"configurable":true}"#,
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_math_binary64_results_and_argument_coercion_match_node() {
+        assert_output_in_execution_modes(
+            r#"
+const view = new DataView(new ArrayBuffer(8));
+function fromBits(bits) { view.setBigUint64(0, BigInt('0x' + bits)); return view.getFloat64(0); }
+function toBits(number) { view.setFloat64(0, number); return view.getBigUint64(0).toString(16).padStart(16, '0'); }
+const cases = [
+  ["cbrt",["0000000000000000"],"0000000000000000"],
+  ["cbrt",["8000000000000000"],"8000000000000000"],
+  ["cbrt",["7ff0000000000000"],"7ff0000000000000"],
+  ["cbrt",["fff0000000000000"],"fff0000000000000"],
+  ["cbrt",["7ff8000000000000"],"7ff8000000000000"],
+  ["cbrt",["0000000000000001"],"2990000000000000"],
+  ["cbrt",["8000000000000001"],"a990000000000000"],
+  ["cbrt",["7fefffffffffffff"],"554428a2f98d728b"],
+  ["cbrt",["ffefffffffffffff"],"d54428a2f98d728b"],
+  ["cbrt",["3ff0000000000000"],"3ff0000000000000"],
+  ["cbrt",["bff0000000000000"],"bff0000000000000"],
+  ["cbrt",["4020000000000000"],"4000000000000000"],
+  ["cbrt",["c020000000000000"],"c000000000000000"],
+  ["atan2",["0000000000000000","0000000000000000"],"0000000000000000"],
+  ["atan2",["0000000000000000","8000000000000000"],"400921fb54442d18"],
+  ["atan2",["0000000000000000","7ff0000000000000"],"0000000000000000"],
+  ["atan2",["0000000000000000","fff0000000000000"],"400921fb54442d18"],
+  ["atan2",["0000000000000000","7ff8000000000000"],"7ff8000000000000"],
+  ["atan2",["0000000000000000","3ff0000000000000"],"0000000000000000"],
+  ["atan2",["0000000000000000","bff0000000000000"],"400921fb54442d18"],
+  ["atan2",["8000000000000000","0000000000000000"],"8000000000000000"],
+  ["atan2",["8000000000000000","8000000000000000"],"c00921fb54442d18"],
+  ["atan2",["8000000000000000","7ff0000000000000"],"8000000000000000"],
+  ["atan2",["8000000000000000","fff0000000000000"],"c00921fb54442d18"],
+  ["atan2",["8000000000000000","7ff8000000000000"],"7ff8000000000000"],
+  ["atan2",["8000000000000000","3ff0000000000000"],"8000000000000000"],
+  ["atan2",["8000000000000000","bff0000000000000"],"c00921fb54442d18"],
+  ["atan2",["7ff0000000000000","0000000000000000"],"3ff921fb54442d18"],
+  ["atan2",["7ff0000000000000","8000000000000000"],"3ff921fb54442d18"],
+  ["atan2",["7ff0000000000000","7ff0000000000000"],"3fe921fb54442d18"],
+  ["atan2",["7ff0000000000000","fff0000000000000"],"4002d97c7f3321d2"],
+  ["atan2",["7ff0000000000000","7ff8000000000000"],"7ff8000000000000"],
+  ["atan2",["7ff0000000000000","3ff0000000000000"],"3ff921fb54442d18"],
+  ["atan2",["7ff0000000000000","bff0000000000000"],"3ff921fb54442d18"],
+  ["atan2",["fff0000000000000","0000000000000000"],"bff921fb54442d18"],
+  ["atan2",["fff0000000000000","8000000000000000"],"bff921fb54442d18"],
+  ["atan2",["fff0000000000000","7ff0000000000000"],"bfe921fb54442d18"],
+  ["atan2",["fff0000000000000","fff0000000000000"],"c002d97c7f3321d2"],
+  ["atan2",["fff0000000000000","7ff8000000000000"],"7ff8000000000000"],
+  ["atan2",["fff0000000000000","3ff0000000000000"],"bff921fb54442d18"],
+  ["atan2",["fff0000000000000","bff0000000000000"],"bff921fb54442d18"],
+  ["atan2",["7ff8000000000000","0000000000000000"],"7ff8000000000000"],
+  ["atan2",["7ff8000000000000","8000000000000000"],"7ff8000000000000"],
+  ["atan2",["7ff8000000000000","7ff0000000000000"],"7ff8000000000000"],
+  ["atan2",["7ff8000000000000","fff0000000000000"],"7ff8000000000000"],
+  ["atan2",["7ff8000000000000","7ff8000000000000"],"7ff8000000000000"],
+  ["atan2",["7ff8000000000000","3ff0000000000000"],"7ff8000000000000"],
+  ["atan2",["7ff8000000000000","bff0000000000000"],"7ff8000000000000"],
+  ["atan2",["3ff0000000000000","0000000000000000"],"3ff921fb54442d18"],
+  ["atan2",["3ff0000000000000","8000000000000000"],"3ff921fb54442d18"],
+  ["atan2",["3ff0000000000000","7ff0000000000000"],"0000000000000000"],
+  ["atan2",["3ff0000000000000","fff0000000000000"],"400921fb54442d18"],
+  ["atan2",["3ff0000000000000","7ff8000000000000"],"7ff8000000000000"],
+  ["atan2",["3ff0000000000000","3ff0000000000000"],"3fe921fb54442d18"],
+  ["atan2",["3ff0000000000000","bff0000000000000"],"4002d97c7f3321d2"],
+  ["atan2",["bff0000000000000","0000000000000000"],"bff921fb54442d18"],
+  ["atan2",["bff0000000000000","8000000000000000"],"bff921fb54442d18"],
+  ["atan2",["bff0000000000000","7ff0000000000000"],"8000000000000000"],
+  ["atan2",["bff0000000000000","fff0000000000000"],"c00921fb54442d18"],
+  ["atan2",["bff0000000000000","7ff8000000000000"],"7ff8000000000000"],
+  ["atan2",["bff0000000000000","3ff0000000000000"],"bfe921fb54442d18"],
+  ["atan2",["bff0000000000000","bff0000000000000"],"c002d97c7f3321d2"],
+  ["cbrt",["23ace6084e030408"],"36837c37a9a62e1f"],
+  ["atan2",["a92a26b4ace7a7ea","a5ecdfd87b9f1b71"],"bff921fb54442d1a"],
+  ["atan",["c00474a752afeb7f"],"bff32afcc7fedda6"],
+  ["atan2",["55576fb73e5fd8e0","d16a68323537c0af"],"3ff921fb54442d18"]
+];
+for (const [name, args, expected] of cases) {
+  const actual = toBits(Math[name](...args.map(fromBits)));
+  if (actual !== expected) throw new Error(name + ': ' + actual + ' !== ' + expected);
+}
+const order=[];
+const value=(name,result)=>({valueOf(){order.push(name);return result;}});
+const angle=Math.atan2(value('y',1),value('x',-1));
+if(toBits(angle)!=='4002d97c7f3321d2'||order.join(',')!=='y,x')throw new Error('atan2 coercion order');
+order.length=0;
+if(!Number.isNaN(Math.atan2(value('y',NaN),value('x',1)))||order.join(',')!=='y,x')throw new Error('atan2 NaN coercion');
+print('math-bits '+cases.length+' '+order.join(','));
+            "#,
+            &["math-bits 66 y,x"],
         );
     }
 
