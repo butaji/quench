@@ -16,7 +16,7 @@ use crate::bytecode::{
 #[cfg(feature = "profile-memory")]
 use crate::heap::CellKind;
 use crate::heap::{
-    CallSiteLocation, CallSiteRecord, Cell, FunctionKind, GcTraceKind, Heap, IteratorConsumer,
+    CallSiteLocation, CallSiteName, CallSiteRecord, Cell, FunctionKind, GcTraceKind, Heap, IteratorConsumer,
     IteratorHelper, IteratorKind, Native, Object, ProxyKind, RootId, StackData, TypedArrayKind,
     WeakHandle,
 };
@@ -423,10 +423,27 @@ pub(crate) struct ActiveIterator {
     pub(crate) iterator: u16,
     pub(crate) done: u16,
 }
-struct PendingJob {
-    callback: Value,
-    this: Value,
-    args: Vec<Value>,
+/// A queued job: a call, or a promise reaction run without a job function to dispatch through.
+enum PendingJob {
+    Call {
+        callback: Value,
+        this: Value,
+        args: Vec<Value>,
+    },
+    Reaction(promise::PromiseJob),
+}
+
+impl PendingJob {
+    fn roots(&self) -> Vec<Value> {
+        match self {
+            Self::Call {
+                callback,
+                this,
+                args,
+            } => [*callback, *this].into_iter().chain(args.iter().copied()).collect(),
+            Self::Reaction(job) => vec![job.realm, job.handler, job.next, job.value],
+        }
+    }
 }
 struct Realm {
     globals: Value,
@@ -473,6 +490,8 @@ struct ErrorRealmIntrinsics {
     constructor: Value,
     stack_getter: Value,
     stack_setter: Value,
+    call_site_constructor: Value,
+    call_site_prototype: Value,
 }
 #[derive(Clone, Copy)]
 struct ArgumentsObjectTemplate {
@@ -1299,7 +1318,7 @@ impl<H: Host> Vm<H> {
         self.heap.root_value(root)
     }
     pub(crate) fn enqueue_job(&mut self, callback: Value, args: Vec<Value>) {
-        self.realm.jobs.push_back(PendingJob {
+        self.realm.jobs.push_back(PendingJob::Call {
             callback,
             this: Value::UNDEFINED,
             args,

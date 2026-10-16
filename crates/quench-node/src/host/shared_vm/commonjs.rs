@@ -874,6 +874,7 @@ pub(crate) fn require_for_module(
             | BuiltinModule::Stream
             | BuiltinModule::StreamPromises
             | BuiltinModule::StreamIter
+            | BuiltinModule::ZlibIter
             | BuiltinModule::Timers
             | BuiltinModule::InternalTimers
             | BuiltinModule::TimersPromises
@@ -977,6 +978,7 @@ enum BuiltinModule {
     Stream,
     StreamPromises,
     StreamIter,
+    ZlibIter,
     WebStreams,
     StringDecoder,
     WorkerThreads,
@@ -1045,6 +1047,7 @@ impl BuiltinModule {
             Self::Stream => Some("stream"),
             Self::StreamPromises => Some("stream/promises"),
             Self::StreamIter => Some("stream/iter"),
+            Self::ZlibIter => Some("zlib/iter"),
             Self::WebStreams => Some("stream/web"),
             Self::StringDecoder => Some("string_decoder"),
             Self::WorkerThreads => Some("worker_threads"),
@@ -1106,7 +1109,7 @@ fn internal_timers_exposed(context: &mut Context<'_>) -> bool {
 
 fn requested_builtin(context: &mut Context<'_>, specifier: &str) -> Option<BuiltinModule> {
     let builtin = BuiltinModule::from_specifier(specifier)?;
-    if matches!(builtin,BuiltinModule::StreamIter) && !context.host_mut().shared_state().borrow().cli_options.enabled("--experimental-stream-iter") { return None; }
+    if matches!(builtin,BuiltinModule::StreamIter | BuiltinModule::ZlibIter) && !context.host_mut().shared_state().borrow().cli_options.enabled("--experimental-stream-iter") { return None; }
     if matches!(builtin, BuiltinModule::InternalTimers) && !internal_timers_exposed(context) {
         None
     } else { Some(builtin) }
@@ -1239,6 +1242,8 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("node:stream", BuiltinModule::Stream),
     ("stream/iter", BuiltinModule::StreamIter),
     ("node:stream/iter", BuiltinModule::StreamIter),
+    ("zlib/iter", BuiltinModule::ZlibIter),
+    ("node:zlib/iter", BuiltinModule::ZlibIter),
     ("stream/promises", BuiltinModule::StreamPromises),
     ("node:stream/promises", BuiltinModule::StreamPromises),
     ("stream/web", BuiltinModule::WebStreams),
@@ -1574,6 +1579,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::Stream => node_library_module(context, "stream.js", "stream.js"),
         BuiltinModule::StreamPromises => node_library_module(context, "stream.js", "stream/promises.js"),
         BuiltinModule::StreamIter => node_library_module(context, "stream/iter.js", "stream/iter.js"),
+        BuiltinModule::ZlibIter => node_library_module(context, "zlib/iter.js", "zlib/iter.js"),
         BuiltinModule::WebStreams => node_library_module(context, "stream/web.js", "stream/web.js"),
         BuiltinModule::StringDecoder => node_library_module(context, "string_decoder.js", "string_decoder.js"),
         BuiltinModule::Timers => {
@@ -2299,6 +2305,7 @@ const getLinkedBinding = () => ({});
     case "config":
     case "icu":
     case "encoding_binding":
+    case "zlib":
     case "symbols":
     case "http2":
     case "fs_event_wrap": return __nativeInternalBinding(name);

@@ -1,0 +1,42 @@
+{
+  "candidate_source": "d40beb63fff0d7e6bc93967f4ef1e4b2597cd954",
+  "core_source": "820549d7a",
+  "core_unchanged": true,
+  "icu": {
+    "node_source": "26e72d85a611e222e3f06025de8a3c496923bacd",
+    "icu": "78.3",
+    "common_objects": 202,
+    "data_sha256": "f294f56707f4bbbc669d291ff537f632eb8d363a8ea60b70b091cdf273ea0499",
+    "platform": "Linux-6.18.44-x86_64-with-glibc2.41",
+    "compiler": "g++ (Debian 14.2.0-19) 14.2.0",
+    "stable_archive_data_sha256": "f294f56707f4bbbc669d291ff537f632eb8d363a8ea60b70b091cdf273ea0499",
+    "stable_data_matches_pinned": true,
+    "libraries": {
+      "libicudata.a": "6b11c9fe912169016304ba10f459a7fbe036d3ef119269b2430039e6e3cb3020",
+      "libicuuc.a": "0dc8387eecc1bc9165e5758f1df34e16d7df13afb4920da22e3ba2f922c3c764"
+    }
+  },
+  "binaries": {
+    "cli": {
+      "path": "work/quench-icu78-qualified",
+      "sha256": "d68cb30fa8c3d5d83f2c0d01d7727f4e5877ab45a5a751f23cef691effb9e131"
+    },
+    "runner": {
+      "path": "work/host-build/iteration/run-parallel",
+      "sha256": "487ac9f87c3a626e5a735abef890715e35e027d33069eb4f6ccf5fa345db0048"
+    },
+    "api_tests": {
+      "path": "work/host-build/iteration/deps/child_entry-a67896ab5b9c716a",
+      "sha256": "7368ceb00ffdb460ac29c4cc8bcb33b028e99eb92cef155fa0b6d6a616ec2dba"
+    }
+  },
+  "later_callsite_work_excluded": true,
+  "api_cases_passed": 334,
+  "api_exit_code": 0,
+  "runtime_tests": 644,
+  "framework_fixtures": 43,
+  "web_correctness_targets": 9,
+  "all_instrumented_executions_valid": true,
+  "instruction_limit_met": false,
+  "publication": "atomic push rejected; neither remote ref updated; later integration excluded"
+}

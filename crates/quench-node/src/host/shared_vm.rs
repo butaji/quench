@@ -22,7 +22,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "parseEnv" (1) => crate::modules::util_shared_vm::parse_env,
         method "parseArgs" (0) => crate::modules::util_parse_args_shared_vm::parse,
         method "utilParseArgsPositional" (1) => crate::modules::util_parse_args_shared_vm::positional_map,
-        method "utilTypeCheck" (1) => crate::modules::util_shared_vm::type_check,
+        method "utilTypeCheck" (0) => crate::modules::util_shared_vm::type_check,
         method "utilProxyDetails" (0) => crate::modules::util_shared_vm::proxy_details,
         method "utilConstructorName" (0) => crate::modules::util_shared_vm::constructor_name,
         method "utilPreviewEntries" (0) => crate::modules::util_shared_vm::preview_entries,
@@ -288,6 +288,16 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "abortDispatchListeners" (4) => crate::modules::events_abort_shared_vm::abort_dispatch_listeners,
         method "eventTargetQueueError" (1) => crate::modules::events_abort_shared_vm::queue_listener_error,
         method "eventTargetRethrow" (0) => crate::modules::events_abort_shared_vm::rethrow_listener_error,
+        #[cfg(quench_node_brotli)]
+        method "BrotliEncoder" (0) => crate::modules::zlib_native_shared_vm::create_brotli_encoder,
+        #[cfg(quench_node_brotli)]
+        method "BrotliDecoder" (0) => crate::modules::zlib_native_shared_vm::create_brotli_decoder,
+        method "Zlib" (0) => crate::modules::zlib_native_shared_vm::create,
+        method "zlibNativeInit" (0) => crate::modules::zlib_native_shared_vm::initialize,
+        method "zlibNativeWrite" (0) => crate::modules::zlib_native_shared_vm::write,
+        method "zlibNativeWriteSync" (0) => crate::modules::zlib_native_shared_vm::write_sync,
+        method "zlibNativeClose" (0) => crate::modules::zlib_native_shared_vm::close,
+        method "zlibNativePoll" (0) => crate::modules::zlib_native_shared_vm::poll,
         method "eventsAddAbortListener" (2) => crate::modules::events_abort_shared_vm::add_abort_listener,
         method "abortListenerDispose" (0) => crate::modules::events_abort_shared_vm::abort_listener_dispose,
         method "abortedListenerJob" (0) => crate::modules::events_abort_shared_vm::aborted_listener_job,
@@ -651,6 +661,10 @@ pub(crate) fn operation(name: &str) -> HostFunctionId {
 }
 
 impl quench_runtime::Host for NodeHost {
+    fn proper_tail_calls(&self) -> bool {
+        false
+    }
+
     fn write_line(&mut self, text: &str) {
         let output = self.shared_state().borrow().output.clone();
         match output {

@@ -1,0 +1,38 @@
+[
+  {
+    "fixture": "test-quic-endpoint-close-destroy.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-h3-stream-idle-timeout.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  },
+  {
+    "fixture": "test-quic-stream-idle-timeout.mjs",
+    "flags": [
+      "--experimental-quic",
+      "--experimental-stream-iter",
+      "--no-warnings"
+    ],
+    "exit": 0,
+    "skip": true,
+    "stdout": "1..0 # Skipped: QUIC is not enabled\n",
+    "stderr": ""
+  }
+]
