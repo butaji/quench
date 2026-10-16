@@ -11,11 +11,13 @@ use fs_ops::ReadFileFailure;
 pub(crate) mod stat;
 #[path = "fs_shared_vm/sync.rs"]
 pub(crate) mod sync;
+#[path = "fs_shared_vm/file_handle_read.rs"]
+pub(crate) mod file_handle_read;
 #[path = "fs_shared_vm/write_stream.rs"]
 pub(crate) mod write_stream;
 
 const PROMISES_FACTORY: &str = quench_js_check::checked_js!(
-    r#"(readFile, stat, lstat, readdir, readlink, realpath, openSync, closeSync, readSync, writeSync, fstatSync, fchmodSync, fsyncSync, fdatasyncSync, writeFileSync, appendFileSync, readvSync, writevSync, createReadStream) => ({
+    r#"(readFile, stat, lstat, readdir, readlink, realpath, openSync, closeSync, readSync, writeSync, fstatSync, fchmodSync, fsyncSync, fdatasyncSync, writeFileSync, appendFileSync, readvSync, writevSync, createReadStream, normalizeRead, apply) => ({
   readFile: (...args) => Promise.resolve().then(() => {
     const handle = args[0];
     if (handle && typeof handle.readFile === 'function') return handle.readFile(args[1]);
@@ -96,25 +98,9 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(
       },
       read: (...readArgs) => Promise.resolve().then(() => {
         ensureOpen("read");
-        let [buffer, offset = 0, length, position = null] = readArgs;
-        if (buffer === undefined && readArgs.length === 0) {
-          buffer = Buffer.alloc(16 * 1024);
-          length = buffer.length;
-        }
-        if (!ArrayBuffer.isView(buffer) && buffer && typeof buffer === "object") {
-          const options = buffer;
-          buffer = options.buffer;
-          offset = options.offset ?? 0;
-          length = options.length;
-          position = options.position ?? null;
-        } else if (offset && typeof offset === "object") {
-          const options = offset;
-          offset = options.offset ?? 0;
-          length = options.length;
-          position = options.position ?? null;
-        }
+        const { buffer, offset, length, position } = apply(normalizeRead, undefined, readArgs);
         const bytesRead = fs.readSync(fd, buffer, offset, length, position);
-        return { bytesRead, buffer };
+        return { __proto__: null, bytesRead, buffer };
       }),
       readFile: async (options) => {
         ensureOpen("read");
@@ -2600,6 +2586,10 @@ pub(crate) fn promises_module(
     let readlink = context.host_function(crate::host::shared_vm::operation("fsReadlinkSync"))?;
     let realpath = context.host_function(crate::host::shared_vm::operation("fsRealpathSync"))?;
     let undefined = context.undefined();
+    let normalize_read=context.host_function(crate::host::shared_vm::operation("fsFileHandleReadParameters"))?;
+    let global=context.global_root()?;
+    let reflect=get(context,global,"Reflect")?;
+    let apply=get(context,reflect,"apply")?;
     let promises = context.call_rooted(
         factory,
         undefined,
@@ -2623,6 +2613,8 @@ pub(crate) fn promises_module(
             readv_sync,
             writev_sync,
             create_read_stream,
+            normalize_read,
+            apply,
         ],
     )?;
     set(context, promises, "constants", constants)?;

@@ -1237,6 +1237,7 @@ pub(crate) enum StackData {
 
 #[derive(Clone, Debug, Default)]
 struct ObjectExtras {
+    used_as_prototype: bool,
     /// The object's inline property values, displaced from its payload by the extras pointer.
     inline_properties: DisplacedInline,
     /// An array's storage position, displaced from its first payload word.
@@ -1607,6 +1608,14 @@ impl Object {
             Some(StackData::Formatted(value)) => visit(*value),
             None => {}
         }
+    }
+
+    pub(crate) fn was_used_as_prototype(&self) -> bool {
+        self.extras().is_some_and(|extras| extras.used_as_prototype)
+    }
+
+    pub(crate) fn mark_as_prototype(&mut self) {
+        if !self.was_used_as_prototype() { self.extras_mut().used_as_prototype = true; }
     }
 
     pub(crate) fn shape(&self) -> u32 {

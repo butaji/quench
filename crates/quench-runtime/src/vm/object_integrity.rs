@@ -363,6 +363,7 @@ impl<H: Host> Vm<H> {
                 .map(|object| object.proto())
                 .unwrap_or(Value::NULL);
         }
+        self.heap.mark_prototype(proto);
         self.object_data_mut(target)
             .expect("object validated")
             .set_proto(proto);
