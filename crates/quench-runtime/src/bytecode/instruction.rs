@@ -218,21 +218,13 @@ macro_rules! layout_accessors {
 
             #[allow(dead_code)]
             pub(crate) fn direct_eval(self) -> bool {
-                debug_assert!(matches!(
-                    self.op().immediate_layout(),
-                    ImmediateLayout::CallWindowWithEvalFlags
-                        | ImmediateLayout::SingleArgumentCallWindowWithEvalFlags
-                ));
+                debug_assert!(self.op().is_call_with_eval_flags());
                 ImmediateLayout::direct_eval(self.imm())
             }
 
             #[allow(dead_code)]
             pub(crate) fn parameter_eval(self) -> bool {
-                debug_assert!(matches!(
-                    self.op().immediate_layout(),
-                    ImmediateLayout::CallWindowWithEvalFlags
-                        | ImmediateLayout::SingleArgumentCallWindowWithEvalFlags
-                ));
+                debug_assert!(self.op().is_call_with_eval_flags());
                 ImmediateLayout::parameter_eval(self.imm())
             }
 
@@ -283,10 +275,7 @@ macro_rules! layout_accessors {
                     self.op().field_layout(InstructionField::B),
                     FieldLayout::OptionalRegister
                 );
-                let encoded = register.map_or(super::NO_OPTIONAL_REGISTER, |register| {
-                    register + super::OPTIONAL_REGISTER_BIAS
-                });
-                self.set_b(encoded);
+                self.set_b(super::encode_optional_register(register));
             }
 
             #[allow(dead_code)]
