@@ -549,9 +549,37 @@ impl<H: Host> Vm<H> {
             name,
             hide_identity,
             is_constructor: frame.context.is_constructor(),
-            is_eval: self.programs.is_eval(frame.program),
+            eval_origin: self.programs.eval_origin(frame.program),
             this_value: if frame.this == Value::DELETED { Value::UNDEFINED } else { frame.this },
         }, residual.kind == crate::bytecode::ProgramKind::Module))
+    }
+
+    /// Snapshot the actual compiling caller without evaluating guest name hooks.
+    pub(super) fn capture_eval_origin(&mut self, context: &ResidualProgram) -> Result<JsString, JsError> {
+        let fallback = || JsString::from_str(super::program_store::ANONYMOUS_EVAL_ORIGIN);
+        let (mut record, module, name) = {
+            let Some(frame) = self.frames.last() else { return Ok(fallback()); };
+            let Some((record, module)) = self.source_call_site_record(frame, false) else { return Ok(fallback()); };
+            let Some(program) = self.programs.get(frame.program) else { return Ok(fallback()); };
+            let Some(function) = program.functions.get(frame.function as usize) else { return Ok(fallback()); };
+            let primary_constructor = self.programs.is_function_constructor(frame.program)
+                && function.parent == Some(ROOT_FUNCTION_ID);
+            let name = function.name.or_else(|| (!primary_constructor)
+                .then(|| frame.context.callable().and_then(|callee| self.original_function_name(callee)))
+                .flatten()).map(|name| self.atom_value(name));
+            (record, module, name.filter(|name| !name.units().is_empty()))
+        };
+        Self::map_call_site_source(&mut self.host, &mut record, module);
+        let mut text = super::wtf16::JsStringBuilder::default();
+        text.append(&JsString::from_str("eval at "));
+        text.append(&name.unwrap_or_else(|| JsString::from_str("<anonymous>")));
+        text.append(&JsString::from_str(" ("));
+        if let Some(origin) = &record.eval_origin { text.append(origin); }
+        else if let CallSiteLocation::Source { file_name, line, column } = &record.location {
+            text.append(&JsString::from_str(&format!("{file_name}:{line}:{column}")));
+        } else { text.append(&JsString::from_str("unknown source")); }
+        text.append(&JsString::from_str(")"));
+        self.string_build_result(context, text.finish())
     }
 
     pub(super) fn map_call_site_source(host: &mut H, record: &mut CallSiteRecord, module: bool) {
@@ -592,7 +620,7 @@ impl<H: Host> Vm<H> {
                         this_value: Value::UNDEFINED,
                         hide_identity: true,
                         is_constructor: false,
-                        is_eval: false,
+                        eval_origin: None,
                     });
                 }
             }
@@ -630,7 +658,7 @@ impl<H: Host> Vm<H> {
                     this_value: Value::UNDEFINED,
                     hide_identity: true,
                     is_constructor: false,
-                    is_eval: false,
+                    eval_origin: None,
                 });
             }
         }
@@ -714,19 +742,28 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn call_site_name(&self, record: &CallSiteRecord) -> Option<JsString> {
         let name = match &record.name {
-            CallSiteName::Callable(function) => self.debug_function_name(*function)?,
-            CallSiteName::Static(name) => name.clone(),
-            CallSiteName::Anonymous => return None,
+            CallSiteName::Callable(function) => self.debug_function_name(*function),
+            CallSiteName::Static(name) => Some(name.clone()),
+            CallSiteName::Anonymous => None,
         };
-        (name.len() != 0).then_some(name)
+        name.filter(|name| !name.units().is_empty()).or_else(|| record.eval_origin.as_ref()
+            .map(|_| JsString::from_str("eval")))
     }
 
     fn format_call_site(&mut self, program: &ResidualProgram, record: &CallSiteRecord) -> Result<JsString, JsError> {
         let location = match &record.location {
-            CallSiteLocation::Source { file_name, line, column } => format!("{file_name}:{line}:{column}"),
-            CallSiteLocation::Native => "native".to_owned(),
+            CallSiteLocation::Source { file_name, line, column } => {
+                let mut text = super::wtf16::JsStringBuilder::default();
+                if let Some(origin) = &record.eval_origin {
+                    text.append(origin);
+                    text.append(&JsString::from_str(", <anonymous>"));
+                } else { text.append(&JsString::from_str(file_name)); }
+                text.append(&JsString::from_str(&format!(":{line}:{column}")));
+                text.finish()
+            }
+            CallSiteLocation::Native => Ok(JsString::from_str("native")),
         };
-        let location = JsString::from_str(&location);
+        let location = self.string_build_result(program, location)?;
         let name = self.call_site_name(record).or_else(|| {
             record.is_constructor.then(|| JsString::from_str("<anonymous>"))
         });
@@ -768,6 +805,7 @@ impl<H: Host> Vm<H> {
             }
         };
         match native {
+            Native::CallSiteGetFileName if record.eval_origin.is_some() => Ok(Value::UNDEFINED),
             Native::CallSiteGetFileName => Ok(match record.location {
                 CallSiteLocation::Source { file_name, .. } => {
                     self.heap.alloc(Cell::String(file_name.into()))
@@ -793,7 +831,7 @@ impl<H: Host> Vm<H> {
                 CallSiteLocation::Source { column, .. } => Value::number(f64::from(column)),
                 CallSiteLocation::Native => Value::NULL,
             }),
-            Native::CallSiteIsEval => Ok(if record.is_eval { Value::TRUE } else { Value::FALSE }),
+            Native::CallSiteIsEval => Ok(if record.eval_origin.is_some() { Value::TRUE } else { Value::FALSE }),
             Native::CallSiteIsConstructor => Ok(if record.is_constructor { Value::TRUE } else { Value::FALSE }),
             Native::CallSiteIsNative => {
                 Ok(if matches!(record.location, CallSiteLocation::Native) {
@@ -805,7 +843,8 @@ impl<H: Host> Vm<H> {
             Native::CallSiteGetTypeName => Ok(self.call_site_type_name(&record)?
                 .map(|name| self.heap.alloc(Cell::String(name)))
                 .unwrap_or(Value::NULL)),
-            Native::CallSiteGetEvalOrigin => Ok(Value::UNDEFINED),
+            Native::CallSiteGetEvalOrigin => Ok(record.eval_origin
+                .map(|origin| self.heap.alloc(Cell::String(origin))).unwrap_or(Value::UNDEFINED)),
             Native::CallSiteToString => {
                 let text = self.format_call_site(program, &record)?;
                 Ok(self.heap.alloc(Cell::String(text)))
@@ -1330,7 +1369,8 @@ impl<H: Host> Vm<H> {
         let Some(program_id) = self.store_dynamic_program(residual) else {
             return Err(self.type_error(program, "dynamic program store is full".into()));
         };
-        self.programs.set_origin(program_id, super::program_store::CompilationOrigin::Eval);
+        let origin = self.capture_eval_origin(program)?;
+        self.programs.set_origin(program_id, super::program_store::CompilationOrigin::FunctionConstructor { caller: origin });
         let residual = self
             .programs
             .get(program_id)
