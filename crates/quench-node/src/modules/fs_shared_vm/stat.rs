@@ -721,7 +721,7 @@ pub(crate) fn read_dir_sync(
         let dirent = context.object_rooted()?;
         set_string(context, dirent, "name", &entry.file_name().to_string_lossy())?;
         let kind = context.number(f64::from(directory_entry_type(file_type)));
-        super::set(context, dirent, "type", kind)?;
+        set(context, dirent, "type", kind)?;
         names.push(dirent);
     }
     context.array_rooted(&names)
@@ -853,16 +853,6 @@ fn set_number(
     value: f64,
 ) -> Result<(), RootedError> {
     let value = context.number(value);
-    set(context, object, name, value)
-}
-
-fn set_bool(
-    context: &mut NativeContext<'_, NodeHost>,
-    object: RootId,
-    name: &str,
-    value: bool,
-) -> Result<(), RootedError> {
-    let value = context.boolean(value);
     set(context, object, name, value)
 }
 
