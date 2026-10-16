@@ -10030,3 +10030,111 @@ fn native_secret_key_job_preserves_hook_order_and_async_local_context() {
         &["--no-warnings", "--expose-internals"],
     );
 }
+
+#[test]
+fn admitted_public_socket_owns_data_and_eof_after_native_read_request() {
+    compare_node_file_source_with_args(include_str!("../node-tests/test-native-public-socket-read-owner.js"), &["--no-warnings"]);
+}
+
+
+#[test]
+fn native_tcp_close_callbacks_follow_real_libuv_lifo_requests() {
+    compare_node_file_source_with_args(include_str!("../node-tests/test-native-tcp-close-order.js"), &["--no-warnings", "--expose-internals"]);
+}
+
+
+
+#[test]
+fn sdk_vfs_metadata_preserves_public_shape_options_accessors_and_error_boundaries() {
+    let source = include_str!("../node-tests/test-sdk-vfs-metadata-protocol.js");
+    compare_node_file_source_with_args(source, &["--no-warnings", "--expose-internals"]);
+    compare_node_file_source_with_args(source, &["--no-warnings", "--expose-internals", "--experimental-vfs"]);
+}
+
+#[test]
+fn sdk_vfs_virtual_metadata_and_descriptor_lifecycle_match_configured_source() {
+    compare_node_file_source_with_args(include_str!("../node-tests/test-sdk-vfs-metadata-lifecycle.js"), &["--no-warnings", "--experimental-vfs"]);
+}
+
+
+#[test]
+fn native_private_symbol_table_has_all_sdk_keys_and_private_semantics() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-private-symbol-table.js"), &["--no-warnings", "--expose-internals"]);
+}
+
+#[test]
+fn native_exit_listener_accepts_owned_dns_and_crypto_work_without_callbacks() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-exit-work-normal.js"), &["--no-warnings"]);
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn native_pool_reads_environment_at_first_dns_work_and_keeps_configuration() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-pool-first-use.js"), &["--no-warnings"]);
+}
+
+#[test]
+fn native_pending_dns_and_crypto_keep_resources_and_als_across_gc() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-pending-work-gc.js"), &["--no-warnings", "--expose-gc"]);
+}
+
+#[test]
+fn native_exit_listener_throw_still_abandons_owned_work_without_callbacks() {
+    let source = include_str!("../node-tests/test-native-exit-work-throw.js");
+    for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
+        let mut command = Command::new(executable);
+        command.args(["--no-warnings", "-e", source]);
+        if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+        let observation = quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap();
+        assert!(!observation.timed_out);
+        assert_eq!(observation.exit_code, Some(1));
+        assert_eq!(observation.stdout, b"native-exit-work-accepted\n");
+        assert!(String::from_utf8_lossy(&observation.stderr).contains("Error: native-exit-lifecycle-marker"));
+    }
+}
+
+#[test]
+fn native_commonjs_realm_reuses_canonical_private_util_binding() {
+    // This host bootstrap adapter is intentionally not a require-able Node module.
+    let mut command = Command::new(env!("CARGO_BIN_EXE_run-parallel"));
+    command.args(["--no-warnings", "--expose-internals", "-e", include_str!("../node-tests/test-native-realm-private-binding.js")]);
+    command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+    let observation = quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap();
+    assert!(!observation.timed_out);
+    assert_eq!(observation.exit_code, Some(0), "{}", String::from_utf8_lossy(&observation.stderr));
+    assert!(observation.stderr.is_empty());
+    assert_eq!(observation.stdout,b"native-realm-binding-identity-ok\n");
+}
+
+
+#[test]
+fn child_process_original_sdk_mocktracker_intercepts_real_native_spawn() {
+    compare_node_source_with_args(
+        include_str!("../node-tests/test-child-process-sdk-mocktracker-native-spawn.js"),
+        &["--no-warnings", "--expose-internals"],
+    );
+}
+
+#[test]
+fn child_process_original_sdk_mocktracker_null_stdio_error_lifecycle() {
+    compare_node_source_with_args(
+        include_str!("../node-tests/test-child-process-sdk-mocktracker-null-stdio-errors.js"),
+        &["--no-warnings", "--expose-internals"],
+    );
+}
+
+#[test]
+fn child_process_original_sdk_mocktracker_null_stdio_timeout_lifecycle() {
+    compare_node_source_with_args(
+        include_str!("../node-tests/test-child-process-sdk-mocktracker-null-stdio-timeout.js"),
+        &["--no-warnings", "--expose-internals"],
+    );
+}
+
+#[test]
+fn child_process_direct_spawn_validates_in_sdk_order_and_closes_with_errno() {
+    compare_node_source_with_args(
+        include_str!("../node-tests/test-child-process-direct-spawn-validation-errors.js"),
+        &["--no-warnings", "--expose-internals"],
+    );
+}
