@@ -20,15 +20,7 @@ impl Mode {
         }
     }
 }
-pub(crate) struct Failure {
-    pub(crate) errno: i32,
-    pub(crate) code: &'static str,
-    pub(crate) message: String,
-}
-pub(crate) struct Step {
-    pub(crate) consumed: usize,
-    pub(crate) produced: usize,
-}
+use super::{Failure, Step};
 enum Engine {
     Encode(Deflate),
     Decode(Inflate),
@@ -77,14 +69,14 @@ impl Codec {
                 Engine::Encode(encoder) if matches!(mode, Mode::Deflate | Mode::DeflateRaw) => {
                     encoder.set_dictionary(dict).map_err(|e| Failure {
                         errno: e as i32,
-                        code: "Z_STREAM_ERROR",
+                        code: "Z_STREAM_ERROR".into(),
                         message: e.as_str().into(),
                     })?;
                 }
                 Engine::Decode(decoder) if matches!(mode, Mode::InflateRaw) => {
                     decoder.set_dictionary(dict).map_err(|e| Failure {
                         errno: zlib_rs::ReturnCode::from(e) as i32,
-                        code: "Z_STREAM_ERROR",
+                        code: "Z_STREAM_ERROR".into(),
                         message: e.as_str().into(),
                     })?;
                 }
@@ -136,7 +128,7 @@ impl Codec {
                     step.produced += (encoder.total_out() - before.1) as usize;
                     status.map_err(|e| Failure {
                         errno: e as i32,
-                        code: "Z_STREAM_ERROR",
+                        code: "Z_STREAM_ERROR".into(),
                         message: encoder.error_message().unwrap_or(e.as_str()).into(),
                     })?
                 }
@@ -152,13 +144,13 @@ impl Codec {
                             let Some(dictionary) = self.dictionary.as_deref() else {
                                 return Err(Failure {
                                     errno: 2,
-                                    code: "Z_NEED_DICT",
+                                    code: "Z_NEED_DICT".into(),
                                     message: "Missing dictionary".into(),
                                 });
                             };
                             decoder.set_dictionary(dictionary).map_err(|_| Failure {
                                 errno: 2,
-                                code: "Z_NEED_DICT",
+                                code: "Z_NEED_DICT".into(),
                                 message: "Bad dictionary".into(),
                             })?;
                             continue;
@@ -166,7 +158,7 @@ impl Codec {
                         Err(e) => {
                             return Err(Failure {
                                 errno: zlib_rs::ReturnCode::from(e) as i32,
-                                code: "Z_DATA_ERROR",
+                                code: "Z_DATA_ERROR".into(),
                                 message: decoder.error_message().unwrap_or(e.as_str()).into(),
                             })
                         }
@@ -183,9 +175,9 @@ impl Codec {
                 return Err(Failure {
                     errno: code as i32,
                     code: if status == Status::BufError {
-                        "Z_BUF_ERROR"
+                        "Z_BUF_ERROR".into()
                     } else {
-                        "Z_OK"
+                        "Z_OK".into()
                     },
                     message: "unexpected end of file".into(),
                 });
@@ -203,7 +195,7 @@ impl Codec {
 fn stream_error() -> Failure {
     Failure {
         errno: -2,
-        code: "Z_STREAM_ERROR",
+        code: "Z_STREAM_ERROR".into(),
         message: "stream error".into(),
     }
 }
