@@ -1892,12 +1892,13 @@ const getLinkedBinding = () => ({});
                     format!("{WRAPPER_PREFIX}{internal_binding}")
                 };
                 let wrapper_source = format!("{prefix}{text}{WRAPPER_SUFFIX}");
+                // The wrapper holds the text now, so the file is released before compiling it.
                 drop(text);
+                drop(file_text);
                 let wrapper = evaluate_wrapper(context, &prefix, &wrapper_source, &key)?;
                 // The compiled program keeps its own source; the module body runs inside this
-                // call, so the file text and wrapper are released before it.
+                // call, so the wrapper is released before it.
                 drop(wrapper_source);
-                drop(file_text);
                 if parent.is_none() {
                     crate::host::resident_pages::release_read_only_pages();
                     crate::host::resident_pages::quench_entry_compiled();
