@@ -50,6 +50,7 @@ struct ControlTarget {
 #[derive(Clone, Copy)]
 struct IteratorClosure {
     iterator: Atom,
+    asynchronous: bool,
     control_depth: usize,
 }
 

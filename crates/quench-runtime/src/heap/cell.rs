@@ -350,7 +350,7 @@ pub(crate) enum Native {
     DisposableStackDisposeAsyncWithCompletion,
     DisposableStackAsyncDisposalFulfilled,
     DisposableStackAsyncDisposalRejected,
-    FunctionCall, FunctionApply, FunctionBind, FunctionBoundCall, FunctionToString, AsyncFunction, GeneratorFunction, AsyncGeneratorFunction, AsyncGeneratorReturnResult, AsyncGeneratorDelegateReturnStart,
+    FunctionCall, FunctionApply, FunctionBind, FunctionBoundCall, FunctionToString, AsyncFunction, GeneratorFunction, AsyncGeneratorFunction, AsyncGeneratorDelegateReturnStart,
     Date,
     DateNow,
     DateGetTime, DateValueOf, DateGetTimezoneOffset, DateGetFullYear, DateGetMonth, DateGetDate, DateGetDay,

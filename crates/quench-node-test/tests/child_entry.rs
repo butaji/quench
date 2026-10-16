@@ -9208,6 +9208,23 @@ console.log(JSON.stringify(out));
 }
 
 #[test]
+fn implemented_cli_option_snapshots_tokenization_and_stream_iterator_policy_match_node() {
+    for flags in [&["--no-warnings","--expose-internals"][..], &["--no-warnings","--expose-internals","--experimental-stream-iter"][..]] {
+        compare_node_source_with_args(include_str!("../node-tests/test-cli-options-stream-iter.js"),flags);
+    }
+}
+
+#[test]
+fn stream_iterator_webidl_uses_genuine_original_abort_signal_brands() {
+    compare_node_source_with_args(include_str!("../node-tests/test-stream-iter-abort-brand.js"),&["--no-warnings","--expose-internals","--experimental-stream-iter"]);
+}
+
+#[test]
+fn internal_abort_operation_uses_original_provider_state_reason_and_dependent_delivery() {
+    compare_node_source_with_args(include_str!("../node-tests/test-internal-abort-provider.js"),&["--no-warnings","--expose-internals"]);
+}
+
+#[test]
 fn text_decoder_stream_boundaries_and_repeated_flush_match_node() {
     compare_node_stream_source(r#"
 const inputs=[['utf-8',[239,187,191,226,130,172,240,159,152,128,65]],['utf-16le',[255,254,61,216,0,222,65,0]],['utf-16be',[254,255,216,61,222,0,0,65]],['shift_jis',[130,160,65]],['big5',[164,164,65]],['euc-kr',[176,161,65]],['gb18030',[144,48,129,48,65]],['iso-2022-jp',[27,36,66,36,34,27,40,66,65]]];
@@ -9288,4 +9305,19 @@ for(const invoke of [()=>C(),()=>new C])try{invoke()}catch(e){out.push([e.name,e
 const get=require('internal/test/binding').internalBinding('util').getConstructorName;out.push(get(site));Object.defineProperty(C,'name',{value:'Changed'});proto.constructor=null;out.push(get(site));
 console.log(JSON.stringify(out));
 "#, &["--expose-internals","--no-warnings"]);
+}
+
+#[test]
+fn async_iterator_protocol_and_secondary_realm_inheritance_match_node() {
+    compare_node_stream_source(include_str!("../node-tests/test-async-iterator-protocol.js"));
+}
+
+#[test]
+fn generator_loop_return_preserves_cleanup_order_rejections_and_finally() {
+    compare_node_stream_source(include_str!("../node-tests/test-generator-loop-return.js"));
+}
+
+#[test]
+fn async_delegated_return_unwinds_original_generator_finally() {
+    compare_node_stream_source(include_str!("../node-tests/test-async-delegate-return.js"));
 }
