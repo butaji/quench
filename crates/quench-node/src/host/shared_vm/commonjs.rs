@@ -222,6 +222,7 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     crate::host::resident_pages::release_read_only_pages();
     if node_primordials_source(context).is_some() {
         context.scoped(crate::modules::node_errors_shared_vm::install_stack_formatter)?;
+        context.scoped(crate::modules::buffer_policy_shared_vm::initialize)?;
         context.seal_startup_intrinsics();
     }
     context.scoped(preload_modules)?;
