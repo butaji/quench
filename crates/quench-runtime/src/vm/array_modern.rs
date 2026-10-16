@@ -55,8 +55,12 @@ impl<H: Host> Vm<H> {
             unreachable!("fresh array owner remains an array");
         };
         let elements = super::index::mutable_array_elements(elements);
+        let capacity = elements.capacity();
         elements.push(value);
-        elements.len()
+        let length = elements.len();
+        let grown = elements.capacity() - capacity;
+        self.heap.charge_payload_growth(grown * size_of::<Value>());
+        length
     }
 
     pub(super) fn new_array_with_prototype(

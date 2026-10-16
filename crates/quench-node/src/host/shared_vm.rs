@@ -118,6 +118,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "errorSourcePositions" (0) => crate::modules::node_errors_shared_vm::source_positions,
         method "errorStackFormat" (3) => crate::modules::node_errors_shared_vm::format_stack,
         method "errorPrepareStackTraceInitialize" (0) => crate::modules::node_errors_shared_vm::initialize_prepare_stack_trace,
+        method "processEmitWarningInitialize" (0) => crate::modules::process_shared_vm::initialize_emit_warning,
+        method "processWarningListener" (0) => crate::modules::process_shared_vm::warning_listener,
         method "nodeErrorBrand" (0) => crate::modules::node_errors_shared_vm::brand,
         method "asyncHookInit" (7) => crate::modules::async_hook_registry_shared_vm::initialize_hook,
         method "asyncHookEnable" (1) => crate::modules::async_hook_registry_shared_vm::enable,
