@@ -231,6 +231,7 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
         }
         context.seal_startup_intrinsics();
     }
+    context.scoped(crate::modules::report_configuration_shared_vm::initialize_signal)?;
     context.scoped(preload_modules)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_preloads");
@@ -2563,7 +2564,8 @@ pub(crate) fn node_internal_binding_source() -> &'static str {
     case "http2":
     case "fs_event_wrap":
     case "errors":
-    case "modules": return __nativeInternalBinding(name);
+    case "modules":
+    case "report": return __nativeInternalBinding(name);
     case "util": return Object.assign({}, {
       privateSymbols: __nativeInternalBinding("util").privateSymbols,
       constants: __nativeInternalBinding("util").constants,

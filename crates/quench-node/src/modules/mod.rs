@@ -157,3 +157,5 @@ pub(crate) mod zlib_native_codec;
 pub(crate) mod zlib_native_shared_vm;
 
 pub(crate) mod native_work;
+
+pub(crate) mod report_configuration_shared_vm;
