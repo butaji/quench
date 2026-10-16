@@ -897,6 +897,10 @@ Abrupt getters close the iterator without replacing the original thrown value;
 normal iterator-close failures remain observable. Tests collect during return
 and before callback delivery. Exception capture permits null reset before its
 occupied-slot check and uses the shared argument-type/coded-error policy.
+Its primary slot belongs to one retained process state object, reset with the
+VM heap. Set/has ignore their receiver; callback delivery uses that state as its
+receiver, so captureFn mutation remains observable. Guest string properties
+cannot impersonate the slot. GC and repeated-execution checks cover its roots.
 Bound-handle error/reentry details, original native-source/stack fidelity,
 diagnostic report flags and the wider Node lifecycle backlog remain open.
 
