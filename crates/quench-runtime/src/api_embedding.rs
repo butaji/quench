@@ -37,6 +37,11 @@ impl RootedError {
 }
 
 impl<H: Host> Runtime<H> {
+    /// Count actual heap record/arena capacities and unique live payloads without guest effects.
+    pub fn heap_memory_composition(&self) -> crate::HeapMemoryComposition {
+        self.vm.embedding_heap_memory_composition()
+    }
+
     /// Scope a native embedding frame in captured Error stacks. Native frames
     /// carry no invented JavaScript filename or source position.
     pub fn with_native_stack_frame<T>(
