@@ -9751,3 +9751,13 @@ fn process_events_share_emitter_storage_inspection_borrowed_methods_and_once_wra
 fn process_warning_policy_preserves_default_listener_removal_suppression_and_startup_descriptors() {
     compare_node_source_with_args(include_str!("../node-tests/test-process-warning-policy.js"), &[]);
 }
+
+#[test]
+fn process_warning_uses_sdk_identity_and_only_public_option_getters() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-warning-sdk-authority.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn process_rejection_warnings_pass_public_arguments_and_preserve_original_stack() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-rejection-warning-arguments.js"), &["--unhandled-rejections=warn", "--no-warnings"]);
+}
