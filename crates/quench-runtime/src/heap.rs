@@ -866,7 +866,7 @@ impl Heap {
         shape: u32,
         values: &[Value],
     ) -> Value {
-        let (properties, inline_properties) = self.initial_object_storage(shape, values);
+        let (properties, inline_properties) = self.initial_object_storage(shape, values, true);
         self.alloc(Cell::Object(Object::with_property_storage(
             proto,
             properties,
@@ -879,7 +879,12 @@ impl Heap {
         shape: u32,
         values: &[Value],
     ) {
-        let (properties, inline_properties) = self.initial_object_storage(shape, values);
+        // An array's payload holds its element backing, so its properties live in the arena.
+        let inline = !self
+            .object(owner)
+            .expect("property owner is an object")
+            .is_array();
+        let (properties, inline_properties) = self.initial_object_storage(shape, values, inline);
         let previous = {
             let object = self.object_mut(owner).expect("property owner is an object");
             object.replace_property_storage(properties, inline_properties)
@@ -889,13 +894,16 @@ impl Heap {
         self.note_object_slots(owner, values.len());
     }
 
+    /// Storage for an object's first property `values`: inline where they fit and `inline`
+    /// allows it, else the arena.
     fn initial_object_storage(
         &mut self,
         shape: u32,
         values: &[Value],
+        inline: bool,
     ) -> (ValueVec, [Value; INLINE_PROPERTY_COUNT]) {
         self.properties.assert_shape_length(shape, values.len());
-        if values.len() <= INLINE_PROPERTY_COUNT {
+        if inline && values.len() <= INLINE_PROPERTY_COUNT {
             let mut inline = [Value::UNDEFINED; INLINE_PROPERTY_COUNT];
             inline[..values.len()].copy_from_slice(values);
             (ValueVec::inline_property_storage(shape), inline)

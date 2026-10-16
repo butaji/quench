@@ -642,3 +642,32 @@ The Rust `createRequire` adapter follows the pinned Node URL-like property check
 The `_nodeModulePaths` operation calls the existing public path resolver, preserving its receiver, argument, overrides and errors. Ancestor `node_modules` directories have one Rust projection shared with ordinary CJS module records. Thin checked function facades preserve ordinary constructor calls and function metadata while Rust owns their policy. Three Node comparisons cover these inputs, original hooks, constructor calls, error presentation and cwd behavior. URL query metadata, full Module construction/resolution hooks and global lookup paths remain open.
 
 `pathToFileURL` uses the same public POSIX or Win32 resolver as Node, including guest cwd and original resolver hooks, and restores an original trailing separator. Its former fixture-relative remapping is removed. Shared path argument errors derive their received-value description from the existing Node utility.
+
+## Linux OS facts and canonical policy
+
+On Linux, the configured, unmodified `lib/os.js` owns public OS exports,
+function reflection, primitive hooks, descriptors, validation and error classes.
+Private OS and credentials binding objects have one retained identity in the
+shared module cache. Rust supplies kernel, environment and account facts;
+public mutable Buffer constructors are not used to construct native results.
+Other platforms retain their existing adapter.
+
+Temporary-directory selection skips empty TMPDIR, TMP and TEMP values, falls
+back to `/tmp`, and removes exactly one trailing slash except at the root.
+Home-directory selection observes HOME, including an empty value, then falls
+back to the reentrant effective-user account lookup. Account fields come from
+that record independently of HOME, and native encodings preserve their bytes.
+
+Available parallelism combines scheduler affinity with libuv's cgroup CPU
+quota rules. Load averages and fractional uptime use the kernel's proc data
+with the corresponding syscall fallbacks. Interface addresses follow the
+getifaddrs inventory, masks, MAC addresses, flags and IPv6 scope identifiers;
+Node's guest policy derives public objects and CIDR strings.
+
+Priority requests mutate the requested kernel process. PID zero maps to the
+CLI process even though the logical main guest executes on a large-stack Rust
+worker. Successful self-priority changes also update that worker so future
+guest children inherit the logical process priority. The requested process
+operation determines the public result and original Node policy constructs
+system errors from the native context. This does not claim Node worker-thread
+semantics or complete Node API parity.
