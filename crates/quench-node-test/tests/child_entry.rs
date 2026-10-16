@@ -9596,3 +9596,8 @@ fn indirect_eval_script_identity_preserves_origins_fresh_values_templates_and_re
 fn error_source_positions_preserve_captured_compiler_metadata_without_guest_hooks() {
     compare_node_source_with_args(include_str!("../node-tests/test-error-source-positions.js"), &["--expose-gc", "--expose-internals", "--no-warnings"]);
 }
+
+#[test]
+fn native_protocol_constants_derive_from_configured_sdk_headers_and_preserve_descriptors() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-protocol-constants.js"), &["--expose-internals", "--no-warnings"]);
+}
