@@ -1060,6 +1060,27 @@ fn spread_accumulates_without_user_methods_or_prototype_setters() {
 }
 
 #[test]
+fn push_and_splice_growth_reaches_inherited_setters_and_proxy_traps() {
+    // Indices that `push` and `splice` grow into are [[Set]] on the receiver: a proxy or an
+    // index setter on the prototype chain answers them however the setter was defined, and a
+    // setter later replaced by data no longer does.
+    let source = "var seen = [];\n\
+         var proxy = new Proxy(Object.create(Array.prototype), { set: function (t, k, v) { seen.push('trap' + k + v); return true; } });\n\
+         var literal = Object.setPrototypeOf({ set 2(v) { seen.push('literal' + v); } }, Array.prototype);\n\
+         var legacy = Object.create(Array.prototype); legacy.__defineSetter__('1', function (v) { seen.push('legacy' + v); });\n\
+         var replaced = Object.create(Array.prototype, { 1: { set: function () { seen.push('never'); }, configurable: true } });\n\
+         Object.defineProperty(replaced, 1, { value: 0, writable: true, configurable: true });\n\
+         function on(proto) { var a = [0]; Object.setPrototypeOf(a, proto); return a; }\n\
+         var a = on(proxy), b = on(proxy), c = on(literal), d = on(legacy), e = on(replaced);\n\
+         a.push('p'); b.splice(1, 0, 's'); c.push('x', 'y'); d.splice(0, 1, 'u', 'v'); e.push('w');\n\
+         var result = [seen.join(), Object.keys(a).join(), Object.keys(b).join(), Object.keys(c).join(), Object.keys(d).join(), e.join()].join('|');";
+    assert_eq!(
+        global_text(source, "result"),
+        "trap1p,trap1s,literaly,legacyv|0|0|0,1|0|0,w"
+    );
+}
+
+#[test]
 fn typed_array_index_stores_convert_and_ignore_out_of_range_indices() {
     // Integer-indexed stores go straight to TypedArraySetElement: values convert by kind,
     // out-of-range indices and prototype setters are never reached, and a non-typed
@@ -10176,5 +10197,64 @@ if(!threw)throw Error('strict synthetic self binding');
 "#;
     for program in [Engine::compile(crate::ExecutionRequest { source, name: "dynamic-function-source.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "dynamic-function-source.js").unwrap()] {
         Vm::new(SilentHost).execute(&program).unwrap();
+    }
+}
+
+#[test]
+fn private_data_fields_keep_distinct_homes_and_duplicate_values_in_both_modes() {
+    let source = r#"
+class Base {constructor(object){return object}}
+function make(){return class extends Base {#x;constructor(object,value){super(object);this.#x=value}read(){return this.#x}write(value){this.#x=value}evaluate(){return eval('this.#x')}}}
+const A=make(),B=make();
+for(const object of [{},[],function(){},Object.create(null),Object.freeze({}),Object.seal({}),Object.preventExtensions({})]) {
+ new A(object,1);new B(object,2);
+ if(A.prototype.read.call(object)!==1||B.prototype.read.call(object)!==2)throw Error('aliased class home');
+ A.prototype.write.call(object,3);let duplicate;
+ try{new A(object,4)}catch(error){duplicate=error.message}
+ if(duplicate!=='Cannot initialize #x twice on the same object')throw Error('duplicate error');
+ if(A.prototype.read.call(object)!==3||B.prototype.read.call(object)!==2)throw Error('duplicate overwrote data');
+ if(A.prototype.evaluate.call(object)!==3||B.prototype.evaluate.call(object)!==2)throw Error('private eval home');
+}
+"#;
+    for program in [Engine::compile(crate::ExecutionRequest { source, name: "private-field-identity.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "private-field-identity.js").unwrap()] {
+        Vm::new(SilentHost).execute(&program).unwrap();
+        let path = std::env::temp_dir().join(format!("quench-private-data-{}-{}", std::process::id(), program.specialized));
+        program.write_binary(&path).unwrap();
+        let decoded = crate::ResidualProgram::read_binary(&path).unwrap();
+        Vm::new(SilentHost).execute(&decoded).unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[test]
+fn private_data_values_survive_collection_and_release_without_their_receiver() {
+    let source = r#"
+class Base {constructor(object){return object}}
+function make(){return class extends Base {#x;constructor(object,value){super(object);this.#x=value}read(){return this.#x}}}
+globalThis.A=make();globalThis.B=make();globalThis.first={value:1};globalThis.second={value:2};globalThis.instance={};
+new A(instance,first);new B(instance,second);
+"#;
+    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
+        let program = compile(source, "private-data-roots.js").unwrap();
+        let mut vm = Vm::new(SilentHost);
+        vm.execute(&program).unwrap();
+        let mut weak = Vec::new();
+        for name in ["first", "second"] {
+            let atom = vm.intern_atom(name);
+            let value = vm.own_property(vm.realm.globals, atom).unwrap();
+            let strong = vm.heap.root(value);
+            weak.push(vm.embedding_host_weak_root(strong).unwrap());
+            vm.heap.release_root(strong);
+            vm.set_property(vm.realm.globals, atom, Value::UNDEFINED).unwrap();
+        }
+        vm.collect_now(&program);
+        for root in &weak { assert!(vm.embedding_host_weak_value(*root).is_some()); }
+        let instance = vm.intern_atom("instance");
+        vm.set_property(vm.realm.globals, instance, Value::UNDEFINED).unwrap();
+        vm.collect_now(&program);
+        for root in weak {
+            assert!(vm.embedding_host_weak_value(root).is_none());
+            vm.heap.release_root(root);
+        }
     }
 }
