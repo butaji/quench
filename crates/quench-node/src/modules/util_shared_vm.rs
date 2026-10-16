@@ -820,11 +820,8 @@ fn build_key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
                 .ok_or_else(|| RootedError::host("original Symbol constructor missing"))?;
             let tag = context.startup_data_property_rooted(symbol, "toStringTag")
                 .ok_or_else(|| RootedError::host("original toStringTag symbol missing"))?;
-            context.host_function_with_data(operation, tag)?
-        } else { context.host_function(operation)? };
-        let key = context.string_rooted("name");
-        let value = context.string_rooted(name);
-        context.define_data_property_rooted(function, key, value, false, false, true)?;
+            context.host_function_named_with_data(operation, name, tag)?
+        } else { context.host_function_named(operation, name)? };
         let key = context.string_rooted(name);
         context.define_data_property_rooted(binding, key, function, true, true, true)?;
     }
