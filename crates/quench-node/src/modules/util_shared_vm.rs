@@ -117,11 +117,9 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     super::util_style_shared_vm::install(context, module, inspect)?;
     // Keep the already qualified native adapters while the remaining policies
     // come directly from the unchanged SDK exports (including their accessors).
-    for name in ["stripVTControlCharacters", "parseEnv"] {
-        let function = context.host_function(crate::host::shared_vm::operation(name))?;
-        let key = context.string_rooted(name);
-        context.set_property_rooted(module, key, function, module)?;
-    }
+    let parse_env = context.host_function(crate::host::shared_vm::operation("parseEnv"))?;
+    let key = context.string_rooted("parseEnv");
+    context.set_property_rooted(module, key, parse_env, module)?;
     let callbackify = super::util_callbackify_shared_vm::function(context)?;
     let parse_args = super::util_parse_args_shared_vm::function(context)?;
     for (name, function) in [("callbackify", callbackify), ("parseArgs", parse_args)] {
@@ -164,25 +162,6 @@ pub(crate) fn type_check(
     let value = args.first().copied().unwrap_or_else(|| context.undefined());
     let matches = context.has_builtin_brand_rooted(value, brand)?;
     Ok(context.boolean(matches))
-}
-
-pub(crate) fn strip_vt(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let value = args.first().copied().unwrap_or_else(|| context.undefined());
-    let Some(units) = context.string_code_units(value)? else {
-        return Err(argument_type_error(context, value, "str", "string")?);
-    };
-    if !crate::modules::util_strip::has_vt_controls(&units) {
-        return Ok(value);
-    }
-    let stripped = crate::modules::util_strip::strip_vt_control_units(&units);
-    if stripped == units {
-        return Ok(value);
-    }
-    Ok(context.string_units_rooted(&stripped))
 }
 
 pub(crate) fn parse_env(
