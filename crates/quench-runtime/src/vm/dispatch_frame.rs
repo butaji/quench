@@ -448,9 +448,19 @@ impl<H: Host> Vm<H> {
     ) {
         // The receiver is already coerced and the body binds no `arguments` object, so
         // activation cannot fail; the registers below replace what it placed in them.
-        self.activate_user_frame(p, id, env, this, passed, CallContext::user_function(id, callee))
-            .expect("a frameless activation's frame activates without error");
-        let frame = self.frames.last_mut().expect("the activation pushed a frame");
+        self.activate_user_frame(
+            p,
+            id,
+            env,
+            this,
+            passed,
+            CallContext::user_function(id, callee),
+        )
+        .expect("a frameless activation's frame activates without error");
+        let frame = self
+            .frames
+            .last_mut()
+            .expect("the activation pushed a frame");
         frame.registers.copy_from_slice(registers);
     }
 

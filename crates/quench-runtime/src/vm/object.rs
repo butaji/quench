@@ -752,7 +752,8 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
-        let hit = self.cached_ordinary_holder_field_value(self.field_cache_index(site), receiver)?;
+        let hit =
+            self.cached_ordinary_holder_field_value(self.field_cache_index(site), receiver)?;
         self.profile
             .field_cache_hit(usize::from(hit.tier), hit.depth);
         Some(hit.value)
@@ -789,10 +790,11 @@ impl<H: Host> Vm<H> {
         self.field_caches[self.field_cache_index(site)].holder != NO_FIELD_HOLDER
     }
 
-    /// The own data field of a direct object among the site's inline megamorphic entries,
-    /// which include the primary entry: `cached_field_hit` for a site past one shape.
+    /// The data field of a direct object, or of its immediate prototype held in an object
+    /// record, among the site's inline megamorphic entries, which include the primary entry:
+    /// `cached_field_hit` and its holder tier for a site past one shape.
     #[inline(always)]
-    pub(super) fn polymorphic_own_field_hit(
+    pub(super) fn polymorphic_field_hit(
         &mut self,
         p: &ResidualProgram,
         object: Value,
@@ -802,11 +804,46 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
-        let slot = self.inline_megamorphic_field_slot(self.field_cache_index(site), receiver.shape())?;
-        // SAFETY: as for `cached_field_hit`.
-        let value = unsafe { self.heap.property_get_shaped(receiver, usize::from(slot)) }?;
-        self.profile.field_cache_hit(2, 0);
-        Some(value)
+        let index = self.field_cache_index(site);
+        // SAFETY: compiler-produced sites index exactly-sized cache vectors;
+        // every non-sentinel index was installed together with its table.
+        let table_index = unsafe { *self.megamorphic_field_indices.get_unchecked(index) };
+        if table_index == NO_MEGAMORPHIC_FIELD {
+            return None;
+        }
+        let set = unsafe { self.megamorphic_fields.get_unchecked(table_index as usize) };
+        if set.overflow.is_some() {
+            return None;
+        }
+        let shape = receiver.shape();
+        for entry in &set.entries[..usize::from(set.len)] {
+            if entry.receiver != shape {
+                continue;
+            }
+            if entry.holder == NO_FIELD_HOLDER {
+                // SAFETY: as for `cached_field_hit`.
+                let value = unsafe {
+                    self.heap
+                        .property_get_shaped(receiver, usize::from(entry.slot))
+                }?;
+                self.profile.field_cache_hit(2, 0);
+                return Some(value);
+            }
+            // A prototype outside the object records takes the slow path.
+            let holder = self.heap.object_record(receiver.proto())?;
+            if holder.is_module_namespace() || holder.shape() != entry.holder {
+                continue;
+            }
+            // SAFETY: both immutable shapes and the property slot were recorded together
+            // after confirming an immediate-prototype data property.
+            let value = unsafe {
+                self.heap
+                    .property_get_shaped(holder, usize::from(entry.slot))
+            }?;
+            self.profile.field_cache_hit(2, 1);
+            return Some(value);
+        }
+        None
     }
 
     /// `get_field_polymorphic` for an ordinary record receiver up to the point where it
@@ -837,11 +874,13 @@ impl<H: Host> Vm<H> {
     }
 
     /// Whether the site's shapes moved to inline megamorphic entries without an overflow:
-    /// `polymorphic_own_field_hit` then sees every own entry the site has recorded.
+    /// `polymorphic_field_hit` then sees every entry the site has recorded.
     pub(super) fn field_site_polymorphic(&self, site: u16) -> bool {
         let table_index = self.megamorphic_field_indices[self.field_cache_index(site)];
         table_index != NO_MEGAMORPHIC_FIELD
-            && self.megamorphic_fields[table_index as usize].overflow.is_none()
+            && self.megamorphic_fields[table_index as usize]
+                .overflow
+                .is_none()
     }
 
     /// An own-data slot from a site's inline megamorphic entries; the hashed overflow is
@@ -1218,7 +1257,10 @@ impl<H: Host> Vm<H> {
             holder = Some(data);
         }
         // SAFETY: the holder's shape was recorded together with this data slot.
-        let value = unsafe { self.heap.property_get_shaped(holder?, usize::from(cache.slot)) }?;
+        let value = unsafe {
+            self.heap
+                .property_get_shaped(holder?, usize::from(cache.slot))
+        }?;
         Some(FieldCacheHit {
             value,
             tier: 0,
@@ -1833,8 +1875,15 @@ impl<H: Host> Vm<H> {
                 }
                 return self.set_shape_property(object, PropertyKey::string(atom), value);
             }
-            let written =
-                self.proxy_set_mode(p, target, handler, object, PropertyKey::string(atom), value, strict)?;
+            let written = self.proxy_set_mode(
+                p,
+                target,
+                handler,
+                object,
+                PropertyKey::string(atom),
+                value,
+                strict,
+            )?;
             return if written || !strict {
                 Ok(())
             } else {
@@ -2012,7 +2061,10 @@ impl<H: Host> Vm<H> {
         if !self.field_add_prototype_chain_matches(proto, cache.prototype_shapes()) {
             return false;
         }
-        debug_assert_eq!(cache.slot as usize, self.shapes[shape as usize].storage_len());
+        debug_assert_eq!(
+            cache.slot as usize,
+            self.shapes[shape as usize].storage_len()
+        );
         self.heap.property_add(object, value, cache.target_shape);
         if self.method_caches_may_name(atom) {
             self.invalidate_method_caches_for_prototype_add(object, atom);
@@ -2163,7 +2215,15 @@ impl<H: Host> Vm<H> {
             };
         }
         let written = if let Some((target, handler)) = self.proxy_parts(object) {
-            self.proxy_set_mode(p, target, handler, object, PropertyKey::string(atom), value, strict)?
+            self.proxy_set_mode(
+                p,
+                target,
+                handler,
+                object,
+                PropertyKey::string(atom),
+                value,
+                strict,
+            )?
         } else {
             self.set_property_with_receiver(p, object, atom, value, object)?
         };

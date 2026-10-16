@@ -18,7 +18,10 @@ impl<H: Host> Vm<H> {
         let prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
-        self.realm.intrinsics.builtin_prototypes.insert((global, Native::Boolean), prototype);
+        self.realm
+            .intrinsics
+            .builtin_prototypes
+            .insert((global, Native::Boolean), prototype);
         let boolean_value = self.intern_atom("\0quench:boolean-value");
         self.set_property_with_attributes(
             prototype,

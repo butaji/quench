@@ -351,35 +351,62 @@ fn native_construction_reentry_scopes_results_and_retains_thrown_identity() {
 
 #[test]
 fn native_backed_ordinary_constructors_preserve_completion_and_new_target() {
-    let (mut runtime, _program, _host) = initialized(
-        "var payload = {}; var Target = function() {};",
-    );
+    let (mut runtime, _program, _host) =
+        initialized("var payload = {}; var Target = function() {};");
     let global = runtime.global_root().unwrap();
     let payload = property(&mut runtime, global, "payload");
     let target = property(&mut runtime, global, "Target");
     let constructor = runtime.host_constructor(ECHO).unwrap();
     let prototype = property(&mut runtime, constructor, "prototype");
     let linked_constructor = property(&mut runtime, prototype, "constructor");
-    assert_eq!(runtime.rooted_value(linked_constructor), runtime.rooted_value(constructor));
+    assert_eq!(
+        runtime.rooted_value(linked_constructor),
+        runtime.rooted_value(constructor)
+    );
     let callback = runtime.host_function(CONSTRUCT).unwrap();
     let receiver = runtime.root(Value::UNDEFINED);
     let number = runtime.root(Value::number(42.0));
-    let instance = runtime.call_rooted(callback, receiver, &[constructor, target, number]).unwrap();
+    let instance = runtime
+        .call_rooted(callback, receiver, &[constructor, target, number])
+        .unwrap();
     let object = property(&mut runtime, global, "Object");
     let get_prototype = property(&mut runtime, object, "getPrototypeOf");
-    let object_prototype = runtime.call_rooted(get_prototype, object, &[instance]).unwrap();
+    let object_prototype = runtime
+        .call_rooted(get_prototype, object, &[instance])
+        .unwrap();
     let target_prototype = property(&mut runtime, target, "prototype");
-    assert_eq!(runtime.rooted_value(object_prototype), runtime.rooted_value(target_prototype));
-    let returned = runtime.call_rooted(callback, receiver, &[constructor, target, payload]).unwrap();
-    assert_eq!(runtime.rooted_value(returned), runtime.rooted_value(payload));
-    let original_prototype = runtime.call_rooted(get_prototype, object, &[payload]).unwrap();
-    assert_ne!(runtime.rooted_value(original_prototype), runtime.rooted_value(target_prototype));
+    assert_eq!(
+        runtime.rooted_value(object_prototype),
+        runtime.rooted_value(target_prototype)
+    );
+    let returned = runtime
+        .call_rooted(callback, receiver, &[constructor, target, payload])
+        .unwrap();
+    assert_eq!(
+        runtime.rooted_value(returned),
+        runtime.rooted_value(payload)
+    );
+    let original_prototype = runtime
+        .call_rooted(get_prototype, object, &[payload])
+        .unwrap();
+    assert_ne!(
+        runtime.rooted_value(original_prototype),
+        runtime.rooted_value(target_prototype)
+    );
 
     // Adding a public prototype does not change the private [[Construct]] fact.
     let ordinary = runtime.host_function(ECHO).unwrap();
     let key = runtime.string_rooted("prototype");
-    assert!(runtime.set_property_rooted(ordinary, key, target_prototype, ordinary).unwrap());
-    assert!(runtime.call_rooted(callback, receiver, &[ordinary, ordinary, number]).is_err());
+    assert!(
+        runtime
+            .set_property_rooted(ordinary, key, target_prototype, ordinary)
+            .unwrap()
+    );
+    assert!(
+        runtime
+            .call_rooted(callback, receiver, &[ordinary, ordinary, number])
+            .is_err()
+    );
 }
 
 fn escaped(
@@ -843,12 +870,18 @@ var result = "ok";
 struct NumberCoercionHost;
 impl Host for NumberCoercionHost {
     fn write_line(&mut self, _: &str) {}
-    fn clock_millis(&mut self) -> f64 { 0.0 }
+    fn clock_millis(&mut self) -> f64 {
+        0.0
+    }
     fn functions(&self) -> &[HostFunction<Self>] {
         crate::host_functions![global "nativeNumber" (1) => native_number_coercion]
     }
 }
-fn native_number_coercion(context: &mut NativeContext<'_, NumberCoercionHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+fn native_number_coercion(
+    context: &mut NativeContext<'_, NumberCoercionHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
     context.collect()?;
     let number = context.to_number(args[0])?;
     Ok(context.number(number))
@@ -864,9 +897,16 @@ fn native_number_conversion_uses_original_hooks_and_shared_language_errors() {
       for(const value of [Symbol('x'),1n]) {try{nativeNumber(value);throw Error('missing type error');}catch(error){if(!(error instanceof TypeError))throw error;}}
     "#;
     for program in [
-        Engine::compile(crate::ExecutionRequest { source, name: "native-number.js", kind: crate::SourceKind::Script }).unwrap(),
-        Engine::specialize(source,"native-number.js").unwrap(),
-    ] { Runtime::new(NumberCoercionHost).execute(&program).unwrap(); }
+        Engine::compile(crate::ExecutionRequest {
+            source,
+            name: "native-number.js",
+            kind: crate::SourceKind::Script,
+        })
+        .unwrap(),
+        Engine::specialize(source, "native-number.js").unwrap(),
+    ] {
+        Runtime::new(NumberCoercionHost).execute(&program).unwrap();
+    }
 }
 
 #[derive(Default)]
@@ -918,28 +958,49 @@ fn native_instanceof_preserves_original_hooks_proxy_effects_and_abrupt_completio
 struct CallerSourcesHost;
 impl Host for CallerSourcesHost {
     fn write_line(&mut self, _: &str) {}
-    fn clock_millis(&mut self) -> f64 { 0.0 }
+    fn clock_millis(&mut self) -> f64 {
+        0.0
+    }
     fn functions(&self) -> &[HostFunction<Self>] {
         crate::host_functions![global "nativeCallerSources" (0) => native_caller_sources, global "nativeDynamicCaller" (0) => native_dynamic_caller]
     }
 }
-fn native_caller_sources(context: &mut NativeContext<'_, CallerSourcesHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+fn native_caller_sources(
+    context: &mut NativeContext<'_, CallerSourcesHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
     context.collect()?;
-    let sources=context.call_stack_source_names();
-    let sources=sources.iter().map(|source|context.string_rooted(source)).collect::<Vec<_>>();
+    let sources = context.call_stack_source_names();
+    let sources = sources
+        .iter()
+        .map(|source| context.string_rooted(source))
+        .collect::<Vec<_>>();
     context.array_rooted(&sources)
 }
-fn native_dynamic_caller(context: &mut NativeContext<'_, CallerSourcesHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+fn native_dynamic_caller(
+    context: &mut NativeContext<'_, CallerSourcesHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
     context.evaluate_script_rooted("nativeCallerSources()", "dynamic-caller-source.js")
 }
 #[test]
 fn native_call_stack_source_names_follow_original_compiler_metadata_after_collection() {
-    let source=r#"
+    let source = r#"
     function inner(){return nativeCallerSources();}function outer(){return inner();}
     const names=outer();if(names.length===0||names.some(name=>name!=='native-caller-sources.js'))throw Error('caller metadata changed');
     const dynamic=nativeDynamicCaller();if(dynamic[0]!=='dynamic-caller-source.js'||!dynamic.includes('native-caller-sources.js'))throw Error('dynamic caller metadata changed');
     "#;
-    for program in [Engine::compile(crate::ExecutionRequest{source,name:"native-caller-sources.js",kind:crate::SourceKind::Script}).unwrap(),Engine::specialize(source,"native-caller-sources.js").unwrap()] {
+    for program in [
+        Engine::compile(crate::ExecutionRequest {
+            source,
+            name: "native-caller-sources.js",
+            kind: crate::SourceKind::Script,
+        })
+        .unwrap(),
+        Engine::specialize(source, "native-caller-sources.js").unwrap(),
+    ] {
         Runtime::new(CallerSourcesHost).execute(&program).unwrap();
     }
 }
@@ -960,7 +1021,11 @@ fn native_collection_preview(context: &mut NativeContext<'_, SnapshotMetadataHos
     let pairs = context.boolean(preview.is_key_value);
     context.array_rooted(&[values, pairs])
 }
-fn native_snapshot_metadata(context: &mut NativeContext<'_, SnapshotMetadataHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+fn native_snapshot_metadata(
+    context: &mut NativeContext<'_, SnapshotMetadataHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
     let value = args.first().copied().unwrap_or_else(|| context.undefined());
     let target = context.proxy_target_rooted(value)?.unwrap_or_else(|| context.undefined());
     let (detail_target, handler) = context.proxy_details_rooted(value)?
@@ -972,7 +1037,7 @@ fn native_snapshot_metadata(context: &mut NativeContext<'_, SnapshotMetadataHost
 }
 #[test]
 fn native_bootstrap_names_and_proxy_targets_survive_mutation_revocation_and_collection() {
-    let source=r#"
+    let source = r#"
       delete globalThis.Object;globalThis.AddedAfterBootstrap=function AddedAfterBootstrap(){};
       let traps=0;
       const target={marker:42};
@@ -992,33 +1057,66 @@ fn native_bootstrap_names_and_proxy_targets_survive_mutation_revocation_and_coll
       const retained=nativeCollectionPreview(previewOwner,true);
       if(previewOwner.size!==0||retained[0][0].key!==42||retained[0][1].marker!==99)throw Error('preview roots lost cleared entries');
     "#;
-    for program in [Engine::compile(crate::ExecutionRequest{source,name:"native-snapshot-metadata.js",kind:crate::SourceKind::Script}).unwrap(),Engine::specialize(source,"native-snapshot-metadata.js").unwrap()] {
-        Runtime::new(SnapshotMetadataHost).execute(&program).unwrap();
+    for program in [
+        Engine::compile(crate::ExecutionRequest {
+            source,
+            name: "native-snapshot-metadata.js",
+            kind: crate::SourceKind::Script,
+        })
+        .unwrap(),
+        Engine::specialize(source, "native-snapshot-metadata.js").unwrap(),
+    ] {
+        Runtime::new(SnapshotMetadataHost)
+            .execute(&program)
+            .unwrap();
     }
 }
 
 struct BoundedViewHost;
 impl Host for BoundedViewHost {
-    fn write_line(&mut self,_:&str){}
-    fn clock_millis(&mut self)->f64{0.0}
-    fn functions(&self)->&[HostFunction<Self>]{crate::host_functions![global "nativeBoundedView" (1) => native_bounded_view]}
+    fn write_line(&mut self, _: &str) {}
+    fn clock_millis(&mut self) -> f64 {
+        0.0
+    }
+    fn functions(&self) -> &[HostFunction<Self>] {
+        crate::host_functions![global "nativeBoundedView" (1) => native_bounded_view]
+    }
 }
-fn native_bounded_view(context:&mut NativeContext<'_,BoundedViewHost>,_:RootId,args:&[RootId])->Result<RootId,RootedError>{
-    let value=args.first().copied().unwrap_or_else(||context.undefined());
-    let keys=context.own_non_index_keys_rooted(value,false)?;context.collect()?;
-    let bytes=context.bytes_prefix_rooted(value,2).ok_or_else(||RootedError::host("buffer bytes missing"))?;
-    let bytes=context.uint8_array_rooted(&bytes)?;let keys=context.array_rooted(&keys)?;context.array_rooted(&[bytes,keys])
+fn native_bounded_view(
+    context: &mut NativeContext<'_, BoundedViewHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let value = args.first().copied().unwrap_or_else(|| context.undefined());
+    let keys = context.own_non_index_keys_rooted(value, false)?;
+    context.collect()?;
+    let bytes = context
+        .bytes_prefix_rooted(value, 2)
+        .ok_or_else(|| RootedError::host("buffer bytes missing"))?;
+    let bytes = context.uint8_array_rooted(&bytes)?;
+    let keys = context.array_rooted(&keys)?;
+    context.array_rooted(&[bytes, keys])
 }
 #[test]
-fn native_bounded_byte_snapshots_and_non_index_keys_preserve_views_and_gc_roots(){
-    let source=r#"
+fn native_bounded_byte_snapshots_and_non_index_keys_preserve_views_and_gc_roots() {
+    let source = r#"
       const ab=new Uint8Array([1,2,3,4]).buffer,view=new Uint8Array(ab,1,3),symbol=Symbol('key');view.extra=1;view[symbol]=2;Object.defineProperty(view,'hidden',{value:3});
       const result=nativeBoundedView(view);
       if(result[0].join()!=='2,3'||result[1].length!==3||result[1][0]!=='extra'||result[1][1]!=='hidden'||result[1][2]!==symbol)throw Error('view bytes or keys changed');
       if(nativeBoundedView(ab)[0].join()!=='1,2')throw Error('backing prefix changed');
       if(nativeBoundedView(new DataView(ab,2,2))[0].join()!=='3,4')throw Error('DataView prefix changed');
     "#;
-    for program in [Engine::compile(crate::ExecutionRequest{source,name:"native-bounded-view.js",kind:crate::SourceKind::Script}).unwrap(),Engine::specialize(source,"native-bounded-view.js").unwrap()]{Runtime::new(BoundedViewHost).execute(&program).unwrap();}
+    for program in [
+        Engine::compile(crate::ExecutionRequest {
+            source,
+            name: "native-bounded-view.js",
+            kind: crate::SourceKind::Script,
+        })
+        .unwrap(),
+        Engine::specialize(source, "native-bounded-view.js").unwrap(),
+    ] {
+        Runtime::new(BoundedViewHost).execute(&program).unwrap();
+    }
 }
 
 struct NonIndexKeyHost;
