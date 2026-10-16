@@ -143,17 +143,17 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     context.release_root(initializer);
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_process_surface");
-    crate::modules::buffer_shared_vm::install_global(context)?;
+    context.scoped(crate::modules::buffer_shared_vm::install_global)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_buffer_global");
-    crate::modules::url_shared_vm::install_global(context)?;
+    context.scoped(crate::modules::url_shared_vm::install_global)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_url_global");
     crate::host::resident_pages::release_read_only_pages();
-    install_shared_web_globals(context)?;
-    crate::modules::base64_shared_vm::install(context)?;
+    context.scoped(install_shared_web_globals)?;
+    context.scoped(crate::modules::base64_shared_vm::install)?;
     if context.host_mut().vfs_enabled() {
-        install_vfs_globals(context)?;
+        context.scoped(install_vfs_globals)?;
     }
     let console = cached_builtin(context, BuiltinModule::Console)?;
     let global = context.global_root()?;
@@ -171,8 +171,8 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     let print_eval = context.host_function(crate::host::shared_vm::operation("nodePrintEvalScript"))?;
     let key = context.string_rooted("\0quench:evalScript");
     context.define_data_property_rooted(global, key, print_eval, false, false, false)?;
-    install_performance_global(context)?;
-    crate::modules::crypto_shared_vm::install_global(context)?;
+    context.scoped(install_performance_global)?;
+    context.scoped(crate::modules::crypto_shared_vm::install_global)?;
     if node_primordials_source(context).is_some() {
         // Node 24 exposes these well-known disposal symbols before its
         // primordial snapshot is built. The runtime may not provide them yet,
@@ -190,11 +190,11 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     // preload or the entry script does to them (`cached_builtin`).
     context.seal_startup_intrinsics();
     crate::host::resident_pages::release_read_only_pages();
-    preload_modules(context)?;
+    context.scoped(preload_modules)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_preloads");
     if context.host_mut().eval_builtin_globals {
-        crate::modules::eval_globals_shared_vm::install(context)?;
+        context.scoped(crate::modules::eval_globals_shared_vm::install)?;
     }
     if context.is_module()? {
         return Ok(());
