@@ -9855,6 +9855,64 @@ fn process_default_warning_listener_preserves_sdk_source_without_internal_exposu
 }
 
 #[test]
+fn process_binding_pending_warnings_follow_sdk_wrapper_native_once_state_and_flag_precedence() {
+    let source = include_str!("../node-tests/test-process-binding-pending-warning.js");
+    for flags in [vec![], vec!["--pending-deprecation"], vec!["--pending-deprecation", "--no-deprecation"], vec!["--pending-deprecation", "--no-pending-deprecation"]] {
+        compare_node_source_with_args(source, &flags);
+    }
+}
+
+#[test]
+fn awaited_primitives_use_enclosing_async_promise_parent_for_real_hook_resources() {
+    compare_node_source_with_args(include_str!("../node-tests/test-await-primitive-promise-parent.js"), &[]);
+}
+
+#[test]
+fn missing_internal_bindings_throw_native_module_errors_with_original_descriptors() {
+    compare_node_source_with_args(include_str!("../node-tests/test-internal-binding-missing-error.js"), &["--no-warnings", "--expose-internals"]);
+}
+
+#[test]
 fn console_global_and_constructor_use_sdk_identity_namespace_and_output_policy() {
     compare_node_source_with_args(include_str!("../node-tests/test-console-sdk-authority.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn errors_reserve_native_stack_before_fields_and_capture_after_observable_conversions() {
+    compare_node_source_with_args(include_str!("../node-tests/test-error-stack-layout.js"), &["--no-warnings", "--expose-internals"]);
+}
+
+#[test]
+fn sdk_vfs_mount_lifecycle_and_native_reads_use_canonical_handler_state() {
+    compare_node_file_source_with_args(include_str!("../node-tests/test-sdk-vfs-read-bridge.js"), &["--experimental-vfs", "--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn sdk_vfs_handlers_preserve_receiver_argument_counts_results_and_errors() {
+    compare_node_file_source_with_args(include_str!("../node-tests/test-sdk-vfs-handler-protocol.js"), &["--experimental-vfs", "--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn private_promise_job_snapshots_preserve_public_async_ids_and_isolated_stores() {
+    compare_node_source_with_args(include_str!("../node-tests/test-async-private-job-identities.js"), &["--no-warnings"]);
+}
+
+fn compare_node_file_source_with_args(source: &str, flags: &[&str]) {
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = directory.path().join("test.cjs");
+    std::fs::write(&fixture, source).unwrap();
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(flags).arg(&fixture);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(observation.exit_code, Some(0), "{}", String::from_utf8_lossy(&observation.stderr));
+        assert!(observation.stderr.is_empty(), "{}", String::from_utf8_lossy(&observation.stderr));
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
 }
