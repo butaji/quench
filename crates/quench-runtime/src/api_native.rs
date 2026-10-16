@@ -87,6 +87,13 @@ pub enum PromiseSnapshot<T = RootId> {
     Rejected(T),
 }
 
+/// Flat native collection entries, preserving the current iterator position.
+#[derive(Debug)]
+pub struct CollectionPreview<T = RootId> {
+    pub entries: Vec<T>,
+    pub is_key_value: bool,
+}
+
 /// Intrinsic payload snapshot. Value roots remain scoped to the native callback.
 #[derive(Debug)]
 pub enum BuiltinData<T = RootId> {
@@ -255,23 +262,38 @@ impl<'a, H: Host> NativeContext<'a, H> {
         Ok(value.map(|value| self.scoped_value(value)))
     }
 
-    /// Snapshot a proxy's target and handler without invoking guest traps. Both
-    /// values are rooted in this native scope; revoked proxies contain nulls.
+    /// Snapshot original target and handler without traps, including revoked nulls.
     pub fn proxy_details_rooted(&mut self, root: RootId) -> Result<Option<(RootId, RootId)>, RootedError> {
         let result = self.vm.embedding_proxy_details(root);
-        let pair = result.map_err(|error| self.error(error))?;
-        Ok(pair.map(|(target, handler)| (self.scoped_value(target), self.scoped_value(handler))))
+        let details = result.map_err(|error| self.error(error))?;
+        Ok(details.map(|(target, handler)| (self.scoped_value(target), self.scoped_value(handler))))
     }
 
-    /// Snapshot live Map/Set/weak collection entries, or the remaining entries of
-    /// their iterators, without invoking guest hooks or consuming the iterator.
-    /// Pair collections are flattened as key, value; returned values are scoped roots.
-    pub fn collection_preview_rooted(&mut self, root: RootId) -> Result<Option<(Vec<RootId>, bool)>, RootedError> {
+    /// The immutable display name of an ordinary function, without public getters.
+    pub fn original_function_name_rooted(&mut self, root: RootId) -> Result<Option<RootId>, RootedError> {
+        let result = self.vm.embedding_original_function_name(root);
+        let name = result.map_err(|error| self.error(error))?;
+        Ok(name.map(|name| self.string_units_rooted(&name.units().to_vec())))
+    }
+
+    /// Original base-constructor name, independent of mutable public properties.
+    pub fn constructed_name_rooted(&mut self, root: RootId) -> Result<Option<RootId>, RootedError> {
+        let result = self.vm.embedding_constructed_name(root);
+        let name = result.map_err(|error| self.error(error))?;
+        Ok(name.map(|name| self.string_units_rooted(&name.units().to_vec())))
+    }
+
+    /// Snapshot collection entries without advancing iterators or invoking hooks.
+    pub fn collection_preview_rooted(&mut self, root: RootId) -> Result<Option<CollectionPreview>, RootedError> {
         let result = self.vm.embedding_collection_preview(root);
-        let snapshot = result.map_err(|error| self.error(error))?;
-        Ok(snapshot.map(|(values, key_value)| (values.into_iter().map(|value| self.scoped_value(value)).collect(), key_value)))
+        let preview = result.map_err(|error| self.error(error))?;
+        Ok(preview.map(|preview| CollectionPreview {
+            entries: preview.entries.into_iter().map(|value| self.scoped_value(value)).collect(),
+            is_key_value: preview.is_key_value,
+        }))
     }
 
+    /// Test an internal-slot brand without invoking guest getters or proxy traps.
     /// Create an opaque, non-owning native address wrapper. Core never dereferences
     /// the address; the embedding retains ownership of its native allocation.
     pub fn external_rooted(&mut self, address: usize) -> Result<RootId, RootedError> {
@@ -874,6 +896,18 @@ impl<'a, H: Host> NativeContext<'a, H> {
         name: &str,
     ) -> Result<RootId, RootedError> {
         let result = self.vm.create_named_host_function(id, name);
+        self.completion(result)
+    }
+
+    /// Create a named callback with private traced environment data.
+    pub fn host_function_named_with_data(
+        &mut self,
+        id: HostFunctionId,
+        name: &str,
+        data: RootId,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.embedding_value(data)
+            .and_then(|value| self.vm.create_named_host_function_with_data(id, name, value));
         self.completion(result)
     }
 
