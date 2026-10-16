@@ -6,31 +6,92 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 
 const NODE_ERROR_BRAND: &str = "\0node/errors/privateBrand";
 pub(crate) const DEFAULT_STACK_FORMATTER: &str = "\0node/errors/defaultStackFormatter";
+/// Node's stack policy, without loading it: `internal/errors.js` and what it requires cost
+/// about as much as the rest of the bootstrap together, and a script that never reads a
+/// stack or `Error.prepareStackTrace` needs none of it. The formatter is a native trampoline
+/// that loads Node's callback on its first call, and `Error.prepareStackTrace` a lazy data
+/// property; both load the library inside the startup intrinsics (`node_library_module`), so
+/// it captures the original intrinsics whatever a script has done to them since.
 pub(crate) fn install_stack_formatter(
     context: &mut NativeContext<'_, NodeHost>,
 ) -> Result<(), RootedError> {
-    let callback = crate::host::shared_vm::commonjs::node_library_export(
+    let formatter = context.host_function(crate::host::shared_vm::operation("errorStackFormat"))?;
+    let formatter = context.retain(formatter)?;
+    context
+        .host_mut()
+        .shared_state()
+        .borrow_mut()
+        .builtin_cache
+        .insert(DEFAULT_STACK_FORMATTER.into(), formatter);
+    let initializer = context.host_function(crate::host::shared_vm::operation(
+        "errorPrepareStackTraceInitialize",
+    ))?;
+    let global = context.global_root()?;
+    let constructor = get(context, global, "Error")?;
+    context.define_lazy_data_properties_rooted(
+        constructor,
+        &["prepareStackTrace"],
+        false,
+        initializer,
+    )
+}
+
+/// Materializes `Error.prepareStackTrace` if it is still lazy, which loads Node's primordials
+/// and errors module in Node's order: both see the property unset, as an eager bootstrap
+/// did, and it is defined once the module has loaded.
+pub(crate) fn materialize_prepare_stack_trace(
+    context: &mut NativeContext<'_, NodeHost>,
+) -> Result<(), RootedError> {
+    let global = context.global_root()?;
+    let constructor = get(context, global, "Error")?;
+    context.materialize_lazy_data_property_rooted(constructor, "prepareStackTrace")
+}
+
+/// One of `internal/errors.js`'s exports, loading the module on first use.
+fn errors_export(
+    context: &mut NativeContext<'_, NodeHost>,
+    name: &str,
+) -> Result<RootId, RootedError> {
+    materialize_prepare_stack_trace(context)?;
+    library_errors_export(context, name)
+}
+
+fn library_errors_export(
+    context: &mut NativeContext<'_, NodeHost>,
+    name: &str,
+) -> Result<RootId, RootedError> {
+    crate::host::shared_vm::commonjs::node_library_export(
         context,
         "internal/errors.js",
         "internal/errors.js",
-        "prepareStackTraceCallback",
-    )?;
-    let prepare = crate::host::shared_vm::commonjs::node_library_export(
-        context,
-        "internal/errors.js",
-        "internal/errors.js",
-        "ErrorPrepareStackTrace",
-    )?;
+        name,
+    )
+}
+
+/// The stack formatter: Node's `prepareStackTraceCallback(global, error, sites)`.
+pub(crate) fn format_stack(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let callback = errors_export(context, "prepareStackTraceCallback")?;
+    let undefined = context.undefined();
+    context.call_rooted(callback, undefined, args)
+}
+
+/// Defines `Error.prepareStackTrace` as Node's `ErrorPrepareStackTrace`, and keeps the
+/// module's private brand as loaded, before script can reach its exports.
+pub(crate) fn initialize_prepare_stack_trace(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let prepare = library_errors_export(context, "ErrorPrepareStackTrace")?;
     let global = context.global_root()?;
     let constructor = get(context, global, "Error")?;
     let key = context.string_rooted("prepareStackTrace");
     context.define_data_property_rooted(constructor, key, prepare, true, false, true)?;
-    let brand = crate::host::shared_vm::commonjs::node_library_export(
-        context,
-        "internal/errors.js",
-        "internal/errors.js",
-        "kIsNodeError",
-    )?;
+    let brand = library_errors_export(context, "kIsNodeError")?;
     let brand = context.retain(brand)?;
     context
         .host_mut()
@@ -38,14 +99,7 @@ pub(crate) fn install_stack_formatter(
         .borrow_mut()
         .builtin_cache
         .insert(NODE_ERROR_BRAND.into(), brand);
-    let callback = context.retain(callback)?;
-    context
-        .host_mut()
-        .shared_state()
-        .borrow_mut()
-        .builtin_cache
-        .insert(DEFAULT_STACK_FORMATTER.into(), callback);
-    Ok(())
+    Ok(context.undefined())
 }
 
 const INVALID_ARGUMENT_TYPE: &str = "ERR_INVALID_ARG_TYPE";
@@ -97,6 +151,10 @@ fn coded_error_prototype(
         return Ok(prototype);
     }
     if state.borrow().node_error_api.is_none() {
+        // Node's private brand, from its library when present.
+        if crate::host::shared_vm::commonjs::node_library_present(context) {
+            materialize_prepare_stack_trace(context)?;
+        }
         let brand = state.borrow().builtin_cache.get(NODE_ERROR_BRAND).copied();
         let brand = brand.unwrap_or_else(|| context.symbol_rooted(Some("kIsNodeError")));
         let brand = context.retain(brand)?;
