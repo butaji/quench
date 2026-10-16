@@ -1,0 +1,9 @@
+Pass /workspace/quench/work/node_modules/node-stable-conformance/test/parallel/test-os-constants-signals.js
+Pass /workspace/quench/work/node_modules/node-stable-conformance/test/parallel/test-os-checked-function.js
+Pass /workspace/quench/work/node_modules/node-stable-conformance/test/parallel/test-os-eol.js
+Fail /workspace/quench/work/node_modules/node-stable-conformance/test/parallel/test-os-fast.js
+Pass /workspace/quench/work/node_modules/node-stable-conformance/test/parallel/test-os-process-priority.js
+Pass /workspace/quench/work/node_modules/node-stable-conformance/test/parallel/test-os-homedir-no-envvar.js
+Pass /workspace/quench/work/node_modules/node-stable-conformance/test/parallel/test-os-userinfo-handles-getter-errors.js
+Pass /workspace/quench/work/node_modules/node-stable-conformance/test/parallel/test-os.js
+all: pass=7 skip=0 fail=1 timeout=0 crash=0 unclassified=0 total=8 inventory_hash=8d43c87ce1e7c262

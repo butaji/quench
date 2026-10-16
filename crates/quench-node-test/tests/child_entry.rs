@@ -1086,10 +1086,7 @@ process.on('exit',()=>console.log(JSON.stringify(result.map(value=>JSON.stringif
         );
         assert!(observation.stderr.is_empty());
     }
-    assert_eq!(
-        String::from_utf8_lossy(&observations[0].stdout),
-        String::from_utf8_lossy(&observations[1].stdout),
-    );
+    assert_eq!(observations[0].stdout, observations[1].stdout);
 }
 
 #[test]
@@ -1478,147 +1475,6 @@ closed.end(input);
 next();
 "#;
     compare_node_stream_source(source);
-}
-
-#[test]
-fn events_async_iterator_preserves_queues_cleanup_abort_and_watermarks() {
-    let observations = compare_node_stream_source(r#"
-const assert=require('assert'),{EventEmitter,on}=require('events');
-(async()=>{
- const e=new EventEmitter(),flow=[];
- e.pause=()=>flow.push('pause');e.resume=()=>flow.push('resume');
- const iterator=on(e,'data',{close:['end'],highWaterMark:1,lowWaterMark:1});
- assert.strictEqual(iterator[Symbol.asyncIterator](),iterator);
- e.emit('data',1,'a');e.emit('data',2,'b');
- assert.deepStrictEqual(flow,['pause']);
- assert.deepStrictEqual(await iterator.next(),{value:[1,'a'],done:false});
- assert.deepStrictEqual(await iterator.next(),{value:[2,'b'],done:false});
- assert.deepStrictEqual(flow,['pause','resume']);
- const pending=iterator.next();e.emit('end');assert.strictEqual((await pending).done,true);
- assert.strictEqual(e.listenerCount('data')+e.listenerCount('error')+e.listenerCount('end'),0);
- const target=new EventTarget(),targetIterator=on(target,'value');
- const targetPending=targetIterator.next(),event=new Event('value');target.dispatchEvent(event);
- assert.strictEqual((await targetPending).value[0],event);await targetIterator.return();
- const controller=new AbortController();controller.signal.addEventListener('abort',event=>event.stopImmediatePropagation());
- const aborted=on(e,'data',{signal:controller.signal});
- const wait=aborted.next();controller.abort('reason');
- await assert.rejects(wait,error=>error.code==='ABORT_ERR'&&error.cause==='reason');
- assert.strictEqual((await aborted.next()).done,true);
- const failed=on(e,'data'),first=failed.next(),second=failed.next(),error=new Error('failure');
- e.emit('error',error);await assert.rejects(first,err=>err===error);
- assert.strictEqual((await second).done,true);
- const returned=on(e,'data');assert.strictEqual((await returned.return()).done,true);
- const thrown=on(e,'data');assert.strictEqual(thrown.throw(error),undefined);
- await assert.rejects(thrown.next(),err=>err===error);
- for(const options of [null,1,{highWaterMark:0},{lowWatermark:0}])assert.throws(()=>on(e,'data',options));
- controller.abort();assert.throws(()=>on(e,'data',{signal:controller.signal}),error=>error.code==='ABORT_ERR');
- assert.strictEqual(e.listenerCount('data')+e.listenerCount('error'),0);
- console.log(JSON.stringify({complete:true}));
-})().catch(error=>{console.error(error);process.exitCode=1});
-"#);
-    assert_eq!(String::from_utf8_lossy(&observations[1].stdout).trim(), r#"{"complete":true}"#);
-}
-
-#[test]
-fn events_async_iterator_descriptor_initialization_captures_original_abort_helper() {
-    let observations=compare_node_stream_source(r#"
-const assert=require('assert'),events=require('events');
-const marker={};events.addAbortListener=()=>{throw marker};
-const originalPromise=globalThis.Promise,originalApply=Reflect.apply;
-globalThis.Promise=function(){throw marker};Reflect.apply=()=>{throw marker};
-let descriptor;
-try{descriptor=Object.getOwnPropertyDescriptor(events,'on')}finally{globalThis.Promise=originalPromise;Reflect.apply=originalApply}
-assert.strictEqual(typeof descriptor.value,'function');assert.strictEqual(descriptor.get,undefined);
-assert.strictEqual(descriptor.writable,true);assert.strictEqual(descriptor.enumerable,true);assert.strictEqual(descriptor.configurable,true);
-assert.strictEqual(descriptor.value.name,'on');assert.strictEqual(descriptor.value.length,2);
-assert.strictEqual(events.on,descriptor.value);Object.freeze(events);assert.strictEqual(events.on,descriptor.value);
-(async()=>{
- const controller=new AbortController();controller.signal.addEventListener('abort',event=>event.stopImmediatePropagation());
- const iterator=events.on(new events.EventEmitter(),'data',{signal:controller.signal});
- const pending=iterator.next();controller.abort('reason');
- await assert.rejects(pending,error=>error.code==='ABORT_ERR'&&error.cause==='reason');
- console.log(JSON.stringify({complete:true}));
-})().catch(error=>{console.error(error);process.exitCode=1});
-"#);
-    assert_eq!(String::from_utf8_lossy(&observations[1].stdout).trim(),r#"{"complete":true}"#);
-}
-
-#[test]
-fn events_async_iterator_initialization_preserves_freeze_before_observation() {
-    let observations=compare_node_stream_source(r#"
-const assert=require('assert'),events=require('events');Object.freeze(events);
-const descriptor=Object.getOwnPropertyDescriptor(events,'on');assert.strictEqual(typeof descriptor.value,'function');
-assert.strictEqual(descriptor.writable,false);assert.strictEqual(descriptor.configurable,false);assert.strictEqual(descriptor.enumerable,true);
-assert.strictEqual(events.on,descriptor.value);
-(async()=>{const emitter=new events.EventEmitter(),iterator=events.on(emitter,'data');emitter.emit('data',42);assert.deepStrictEqual((await iterator.next()).value,[42]);await iterator.return();console.log(JSON.stringify({complete:true}));})().catch(error=>{console.error(error);process.exitCode=1});
-"#);
-    assert_eq!(String::from_utf8_lossy(&observations[1].stdout).trim(),r#"{"complete":true}"#);
-}
-
-#[test]
-fn child_stdin_destruction_closes_pipe_and_precedes_exit_observers() {
-    let observations = compare_node_stream_source(r#"
-const assert=require('assert'),{spawn}=require('child_process');
-const child=spawn(process.execPath,['-e',`process.stdin.resume();process.stdin.on('end',()=>process.exit(0));`]);
-const original=child.stdin.destroy;let calls=0,exited=false;
-child.stdin.destroy=function(...args){calls++;return Reflect.apply(original,this,args)};
-child.on('error',error=>{throw error});
-child.on('spawn',()=>child.stdin.destroy());
-child.on('exit',(code,signal)=>{assert.strictEqual(code,0);assert.strictEqual(signal,null);assert(child.stdin.destroyed);assert(calls>=2);assert.strictEqual(child._handle,null);exited=true});
-child.on('close',()=>{assert(exited);console.log(JSON.stringify({complete:true}))});
-"#);
-    assert_eq!(String::from_utf8_lossy(&observations[1].stdout).trim(), r#"{"complete":true}"#);
-}
-
-#[test]
-fn ipc_counted_references_preserve_initial_state_explicit_overrides_and_exit() {
-    for (methods, kept) in [
-        ("['unrefCounted']", true),
-        ("['refCounted','unrefCounted']", false),
-        ("['refCounted','refCounted','unrefCounted']", true),
-        ("['unref','refCounted','refCounted']", false),
-        ("['ref','unrefCounted']", true),
-        ("['unrefCounted','refCounted','refCounted','unrefCounted']", false),
-    ] {
-        let source = format!(r#"
-const assert=require('assert'),{{spawn}}=require('child_process');
-const child=spawn(process.execPath,['-e','process.on("message",()=>process.exit(0))'],{{stdio:['ignore','ignore','ignore','ipc']}});
-child.unref();
-for(const name of ['refCounted','unrefCounted']){{
- const method=child.channel[name],descriptor=Object.getOwnPropertyDescriptor(Object.getPrototypeOf(child.channel),name);
- assert.strictEqual(method.name,name);assert.strictEqual(method.length,0);
- assert.strictEqual(descriptor.enumerable,false);assert.strictEqual(descriptor.writable,true);assert.strictEqual(descriptor.configurable,true);
- assert.throws(()=>method.call({{}}),TypeError);assert.throws(()=>Reflect.construct(method,[]),TypeError);
-}}
-for(const method of {methods})assert.strictEqual(child.channel[method](),undefined);
-console.log('setup');setTimeout(()=>{{console.log('kept');child.send('done')}},50).unref();
-"#);
-        let observations = compare_node_stream_source(&source);
-        assert_eq!(String::from_utf8_lossy(&observations[1].stdout), if kept {"setup\nkept\n"} else {"setup\n"});
-    }
-}
-
-#[test]
-fn ipc_process_counted_references_compose_with_implicit_listener_counts() {
-    let observations = compare_node_stream_source(r#"
-const assert=require('assert'),{spawn}=require('child_process');
-(async()=>{
- const out=[];
- for(const keep of [false,true]){
-  const source=`process.on('message',()=>{});process.on('disconnect',()=>{});
-  process.channel.unrefCounted();process.channel.unrefCounted();
-  if(${keep})process.channel.refCounted();
-  console.log('setup');setTimeout(()=>{console.log('kept');process.exit(0)},50).unref();`;
-  const child=spawn(process.execPath,['-e',source],{stdio:['ignore','pipe','pipe','ipc']});
-  let stdout='',stderr='';child.stdout.on('data',chunk=>stdout+=chunk);child.stderr.on('data',chunk=>stderr+=chunk);
-  const code=await new Promise((resolve,reject)=>{child.on('error',reject);child.on('close',resolve)});
-  assert.strictEqual(code,0);assert.strictEqual(stderr,'');assert.strictEqual(stdout,keep?'setup\nkept\n':'setup\n');out.push(stdout);
- }
- console.log(JSON.stringify({complete:true,out}));
-})().catch(error=>{console.error(error);process.exitCode=1});
-"#);
-    let result: serde_json::Value=serde_json::from_slice(&observations[1].stdout).unwrap();
-    assert_eq!(result["complete"],true);
 }
 
 fn compare_node_stream_source(source: &str) -> [quench_node_test::case_process::CaseObservation; 2] {
@@ -7746,270 +7602,68 @@ fn util_parse_args_default_argv_matches_eval_print_and_file_entry_forms() {
 }
 
 #[test]
-fn file_url_module_imports_share_plain_aliases_and_preserve_query_identity() {
-    let directory = tempfile::tempdir().unwrap();
-    std::fs::write(directory.path().join("sibling.mjs"), "globalThis.siblingLoads=(globalThis.siblingLoads||0)+1;export const sibling={};").unwrap();
-    let dependency=directory.path().join("module # ü.mjs");
-    std::fs::write(&dependency,"import {sibling} from './sibling.mjs';export {sibling};export const id=globalThis.moduleLoads=(globalThis.moduleLoads||0)+1;export let live=1;export function increment(){live++}export const url=import.meta.url;").unwrap();
-    let url=url::Url::from_file_path(&dependency).unwrap().to_string();
-    let entry=directory.path().join("entry.mjs");
-    std::fs::write(&entry,format!(r#"
-import * as first from {literal};
-import assert from 'node:assert/strict';
-const base={literal};
-const same=await import(base);
-assert.strictEqual(first,same);
-const relative=await import('./module%20%23%20%C3%BC.mjs');
-assert.strictEqual(first,relative);
-assert.strictEqual(first,await import(base.replace('file:','FILE:')));
-same.increment();assert.strictEqual(first.live,2);
-const suffixes=['?x=one','?x=two','?x=/../one','?x=/one','#part','#other','?','#'];
-const out=[];
-for(const suffix of suffixes){{
- const variant=await import(base+suffix);
- if(suffix==='?'||suffix==='#'){{assert.strictEqual(variant,first);continue;}}
- assert.notStrictEqual(variant,first);
- assert.strictEqual(variant,await import(base+suffix));
- assert.strictEqual(variant.sibling,first.sibling);
- assert.strictEqual(variant.url,base+suffix);
- out.push([suffix,variant.id,variant.live]);
-}}
-for(const [input,canonical] of [['?x=one#','?x=one'],['?#part','#part']]){{
- assert.strictEqual(await import(base+input),await import(base+canonical));
-}}
-assert.strictEqual(globalThis.siblingLoads,1);
-assert.strictEqual(globalThis.moduleLoads,7);
-console.log(JSON.stringify({{out,firstId:first.id,firstLive:first.live}}));
-"#,literal=serde_json::to_string(&url).unwrap())).unwrap();
-    let observations=["node",env!("CARGO_BIN_EXE_run-parallel")].map(|executable|{
-        let mut command=Command::new(executable);command.arg(&entry);
-        if executable!="node"{command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1");}
-        quench_node_test::case_process::observe_command(command,Duration::from_secs(20)).unwrap()
-    });
-    for result in &observations {assert!(!result.timed_out);assert_eq!(result.exit_code,Some(0),"{}",String::from_utf8_lossy(&result.stderr));assert!(result.stderr.is_empty());}
-    assert_eq!(observations[0].stdout,observations[1].stdout);
-}
-
-#[test]
-fn text_decoder_unicode_labels_bom_fatal_errors_and_recovery_match_node() {
+fn native_builtin_setup_preserves_regexp_and_crypto_uses_canonical_streams() {
     compare_node_stream_source(r#"
-const out=[];
-for(const label of ['utf8','utf-16','utf-16be','ascii'])for(const fatal of [false,true])for(const ignoreBOM of [false,true]){
- const decoder=new TextDecoder(label,{fatal,ignoreBOM});
- for(const bytes of [[],[65],[239,187,191,65],[255,254,65,0],[254,255,0,65],[0,216],[0,216,65],[195,40]]){
-  try{out.push([label,fatal,ignoreBOM,decoder.encoding,decoder.decode(new Uint8Array(bytes))])}
-  catch(e){out.push([label,fatal,ignoreBOM,e.name,e.code,e.message])}
- }
-}
-for(const label of ['bogus','replacement','iso-2022-cn','\u00a0utf-8\u00a0'])try{new TextDecoder(label)}catch(e){out.push([label,e.name,e.code,e.message])}
-console.log(JSON.stringify(out));
+const state=()=>[RegExp.input,RegExp.lastMatch,RegExp.lastParen,RegExp.leftContext,RegExp.rightContext,RegExp.$1,RegExp.$2,RegExp.$9];
+/(before)-(after)/.exec('leftbefore-afterright');RegExp.input='caller input';const before=JSON.stringify(state());
+const crypto=require('crypto');const after=JSON.stringify(state());
+const stream=require('stream');const promises=require('stream/promises');
+console.log(before===after,stream.promises===promises,stream.Stream===stream);
+const hash=crypto.createHash('sha256');console.log(hash instanceof stream.Transform);
+hash.on('data',chunk=>console.log(chunk.toString('hex')));hash.end('abc');
 "#);
 }
 
 #[test]
-fn synchronous_esm_require_preserves_namespaces_live_bindings_errors_and_later_imports() {
-    let directory=tempfile::tempdir().unwrap();
-    for (name,source) in [
-        ("plain.mjs","export let n=1;export function inc(){n++}"),
-        ("default.mjs","export default function f(){return 42};export let n=1;export function inc(){n++}"),
-        ("marker.mjs","export default 42;export const __esModule=false;"),
-        ("special.mjs","const value={answer:42};export {value as 'module.exports'};export default 7;"),
-        ("async.mjs","globalThis.asyncStarted=true;await 0;export const done=true;"),
-        ("parent.mjs","import './async.mjs';globalThis.parentExecuted=true;export const done=true;"),
-        ("cycle.mjs","import './cycle.cjs';export const n=1;"),
-        ("cycle.cjs","module.exports=require('./cycle.mjs');"),
-    ] {std::fs::write(directory.path().join(name),source).unwrap();}
-    let entry=directory.path().join("entry.cjs");
-    std::fs::write(&entry,r#"
-(async()=>{
-const out=[];
-for(const name of ['plain','default','marker','special']){
- const value=require('./'+name+'.mjs');const ns=await import('./'+name+'.mjs');
- out.push([name,value===require('./'+name+'.mjs'),value===ns,Object.getPrototypeOf(value)===null,Object.isExtensible(value),Reflect.ownKeys(value).map(k=>String(k))]);
- if(value.inc){value.inc();out.push([name,value.n,ns.n]);}
- if(value.default)out.push(['default',typeof value.default,value.__esModule]);
-}
-for(const name of ['parent','async','cycle']){
- let previous;
- for(let count=0;count<2;count++)try{require('./'+name+'.mjs');throw Error('unexpected success')}catch(e){
-  out.push([name,e.name,e.code,e.message,previous===e,e.requireStack,Object.getOwnPropertyDescriptor(e,'requireStack')]);previous=e;
- }
-}
-out.push(['not started',globalThis.asyncStarted===undefined,globalThis.parentExecuted===undefined]);
-const asyncNS=await import('./parent.mjs');out.push(['async imported',asyncNS.done,globalThis.asyncStarted,globalThis.parentExecuted]);
-console.log(JSON.stringify({complete:true,out}));
-})().catch(e=>{console.error(e.stack);process.exitCode=1});
-"#).unwrap();
-    let observations=["node",env!("CARGO_BIN_EXE_run-parallel")].map(|executable|{
-        let mut command=Command::new(executable);command.arg(&entry);
-        if executable!="node"{command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1");}
-        quench_node_test::case_process::observe_command(command,Duration::from_secs(20)).unwrap()
-    });
-    for result in &observations {
-        assert!(!result.timed_out);assert_eq!(result.exit_code,Some(0),"{}",String::from_utf8_lossy(&result.stderr));assert!(result.stderr.is_empty());
-        let value:serde_json::Value=serde_json::from_slice(&result.stdout).unwrap();assert_eq!(value["complete"],true);
-    }
-    assert_eq!(observations[0].stdout,observations[1].stdout);
+fn native_internal_microtask_queue_keeps_original_identity_and_job_order() {
+    const SOURCE: &str = r#"
+const original=queueMicrotask;
+Object.defineProperty(globalThis,'queueMicrotask',{value(){throw Error('public queue consulted')},writable:false,configurable:false});
+const internal=require('internal/process/task_queues');
+console.log(internal.queueMicrotask===original,internal.queueMicrotask.name,internal.queueMicrotask.length);
+const trace=[];process.nextTick(()=>trace.push('tick'));
+internal.queueMicrotask(()=>{trace.push('microtask');console.log(trace.join(','))});trace.push('sync');
+"#;
+    compare_node_source_with_args(SOURCE, &["--no-warnings", "--expose-internals"]);
 }
 
 #[test]
-fn commonjs_cache_mutation_replacement_and_esm_reload_match_node() {
-    let directory = tempfile::tempdir().unwrap();
-    for (name, source) in [
-        ("value.cjs", "globalThis.loads=(globalThis.loads||0)+1;module.exports={n:loads,cache:require.cache};"),
-        ("data.json", "{\"n\":1}"),
-        ("failure.cjs", "throw globalThis.failure;"),
-        ("default.mjs", "export default 42;"),
-        ("namespace.mjs", "export const n=42;"),
-    ] { std::fs::write(directory.path().join(name), source).unwrap(); }
-    let entry = directory.path().join("entry.cjs");
-    std::fs::write(&entry, r#"
-const Module=require('node:module');const original=Module._cache;const out=[];
-out.push(['identity',require.cache===original,Object.getPrototypeOf(original)===null,original[__filename]===module]);
-out.push(['private',Object.keys(original).every(key=>!key.includes('/lib/internal/')&&!key.includes('\0'))]);
-const filename=require.resolve('./value.cjs');const a=require('./value.cjs');
-out.push(['record',original[filename].loaded,original[filename].exports===a,original[filename].parent===module]);
-delete require.cache[filename];const b=require('./value.cjs');out.push(['reload',a!==b,a.n,b.n]);
-const json=require.resolve('./data.json');original[json]={loaded:true,exports:{mock:42}};
-out.push(['substitution',require('./data.json')]);delete original[json];out.push(['json',require('./data.json')]);
-const actualFs=require('node:fs');original.fs={loaded:true,exports:{mock:'fs'}};
-out.push(['builtin',require('fs'),require('node:fs')===actualFs]);delete original.fs;
-const descriptor=Object.getOwnPropertyDescriptor(Module,'_cache');
-out.push(['descriptor',descriptor.writable,descriptor.enumerable,descriptor.configurable]);
-Module._cache=Object.create(null);const fresh=Module._cache;const c=require('./value.cjs');
-out.push(['replace',require.cache===original,c.cache===fresh,c.n,fresh[filename].exports===c]);
-require.cache={unused:true};out.push(['require property',require('./value.cjs')===c,Module._cache===fresh]);
-require.cache=original;Module._cache=original;
-globalThis.failure={tag:'failure'};const bad=require.resolve('./failure.cjs');
-for(let count=0;count<2;count++)try{require('./failure.cjs')}catch(e){out.push(['failure',e===failure,Object.hasOwn(original,bad),module.children.some(child=>child.filename===bad)]);}
-const events=[];const proxied=new Proxy(original,{
- get(target,key){if(key===filename)events.push('get');return Reflect.get(target,key)},
- set(target,key,value){if(key===filename)events.push('set');return Reflect.set(target,key,value)},
- deleteProperty(target,key){if(key===bad)events.push('delete');return Reflect.deleteProperty(target,key)}
-});
-Module._cache=proxied;delete original[filename];const d=require('./value.cjs');
-try{require('./failure.cjs')}catch(e){out.push(['proxy failure',e===failure]);}
-out.push(['proxy',d.cache===proxied,events]);Module._cache=original;
-for(const name of ['default','namespace']){
- const path=require.resolve('./'+name+'.mjs');const first=require(path);delete original[path];const second=require(path);
- out.push(['esm',name,first===second,Object.getPrototypeOf(second)===null]);
-}
-console.log(JSON.stringify({complete:true,out}));
-"#).unwrap();
-    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
-        let mut command = Command::new(executable); command.arg(&entry);
-        if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
-        quench_node_test::case_process::observe_command(command, Duration::from_secs(20)).unwrap()
-    });
-    for result in &observations {
-        assert!(!result.timed_out);
-        assert_eq!(result.exit_code, Some(0), "{}", String::from_utf8_lossy(&result.stderr));
-        assert!(result.stderr.is_empty());
-        let value: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
-        assert_eq!(value["complete"], true);
-    }
-    assert_eq!(observations[0].stdout, observations[1].stdout);
-}
-
-
-#[test]
-fn ambiguous_commonjs_sources_detect_esm_syntax_await_and_wrapper_bindings() {
-    let directory = tempfile::tempdir().unwrap();
-    for (name, source) in [
-        ("esm.js", "export const n=42;"),
-        ("meta.js", "globalThis.detectedMeta=import.meta.url;"),
-        ("lexical.js", "const require=42;globalThis.detectedLexical=require;"),
-        ("destructure.js", "const {x:exports}={x:42};globalThis.detectedDestructure=exports;"),
-        ("script.js", "var require;module.exports=42;return;"),
-        ("string.js", "module.exports='export { imaginary }';"),
-        ("await-name.js", "var await=8;module.exports=await/2/2;"),
-        ("dynamic.js", "module.exports=()=>import('./esm.js');"),
-        ("async.js", "globalThis.detectedStarted=true;await 0;globalThis.detectedFinished=true;"),
-        ("hashbang.js", "#!/usr/bin/env node\nexport const n=42;"),
-        ("bom.js", "\u{feff}export const n=42;"),
-        ("common/package.json", "{\"type\":\"commonjs\"}"),
-        ("common/value.js", "module.exports=42;"),
-        ("common/explicit.mjs", "export const n=42;"),
-        ("common/no-extension", "module.exports=42;"),
-        ("module/package.json", "{\"type\":\"module\"}"),
-        ("module/value.js", "export const n=42;"),
-        ("module/explicit.cjs", "module.exports=42;"),
-        ("module/no-extension", "export const n=42;"),
-        ("module/unregistered.txt", "module.exports=42;"),
-        ("unknown/package.json", "{\"type\":\"other\"}"),
-        ("unknown/value.js", "export const n=42;"),
-        ("node_modules/pkg/package.json", "{}"),
-        ("node_modules/pkg/index.js", "export const n=42;"),
-    ] {
-        let path = directory.path().join(name);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(path, source).unwrap();
-    }
-    let entry = directory.path().join("entry.cjs");
-    std::fs::write(&entry, r#"
-(async()=>{
-const out=[];
-for(const file of ['esm.js','meta.js','lexical.js','destructure.js','script.js','string.js','await-name.js','hashbang.js','bom.js','common/value.js','common/explicit.mjs','common/no-extension','module/value.js','module/explicit.cjs','module/no-extension','module/unregistered.txt','unknown/value.js','node_modules/pkg/index.js']){
- const value=require('./'+file);out.push([file,typeof value,typeof value==='object'?Object.keys(value):value,typeof value==='object'?value.n:null]);
-}
-out.push(['effects',detectedMeta.endsWith('/meta.js'),detectedLexical,detectedDestructure]);
-out.push(['dynamic',(await require('./dynamic.js')()).n]);
-try{require('./async.js');throw Error('unexpected success')}catch(e){out.push(['async',e.name,e.code,globalThis.detectedStarted===undefined]);}
-await import('./async.js');out.push(['later',detectedStarted,detectedFinished]);
-console.log(JSON.stringify({complete:true,out}));
-})().catch(e=>{console.error(e.stack);process.exitCode=1});
-"#).unwrap();
-    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
-        let mut command = Command::new(executable); command.arg(&entry);
-        if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
-        quench_node_test::case_process::observe_command(command, Duration::from_secs(20)).unwrap()
-    });
-    for result in &observations {
-        assert!(!result.timed_out);
-        assert_eq!(result.exit_code, Some(0), "{}", String::from_utf8_lossy(&result.stderr));
-        assert!(result.stderr.is_empty(), "{}", String::from_utf8_lossy(&result.stderr));
-        let value: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
-        assert_eq!(value["complete"], true);
-    }
-    assert_eq!(String::from_utf8_lossy(&observations[0].stdout), String::from_utf8_lossy(&observations[1].stdout));
+fn native_promise_inspection_preserves_slots_identity_and_rejection_handling() {
+    const SOURCE: &str = r#"
+const {internalBinding}=require('internal/test/binding');const u=internalBinding('util');
+const value={answer:42},pending=new Promise(()=>{}),fulfilled=Promise.resolve(value),rejected=Promise.reject(value);
+for(const p of [pending,fulfilled,rejected])for(const key of ['then','constructor'])Object.defineProperty(p,key,{get(){throw Error(key)}});
+console.log(u.getPromiseDetails(pending).length,u.getPromiseDetails(pending)[0],u.getPromiseDetails(fulfilled)[0],u.getPromiseDetails(rejected)[0]);
+console.log(u.getPromiseDetails(fulfilled)[1]===value,u.getPromiseDetails(rejected)[1]===value,u.getPromiseDetails({}));
+u.markPromiseAsHandled(rejected);u.markPromiseAsHandled(pending);
+const events=[];process.on('unhandledRejection',()=>events.push('unhandled'));process.on('rejectionHandled',()=>events.push('handled'));
+setImmediate(()=>console.log(JSON.stringify(events)));
+"#;
+    compare_node_source_with_args(SOURCE, &["--no-warnings", "--expose-internals"]);
 }
 
 #[test]
-fn stream_callable_duplex_transform_and_passthrough_initialize_supplied_receivers() {
-    let observations = compare_node_stream_source(r#"
-const stream=require('node:stream');
+fn canonical_web_streams_share_globals_and_preserve_byte_and_abort_algorithms() {
+    compare_node_stream_source(r#"
+const web=require('stream/web');
+console.log(['ReadableStream','WritableStream','TransformStream','TextEncoderStream','TextDecoderStream'].every(name=>web[name]===globalThis[name]));
 (async()=>{
-const out=[];
-for(const name of ['Duplex','Transform','PassThrough']){
- const C=stream[name];const parent=stream[name==='Duplex'?'Readable':name==='Transform'?'Duplex':'Transform'];
- function Derived() {this.returned=C.call(this,{read(){},write(c,e,cb){cb()},transform(c,e,cb){cb(null,c)}})}
- Object.setPrototypeOf(Derived.prototype,C.prototype);
- const d=new Derived();out.push([name,d instanceof C,!!d._readableState,!!d._writableState,d.returned===undefined,d.allowHalfOpen]);
- const plain=C({read(){},write(c,e,cb){cb()}});out.push(['factory',name,plain instanceof C]);
- class Child extends C {constructor(){super({read(){},write(c,e,cb){cb()}});this.marker=42}}
- const child=new Child();out.push(['subclass',name,child instanceof Child,child instanceof C,child.marker]);
- const target=Object.create(C.prototype);out.push(['call',name,C.call(target,{read(){},write(c,e,cb){cb()}})===undefined,!!target._readableState,!!target._writableState]);
- const closed=new C({readable:false,writable:false,allowHalfOpen:false});out.push(['disabled',name,closed.readableEnded,closed.writableFinished,closed.allowHalfOpen]);
- out.push(['metadata',name,C.name,C.length,Object.getPrototypeOf(C)===parent,C.prototype.constructor===C,Object.getOwnPropertyDescriptor(C,'prototype').writable]);
-}
-async function collect(value,input){const values=[];value.on('data',c=>values.push(c.toString()));const done=new Promise((resolve,reject)=>{value.on('error',reject);value.on('end',resolve)});value.end(input);await done;return values.join('')}
-let transformed;let constructions=0;
-function Upper(){stream.Transform.call(this,{construct(cb){constructions++;cb()},transform(c,e,cb){out.push(['transform receiver',this===transformed]);cb(null,c.toString().toUpperCase())},flush(cb){out.push(['flush receiver',this===transformed]);cb(null,'!')}})}
-Object.setPrototypeOf(Upper.prototype,stream.Transform.prototype);transformed=new Upper();
-out.push(['output',await collect(transformed,'hello'),constructions]);
-function Through(){stream.PassThrough.call(this)}Object.setPrototypeOf(Through.prototype,stream.PassThrough.prototype);
-out.push(['passthrough',await collect(new Through(),'data')]);
-out.push(['custom pass',await collect(new stream.PassThrough({transform(c,e,cb){cb(null,'custom')}}),'data')]);
-const chunk=Buffer.from('direct');let direct;
-stream.PassThrough.prototype._transform.call({push(){throw Error('unexpected push')}},chunk,'buffer',(error,value)=>{direct=[error===null,value===chunk]});
-out.push(['direct',direct,stream.PassThrough.prototype._transform.name,Object.hasOwn(stream.PassThrough.prototype._transform,'prototype')]);
-console.log(JSON.stringify({complete:true,out}));
-})().catch(e=>{console.error(e.stack);process.exitCode=1});
+ const bytes=new web.ReadableStream({type:'bytes',start(c){c.enqueue(new Uint8Array([1,2,3]));c.close()}});
+ const reader=bytes.getReader({mode:'byob'});const buffer=new Uint8Array(8);const first=await reader.read(buffer);
+ console.log(first.done,JSON.stringify([...first.value]),buffer.byteLength);
+ const final=await reader.read(new Uint8Array(2));console.log(final.done,final.value.byteLength);
+ const reason={reason:42};await new web.ReadableStream({cancel(value){console.log('cancel',value===reason)}}).cancel(reason);
+ const writable=new web.WritableStream({abort(value){console.log('abort',value===reason)}});await writable.abort(reason);
+ const encoder=new web.TextEncoderStream(),r=encoder.readable.getReader(),w=encoder.writable.getWriter();
+ const read=r.read();await w.write('\ud83d');await w.write('\ude00');console.log('encoded',JSON.stringify([...(await read).value]));
+ await w.close();console.log('closed',(await r.read()).done);
+})().catch(error=>{console.error(error);process.exitCode=1});
 "#);
-    for observation in observations {
-        let result: serde_json::Value = serde_json::from_slice(&observation.stdout).unwrap();
-        assert_eq!(result["complete"], true);
-    }
+}
+
+#[test]
+fn native_encoding_and_array_buffer_copy_match_stable_slots_and_byte_ranges() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-encoding-bytes.js"), &["--no-warnings", "--expose-internals"]);
 }
 
 #[test]
@@ -8292,6 +7946,46 @@ Promise.all([callback,promise]).then(results=>{out.push(...results);console.log(
     );
 }
 
+#[test]
+fn canonical_string_decoder_preserves_native_boundaries_and_live_state_views() {
+    compare_node_stream_source(include_str!("../node-tests/test-string-decoder-native-state.js"));
+}
+
+#[test]
+fn internal_fast_buffer_shares_public_buffer_identity_and_backing() {
+    compare_node_source_with_args(r#"
+const {FastBuffer}=require('internal/buffer'),stream=require('stream');
+const original=Buffer.from([1,2,3,4]),view=new FastBuffer(original.buffer,original.byteOffset,original.byteLength);
+console.log(FastBuffer===Buffer[Symbol.species],FastBuffer.prototype===Buffer.prototype,view instanceof Buffer,view.constructor===Buffer,FastBuffer.name,FastBuffer.length);
+view[1]=9;console.log(original.toString('hex'),view.readUInt16BE(0));
+const raw=new Uint8Array([65,66]),converted=stream._uint8ArrayToBuffer(raw);
+console.log(converted instanceof Buffer,Object.getPrototypeOf(converted)===Buffer.prototype,converted.toString(),converted.buffer===raw.buffer);converted[0]=67;console.log(raw[0]);
+"#, &["--no-warnings","--expose-internals"]);
+}
+
+#[test]
+fn socket_end_counts_final_queued_bytes_and_finishes_without_a_transport() {
+    compare_node_stream_source(r#"
+const net=require('net'),events=[];const fresh=new net.Socket();fresh.end(()=>events.push(['fresh',fresh.writable]));
+const server=net.createServer(socket=>{let body='';socket.setEncoding('utf8');socket.on('data',chunk=>body+=chunk);socket.on('end',()=>{events.push(['received',body]);socket.end()})});
+server.listen(0,'127.0.0.1',()=>{
+ const socket=new net.Socket({highWaterMark:0});socket.connect(server.address().port,'127.0.0.1');socket.cork();
+ socket.write('hé',()=>events.push(['write',socket.bytesWritten]));socket.end('😀',()=>events.push(['finish',socket.bytesWritten,socket.writable]));events.push(['queued',socket.bytesWritten]);
+ socket.on('close',()=>server.close(()=>console.log(JSON.stringify(events))));
+});
+"#);
+}
+
+#[test]
+fn canonical_assertions_validate_rejections_and_share_success_results() {
+    compare_node_stream_source(include_str!("../node-tests/test-canonical-assertions.js"));
+}
+
+#[test]
+fn native_key_slots_preserve_material_comparison_and_reject_spoofed_brands() {
+    compare_node_stream_source(include_str!("../node-tests/test-native-key-slots.js"));
+}
+
 #[cfg(unix)]
 #[test]
 fn read_file_preserves_raw_paths_descriptor_positions_and_utf8_conversion_boundaries() {
@@ -8435,74 +8129,6 @@ const out=[];for(const target of [undefined,null,1,'x',true,1n,Symbol('x')]){
  try{Error.captureStackTrace(target);out.push('accepted')}catch(error){out.push([error.name,error.message,Reflect.ownKeys(error).filter(k=>k!=='stack')])}
 }console.log(JSON.stringify(out));
 "#,
-    );
-}
-
-#[test]
-fn native_builtin_setup_preserves_regexp_and_crypto_uses_canonical_streams() {
-    compare_node_stream_source(r#"
-const state=()=>[RegExp.input,RegExp.lastMatch,RegExp.lastParen,RegExp.leftContext,RegExp.rightContext,RegExp.$1,RegExp.$2,RegExp.$9];
-/(before)-(after)/.exec('leftbefore-afterright');RegExp.input='caller input';const before=JSON.stringify(state());
-const crypto=require('crypto');const after=JSON.stringify(state());
-const stream=require('stream');const promises=require('stream/promises');
-console.log(before===after,stream.promises===promises,stream.Stream===stream);
-const hash=crypto.createHash('sha256');console.log(hash instanceof stream.Transform);
-hash.on('data',chunk=>console.log(chunk.toString('hex')));hash.end('abc');
-"#);
-}
-
-#[test]
-fn native_internal_microtask_queue_keeps_original_identity_and_job_order() {
-    const SOURCE: &str = r#"
-const original=queueMicrotask;
-Object.defineProperty(globalThis,'queueMicrotask',{value(){throw Error('public queue consulted')},writable:false,configurable:false});
-const internal=require('internal/process/task_queues');
-console.log(internal.queueMicrotask===original,internal.queueMicrotask.name,internal.queueMicrotask.length);
-const trace=[];process.nextTick(()=>trace.push('tick'));
-internal.queueMicrotask(()=>{trace.push('microtask');console.log(trace.join(','))});trace.push('sync');
-"#;
-    compare_node_source_with_args(SOURCE, &["--no-warnings", "--expose-internals"]);
-}
-
-#[test]
-fn native_promise_inspection_preserves_slots_identity_and_rejection_handling() {
-    const SOURCE: &str = r#"
-const {internalBinding}=require('internal/test/binding');const u=internalBinding('util');
-const value={answer:42},pending=new Promise(()=>{}),fulfilled=Promise.resolve(value),rejected=Promise.reject(value);
-for(const p of [pending,fulfilled,rejected])for(const key of ['then','constructor'])Object.defineProperty(p,key,{get(){throw Error(key)}});
-console.log(u.getPromiseDetails(pending).length,u.getPromiseDetails(pending)[0],u.getPromiseDetails(fulfilled)[0],u.getPromiseDetails(rejected)[0]);
-console.log(u.getPromiseDetails(fulfilled)[1]===value,u.getPromiseDetails(rejected)[1]===value,u.getPromiseDetails({}));
-u.markPromiseAsHandled(rejected);u.markPromiseAsHandled(pending);
-const events=[];process.on('unhandledRejection',()=>events.push('unhandled'));process.on('rejectionHandled',()=>events.push('handled'));
-setImmediate(()=>console.log(JSON.stringify(events)));
-"#;
-    compare_node_source_with_args(SOURCE, &["--no-warnings", "--expose-internals"]);
-}
-
-#[test]
-fn canonical_web_streams_share_globals_and_preserve_byte_and_abort_algorithms() {
-    compare_node_stream_source(r#"
-const web=require('stream/web');
-console.log(['ReadableStream','WritableStream','TransformStream','TextEncoderStream','TextDecoderStream'].every(name=>web[name]===globalThis[name]));
-(async()=>{
- const bytes=new web.ReadableStream({type:'bytes',start(c){c.enqueue(new Uint8Array([1,2,3]));c.close()}});
- const reader=bytes.getReader({mode:'byob'});const buffer=new Uint8Array(8);const first=await reader.read(buffer);
- console.log(first.done,JSON.stringify([...first.value]),buffer.byteLength);
- const final=await reader.read(new Uint8Array(2));console.log(final.done,final.value.byteLength);
- const reason={reason:42};await new web.ReadableStream({cancel(value){console.log('cancel',value===reason)}}).cancel(reason);
- const writable=new web.WritableStream({abort(value){console.log('abort',value===reason)}});await writable.abort(reason);
- const encoder=new web.TextEncoderStream(),r=encoder.readable.getReader(),w=encoder.writable.getWriter();
- const read=r.read();await w.write('\ud83d');await w.write('\ude00');console.log('encoded',JSON.stringify([...(await read).value]));
- await w.close();console.log('closed',(await r.read()).done);
-})().catch(error=>{console.error(error);process.exitCode=1});
-"#);
-}
-
-#[test]
-fn native_encoding_and_array_buffer_copy_match_stable_slots_and_byte_ranges() {
-    compare_node_source_with_args(
-        include_str!("../node-tests/test-native-encoding-bytes.js"),
-        &["--no-warnings", "--expose-internals"],
     );
 }
 
@@ -8694,4 +8320,658 @@ try {
 out[2]=target[0];console.log(JSON.stringify(out));
 "#,
     );
+}
+
+#[cfg(target_os = "linux")]
+const PROCESS_MEMORY_SOURCE: &str = r#"
+const fs=require('node:fs'),os=require('node:os'),assert=require('node:assert'),processModule=require('node:process'),out=[];
+const physical=os.totalmem();
+for(const name of ['availableMemory','constrainedMemory']){
+ const fn=processModule[name],descriptor=Object.getOwnPropertyDescriptor(processModule,name);
+ out.push([name,fn.name,fn.length,Object.getOwnPropertyNames(fn),descriptor.writable,descriptor.enumerable,descriptor.configurable]);
+ const value=Reflect.apply(fn,{unrelated:true},[{valueOf(){throw Error('argument coercion')}}]);
+ assert(Number.isFinite(value)&&value>=0);
+ if(name==='availableMemory')assert(value<=physical);
+ else out.push(['constraint',value]);
+ assert.throws(()=>Reflect.construct(fn,[]),TypeError);
+}
+const original=fs.readFileSync;fs.readFileSync=()=>{throw Error('public fs hook')};
+try{assert.strictEqual(typeof processModule.availableMemory(),'number');assert.strictEqual(typeof processModule.constrainedMemory(),'number');out.push('native facts')}finally{fs.readFileSync=original}
+console.log(JSON.stringify(out));
+"#;
+#[cfg(target_os = "linux")]
+#[test]
+fn process_memory_reports_kernel_constraints_and_native_function_metadata() {
+    compare_node_stream_source(PROCESS_MEMORY_SOURCE);
+}
+#[cfg(target_os = "linux")]
+#[test]
+fn process_memory_constraints_respect_inherited_data_limits() {
+    use std::os::unix::process::CommandExt;
+    const DATA_LIMIT_BYTES: u64 = 12 * 1024 * 1024 * 1024;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", PROCESS_MEMORY_SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        // The lower soft limit applies only to this test child, leaving the runner unchanged.
+        unsafe {
+            command.pre_exec(|| {
+                let mut limit = std::mem::MaybeUninit::<libc::rlimit>::uninit();
+                if libc::getrlimit(libc::RLIMIT_DATA, limit.as_mut_ptr()) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                let mut limit = limit.assume_init();
+                limit.rlim_cur = limit.rlim_cur.min(DATA_LIMIT_BYTES as libc::rlim_t);
+                if libc::setrlimit(libc::RLIMIT_DATA, &limit) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(
+            observation.stderr.is_empty(),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn os_memory_functions_report_native_values_names_and_primitive_conversion() {
+    compare_node_stream_source(
+        r#"
+const assert=require('node:assert'),OriginalSymbol=globalThis.Symbol;globalThis.Symbol=function(){throw Error('public Symbol')};let os;
+try{os=require('node:os')}finally{globalThis.Symbol=OriginalSymbol}
+const out=[],physical=os.totalmem();
+for(const name of ['freemem','totalmem']){
+ const f=os[name],d=Object.getOwnPropertyDescriptor(f,Symbol.toPrimitive),hook=f[Symbol.toPrimitive];
+ const value=f();assert(Number.isFinite(value)&&value>=0&&value<=physical);
+ out.push([name,f.name,f.length,Object.getOwnPropertyNames(f),Reflect.ownKeys(f).map(String),d.writable,d.enumerable,d.configurable,hook.name,hook.length,hook===f]);
+ assert.strictEqual(Function.prototype.toString.call(f),'function () { [native code] }');
+ assert.strictEqual(f.valueOf(),f);assert.throws(()=>Reflect.construct(f,[]),TypeError);
+ assert.strictEqual(typeof +f,'number');assert(/^\d+$/.test(String(f)));
+ const original=os[name];os[name]=()=>-1;
+ try{const number=original[Symbol.toPrimitive].call({unrelated:true},Symbol('hint'));assert(number>=0&&number<=physical);out.push('captured native value')}finally{os[name]=original}
+}
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn os_tmpdir_uses_live_nonempty_environment_precedence_and_removes_one_slash() {
+    compare_node_stream_source(
+        r#"
+const os=require('node:os'),out=[];
+for(const values of [[undefined,undefined,undefined],['','/tmp-value','/temp-value'],['','','/temp-value'],['','',''],['a///','b','c'],['/','b','c'],['//','b','c'],['a\\','b','c'],['relative/','b','c'],['😀///','b','c']]){
+ for(const [i,key] of ['TMPDIR','TMP','TEMP'].entries()){if(values[i]===undefined)delete process.env[key];else process.env[key]=values[i]}
+ out.push(os.tmpdir());
+}
+const environment=process.env;process.env={TMPDIR:'/replacement'};
+try{out.push(os.tmpdir())}finally{process.env=environment}
+process.env.TMPDIR='';process.env.TMP='';process.env.TEMP='';process.env.TEMPDIR='/ignored';out.push(os.tmpdir());
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn os_canonical_exports_reflection_constants_and_stable_host_values_match_node() {
+    compare_node_stream_source(
+        r#"
+const os=require('node:os'),out=[];
+for(const key of Reflect.ownKeys(os)){
+ const d=Object.getOwnPropertyDescriptor(os,key),v=os[key];
+ out.push([String(key),d.writable,d.enumerable,d.configurable,typeof v]);
+ if(typeof v==='function'){
+  let constructible=true;try{Reflect.construct(Object,[],v)}catch{constructible=false}
+  out.push([v.name,v.length,constructible,Reflect.ownKeys(v).map(String),Object.getOwnPropertyNames(v).map(k=>{const d=Object.getOwnPropertyDescriptor(v,k);return[k,d.writable,d.enumerable,d.configurable]}),Function.prototype.toString.call(v)]);
+  if(v[Symbol.toPrimitive])out.push([v[Symbol.toPrimitive].name,v[Symbol.toPrimitive].length,Function.prototype.toString.call(v[Symbol.toPrimitive])]);
+ }
+}
+out.push(os.constants, Object.getPrototypeOf(os.constants)===null);
+for(const k of ['dlopen','errno','signals','priority'])out.push([k,Object.getPrototypeOf(os.constants[k])===null,Object.isFrozen(os.constants[k])]);
+out.push(os.networkInterfaces(),os.userInfo(),os.homedir(),os.hostname(),os.machine(),os.version(),os.release(),os.type(),os.arch(),os.platform(),os.endianness(),os.availableParallelism());
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn os_user_info_reads_account_records_and_native_encodings_without_public_hooks() {
+    compare_node_stream_source(
+        r#"
+const os=require('node:os'),out=[];
+const original=Buffer.from;Buffer.from=()=>{throw Error('public Buffer.from')};
+try{
+ for(const encoding of [undefined,'utf8','UTF-8','hex','base64','base64url','ascii','latin1','binary','utf16le','ucs2','buffer','BUFFER','not-encoding',null,0,false,{},new String('hex')]){
+  const events=[],value=os.userInfo({get encoding(){events.push('encoding');return encoding}});
+  out.push([events,Object.getPrototypeOf(value)===null,Object.keys(value),value]);
+ }
+ for(const options of [undefined,null,1,'hex',()=>{}])out.push(os.userInfo(options));
+ for(const thrown of [17,'error',Symbol.for('marker'),new Error('getter')]){
+  try{os.userInfo({get encoding(){throw thrown}})}catch(e){out.push(e===thrown)}
+ }
+ const environment=process.env;
+ for(const home of ['', '/different-home','😀///']){process.env.HOME=home;out.push([os.homedir(),os.userInfo().homedir])}
+ delete process.env.HOME;out.push([os.homedir(),os.userInfo().homedir]);
+}finally{Buffer.from=original}
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn os_priority_validation_native_system_errors_and_process_effects_match_node() {
+    compare_node_stream_source(
+        r#"
+const os=require('node:os'),out=[];
+const record=f=>{try{out.push(['ok',f()])}catch(e){out.push([e.name,e.message,e.code,e.info,Reflect.ownKeys(e).map(String),e.constructor.name,Object.getPrototypeOf(e).constructor.name])}};
+for(const pid of [null,true,false,'foo',{},[],/x/,NaN,Infinity,-Infinity,3.14,2**32,-1,2147483647]){
+ record(()=>os.getPriority(pid));record(()=>os.setPriority(pid,0));
+}
+for(const p of [null,true,'foo',{},[],NaN,Infinity,-Infinity,3.14,2**32,-21,20,undefined])record(()=>os.setPriority(0,p));
+const before=os.getPriority();os.setPriority(Math.min(19,before+1));out.push(os.getPriority()===Math.min(19,before+1));
+os.setPriority(process.pid,Math.min(19,before+2));out.push(os.getPriority()===Math.min(19,before+2));
+const child=require('node:child_process').spawnSync(process.execPath,['-e','console.log(require("node:os").getPriority())'],{encoding:'utf8'});out.push([child.status,child.stdout.trim()===String(Math.min(19,before+2)),child.stderr]);
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn os_load_and_uptime_use_kernel_data_and_return_fresh_results() {
+    compare_node_stream_source(
+        r#"
+const assert=require('node:assert'),os=require('node:os'),fs=require('node:fs');
+const before=Number(fs.readFileSync('/proc/uptime','utf8').split(' ')[0]),actual=os.uptime(),after=Number(fs.readFileSync('/proc/uptime','utf8').split(' ')[0]);assert(actual>=before&&actual<=after);
+const first=os.loadavg();assert(Array.isArray(first)&&first.length===3&&first.every(x=>typeof x==='number'&&Number.isFinite(x)&&x>=0));
+first.fill(-1);const current=os.loadavg();assert(current.every(x=>x>=0));assert.notStrictEqual(first,current);
+const kernel=fs.readFileSync('/proc/loadavg','utf8').trim().split(/\s+/).slice(0,3).map(Number);
+assert(current.every((x,i)=>Math.abs(x-kernel[i])<1));
+console.log('live os facts');
+"#,
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn os_priority_changes_are_visible_to_the_kernel_on_the_child_process_pid() {
+    struct RunningChild(std::process::Child);
+    impl Drop for RunningChild {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("ready.json");
+    let child = Command::new(env!("CARGO_BIN_EXE_run-parallel"))
+        .env(quench_node::shared_run::CHILD_RUNNER_ENV, "1")
+        .args(["-e", "const os=require('node:os');const priority=Math.min(19,os.getPriority()+1);os.setPriority(priority);require('node:fs').writeFileSync(process.argv[1],JSON.stringify(priority));setInterval(()=>{},1000)"])
+        .arg(&marker)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut child = RunningChild(child);
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !marker.exists() {
+        assert!(
+            child.0.try_wait().unwrap().is_none(),
+            "priority child exited before readiness"
+        );
+        assert!(
+            std::time::Instant::now() < deadline,
+            "priority child did not become ready"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let expected: i32 = serde_json::from_slice(&std::fs::read(marker).unwrap()).unwrap();
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let actual = unsafe { libc::getpriority(libc::PRIO_PROCESS, child.0.id()) };
+    assert_eq!(unsafe { *libc::__errno_location() }, 0);
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn native_vfs_descriptors_share_live_positions_registry_identity_and_close_ownership() {
+    compare_node_source_with_args(
+        include_str!("../node-tests/test-native-vfs-descriptors.js"),
+        &["--no-warnings", "--experimental-vfs", "--expose-internals"],
+    );
+}
+
+#[test]
+fn scalar_assertion_guards_preserve_aliases_metadata_success_effects_and_failure_policy() {
+    compare_node_stream_source(include_str!("../node-tests/test-assert-scalar-guards.js"));
+}
+
+#[test]
+fn events_async_iterator_preserves_queues_cleanup_abort_and_watermarks() {
+    let observations = compare_node_stream_source(r#"
+const assert=require('assert'),{EventEmitter,on}=require('events');
+(async()=>{
+ const e=new EventEmitter(),flow=[];
+ e.pause=()=>flow.push('pause');e.resume=()=>flow.push('resume');
+ const iterator=on(e,'data',{close:['end'],highWaterMark:1,lowWaterMark:1});
+ assert.strictEqual(iterator[Symbol.asyncIterator](),iterator);
+ e.emit('data',1,'a');e.emit('data',2,'b');
+ assert.deepStrictEqual(flow,['pause']);
+ assert.deepStrictEqual(await iterator.next(),{value:[1,'a'],done:false});
+ assert.deepStrictEqual(await iterator.next(),{value:[2,'b'],done:false});
+ assert.deepStrictEqual(flow,['pause','resume']);
+ const pending=iterator.next();e.emit('end');assert.strictEqual((await pending).done,true);
+ assert.strictEqual(e.listenerCount('data')+e.listenerCount('error')+e.listenerCount('end'),0);
+ const target=new EventTarget(),targetIterator=on(target,'value');
+ const targetPending=targetIterator.next(),event=new Event('value');target.dispatchEvent(event);
+ assert.strictEqual((await targetPending).value[0],event);await targetIterator.return();
+ const controller=new AbortController();controller.signal.addEventListener('abort',event=>event.stopImmediatePropagation());
+ const aborted=on(e,'data',{signal:controller.signal});
+ const wait=aborted.next();controller.abort('reason');
+ await assert.rejects(wait,error=>error.code==='ABORT_ERR'&&error.cause==='reason');
+ assert.strictEqual((await aborted.next()).done,true);
+ const failed=on(e,'data'),first=failed.next(),second=failed.next(),error=new Error('failure');
+ e.emit('error',error);await assert.rejects(first,err=>err===error);
+ assert.strictEqual((await second).done,true);
+ const returned=on(e,'data');assert.strictEqual((await returned.return()).done,true);
+ const thrown=on(e,'data');assert.strictEqual(thrown.throw(error),undefined);
+ await assert.rejects(thrown.next(),err=>err===error);
+ for(const options of [null,1,{highWaterMark:0},{lowWatermark:0}])assert.throws(()=>on(e,'data',options));
+ controller.abort();assert.throws(()=>on(e,'data',{signal:controller.signal}),error=>error.code==='ABORT_ERR');
+ assert.strictEqual(e.listenerCount('data')+e.listenerCount('error'),0);
+ console.log(JSON.stringify({complete:true}));
+})().catch(error=>{console.error(error);process.exitCode=1});
+"#);
+    assert_eq!(String::from_utf8_lossy(&observations[1].stdout).trim(), r#"{"complete":true}"#);
+}
+
+#[test]
+fn events_async_iterator_descriptor_initialization_captures_original_abort_helper() {
+    let observations=compare_node_stream_source(r#"
+const assert=require('assert'),events=require('events');
+const marker={};events.addAbortListener=()=>{throw marker};
+const originalPromise=globalThis.Promise,originalApply=Reflect.apply;
+globalThis.Promise=function(){throw marker};Reflect.apply=()=>{throw marker};
+let descriptor;
+try{descriptor=Object.getOwnPropertyDescriptor(events,'on')}finally{globalThis.Promise=originalPromise;Reflect.apply=originalApply}
+assert.strictEqual(typeof descriptor.value,'function');assert.strictEqual(descriptor.get,undefined);
+assert.strictEqual(descriptor.writable,true);assert.strictEqual(descriptor.enumerable,true);assert.strictEqual(descriptor.configurable,true);
+assert.strictEqual(descriptor.value.name,'on');assert.strictEqual(descriptor.value.length,2);
+assert.strictEqual(events.on,descriptor.value);Object.freeze(events);assert.strictEqual(events.on,descriptor.value);
+(async()=>{
+ const controller=new AbortController();controller.signal.addEventListener('abort',event=>event.stopImmediatePropagation());
+ const iterator=events.on(new events.EventEmitter(),'data',{signal:controller.signal});
+ const pending=iterator.next();controller.abort('reason');
+ await assert.rejects(pending,error=>error.code==='ABORT_ERR'&&error.cause==='reason');
+ console.log(JSON.stringify({complete:true}));
+})().catch(error=>{console.error(error);process.exitCode=1});
+"#);
+    assert_eq!(String::from_utf8_lossy(&observations[1].stdout).trim(),r#"{"complete":true}"#);
+}
+
+#[test]
+fn events_async_iterator_initialization_preserves_freeze_before_observation() {
+    let observations=compare_node_stream_source(r#"
+const assert=require('assert'),events=require('events');Object.freeze(events);
+const descriptor=Object.getOwnPropertyDescriptor(events,'on');assert.strictEqual(typeof descriptor.value,'function');
+assert.strictEqual(descriptor.writable,false);assert.strictEqual(descriptor.configurable,false);assert.strictEqual(descriptor.enumerable,true);
+assert.strictEqual(events.on,descriptor.value);
+(async()=>{const emitter=new events.EventEmitter(),iterator=events.on(emitter,'data');emitter.emit('data',42);assert.deepStrictEqual((await iterator.next()).value,[42]);await iterator.return();console.log(JSON.stringify({complete:true}));})().catch(error=>{console.error(error);process.exitCode=1});
+"#);
+    assert_eq!(String::from_utf8_lossy(&observations[1].stdout).trim(),r#"{"complete":true}"#);
+}
+
+#[test]
+fn child_stdin_destruction_closes_pipe_and_precedes_exit_observers() {
+    let observations = compare_node_stream_source(r#"
+const assert=require('assert'),{spawn}=require('child_process');
+const child=spawn(process.execPath,['-e',`process.stdin.resume();process.stdin.on('end',()=>process.exit(0));`]);
+const original=child.stdin.destroy;let calls=0,exited=false;
+child.stdin.destroy=function(...args){calls++;return Reflect.apply(original,this,args)};
+child.on('error',error=>{throw error});
+child.on('spawn',()=>child.stdin.destroy());
+child.on('exit',(code,signal)=>{assert.strictEqual(code,0);assert.strictEqual(signal,null);assert(child.stdin.destroyed);assert(calls>=2);assert.strictEqual(child._handle,null);exited=true});
+child.on('close',()=>{assert(exited);console.log(JSON.stringify({complete:true}))});
+"#);
+    assert_eq!(String::from_utf8_lossy(&observations[1].stdout).trim(), r#"{"complete":true}"#);
+}
+
+#[test]
+fn ipc_counted_references_preserve_initial_state_explicit_overrides_and_exit() {
+    for (methods, kept) in [
+        ("['unrefCounted']", true),
+        ("['refCounted','unrefCounted']", false),
+        ("['refCounted','refCounted','unrefCounted']", true),
+        ("['unref','refCounted','refCounted']", false),
+        ("['ref','unrefCounted']", true),
+        ("['unrefCounted','refCounted','refCounted','unrefCounted']", false),
+    ] {
+        let source = format!(r#"
+const assert=require('assert'),{{spawn}}=require('child_process');
+const child=spawn(process.execPath,['-e','process.on("message",()=>process.exit(0))'],{{stdio:['ignore','ignore','ignore','ipc']}});
+child.unref();
+for(const name of ['refCounted','unrefCounted']){{
+ const method=child.channel[name],descriptor=Object.getOwnPropertyDescriptor(Object.getPrototypeOf(child.channel),name);
+ assert.strictEqual(method.name,name);assert.strictEqual(method.length,0);
+ assert.strictEqual(descriptor.enumerable,false);assert.strictEqual(descriptor.writable,true);assert.strictEqual(descriptor.configurable,true);
+ assert.throws(()=>method.call({{}}),TypeError);assert.throws(()=>Reflect.construct(method,[]),TypeError);
+}}
+for(const method of {methods})assert.strictEqual(child.channel[method](),undefined);
+console.log('setup');setTimeout(()=>{{console.log('kept');child.send('done')}},50).unref();
+"#);
+        let observations = compare_node_stream_source(&source);
+        assert_eq!(String::from_utf8_lossy(&observations[1].stdout), if kept {"setup\nkept\n"} else {"setup\n"});
+    }
+}
+
+#[test]
+fn ipc_process_counted_references_compose_with_implicit_listener_counts() {
+    let observations = compare_node_stream_source(r#"
+const assert=require('assert'),{spawn}=require('child_process');
+(async()=>{
+ const out=[];
+ for(const keep of [false,true]){
+  const source=`process.on('message',()=>{});process.on('disconnect',()=>{});
+  process.channel.unrefCounted();process.channel.unrefCounted();
+  if(${keep})process.channel.refCounted();
+  console.log('setup');setTimeout(()=>{console.log('kept');process.exit(0)},50).unref();`;
+  const child=spawn(process.execPath,['-e',source],{stdio:['ignore','pipe','pipe','ipc']});
+  let stdout='',stderr='';child.stdout.on('data',chunk=>stdout+=chunk);child.stderr.on('data',chunk=>stderr+=chunk);
+  const code=await new Promise((resolve,reject)=>{child.on('error',reject);child.on('close',resolve)});
+  assert.strictEqual(code,0);assert.strictEqual(stderr,'');assert.strictEqual(stdout,keep?'setup\nkept\n':'setup\n');out.push(stdout);
+ }
+ console.log(JSON.stringify({complete:true,out}));
+})().catch(error=>{console.error(error);process.exitCode=1});
+"#);
+    let result: serde_json::Value=serde_json::from_slice(&observations[1].stdout).unwrap();
+    assert_eq!(result["complete"],true);
+}
+
+
+#[test]
+fn file_url_module_imports_share_plain_aliases_and_preserve_query_identity() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("sibling.mjs"), "globalThis.siblingLoads=(globalThis.siblingLoads||0)+1;export const sibling={};").unwrap();
+    let dependency=directory.path().join("module # ü.mjs");
+    std::fs::write(&dependency,"import {sibling} from './sibling.mjs';export {sibling};export const id=globalThis.moduleLoads=(globalThis.moduleLoads||0)+1;export let live=1;export function increment(){live++}export const url=import.meta.url;").unwrap();
+    let url=url::Url::from_file_path(&dependency).unwrap().to_string();
+    let entry=directory.path().join("entry.mjs");
+    std::fs::write(&entry,format!(r#"
+import * as first from {literal};
+import assert from 'node:assert/strict';
+const base={literal};
+const same=await import(base);
+assert.strictEqual(first,same);
+const relative=await import('./module%20%23%20%C3%BC.mjs');
+assert.strictEqual(first,relative);
+assert.strictEqual(first,await import(base.replace('file:','FILE:')));
+same.increment();assert.strictEqual(first.live,2);
+const suffixes=['?x=one','?x=two','?x=/../one','?x=/one','#part','#other','?','#'];
+const out=[];
+for(const suffix of suffixes){{
+ const variant=await import(base+suffix);
+ if(suffix==='?'||suffix==='#'){{assert.strictEqual(variant,first);continue;}}
+ assert.notStrictEqual(variant,first);
+ assert.strictEqual(variant,await import(base+suffix));
+ assert.strictEqual(variant.sibling,first.sibling);
+ assert.strictEqual(variant.url,base+suffix);
+ out.push([suffix,variant.id,variant.live]);
+}}
+for(const [input,canonical] of [['?x=one#','?x=one'],['?#part','#part']]){{
+ assert.strictEqual(await import(base+input),await import(base+canonical));
+}}
+assert.strictEqual(globalThis.siblingLoads,1);
+assert.strictEqual(globalThis.moduleLoads,7);
+console.log(JSON.stringify({{out,firstId:first.id,firstLive:first.live}}));
+"#,literal=serde_json::to_string(&url).unwrap())).unwrap();
+    let observations=["node",env!("CARGO_BIN_EXE_run-parallel")].map(|executable|{
+        let mut command=Command::new(executable);command.arg(&entry);
+        if executable!="node"{command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1");}
+        quench_node_test::case_process::observe_command(command,Duration::from_secs(20)).unwrap()
+    });
+    for result in &observations {assert!(!result.timed_out);assert_eq!(result.exit_code,Some(0),"{}",String::from_utf8_lossy(&result.stderr));assert!(result.stderr.is_empty());}
+    assert_eq!(observations[0].stdout,observations[1].stdout);
+}
+
+#[test]
+fn text_decoder_unicode_labels_bom_fatal_errors_and_recovery_match_node() {
+    compare_node_stream_source(r#"
+const out=[];
+for(const label of ['utf8','utf-16','utf-16be','ascii'])for(const fatal of [false,true])for(const ignoreBOM of [false,true]){
+ const decoder=new TextDecoder(label,{fatal,ignoreBOM});
+ for(const bytes of [[],[65],[239,187,191,65],[255,254,65,0],[254,255,0,65],[0,216],[0,216,65],[195,40]]){
+  try{out.push([label,fatal,ignoreBOM,decoder.encoding,decoder.decode(new Uint8Array(bytes))])}
+  catch(e){out.push([label,fatal,ignoreBOM,e.name,e.code,e.message])}
+ }
+}
+for(const label of ['bogus','replacement','iso-2022-cn','\u00a0utf-8\u00a0'])try{new TextDecoder(label)}catch(e){out.push([label,e.name,e.code,e.message])}
+console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn synchronous_esm_require_preserves_namespaces_live_bindings_errors_and_later_imports() {
+    let directory=tempfile::tempdir().unwrap();
+    for (name,source) in [
+        ("plain.mjs","export let n=1;export function inc(){n++}"),
+        ("default.mjs","export default function f(){return 42};export let n=1;export function inc(){n++}"),
+        ("marker.mjs","export default 42;export const __esModule=false;"),
+        ("special.mjs","const value={answer:42};export {value as 'module.exports'};export default 7;"),
+        ("async.mjs","globalThis.asyncStarted=true;await 0;export const done=true;"),
+        ("parent.mjs","import './async.mjs';globalThis.parentExecuted=true;export const done=true;"),
+        ("cycle.mjs","import './cycle.cjs';export const n=1;"),
+        ("cycle.cjs","module.exports=require('./cycle.mjs');"),
+    ] {std::fs::write(directory.path().join(name),source).unwrap();}
+    let entry=directory.path().join("entry.cjs");
+    std::fs::write(&entry,r#"
+(async()=>{
+const out=[];
+for(const name of ['plain','default','marker','special']){
+ const value=require('./'+name+'.mjs');const ns=await import('./'+name+'.mjs');
+ out.push([name,value===require('./'+name+'.mjs'),value===ns,Object.getPrototypeOf(value)===null,Object.isExtensible(value),Reflect.ownKeys(value).map(k=>String(k))]);
+ if(value.inc){value.inc();out.push([name,value.n,ns.n]);}
+ if(value.default)out.push(['default',typeof value.default,value.__esModule]);
+}
+for(const name of ['parent','async','cycle']){
+ let previous;
+ for(let count=0;count<2;count++)try{require('./'+name+'.mjs');throw Error('unexpected success')}catch(e){
+  out.push([name,e.name,e.code,e.message,previous===e,e.requireStack,Object.getOwnPropertyDescriptor(e,'requireStack')]);previous=e;
+ }
+}
+out.push(['not started',globalThis.asyncStarted===undefined,globalThis.parentExecuted===undefined]);
+const asyncNS=await import('./parent.mjs');out.push(['async imported',asyncNS.done,globalThis.asyncStarted,globalThis.parentExecuted]);
+console.log(JSON.stringify({complete:true,out}));
+})().catch(e=>{console.error(e.stack);process.exitCode=1});
+"#).unwrap();
+    let observations=["node",env!("CARGO_BIN_EXE_run-parallel")].map(|executable|{
+        let mut command=Command::new(executable);command.arg(&entry);
+        if executable!="node"{command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1");}
+        quench_node_test::case_process::observe_command(command,Duration::from_secs(20)).unwrap()
+    });
+    for result in &observations {
+        assert!(!result.timed_out);assert_eq!(result.exit_code,Some(0),"{}",String::from_utf8_lossy(&result.stderr));assert!(result.stderr.is_empty());
+        let value:serde_json::Value=serde_json::from_slice(&result.stdout).unwrap();assert_eq!(value["complete"],true);
+    }
+    assert_eq!(observations[0].stdout,observations[1].stdout);
+}
+
+#[test]
+fn commonjs_cache_mutation_replacement_and_esm_reload_match_node() {
+    let directory = tempfile::tempdir().unwrap();
+    for (name, source) in [
+        ("value.cjs", "globalThis.loads=(globalThis.loads||0)+1;module.exports={n:loads,cache:require.cache};"),
+        ("data.json", "{\"n\":1}"),
+        ("failure.cjs", "throw globalThis.failure;"),
+        ("default.mjs", "export default 42;"),
+        ("namespace.mjs", "export const n=42;"),
+    ] { std::fs::write(directory.path().join(name), source).unwrap(); }
+    let entry = directory.path().join("entry.cjs");
+    std::fs::write(&entry, r#"
+const Module=require('node:module');const original=Module._cache;const out=[];
+out.push(['identity',require.cache===original,Object.getPrototypeOf(original)===null,original[__filename]===module]);
+out.push(['private',Object.keys(original).every(key=>!key.includes('/lib/internal/')&&!key.includes('\0'))]);
+const filename=require.resolve('./value.cjs');const a=require('./value.cjs');
+out.push(['record',original[filename].loaded,original[filename].exports===a,original[filename].parent===module]);
+delete require.cache[filename];const b=require('./value.cjs');out.push(['reload',a!==b,a.n,b.n]);
+const json=require.resolve('./data.json');original[json]={loaded:true,exports:{mock:42}};
+out.push(['substitution',require('./data.json')]);delete original[json];out.push(['json',require('./data.json')]);
+const actualFs=require('node:fs');original.fs={loaded:true,exports:{mock:'fs'}};
+out.push(['builtin',require('fs'),require('node:fs')===actualFs]);delete original.fs;
+const descriptor=Object.getOwnPropertyDescriptor(Module,'_cache');
+out.push(['descriptor',descriptor.writable,descriptor.enumerable,descriptor.configurable]);
+Module._cache=Object.create(null);const fresh=Module._cache;const c=require('./value.cjs');
+out.push(['replace',require.cache===original,c.cache===fresh,c.n,fresh[filename].exports===c]);
+require.cache={unused:true};out.push(['require property',require('./value.cjs')===c,Module._cache===fresh]);
+require.cache=original;Module._cache=original;
+globalThis.failure={tag:'failure'};const bad=require.resolve('./failure.cjs');
+for(let count=0;count<2;count++)try{require('./failure.cjs')}catch(e){out.push(['failure',e===failure,Object.hasOwn(original,bad),module.children.some(child=>child.filename===bad)]);}
+const events=[];const proxied=new Proxy(original,{
+ get(target,key){if(key===filename)events.push('get');return Reflect.get(target,key)},
+ set(target,key,value){if(key===filename)events.push('set');return Reflect.set(target,key,value)},
+ deleteProperty(target,key){if(key===bad)events.push('delete');return Reflect.deleteProperty(target,key)}
+});
+Module._cache=proxied;delete original[filename];const d=require('./value.cjs');
+try{require('./failure.cjs')}catch(e){out.push(['proxy failure',e===failure]);}
+out.push(['proxy',d.cache===proxied,events]);Module._cache=original;
+for(const name of ['default','namespace']){
+ const path=require.resolve('./'+name+'.mjs');const first=require(path);delete original[path];const second=require(path);
+ out.push(['esm',name,first===second,Object.getPrototypeOf(second)===null]);
+}
+console.log(JSON.stringify({complete:true,out}));
+"#).unwrap();
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable); command.arg(&entry);
+        if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(20)).unwrap()
+    });
+    for result in &observations {
+        assert!(!result.timed_out);
+        assert_eq!(result.exit_code, Some(0), "{}", String::from_utf8_lossy(&result.stderr));
+        assert!(result.stderr.is_empty());
+        let value: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+        assert_eq!(value["complete"], true);
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn ambiguous_commonjs_sources_detect_esm_syntax_await_and_wrapper_bindings() {
+    let directory = tempfile::tempdir().unwrap();
+    for (name, source) in [
+        ("esm.js", "export const n=42;"),
+        ("meta.js", "globalThis.detectedMeta=import.meta.url;"),
+        ("lexical.js", "const require=42;globalThis.detectedLexical=require;"),
+        ("destructure.js", "const {x:exports}={x:42};globalThis.detectedDestructure=exports;"),
+        ("script.js", "var require;module.exports=42;return;"),
+        ("string.js", "module.exports='export { imaginary }';"),
+        ("await-name.js", "var await=8;module.exports=await/2/2;"),
+        ("dynamic.js", "module.exports=()=>import('./esm.js');"),
+        ("async.js", "globalThis.detectedStarted=true;await 0;globalThis.detectedFinished=true;"),
+        ("hashbang.js", "#!/usr/bin/env node\nexport const n=42;"),
+        ("bom.js", "\u{feff}export const n=42;"),
+        ("common/package.json", "{\"type\":\"commonjs\"}"),
+        ("common/value.js", "module.exports=42;"),
+        ("common/explicit.mjs", "export const n=42;"),
+        ("common/no-extension", "module.exports=42;"),
+        ("module/package.json", "{\"type\":\"module\"}"),
+        ("module/value.js", "export const n=42;"),
+        ("module/explicit.cjs", "module.exports=42;"),
+        ("module/no-extension", "export const n=42;"),
+        ("module/unregistered.txt", "module.exports=42;"),
+        ("unknown/package.json", "{\"type\":\"other\"}"),
+        ("unknown/value.js", "export const n=42;"),
+        ("node_modules/pkg/package.json", "{}"),
+        ("node_modules/pkg/index.js", "export const n=42;"),
+    ] {
+        let path = directory.path().join(name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, source).unwrap();
+    }
+    let entry = directory.path().join("entry.cjs");
+    std::fs::write(&entry, r#"
+(async()=>{
+const out=[];
+for(const file of ['esm.js','meta.js','lexical.js','destructure.js','script.js','string.js','await-name.js','hashbang.js','bom.js','common/value.js','common/explicit.mjs','common/no-extension','module/value.js','module/explicit.cjs','module/no-extension','module/unregistered.txt','unknown/value.js','node_modules/pkg/index.js']){
+ const value=require('./'+file);out.push([file,typeof value,typeof value==='object'?Object.keys(value):value,typeof value==='object'?value.n:null]);
+}
+out.push(['effects',detectedMeta.endsWith('/meta.js'),detectedLexical,detectedDestructure]);
+out.push(['dynamic',(await require('./dynamic.js')()).n]);
+try{require('./async.js');throw Error('unexpected success')}catch(e){out.push(['async',e.name,e.code,globalThis.detectedStarted===undefined]);}
+await import('./async.js');out.push(['later',detectedStarted,detectedFinished]);
+console.log(JSON.stringify({complete:true,out}));
+})().catch(e=>{console.error(e.stack);process.exitCode=1});
+"#).unwrap();
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable); command.arg(&entry);
+        if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(20)).unwrap()
+    });
+    for result in &observations {
+        assert!(!result.timed_out);
+        assert_eq!(result.exit_code, Some(0), "{}", String::from_utf8_lossy(&result.stderr));
+        assert!(result.stderr.is_empty(), "{}", String::from_utf8_lossy(&result.stderr));
+        let value: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+        assert_eq!(value["complete"], true);
+    }
+    assert_eq!(String::from_utf8_lossy(&observations[0].stdout), String::from_utf8_lossy(&observations[1].stdout));
+}
+
+#[test]
+fn stream_callable_duplex_transform_and_passthrough_initialize_supplied_receivers() {
+    let observations = compare_node_stream_source(r#"
+const stream=require('node:stream');
+(async()=>{
+const out=[];
+for(const name of ['Duplex','Transform','PassThrough']){
+ const C=stream[name];const parent=stream[name==='Duplex'?'Readable':name==='Transform'?'Duplex':'Transform'];
+ function Derived() {this.returned=C.call(this,{read(){},write(c,e,cb){cb()},transform(c,e,cb){cb(null,c)}})}
+ Object.setPrototypeOf(Derived.prototype,C.prototype);
+ const d=new Derived();out.push([name,d instanceof C,!!d._readableState,!!d._writableState,d.returned===undefined,d.allowHalfOpen]);
+ const plain=C({read(){},write(c,e,cb){cb()}});out.push(['factory',name,plain instanceof C]);
+ class Child extends C {constructor(){super({read(){},write(c,e,cb){cb()}});this.marker=42}}
+ const child=new Child();out.push(['subclass',name,child instanceof Child,child instanceof C,child.marker]);
+ const target=Object.create(C.prototype);out.push(['call',name,C.call(target,{read(){},write(c,e,cb){cb()}})===undefined,!!target._readableState,!!target._writableState]);
+ const closed=new C({readable:false,writable:false,allowHalfOpen:false});out.push(['disabled',name,closed.readableEnded,closed.writableFinished,closed.allowHalfOpen]);
+ out.push(['metadata',name,C.name,C.length,Object.getPrototypeOf(C)===parent,C.prototype.constructor===C,Object.getOwnPropertyDescriptor(C,'prototype').writable]);
+}
+async function collect(value,input){const values=[];value.on('data',c=>values.push(c.toString()));const done=new Promise((resolve,reject)=>{value.on('error',reject);value.on('end',resolve)});value.end(input);await done;return values.join('')}
+let transformed;let constructions=0;
+function Upper(){stream.Transform.call(this,{construct(cb){constructions++;cb()},transform(c,e,cb){out.push(['transform receiver',this===transformed]);cb(null,c.toString().toUpperCase())},flush(cb){out.push(['flush receiver',this===transformed]);cb(null,'!')}})}
+Object.setPrototypeOf(Upper.prototype,stream.Transform.prototype);transformed=new Upper();
+out.push(['output',await collect(transformed,'hello'),constructions]);
+function Through(){stream.PassThrough.call(this)}Object.setPrototypeOf(Through.prototype,stream.PassThrough.prototype);
+out.push(['passthrough',await collect(new Through(),'data')]);
+out.push(['custom pass',await collect(new stream.PassThrough({transform(c,e,cb){cb(null,'custom')}}),'data')]);
+const chunk=Buffer.from('direct');let direct;
+stream.PassThrough.prototype._transform.call({push(){throw Error('unexpected push')}},chunk,'buffer',(error,value)=>{direct=[error===null,value===chunk]});
+out.push(['direct',direct,stream.PassThrough.prototype._transform.name,Object.hasOwn(stream.PassThrough.prototype._transform,'prototype')]);
+console.log(JSON.stringify({complete:true,out}));
+})().catch(e=>{console.error(e.stack);process.exitCode=1});
+"#);
+    for observation in observations {
+        let result: serde_json::Value = serde_json::from_slice(&observation.stdout).unwrap();
+        assert_eq!(result["complete"], true);
+    }
 }
