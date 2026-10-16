@@ -134,6 +134,7 @@ fn embed_node_sources() {
     embed_node_protocol_constants(&root);
     embed_uv_error_constants(&root);
     embed_empty_string_list_options(&root);
+    embed_legacy_binding_metadata(&root);
     let mut pending = vec![root.join("lib")];
     let mut files = BUNDLED_DEPENDENCIES.iter().map(|(_, path)| root.join(path)).collect::<Vec<_>>();
     while let Some(directory) = pending.pop() {
@@ -372,5 +373,32 @@ fn embed_empty_string_list_options(root: &Path) {
     let path = Path::new(&env::var("OUT_DIR").expect("build output")).join("node_option_defaults.rs");
     if std::fs::read_to_string(&path).ok().as_deref() != Some(&generated) {
         std::fs::write(path, generated).expect("write SDK option inventory");
+    }
+}
+
+fn embed_legacy_binding_metadata(root: &Path) {
+    let path = root.join("lib/internal/bootstrap/realm.js");
+    println!("cargo:rerun-if-changed={}", path.display());
+    let source = std::fs::read_to_string(path).expect("read SDK legacy binding metadata");
+    let mut output = String::new();
+    for (name, constant) in [
+        ("processBindingAllowList", "PROCESS_BINDING_ALLOW_LIST"),
+        ("runtimeDeprecatedList", "RUNTIME_DEPRECATED_BINDINGS"),
+        ("legacyWrapperList", "LEGACY_WRAPPER_BINDINGS"),
+    ] {
+        let start = format!("const {name} = new SafeSet([");
+        let body = source.split_once(&start).expect("SDK binding metadata set").1
+            .split_once("]);").expect("SDK binding metadata end").0;
+        output.push_str(&format!("const {constant}: &[&str] = &[\n"));
+        for line in body.lines().map(str::trim).filter(|line| !line.is_empty() && !line.starts_with("//")) {
+            let value = line.strip_prefix('\'').and_then(|line| line.split_once('\'')).expect("SDK binding name literal").0;
+            assert!(!value.is_empty() && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_'));
+            output.push_str(&format!("    {value:?},\n"));
+        }
+        output.push_str("];\n");
+    }
+    let path = std::path::PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("node_legacy_bindings.rs");
+    if std::fs::read_to_string(&path).ok().as_deref() != Some(&output) {
+        std::fs::write(path, output).expect("write SDK legacy binding metadata");
     }
 }
