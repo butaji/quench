@@ -1567,6 +1567,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             let parent = module_record(context, &root.join("lib/http.js"), None, false)?;
             load(context, &root.join("lib/_http_incoming.js"), Some(parent), EntryGoal::CommonJs)
         }
+        BuiltinModule::Internal("dns/promises") => node_library_module(context, "dns.js", "dns/promises.js"),
         BuiltinModule::Internal(_) => context.object_rooted(),
         BuiltinModule::Fs => crate::modules::fs_shared_vm::module(context),
         BuiltinModule::InternalUrl => {
@@ -2617,11 +2618,22 @@ pub(crate) fn node_internal_binding_source() -> &'static str {
     };
     case "process": return process;
     case "messaging": return { DOMException: globalThis.DOMException };
-    case "performance": return {
-      constants: { NODE_PERFORMANCE_MILESTONE_TIME_ORIGIN: 0, NODE_PERFORMANCE_MILESTONE_TIME_ORIGIN_TIMESTAMP: 1 },
-      milestones: [0, 0], now: () => require("perf_hooks").performance.now() * 1e6,
-    };
+    case "performance": {
+      // Entry types in src/node_perf_common.h order. Quench's perf_hooks keeps its own
+      // observers, so library modules see no observer for any native entry type.
+      const entryTypes = ["GC", "HTTP", "HTTP2", "NET", "DNS", "QUIC"];
+      const constants = { NODE_PERFORMANCE_MILESTONE_TIME_ORIGIN: 0, NODE_PERFORMANCE_MILESTONE_TIME_ORIGIN_TIMESTAMP: 1 };
+      entryTypes.forEach((type, index) => { constants[`NODE_PERFORMANCE_ENTRY_TYPE_${type}`] = index; });
+      return {
+        constants,
+        milestones: [0, 0], now: () => require("perf_hooks").performance.now() * 1e6,
+        observerCounts: new Uint32Array(entryTypes.length),
+        setupObservers: () => {},
+        updateGarbageCollectionTracking: () => {},
+      };
+    }
     case "uv": return __nativeInternalBinding("uv");
+    case "cares_wrap": return __nativeInternalBinding("cares_wrap");
     default: return {};
   }
 };

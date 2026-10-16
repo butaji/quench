@@ -2081,6 +2081,9 @@ fn drain_checkpoint(
         if crate::modules::worker_shared_vm::poll(runtime, program, &shared_state)? {
             continue;
         }
+        if crate::modules::dns_shared_vm::poll(runtime, program, &shared_state)? {
+            continue;
+        }
 
         if has_referenced_shared_work(&shared_state)
             && super::fs_watch_shared_vm::poll(runtime, program)?
@@ -2266,6 +2269,7 @@ fn has_referenced_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeS
         || crate::modules::http_shared_vm::has_work(shared_state)
         || crate::modules::napi::has_work()
         || crate::modules::worker_shared_vm::has_work(shared_state)
+        || crate::modules::dns_shared_vm::has_work(shared_state)
         || super::fs_watch_shared_vm::has_work(&shared_state.borrow().fs_watch)
         || super::fs_stat_watch_shared_vm::has_work(&shared_state.borrow().fs_stat_watch)
         || shared_state.borrow().scheduler.has_refed_shared_timers()
@@ -2559,6 +2563,42 @@ fn drain_shared_jobs(
         }
         dispatch_promise_rejection_batch(runtime, program, unhandled)?;
     }
+}
+
+/// Event-loop source delivery through a host operation that runs one pending completion
+/// per call and returns whether it delivered one. Each delivery runs as its own callback:
+/// its microtasks drain and its exception routes as uncaught. `true` when any ran.
+pub(crate) fn deliver_each(
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
+    operation: &'static str,
+) -> Result<bool, String> {
+    let operation = runtime
+        .host_function(crate::host::shared_vm::operation(operation))
+        .map_err(|error| error.to_string())?;
+    let receiver = runtime.root(quench_runtime::Value::UNDEFINED);
+    let mut ran = false;
+    let result = loop {
+        let delivered = match runtime.call_rooted(operation, receiver, &[]) {
+            Ok(result) => {
+                let delivered = runtime.rooted_value(result).and_then(quench_runtime::Value::as_bool) == Some(true);
+                runtime.release_root(result);
+                if !delivered {
+                    break Ok(ran);
+                }
+                run_host_jobs_with_uncaught(runtime, program)
+            }
+            Err(error) => route_callback_failure(runtime, program, error)
+                .and_then(|()| run_host_jobs_with_uncaught(runtime, program)),
+        };
+        ran = true;
+        if let Err(error) = delivered {
+            break Err(error);
+        }
+    };
+    runtime.release_root(operation);
+    runtime.release_root(receiver);
+    result
 }
 
 pub(crate) fn run_host_jobs_with_uncaught(
@@ -3212,11 +3252,17 @@ fn poll_process_signals(
         );
         let event = runtime.string_rooted(&name);
         let signal = runtime.string_rooted(&name);
+        // Listeners receive the signal's name and number (src/signal_wrap.cc).
+        let mut args = vec![event, signal];
+        #[cfg(target_os = "linux")]
+        if let Some(number) = crate::modules::process_signals_state::signal_number(&name) {
+            args.push(runtime.root(quench_runtime::Value::number(f64::from(number))));
+        }
         state.borrow_mut().scheduler.queue_shared_next_tick(
             crate::modules::shared_event_loop::SharedCallback { execution: None,
                 callback,
                 receiver,
-                args: vec![event, signal],
+                args,
             },
         );
     }

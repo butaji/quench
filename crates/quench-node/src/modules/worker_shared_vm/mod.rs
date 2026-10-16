@@ -13,7 +13,7 @@ mod thread;
 
 use crate::host::NodeHost;
 use ports::{Endpoint, Message};
-use quench_runtime::{NativeContext, RootId, RootedError, Value};
+use quench_runtime::{NativeContext, RootId, RootedError};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 pub(crate) use thread::{capture_error, capture_fatal, WorkerContext};
@@ -541,35 +541,5 @@ pub(crate) fn poll(
     if !has_work(shared_state) {
         return Ok(false);
     }
-    let operation = runtime
-        .host_function(crate::host::shared_vm::operation("messagingDrain"))
-        .map_err(|error| error.to_string())?;
-    let receiver = runtime.root(Value::UNDEFINED);
-    let mut ran = false;
-    let result = loop {
-        match runtime.call_rooted(operation, receiver, &[]) {
-            Ok(result) => {
-                let delivered = runtime.rooted_value(result).and_then(Value::as_bool) == Some(true);
-                runtime.release_root(result);
-                if !delivered {
-                    break Ok(ran);
-                }
-                ran = true;
-                if let Err(error) = crate::modules::process_shared_vm::run_host_jobs_with_uncaught(runtime, program) {
-                    break Err(error);
-                }
-            }
-            Err(error) => {
-                ran = true;
-                if let Err(error) = crate::modules::process_shared_vm::route_callback_failure(runtime, program, error)
-                    .and_then(|()| crate::modules::process_shared_vm::run_host_jobs_with_uncaught(runtime, program))
-                {
-                    break Err(error);
-                }
-            }
-        }
-    };
-    runtime.release_root(operation);
-    runtime.release_root(receiver);
-    result
+    crate::modules::process_shared_vm::deliver_each(runtime, program, "messagingDrain")
 }
