@@ -42,6 +42,7 @@ pub(crate) use atoms::{AtomPrefix, NoAtomPrefix};
 /// The synthetic method supplies parsing context only; execution uses its body.
 fn eval_method_body<'a, 'b>(
     program: &'b mut Program<'a>,
+    ordinary_function: bool,
 ) -> Option<&'b mut oxc_ast::ast::FunctionBody<'a>> {
     let [Statement::ExpressionStatement(statement)] = program.body.as_mut_slice() else {
         return None;
@@ -64,6 +65,14 @@ fn eval_method_body<'a, 'b>(
             function
         }
         _ => return None,
+    };
+    let body = function.body.as_deref_mut()?;
+    if !ordinary_function { return Some(body); }
+    let [Statement::ExpressionStatement(statement)] = body.statements.as_mut_slice() else {
+        return None;
+    };
+    let Expression::FunctionExpression(function) = statement.expression.without_parentheses_mut() else {
+        return None;
     };
     function.body.as_deref_mut()
 }
@@ -185,7 +194,7 @@ pub(crate) struct EvalContext {
 enum ParsedProgramShape {
     Any,
     DynamicFunction { parameter_list_end: usize },
-    Eval(EvalContext),
+    Eval(EvalContext, Option<Span>),
 }
 
 pub(crate) struct EvalRegExpLiteral {
@@ -266,7 +275,7 @@ impl Engine {
         if stack::validate_parsed(&parsed).is_err() || !parsed.diagnostics.is_empty() {
             return false; // The normal eval compiler owns syntax and exhaustion errors.
         }
-        eval_method_body(&mut parsed.program)
+        eval_method_body(&mut parsed.program, false)
             .is_some_and(|body| early::field_eval_references_arguments(&body.statements))
     }
 
@@ -553,7 +562,10 @@ impl Engine {
         annex_b_forbidden_names: &[String],
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let method_source;
-        let (source, source_type) = if context.home_atom.is_some() {
+        let raw_source_len = source.len();
+        let ordinary_private_context = context.home_atom.is_none()
+            && context.in_function && !private_names.is_empty();
+        let (source, source_type) = if context.home_atom.is_some() || ordinary_private_context {
             method_source = if private_names.is_empty() && !context.super_calls {
                 let directive = if inherited_strict {
                     "'use strict';\n"
@@ -562,6 +574,11 @@ impl Engine {
                 };
                 format!("{directive}({{__eval() {{\n{source}\n}}}})")
             } else {
+                let ordinary_source;
+                let source = if ordinary_private_context {
+                    ordinary_source = format!("(function() {{\n{source}\n}});");
+                    ordinary_source.as_str()
+                } else { source };
                 eval_context_source(source, private_names, context.super_calls)
             };
             (method_source.as_str(), SourceType::script())
@@ -575,6 +592,13 @@ impl Engine {
                 },
             )
         };
+        let body_span = if context.home_atom.is_some() || ordinary_private_context {
+            let suffix = if ordinary_private_context { "\n});\n}\n})" }
+                else if private_names.is_empty() && !context.super_calls { "\n}})" }
+                else { "\n}\n})" };
+            let body_start = source.len() - suffix.len() - raw_source_len - "{\n".len();
+            Some(Span::new(body_start as u32, (body_start + "{\n".len() + raw_source_len + "\n}".len()) as u32))
+        } else { None };
         Self::specialize_with_mode_and_private_names(
             source,
             name,
@@ -586,7 +610,7 @@ impl Engine {
             inherited_strict,
             private_names,
             annex_b_forbidden_names,
-            ParsedProgramShape::Eval(context),
+            ParsedProgramShape::Eval(context, body_span),
         )
     }
 
@@ -775,10 +799,15 @@ impl Engine {
                 span,
             }]);
         }
+        let ordinary_private_context = matches!(expected_shape, ParsedProgramShape::Eval(context, _)
+            if context.home_atom.is_none() && context.in_function && !private_name_overrides.is_empty());
+        let wrapped_eval = matches!(expected_shape, ParsedProgramShape::Eval(context, _)
+            if context.home_atom.is_some()) || ordinary_private_context;
         let dynamic_function_shape = match expected_shape {
             ParsedProgramShape::Any => true,
-            ParsedProgramShape::Eval(context) => {
-                context.home_atom.is_none() || eval_method_body(&mut parsed.program).is_some()
+            ParsedProgramShape::Eval(_, expected_span) => {
+                !wrapped_eval || eval_method_body(&mut parsed.program, ordinary_private_context)
+                    .is_some_and(|body| Some(body.span) == expected_span)
             }
             ParsedProgramShape::DynamicFunction { parameter_list_end } => {
                 match parsed.program.body.as_mut_slice() {
@@ -826,7 +855,7 @@ impl Engine {
         }
         let private_name_ids = private_name_ids(&semantic.semantic);
         let private_name_labels = private_name_labels(&semantic.semantic);
-        let inherited_private_ids = if matches!(expected_shape, ParsedProgramShape::Eval(context) if context.home_atom.is_some())
+        let inherited_private_ids = if wrapped_eval
         {
             let mut ids = FxHashSet::default();
             if let [Statement::ExpressionStatement(statement)] = parsed.program.body.as_slice()
@@ -865,10 +894,10 @@ impl Engine {
         // Validate in method grammar, then remove the context wrapper. Original
         // spans still address `normalized`, retaining exact nested function source.
         drop(semantic);
-        let eval_context = if let ParsedProgramShape::Eval(context) = expected_shape {
-            if context.home_atom.is_some() {
-                let body =
-                    eval_method_body(&mut parsed.program).expect("validated eval method shape");
+        let eval_context = if let ParsedProgramShape::Eval(context, _) = expected_shape {
+            if wrapped_eval {
+                let body = eval_method_body(&mut parsed.program, ordinary_private_context)
+                    .expect("validated eval context shape");
                 let statements = std::mem::replace(
                     &mut body.statements,
                     oxc_allocator::Vec::new_in(&&allocator),

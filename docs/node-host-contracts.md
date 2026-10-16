@@ -847,5 +847,10 @@ The atomic private-data definition operation is serialized in bytecode format
 92. Round-trip execution and generic/specialized collection tests cover the
 representation. Eval-capable methods retain their synthetic class-home capture
 in dynamic-name metadata, even when private syntax appears only inside eval's
-string. Complete private-environment contexts and the ordinary NUL string-key
-namespace remain separate conformance work.
+string. Bytecode format 93 adds lexical private-name bindings that retain each
+name's actual declaring home independently of the method's super home. Static
+and instance names, escaped ordinary closures, and outer/shadowed class names
+use that binding metadata. Ordinary-function eval uses OXC's ordinary-function
+grammar inside a private-name parsing context, and the extracted body must match
+the generated source boundaries. Complete private-environment contexts and the
+ordinary NUL string-key namespace remain separate conformance work.
