@@ -183,7 +183,16 @@ impl<H: Host> Vm<H> {
             self.heap
                 .object_mut(source)
                 .expect("ordinary object remains live")
-                .forbid_structured_clone();
+                .set_structured_serialization(crate::heap::StructuredSerialization::Forbidden);
+        }
+        Ok(())
+    }
+
+    /// Mark a host object serializable only by transfer (a MessagePort).
+    pub(crate) fn embedding_require_transfer(&mut self, source: RootId) -> Result<(), JsError> {
+        let source = self.embedding_value(source)?;
+        if let Some(object) = self.heap.object_mut(source) {
+            object.set_structured_serialization(crate::heap::StructuredSerialization::TransferRequired);
         }
         Ok(())
     }
@@ -337,10 +346,19 @@ impl<H: Host> Vm<H> {
             return Err(self.data_clone_error(program, "#<Object> could not be cloned."));
         }
         if let Some(object) = self.heap.object_record(source) {
-            if object.is_structured_clone_forbidden() {
-                return Err(
-                    self.data_clone_error(program, "Cannot clone object of unsupported type.")
-                );
+            match object.structured_serialization() {
+                crate::heap::StructuredSerialization::Ordinary => {}
+                crate::heap::StructuredSerialization::Forbidden => {
+                    return Err(
+                        self.data_clone_error(program, "Cannot clone object of unsupported type.")
+                    );
+                }
+                crate::heap::StructuredSerialization::TransferRequired => {
+                    return Err(self.data_clone_error(
+                        program,
+                        "Object that needs transfer was found in message but not listed in transferList",
+                    ));
+                }
             }
             if self.realm.promise.records.contains_key(&source) {
                 return Err(self.data_clone_error(program, "#<Promise> could not be cloned."));

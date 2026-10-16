@@ -5,6 +5,7 @@
 
 pub(crate) mod assert_shared_vm;
 pub(crate) mod napi;
+pub(crate) mod worker_shared_vm;
 pub(crate) mod base64_shared_vm;
 pub(crate) mod async_hook_registry_shared_vm;
 pub(crate) mod async_hooks_shared_vm;
