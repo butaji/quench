@@ -1,0 +1,10 @@
+Store private field data by declaring home and logical name
+
+Keep private brands and data in one traced receiver-owned entry. Define data
+atomically, preserve existing values on duplicate initialization and avoid
+public extensibility and Proxy traps. Register eval-capable class-home captures
+in dynamic-name metadata. Bytecode format 92 records private-data definition.
+
+Validation: all 663 runtime tests and 378 serial Node API comparisons pass,
+including private data lifetime, both execution modes and binary round-trip.
+Broader private-eval environments and ordinary NUL-key namespaces remain open.
