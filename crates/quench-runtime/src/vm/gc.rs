@@ -277,7 +277,7 @@ impl<H: Host> Vm<H> {
             .for_each(|continuation| reference(continuation.program));
         self.heap
             .for_each_cell(|cell| cell.program_references(&mut reference));
-        let reclaimed = self.programs.reclaim_unreferenced(&referenced);
+        let reclaimed = self.programs.reclaim_unreferenced(referenced);
         if reclaimed.is_empty() {
             return;
         }
@@ -738,6 +738,8 @@ impl<H: Host> Vm<H> {
         // Heap weak fields are pruned during collection. Prune the VM-owned
         // weak function cache before any post-collection cleanup can allocate
         // into newly freed slots.
+        let heap = &self.heap;
+        self.programs.prune_owned_script_realms(|realm| heap.weak_value(realm).is_some());
         self.prune_function_values();
         self.prune_wasm_exported_functions();
         // A home stays reachable through its environment; entries of swept environments go

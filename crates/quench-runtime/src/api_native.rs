@@ -9,6 +9,18 @@ pub struct PreparedScript {
     pub(crate) program: std::rc::Rc<crate::ResidualProgram>,
 }
 
+/// A logical host Script with one source identity and separate execution caches
+/// in each realm. The handle owns code, not guest objects or realm globals.
+#[derive(Clone)]
+pub struct CompiledScript {
+    pub(crate) state: std::rc::Rc<CompiledScriptState>,
+}
+
+pub(crate) struct CompiledScriptState {
+    pub(crate) program: std::rc::Rc<crate::ResidualProgram>,
+    pub(crate) source: crate::vm::ProgramId,
+}
+
 /// Opaque index into the embedding's stable native-operation table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HostFunctionId(pub u32);
@@ -649,6 +661,28 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.vm.prepare_embedding_specialized_script_in_realm_with_origin(
             global, source, name, (line_offset, column_offset),
         ).map_err(|error| self.error(error))
+    }
+
+    /// Compile one logical Script. Its source identity persists across runs;
+    /// realm-bound execution state is allocated independently on first use.
+    pub fn compile_script_in_realm_with_origin(
+        &mut self, global: RootId, source: &str, name: &str,
+        line_offset: u32, column_offset: u32,
+    ) -> Result<CompiledScript, RootedError> {
+        self.vm.compile_embedding_script_in_realm(
+            global, source, name, (line_offset, column_offset),
+        ).map_err(|error| self.error(error))
+    }
+
+    pub fn compiled_script_is_current(&self, script: &CompiledScript) -> bool {
+        self.vm.compiled_script_is_current(script)
+    }
+
+    pub fn evaluate_compiled_script_in_realm_rooted(
+        &mut self, global: RootId, script: &CompiledScript,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.evaluate_embedding_compiled_script_in_realm(global, script);
+        self.completion(result)
     }
 
     pub fn prepared_script_is_current(&self, prepared: &PreparedScript) -> bool {
