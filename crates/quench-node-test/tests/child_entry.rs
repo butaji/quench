@@ -9143,23 +9143,6 @@ fn file_handle_read_parameters_preserve_defaults_options_getter_order_and_result
 }
 
 #[test]
-fn implemented_cli_option_snapshots_tokenization_and_stream_iterator_policy_match_node() {
-    for flags in [&["--no-warnings","--expose-internals"][..], &["--no-warnings","--expose-internals","--experimental-stream-iter"][..]] {
-        compare_node_source_with_args(include_str!("../node-tests/test-cli-options-stream-iter.js"),flags);
-    }
-}
-
-#[test]
-fn stream_iterator_webidl_uses_genuine_original_abort_signal_brands() {
-    compare_node_source_with_args(include_str!("../node-tests/test-stream-iter-abort-brand.js"),&["--no-warnings","--expose-internals","--experimental-stream-iter"]);
-}
-
-#[test]
-fn internal_abort_operation_uses_original_provider_state_reason_and_dependent_delivery() {
-    compare_node_source_with_args(include_str!("../node-tests/test-internal-abort-provider.js"),&["--no-warnings","--expose-internals"]);
-}
-
-#[test]
 fn text_decoder_stream_boundaries_and_repeated_flush_match_node() {
     compare_node_stream_source(r#"
 const inputs=[['utf-8',[239,187,191,226,130,172,240,159,152,128,65]],['utf-16le',[255,254,61,216,0,222,65,0]],['utf-16be',[254,255,216,61,222,0,0,65]],['shift_jis',[130,160,65]],['big5',[164,164,65]],['euc-kr',[176,161,65]],['gb18030',[144,48,129,48,65]],['iso-2022-jp',[27,36,66,36,34,27,40,66,65]]];
@@ -9226,6 +9209,23 @@ for(const [encoding,valid,invalid]of fixtures)for(const fatal of [false,true])fo
 }
 console.log(JSON.stringify({complete:true,cases:rows.length,calls:rows.length*7,rows}));
 "#);
+}
+
+#[test]
+fn implemented_cli_option_snapshots_tokenization_and_stream_iterator_policy_match_node() {
+    for flags in [&["--no-warnings","--expose-internals"][..], &["--no-warnings","--expose-internals","--experimental-stream-iter"][..]] {
+        compare_node_source_with_args(include_str!("../node-tests/test-cli-options-stream-iter.js"),flags);
+    }
+}
+
+#[test]
+fn stream_iterator_webidl_uses_genuine_original_abort_signal_brands() {
+    compare_node_source_with_args(include_str!("../node-tests/test-stream-iter-abort-brand.js"),&["--no-warnings","--expose-internals","--experimental-stream-iter"]);
+}
+
+#[test]
+fn internal_abort_operation_uses_original_provider_state_reason_and_dependent_delivery() {
+    compare_node_source_with_args(include_str!("../node-tests/test-internal-abort-provider.js"),&["--no-warnings","--expose-internals"]);
 }
 
 #[test]

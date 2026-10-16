@@ -1,4 +1,5 @@
 mod compiled;
+mod shape_transitions;
 mod startup_intrinsics;
 mod wasm;
 pub use compiled::ExecutionMode;
@@ -422,10 +423,27 @@ pub(crate) struct ActiveIterator {
     pub(crate) iterator: u16,
     pub(crate) done: u16,
 }
-struct PendingJob {
-    callback: Value,
-    this: Value,
-    args: Vec<Value>,
+/// A queued job: a call, or a promise reaction run without a job function to dispatch through.
+enum PendingJob {
+    Call {
+        callback: Value,
+        this: Value,
+        args: Vec<Value>,
+    },
+    Reaction(promise::PromiseJob),
+}
+
+impl PendingJob {
+    fn roots(&self) -> Vec<Value> {
+        match self {
+            Self::Call {
+                callback,
+                this,
+                args,
+            } => [*callback, *this].into_iter().chain(args.iter().copied()).collect(),
+            Self::Reaction(job) => vec![job.realm, job.handler, job.next, job.value],
+        }
+    }
 }
 struct Realm {
     globals: Value,
@@ -1136,7 +1154,7 @@ pub(crate) struct Vm<H> {
     shapes: Vec<Shape>,
     /// The getters and setters of shapes' accessor descriptors (`ShapeAttributes`).
     shape_accessors: Vec<ShapeAccessors>,
-    transitions: FxHashMap<(u32, ShapeTransitionKey), u32>,
+    transitions: shape_transitions::ShapeTransitionIndex,
     atom_text: AtomTable,
     atoms: FxHashMap<u64, Atom>,
     atom_collisions: FxHashMap<u64, Vec<Atom>>,
@@ -1298,7 +1316,7 @@ impl<H: Host> Vm<H> {
         self.heap.root_value(root)
     }
     pub(crate) fn enqueue_job(&mut self, callback: Value, args: Vec<Value>) {
-        self.realm.jobs.push_back(PendingJob {
+        self.realm.jobs.push_back(PendingJob::Call {
             callback,
             this: Value::UNDEFINED,
             args,
@@ -1672,7 +1690,7 @@ impl<H: Host> Vm<H> {
             self.shapes.len(),
             self.shapes.capacity(),
             self.transitions.len(),
-            self.transitions.capacity() * size_of::<((u32, ShapeTransitionKey), u32)>(),
+            self.transitions.bytes(),
             self.field_caches.capacity() * size_of::<FieldCache>()
                 + self.megamorphic_field_indices.capacity() * size_of::<u32>()
                 + field_add_cache_bytes,
@@ -1708,8 +1726,7 @@ impl<H: Host> Vm<H> {
             .filter_map(|shape| shape.lookup_index.get())
             .map(|index| index.payload_capacity_bytes())
             .sum::<usize>();
-        let transition_table_bytes =
-            self.transitions.capacity() * size_of::<((u32, ShapeTransitionKey), u32)>();
+        let transition_table_bytes = self.transitions.bytes();
         let descriptor_side_table_bytes = self.descriptors.capacity()
             * size_of::<((Value, property_key::PropertyKey), PropertyAttributes)>();
         let cache_side_table_bytes = self.field_caches.capacity() * size_of::<FieldCache>()

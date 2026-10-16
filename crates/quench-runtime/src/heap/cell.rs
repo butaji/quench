@@ -586,7 +586,6 @@ pub(crate) enum Native {
     PromiseAllSettled,
     PromiseAllSettledKeyed,
     PromiseAny,
-    PromiseReactionJob,
     PromiseThenableJob,
     PromiseAggregateJob,
     PromiseAsyncResumeJob, AsyncFromSyncValue, AsyncFromSyncValueRejected, AsyncGeneratorDelegateFulfilled, AsyncGeneratorDelegateRejected,
@@ -623,19 +622,14 @@ pub(crate) struct WasmMemoryHeader {
 pub(crate) enum WasmObjectSlot {
     Module(Box<crate::WasmModule>),
     /// The frozen exports object of an instance; its bindings stay alive through it.
-    Instance {
-        exports: Value,
-    },
+    Instance { exports: Value },
 }
 
 impl std::fmt::Debug for WasmObjectSlot {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Module(_) => f.write_str("Module"),
-            Self::Instance { exports } => f
-                .debug_struct("Instance")
-                .field("exports", exports)
-                .finish(),
+            Self::Instance { exports } => f.debug_struct("Instance").field("exports", exports).finish(),
         }
     }
 }
@@ -899,7 +893,6 @@ impl Native {
                 | Self::PromiseAllSettled
                 | Self::PromiseAllSettledKeyed
                 | Self::PromiseAny
-                | Self::PromiseReactionJob
                 | Self::PromiseThenableJob
                 | Self::PromiseAggregateJob
                 | Self::PromiseAsyncResumeJob
@@ -954,7 +947,11 @@ impl IteratorKind {
     pub(crate) fn is_collection_iterator(self) -> bool {
         matches!(
             self,
-            Self::MapKeys | Self::MapValues | Self::MapEntries | Self::SetValues | Self::SetEntries
+            Self::MapKeys
+                | Self::MapValues
+                | Self::MapEntries
+                | Self::SetValues
+                | Self::SetEntries
         )
     }
 }
