@@ -9538,3 +9538,8 @@ fn source_positions_use_javascript_line_terminators_and_utf16_columns() {
 fn fused_field_reads_preserve_each_getter_operation_source() {
     compare_node_source_with_args(include_str!("../node-tests/test-fused-field-source-positions.js"), &[]);
 }
+
+#[test]
+fn fs_glob_uses_original_policy_and_real_dirent_types_across_all_three_apis() {
+    compare_node_source_with_args(include_str!("../node-tests/test-fs-original-glob-policy.js"), &[]);
+}
