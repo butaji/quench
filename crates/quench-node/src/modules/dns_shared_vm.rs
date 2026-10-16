@@ -5,8 +5,6 @@ use quench_runtime::{NativeContext, RootId, RootedError, Value};
 use std::net::IpAddr;
 
 use super::net_config::{ANY_FAMILY, IPV4_FAMILY, IPV6_FAMILY};
-const DNS_SYSCALL: &str = "getaddrinfo";
-const NOT_FOUND_CODE: &str = "ENOTFOUND";
 
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let module = context.object_rooted()?;
@@ -38,6 +36,9 @@ pub(crate) fn lookup(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
+    lookup_impl(context, args, None)
+}
+fn lookup_impl(context: &mut NativeContext<'_, NodeHost>, args: &[RootId], capability: Option<RootId>) -> Result<RootId, RootedError> {
     let hostname_root = args.first().copied().unwrap_or_else(|| context.undefined());
     let name = context.string_rooted("hostname");
     validate(context, "validateStringWithoutNullBytes", &[hostname_root, name])?;
@@ -89,6 +90,16 @@ pub(crate) fn lookup(
     let key = context.string_rooted("GetAddrInfoReqWrap");
     let constructor = context.get_property_rooted(binding, key)?;
     let request = context.construct_rooted(constructor, constructor, &[])?;
+    let callback = if let Some(capability) = capability {
+        for name in ["resolve", "reject"] {
+            let key = context.string_rooted(name);
+            let value = context.get_property_rooted(capability, key)?;
+            set(context, request, name, value)?;
+        }
+        context.host_function_with_data(crate::host::shared_vm::operation("dnsPromiseComplete"), request)?
+    } else { callback };
+    let family_root = context.number(family as f64);
+    set(context, request, "family", family_root)?;
     set(context, request, "callback", callback)?;
     set_str(context, request, "hostname", &hostname)?;
     let all_root = context.boolean(all);
@@ -165,17 +176,6 @@ fn success_all(
     Ok(vec![context.null(), array])
 }
 
-fn not_found_error(
-    context: &mut NativeContext<'_, NodeHost>,
-    hostname: &str,
-) -> Result<RootId, RootedError> {
-    let error = context.error_rooted(&format!("{DNS_SYSCALL} ENOTFOUND {hostname}"))?;
-    set_str(context, error, "code", NOT_FOUND_CODE)?;
-    set_str(context, error, "syscall", DNS_SYSCALL)?;
-    set_str(context, error, "hostname", hostname)?;
-    Ok(error)
-}
-
 fn set(
     context: &mut NativeContext<'_, NodeHost>,
     object: RootId,
@@ -235,17 +235,35 @@ fn complete_lookup(context: &mut NativeContext<'_, NodeHost>, request: RootId, s
         context.call_rooted(callback, undefined, &[error])?;
         return Ok(());
     }
+    let key = context.string_rooted("family");
+    let requested_family = context.get_property_rooted(request, key)?;
+    let requested_family = context.rooted_value(requested_family).and_then(Value::as_number).unwrap_or(0.0);
     let key = context.string_rooted("length"); let length = context.get_property_rooted(addresses, key)?;
     let length = context.rooted_value(length).and_then(Value::as_number).unwrap_or(0.0) as usize;
-    let mut results = Vec::with_capacity(length);
-    for index in 0..length {
-        let key = context.string_rooted(&index.to_string()); let value = context.get_property_rooted(addresses, key)?;
-        if let Some(address) = context.string_text(value)?.and_then(|s| s.parse::<IpAddr>().ok()) { results.push(address); }
+    let mut result_args = vec![context.null()];
+    if all {
+        for index in 0..length {
+            let key = context.string_rooted(&index.to_string());
+            let address = context.get_property_rooted(addresses, key)?;
+            let family = if requested_family != 0.0 { requested_family } else {
+                context.string_text(address)?.and_then(|text| text.parse::<IpAddr>().ok()).map_or(0.0, |address| family_of(address) as f64)
+            };
+            let item = context.object_rooted()?;
+            set(context, item, "address", address)?;
+            set_number(context, item, "family", family)?;
+            context.set_property_rooted(addresses, key, item, addresses)?;
+        }
+        result_args.push(addresses);
+    } else {
+        let key = context.string_rooted("0");
+        let address = context.get_property_rooted(addresses, key)?;
+        let family = if requested_family != 0.0 { requested_family } else {
+            context.string_text(address)?.and_then(|text| text.parse::<IpAddr>().ok()).map_or(0.0, |address| family_of(address) as f64)
+        };
+        result_args.push(address);
+        result_args.push(context.number(family));
     }
-    let args = if all { success_all(context, results)? } else if let Some(address) = results.first() {
-        vec![context.null(), context.string_rooted(&address.to_string()), context.number(family_of(*address) as f64)]
-    } else { vec![not_found_error(context, &hostname)?] };
-    let undefined = context.undefined(); context.call_rooted(callback, undefined, &args)?;
+    let undefined = context.undefined(); context.call_rooted(callback, undefined, &result_args)?;
     Ok(())
 }
 pub(crate) fn promise_lookup(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
@@ -260,7 +278,7 @@ pub(crate) fn promise_lookup(context: &mut NativeContext<'_, NodeHost>, _: RootI
     let undefined = context.undefined();
     let hostname = args.first().copied().unwrap_or(undefined);
     let options = args.get(1).copied().unwrap_or(undefined);
-    lookup(context, undefined, &[hostname, options, callback])?;
+    lookup_impl(context, &[hostname, options, callback], Some(capability))?;
     Ok(promise)
 }
 pub(crate) fn promise_complete(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
@@ -277,7 +295,7 @@ pub(crate) fn promise_complete(context: &mut NativeContext<'_, NodeHost>, _: Roo
         set(context, result, "family", family)?;
         result
     } else { args.get(1).copied().unwrap_or(undefined) };
-    context.call_rooted(callback, undefined, &[result])
+    context.call_rooted(callback, capability, &[result])
 }
 // The pinned SDK validators own enum validation, received-value formatting, and errors.
 fn validate(context: &mut NativeContext<'_, NodeHost>, name: &str, args: &[RootId]) -> Result<(), RootedError> {

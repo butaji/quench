@@ -2373,6 +2373,10 @@ const getLinkedBinding = () => ({});
                     // This configured SDK entry exposes the engine's raw binding
                     // objects; it must not expose per-module library adapters.
                     "const internalBinding = __nativeInternalBinding;"
+                } else if library_relative == Some(Path::new("lib/internal/per_context/domexception.js")) {
+                    // This SDK per-context source has two explicit native symbol
+                    // capabilities in Node's wrapper. Reuse existing symbol owners.
+                    "const privateSymbols=__nativeInternalBinding('util').privateSymbols; const perIsolateSymbols=__nativeInternalBinding('symbols');"
                 } else if in_node_internal {
                     node_internal_binding_source()
                 } else {
@@ -2616,7 +2620,10 @@ pub(crate) fn node_internal_binding_source() -> &'static str {
       setDeserializeMainFunction: () => {},
     };
     case "process": return process;
-    case "messaging": return { DOMException: globalThis.DOMException };
+    case "messaging": {
+      if (__nativeInternalBinding("crypto").getFipsCryptoGeneration) return __nativeInternalBinding("messaging");
+      return { DOMException: globalThis.DOMException };
+    }
     case "performance": return {
       constants: { NODE_PERFORMANCE_MILESTONE_TIME_ORIGIN: 0, NODE_PERFORMANCE_MILESTONE_TIME_ORIGIN_TIMESTAMP: 1 },
       milestones: [0, 0], now: () => require("perf_hooks").performance.now() * 1e6,

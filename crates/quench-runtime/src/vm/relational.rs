@@ -78,6 +78,10 @@ impl<H: Host> Vm<H> {
     ) -> Result<bool, JsError> {
         let _stack = self.enter_stack()?;
         self.with_call_roots([object, key], |vm| {
+            if vm.is_host_private_symbol(key) {
+                return Ok(!matches!(vm.heap.get(object), Some(Cell::Proxy { .. }))
+                    && vm.symbol_property(object, key).is_some());
+            }
             if let Some((target, handler)) = vm.proxy_parts(object)
             {
                 if handler.is_null() {

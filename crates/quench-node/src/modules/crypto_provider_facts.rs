@@ -13,6 +13,8 @@ pub enum Kind {
 }
 #[cfg_attr(test, link(name = "crypto"))]
 unsafe extern "C" {
+    fn CRYPTO_secure_malloc_initialized() -> c_int;
+    fn CRYPTO_secure_used() -> usize;
     fn EVP_default_properties_is_fips_enabled(ctx: *mut c_void) -> c_int;
     fn EVP_default_properties_enable_fips(ctx: *mut c_void, enable: c_int) -> c_int;
     fn EVP_CIPHER_do_all_provided(
@@ -223,5 +225,18 @@ mod tests {
             assert!(set_fips(before));
             assert_eq!(fips_generation(), generation + 2);
         }
+    }
+}
+
+/// Real heap state: default Node builds use ordinary backing allocations when
+/// OpenSSL secure heap is disabled. Active secure heap needs owner adoption.
+pub fn secure_heap_initialized() -> bool {
+    unsafe { CRYPTO_secure_malloc_initialized() == 1 }
+}
+pub fn secure_heap_used() -> usize {
+    if secure_heap_initialized() {
+        unsafe { CRYPTO_secure_used() }
+    } else {
+        0
     }
 }

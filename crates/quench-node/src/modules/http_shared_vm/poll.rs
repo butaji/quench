@@ -194,6 +194,9 @@ pub(crate) fn poll(
                 let root = shared_state.borrow().net_sockets.get(&socket).map(|socket| socket.root);
                 if let Some(root) = root { queue_net_event(runtime, shared_state, root, "secure", &[])?; progressed = true; }
             }
+            net_shared_vm::TransportEvent::NativeWriteComplete { request } => {
+                progressed |= queue_native_write_completion(runtime, shared_state, request, 0)?;
+            }
             net_shared_vm::TransportEvent::WriteComplete { socket } => {
                 let callback = shared_state
                     .borrow_mut()
@@ -277,6 +280,7 @@ pub(crate) fn poll(
                 progressed = true;
             }
             net_shared_vm::TransportEvent::Data { socket, bytes } => {
+                if queue_native_read(runtime, shared_state, socket, Some(&bytes), bytes.len() as i32)? { progressed=true; continue; }
                 let net_socket = shared_state.borrow().net_sockets.get(&socket).map(|socket| {
                     (socket.root, socket.encoding.clone().unwrap_or_default())
                 });
@@ -585,6 +589,7 @@ pub(crate) fn poll(
                 }
             }
             net_shared_vm::TransportEvent::End { socket } => {
+                if queue_native_read(runtime, shared_state, socket, None, super::super::stream_binding::UV_EOF)? { progressed=true; continue; }
                 let net_root = {
                     shared_state
                         .borrow()
@@ -681,6 +686,9 @@ pub(crate) fn poll(
                 }
             }
             net_shared_vm::TransportEvent::CloseCompleted { socket } => {
+                cancel_native_writes(runtime, shared_state, socket, -libc::ECANCELED)?;
+                let reader=shared_state.borrow_mut().native_stream.readers.remove(&socket);
+                if let Some(reader)=reader { runtime.release_root(reader); }
                 let (root, callback) = {
                     let mut state = shared_state.borrow_mut();
                     (
@@ -721,6 +729,14 @@ pub(crate) fn poll(
                 error,
                 syscall,
             } => {
+                let raw=shared_state.borrow().native_stream.readers.contains_key(&socket)
+                    || shared_state.borrow().native_stream.writes.iter().any(|(_,pending)|pending.socket==socket);
+                if raw {
+                    let status=-error.raw_os_error().unwrap_or(libc::EIO);
+                    cancel_native_writes(runtime,shared_state,socket,status)?;
+                    if syscall=="read" { queue_native_read(runtime,shared_state,socket,None,status)?; }
+                    progressed=true;continue;
+                }
                 // The OS error owns errno; presentation never recovers it from
                 // localized text. Derive the Node code and syscall message.
                 let ssl_error=error.get_ref().and_then(|error|error.downcast_ref::<openssl::ssl::Error>());
@@ -1631,4 +1647,111 @@ fn set(
     } else {
         Err("shared HTTP object rejected a required property".into())
     }
+}
+
+fn queue_native_read(
+    runtime: &mut Runtime<NodeHost>,
+    shared_state: &Rc<RefCell<SharedNodeState>>,
+    socket: u64,
+    bytes: Option<&[u8]>,
+    count: i32,
+) -> Result<bool, String> {
+    let handle = shared_state
+        .borrow()
+        .native_stream
+        .readers
+        .get(&socket)
+        .copied();
+    let Some(handle) = handle else {
+        return Ok(false);
+    };
+    let payload = if let Some(bytes) = bytes {
+        let operation = runtime
+            .host_function(crate::host::shared_vm::operation("nativeStreamCopyRead"))
+            .map_err(|e| e.to_string())?;
+        let undefined = runtime.root(Value::UNDEFINED);
+        let text = runtime.string_rooted(&latin1_text(bytes));
+        let result = runtime.call_rooted(operation, undefined, &[text]);
+        runtime.release_root(operation);
+        runtime.release_root(undefined);
+        runtime.release_root(text);
+        result.map_err(|e| e.to_string())?
+    } else {
+        runtime.root(Value::UNDEFINED)
+    };
+    let callback = runtime
+        .host_function(crate::host::shared_vm::operation("nativeStreamDeliverRead"))
+        .map_err(|e| e.to_string())?;
+    let receiver = runtime.root(
+        runtime
+            .rooted_value(handle)
+            .ok_or("raw native handle expired")?,
+    );
+    let count = runtime.root(Value::number(f64::from(count)));
+    let id = runtime.root(Value::number(socket as f64));
+    shared_state.borrow_mut().scheduler.queue_shared_next_tick(
+        crate::modules::shared_event_loop::SharedCallback {
+            execution: None,
+            callback,
+            receiver,
+            args: vec![payload, count, id],
+        },
+    );
+    Ok(true)
+}
+fn queue_native_write_completion(
+    runtime: &mut Runtime<NodeHost>,
+    shared_state: &Rc<RefCell<SharedNodeState>>,
+    request: RootId,
+    status: i32,
+) -> Result<bool, String> {
+    let pending = {
+        let mut state = shared_state.borrow_mut();
+        let index = state
+            .native_stream
+            .writes
+            .iter()
+            .position(|(id, _)| *id == request);
+        index
+            .and_then(|index| state.native_stream.writes.remove(index))
+            .map(|(_, pending)| pending)
+    };
+    let Some(pending) = pending else {
+        return Ok(false);
+    };
+    let status = runtime.root(Value::number(f64::from(status)));
+    let callback = runtime
+        .host_function(crate::host::shared_vm::operation(
+            "nativeStreamDeliverWrite",
+        ))
+        .map_err(|e| e.to_string())?;
+    // Transfer the actual retained request and handle roots to the callback job.
+    shared_state.borrow_mut().scheduler.queue_shared_next_tick(
+        crate::modules::shared_event_loop::SharedCallback {
+            execution: None,
+            callback,
+            receiver: request,
+            args: vec![status, pending.handle],
+        },
+    );
+    Ok(true)
+}
+
+fn cancel_native_writes(
+    runtime: &mut Runtime<NodeHost>,
+    shared_state: &Rc<RefCell<SharedNodeState>>,
+    socket: u64,
+    status: i32,
+) -> Result<(), String> {
+    let requests = shared_state
+        .borrow()
+        .native_stream
+        .writes
+        .iter()
+        .filter_map(|(request, p)| (p.socket == socket).then_some(*request))
+        .collect::<Vec<_>>();
+    for request in requests {
+        queue_native_write_completion(runtime, shared_state, request, status)?;
+    }
+    Ok(())
 }

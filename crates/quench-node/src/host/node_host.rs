@@ -123,6 +123,7 @@ pub(crate) struct SharedNodeState {
     pub(crate) net_sockets: std::collections::HashMap<u64, NetSocket>,
     pub(crate) net_closing_sockets: std::collections::HashMap<u64, quench_runtime::RootId>,
     pub(crate) net_socket_close_completed: Option<quench_runtime::RootId>,
+    pub(crate) native_stream: crate::modules::stream_binding::State,
     pub(crate) native_tcp_listeners: std::collections::HashMap<u64, quench_runtime::RootId>,
     pub(crate) net_servers: std::collections::HashMap<u64, NetServer>,
     pub(crate) child_process_shell_args_warning_emitted: bool,
@@ -211,6 +212,7 @@ impl SharedNodeState {
         self.net_server_on_connection = None;
         self.net_handle_onclose_symbol = None;
         self.net_socket_option_keys = None;
+        self.native_stream = Default::default();
         self.native_tcp_listeners.clear();
         self.net_handle_identities.clear();
         self.net_handle_close_callbacks.clear();
@@ -293,6 +295,7 @@ impl SharedNodeState {
             net_sockets: std::collections::HashMap::new(),
             net_closing_sockets: std::collections::HashMap::new(),
             net_socket_close_completed: None,
+            native_stream: Default::default(),
             native_tcp_listeners: std::collections::HashMap::new(),
             net_servers: std::collections::HashMap::new(),
             child_process_shell_args_warning_emitted: false,

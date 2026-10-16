@@ -1796,3 +1796,103 @@ fn compiled_host_scripts_keep_source_identity_and_own_separate_realm_execution_s
         assert_eq!(state.borrow().invalidations, 2);
     }
 }
+
+struct HostPrivateSymbolHost;
+impl Host for HostPrivateSymbolHost {
+    fn write_line(&mut self, _: &str) {}
+    fn clock_millis(&mut self) -> f64 { 0.0 }
+    fn functions(&self) -> &[HostFunction<Self>] { &[] }
+    fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
+        let global = context.global_root()?;
+        for (name, private) in [("nativePrivate", true), ("nativePublic", false)] {
+            let symbol = if private { context.private_symbol_rooted(Some("same")) }
+                         else { context.symbol_rooted(Some("same")) };
+            let name = context.string_rooted(name);
+            context.define_data_property_rooted(global, name, symbol, true, true, true)?;
+        }
+        context.collect()?;
+        Ok(())
+    }
+}
+#[test]
+fn host_private_symbols_preserve_explicit_access_and_bypass_public_object_protocols() {
+    let source = r#"
+      function check(value) { if (!value) throw new Error('private-symbol check'); }
+      const s = nativePrivate, publicKey = nativePublic;
+      check(typeof s === 'symbol' && s !== publicKey && s.description === 'same');
+      check(String(s) === 'Symbol(same)' && Symbol.keyFor(s) === undefined);
+      const o = {}; o[s] = 2; o[publicKey] = 8;
+      check(o[s] === 2 && s in o && Object.hasOwn(o, s));
+      let d = Object.getOwnPropertyDescriptor(o,s);
+      check(d.value === 2 && d.writable && !d.enumerable && d.configurable);
+      check(Reflect.ownKeys(o).length === 1 && Reflect.ownKeys(o)[0] === publicKey);
+      check(Object.getOwnPropertySymbols(o).length === 1);
+      check(!Object.hasOwn(Object.getOwnPropertyDescriptors(o),s));
+      check(Object.assign({},o)[s] === undefined && ({...o})[s] === undefined);
+      const child = Object.create(o);
+      check(child[s] === undefined && !(s in child) && !Object.hasOwn(child,s));
+      check(child[publicKey] === 8);
+      child[s] = 3; check(child[s] === 3 && o[s] === 2);
+      Object.defineProperty(o,s,{value:4,enumerable:true,writable:false,configurable:false});
+      check(Object.getOwnPropertyDescriptor(o,s).enumerable);
+      check(Reflect.ownKeys(o).length === 1 && !Reflect.deleteProperty(o,s));
+      check(!Reflect.set(o,s,5) && o[s] === 4);
+      let called = 0;
+      const p = new Proxy(o,{
+        get(){called++;throw 1}, set(){called++;throw 1}, has(){called++;throw 1},
+        getOwnPropertyDescriptor(){called++;throw 1}, defineProperty(){called++;throw 1},
+        deleteProperty(){called++;throw 1}, ownKeys(){return [s]}
+      });
+      check(p[s] === undefined && !(s in p) && !Object.hasOwn(p,s));
+      check(!Reflect.set(p,s,6) && !Reflect.defineProperty(p,s,{value:7}));
+      check(Reflect.deleteProperty(p,s) && called === 0);
+      check(Reflect.ownKeys(p).length === 0);
+      const rev = Proxy.revocable({},{});rev.revoke();
+      check(rev.proxy[s] === undefined && !(s in rev.proxy));
+      check(Reflect.deleteProperty(rev.proxy,s) && !Reflect.set(rev.proxy,s,8));
+      const frozen = Object.freeze({});check(Reflect.set(frozen,s,9));
+      check(frozen[s] === 9 && Reflect.defineProperty(frozen,s,{value:10}));
+      check(Object.isFrozen(frozen) && Reflect.ownKeys(frozen).length === 0);
+      let receiver;
+      const access = {};
+      Object.defineProperty(access,s,{get(){receiver=this;return 12},configurable:true});
+      check(access[s] === 12 && receiver === access);
+      check(!Reflect.set(access,s,4));
+      check(Reflect.deleteProperty(access,s) && access[s] === undefined);
+      for (const base of [null, undefined]) {
+        let threw = false; try { base[s]; } catch(e) { threw = e instanceof TypeError; }
+        check(threw);
+      }
+      for (const base of [1, true, 'x', Symbol('x')]) {
+        check(base[s] === undefined);
+        let threw = false;
+        try { (function(){ 'use strict'; base[s] = 1; })(); }
+        catch(e) { threw = e instanceof TypeError; }
+        check(threw);
+      }
+      let setterReceiver, setterValue;
+      const a = {}, receiverObject = {};
+      Object.defineProperty(a,s,{get(){return this},set(v){setterReceiver=this;setterValue=v},configurable:true});
+      check(Reflect.get(a,s,receiverObject) === receiverObject);
+      check(Reflect.set(a,s,33,receiverObject));
+      check(setterReceiver === receiverObject && setterValue === 33);
+      const marker = {};
+      Object.defineProperty(a,s,{get(){throw marker},set(){throw marker}});
+      for(const operation of [()=>a[s],()=>Reflect.set(a,s,2)]) {
+        let caught; try { operation(); } catch(e) { caught=e; } check(caught===marker);
+      }
+      for(const target of [{},Object.preventExtensions({})]) {
+        let threw=false;try{Reflect.ownKeys(new Proxy(target,{ownKeys(){return [s,s]}}))}catch(e){threw=e instanceof TypeError}
+        check(threw);
+      }
+      let invariantThrew=false;
+      try{Reflect.ownKeys(new Proxy(Object.preventExtensions({}),{ownKeys(){return [s]}}))}catch(e){invariantThrew=e instanceof TypeError}
+      check(invariantThrew);
+      globalThis.privateSurvivor = child;
+    "#;
+    for program in [Engine::specialize_unspecialized(source, "native-private-symbol.js").unwrap(),
+                    Engine::specialize(source, "native-private-symbol.js").unwrap()] {
+        let mut runtime = Runtime::new(HostPrivateSymbolHost);
+        runtime.execute(&program).unwrap();
+    }
+}

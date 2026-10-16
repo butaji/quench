@@ -396,6 +396,7 @@ pub(crate) fn close(context: &mut NativeContext<'_, NodeHost>, receiver: RootId,
     }
     let handle = context.retain(receiver)?;
     shared.borrow_mut().net_handle_close_callbacks.insert(id, handle);
+    super::stream_binding::release_reader(context, id);
     super::net_shared_vm::close_socket(&mut shared.borrow_mut().tcp, id);
     Ok(context.undefined())
 }
@@ -454,6 +455,7 @@ pub(crate) fn close_complete(context: &mut NativeContext<'_, NodeHost>, receiver
         }
         Ok(context.undefined())
     })();
+    super::stream_binding::release_reader(context, id);
     let socket = context.host_mut().shared_state().borrow_mut().net_sockets.remove(&id);
     if let Some(socket) = socket { context.release_root(socket.root); }
     result
@@ -464,10 +466,12 @@ pub(crate) fn read_start(context: &mut NativeContext<'_, NodeHost>, receiver: Ro
     let Some(id) = tcp_option_owner(context, receiver)? else { return Ok(context.number(-f64::from(libc::EBADF))); };
     let shared = context.host_mut().shared_state();
     let result = super::net_shared_vm::start_read(&mut shared.borrow_mut().tcp, id);
+    if result.is_ok() { super::stream_binding::retain_reader(context, id, receiver)?; }
     Ok(option_result(context, result))
 }
 pub(crate) fn read_stop(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     let Some(id) = tcp_option_owner(context, receiver)? else { return Ok(context.number(-f64::from(libc::EBADF))); };
     super::net_shared_vm::stop_read(&mut context.host_mut().shared_state().borrow_mut().tcp, id);
+    super::stream_binding::release_reader(context, id);
     Ok(context.number(0.0))
 }
