@@ -2019,6 +2019,8 @@ pub(super) fn register_socket(
             write_callbacks: VecDeque::new(),
         },
     );
+    // A public Socket now owns delivery even when it adopts an active raw handle.
+    super::stream_binding::release_reader(context, id);
     super::net_reference_shared_vm::install_socket_handle(context, id, socket)?;
     Ok(socket)
 }
