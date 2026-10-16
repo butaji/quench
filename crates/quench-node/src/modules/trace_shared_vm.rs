@@ -366,9 +366,11 @@ pub(crate) fn internal_binding(
         "credentials" => return super::os_binding_shared_vm::credentials_binding(context),
         "fs" => return super::fs_directory_shared_vm::binding(context),
         "errors" => return super::node_errors_shared_vm::binding(context),
+        "report" => return super::report_configuration_shared_vm::binding(context),
         "modules" => return crate::host::shared_vm::commonjs::cached_native_binding(
             context, "\0binding:modules", module_protocol_binding,
         ),
+        "contextify" => return super::contextify_shared_vm::binding(context),
         "types" => return super::util_shared_vm::types_binding(context),
         "crypto_keys" => return super::crypto_key_shared_vm::binding(context),
         "util" => return super::util_shared_vm::key_binding(context),
@@ -590,5 +592,11 @@ fn module_protocol_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<
         .map(|status| context.string_rooted(status)).collect::<Vec<_>>();
     let statuses = context.array_rooted(&statuses)?;
     put(context, binding, "compileCacheStatus", statuses)?;
+    let types = context.null_object_rooted()?;
+    for &(name, value) in super::node_protocol_constants::CACHED_CODE_TYPES {
+        let value = context.number(f64::from(value));
+        put(context, types, name, value)?;
+    }
+    put(context, binding, "cachedCodeTypes", types)?;
     Ok(binding)
 }

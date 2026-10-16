@@ -9689,3 +9689,113 @@ fn process_capture_callback_reset_prioritizes_null_and_original_type_validation(
 fn http_listening_derives_from_the_handle_and_close_cancels_pending_notification() {
     compare_node_source_with_args(include_str!("../node-tests/test-http-listening-handle.js"), &[]);
 }
+
+#[test]
+fn process_capture_state_is_canonical_receiver_independent_and_survives_collection() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-canonical-state.js"), &["--expose-gc"]);
+}
+
+#[test]
+fn process_uncaught_monitor_precedes_capture_and_can_replace_the_pending_handler() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-monitor-capture-transition.js"), &[]);
+}
+
+#[test]
+fn process_uncaught_events_ignore_monitor_results_and_use_emit_truthiness() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-uncaught-emit-truthiness.js"), &[]);
+}
+
+#[test]
+fn process_capture_delivery_reloads_the_callback_after_the_null_check() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-getter-order.js"), &[]);
+}
+
+#[test]
+fn process_auxiliary_capture_runs_in_reverse_order_with_exact_true_handling() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-auxiliary.js"), &[]);
+}
+
+#[test]
+fn process_auxiliary_capture_preserves_length_coercion_fractional_keys_and_replacement() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-auxiliary-coercion.js"), &["--expose-gc"]);
+}
+
+#[test]
+fn process_capture_methods_have_public_names_and_ordinary_constructor_shapes() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-method-shape.js"), &[]);
+}
+
+#[test]
+fn native_contextify_scripts_compile_once_keep_template_sites_and_return_global_functions() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-contextify-owned-script.js"), &["--expose-internals", "--no-warnings", "--expose-gc"]);
+}
+
+#[test]
+fn sdk_mock_tracker_preserves_call_records_restoration_and_virtual_timer_queue() {
+    compare_node_source_with_args(include_str!("../node-tests/test-sdk-mock-tracker.js"), &["--no-warnings"]);
+}
+
+#[test]
+fn original_sdk_test_harness_runs_hooks_subtests_contexts_and_mock_cleanup() {
+    compare_node_source_with_args(include_str!("../node-tests/test-sdk-test-harness.js"), &["--no-warnings", "--test-reporter=dot"]);
+}
+
+#[test]
+fn promise_async_hooks_observe_real_resources_trigger_identity_and_job_order() {
+    compare_node_source_with_args(include_str!("../node-tests/test-promise-async-hooks-lifecycle.js"), &[]);
+}
+
+#[test]
+fn promise_hooks_keep_suspended_continuations_and_reactions_live_during_gc() {
+    compare_node_source_with_args(include_str!("../node-tests/test-promise-hooks-gc-roots.js"), &["--expose-gc"]);
+}
+
+#[test]
+fn promise_init_hooks_can_settle_await_sources_reentrantly() {
+    compare_node_source_with_args(include_str!("../node-tests/test-promise-init-reentry.js"), &[]);
+}
+
+#[test]
+fn fs_internal_module_stat_follows_links_returns_errno_and_resolves_node_cwd() {
+    compare_node_source_with_args(include_str!("../node-tests/test-fs-internal-module-stat.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn process_fatal_handler_exits_preserve_sdk_status_event_suppression_and_explicit_requests() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-fatal-handler-exit.js"), &[]);
+}
+
+
+#[test]
+fn cli_version_aliases_use_the_configured_sdk_and_short_circuit_before_guest_execution() {
+    compare_node_source_with_args(include_str!("../node-tests/test-cli-version-order.js"), &[]);
+}
+
+
+#[test]
+fn process_report_configuration_uses_sdk_descriptors_validation_and_shared_native_state() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-report-configuration.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+
+#[test]
+fn process_capture_preserves_report_flag_snapshot_restoration_and_accessor_order() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-report-flags.js"), &[]);
+}
+
+
+#[test]
+fn process_report_startup_flags_preserve_environment_precedence_aliases_and_signal_registration() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-report-startup.js"), &[]);
+}
+
+
+#[test]
+fn process_events_share_emitter_storage_inspection_borrowed_methods_and_once_wrappers() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-shared-event-store.js"), &[]);
+}
+
+#[test]
+fn module_cache_protocol_types_come_from_configured_sdk_and_preserve_native_descriptors() {
+    compare_node_source_with_args(include_str!("../node-tests/test-module-cache-protocol.js"), &["--expose-internals", "--no-warnings"]);
+}

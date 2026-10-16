@@ -114,6 +114,7 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         for (name, operation) in [
             ("readdir", "fsBindingReaddir"),
             ("readdirRecursive", "fsBindingReaddirRecursive"),
+            ("internalModuleStat", "fsBindingInternalModuleStat"),
         ] {
             let function = c.host_function(crate::host::shared_vm::operation(operation))?;
             let key = c.string_rooted("name");
@@ -125,6 +126,21 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         Ok(binding)
     })
 }
+/// The SDK's allocation-free module/directory classifier follows symlinks and
+/// returns libuv status instead of constructing Stat or Error objects.
+pub(crate) fn internal_module_stat(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let input = args.first().copied().ok_or_else(|| RootedError::host("internalModuleStat requires a path"))?;
+    let mut path = c.string_text(input)?.ok_or_else(|| RootedError::host("internalModuleStat requires a string"))?;
+    // The native SDK consumes BufferValue's C string, including its NUL boundary.
+    if let Some(end) = path.find('\0') { path.truncate(end); }
+    let path = c.host_mut().shared_state().borrow().cwd.resolve_io_path(Path::new(&path));
+    let status = match std::fs::metadata(path) {
+        Ok(metadata) => i32::from(metadata.is_dir()),
+        Err(error) => super::fs_error_codes::code_for(&error).1,
+    };
+    Ok(c.number(f64::from(status)))
+}
+
 fn read(c: &mut Context<'_>, args: &[RootId], recursive: bool) -> Result<RootId, RootedError> {
     if args.len() != 3 {
         return Err(RootedError::host(

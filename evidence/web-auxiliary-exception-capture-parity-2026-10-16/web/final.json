@@ -1,0 +1,442 @@
+{
+  "complete": true,
+  "cpu_limits": "400000 100000\n",
+  "engines": {
+    "bun": {
+      "binary": "/workspace/quench/work/bun/bin/bun",
+      "jit_proof": "Modified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)\n",
+      "server_args": [],
+      "server_env": {
+        "BUN_JSC_useJIT": "0"
+      },
+      "sha256": "7ce7d6b654eddeec20afddf2396317fba6dc19ab52788a27e894e1806bf8f24b",
+      "version": "1.4.3\n"
+    },
+    "node": {
+      "binary": "/workspace/quench/work/node-v26.12.0-linux-x64/bin/node",
+      "jit_proof": "true\nundefined\n",
+      "server_args": [
+        "--jitless"
+      ],
+      "server_env": {},
+      "sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943",
+      "version": "v26.12.0\n"
+    },
+    "quench": {
+      "binary": "/workspace/quench/work/quench-process-auxiliary-capture-qualified",
+      "jit_proof": "quench-node uses the default interpreted execution mode; no compiled-mode flag",
+      "server_args": [],
+      "server_env": {},
+      "sha256": "dc79ded506fd17ae4944727be21d82c796a8c9696d6910006247712139e8fb35",
+      "version": "v22.0.0\n"
+    }
+  },
+  "host": "Linux 7ba71d3070cc 6.18.44 #1 SMP Sat Sep 26 20:02:31 UTC 2026 x86_64 GNU/Linux\n",
+  "load_generator": {
+    "binary": "/workspace/quench/work/bombardier",
+    "sha256": "d3dc4a9ecec3f8bd43f8c196ad533cb4b79ca55b11fc74c3184231e00a95bc0b",
+    "version": "bombardier version unspecified linux/amd64\n"
+  },
+  "memory_limit": "17179869184\n",
+  "rounds": 1,
+  "runner": {
+    "binary": "/workspace/quench/target/debug/web",
+    "sha256": "58c2307c29affe49f7e5e9ab0e32a394fdde8233d9bd464e1f713dbb678624bb"
+  },
+  "samples": [
+    {
+      "round": 0,
+      "sample": {
+        "entry_sha256": "e53d8ffc7164529c9c62c04bfd63e7712336251d43c1d12209b2713b7a42c386",
+        "result": {
+          "correctness": {
+            "body": "passed",
+            "ping": "passed",
+            "query": "passed",
+            "query-dynamic": "passed",
+            "video": "passed"
+          },
+          "linux_proc_status_after": "Name:\tquench-process-\nUmask:\t0077\nState:\tS (sleeping)\nTgid:\t756918\nNgid:\t0\nPid:\t756918\nPPid:\t756814\nTracerPid:\t0\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nFDSize:\t64\nGroups:\t \nNStgid:\t756918\nNSpid:\t756918\nNSpgid:\t756535\nNSsid:\t756535\nKthread:\t0\nVmPeak:\t 5180004 kB\nVmSize:\t 5169856 kB\nVmLck:\t       0 kB\nVmPin:\t       0 kB\nVmHWM:\t   65320 kB\nVmRSS:\t   64808 kB\nRssAnon:\t   48100 kB\nRssFile:\t   16708 kB\nRssShmem:\t       0 kB\nVmData:\t  869664 kB\nVmStk:\t     132 kB\nVmExe:\t   23568 kB\nVmLib:\t    3416 kB\nVmPTE:\t     260 kB\nVmSwap:\t       0 kB\nHugetlbPages:\t       0 kB\nCoreDumping:\t0\nTHP_enabled:\t1\nuntag_mask:\t0xffffffffffffffff\nThreads:\t2\nSigQ:\t21/71955\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t000000007ffbfeff\nSigIgn:\t0000000001001000\nSigCgt:\t0000000100000440\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t000001ffffffffff\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\nSpeculation_Store_Bypass:\tvulnerable\nSpeculationIndirectBranch:\talways enabled\nCpus_allowed:\t1f\nCpus_allowed_list:\t0-4\nMems_allowed:\t00000000,00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t1\nnonvoluntary_ctxt_switches:\t0\n",
+          "linux_proc_status_before": "Name:\tquench-process-\nUmask:\t0077\nState:\tS (sleeping)\nTgid:\t756918\nNgid:\t0\nPid:\t756918\nPPid:\t756814\nTracerPid:\t0\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nFDSize:\t64\nGroups:\t \nNStgid:\t756918\nNSpid:\t756918\nNSpgid:\t756535\nNSsid:\t756535\nKthread:\t0\nVmPeak:\t 5180004 kB\nVmSize:\t 5169660 kB\nVmLck:\t       0 kB\nVmPin:\t       0 kB\nVmHWM:\t   58576 kB\nVmRSS:\t   49172 kB\nRssAnon:\t   38116 kB\nRssFile:\t   11056 kB\nRssShmem:\t       0 kB\nVmData:\t  859856 kB\nVmStk:\t     132 kB\nVmExe:\t   23568 kB\nVmLib:\t    3416 kB\nVmPTE:\t     240 kB\nVmSwap:\t       0 kB\nHugetlbPages:\t       0 kB\nCoreDumping:\t0\nTHP_enabled:\t1\nuntag_mask:\t0xffffffffffffffff\nThreads:\t2\nSigQ:\t21/71955\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t000000007ffbfeff\nSigIgn:\t0000000001001000\nSigCgt:\t0000000100000440\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t000001ffffffffff\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\nSpeculation_Store_Bypass:\tvulnerable\nSpeculationIndirectBranch:\talways enabled\nCpus_allowed:\t1f\nCpus_allowed_list:\t0-4\nMems_allowed:\t00000000,00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t1\nnonvoluntary_ctxt_switches:\t0\n",
+          "startup_ms": 1006.30875,
+          "valid": true,
+          "workloads": [
+            {
+              "valid": true,
+              "verification_only": true,
+              "workload": "ping"
+            },
+            {
+              "valid": true,
+              "verification_only": true,
+              "workload": "query"
+            },
+            {
+              "valid": true,
+              "verification_only": true,
+              "workload": "body"
+            },
+            {
+              "valid": true,
+              "verification_only": true,
+              "workload": "video"
+            }
+          ]
+        }
+      },
+      "target": "quench/express",
+      "valid": true
+    },
+    {
+      "round": 0,
+      "sample": {
+        "entry_sha256": "2a6fd9b7c208d8e1fa80d9581fdd1d15c074b6e659cbf76083e5f2ead904b091",
+        "result": {
+          "correctness": {
+            "body": "passed",
+            "ping": "passed",
+            "query": "passed",
+            "query-dynamic": "passed",
+            "video": "passed"
+          },
+          "linux_proc_status_after": "Name:\tquench-process-\nUmask:\t0077\nState:\tS (sleeping)\nTgid:\t756946\nNgid:\t0\nPid:\t756946\nPPid:\t756814\nTracerPid:\t0\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nFDSize:\t64\nGroups:\t \nNStgid:\t756946\nNSpid:\t756946\nNSpgid:\t756535\nNSsid:\t756535\nKthread:\t0\nVmPeak:\t 5185168 kB\nVmSize:\t 5177828 kB\nVmLck:\t       0 kB\nVmPin:\t       0 kB\nVmHWM:\t   95976 kB\nVmRSS:\t   95976 kB\nRssAnon:\t   78864 kB\nRssFile:\t   17112 kB\nRssShmem:\t       0 kB\nVmData:\t  900324 kB\nVmStk:\t     132 kB\nVmExe:\t   23568 kB\nVmLib:\t    3416 kB\nVmPTE:\t     320 kB\nVmSwap:\t       0 kB\nHugetlbPages:\t       0 kB\nCoreDumping:\t0\nTHP_enabled:\t1\nuntag_mask:\t0xffffffffffffffff\nThreads:\t2\nSigQ:\t21/71955\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t000000007ffbfeff\nSigIgn:\t0000000001001000\nSigCgt:\t0000000100000440\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t000001ffffffffff\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\nSpeculation_Store_Bypass:\tvulnerable\nSpeculationIndirectBranch:\talways enabled\nCpus_allowed:\t1f\nCpus_allowed_list:\t0-4\nMems_allowed:\t00000000,00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t1\nnonvoluntary_ctxt_switches:\t0\n",
+          "linux_proc_status_before": "Name:\tquench-process-\nUmask:\t0077\nState:\tS (sleeping)\nTgid:\t756946\nNgid:\t0\nPid:\t756946\nPPid:\t756814\nTracerPid:\t0\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nFDSize:\t64\nGroups:\t \nNStgid:\t756946\nNSpid:\t756946\nNSpgid:\t756535\nNSsid:\t756535\nKthread:\t0\nVmPeak:\t 5185168 kB\nVmSize:\t 5177828 kB\nVmLck:\t       0 kB\nVmPin:\t       0 kB\nVmHWM:\t   81236 kB\nVmRSS:\t   81236 kB\nRssAnon:\t   64696 kB\nRssFile:\t   16540 kB\nRssShmem:\t       0 kB\nVmData:\t  886224 kB\nVmStk:\t     132 kB\nVmExe:\t   23568 kB\nVmLib:\t    3416 kB\nVmPTE:\t     292 kB\nVmSwap:\t       0 kB\nHugetlbPages:\t       0 kB\nCoreDumping:\t0\nTHP_enabled:\t1\nuntag_mask:\t0xffffffffffffffff\nThreads:\t2\nSigQ:\t21/71955\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t000000007ffbfeff\nSigIgn:\t0000000001001000\nSigCgt:\t0000000100000440\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t000001ffffffffff\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\nSpeculation_Store_Bypass:\tvulnerable\nSpeculationIndirectBranch:\talways enabled\nCpus_allowed:\t1f\nCpus_allowed_list:\t0-4\nMems_allowed:\t00000000,00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t1\nnonvoluntary_ctxt_switches:\t0\n",
+          "startup_ms": 2609.706025,
+          "valid": true,
+          "workloads": [
+            {
+              "valid": true,
+              "verification_only": true,
+              "workload": "ping"
+            },
+            {
+              "valid": true,
+              "verification_only": true,
+              "workload": "query"
+            },
+            {
+              "valid": true,
+              "verification_only": true,
+              "workload": "body"
+            },
+            {
+              "valid": true,
+              "verification_only": true,
+              "workload": "video"
+            }
+          ]
+        }
+      },
+      "target": "quench/fastify",
+      "valid": true
+    },
+    {
+      "round": 0,
+      "sample": {
+        "entry_sha256": "0eeb347f1881eeb760a14ed656860734970375d6dc3dd3b32d2c9a778f719656",
+        "result": {
+          "correctness": {
+            "body": "passed",
+            "ping": "passed",
+            "query": "passed",
+            "query-dynamic": "passed",
+            "video": "passed"
+          },
+          "linux_proc_status_after": "Name:\tquench-process-\nUmask:\t0077\nState:\tS (sleeping)\nTgid:\t756974\nNgid:\t0\nPid:\t756974\nPPid:\t756814\nTracerPid:\t0\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nFDSize:\t64\nGroups:\t \nNStgid:\t756974\nNSpid:\t756974\nNSpgid:\t756535\nNSsid:\t756535\nKthread:\t0\nVmPeak:\t 5175456 kB\nVmSize:\t 5170468 kB\nVmLck:\t       0 kB\nVmPin:\t       0 kB\nVmHWM:\t   69972 kB\nVmRSS:\t   66348 kB\nRssAnon:\t   49316 kB\nRssFile:\t   17032 kB\nRssShmem:\t       0 kB\nVmData:\t  874012 kB\nVmStk:\t     132 kB\nVmExe:\t   23568 kB\nVmLib:\t    3416 kB\nVmPTE:\t     264 kB\nVmSwap:\t       0 kB\nHugetlbPages:\t       0 kB\nCoreDumping:\t0\nTHP_enabled:\t1\nuntag_mask:\t0xffffffffffffffff\nThreads:\t2\nSigQ:\t21/71955\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t000000007ffbfeff\nSigIgn:\t0000000001001000\nSigCgt:\t0000000100000440\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t000001ffffffffff\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\nSpeculation_Store_Bypass:\tvulnerable\nSpeculationIndirectBranch:\talways enabled\nCpus_allowed:\t1f\nCpus_allowed_list:\t0-4\nMems_allowed:\t00000000,00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t1\nnonvoluntary_ctxt_switches:\t0\n",
+          "linux_proc_status_before": "Name:\tquench-process-\nUmask:\t0077\nState:\tS (sleeping)\nTgid:\t756974\nNgid:\t0\nPid:\t756974\nPPid:\t756814\nTracerPid:\t0\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nFDSize:\t64\nGroups:\t \nNStgid:\t756974\nNSpid:\t756974\nNSpgid:\t756535\nNSsid:\t756535\nKthread:\t0\nVmPeak:\t 5175456 kB\nVmSize:\t 5170468 kB\nVmLck:\t       0 kB\nVmPin:\t       0 kB\nVmHWM:\t   58984 kB\nVmRSS:\t   49412 kB\nRssAnon:\t   37712 kB\nRssFile:\t   11700 kB\nRssShmem:\t       0 kB\nVmData:\t  859572 kB\nVmStk:\t     132 kB\nVmExe:\t   23568 kB\nVmLib:\t    3416 kB\nVmPTE:\t     232 kB\nVmSwap:\t       0 kB\nHugetlbPages:\t       0 kB\nCoreDumping:\t0\nTHP_enabled:\t1\nuntag_mask:\t0xffffffffffffffff\nThreads:\t2\nSigQ:\t21/71955\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t000000007ffbfeff\nSigIgn:\t0000000001001000\nSigCgt:\t0000000100000440\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t000001ffffffffff\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\nSpeculation_Store_Bypass:\tvulnerable\nSpeculationIndirectBranch:\talways enabled\nCpus_allowed:\t1f\nCpus_allowed_list:\t0-4\nMems_allowed:\t00000000,00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t1\nnonvoluntary_ctxt_switches:\t0\n",
+          "startup_ms": 903.485085,
+          "valid": true,
+          "workloads": [
+            {
+              "valid": true,
+              "verification_only": true,
+              "workload": "ping"
+            },
+            {
+              "valid": true,
+              "verification_only": true,
+              "workload": "query"
+            },
+            {
+              "valid": true,
+              "verification_only": true,
+              "workload": "body"
+            },
+            {
+              "valid": true,
+              "verification_only": true,
+              "workload": "video"
+            }
+          ]
+        }
+      },
+      "target": "quench/hono",
+      "valid": true
+    },
+    {
+      "round": 0,
+      "sample": {
+        "entry_sha256": "e53d8ffc7164529c9c62c04bfd63e7712336251d43c1d12209b2713b7a42c386",
+        "result": {
+          "correctness": {
+            "body": "passed",
+            "ping": "passed",
+            "query": "passed",
+            "query-dynamic": "passed",
+            "video": "passed"
+          },
+          "linux_proc_status_after": "Name:\tnode-MainThread\nUmask:\t0077\nState:\tS (sleeping)\nTgid:\t757002\nNgid:\t0\nPid:\t757002\nPPid:\t756814\nTracerPid:\t0\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nFDSize:\t64\nGroups:\t \nNStgid:\t757002\nNSpid:\t757002\nNSpgid:\t756535\nNSsid:\t756535\nKthread:\t0\nVmPeak:\t  949156 kB\nVmSize:\t  949156 kB\nVmLck:\t       0 kB\nVmPin:\t       0 kB\nVmHWM:\t   71648 kB\nVmRSS:\t   71648 kB\nRssAnon:\t   32008 kB\nRssFile:\t   39640 kB\nRssShmem:\t       0 kB\nVmData:\t  106832 kB\nVmStk:\t     132 kB\nVmExe:\t   45684 kB\nVmLib:\t    3436 kB\nVmPTE:\t     932 kB\nVmSwap:\t       0 kB\nHugetlbPages:\t       0 kB\nCoreDumping:\t0\nTHP_enabled:\t1\nuntag_mask:\t0xffffffffffffffff\nThreads:\t11\nSigQ:\t21/71955\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t0000000000000000\nSigIgn:\t0000000001001000\nSigCgt:\t0000000100004602\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t000001ffffffffff\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\nSpeculation_Store_Bypass:\tvulnerable\nSpeculationIndirectBranch:\talways enabled\nCpus_allowed:\t1f\nCpus_allowed_list:\t0-4\nMems_allowed:\t00000000,00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t236\nnonvoluntary_ctxt_switches:\t0\n",
+          "linux_proc_status_before": "Name:\tnode-MainThread\nUmask:\t0077\nState:\tR (running)\nTgid:\t757002\nNgid:\t0\nPid:\t757002\nPPid:\t756814\nTracerPid:\t0\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nFDSize:\t64\nGroups:\t \nNStgid:\t757002\nNSpid:\t757002\nNSpgid:\t756535\nNSsid:\t756535\nKthread:\t0\nVmPeak:\t  901952 kB\nVmSize:\t  901700 kB\nVmLck:\t       0 kB\nVmPin:\t       0 kB\nVmHWM:\t   54728 kB\nVmRSS:\t   54728 kB\nRssAnon:\t   17028 kB\nRssFile:\t   37700 kB\nRssShmem:\t       0 kB\nVmData:\t   59392 kB\nVmStk:\t     132 kB\nVmExe:\t   45684 kB\nVmLib:\t    3436 kB\nVmPTE:\t     856 kB\nVmSwap:\t       0 kB\nHugetlbPages:\t       0 kB\nCoreDumping:\t0\nTHP_enabled:\t1\nuntag_mask:\t0xffffffffffffffff\nThreads:\t7\nSigQ:\t21/71955\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t0000000000000000\nSigIgn:\t0000000001001000\nSigCgt:\t0000000100004602\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t000001ffffffffff\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\nSpeculation_Store_Bypass:\tvulnerable\nSpeculationIndirectBranch:\talways enabled\nCpus_allowed:\t1f\nCpus_allowed_list:\t0-4\nMems_allowed:\t00000000,00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t10\nnonvoluntary_ctxt_switches:\t0\n",
+          "startup_ms": 100.894997,
+          "valid": true,
+          "workloads": [
+            {
+              "valid": true,
+              "verification_only": true,
+              "workload": "ping"
+            },
+            {
+              "valid": true,
+              "verification_only": true,
+              "workload": "query"
+            },
+            {
+              "valid": true,
+              "verification_only": true,
+              "workload": "body"
+            },
+            {
+              "valid": true,
+              "verification_only": true,
+              "workload": "video"
+            }
+          ]
+        }
+      },
+      "target": "node/express",
+      "valid": true
+    },
+    {
+      "round": 0,
+      "sample": {
+        "entry_sha256": "2a6fd9b7c208d8e1fa80d9581fdd1d15c074b6e659cbf76083e5f2ead904b091",
+        "result": {
+          "correctness": {
+            "body": "passed",
+            "ping": "passed",
+            "query": "passed",
+            "query-dynamic": "passed",
+            "video": "passed"
+          },
+          "linux_proc_status_after": "Name:\tnode-MainThread\nUmask:\t0077\nState:\tS (sleeping)\nTgid:\t757039\nNgid:\t0\nPid:\t757039\nPPid:\t756814\nTracerPid:\t0\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nFDSize:\t64\nGroups:\t \nNStgid:\t757039\nNSpid:\t757039\nNSpgid:\t756535\nNSsid:\t756535\nKthread:\t0\nVmPeak:\t 1149096 kB\nVmSize:\t 1095984 kB\nVmLck:\t       0 kB\nVmPin:\t       0 kB\nVmHWM:\t   81604 kB\nVmRSS:\t   81604 kB\nRssAnon:\t   40048 kB\nRssFile:\t   41556 kB\nRssShmem:\t       0 kB\nVmData:\t  123700 kB\nVmStk:\t     132 kB\nVmExe:\t   45684 kB\nVmLib:\t    3436 kB\nVmPTE:\t    1212 kB\nVmSwap:\t       0 kB\nHugetlbPages:\t       0 kB\nCoreDumping:\t0\nTHP_enabled:\t1\nuntag_mask:\t0xffffffffffffffff\nThreads:\t11\nSigQ:\t21/71955\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t0000000000000000\nSigIgn:\t0000000001001000\nSigCgt:\t0000000100004602\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t000001ffffffffff\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\nSpeculation_Store_Bypass:\tvulnerable\nSpeculationIndirectBranch:\talways enabled\nCpus_allowed:\t1f\nCpus_allowed_list:\t0-4\nMems_allowed:\t00000000,00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t243\nnonvoluntary_ctxt_switches:\t2\n",
+          "linux_proc_status_before": "Name:\tnode-MainThread\nUmask:\t0077\nState:\tR (running)\nTgid:\t757039\nNgid:\t0\nPid:\t757039\nPPid:\t756814\nTracerPid:\t0\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nFDSize:\t64\nGroups:\t \nNStgid:\t757039\nNSpid:\t757039\nNSpgid:\t756535\nNSsid:\t756535\nKthread:\t0\nVmPeak:\t 1149096 kB\nVmSize:\t 1083560 kB\nVmLck:\t       0 kB\nVmPin:\t       0 kB\nVmHWM:\t   67848 kB\nVmRSS:\t   67848 kB\nRssAnon:\t   27324 kB\nRssFile:\t   40524 kB\nRssShmem:\t       0 kB\nVmData:\t  111276 kB\nVmStk:\t     132 kB\nVmExe:\t   45684 kB\nVmLib:\t    3436 kB\nVmPTE:\t    1176 kB\nVmSwap:\t       0 kB\nHugetlbPages:\t       0 kB\nCoreDumping:\t0\nTHP_enabled:\t1\nuntag_mask:\t0xffffffffffffffff\nThreads:\t11\nSigQ:\t21/71955\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t0000000000000000\nSigIgn:\t0000000001001000\nSigCgt:\t0000000100004602\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t000001ffffffffff\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\nSpeculation_Store_Bypass:\tvulnerable\nSpeculationIndirectBranch:\talways enabled\nCpus_allowed:\t1f\nCpus_allowed_list:\t0-4\nMems_allowed:\t00000000,00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t19\nnonvoluntary_ctxt_switches:\t0\n",
+          "startup_ms": 201.164499,
+          "valid": true,
+          "workloads": [
+            {
+              "valid": true,
+              "verification_only": true,
+              "workload": "ping"
+            },
+            {
+              "valid": true,
+              "verification_only": true,
+              "workload": "query"
+            },
+            {
+              "valid": true,
+              "verification_only": true,
+              "workload": "body"
+            },
+            {
+              "valid": true,
+              "verification_only": true,
+              "workload": "video"
+            }
+          ]
+        }
+      },
+      "target": "node/fastify",
+      "valid": true
+    },
+    {
+      "round": 0,
+      "sample": {
+        "entry_sha256": "0eeb347f1881eeb760a14ed656860734970375d6dc3dd3b32d2c9a778f719656",
+        "result": {
+          "correctness": {
+            "body": "passed",
+            "ping": "passed",
+            "query": "passed",
+            "query-dynamic": "passed",
+            "video": "passed"
+          },
+          "linux_proc_status_after": "Name:\tnode-MainThread\nUmask:\t0077\nState:\tS (sleeping)\nTgid:\t757077\nNgid:\t0\nPid:\t757077\nPPid:\t756814\nTracerPid:\t0\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nFDSize:\t64\nGroups:\t \nNStgid:\t757077\nNSpid:\t757077\nNSpgid:\t756535\nNSsid:\t756535\nKthread:\t0\nVmPeak:\t  969676 kB\nVmSize:\t  969676 kB\nVmLck:\t       0 kB\nVmPin:\t       0 kB\nVmHWM:\t   87264 kB\nVmRSS:\t   87264 kB\nRssAnon:\t   44800 kB\nRssFile:\t   42464 kB\nRssShmem:\t       0 kB\nVmData:\t  128212 kB\nVmStk:\t     132 kB\nVmExe:\t   45684 kB\nVmLib:\t    3436 kB\nVmPTE:\t     980 kB\nVmSwap:\t       0 kB\nHugetlbPages:\t       0 kB\nCoreDumping:\t0\nTHP_enabled:\t1\nuntag_mask:\t0xffffffffffffffff\nThreads:\t11\nSigQ:\t21/71955\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t0000000000000000\nSigIgn:\t0000000001001000\nSigCgt:\t0000000100004602\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t000001ffffffffff\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\nSpeculation_Store_Bypass:\tvulnerable\nSpeculationIndirectBranch:\talways enabled\nCpus_allowed:\t1f\nCpus_allowed_list:\t0-4\nMems_allowed:\t00000000,00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t24\nnonvoluntary_ctxt_switches:\t3\n",
+          "linux_proc_status_before": "Name:\tnode-MainThread\nUmask:\t0077\nState:\tR (running)\nTgid:\t757077\nNgid:\t0\nPid:\t757077\nPPid:\t756814\nTracerPid:\t0\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nFDSize:\t64\nGroups:\t \nNStgid:\t757077\nNSpid:\t757077\nNSpgid:\t756535\nNSsid:\t756535\nKthread:\t0\nVmPeak:\t  907984 kB\nVmSize:\t  907732 kB\nVmLck:\t       0 kB\nVmPin:\t       0 kB\nVmHWM:\t   57240 kB\nVmRSS:\t   57240 kB\nRssAnon:\t   15944 kB\nRssFile:\t   41296 kB\nRssShmem:\t       0 kB\nVmData:\t   66276 kB\nVmStk:\t     132 kB\nVmExe:\t   45684 kB\nVmLib:\t    3436 kB\nVmPTE:\t     776 kB\nVmSwap:\t       0 kB\nHugetlbPages:\t       0 kB\nCoreDumping:\t0\nTHP_enabled:\t1\nuntag_mask:\t0xffffffffffffffff\nThreads:\t7\nSigQ:\t21/71955\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t0000000000000000\nSigIgn:\t0000000001001000\nSigCgt:\t0000000100004602\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t000001ffffffffff\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\nSpeculation_Store_Bypass:\tvulnerable\nSpeculationIndirectBranch:\talways enabled\nCpus_allowed:\t1f\nCpus_allowed_list:\t0-4\nMems_allowed:\t00000000,00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t7\nnonvoluntary_ctxt_switches:\t2\n",
+          "startup_ms": 200.919061,
+          "valid": true,
+          "workloads": [
+            {
+              "valid": true,
+              "verification_only": true,
+              "workload": "ping"
+            },
+            {
+              "valid": true,
+              "verification_only": true,
+              "workload": "query"
+            },
+            {
+              "valid": true,
+              "verification_only": true,
+              "workload": "body"
+            },
+            {
+              "valid": true,
+              "verification_only": true,
+              "workload": "video"
+            }
+          ]
+        }
+      },
+      "target": "node/hono",
+      "valid": true
+    },
+    {
+      "round": 0,
+      "sample": {
+        "entry_sha256": "725a134597664be977601818798572612babc975b8f7baad1bfaa30fa084fd60",
+        "result": {
+          "correctness": {
+            "body": "passed",
+            "ping": "passed",
+            "query": "passed",
+            "query-dynamic": "passed",
+            "video": "passed"
+          },
+          "linux_proc_status_after": "Name:\tbun\nUmask:\t0077\nState:\tS (sleeping)\nTgid:\t757115\nNgid:\t0\nPid:\t757115\nPPid:\t756814\nTracerPid:\t0\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nFDSize:\t1024\nGroups:\t \nNStgid:\t757115\nNSpid:\t757115\nNSpgid:\t756535\nNSsid:\t756535\nKthread:\t0\nVmPeak:\t 9531744 kB\nVmSize:\t 5556156 kB\nVmLck:\t       0 kB\nVmPin:\t       0 kB\nVmHWM:\t   27424 kB\nVmRSS:\t   27424 kB\nRssAnon:\t    5236 kB\nRssFile:\t   22188 kB\nRssShmem:\t       0 kB\nVmData:\t 5269840 kB\nVmStk:\t     132 kB\nVmExe:\t   63980 kB\nVmLib:\t    2096 kB\nVmPTE:\t     288 kB\nVmSwap:\t       0 kB\nHugetlbPages:\t       0 kB\nCoreDumping:\t0\nTHP_enabled:\t1\nuntag_mask:\t0xffffffffffffffff\nThreads:\t7\nSigQ:\t21/71955\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t0000000000000000\nSigIgn:\t0000000001001000\nSigCgt:\t00000001200004f8\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t000001ffffffffff\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\nSpeculation_Store_Bypass:\tvulnerable\nSpeculationIndirectBranch:\talways enabled\nCpus_allowed:\t1f\nCpus_allowed_list:\t0-4\nMems_allowed:\t00000000,00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t41\nnonvoluntary_ctxt_switches:\t0\n",
+          "linux_proc_status_before": "Name:\tbun\nUmask:\t0077\nState:\tR (running)\nTgid:\t757115\nNgid:\t0\nPid:\t757115\nPPid:\t756814\nTracerPid:\t0\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nFDSize:\t1024\nGroups:\t \nNStgid:\t757115\nNSpid:\t757115\nNSpgid:\t756535\nNSsid:\t756535\nKthread:\t0\nVmPeak:\t 9531744 kB\nVmSize:\t 5416884 kB\nVmLck:\t       0 kB\nVmPin:\t       0 kB\nVmHWM:\t   24424 kB\nVmRSS:\t   24408 kB\nRssAnon:\t    4844 kB\nRssFile:\t   19564 kB\nRssShmem:\t       0 kB\nVmData:\t 5261384 kB\nVmStk:\t     132 kB\nVmExe:\t   63980 kB\nVmLib:\t    2096 kB\nVmPTE:\t     272 kB\nVmSwap:\t       0 kB\nHugetlbPages:\t       0 kB\nCoreDumping:\t0\nTHP_enabled:\t1\nuntag_mask:\t0xffffffffffffffff\nThreads:\t5\nSigQ:\t21/71955\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t0000000000000000\nSigIgn:\t0000000001001000\nSigCgt:\t00000001200004f8\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t000001ffffffffff\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\nSpeculation_Store_Bypass:\tvulnerable\nSpeculationIndirectBranch:\talways enabled\nCpus_allowed:\t1f\nCpus_allowed_list:\t0-4\nMems_allowed:\t00000000,00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t23\nnonvoluntary_ctxt_switches:\t0\n",
+          "startup_ms": 100.60972699999999,
+          "valid": true,
+          "workloads": [
+            {
+              "valid": true,
+              "verification_only": true,
+              "workload": "ping"
+            },
+            {
+              "valid": true,
+              "verification_only": true,
+              "workload": "query"
+            },
+            {
+              "valid": true,
+              "verification_only": true,
+              "workload": "body"
+            },
+            {
+              "valid": true,
+              "verification_only": true,
+              "workload": "video"
+            }
+          ]
+        }
+      },
+      "target": "bun/elysia",
+      "valid": true
+    },
+    {
+      "round": 0,
+      "sample": {
+        "entry_sha256": "1d11b657372ced59445ba905b33759dd9e8379161c7653710bff39bc64cf07b9",
+        "result": {
+          "correctness": {
+            "body": "passed",
+            "ping": "passed",
+            "query": "passed",
+            "query-dynamic": "passed",
+            "video": "passed"
+          },
+          "linux_proc_status_after": "Name:\tbun\nUmask:\t0077\nState:\tS (sleeping)\nTgid:\t757153\nNgid:\t0\nPid:\t757153\nPPid:\t756814\nTracerPid:\t0\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nFDSize:\t1024\nGroups:\t \nNStgid:\t757153\nNSpid:\t757153\nNSpgid:\t756535\nNSsid:\t756535\nKthread:\t0\nVmPeak:\t 9531744 kB\nVmSize:\t 5556156 kB\nVmLck:\t       0 kB\nVmPin:\t       0 kB\nVmHWM:\t   24680 kB\nVmRSS:\t   24680 kB\nRssAnon:\t    3960 kB\nRssFile:\t   20720 kB\nRssShmem:\t       0 kB\nVmData:\t 5269840 kB\nVmStk:\t     132 kB\nVmExe:\t   63980 kB\nVmLib:\t    2096 kB\nVmPTE:\t     268 kB\nVmSwap:\t       0 kB\nHugetlbPages:\t       0 kB\nCoreDumping:\t0\nTHP_enabled:\t1\nuntag_mask:\t0xffffffffffffffff\nThreads:\t7\nSigQ:\t21/71955\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t0000000000000000\nSigIgn:\t0000000001001000\nSigCgt:\t00000001200004f8\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t000001ffffffffff\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\nSpeculation_Store_Bypass:\tvulnerable\nSpeculationIndirectBranch:\talways enabled\nCpus_allowed:\t1f\nCpus_allowed_list:\t0-4\nMems_allowed:\t00000000,00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t45\nnonvoluntary_ctxt_switches:\t2\n",
+          "linux_proc_status_before": "Name:\tbun\nUmask:\t0077\nState:\tR (running)\nTgid:\t757153\nNgid:\t0\nPid:\t757153\nPPid:\t756814\nTracerPid:\t0\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nFDSize:\t1024\nGroups:\t \nNStgid:\t757153\nNSpid:\t757153\nNSpgid:\t756535\nNSsid:\t756535\nKthread:\t0\nVmPeak:\t 9531744 kB\nVmSize:\t 5416884 kB\nVmLck:\t       0 kB\nVmPin:\t       0 kB\nVmHWM:\t   19228 kB\nVmRSS:\t   19228 kB\nRssAnon:\t    3052 kB\nRssFile:\t   16176 kB\nRssShmem:\t       0 kB\nVmData:\t 5261384 kB\nVmStk:\t     132 kB\nVmExe:\t   63980 kB\nVmLib:\t    2096 kB\nVmPTE:\t     248 kB\nVmSwap:\t       0 kB\nHugetlbPages:\t       0 kB\nCoreDumping:\t0\nTHP_enabled:\t1\nuntag_mask:\t0xffffffffffffffff\nThreads:\t5\nSigQ:\t21/71955\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t0000000000000000\nSigIgn:\t0000000001001000\nSigCgt:\t00000001200004f8\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t000001ffffffffff\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\nSpeculation_Store_Bypass:\tvulnerable\nSpeculationIndirectBranch:\talways enabled\nCpus_allowed:\t1f\nCpus_allowed_list:\t0-4\nMems_allowed:\t00000000,00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t28\nnonvoluntary_ctxt_switches:\t1\n",
+          "startup_ms": 100.89174,
+          "valid": true,
+          "workloads": [
+            {
+              "valid": true,
+              "verification_only": true,
+              "workload": "ping"
+            },
+            {
+              "valid": true,
+              "verification_only": true,
+              "workload": "query"
+            },
+            {
+              "valid": true,
+              "verification_only": true,
+              "workload": "body"
+            },
+            {
+              "valid": true,
+              "verification_only": true,
+              "workload": "video"
+            }
+          ]
+        }
+      },
+      "target": "bun/hono",
+      "valid": true
+    },
+    {
+      "round": 0,
+      "sample": {
+        "entry_sha256": "2823b737ce8e33c2053fd17ca1db89a8f676ecd667952002408668ae1e46954d",
+        "result": {
+          "correctness": {
+            "body": "passed",
+            "ping": "passed",
+            "query": "passed",
+            "query-dynamic": "passed",
+            "video": "passed"
+          },
+          "linux_proc_status_after": "Name:\tbun\nUmask:\t0077\nState:\tS (sleeping)\nTgid:\t757186\nNgid:\t0\nPid:\t757186\nPPid:\t756814\nTracerPid:\t0\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nFDSize:\t1024\nGroups:\t \nNStgid:\t757186\nNSpid:\t757186\nNSpgid:\t756535\nNSsid:\t756535\nKthread:\t0\nVmPeak:\t 9531744 kB\nVmSize:\t 5626308 kB\nVmLck:\t       0 kB\nVmPin:\t       0 kB\nVmHWM:\t   46116 kB\nVmRSS:\t   46116 kB\nRssAnon:\t   20940 kB\nRssFile:\t   25176 kB\nRssShmem:\t       0 kB\nVmData:\t 5274580 kB\nVmStk:\t     132 kB\nVmExe:\t   63980 kB\nVmLib:\t    2096 kB\nVmPTE:\t     344 kB\nVmSwap:\t       0 kB\nHugetlbPages:\t       0 kB\nCoreDumping:\t0\nTHP_enabled:\t1\nuntag_mask:\t0xffffffffffffffff\nThreads:\t9\nSigQ:\t21/71955\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t0000000000000000\nSigIgn:\t0000000001001000\nSigCgt:\t00000001200004f8\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t000001ffffffffff\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\nSpeculation_Store_Bypass:\tvulnerable\nSpeculationIndirectBranch:\talways enabled\nCpus_allowed:\t1f\nCpus_allowed_list:\t0-4\nMems_allowed:\t00000000,00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t321\nnonvoluntary_ctxt_switches:\t30\n",
+          "linux_proc_status_before": "Name:\tbun\nUmask:\t0077\nState:\tR (running)\nTgid:\t757186\nNgid:\t0\nPid:\t757186\nPPid:\t756814\nTracerPid:\t0\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nFDSize:\t1024\nGroups:\t \nNStgid:\t757186\nNSpid:\t757186\nNSpgid:\t756535\nNSsid:\t756535\nKthread:\t0\nVmPeak:\t 9531744 kB\nVmSize:\t 5556672 kB\nVmLck:\t       0 kB\nVmPin:\t       0 kB\nVmHWM:\t   40916 kB\nVmRSS:\t   39228 kB\nRssAnon:\t   16992 kB\nRssFile:\t   22236 kB\nRssShmem:\t       0 kB\nVmData:\t 5270352 kB\nVmStk:\t     132 kB\nVmExe:\t   63980 kB\nVmLib:\t    2096 kB\nVmPTE:\t     332 kB\nVmSwap:\t       0 kB\nHugetlbPages:\t       0 kB\nCoreDumping:\t0\nTHP_enabled:\t1\nuntag_mask:\t0xffffffffffffffff\nThreads:\t8\nSigQ:\t21/71955\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t0000000000000000\nSigIgn:\t0000000001001000\nSigCgt:\t00000001200004f8\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t000001ffffffffff\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\nSpeculation_Store_Bypass:\tvulnerable\nSpeculationIndirectBranch:\talways enabled\nCpus_allowed:\t1f\nCpus_allowed_list:\t0-4\nMems_allowed:\t00000000,00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t55\nnonvoluntary_ctxt_switches:\t3\n",
+          "startup_ms": 201.315371,
+          "valid": true,
+          "workloads": [
+            {
+              "valid": true,
+              "verification_only": true,
+              "workload": "ping"
+            },
+            {
+              "valid": true,
+              "verification_only": true,
+              "workload": "query"
+            },
+            {
+              "valid": true,
+              "verification_only": true,
+              "workload": "body"
+            },
+            {
+              "valid": true,
+              "verification_only": true,
+              "workload": "video"
+            }
+          ]
+        }
+      },
+      "target": "bun/fastify",
+      "valid": true
+    }
+  ],
+  "seconds": 0,
+  "source": "2fdb67fcbcfadc74289a7e2c83401731bc75c8b7\n",
+  "source_status": "",
+  "toolchain": "rustc 1.99.0 (b940084d7 2026-09-28)\n",
+  "upstream": "f654bcd175165bce2e3c83b65eaecd8e34294ffd",
+  "upstream_lock_sha256": "0010459cfcdda2e69b2d26b66d89cc344458bd1dee072a506b43cf9418e3dfa0",
+  "verification_only": true
+}

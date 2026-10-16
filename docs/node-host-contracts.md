@@ -945,6 +945,27 @@ Abrupt getters close the iterator without replacing the original thrown value;
 normal iterator-close failures remain observable. Tests collect during return
 and before callback delivery. Exception capture permits null reset before its
 occupied-slot check and uses the shared argument-type/coded-error policy.
+Its primary slot belongs to one retained process state object, reset with the
+VM heap. Set/has ignore their receiver; callback delivery uses that state as its
+receiver, so captureFn mutation remains observable. Guest string properties
+cannot impersonate the slot. GC and repeated-execution checks cover its roots.
+Uncaught delivery emits uncaughtExceptionMonitor before selecting the primary
+callback, then re-reads captureFn for the property call after its null check.
+Monitor results are ignored; uncaught event results use JavaScript truthiness.
+Both events share the canonical process-event dispatch operation.
+Auxiliary capture tries callbacks in reverse order and accepts only literal
+true. It re-reads the callback collection for each property call; ordinary
+subtraction owns length coercion, including fractional property keys and guest
+collection during coercion. The retained Runtime subtraction adapter shares the
+same VM operation as native contexts. Public capture methods have Node's public
+names and ordinary constructor shapes. Diagnostic report integration and
+internal auxiliary registration remain unqualified.
+A thrown monitor, primary, auxiliary or uncaught listener enters a distinct
+fatal-handler exit state, using the configured SDK's typed exit code and
+suppressing normal exit events. Explicit exits retain their own status and event
+policy, including an explicitly requested code 7. The protocol enum and public
+binding table derive from the same header declaration. A 19-child oracle matrix
+covers top-level, next-tick, promise, auxiliary and explicit-exit paths.
 Bound-handle error/reentry details, original native-source/stack fidelity,
 diagnostic report flags and the wider Node lifecycle backlog remain open.
 
@@ -973,3 +994,86 @@ including prepared realm wrappers. Binding setup must not invalidate the SDK's
 strict directive: assignment errors on primitive targets, rejected proxy writes
 and nonwritable properties retain Node's behavior. Application CommonJS wrappers
 retain their source-directed strictness.
+
+## Native compiled Script foundation
+
+The internal contextify binding owns real Core CompiledScript values behind
+collector-cleared weak wrapper identities. Main-context execution reuses the
+compiled source and its realm template sites. Escaped functions retain their
+compiler source after the Script wrapper is collected. Function compilation
+parses genuine generated function input in the global lexical environment;
+it does not capture the calling CommonJS module's lexical bindings.
+
+This binding currently provides main-context Script execution and ordinary
+function compilation. Source-offset options, sandbox execution, bytecode caches
+and interrupt/deadline controls are rejected explicitly. Source-URL metadata
+and import customization remain separate work. The existing public vm surface
+and the full original test runner are not claimed complete by this foundation.
+
+Mock call records, restoration and virtual timer scheduling use the unchanged
+SDK MockTracker policy. The global test mock and per-callback mock trackers are
+real SDK instances. Configured SDK wrappers receive a private native require
+capability for the internal timer adapter; changing a public module filename
+cannot grant this capability. Ordinary guest imports keep their original
+visibility rules.
+
+The node:test projection uses the original SDK harness for scheduling, hooks,
+subtests and test contexts. It exposes the SDK's real MockTracker, assertion
+registration and snapshot policy through native lazy accessors. File-oriented
+runner execution still requires a genuine V8 serializer and is unavailable.
+Repeated-string CLI option defaults come from the configured SDK declarations;
+startup environment and invocation values populate those lists.
+
+Core exposes real Promise creation, job-boundary and settlement observations to
+opted-in hosts. Node assigns Promise identities before observable init callbacks,
+keeps resource objects weakly, and maps private AsyncLocalStorage job snapshots
+to the actual execution resource. Init callbacks may collect or settle awaited
+sources reentrantly: incoming async closure state, suspended continuation handlers
+and detached reaction payloads remain rooted across those callbacks. Hosts without
+observers retain the optimized primitive-await path.
+
+The private fs internalModuleStat binding follows native filesystem symlinks and
+returns the configured SDK classifier protocol: directory1, other successful
+metadata0, or a negative libuv error. It resolves relative paths through Node's
+cwd owner. Original SDK recursive traversal owns policy for using this result.
+
+Encoding uses the shared Buffer codecs; Buffer results retain the original
+filename bytes. Recursive Dirent results use Node's packed native layout, with
+Uint8 types and aligned Uint32 directory counts sharing one ArrayBuffer. The
+unchanged SDK owns validation and Dirent construction. Existing filesystem
+adapters capture a Rust forwarding function to this same policy, initialized
+after the filesystem module is cached. Their outer asynchronous validation and
+scheduling remain separate compatibility work.
+
+## Configured CLI version and flag order
+
+The Node-compatible CLI derives --version/-v from the same configured SDK
+version as process.version and process.versions.node. It handles version flags
+while parsing startup options, before evaluating guest source. An explicit -- or
+the first guest argument ends option parsing, so later version spellings remain
+guest arguments. The oracle checks aliases, jitless ordering, eval side effects
+and both argument boundaries. General help/unknown-option parity remains open.
+
+## Diagnostic-report configuration and one process listener store
+
+The lazy process.report getter returns the configured Node library's report
+object. Rust owns its mutable configuration, initialized from the same parsed
+startup options used by native option queries. The original SDK owns public
+validation, property/method descriptors, signal changes and field order.
+Report directory aliases, option/environment precedence, and report-signal's
+ordered implication of report-on-signal are covered against the oracle.
+
+Capture installation snapshots reportOnUncaughtException with strict true and
+then disables it. Clearing restores the saved flag only when auxiliary length
+is strictly numeric zero. The process.report reference is evaluated before the
+saved-flag getter on restoration; installation reads process.report separately
+for the read and write. Slot mutation precedes report getter failures.
+
+Process uses the common EventEmitter store for registration, dispatch,
+inspection, symbols, borrowed methods, prepending and mutable _events records.
+Signal watching and IPC counted references are actual listener add/remove
+observers; no second scheduler listener map mirrors those facts. Exit dispatch
+uses the public process emit hook after entering the named exit state.
+The Node26 ordinary once-wrapper shape is retained. Report generation/file I/O,
+abort toggles, default warning listener/source fidelity and the broader Node
+compatibility backlog remain unqualified.
