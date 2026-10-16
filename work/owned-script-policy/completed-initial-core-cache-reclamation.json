@@ -1,0 +1,6 @@
+{
+  "path": "target/debug/deps/quench_runtime-faba0c2c63dca90b",
+  "bytes": 575976600,
+  "sha256": "554a3d70bc79d86b3876473a7b65b2dbd0dafce9312e18acc35f70996edf418d",
+  "reason": "Completed failed Core663 attempt:661existing pass,2new source-layout failures retained. Rebuild shared initializer correction."
+}
