@@ -799,6 +799,7 @@ fn build_key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     for (name, operation) in [
         ("getConstructorName", "utilConstructorName"),
         ("getCallSites", "utilGetCallSites"),
+        ("getCallerLocation", "utilGetCallerLocation"),
         ("getOwnNonIndexProperties", "utilOwnNonIndexProperties"),
         ("getPromiseDetails", "utilPromiseDetails"),
         ("getProxyDetails", "utilProxyDetails"),
@@ -981,4 +982,21 @@ pub(crate) fn get_call_sites(
         sites.push(site);
     }
     context.array_rooted(&sites)
+}
+
+/// Node's native caller capture skips the immediate JavaScript activation.
+pub(crate) fn get_caller_location(
+    context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let mut frames = context.source_stack_frames(2);
+    let Some(frame) = (frames.len() == 2).then(|| frames.pop().unwrap()) else {
+        return Ok(context.undefined());
+    };
+    // An unnamed eval has no ScriptNameOrSourceURL. Do not fabricate an
+    // internal bootstrap caller or a script name when no such frame exists.
+    if frame.is_eval { return Ok(context.undefined()); }
+    let line = context.number(f64::from(frame.line_number));
+    let column = context.number(f64::from(frame.column_number));
+    let name = context.string_rooted(&frame.script_name);
+    context.array_rooted(&[line, column, name])
 }
