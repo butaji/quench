@@ -1,0 +1,17 @@
+==683600== Callgrind, a call-graph generating cache profiler
+==683600== Copyright (C) 2002-2017, and GNU GPL'd, by Josef Weidendorfer et al.
+==683600== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info
+==683600== Command: /workspace/quench/work/quench-tcp-listen-backlog-qualified /workspace/quench/work/clone-callgrind/navier-stokes-1.js
+==683600== Parent PID: 683299
+==683600== 
+==683600== For interactive control, run 'callgrind_control -h'.
+--683600-- WARNING: unhandled amd64-linux syscall: 323
+--683600-- You may be able to write your own handler.
+--683600-- Read the file README_MISSING_SYSCALL_OR_IOCTL.
+--683600-- Nevertheless we consider this a bug.  Please report
+--683600-- it at http://valgrind.org/support/bug_reports.html.
+==683600== 
+==683600== Events    : Ir
+==683600== Collected : 3862588965
+==683600== 
+==683600== I   refs:      3,862,588,965

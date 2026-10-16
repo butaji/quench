@@ -931,7 +931,22 @@ Supplied `options.backlog` uses the JavaScript truthy default followed by shared
 ToNumber/ToInt32 conversion. Linux syscall comparisons cover default, IPv4,
 reuse-port and HTTP listeners plus numeric/string/nonfinite/wrapped options.
 The comparison explicitly reports when syscall tracing is unavailable.
-Positional backlog overloads and DNS-deferred coercion/error timing remain open.
+The native net.Server lifecycle receives the complete argument list, retains
+positional backlog/callback overloads, and delegates supplied-host lookup to the
+same public DNS module. Lookup callbacks retain traced data and compare the
+public listening generation before touching a cancelled server. New servers
+report a null address; listening derives from the actual handle. Closing before
+lookup completion and closing an already closed server complete through the
+canonical callback queue. Ordinary method/getter/wrapper constructor shapes and
+coded close errors remain separate from source-text/host-frame fidelity.
+
+DNS address selection uses the shared IP classifier and iterator protocol.
+Abrupt getters close the iterator without replacing the original thrown value;
+normal iterator-close failures remain observable. Tests collect during return
+and before callback delivery. Exception capture permits null reset before its
+occupied-slot check and uses the shared argument-type/coded-error policy.
+Bound-handle error/reentry details, original native-source/stack fidelity,
+diagnostic report flags and the wider Node lifecycle backlog remain open.
 
 The public utility module retains the configured SDK's actual exports object,
 including its lazy properties and shared warning caches. Rust owns the native
@@ -940,7 +955,9 @@ loads its original SDK module on observation, and becomes a writable data
 property. Assignment and descriptor reflection use the same Core operation as
 other lazy host properties. No duplicate JavaScript utility policy is installed.
 The already qualified callbackify, argument parsing, styling and environment
-adapters remain native. Abort transfer/weak-event and signal-tracing exports
+adapters remain native. Public terminal escape stripping uses the original SDK
+inspect policy, including terminated OSC hyperlinks and colon-delimited CSI
+parameters; its UTF-16 and argument validation behavior share that owner. Abort transfer/weak-event and signal-tracing exports
 remain unavailable until their genuine host dependencies exist.
 
 The libuv utility binding derives its complete error inventory, ordering and

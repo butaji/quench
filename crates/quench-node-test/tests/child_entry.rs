@@ -295,7 +295,10 @@ fn util_text_operations_match_node_without_utf16_loss() {
       const texts = ['', 'plain', '\x1b', '\x1b[', '\x1b[31mred\x1b[0m',
         '\x1b(Btext', '\x9b2Jtext', '\x1b]8;;https://a/b?x=1&y=2\x07link\x1b]8;;\x07',
         '\x1b]8;;https://a\x1b\\link\x1b]8;;\x1b\\', '\ud800\x1b[31m\udfff',
-        '\x1b[99999mtext', '\x1b[31☃text', '\x1b]unterminated', '😀\x1b[0m😀'];
+        '\x1b[99999mtext', '\x1b[31☃text', '\x1b]unterminated', '😀\x1b[0m😀',
+        '\x1b]8;;https://example.com/(foo\x07label\x1b]8;;\x07',
+        '\x1b]8;;https://example.com/foo)bar\x9clabel\x1b]8;;\x9c',
+        '\x1b[38:2:255:0:0mHello\x1b[0m', '\x1b[4:3mUnderline\x1b[4:0m'];
       console.log(JSON.stringify(texts.map(text=>util.stripVTControlCharacters(text))));
       const envs = ['', 'Z=1\nA=2\nZ=3', 'A=1#comment\nB=x #rest',
         'A=`x\\n`\nB="x\\n\\r"\nC=\'x\\n\'', 'A="one\ntwo"\nB=three',
@@ -9665,4 +9668,24 @@ fn tcp_option_listen_backlog_matches_node_truthiness_and_int32_when_tracing_is_a
 #[test]
 fn utility_sdk_projection_preserves_mime_diff_timing_promise_state_and_uv_protocol_metadata() {
     compare_node_source_with_args(include_str!("../node-tests/test-util-sdk-projection.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn net_listen_lifecycle_retains_dns_generations_callbacks_and_public_method_shapes() {
+    compare_node_source_with_args(include_str!("../node-tests/test-net-listen-lifecycle.js"), &["--expose-gc"]);
+}
+
+#[test]
+fn net_dns_iterator_errors_close_once_preserve_original_abrupt_values_and_survive_gc() {
+    compare_node_source_with_args(include_str!("../node-tests/test-net-dns-iterator-errors.js"), &["--expose-gc"]);
+}
+
+#[test]
+fn process_capture_callback_reset_prioritizes_null_and_original_type_validation() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-callback-reset.js"), &[]);
+}
+
+#[test]
+fn http_listening_derives_from_the_handle_and_close_cancels_pending_notification() {
+    compare_node_source_with_args(include_str!("../node-tests/test-http-listening-handle.js"), &[]);
 }
