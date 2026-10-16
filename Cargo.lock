@@ -1606,6 +1606,7 @@ dependencies = [
  "cranelift-codegen",
  "cranelift-frontend",
  "cranelift-native",
+ "hashbrown 0.16.1",
  "libc",
  "libm",
  "num-bigint 0.4.8",
