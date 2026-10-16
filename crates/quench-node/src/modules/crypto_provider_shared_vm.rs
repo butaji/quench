@@ -22,6 +22,7 @@ pub(crate) fn install(c: &mut Context<'_>, binding: RootId) -> Result<(), Rooted
         c.define_data_property_rooted(binding, key, value, true, true, true)?;
     }
     for name in [
+        "randomFillSync",
         "getFipsCrypto",
         "getFipsCryptoGeneration",
         "setFipsCrypto",
@@ -49,6 +50,7 @@ pub(crate) fn operation(
     let op = c.host_function_data()?;
     let op = c.to_string(op)?;
     match op.as_str() {
+        "randomFillSync" => random_fill(c, args),
         "getFipsCrypto" => Ok(c.number(if native::fips_enabled() { 1.0 } else { 0.0 })),
         "getFipsCryptoGeneration" => Ok(c.bigint_rooted(i128::from(native::fips_generation()))),
         "setFipsCrypto" => {
@@ -117,5 +119,81 @@ pub(crate) fn install_classes(
         let key = c.string_rooted(name);
         c.define_data_property_rooted(global, key, value, true, false, true)?;
     }
+    Ok(c.undefined())
+}
+
+/// SDK already converted BufferSource ranges to bytes. Use intrinsic slot getters
+/// and one bulk typed-array write; never evaluate public .buffer/.byteOffset.
+fn random_fill(c: &mut Context<'_>, args: &[RootId]) -> Result<RootId, RootedError> {
+    use quench_runtime::BuiltinBrand;
+    let missing = c.undefined();
+    let input = args.first().copied().unwrap_or(missing);
+    let integer = |c: &mut Context<'_>, index: usize| -> Result<usize, RootedError> {
+        let value = args.get(index).copied().unwrap_or(missing);
+        let n = c.rooted_value(value).and_then(|v| v.as_number());
+        match n {
+            Some(n) if n >= 0.0 && n.is_finite() && n.fract() == 0.0 && n <= usize::MAX as f64 => {
+                Ok(n as usize)
+            }
+            _ => Err(RootedError::host("Invalid native random fill byte range")),
+        }
+    };
+    let offset = integer(c, 1)?;
+    let size = integer(c, 2)?;
+    let (destination, set) = c.with_startup_intrinsics(|c| {
+        let global = c.global_root()?;
+        let constructor = get(c, global, "Uint8Array")?;
+        let byte_proto = get(c, constructor, "prototype")?;
+        let typed_proto = c.prototype_rooted(byte_proto)?;
+        let setter = get(c, typed_proto, "set")?;
+        let (backing, base, length) =
+            if c.has_builtin_brand_rooted(input, BuiltinBrand::AnyArrayBuffer)? {
+                let array = get(c, global, "ArrayBuffer")?;
+                let proto = get(c, array, "prototype")?;
+                let proto = if c.has_builtin_brand_rooted(input, BuiltinBrand::SharedArrayBuffer)? {
+                    let ctor = get(c, global, "SharedArrayBuffer")?;
+                    get(c, ctor, "prototype")?
+                } else {
+                    proto
+                };
+                let key = c.string_rooted("byteLength");
+                let descriptor = c.own_property_descriptor_rooted(proto, key)?;
+                let getter = get(c, descriptor, "get")?;
+                let length = c.call_rooted(getter, input, &[])?;
+                (input, 0, c.to_number(length)? as usize)
+            } else {
+                let proto = if c.has_builtin_brand_rooted(input, BuiltinBrand::DataView)? {
+                    let ctor = get(c, global, "DataView")?;
+                    get(c, ctor, "prototype")?
+                } else {
+                    typed_proto
+                };
+                let mut values = Vec::new();
+                for name in ["buffer", "byteOffset", "byteLength"] {
+                    let key = c.string_rooted(name);
+                    let desc = c.own_property_descriptor_rooted(proto, key)?;
+                    let getter = get(c, desc, "get")?;
+                    values.push(c.call_rooted(getter, input, &[])?);
+                }
+                (
+                    values[0],
+                    c.to_number(values[1])? as usize,
+                    c.to_number(values[2])? as usize,
+                )
+            };
+        if offset.checked_add(size).is_none_or(|end| end > length) {
+            return Err(RootedError::host("Native random fill range exceeds buffer"));
+        }
+        let offset = c.number((base + offset) as f64);
+        let length = c.number(size as f64);
+        let destination =
+            c.construct_rooted(constructor, constructor, &[backing, offset, length])?;
+        Ok((destination, setter))
+    })?;
+    let mut bytes = vec![0; size];
+    openssl::rand::rand_bytes(&mut bytes)
+        .map_err(|stack| super::crypto_error_shared_vm::decorated(c, stack))?;
+    let source = c.uint8_array_rooted(&bytes)?;
+    c.call_rooted(set, destination, &[source])?;
     Ok(c.undefined())
 }
