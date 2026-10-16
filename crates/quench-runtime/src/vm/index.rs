@@ -171,6 +171,9 @@ impl<H: Host> Vm<H> {
                 self.replace_dense_element(object, index, value);
                 return Ok(());
             }
+            if self.append_dense_element(object, index, value) {
+                return Ok(());
+            }
             // A typed array's integer-indexed [[Set]] is TypedArraySetElement: its indices
             // carry no descriptors, accessors or integrity state for the checks below.
             if self.typed_array_set(p, object, index, value)? {
@@ -484,8 +487,11 @@ impl<H: Host> Vm<H> {
             self.profile
                 .array_write_ownership(Rc::strong_count(elements) != 1);
             let elements = mutable_array_elements(elements);
+            let capacity = elements.capacity();
             elements.resize(index + 1, Value::DELETED);
             elements[index] = value;
+            let grown = elements.capacity() - capacity;
+            self.heap.charge_payload_growth(grown * size_of::<Value>());
         }
         self.sync_mapped_argument(object, index, value);
         true

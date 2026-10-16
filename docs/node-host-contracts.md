@@ -1099,3 +1099,31 @@ release inherited local stores and queue destruction notifications. Refreshing a
 completed timer creates its new identity before retaining a new invocation.
 TickObject callback and argument fields remain canonical mutable slots; the
 scheduler retains an invocation view rather than a second callback policy.
+
+### Public warning construction
+
+`process.emitWarning` is the configured Node SDK function, including argument
+validation, option getter order, stack-constructor handling and function source.
+Rust promise-rejection delivery calls this public function with the normal
+string/type or Error arguments; it does not attach private string-key options.
+The SDK also owns the default warning listener. Full diagnostic report generation,
+exception abort/async-hook contracts and total Node compatibility remain open.
+
+### Linux process CPU and resource facts
+
+The native `process_methods` binding supplies process and thread `getrusage`
+results, live resident memory, and a real monotonic `hrtimeBuffer`. The configured
+SDK `wrapProcessMethods` owns public CPU/resource function shape, validation,
+previous-value getter order and subtraction. RSS reads the operating system
+without using guest filesystem methods. Exposed internal exports are captured
+before guest execution; other callers initialize this policy with the existing
+lazy process surface.
+
+`process.report.compact` keeps SDK boolean validation. Its native `setCompact`
+binding separately applies truthiness, matching the SDK's native implementation.
+Other native report setters retain their declared input kinds.
+
+These facts do not provide heap accounting: the existing full `memoryUsage()`
+heap fields and diagnostic report generation still need a Runtime memory owner.
+The native CPU/resource/RSS implementation currently applies on Linux; other
+platform paths retain their existing behavior.
