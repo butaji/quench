@@ -1607,6 +1607,7 @@ dependencies = [
  "cranelift-frontend",
  "cranelift-native",
  "libc",
+ "libm",
  "num-bigint 0.4.8",
  "oxc_allocator",
  "oxc_ast",
