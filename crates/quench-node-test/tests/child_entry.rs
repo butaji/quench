@@ -8516,3 +8516,71 @@ fn os_priority_changes_are_visible_to_the_kernel_on_the_child_process_pid() {
     assert_eq!(unsafe { *libc::__errno_location() }, 0);
     assert_eq!(actual, expected);
 }
+
+#[test]
+fn canonical_inspection_preserves_inherited_getter_receivers_cycles_and_depth() {
+    compare_node_stream_source(r#"
+const inspect=require('node:util').inspect,out=[];
+class X { constructor(){this._y=123}get y(){return this._y} }
+out.push(inspect(new X(),{getters:true,showHidden:true}));
+class A { constructor(B){this.B=B}get b(){return this.B} }
+class B { constructor(){this.A=new A(this)}get a(){return this.A} }
+out.push(inspect(new B(),{depth:1,getters:true,showHidden:true}));
+const value={get x(){throw 'getter failed'},get y(){return {nested:true}},set z(value){}};
+for(const getters of [false,true,'get','set'])out.push(inspect(value,{getters,sorted:true,compact:false}));
+const d=Object.getOwnPropertyDescriptor(inspect,'defaultOptions');out.push([d.enumerable,d.configurable,d.get.name,d.set.name]);
+for(const options of [null,1,'x',Symbol('x'),()=>{}])try{inspect.defaultOptions=options;out.push('ok')}catch(e){out.push([e.name,e.code,e.message])}
+console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn canonical_inspection_unwraps_proxies_without_traps_and_keeps_binding_identity() {
+    compare_node_source_with_args(r#"
+const inspect=require('node:util').inspect,{getProxyDetails}=require('internal/test/binding').internalBinding('util'),out=[];
+let calls=0;const target={x:1},handler={get(){calls++;throw Error('get trap')},ownKeys(){calls++;throw Error('keys trap')},getPrototypeOf(){calls++;throw Error('prototype trap')}};
+const proxy=new Proxy(target,handler);
+for(const flag of [undefined,true,false,1,'true',null]){
+ const value=getProxyDetails(proxy,flag);out.push(flag===true?[value[0]===target,value[1]===handler]:value===target);
+}
+const details=getProxyDetails(proxy);out.push([details[0]===target,details[1]===handler]);
+out.push(inspect(proxy),inspect(proxy,{showProxy:true}),calls);
+const revoked=Proxy.revocable({},{});revoked.revoke();out.push(getProxyDetails(revoked.proxy),getProxyDetails(revoked.proxy,false),inspect(revoked.proxy),getProxyDetails({})===undefined);
+const original=require('internal/util/inspect');out.push(original.inspect===inspect,original.format===require('node:util').format,original.formatWithOptions===require('node:util').formatWithOptions);
+for(const v of [undefined,null,{},[],new Uint8Array(1),new Proxy({},{}),Symbol('External')])out.push(require('util').types.isExternal(v));
+console.log(JSON.stringify(out));
+"#,&["--expose-internals","--no-warnings"]);
+}
+
+#[test]
+fn canonical_inspection_previews_collection_iterators_without_consuming_or_public_hooks() {
+    compare_node_source_with_args(r#"
+const inspect=require('node:util').inspect,{previewEntries}=require('internal/test/binding').internalBinding('util'),out=[];
+const map=new Map([['a',1],['b',2],['c',3]]),set=new Set(['a','b','c']);
+for(const value of [map,set,map.keys(),map.values(),map.entries(),set.values(),set.entries()]){
+ if(typeof value.next==='function')value.next();
+ const first=previewEntries(value),second=previewEntries(value,undefined);out.push([first,second,inspect(value)]);
+ if(typeof value.next==='function')out.push(value.next());
+}
+const iterator=map.entries();iterator.next();map.delete('b');map.set('d',4);out.push(previewEntries(iterator),iterator.next());
+map.clear();map.set('z',9);out.push(previewEntries(iterator),iterator.next(),iterator.next(),previewEntries(iterator,true));
+const key={k:1},value={v:2},wm=new WeakMap([[key,value]]),ws=new WeakSet([key]);out.push(previewEntries(wm),previewEntries(ws),inspect(wm,{showHidden:true}),inspect(ws,{showHidden:true}));
+for(const value of [undefined,null,{},[],[1].values(),new Proxy(map,{})])out.push(previewEntries(value,true)===undefined);
+const original=Map.prototype.entries;Map.prototype.entries=()=>{throw Error('public entries')};try{out.push(previewEntries(map),inspect(map))}finally{Map.prototype.entries=original}
+console.log(JSON.stringify(out));
+"#,&["--expose-internals","--no-warnings"]);
+}
+
+#[test]
+fn native_inspection_class_fallback_uses_slots_and_data_tags_without_public_getters() {
+    compare_node_source_with_args(r#"
+const {getConstructorName}=require('internal/test/binding').internalBinding('util'),out=[];let calls=0;
+const plain=Object.create(null),tagged=Object.create(null),accessor=Object.create(null),ownConstructor={};
+Object.defineProperty(tagged,Symbol.toStringTag,{value:'Tagged'});Object.defineProperty(accessor,Symbol.toStringTag,{get(){calls++;throw Error('tag getter')}});
+Object.defineProperty(ownConstructor,'constructor',{get(){calls++;throw Error('constructor getter')}});
+const array=[],map=new Map(),typed=new Uint16Array(1);for(const v of [array,map,typed])Object.setPrototypeOf(v,null);
+const original=globalThis.Symbol;globalThis.Symbol=function(){throw Error('public Symbol')};
+try{for(const v of [plain,tagged,accessor,ownConstructor,array,map,typed])out.push(getConstructorName(v))}finally{globalThis.Symbol=original}
+out.push(calls);console.log(JSON.stringify(out));
+"#,&["--expose-internals","--no-warnings"]);
+}
