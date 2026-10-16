@@ -85,6 +85,8 @@ pub(crate) mod node_protocol_constants;
 pub(crate) mod os_facts;
 pub(crate) mod memory_facts;
 pub(crate) mod process_memory_shared_vm;
+#[cfg(target_os = "linux")]
+pub(crate) mod process_metrics_shared_vm;
 pub(crate) mod os_shared_vm;
 pub(crate) mod path_algorithms;
 pub(crate) mod path_shared_vm;

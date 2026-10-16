@@ -9761,3 +9761,14 @@ fn process_warning_uses_sdk_identity_and_only_public_option_getters() {
 fn process_rejection_warnings_pass_public_arguments_and_preserve_original_stack() {
     compare_node_source_with_args(include_str!("../node-tests/test-process-rejection-warning-arguments.js"), &["--unhandled-rejections=warn", "--no-warnings"]);
 }
+
+#[test]
+fn process_report_native_compact_uses_truthiness_without_coercion_hooks() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-report-native-compact.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn process_native_cpu_resource_and_rss_facts_use_sdk_validation_and_live_os_data() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-native-metrics.js"), &["--expose-internals", "--no-warnings"]);
+}
