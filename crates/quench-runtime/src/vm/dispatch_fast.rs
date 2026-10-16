@@ -3478,9 +3478,9 @@ fn lane_activate<H: Host>(
     // sends strict terminal calls to the general dispatch path instead.
     let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
     if returns
-        && vm.host.proper_tail_calls()
         && vm.lane_stack.activations.last().is_none_or(|caller| {
-            unsafe { &*(*cx).code }.functions[caller.function as usize].strict
+            vm.host.proper_tail_calls()
+                && unsafe { &*(*cx).code }.functions[caller.function as usize].strict
         })
     {
         return Err(exit(ip));
@@ -3588,9 +3588,9 @@ fn lane_activate_keeping<H: Host>(
     // sends strict terminal calls to the general dispatch path instead.
     let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
     if returns
-        && vm.host.proper_tail_calls()
         && vm.lane_stack.activations.last().is_none_or(|caller| {
-            unsafe { &*(*cx).code }.functions[caller.function as usize].strict
+            vm.host.proper_tail_calls()
+                && unsafe { &*(*cx).code }.functions[caller.function as usize].strict
         })
     {
         return Err(exit(ip));
