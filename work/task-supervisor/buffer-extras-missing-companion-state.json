@@ -1,0 +1,12 @@
+{
+  "status": "failed",
+  "index": 0,
+  "command": [
+    "bash",
+    "/workspace/quench/work/native-buffer-allocation/run-extras.sh"
+  ],
+  "exit": 1,
+  "supervisor_pid": 2894984,
+  "session_id": 2894983,
+  "utc": "2026-10-16T06:15:25.707927+00:00"
+}

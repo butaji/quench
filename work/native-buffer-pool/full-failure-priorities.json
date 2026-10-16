@@ -1,0 +1,1791 @@
+{
+  "source": "c4ad13141",
+  "inventory_hash": "a3820c977f97ed07",
+  "oracle": "v26.12.0",
+  "note": "Counts are fixture name groups, not proven common root causes. No sum of selected gains is a full-suite score.",
+  "groups": {
+    "http": {
+      "status": {
+        "fail": 287,
+        "timeout": 42
+      },
+      "examples": [
+        "test-http-1.0.js",
+        "test-http-abort-before-end.js",
+        "test-http-abort-client.js"
+      ]
+    },
+    "http2": {
+      "status": {
+        "fail": 280
+      },
+      "examples": [
+        "test-http2-allow-http1-upgrade-ws.js",
+        "test-http2-allow-http1.js",
+        "test-http2-alpn.js"
+      ]
+    },
+    "tls": {
+      "status": {
+        "fail": 162,
+        "timeout": 8
+      },
+      "examples": [
+        "test-tls-add-context.js",
+        "test-tls-alert-handling.js",
+        "test-tls-alert.js"
+      ]
+    },
+    "worker": {
+      "status": {
+        "fail": 139
+      },
+      "examples": [
+        "test-worker-abort-on-uncaught-exception-terminate.js",
+        "test-worker-abort-on-uncaught-exception.js",
+        "test-worker-arraybuffer-zerofill.js"
+      ]
+    },
+    "crypto": {
+      "status": {
+        "fail": 103
+      },
+      "examples": [
+        "test-crypto-argon2-unsupported.js",
+        "test-crypto-async-sign-verify.js",
+        "test-crypto-certificate.js"
+      ]
+    },
+    "fs": {
+      "status": {
+        "fail": 92,
+        "timeout": 1
+      },
+      "examples": [
+        "test-fs-access.js",
+        "test-fs-append-file-flush.js",
+        "test-fs-assert-encoding-error.js"
+      ]
+    },
+    "repl": {
+      "status": {
+        "timeout": 10,
+        "fail": 79
+      },
+      "examples": [
+        "test-repl-array-prototype-tempering.js",
+        "test-repl-async-iife.js",
+        "test-repl-autocomplete.js"
+      ]
+    },
+    "webcrypto": {
+      "status": {
+        "fail": 76
+      },
+      "examples": [
+        "test-webcrypto-aead-decrypt-detached-buffer.js",
+        "test-webcrypto-aes-gcm-iv-length.js",
+        "test-webcrypto-aes-kw-short-input.js"
+      ]
+    },
+    "runner": {
+      "status": {
+        "fail": 72,
+        "timeout": 2
+      },
+      "examples": [
+        "test-runner-aftereach-runtime-skip.js",
+        "test-runner-assert.js",
+        "test-runner-cli-concurrency.js"
+      ]
+    },
+    "vfs": {
+      "status": {
+        "fail": 69
+      },
+      "examples": [
+        "test-vfs-composable-provider.js",
+        "test-vfs-destructuring.js",
+        "test-vfs-file-handle.js"
+      ]
+    },
+    "https": {
+      "status": {
+        "fail": 68
+      },
+      "examples": [
+        "test-https-abortcontroller.js",
+        "test-https-agent-abort-controller.js",
+        "test-https-agent-additional-options.js"
+      ]
+    },
+    "permission": {
+      "status": {
+        "fail": 67,
+        "timeout": 1
+      },
+      "examples": [
+        "test-permission-allow-addons-cli.js",
+        "test-permission-allow-child-process-cli.js",
+        "test-permission-allow-fs-vfs-flags.js"
+      ]
+    },
+    "cluster": {
+      "status": {
+        "fail": 53,
+        "timeout": 8
+      },
+      "examples": [
+        "test-cluster-accept-fail.js",
+        "test-cluster-basic.js",
+        "test-cluster-bind-privileged-port.js"
+      ]
+    },
+    "vm": {
+      "status": {
+        "fail": 58,
+        "timeout": 2
+      },
+      "examples": [
+        "test-vm-api-handles-getter-errors.js",
+        "test-vm-basic.js",
+        "test-vm-cached-data.js"
+      ]
+    },
+    "net": {
+      "status": {
+        "fail": 52,
+        "timeout": 4
+      },
+      "examples": [
+        "test-net-access-byteswritten.js",
+        "test-net-autoselectfamily.js",
+        "test-net-better-error-messages-listen.js"
+      ]
+    },
+    "zlib": {
+      "status": {
+        "fail": 53,
+        "timeout": 1
+      },
+      "examples": [
+        "test-zlib-brotli-dictionary.js",
+        "test-zlib-brotli-flush-invalid-kind.js",
+        "test-zlib-brotli-flush.js"
+      ]
+    },
+    "diagnostics": {
+      "status": {
+        "fail": 44
+      },
+      "examples": [
+        "test-diagnostics-channel-bind-store.js",
+        "test-diagnostics-channel-bounded-channel-run-transform-error.js",
+        "test-diagnostics-channel-bounded-channel-run.js"
+      ]
+    },
+    "async": {
+      "status": {
+        "fail": 35,
+        "timeout": 1
+      },
+      "examples": [
+        "test-async-hooks-async-await.js",
+        "test-async-hooks-correctly-switch-promise-hook.js",
+        "test-async-hooks-destroy-on-gc.js"
+      ]
+    },
+    "whatwg": {
+      "status": {
+        "fail": 35
+      },
+      "examples": [
+        "test-whatwg-encoding-custom-interop.js",
+        "test-whatwg-encoding-singlebyte.mjs",
+        "test-whatwg-events-add-event-listener-options-passive.js"
+      ]
+    },
+    "process": {
+      "status": {
+        "fail": 31,
+        "timeout": 3
+      },
+      "examples": [
+        "test-process-binding-internalbinding-allowlist.js",
+        "test-process-binding-util.js",
+        "test-process-binding.js"
+      ]
+    },
+    "perf": {
+      "status": {
+        "fail": 32
+      },
+      "examples": [
+        "test-perf-gc-crash.js",
+        "test-perf-hooks-eventlooputilization.js",
+        "test-perf-hooks-histogram-analysis.js"
+      ]
+    },
+    "dns": {
+      "status": {
+        "fail": 30
+      },
+      "examples": [
+        "test-dns-cancel-reverse-lookup.js",
+        "test-dns-channel-cancel-promise.js",
+        "test-dns-channel-cancel.js"
+      ]
+    },
+    "bench": {
+      "status": {
+        "fail": 28
+      },
+      "examples": [
+        "test-bench-auto-run.js",
+        "test-bench-cli-ack.js",
+        "test-bench-cli-arguments.js"
+      ]
+    },
+    "domain": {
+      "status": {
+        "fail": 27
+      },
+      "examples": [
+        "test-domain-abort-on-uncaught.js",
+        "test-domain-async-id-map-leak.js",
+        "test-domain-emit-error-handler-stack.js"
+      ]
+    },
+    "snapshot": {
+      "status": {
+        "fail": 27
+      },
+      "examples": [
+        "test-snapshot-api.js",
+        "test-snapshot-argv1.js",
+        "test-snapshot-basic.js"
+      ]
+    },
+    "child": {
+      "status": {
+        "fail": 22,
+        "timeout": 2
+      },
+      "examples": [
+        "test-child-process-advanced-serialization-host-objects.js",
+        "test-child-process-advanced-serialization-largebuffer.js",
+        "test-child-process-advanced-serialization.js"
+      ]
+    },
+    "module": {
+      "status": {
+        "fail": 24
+      },
+      "examples": [
+        "test-module-builtin-experimental.js",
+        "test-module-builtin-policies.js",
+        "test-module-circular-dependency-warning.js"
+      ]
+    },
+    "compile": {
+      "status": {
+        "fail": 20
+      },
+      "examples": [
+        "test-compile-cache-api-env.js",
+        "test-compile-cache-api-error.js",
+        "test-compile-cache-api-flush.js"
+      ]
+    },
+    "v8": {
+      "status": {
+        "fail": 18
+      },
+      "examples": [
+        "test-v8-collect-gc-profile-exit-before-stop.js",
+        "test-v8-collect-gc-profile-in-worker.js",
+        "test-v8-collect-gc-profile-minor-ms.js"
+      ]
+    },
+    "cli": {
+      "status": {
+        "fail": 16,
+        "timeout": 1
+      },
+      "examples": [
+        "test-cli-bad-options.js",
+        "test-cli-eval.js",
+        "test-cli-node-cli-manpage-env-vars.mjs"
+      ]
+    },
+    "fastutf8stream": {
+      "status": {
+        "fail": 17
+      },
+      "examples": [
+        "test-fastutf8stream-destroy.js",
+        "test-fastutf8stream-end.js",
+        "test-fastutf8stream-flush-mocks.js"
+      ]
+    },
+    "dgram": {
+      "status": {
+        "fail": 16
+      },
+      "examples": [
+        "test-dgram-bind-error-callback.js",
+        "test-dgram-bind-fd.js",
+        "test-dgram-cluster-bind-error.js"
+      ]
+    },
+    "stream": {
+      "status": {
+        "fail": 14,
+        "timeout": 2
+      },
+      "examples": [
+        "test-stream-base-prototype-accessors-enumerability.js",
+        "test-stream-consumers.js",
+        "test-stream-destroy.js"
+      ]
+    },
+    "util": {
+      "status": {
+        "fail": 15
+      },
+      "examples": [
+        "test-util-convert-signal-to-exit-code.mjs",
+        "test-util-debounce.js",
+        "test-util-exception-with-host-port.js"
+      ]
+    },
+    "buffer": {
+      "status": {
+        "fail": 12
+      },
+      "examples": [
+        "test-buffer-alloc-alignment.js",
+        "test-buffer-alloc.js",
+        "test-buffer-backing-arraybuffer.js"
+      ]
+    },
+    "readline": {
+      "status": {
+        "fail": 12
+      },
+      "examples": [
+        "test-readline-async-iterators-backpressure.js",
+        "test-readline-async-iterators-destroy.js",
+        "test-readline-async-iterators.js"
+      ]
+    },
+    "require": {
+      "status": {
+        "fail": 12
+      },
+      "examples": [
+        "test-require-delete-array-iterator.js",
+        "test-require-dot.js",
+        "test-require-extension-over-directory.js"
+      ]
+    },
+    "trace": {
+      "status": {
+        "fail": 12
+      },
+      "examples": [
+        "test-trace-env-stack.js",
+        "test-trace-env.js",
+        "test-trace-events-api-worker-disabled.js"
+      ]
+    },
+    "performance": {
+      "status": {
+        "fail": 11
+      },
+      "examples": [
+        "test-performance-function-async.js",
+        "test-performance-gc-minor-ms.js",
+        "test-performance-gc.js"
+      ]
+    },
+    "internal": {
+      "status": {
+        "fail": 10
+      },
+      "examples": [
+        "test-internal-async-context-frame-enabled.js",
+        "test-internal-module-wrap.js",
+        "test-internal-modules.js"
+      ]
+    },
+    "url": {
+      "status": {
+        "fail": 9
+      },
+      "examples": [
+        "test-url-format-whatwg.js",
+        "test-url-format.js",
+        "test-url-parse-deprecation.js"
+      ]
+    },
+    "promise": {
+      "status": {
+        "fail": 8
+      },
+      "examples": [
+        "test-promise-hook-create-hook.js",
+        "test-promise-hook-exceptions.js",
+        "test-promise-hook-on-after.js"
+      ]
+    },
+    "common": {
+      "status": {
+        "fail": 7
+      },
+      "examples": [
+        "test-common-gc.js",
+        "test-common-must-not-call.js",
+        "test-common-wpt-allowed-rejections.js"
+      ]
+    },
+    "timers": {
+      "status": {
+        "fail": 7
+      },
+      "examples": [
+        "test-timers-async-store-leak.js",
+        "test-timers-clearImmediate-als.js",
+        "test-timers-fast-calls.js"
+      ]
+    },
+    "console": {
+      "status": {
+        "fail": 6
+      },
+      "examples": [
+        "test-console-diagnostics-channels.js",
+        "test-console-group.js",
+        "test-console-instance.js"
+      ]
+    },
+    "shadow": {
+      "status": {
+        "fail": 6
+      },
+      "examples": [
+        "test-shadow-realm-allowed-builtin-modules.js",
+        "test-shadow-realm-custom-loaders.js",
+        "test-shadow-realm-gc.js"
+      ]
+    },
+    "webworker": {
+      "status": {
+        "fail": 6
+      },
+      "examples": [
+        "test-webworker-blob-module-url.js",
+        "test-webworker-importscripts-conversion.js",
+        "test-webworker-postmessage-lifecycle.js"
+      ]
+    },
+    "assert": {
+      "status": {
+        "fail": 5
+      },
+      "examples": [
+        "test-assert-async.js",
+        "test-assert-checktag.js",
+        "test-assert-deep.js"
+      ]
+    },
+    "global": {
+      "status": {
+        "fail": 5
+      },
+      "examples": [
+        "test-global-console-exists.js",
+        "test-global-customevent.js",
+        "test-global-setters.js"
+      ]
+    },
+    "node": {
+      "status": {
+        "fail": 5
+      },
+      "examples": [
+        "test-node-output-console.mjs",
+        "test-node-output-errors.mjs",
+        "test-node-output-sourcemaps.mjs"
+      ]
+    },
+    "file": {
+      "status": {
+        "fail": 4
+      },
+      "examples": [
+        "test-file-validate-mode-flag.js",
+        "test-file-write-stream.js",
+        "test-file-write-stream2.js"
+      ]
+    },
+    "pipe": {
+      "status": {
+        "fail": 4
+      },
+      "examples": [
+        "test-pipe-abstract-socket-http.js",
+        "test-pipe-abstract-socket.js",
+        "test-pipe-outgoing-message-data-emitted-after-ended.js"
+      ]
+    },
+    "watch": {
+      "status": {
+        "fail": 3,
+        "timeout": 1
+      },
+      "examples": [
+        "test-watch-mode-files_watcher.mjs",
+        "test-watch-mode-kill-signal-default.mjs",
+        "test-watch-mode-kill-signal-invalid.mjs"
+      ]
+    },
+    "wrap": {
+      "status": {
+        "fail": 4
+      },
+      "examples": [
+        "test-wrap-js-stream-destroy.js",
+        "test-wrap-js-stream-duplex.js",
+        "test-wrap-js-stream-exceptions.js"
+      ]
+    },
+    "abortsignal": {
+      "status": {
+        "fail": 3
+      },
+      "examples": [
+        "test-abortsignal-any-source-gc.mjs",
+        "test-abortsignal-cloneable.js",
+        "test-abortsignal-drop-settled-signals.mjs"
+      ]
+    },
+    "error": {
+      "status": {
+        "fail": 3
+      },
+      "examples": [
+        "test-error-aggregateTwoErrors.js",
+        "test-error-prepare-stack-trace.js",
+        "test-error-reporting.js"
+      ]
+    },
+    "gc": {
+      "status": {
+        "fail": 2,
+        "timeout": 1
+      },
+      "examples": [
+        "test-gc-http-client-connaborted.js",
+        "test-gc-net-timeout.js",
+        "test-gc-tls-external-memory.js"
+      ]
+    },
+    "listen": {
+      "status": {
+        "fail": 3
+      },
+      "examples": [
+        "test-listen-fd-cluster.js",
+        "test-listen-fd-ebadf.js",
+        "test-listen-fd-server.js"
+      ]
+    },
+    "primordials": {
+      "status": {
+        "fail": 3
+      },
+      "examples": [
+        "test-primordials-apply.js",
+        "test-primordials-promise.js",
+        "test-primordials-regexp.js"
+      ]
+    },
+    "source": {
+      "status": {
+        "fail": 3
+      },
+      "examples": [
+        "test-source-map-api.js",
+        "test-source-map-cjs-require-cache.js",
+        "test-source-map-invalid-url.js"
+      ]
+    },
+    "stdout": {
+      "status": {
+        "fail": 3
+      },
+      "examples": [
+        "test-stdout-cannot-be-closed-child-process-pipe.js",
+        "test-stdout-close-catch.js",
+        "test-stdout-close-unref.js"
+      ]
+    },
+    "tcp": {
+      "status": {
+        "fail": 3
+      },
+      "examples": [
+        "test-tcp-wrap-connect.js",
+        "test-tcp-wrap-listen.js",
+        "test-tcp-wrap.js"
+      ]
+    },
+    "uv": {
+      "status": {
+        "fail": 3
+      },
+      "examples": [
+        "test-uv-binding-constant.js",
+        "test-uv-errmap.js",
+        "test-uv-errno.js"
+      ]
+    },
+    "als": {
+      "status": {
+        "fail": 2
+      },
+      "examples": [
+        "test-als-defaultvalue-original.js",
+        "test-als-defaultvalue.js"
+      ]
+    },
+    "blob": {
+      "status": {
+        "fail": 2
+      },
+      "examples": [
+        "test-blob-createobjecturl.js",
+        "test-blob-file-backed.js"
+      ]
+    },
+    "diagnostic": {
+      "status": {
+        "fail": 2
+      },
+      "examples": [
+        "test-diagnostic-channel-http-request-created.js",
+        "test-diagnostic-channel-http-response-created.js"
+      ]
+    },
+    "disable": {
+      "status": {
+        "fail": 2
+      },
+      "examples": [
+        "test-disable-proto-delete.js",
+        "test-disable-proto-throw.js"
+      ]
+    },
+    "domexception": {
+      "status": {
+        "fail": 2
+      },
+      "examples": [
+        "test-domexception-cause.js",
+        "test-domexception-subclass.js"
+      ]
+    },
+    "dotenv": {
+      "status": {
+        "fail": 2
+      },
+      "examples": [
+        "test-dotenv-edge-cases.js",
+        "test-dotenv-node-options.js"
+      ]
+    },
+    "double": {
+      "status": {
+        "fail": 2
+      },
+      "examples": [
+        "test-double-tls-client.js",
+        "test-double-tls-server.js"
+      ]
+    },
+    "env": {
+      "status": {
+        "fail": 2
+      },
+      "examples": [
+        "test-env-newprotomethod-remove-unnecessary-prototypes.js",
+        "test-env-var-no-warnings.js"
+      ]
+    },
+    "filehandle": {
+      "status": {
+        "fail": 2
+      },
+      "examples": [
+        "test-filehandle-autoclose.mjs",
+        "test-filehandle-readablestream.js"
+      ]
+    },
+    "force": {
+      "status": {
+        "fail": 2
+      },
+      "examples": [
+        "test-force-repl-with-eval.js",
+        "test-force-repl.js"
+      ]
+    },
+    "heapdump": {
+      "status": {
+        "fail": 2
+      },
+      "examples": [
+        "test-heapdump-async-hooks-init-promise.js",
+        "test-heapdump-fs-mkdir-recursive.js"
+      ]
+    },
+    "heapsnapshot": {
+      "status": {
+        "fail": 2
+      },
+      "examples": [
+        "test-heapsnapshot-near-heap-limit-by-api-in-worker.js",
+        "test-heapsnapshot-near-heap-limit-worker.js"
+      ]
+    },
+    "icu": {
+      "status": {
+        "fail": 2
+      },
+      "examples": [
+        "test-icu-env.js",
+        "test-icu-transcode.js"
+      ]
+    },
+    "memory": {
+      "status": {
+        "fail": 2
+      },
+      "examples": [
+        "test-memory-usage-emfile.js",
+        "test-memory-usage.js"
+      ]
+    },
+    "messaging": {
+      "status": {
+        "fail": 2
+      },
+      "examples": [
+        "test-messaging-marktransfermode.js",
+        "test-messaging-string-tag.js"
+      ]
+    },
+    "mime": {
+      "status": {
+        "fail": 2
+      },
+      "examples": [
+        "test-mime-api.js",
+        "test-mime-whatwg.js"
+      ]
+    },
+    "openssl": {
+      "status": {
+        "fail": 2
+      },
+      "examples": [
+        "test-openssl-ca-options.js",
+        "test-openssl-unreadable-config.js"
+      ]
+    },
+    "outgoing": {
+      "status": {
+        "fail": 2
+      },
+      "examples": [
+        "test-outgoing-message-destroy.js",
+        "test-outgoing-message-pipe.js"
+      ]
+    },
+    "performanceobserver": {
+      "status": {
+        "fail": 2
+      },
+      "examples": [
+        "test-performanceobserver-gc.js",
+        "test-performanceobserver-observer-counts.js"
+      ]
+    },
+    "queue": {
+      "status": {
+        "fail": 2
+      },
+      "examples": [
+        "test-queue-microtask-uncaught-asynchooks.js",
+        "test-queue-microtask.js"
+      ]
+    },
+    "sea": {
+      "status": {
+        "fail": 2
+      },
+      "examples": [
+        "test-sea-assets-not-in-sea.js",
+        "test-sea-get-asset-keys.js"
+      ]
+    },
+    "socket": {
+      "status": {
+        "fail": 2
+      },
+      "examples": [
+        "test-socket-address.js",
+        "test-socket-writes-before-passed-to-tls-socket.js"
+      ]
+    },
+    "startup": {
+      "status": {
+        "fail": 2
+      },
+      "examples": [
+        "test-startup-empty-regexp-statics.js",
+        "test-startup-large-pages.js"
+      ]
+    },
+    "structuredClone": {
+      "status": {
+        "fail": 2
+      },
+      "examples": [
+        "test-structuredClone-domexception.js",
+        "test-structuredClone-global.js"
+      ]
+    },
+    "throw": {
+      "status": {
+        "fail": 2
+      },
+      "examples": [
+        "test-throw-error-with-getter-throw-traced.mjs",
+        "test-throw-undefined-or-null-traced.mjs"
+      ]
+    },
+    "tty": {
+      "status": {
+        "fail": 2
+      },
+      "examples": [
+        "test-tty-backwards-api.js",
+        "test-tty-stdin-pipe.js"
+      ]
+    },
+    "ttywrap": {
+      "status": {
+        "fail": 2
+      },
+      "examples": [
+        "test-ttywrap-invalid-fd.js",
+        "test-ttywrap-stack.js"
+      ]
+    },
+    "unhandled": {
+      "status": {
+        "fail": 2
+      },
+      "examples": [
+        "test-unhandled-exception-rethrow-error.js",
+        "test-unhandled-exception-with-worker-inuse.js"
+      ]
+    },
+    "urlpattern": {
+      "status": {
+        "fail": 2
+      },
+      "examples": [
+        "test-urlpattern-invalidthis.js",
+        "test-urlpattern-types.js"
+      ]
+    },
+    "warn": {
+      "status": {
+        "fail": 2
+      },
+      "examples": [
+        "test-warn-tls-common-deprecation.js",
+        "test-warn-tls-wrap-deprecation.js"
+      ]
+    },
+    "web": {
+      "status": {
+        "fail": 2
+      },
+      "examples": [
+        "test-web-locks-query.js",
+        "test-web-locks.js"
+      ]
+    },
+    "webstreams": {
+      "status": {
+        "fail": 2
+      },
+      "examples": [
+        "test-webstreams-clone-unref.js",
+        "test-webstreams-decompression-reject-trailing.js"
+      ]
+    },
+    "abort": {
+      "status": {
+        "timeout": 1
+      },
+      "examples": [
+        "test-abort-controller-any-timeout.js"
+      ]
+    },
+    "abortcontroller": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-abortcontroller-internal.js"
+      ]
+    },
+    "abortcontroller.js": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-abortcontroller.js"
+      ]
+    },
+    "aborted": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-aborted-util.js"
+      ]
+    },
+    "accessor": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-accessor-properties.js"
+      ]
+    },
+    "assert.js": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-assert.js"
+      ]
+    },
+    "bash": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-bash-completion.js"
+      ]
+    },
+    "binding": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-binding-constants.js"
+      ]
+    },
+    "blob.js": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-blob.js"
+      ]
+    },
+    "blocklist": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-blocklist-fast-api.js"
+      ]
+    },
+    "blocklist.js": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-blocklist.js"
+      ]
+    },
+    "bootstrap": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-bootstrap-modules.js"
+      ]
+    },
+    "broadcastchannel": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-broadcastchannel-custom-inspect.js"
+      ]
+    },
+    "c": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-c-ares.js"
+      ]
+    },
+    "client": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-client-request-destroy.js"
+      ]
+    },
+    "code": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-code-cache.js"
+      ]
+    },
+    "common.js": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-common.js"
+      ]
+    },
+    "console.js": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-console.js"
+      ]
+    },
+    "constants.js": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-constants.js"
+      ]
+    },
+    "coverage": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-coverage-with-inspector-disabled.js"
+      ]
+    },
+    "cppheap": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-cppheap-stats.js"
+      ]
+    },
+    "crypto.js": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-crypto.js"
+      ]
+    },
+    "cwd": {
+      "status": {
+        "timeout": 1
+      },
+      "examples": [
+        "test-cwd-enoent-repl.js"
+      ]
+    },
+    "data": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-data-url.js"
+      ]
+    },
+    "datetime": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-datetime-change-notify.js"
+      ]
+    },
+    "debug": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-debug-v8-fast-api.js"
+      ]
+    },
+    "diff.js": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-diff.js"
+      ]
+    },
+    "directory": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-directory-import.js"
+      ]
+    },
+    "dlopen": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-dlopen-binary.js"
+      ]
+    },
+    "dns.js": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-dns.js"
+      ]
+    },
+    "dotenv.js": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-dotenv.js"
+      ]
+    },
+    "dummy": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-dummy-stdio.js"
+      ]
+    },
+    "err": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-err-name-deprecation.js"
+      ]
+    },
+    "errors": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-errors-systemerror.js"
+      ]
+    },
+    "eval": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-eval-disallow-code-generation-from-strings.js"
+      ]
+    },
+    "events": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-events-on-async-iterator.js"
+      ]
+    },
+    "eventsource.js": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-eventsource.js"
+      ]
+    },
+    "eventtarget": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-eventtarget-memoryleakwarning.js"
+      ]
+    },
+    "eventtarget.js": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-eventtarget.js"
+      ]
+    },
+    "experimental": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-experimental-shared-value-conveyor.js"
+      ]
+    },
+    "external": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-external-memory-reasonable-size.js"
+      ]
+    },
+    "fetch.mjs": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-fetch.mjs"
+      ]
+    },
+    "ffi": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-ffi-missing-build.js"
+      ]
+    },
+    "file.js": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-file.js"
+      ]
+    },
+    "fileurltopathbuffer.js": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-fileurltopathbuffer.js"
+      ]
+    },
+    "find": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-find-package-json.js"
+      ]
+    },
+    "freeze": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-freeze-intrinsics.js"
+      ]
+    },
+    "global.js": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-global.js"
+      ]
+    },
+    "h2": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-h2-large-header-cause-client-to-hangup.js"
+      ]
+    },
+    "h2leak": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-h2leak-destroy-session-on-socket-ended.js"
+      ]
+    },
+    "handle": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-handle-wrap-hasref.js"
+      ]
+    },
+    "hash": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-hash-seed.mjs"
+      ]
+    },
+    "heap": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-heap-embedder-graph.js"
+      ]
+    },
+    "http.js": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-http.js"
+      ]
+    },
+    "intl.js": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-intl.js"
+      ]
+    },
+    "is": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-is-internal-thread.mjs"
+      ]
+    },
+    "js": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-js-stream-call-properties.js"
+      ]
+    },
+    "mark": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-mark-promise-handled.js"
+      ]
+    },
+    "math": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-math-random.js"
+      ]
+    },
+    "max": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-max-old-space-size-percentage.js"
+      ]
+    },
+    "mock": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-mock-timers-abortsignal-timeout.js"
+      ]
+    },
+    "navigator.js": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-navigator.js"
+      ]
+    },
+    "next": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-next-tick-domain.js"
+      ]
+    },
+    "no": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-no-addons-resolution-condition.js"
+      ]
+    },
+    "nodeeventtarget.js": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-nodeeventtarget.js"
+      ]
+    },
+    "npm": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-npm-install.js"
+      ]
+    },
+    "os": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-os-fast.js"
+      ]
+    },
+    "package": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-package-map-cli.js"
+      ]
+    },
+    "parse": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-parse-test-envs.js"
+      ]
+    },
+    "pending": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-pending-deprecation.js"
+      ]
+    },
+    "performanceobserver.js": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-performanceobserver.js"
+      ]
+    },
+    "preload.js": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-preload.js"
+      ]
+    },
+    "primitive": {
+      "status": {
+        "timeout": 1
+      },
+      "examples": [
+        "test-primitive-timer-leak.js"
+      ]
+    },
+    "promises": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-promises-unhandled-rejections.js"
+      ]
+    },
+    "punycode.js": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-punycode.js"
+      ]
+    },
+    "querystring": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-querystring-escape.js"
+      ]
+    },
+    "querystring.js": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-querystring.js"
+      ]
+    },
+    "quic": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-quic-session-properties.mjs"
+      ]
+    },
+    "quotaexceedederror.js": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-quotaexceedederror.js"
+      ]
+    },
+    "ref": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-ref-unref-return.js"
+      ]
+    },
+    "release": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-release-npm.js"
+      ]
+    },
+    "repl.js": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-repl.js"
+      ]
+    },
+    "resource": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-resource-usage.js"
+      ]
+    },
+    "safe": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-safe-get-env.js"
+      ]
+    },
+    "security": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-security-revert-unknown.js"
+      ]
+    },
+    "set": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-set-http-max-http-headers.js"
+      ]
+    },
+    "setproctitle.js": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-setproctitle.js"
+      ]
+    },
+    "signal": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-signal-safety.js"
+      ]
+    },
+    "socketaddress.js": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-socketaddress.js"
+      ]
+    },
+    "stdio": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-stdio-undestroy.js"
+      ]
+    },
+    "strace": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-strace-openat-openssl.js"
+      ]
+    },
+    "sync": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-sync-io-option.js"
+      ]
+    },
+    "testpy": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-testpy-env-var-via-comment.js"
+      ]
+    },
+    "tick": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-tick-processor-arguments.js"
+      ]
+    },
+    "tojson": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-tojson-perf_hooks.js"
+      ]
+    },
+    "unicode": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-unicode-node-options.js"
+      ]
+    },
+    "urlpattern.js": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-urlpattern.js"
+      ]
+    },
+    "util.js": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-util.js"
+      ]
+    },
+    "vfs.js": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-vfs.js"
+      ]
+    },
+    "wasm.mjs": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-wasm.mjs"
+      ]
+    },
+    "websocket.js": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-websocket.js"
+      ]
+    },
+    "webstream": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-webstream-structured-clone-no-leftovers.mjs"
+      ]
+    },
+    "worker.js": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-worker.js"
+      ]
+    },
+    "worker.mjs": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-worker.mjs"
+      ]
+    },
+    "x509": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-x509-escaping.js"
+      ]
+    },
+    "zlib.js": {
+      "status": {
+        "fail": 1
+      },
+      "examples": [
+        "test-zlib.js"
+      ]
+    }
+  }
+}
