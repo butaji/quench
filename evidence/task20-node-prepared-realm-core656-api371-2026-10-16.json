@@ -1,0 +1,576 @@
+{
+  "source_commit": "e9ec2e9c1372e8640ef1ab027bbe5f9a5f5e3e33",
+  "scope": "Prepared host Script code for original realm-local Node policy, combined with incoming parsed eval and genuine scandir metadata",
+  "oracle": "Node v26.12.0 latest stable",
+  "checks": {
+    "core": 656,
+    "api": 371,
+    "framework": 43,
+    "shared": 7,
+    "workspace_all_targets": true,
+    "focused_realm_policy": 1,
+    "empty_differentials": 5
+  },
+  "family": {
+    "before": {
+      "fail": 6,
+      "pass": 10,
+      "skip": 2
+    },
+    "candidate": {
+      "fail": 6,
+      "pass": 10,
+      "skip": 2
+    },
+    "total": 18,
+    "gained": [],
+    "lost": [],
+    "skip_changes": {}
+  },
+  "previous_full_loss_controls": [
+    {
+      "label": "before",
+      "fixture": "test-shadow-realm-gc-module.js",
+      "exit": 0,
+      "elapsed_seconds": 21.384151679987554,
+      "counts": {
+        "pass": 1
+      }
+    },
+    {
+      "label": "before",
+      "fixture": "test-stream2-read-sync-stack.js",
+      "exit": 0,
+      "elapsed_seconds": 21.751187490008306,
+      "counts": {
+        "pass": 1
+      }
+    },
+    {
+      "label": "before",
+      "fixture": "test-stringbytes-external.js",
+      "exit": 0,
+      "elapsed_seconds": 26.10872948402539,
+      "counts": {
+        "pass": 1
+      }
+    },
+    {
+      "label": "candidate",
+      "fixture": "test-shadow-realm-gc-module.js",
+      "exit": 0,
+      "elapsed_seconds": 21.492213452002034,
+      "counts": {
+        "pass": 1
+      }
+    },
+    {
+      "label": "candidate",
+      "fixture": "test-stream2-read-sync-stack.js",
+      "exit": 0,
+      "elapsed_seconds": 24.57057253801031,
+      "counts": {
+        "pass": 1
+      }
+    },
+    {
+      "label": "candidate",
+      "fixture": "test-stringbytes-external.js",
+      "exit": 0,
+      "elapsed_seconds": 27.12483035499463,
+      "counts": {
+        "pass": 1
+      }
+    }
+  ],
+  "fixed_work": {
+    "valid": 8,
+    "clean": 0,
+    "speed_claim": false
+  },
+  "design": [
+    "Prepared Script code retains no guest objects. Each evaluation creates a fresh Script record, constants, caches and realm-bound functions.",
+    "The shared atom sequence is the runtime-state authority; reset and foreign-runtime handles are rejected. Core test covers both compiler modes, collection, private state and realm prototypes.",
+    "Configured SDK cache entries compare exact wrapper input, replace on source change and preserve original positions. Every realm still executes fresh unchanged primordial/error modules and owns actual hooks, brands and fallback state.",
+    "Node directory scans now report actualscandir syscall metadata; original Node oracle checks synchronous/callback error fields."
+  ],
+  "limitations": [
+    "All-parallel goal remains open. Latest completed sourcec4f full stable1789/5015 and pinned1817/4727 exclude this source. No selected-case totals substituted.",
+    "The18-case filesystem family has no losses or skip changes and no new full-case gain in this batch. scandir correction exposes a later existing async-options snapshot gap in fs-readdir-types.",
+    "All three prior timeout cases pass quiet30s controls on both old and new binaries; raw full losses remain. End-to-end GC-module time is not improved materially in this sample.",
+    "No speed claim: fixed-work8valid0clean. Direct initialization samples are diagnostic only.",
+    "Initial Core test link failed from disk exhaustion/SIGBUS before tests ran. Failed temporary and obsolete completed library caches were hashed/reclaimed; fresh successful656/656 retry qualifies source."
+  ],
+  "raw": [
+    {
+      "path": "work/prepared-realm-policy/all-api.log",
+      "bytes": 30427,
+      "sha256": "2c6a475ec4050a95554cff043f3032e9c9025ad421733b762a7fdd75d1f4e86a"
+    },
+    {
+      "path": "work/prepared-realm-policy/buffer-concat-oracle.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/prepared-realm-policy/buffer-concat-oracle.log",
+      "bytes": 945,
+      "sha256": "6952b631101e34ed06edc5159ea6b526493f0567d64f94710f686417c70d0b7d"
+    },
+    {
+      "path": "work/prepared-realm-policy/buffer-latin1-oracle.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/prepared-realm-policy/buffer-latin1-oracle.log",
+      "bytes": 1863,
+      "sha256": "09939bcf717a24a1d1193e5d2dbf4d0d6b23ecbde28bc8e551a3afaef73c562a"
+    },
+    {
+      "path": "work/prepared-realm-policy/buffer-oracle.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/prepared-realm-policy/buffer-oracle.log",
+      "bytes": 4169,
+      "sha256": "f9d0f3418b5812dbcd7e927283a12ea6ff35b6b736c9073a3243ad20342338ce"
+    },
+    {
+      "path": "work/prepared-realm-policy/buffer-poison-oracle.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/prepared-realm-policy/buffer-poison-oracle.log",
+      "bytes": 476,
+      "sha256": "13189736a66e7b1615619955feaa462064b24ed73d07b84b76bd4d5c21fd39e8"
+    },
+    {
+      "path": "work/prepared-realm-policy/check.log",
+      "bytes": 135,
+      "sha256": "190deb745d728126a71972b151b8b22f0aa06dca106b8cf3595265746ad3b14d"
+    },
+    {
+      "path": "work/prepared-realm-policy/completed-iteration-library-cache-reclamation.json",
+      "bytes": 2438,
+      "sha256": "a4941f4bdf58a96feff3240f5c5e03505651d116ffa056d548c5366d895bc794"
+    },
+    {
+      "path": "work/prepared-realm-policy/core-initial-disk-link-failure.log",
+      "bytes": 5764,
+      "sha256": "b5c9f7a80ba5a5129cdcefcc7424e1271aa9939f0fbf556d29d7a0ece739618b"
+    },
+    {
+      "path": "work/prepared-realm-policy/core.log",
+      "bytes": 57756,
+      "sha256": "dfa9482413b57f3181bb01163d5c07f0c3727a0acfd246267c365c52922ae240"
+    },
+    {
+      "path": "work/prepared-realm-policy/core655-cache-reclamation.json",
+      "bytes": 352,
+      "sha256": "74fc8ce027031901d7ea7b6b18246dd392b16a9d8c19b753a1722afb81ce20ed"
+    },
+    {
+      "path": "work/prepared-realm-policy/core656-source-sha256.json",
+      "bytes": 28722,
+      "sha256": "15633ccf77459b19ca3b03b4a02df248d05ed4205426bd5a1ccee9b1b04fa492"
+    },
+    {
+      "path": "work/prepared-realm-policy/cost-controls/buffer20000-before.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/prepared-realm-policy/cost-controls/buffer20000-before.stdout",
+      "bytes": 6,
+      "sha256": "0be508172e87a2af98f344d18610bbaaa0e6bbfcef0c7804b24457f839e129c9"
+    },
+    {
+      "path": "work/prepared-realm-policy/cost-controls/buffer20000-c4f.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/prepared-realm-policy/cost-controls/buffer20000-c4f.stdout",
+      "bytes": 6,
+      "sha256": "0be508172e87a2af98f344d18610bbaaa0e6bbfcef0c7804b24457f839e129c9"
+    },
+    {
+      "path": "work/prepared-realm-policy/cost-controls/buffer20000-node26.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/prepared-realm-policy/cost-controls/buffer20000-node26.stdout",
+      "bytes": 6,
+      "sha256": "0be508172e87a2af98f344d18610bbaaa0e6bbfcef0c7804b24457f839e129c9"
+    },
+    {
+      "path": "work/prepared-realm-policy/cost-controls/buffer20000-prepared.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/prepared-realm-policy/cost-controls/buffer20000-prepared.stdout",
+      "bytes": 6,
+      "sha256": "0be508172e87a2af98f344d18610bbaaa0e6bbfcef0c7804b24457f839e129c9"
+    },
+    {
+      "path": "work/prepared-realm-policy/cost-controls/results.json",
+      "bytes": 3416,
+      "sha256": "3e756b96dc28e630866a232a9465159a45aa68c50a5bb50abac5afbf8fb9364a"
+    },
+    {
+      "path": "work/prepared-realm-policy/cost-controls/shadow20-before.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/prepared-realm-policy/cost-controls/shadow20-before.stdout",
+      "bytes": 3,
+      "sha256": "673650f936cb3b0a2f93ce09d81be10748b1b203c19e8176b4eefc1964a0cf3a"
+    },
+    {
+      "path": "work/prepared-realm-policy/cost-controls/shadow20-c4f.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/prepared-realm-policy/cost-controls/shadow20-c4f.stdout",
+      "bytes": 3,
+      "sha256": "673650f936cb3b0a2f93ce09d81be10748b1b203c19e8176b4eefc1964a0cf3a"
+    },
+    {
+      "path": "work/prepared-realm-policy/cost-controls/shadow20-node26.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/prepared-realm-policy/cost-controls/shadow20-node26.stdout",
+      "bytes": 3,
+      "sha256": "673650f936cb3b0a2f93ce09d81be10748b1b203c19e8176b4eefc1964a0cf3a"
+    },
+    {
+      "path": "work/prepared-realm-policy/cost-controls/shadow20-prepared.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/prepared-realm-policy/cost-controls/shadow20-prepared.stdout",
+      "bytes": 3,
+      "sha256": "673650f936cb3b0a2f93ce09d81be10748b1b203c19e8176b4eefc1964a0cf3a"
+    },
+    {
+      "path": "work/prepared-realm-policy/cost-controls.py",
+      "bytes": 1621,
+      "sha256": "99d7fba13282a95694fff366112754f08beee1019e47c6fe3e5abfe670d148b8"
+    },
+    {
+      "path": "work/prepared-realm-policy/extras.sh",
+      "bytes": 2620,
+      "sha256": "9b3be2d2b60e5aa3aebae7828451066e372b9e32811938165b979a1da36b9d58"
+    },
+    {
+      "path": "work/prepared-realm-policy/failed-link-and-stale-library-reclamation.json",
+      "bytes": 5968,
+      "sha256": "1d3fbd5475d6f179ee4bebd8cf58278a097dd2be57899593d6d1e00088c71981"
+    },
+    {
+      "path": "work/prepared-realm-policy/family-before-test-fs-glob.json",
+      "bytes": 2574,
+      "sha256": "234c9ae4546fbf4cf1d0c5a9ff3f314cc65f76e4e28dc8aff374bf498b6529ff"
+    },
+    {
+      "path": "work/prepared-realm-policy/family-before-test-fs-glob.log",
+      "bytes": 390,
+      "sha256": "a168b3aea42f3a4a2a811e141ca465715690a84fc74510f45e06faa534058787"
+    },
+    {
+      "path": "work/prepared-realm-policy/family-before-test-fs-opendir.json",
+      "bytes": 668,
+      "sha256": "4cdf3453ca0bff17bf709598b2ef277d617663117eebd83b4d937a0bb4593d1c"
+    },
+    {
+      "path": "work/prepared-realm-policy/family-before-test-fs-opendir.log",
+      "bytes": 187,
+      "sha256": "091034aa56795c26af19f660e1ef60fe33ac1d52c88087b1d91a22800af16243"
+    },
+    {
+      "path": "work/prepared-realm-policy/family-before-test-fs-readdir.json",
+      "bytes": 12150,
+      "sha256": "6fac2e9b781b4892b9bf8fe1f18950f2ec4f1bd278a268c1ded9e7eb17b1316c"
+    },
+    {
+      "path": "work/prepared-realm-policy/family-before-test-fs-readdir.log",
+      "bytes": 1422,
+      "sha256": "7330467014cb83b1bc814d89e964f1f2814c9b83573c8b62e82efdf03f17f6bf"
+    },
+    {
+      "path": "work/prepared-realm-policy/family-before-test-fs-utils-get-dirents.json",
+      "bytes": 2300,
+      "sha256": "352d7f9211ccf23dffa0a6bbfa9658e46abe4bb5688c6afd932e8d121b7a8c95"
+    },
+    {
+      "path": "work/prepared-realm-policy/family-before-test-fs-utils-get-dirents.log",
+      "bytes": 197,
+      "sha256": "4686a5a442f48cde24fcfa6cf244e5e74796fbd6f3327f650d249da5ddb1eee5"
+    },
+    {
+      "path": "work/prepared-realm-policy/family-candidate-test-fs-glob.json",
+      "bytes": 2574,
+      "sha256": "234c9ae4546fbf4cf1d0c5a9ff3f314cc65f76e4e28dc8aff374bf498b6529ff"
+    },
+    {
+      "path": "work/prepared-realm-policy/family-candidate-test-fs-glob.log",
+      "bytes": 390,
+      "sha256": "a168b3aea42f3a4a2a811e141ca465715690a84fc74510f45e06faa534058787"
+    },
+    {
+      "path": "work/prepared-realm-policy/family-candidate-test-fs-opendir.json",
+      "bytes": 668,
+      "sha256": "4cdf3453ca0bff17bf709598b2ef277d617663117eebd83b4d937a0bb4593d1c"
+    },
+    {
+      "path": "work/prepared-realm-policy/family-candidate-test-fs-opendir.log",
+      "bytes": 187,
+      "sha256": "091034aa56795c26af19f660e1ef60fe33ac1d52c88087b1d91a22800af16243"
+    },
+    {
+      "path": "work/prepared-realm-policy/family-candidate-test-fs-readdir.json",
+      "bytes": 12269,
+      "sha256": "551aa1e1ec38599bce681d94ff8193f593071b26a040f63ada4f053d8c45504a"
+    },
+    {
+      "path": "work/prepared-realm-policy/family-candidate-test-fs-readdir.log",
+      "bytes": 1422,
+      "sha256": "b032216e6c0b877e70531ababf99f83083a221452bb0c45bcbeaee81303782b0"
+    },
+    {
+      "path": "work/prepared-realm-policy/family-candidate-test-fs-utils-get-dirents.json",
+      "bytes": 2300,
+      "sha256": "3ac4cc0c8984c6bf10aa4c4eb8ae3917d7c9d79c179f78ea56d2216ea6341229"
+    },
+    {
+      "path": "work/prepared-realm-policy/family-candidate-test-fs-utils-get-dirents.log",
+      "bytes": 197,
+      "sha256": "4686a5a442f48cde24fcfa6cf244e5e74796fbd6f3327f650d249da5ddb1eee5"
+    },
+    {
+      "path": "work/prepared-realm-policy/family-driver.log",
+      "bytes": 3901,
+      "sha256": "2ab46f3c50b8e37ee55bd4f662a8dee39aded4208239d411a0d8f7a3abb4987d"
+    },
+    {
+      "path": "work/prepared-realm-policy/family-receipt.json",
+      "bytes": 5329,
+      "sha256": "c8b42f24f0a059c09c894ff79de133d70ce09861028ccb977a080aebf101d9f1"
+    },
+    {
+      "path": "work/prepared-realm-policy/family.py",
+      "bytes": 1877,
+      "sha256": "49b07015a0891f47135c9e9a29b9c39515da3f5e31814c903a27b76f22a361b8"
+    },
+    {
+      "path": "work/prepared-realm-policy/fixed-work.json",
+      "bytes": 153746,
+      "sha256": "15424058615bf47884b1dfe5c0def61c0bc44a4e2876ccc702db0b3ad25826b6"
+    },
+    {
+      "path": "work/prepared-realm-policy/fixed-work.log",
+      "bytes": 1130,
+      "sha256": "8f1ce34c2094be6b10f4a3fdf3f9e8b4e18b2b8604aeaa6afbdbb04ad0b5dd42"
+    },
+    {
+      "path": "work/prepared-realm-policy/focused.log",
+      "bytes": 439,
+      "sha256": "53279c413b751e574fa7497c008eab43d255edc28441a975d0fc0bef0415fc6a"
+    },
+    {
+      "path": "work/prepared-realm-policy/framework.log",
+      "bytes": 3798,
+      "sha256": "b41881f94821125815bc87efbbbd7d26b13fd072686394014795864fa55f2ae8"
+    },
+    {
+      "path": "work/prepared-realm-policy/fs-oracle.log",
+      "bytes": 1807,
+      "sha256": "17ee8ac7d17845321da74a08066800d8dcf0b3508a8eeee9c5ea3f7003587e0b"
+    },
+    {
+      "path": "work/prepared-realm-policy/loss-before-test-shadow-realm-gc-module.js.json",
+      "bytes": 680,
+      "sha256": "fab0492632c68e71dabc4adbe81182bfd3a4931a59fb501f18a72599ab63265d"
+    },
+    {
+      "path": "work/prepared-realm-policy/loss-before-test-shadow-realm-gc-module.js.log",
+      "bytes": 199,
+      "sha256": "646ad2afab0069bbed84fb269a26e4af37bd90b887d0401b80e2f3a780684287"
+    },
+    {
+      "path": "work/prepared-realm-policy/loss-before-test-stream2-read-sync-stack.js.json",
+      "bytes": 1133,
+      "sha256": "03ece9be43298a98a2f1b5f0ffa06fcc4f95ac5cb1ae9efcd4798826132c2fa7"
+    },
+    {
+      "path": "work/prepared-realm-policy/loss-before-test-stream2-read-sync-stack.js.log",
+      "bytes": 200,
+      "sha256": "8ab7382c364429aef6f16f66e36a18b5e610f31cbfcb5f900b962583ec9c1b9d"
+    },
+    {
+      "path": "work/prepared-realm-policy/loss-before-test-stringbytes-external.js.json",
+      "bytes": 678,
+      "sha256": "fff7694390a63436981db68da8244fce79b21e93b757747ce23dd5ca746997d6"
+    },
+    {
+      "path": "work/prepared-realm-policy/loss-before-test-stringbytes-external.js.log",
+      "bytes": 197,
+      "sha256": "6b8941cf17ea938821799e600b1f94d8186b00a10676290e39d091b78e071d2d"
+    },
+    {
+      "path": "work/prepared-realm-policy/loss-candidate-test-shadow-realm-gc-module.js.json",
+      "bytes": 680,
+      "sha256": "fab0492632c68e71dabc4adbe81182bfd3a4931a59fb501f18a72599ab63265d"
+    },
+    {
+      "path": "work/prepared-realm-policy/loss-candidate-test-shadow-realm-gc-module.js.log",
+      "bytes": 199,
+      "sha256": "646ad2afab0069bbed84fb269a26e4af37bd90b887d0401b80e2f3a780684287"
+    },
+    {
+      "path": "work/prepared-realm-policy/loss-candidate-test-stream2-read-sync-stack.js.json",
+      "bytes": 1133,
+      "sha256": "03ece9be43298a98a2f1b5f0ffa06fcc4f95ac5cb1ae9efcd4798826132c2fa7"
+    },
+    {
+      "path": "work/prepared-realm-policy/loss-candidate-test-stream2-read-sync-stack.js.log",
+      "bytes": 200,
+      "sha256": "8ab7382c364429aef6f16f66e36a18b5e610f31cbfcb5f900b962583ec9c1b9d"
+    },
+    {
+      "path": "work/prepared-realm-policy/loss-candidate-test-stringbytes-external.js.json",
+      "bytes": 678,
+      "sha256": "fff7694390a63436981db68da8244fce79b21e93b757747ce23dd5ca746997d6"
+    },
+    {
+      "path": "work/prepared-realm-policy/loss-candidate-test-stringbytes-external.js.log",
+      "bytes": 197,
+      "sha256": "6b8941cf17ea938821799e600b1f94d8186b00a10676290e39d091b78e071d2d"
+    },
+    {
+      "path": "work/prepared-realm-policy/loss-controls.json",
+      "bytes": 3714,
+      "sha256": "d9ab19306a22d1d5fbdde29fc0de6bf4f50219b0e01d2c9f77529778f06ca879"
+    },
+    {
+      "path": "work/prepared-realm-policy/loss-controls.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/prepared-realm-policy/loss-controls.py",
+      "bytes": 1217,
+      "sha256": "83a1b7bbb725f893fddc50e47a4ff9c6c3ff47192ae44f69e42b09c2a247b02c"
+    },
+    {
+      "path": "work/prepared-realm-policy/node-default-hook-source.log",
+      "bytes": 100,
+      "sha256": "77484e05900b597f97a5c6d71f08a99dc30340cb5bfcc165ff0dee44915e966b"
+    },
+    {
+      "path": "work/prepared-realm-policy/paired-build.log",
+      "bytes": 365,
+      "sha256": "b4805d1d8f03d97ddb3c2f7793d5ef147cdec2326ebd463db189b3781a6c795a"
+    },
+    {
+      "path": "work/prepared-realm-policy/qualify.sh",
+      "bytes": 1312,
+      "sha256": "0e5cc483f3d31edf45d34267b4548a622ce2a332b89b3abc7440b3446946f883"
+    },
+    {
+      "path": "work/prepared-realm-policy/scandir-commit.log",
+      "bytes": 145,
+      "sha256": "b24552b0b142f3201c088714cdcc67451aecc43dd25256644ed936be0eff55ac"
+    },
+    {
+      "path": "work/prepared-realm-policy/shadow-node.log",
+      "bytes": 195,
+      "sha256": "5bb1c6f6a341403cc0fb9a357f431916fbbeb47d4b36b6b0a8179f599a2f7a1f"
+    },
+    {
+      "path": "work/prepared-realm-policy/shadow-quench.log",
+      "bytes": 195,
+      "sha256": "5bb1c6f6a341403cc0fb9a357f431916fbbeb47d4b36b6b0a8179f599a2f7a1f"
+    },
+    {
+      "path": "work/prepared-realm-policy/shadow.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/prepared-realm-policy/shared.log",
+      "bytes": 882,
+      "sha256": "1cf07c8f7424dde8de9b54e829f2f8ba103528f87dd2470085b8ea2b4f4275e1"
+    },
+    {
+      "path": "work/prepared-realm-policy/workspace.log",
+      "bytes": 519,
+      "sha256": "6907bb9fff71cf622b135f772a5c964b63aad0c7d86eceffee4d002d0859d065"
+    },
+    {
+      "path": "work/prepared-realm-bin/source-commit.txt",
+      "bytes": 41,
+      "sha256": "368554ef035bbad428ee6465d051c7335969e7d5c32c1980a025da71f0154b9b"
+    },
+    {
+      "path": "work/prepared-realm-bin/source-sha256.json",
+      "bytes": 83210,
+      "sha256": "f318c9ffbde8aba02d674bde771e81a778b708c5b8a6c8a756c468b093c26975"
+    },
+    {
+      "path": "work/prepared-realm-bin/sha256.txt",
+      "bytes": 235,
+      "sha256": "5d6490f9aa90587e4b90455500b4e531e2bd5d686a9b8c5f87b3fca478cadcd5"
+    },
+    {
+      "path": "work/task-supervisor/prepared-realm-state.json",
+      "bytes": 250,
+      "sha256": "d344f3198572e4ed62214ee0755b20ed8f8d3db7f9ae58c39c4ae549771bcf47"
+    },
+    {
+      "path": "work/task-supervisor/prepared-realm.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/task-supervisor/prepared-realm-config.json",
+      "bytes": 256,
+      "sha256": "dc719678dfb95fd909c6f88bc9e17306490450f5f83921c77edb2612f26d2b27"
+    },
+    {
+      "path": "work/task-supervisor/prepared-extras-state.json",
+      "bytes": 249,
+      "sha256": "6120027c1d334c268de19adf1cd9ca8909a0f79791e8674daeb7ca30b3ffc62d"
+    },
+    {
+      "path": "work/task-supervisor/prepared-extras.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/task-supervisor/prepared-extras-config.json",
+      "bytes": 257,
+      "sha256": "b1d6401fcb51a1382fe38ea74e59af0f1e646b07d2574c5989fd74785c3b1d43"
+    },
+    {
+      "path": "work/compat-cost-controls/prepared-candidate-commit.log",
+      "bytes": 165,
+      "sha256": "7eed530d603ec08d23905c1c3b57a0f05f96a006290a2cf8680bf9e19660a39d"
+    },
+    {
+      "path": "work/compat-cost-controls/prepared-merge.log",
+      "bytes": 886,
+      "sha256": "3c56b389094657c4ee49ca0b423048f1463723fd182bcdaf2d200b8db9251156"
+    }
+  ]
+}

@@ -2621,6 +2621,12 @@ pub(crate) fn node_internal_binding_source() -> &'static str {
 
 /// Execute an unchanged configured Node library module in a fresh language realm.
 /// The private CJS environment supplies host services without exposing globals.
+/// Immutable code can be shared while each realm executes a fresh module body.
+pub(crate) struct PreparedRealmModule {
+    source: std::rc::Rc<str>,
+    script: quench_runtime::PreparedScript,
+}
+
 pub(crate) fn node_library_module_in_realm(
     context: &mut Context<'_>,
     global: RootId,
@@ -2650,9 +2656,23 @@ pub(crate) fn node_library_module_in_realm(
         .map_err(|_| RootedError::host("realm wrapper line origin exceeds compiler positions"))?;
     let column_offset = u32::try_from(prefix.rsplit('\n').next().unwrap_or("").encode_utf16().count())
         .map_err(|_| RootedError::host("realm wrapper column origin exceeds compiler positions"))?;
-    let factory = context.evaluate_specialized_script_in_realm_with_origin_rooted(
-        global, &wrapper, &path.to_string_lossy(), line_offset, column_offset,
-    )?;
+    let shared = context.host_mut().shared_state();
+    let cached = shared.borrow().realm_module_programs.get(&path)
+        .filter(|cached| cached.source.as_ref() == wrapper)
+        .map(|cached| cached.script.clone());
+    let script = match cached.filter(|script| context.prepared_script_is_current(script)) {
+        Some(script) => script,
+        None => {
+            let script = context.prepare_specialized_script_in_realm_with_origin(
+                global, &wrapper, &path.to_string_lossy(), line_offset, column_offset,
+            )?;
+            shared.borrow_mut().realm_module_programs.insert(path.clone(), PreparedRealmModule {
+                source: std::rc::Rc::from(wrapper), script: script.clone(),
+            });
+            script
+        }
+    };
+    let factory = context.evaluate_prepared_script_in_realm_rooted(global, &script)?;
     let native_binding =
         context.host_function(crate::host::shared_vm::operation("traceInternal"))?;
     let process = context
