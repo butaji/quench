@@ -6,9 +6,10 @@ mod embedding;
 pub use embedding::RootedError;
 #[path = "api_native.rs"]
 mod native;
+pub(crate) use native::CompiledScriptState;
 pub use native::{
     BuiltinBrand, BuiltinData, CollectionPreview, PromiseSnapshot, HostFunction, HostFunctionId, HostWeakRoot, PreparedScript, NativeArithmetic,
-    NativeContext, RootedIterator, ErrorSourcePosition, SourceStackFrame, SynchronousModule,
+    CompiledScript, NativeContext, RootedIterator, ErrorSourcePosition, SourceStackFrame, SynchronousModule,
 };
 
 /// The syntax context used when compiling source. Script and Module use
