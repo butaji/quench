@@ -18,6 +18,7 @@ const BOOLEAN_OPTIONS: &[(&str, bool)] = &[
     ("--report-uncaught-exception", false),
 ];
 const STRING_OPTIONS: &[(&str, &str)] = &[
+    ("--dns-result-order", "verbatim"),
     ("--report-dir", ""),
     ("--report-filename", ""),
     ("--report-signal", "SIGUSR2"),
