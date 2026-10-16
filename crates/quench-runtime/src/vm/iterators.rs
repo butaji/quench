@@ -225,6 +225,10 @@ impl<H: Host> Vm<H> {
                 .builtin_prototypes
                 .insert((self.realm.globals, native), prototype);
             let constructor = self.native_value(native);
+            self.realm
+                .intrinsics
+                .function_constructors
+                .insert((self.realm.globals, native), constructor);
             self.set_builtin_function_name(constructor, name)?;
             let function = self.native_value(Native::Function);
             self.object_data_mut(constructor)

@@ -92,7 +92,7 @@ impl<H: Host> Vm<H> {
             match self.frames[index].context {
                 CallContext::DirectEval(_) => continue,
                 CallContext::Internal | CallContext::IndirectEval(_) => return Value::NULL,
-                CallContext::Function(caller) => {
+                CallContext::Function(caller) | CallContext::Constructor(caller) => {
                     let Some(Cell::Function {
                         kind:
                             FunctionKind::User(program_id, id)

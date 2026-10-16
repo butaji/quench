@@ -11,6 +11,8 @@ mod backend;
 mod brotli;
 #[cfg(quench_node_zlib)]
 pub(crate) use backend::version;
+#[path = "zlib_native_zstd.rs"]
+mod zstd;
 pub(crate) struct Failure {
     pub(crate) errno: i32,
     pub(crate) code: String,
@@ -22,6 +24,7 @@ pub(crate) struct Step {
 }
 pub(crate) enum Codec {
     Zlib(backend::Codec),
+    Zstd(zstd::Codec),
     #[cfg(quench_node_brotli)]
     Brotli(brotli::Codec),
 }
@@ -44,6 +47,15 @@ impl Codec {
     ) -> Result<Self, Failure> {
         brotli::Codec::new(mode, params, dictionary).map(Self::Brotli)
     }
+    pub(in crate::modules) fn zstd(
+        mode: Mode,
+        params: &[u32],
+        pledge: Option<u64>,
+        dictionary: Option<Vec<u8>>,
+        reject_trailing: bool,
+    ) -> Result<Self, Failure> {
+        zstd::Codec::new(mode, params, pledge, dictionary, reject_trailing).map(Self::Zstd)
+    }
     pub(crate) fn write(
         &mut self,
         flush: i32,
@@ -52,6 +64,7 @@ impl Codec {
     ) -> Result<Step, Failure> {
         match self {
             Self::Zlib(codec) => codec.write(flush, input, output),
+            Self::Zstd(codec) => codec.write(flush, input, output),
             #[cfg(quench_node_brotli)]
             Self::Brotli(codec) => codec.write(flush, input, output),
         }

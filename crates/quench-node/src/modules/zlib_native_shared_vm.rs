@@ -100,6 +100,8 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         let result = c.object_rooted()?;
         let constructors = [
             ("Zlib", "Zlib"),
+            ("ZstdCompress", "ZstdCompress"),
+            ("ZstdDecompress", "ZstdDecompress"),
             #[cfg(quench_node_brotli)]
             ("BrotliEncoder", "BrotliEncoder"),
             #[cfg(quench_node_brotli)]
@@ -171,6 +173,20 @@ pub(crate) fn create_brotli_decoder(
 ) -> Result<RootId, RootedError> {
     create_handle(c, handle, Mode::BrotliDecompress)
 }
+pub(crate) fn create_zstd_compress(
+    c: &mut Context<'_>,
+    handle: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    create_handle(c, handle, Mode::ZstdCompress)
+}
+pub(crate) fn create_zstd_decompress(
+    c: &mut Context<'_>,
+    handle: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    create_handle(c, handle, Mode::ZstdDecompress)
+}
 fn create_handle(c: &mut Context<'_>, handle: RootId, mode: Mode) -> Result<RootId, RootedError> {
     let api = c.host_function_data()?;
     let data = c.null_object_rooted()?;
@@ -202,28 +218,36 @@ pub(crate) fn initialize(
     if !matches!(shared.borrow().zlib_native.entries[i].phase, Phase::New) {
         return Err(fail(c, "Compression handle already initialized"));
     }
-    let (engine, state_index, callback_index) = {
-        #[cfg(quench_node_brotli)]
-        if matches!(mode, Mode::BrotliCompress | Mode::BrotliDecompress) {
-            let params = args
-                .first()
+    let (engine, state_index, callback_index) =
+        if matches!(mode, Mode::ZstdCompress | Mode::ZstdDecompress) {
+            let params = parameter_values(c, args)?;
+            let pledge = pledged_size(c, args.get(1).copied())?;
+            let dictionary = dictionary_bytes(c, args.get(4).copied())?;
+            let reject_trailing = args
+                .get(5)
                 .copied()
-                .and_then(|v| c.view_bytes_rooted(v))
-                .ok_or_else(|| fail(c, "Invalid Brotli parameters"))?;
-            let params = params
-                .chunks_exact(std::mem::size_of::<u32>())
-                .map(|bytes| u32::from_ne_bytes(bytes.try_into().expect("u32 chunk")))
-                .collect::<Vec<_>>();
-            let dictionary = args.get(3).copied().and_then(|v| c.view_bytes_rooted(v));
-            (Engine::brotli(mode, &params, dictionary), 1, 2)
+                .and_then(|v| c.rooted_value(v))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            (
+                Engine::zstd(mode, &params, pledge, dictionary, reject_trailing),
+                2,
+                3,
+            )
         } else {
-            initialize_zlib(c, mode, args)?
-        }
-        #[cfg(not(quench_node_brotli))]
-        {
-            initialize_zlib(c, mode, args)?
-        }
-    };
+            #[cfg(quench_node_brotli)]
+            if matches!(mode, Mode::BrotliCompress | Mode::BrotliDecompress) {
+                let params = parameter_values(c, args)?;
+                let dictionary = dictionary_bytes(c, args.get(3).copied())?;
+                (Engine::brotli(mode, &params, dictionary), 1, 2)
+            } else {
+                initialize_zlib(c, mode, args)?
+            }
+            #[cfg(not(quench_node_brotli))]
+            {
+                initialize_zlib(c, mode, args)?
+            }
+        };
     let api = c.host_function_data()?;
     let engine = match engine {
         Ok(engine) => engine,
@@ -233,7 +257,12 @@ pub(crate) fn initialize(
             let errno = c.number(error.errno as f64);
             let code = c.string_rooted(&error.code);
             c.call_rooted(callback, handle, &[message, errno, code])?;
-            let exception = c.error_rooted("Initialization failed")?;
+            let init_message = if matches!(mode, Mode::ZstdCompress | Mode::ZstdDecompress) {
+                &error.message
+            } else {
+                "Initialization failed"
+            };
+            let exception = c.error_rooted(init_message)?;
             let code = c.string_rooted("ERR_ZLIB_INITIALIZATION_FAILED");
             put(c, exception, "code", code)?;
             return Err(c.throw(exception));
@@ -250,6 +279,58 @@ pub(crate) fn initialize(
     put(c, data, "callback", callback)?;
     shared.borrow_mut().zlib_native.entries[i].phase = Phase::Ready(engine);
     Ok(c.undefined())
+}
+fn pledged_size(c: &mut Context<'_>, value: Option<RootId>) -> Result<Option<u64>, RootedError> {
+    const MAX_SAFE_JS_INTEGER: f64 = ((1u64 << f64::MANTISSA_DIGITS) - 1) as f64;
+    let Some(value) = value.filter(|v| !c.rooted_value(*v).is_some_and(|v| v.is_undefined()))
+    else {
+        return Ok(None);
+    };
+    let Some(number) = c.rooted_value(value).and_then(|v| v.as_number()) else {
+        let error = c.type_error_rooted("pledgedSrcSize must be a number")?;
+        let code = c.string_rooted("ERR_INVALID_ARG_TYPE");
+        put(c, error, "code", code)?;
+        return Err(c.throw(error));
+    };
+    let message =
+        if !number.is_finite() || number.fract() != 0.0 || number.abs() > MAX_SAFE_JS_INTEGER {
+            "pledgedSrcSize must be a safe integer"
+        } else if number < 0.0 {
+            "pledgedSrcSize must be non-negative"
+        } else {
+            return Ok(Some(number as u64));
+        };
+    let error = c.range_error_rooted(message)?;
+    let code = c.string_rooted("ERR_OUT_OF_RANGE");
+    put(c, error, "code", code)?;
+    Err(c.throw(error))
+}
+fn dictionary_bytes(
+    c: &mut Context<'_>,
+    value: Option<RootId>,
+) -> Result<Option<Vec<u8>>, RootedError> {
+    let Some(value) = value.filter(|v| !c.rooted_value(*v).is_some_and(|v| v.is_undefined()))
+    else {
+        return Ok(None);
+    };
+    if let Some(bytes) = c.view_bytes_rooted(value) {
+        return Ok(Some(bytes));
+    }
+    let error = c.type_error_rooted("dictionary must be an ArrayBufferView if provided")?;
+    let code = c.string_rooted("ERR_INVALID_ARG_TYPE");
+    put(c, error, "code", code)?;
+    Err(c.throw(error))
+}
+fn parameter_values(c: &mut Context<'_>, args: &[RootId]) -> Result<Vec<u32>, RootedError> {
+    let params = args
+        .first()
+        .copied()
+        .and_then(|v| c.view_bytes_rooted(v))
+        .ok_or_else(|| fail(c, "Invalid compression parameters"))?;
+    Ok(params
+        .chunks_exact(std::mem::size_of::<u32>())
+        .map(|bytes| u32::from_ne_bytes(bytes.try_into().expect("u32 chunk")))
+        .collect())
 }
 fn initialize_zlib(
     c: &mut Context<'_>,

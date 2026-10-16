@@ -1,13 +1,14 @@
 //! Immutable creation names share the shape's lifetime and property transitions.
 use super::*;
 
-pub(super) fn shape_names(shapes: &[Shape], shape: u32) -> (Option<Atom>, Option<(Value, bool)>) {
-    let (mut function, mut constructed) = (None, None);
+pub(super) fn shape_names(shapes: &[Shape], shape: u32) -> (Option<Atom>, Option<(Value, bool)>, bool) {
+    let (mut function, mut constructed, mut reconfigured) = (None, None, false);
     let mut current = Some(shape);
     while let Some(id) = current {
         let shape = &shapes[id as usize];
         match shape.transition {
             ShapeTransition::FunctionName { name } if function.is_none() => function = Some(name),
+            ShapeTransition::FunctionNameReconfigured => reconfigured = true,
             ShapeTransition::Constructed {
                 constructor,
                 new_target_is_base,
@@ -16,7 +17,7 @@ pub(super) fn shape_names(shapes: &[Shape], shape: u32) -> (Option<Atom>, Option
         }
         current = shape.parent();
     }
-    (function, constructed)
+    (function, constructed, reconfigured)
 }
 
 impl<H: Host> Vm<H> {
@@ -29,15 +30,37 @@ impl<H: Host> Vm<H> {
         if self.original_function_name(function) == Some(name) {
             return;
         }
-        let Some(object) = self.object_data(function) else {
-            return;
-        };
-        let shape = object.shape();
-        let shape =
-            self.append_cached_shape_transition(shape, ShapeTransition::FunctionName { name });
-        self.object_data_mut(function)
-            .expect("function object")
-            .set_shape(shape);
+        self.capture_function_name_atom(function, name);
+    }
+
+    fn capture_function_name_atom(&mut self, function: Value, name: Atom) {
+        let Some(shape) = self.object_data(function).map(Object::shape) else { return; };
+        let shape = self.append_cached_shape_transition(shape, ShapeTransition::FunctionName { name });
+        self.object_data_mut(function).expect("function object").set_shape(shape);
+    }
+
+    pub(super) fn set_function_debug_name(&mut self, function: Value, name: Atom) {
+        if matches!(self.heap.get(function), Some(Cell::Function { kind: FunctionKind::User(..) | FunctionKind::NumericUser(..), .. }))
+            && self.original_function_name(function).is_some_and(|original| self.atom_units_equal_str(original, ""))
+        {
+            self.capture_function_name_atom(function, name);
+        }
+    }
+
+    pub(super) fn default_function_name_info(&self, function: Value, key: PropertyKey) -> bool {
+        if !matches!(key, PropertyKey::String(atom) if self.atom_units_equal_str(atom, "name"))
+            || !matches!(self.heap.get(function), Some(Cell::Function { .. }))
+        { return false; }
+        let Some(object) = self.object_data(function) else { return false; };
+        let (name, _, reconfigured) = shape_names(&self.shapes, object.shape());
+        name.is_some() && !reconfigured && !object.was_used_as_prototype()
+    }
+
+    pub(super) fn reconfigure_function_name(&mut self, function: Value, key: PropertyKey) {
+        if !self.default_function_name_info(function, key) { return; }
+        let shape = self.object_data(function).expect("function object").shape();
+        let shape = self.append_cached_shape_transition(shape, ShapeTransition::FunctionNameReconfigured);
+        self.object_data_mut(function).expect("function object").set_shape(shape);
     }
 
     pub(super) fn original_function_name(&self, function: Value) -> Option<Atom> {
@@ -51,25 +74,11 @@ impl<H: Host> Vm<H> {
             self.atom_units_equal_str(atom, "name")
         });
         if let Some(name_key) = name_key {
-            let mut current = function;
-            while let Some(object) = self.object_data(current) {
-                if matches!(self.heap.get(current), Some(Cell::Proxy { .. })) {
-                    break;
-                }
-                if let Some(attributes) =
-                    self.property_attributes(current, PropertyKey::string(name_key))
-                {
-                    if !attributes.accessor {
-                        if let Some(Cell::String(name)) = self
-                            .own_property(current, name_key)
-                            .and_then(|value| self.heap.get(value))
-                        {
-                            return Some(name.clone());
-                        }
-                    }
-                    break;
-                }
-                current = object.proto();
+            if let Some(Cell::String(name)) = self
+                .diagnostic_data_property(function, PropertyKey::string(name_key))
+                .and_then(|value| self.heap.get(value))
+            {
+                return Some(name.clone());
             }
         }
         self.original_function_name(function)
@@ -134,20 +143,71 @@ impl<H: Host> Vm<H> {
             .map(|name| self.atom_value(name)))
     }
 
+    /// A function's existing code kind and creation realm own its factory origin.
+    /// Bound functions have no such ordinary-function constructor projection.
+    fn function_factory_constructor(&self, value: Value) -> Option<Value> {
+        let Cell::Function { object, kind, .. } = self.heap.get(value)? else {
+            return None;
+        };
+        let intrinsic = match *kind {
+            FunctionKind::User(program, id) | FunctionKind::NumericUser(program, id) => {
+                let program = self.programs.get(program)?;
+                let function = program.functions.get(id as usize)?;
+                match (function.is_async, function.is_generator) {
+                    (true, true) => Native::AsyncGeneratorFunction,
+                    (false, true) => Native::GeneratorFunction,
+                    (true, false) => Native::AsyncFunction,
+                    (false, false) => Native::Function,
+                }
+            }
+            FunctionKind::Native(Native::FunctionBoundCall) => return None,
+            FunctionKind::Native(_) => Native::Function,
+        };
+        self.realm
+            .intrinsics
+            .function_constructors
+            .get(&(object.realm, intrinsic))
+            .copied()
+    }
+
     pub(crate) fn embedding_constructed_name(
         &self,
         root: RootId,
     ) -> Result<Option<JsString>, JsError> {
-        let value = self.embedding_value(root)?;
-        let Some(object) = self.object_data(value) else {
-            return Ok(None);
-        };
-        if object.was_used_as_prototype() {
-            return Ok(None);
-        }
-        Ok(shape_names(&self.shapes, object.shape())
-            .1
-            .filter(|(_, new_target_is_base)| *new_target_is_base)
-            .and_then(|(constructor, _)| self.debug_function_name(constructor)))
+        Ok(self.constructed_name(self.embedding_value(root)?))
     }
+
+    pub(super) fn constructed_name(&self, value: Value) -> Option<JsString> {
+        let object = self.object_data(value)?;
+        if object.was_used_as_prototype() {
+            return None;
+        }
+        if let Some((constructor, new_target_is_base)) = shape_names(&self.shapes, object.shape()).1 {
+            return new_target_is_base
+                .then(|| self.debug_function_name(constructor))
+                .flatten();
+        }
+        if let Some(constructor) = self.function_factory_constructor(value) {
+            return self.debug_function_name(constructor);
+        }
+        // These iterator maps have inaccessible intrinsic constructors. Their
+        // immutable names derive from the existing iterator kind.
+        let name = match self.heap.get(value) {
+            Some(Cell::Iterator {
+                kind: IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::MapEntries,
+                ..
+            }) => "MapIterator",
+            Some(Cell::Iterator {
+                kind: IteratorKind::SetValues | IteratorKind::SetEntries,
+                ..
+            }) => "SetIterator",
+            Some(Cell::Iterator {
+                kind: IteratorKind::String,
+                ..
+            }) => "StringIterator",
+            _ => return None,
+        };
+        Some(JsString::from_str(name))
+    }
+
 }
