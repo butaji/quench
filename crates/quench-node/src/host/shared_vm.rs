@@ -469,6 +469,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "encodingUtf8" (0) => crate::modules::encoding_binding_shared_vm::encode,
         method "encodingInto" (0) => crate::modules::encoding_binding_shared_vm::encode_into,
         method "encodingDecodeUtf8" (0) => crate::modules::encoding_binding_shared_vm::decode,
+        method "utilPreviewEntries" (0) => crate::modules::util_shared_vm::preview_entries,
+        method "utilProxyDetails" (0) => crate::modules::util_shared_vm::proxy_details,
         method "utilPromiseDetails" (0) => crate::modules::util_shared_vm::promise_details,
         method "utilMarkPromiseHandled" (0) => crate::modules::util_shared_vm::mark_promise_handled,
         method "utilOwnNonIndexProperties" (0) => crate::modules::util_shared_vm::own_non_index_properties,

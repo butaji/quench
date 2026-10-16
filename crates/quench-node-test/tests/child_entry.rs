@@ -8566,3 +8566,19 @@ fn os_priority_changes_are_visible_to_the_kernel_on_the_child_process_pid() {
     assert_eq!(unsafe { *libc::__errno_location() }, 0);
     assert_eq!(actual, expected);
 }
+
+#[test]
+fn native_proxy_details_preserve_slot_identity_revocation_and_trap_isolation() {
+    compare_node_source_with_args(
+        include_str!("../node-tests/test-native-proxy-details.js"),
+        &["--no-warnings", "--expose-internals"],
+    );
+}
+
+#[test]
+fn native_collection_previews_keep_iterator_positions_live_slots_and_return_conventions() {
+    compare_node_source_with_args(
+        include_str!("../node-tests/test-native-collection-preview.js"),
+        &["--no-warnings", "--expose-internals"],
+    );
+}

@@ -332,8 +332,60 @@ impl<H: Host> Vm<H> {
     }
 
     pub(crate) fn embedding_proxy_target(&self, root: RootId) -> Result<Option<Value>, JsError> {
+        Ok(self.embedding_proxy_details(root)?.map(|(target, _)| target))
+    }
+
+    pub(crate) fn embedding_proxy_details(&self, root: RootId) -> Result<Option<(Value, Value)>, JsError> {
         let value = self.embedding_value(root)?;
-        Ok(match self.heap.get(value) { Some(Cell::Proxy { target, .. }) => Some(*target), _ => None })
+        Ok(match self.heap.get(value) {
+            Some(Cell::Proxy { target, handler, .. }) => Some((*target, *handler)),
+            _ => None,
+        })
+    }
+
+    /// Inspect live collection slots without calling or advancing an iterator.
+    pub(crate) fn embedding_collection_preview(&self, root: RootId) -> Result<Option<(Vec<Value>, bool)>, JsError> {
+        let value = self.embedding_value(root)?;
+        fn flatten(entries: impl Iterator<Item = (Value, Value)>) -> Vec<Value> {
+            entries.flat_map(|(key, value)| [key, value]).collect()
+        }
+        let snapshot = match self.heap.get(value) {
+            Some(Cell::Map { entries, .. }) => (flatten(entries.iter()), true),
+            Some(Cell::Set { entries, .. }) => (entries.to_vec(), false),
+            Some(Cell::WeakMap { entries, .. }) => (flatten(entries.iter().copied()), true),
+            Some(Cell::WeakSet { entries, .. }) => (entries.to_vec(), false),
+            Some(Cell::Iterator { source, kind, index, done, ext, .. }) => {
+                let key_value = match kind {
+                    IteratorKind::MapEntries | IteratorKind::SetEntries => true,
+                    IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::SetValues => false,
+                    _ => return Ok(None),
+                };
+                let mut values = Vec::new();
+                let mut position = ext.position(*index);
+                if !done {
+                    match self.heap.get(*source) {
+                        Some(Cell::Map { entries, .. }) => while let Some((slot, (key, value))) = entries.next_live(position) {
+                            match kind {
+                                IteratorKind::MapKeys => values.push(key),
+                                IteratorKind::MapValues => values.push(value),
+                                IteratorKind::MapEntries => values.extend([key, value]),
+                                _ => unreachable!("Map iterator owns Map source"),
+                            }
+                            position = slot + 1;
+                        },
+                        Some(Cell::Set { entries, .. }) => while let Some((slot, value)) = entries.next_live(position) {
+                            values.push(value);
+                            if key_value { values.push(value); }
+                            position = slot + 1;
+                        },
+                        _ => {},
+                    }
+                }
+                (values, key_value)
+            }
+            _ => return Ok(None),
+        };
+        Ok(Some(snapshot))
     }
 
     pub(crate) fn embedding_builtin_data(

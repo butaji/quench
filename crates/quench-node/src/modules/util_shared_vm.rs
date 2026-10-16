@@ -1129,6 +1129,43 @@ pub(crate) fn mark_promise_handled(
     Ok(context.undefined())
 }
 
+/// Read genuine Core proxy slots using the Node binding return convention.
+pub(crate) fn proxy_details(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let undefined = context.undefined();
+    let value = args.first().copied().unwrap_or(undefined);
+    let Some((target, handler)) = context.proxy_details_rooted(value)? else {
+        return Ok(undefined);
+    };
+    let show_both = if args.len() == 1 {
+        true
+    } else {
+        let yes = context.boolean(true);
+        context.strict_equal_rooted(args.get(1).copied().unwrap_or(undefined), yes)?
+    };
+    if show_both { context.array_rooted(&[target, handler]) } else { Ok(target) }
+}
+
+/// Node's entry preview is a non-consuming snapshot of genuine collection slots.
+pub(crate) fn preview_entries(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let undefined = context.undefined();
+    let value = args.first().copied().unwrap_or(undefined);
+    let Some((values, key_value)) = context.collection_preview_rooted(value)? else {
+        return Ok(undefined);
+    };
+    let entries = context.array_rooted(&values)?;
+    if args.len() == 1 { return Ok(entries); }
+    let key_value = context.boolean(key_value);
+    context.array_rooted(&[entries, key_value])
+}
+
 /// Cache the genuine internal key binding in Core-owned private formatter data.
 pub(crate) fn key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let data = internal_formatters(context)?;
@@ -1136,21 +1173,15 @@ pub(crate) fn key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<R
     let cached = context.own_property_descriptor_rooted(data, cache_key)?;
     if context.is_object_rooted(cached)? { return get(context, cached, "value"); }
     let binding = context.object_rooted()?;
-    let function = context.host_function(crate::host::shared_vm::operation("utilOwnNonIndexProperties"))?;
-    let key = context.string_rooted("name");
-    let name = context.string_rooted("getOwnNonIndexProperties");
-    context.define_data_property_rooted(function, key, name, false, false, true)?;
-    let key = context.string_rooted("getOwnNonIndexProperties");
-    context.define_data_property_rooted(binding, key, function, true, true, true)?;
     for (name, operation) in [
+        ("getOwnNonIndexProperties", "utilOwnNonIndexProperties"),
         ("getPromiseDetails", "utilPromiseDetails"),
+        ("getProxyDetails", "utilProxyDetails"),
+        ("previewEntries", "utilPreviewEntries"),
         ("getExternalValue", "utilExternalValue"),
         ("markPromiseAsHandled", "utilMarkPromiseHandled"),
     ] {
-        let function = context.host_function(crate::host::shared_vm::operation(operation))?;
-        let key = context.string_rooted("name");
-        let value = context.string_rooted(name);
-        context.define_data_property_rooted(function, key, value, false, false, true)?;
+        let function = context.host_function_named(crate::host::shared_vm::operation(operation), name)?;
         let key = context.string_rooted(name);
         context.define_data_property_rooted(binding, key, function, true, true, true)?;
     }
