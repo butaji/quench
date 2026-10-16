@@ -1975,10 +1975,10 @@ impl<H: Host> Vm<H> {
             matcher,
         });
         let last_index_atom = self.intern_atom("lastIndex");
-        self.set_property(object, last_index_atom, Value::number(0.0))?;
-        self.set_property_attributes(
+        self.set_property_with_attributes(
             object,
-            PropertyKey::string(last_index_atom),
+            last_index_atom,
+            Value::number(0.0),
             PropertyAttributes {
                 writable: true,
                 enumerable: false,
@@ -1987,7 +1987,7 @@ impl<H: Host> Vm<H> {
                 getter: None,
                 setter: None,
             },
-        );
+        )?;
         Ok(object)
     }
 

@@ -86,10 +86,10 @@ impl<H: Host> Vm<H> {
             self.set_builtin_value_named(prototype, name, method)?;
         }
         let name = self.intern_atom("FinalizationRegistry");
-        self.set_property(global, name, constructor)?;
-        self.set_property_attributes(
+        self.set_property_with_attributes(
             global,
-            PropertyKey::string(name),
+            name,
+            constructor,
             PropertyAttributes {
                 writable: true,
                 enumerable: false,
@@ -98,7 +98,7 @@ impl<H: Host> Vm<H> {
                 getter: None,
                 setter: None,
             },
-        );
+        )?;
         Ok(())
     }
 
