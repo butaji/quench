@@ -86,7 +86,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "processStartListeningSignal" (1) => crate::modules::process_shared_vm::start_listening_signal,
         method "processStopListeningSignal" (1) => crate::modules::process_shared_vm::stop_listening_signal,
         method "processIpcListenerReference" (1) => crate::modules::child_process_ipc_shared_vm::listener_reference,
-        method "processEmitWarning" (2) => crate::modules::process_shared_vm::emit_warning,
+        method "processEmitWarning" (4) => crate::modules::process_shared_vm::emit_warning,
         method "processThrowWarning" (1) => crate::modules::process_shared_vm::throw_warning,
         method "processDispatchWarning" (1) => crate::modules::process_shared_vm::dispatch_warning,
         method "require" (1) => commonjs::require,
