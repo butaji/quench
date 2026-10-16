@@ -3,10 +3,10 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError, Value};
 type Context<'a> = NativeContext<'a, NodeHost>;
 #[derive(Clone, Copy)]
-enum Kind { Boolean, String }
+enum Kind { Boolean, Truthiness, String }
 struct Setting { get: &'static str, set: &'static str, option: &'static str, kind: Kind }
 const SETTINGS: &[Setting] = &[
-    Setting { get: "getCompact", set: "setCompact", option: "--report-compact", kind: Kind::Boolean },
+    Setting { get: "getCompact", set: "setCompact", option: "--report-compact", kind: Kind::Truthiness },
     Setting { get: "getExcludeNetwork", set: "setExcludeNetwork", option: "--report-exclude-network", kind: Kind::Boolean },
     Setting { get: "getExcludeEnv", set: "setExcludeEnv", option: "--report-exclude-env", kind: Kind::Boolean },
     Setting { get: "getDirectory", set: "setDirectory", option: "--report-dir", kind: Kind::String },
@@ -25,7 +25,7 @@ impl Default for State {
 impl State {
     pub(crate) fn from_options(options: &super::cli_options::CliOptions) -> Self {
         Self { values: SETTINGS.iter().map(|setting| match setting.kind {
-            Kind::Boolean => SettingValue::Boolean(options.enabled(setting.option)),
+            Kind::Boolean | Kind::Truthiness => SettingValue::Boolean(options.enabled(setting.option)),
             Kind::String => SettingValue::String(options.string_value(setting.option).expect("declared report string option").to_owned()),
         }).collect() }
     }
@@ -77,6 +77,7 @@ pub(crate) fn set(context: &mut Context<'_>, _: RootId, args: &[RootId]) -> Resu
     let value = args.first().copied().unwrap_or_else(|| context.undefined());
     let parsed = match SETTINGS[index].kind {
         Kind::Boolean => context.rooted_value(value).and_then(Value::as_bool).map(SettingValue::Boolean),
+        Kind::Truthiness => Some(SettingValue::Boolean(context.truthy_rooted(value)?)),
         Kind::String => context.string_text(value)?.map(SettingValue::String),
     }.ok_or_else(|| RootedError::host("invalid native report setting value"))?;
     context.host_mut().shared_state().borrow_mut().report_config.values[index] = parsed;

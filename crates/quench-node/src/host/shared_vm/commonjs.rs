@@ -228,6 +228,12 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
         if internals_exposed(context) {
             context.scoped(crate::modules::buffer_policy_shared_vm::initialize)?;
             context.scoped(crate::modules::util_shared_vm::initialize_call_site_policy)?;
+            // Capture SDK process policies before exposed internal exports can be replaced.
+            #[cfg(target_os = "linux")]
+            {
+                let cpu_usage = get(context, process, "cpuUsage")?;
+                context.release_root(cpu_usage);
+            }
         }
         context.seal_startup_intrinsics();
     }
@@ -547,7 +553,10 @@ pub(super) fn initialize_process_surface(
         context,
         crate::polyfills::post_bootstrap::process_surface_00::LAZY_JS,
         "node:bootstrap/process-surface-lazy.js",
-    )
+    )?;
+    #[cfg(target_os = "linux")]
+    crate::modules::process_metrics_shared_vm::install(context)?;
+    Ok(context.undefined())
 }
 
 pub(super) fn initialize_web_apis(
@@ -2540,6 +2549,7 @@ pub(crate) fn node_internal_binding_source() -> &'static str {
     case "errors":
     case "modules":
     case "report": return __nativeInternalBinding(name);
+    case "process_methods": return __nativeInternalBinding(name);
     case "util": return Object.assign({}, {
       privateSymbols: __nativeInternalBinding("util").privateSymbols,
       constants: __nativeInternalBinding("util").constants,
