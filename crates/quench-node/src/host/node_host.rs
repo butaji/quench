@@ -63,7 +63,10 @@ pub(crate) struct SharedNodeState {
     pub(crate) vm_scripts: crate::modules::contextify_shared_vm::State,
     pub(crate) async_hooks: crate::modules::async_hooks_state::SharedAsyncHooksState,
     pub(crate) native_tasks: crate::modules::native_task_pool::Pool,
+    #[cfg(quench_node_cares)]
+    pub(crate) cares: crate::modules::cares_channel_shared_vm::State,
     pub(crate) dns: crate::modules::cares_binding::State,
+    pub(crate) performance_native: crate::modules::performance_binding_shared_vm::State,
     pub(crate) scheduler: crate::modules::shared_event_loop::SharedEventLoop,
     pub(crate) fs: crate::modules::fs_state::FsState,
     pub(crate) fs_watch: crate::modules::fs_watch_shared_vm::State,
@@ -125,6 +128,8 @@ pub(crate) struct SharedNodeState {
     pub(crate) net_sockets: std::collections::HashMap<u64, NetSocket>,
     pub(crate) net_closing_sockets: std::collections::HashMap<u64, quench_runtime::RootId>,
     pub(crate) net_socket_close_completed: Option<quench_runtime::RootId>,
+    pub(crate) udp: crate::modules::udp_binding::State,
+    pub(crate) native_async_wrap: crate::modules::native_async_wrap::State,
     pub(crate) native_stream: crate::modules::stream_binding::State,
     pub(crate) native_tcp_listeners: std::collections::HashMap<u64, quench_runtime::RootId>,
     pub(crate) net_servers: std::collections::HashMap<u64, NetServer>,
@@ -193,6 +198,7 @@ pub(crate) enum ChildProcessEvent {
 impl SharedNodeState {
     /// Forget cached guest handles before bootstrapping a replacement VM heap.
     pub(crate) fn reset_cached_vm_roots(&mut self) {
+        self.performance_native = Default::default();
         self.vm_scripts = Default::default();
         self.builtin_cache.clear();
         self.commonjs_cache = None;
@@ -215,6 +221,8 @@ impl SharedNodeState {
         self.net_server_on_connection = None;
         self.net_handle_onclose_symbol = None;
         self.net_socket_option_keys = None;
+        self.udp = Default::default();
+        self.native_async_wrap = Default::default();
         self.native_stream = Default::default();
         self.native_tcp_listeners.clear();
         self.net_handle_identities.clear();
@@ -241,7 +249,10 @@ impl SharedNodeState {
                 async_identity,
             ),
             native_tasks: Default::default(),
+            #[cfg(quench_node_cares)]
+            cares: Default::default(),
             dns: Default::default(),
+            performance_native: Default::default(),
             scheduler: crate::modules::shared_event_loop::SharedEventLoop::new(),
             fs,
             fs_watch: crate::modules::fs_watch_shared_vm::State::default(),
@@ -300,6 +311,8 @@ impl SharedNodeState {
             net_sockets: std::collections::HashMap::new(),
             net_closing_sockets: std::collections::HashMap::new(),
             net_socket_close_completed: None,
+            udp: Default::default(),
+            native_async_wrap: Default::default(),
             native_stream: Default::default(),
             native_tcp_listeners: std::collections::HashMap::new(),
             net_servers: std::collections::HashMap::new(),

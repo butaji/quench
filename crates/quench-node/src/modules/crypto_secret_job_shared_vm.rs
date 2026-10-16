@@ -37,6 +37,7 @@ struct HashRequest {
 enum NativeRequest {
     Hash(HashRequest),
     Hkdf(HkdfRequest),
+    Pbkdf2(Pbkdf2Request),
 }
 #[cfg(quench_openssl_provider)]
 struct HkdfRequest {
@@ -44,6 +45,14 @@ struct HkdfRequest {
     key: Option<Material>,
     salt: Option<Vec<u8>>,
     info: Option<Vec<u8>>,
+    length: usize,
+}
+#[cfg(quench_openssl_provider)]
+struct Pbkdf2Request {
+    digest: std::sync::Arc<super::crypto_digest::Digest>,
+    password: Option<Material>,
+    salt: Option<Vec<u8>>,
+    iterations: u32,
     length: usize,
 }
 enum Output {
@@ -60,6 +69,8 @@ enum Failure {
     Digest(super::crypto_digest::DigestError),
     #[cfg(quench_openssl_provider)]
     Hkdf(openssl::error::ErrorStack),
+    #[cfg(quench_openssl_provider)]
+    Pbkdf2(openssl::error::ErrorStack),
 }
 type Outcome = Result<Output, Failure>;
 enum Delivery {
@@ -146,6 +157,8 @@ pub(crate) fn install(c: &mut Context<'_>, binding: RootId) -> Result<(), Rooted
     install_job_class(c, binding, "HashJob", "cryptoHashJobNew")?;
     #[cfg(quench_openssl_provider)]
     install_job_class(c, binding, "HKDFJob", "cryptoHkdfJobNew")?;
+    #[cfg(quench_openssl_provider)]
+    install_job_class(c, binding, "PBKDF2Job", "cryptoPbkdf2JobNew")?;
     for (name, value) in [
         ("kCryptoJobAsync", ASYNC),
         ("kCryptoJobSync", SYNC),
@@ -468,6 +481,8 @@ fn native_error(c: &mut Context<'_>, failure: Failure) -> RootedError {
         Failure::Hkdf(stack) => {
             super::crypto_error_shared_vm::job_failure(c, &stack, "HKDF derivation failed")
         }
+        #[cfg(quench_openssl_provider)]
+        Failure::Pbkdf2(stack) => super::crypto_error_shared_vm::job_failure(c, &stack, "PBKDF2 derivation failed"),
         Failure::WorkerDisconnected => match c.error_rooted("Secret key worker disconnected") {
             Ok(error) => c.throw(error),
             Err(error) => error,
@@ -523,7 +538,7 @@ fn queue(c: &mut Context<'_>, data: RootId, completion: bool) -> Result<(), Root
                 return Err(error);
             }
         };
-        Some(super::shared_event_loop::CallbackExecution { id, resource })
+        Some(super::shared_event_loop::CallbackExecution { lifetime: crate::modules::shared_event_loop::CallbackLifetime::Operation, optional_callback: None, id, resource })
     } else {
         None
     };
@@ -581,6 +596,17 @@ pub(crate) fn run(c: &mut Context<'_>, job: RootId, _: &[RootId]) -> Result<Root
                     .map(Output::Digest)
                     .map_err(Failure::Digest)
             })
+        }
+        Some(NativeRequest::Pbkdf2(mut request)) => {
+            let password = match request.password.take() {
+                Some(bytes) => bytes,
+                None => Material::new(request_bytes(c, record, "password")?),
+            };
+            let salt = match request.salt.take() {
+                Some(bytes) => bytes,
+                None => request_bytes(c, record, "salt")?,
+            };
+            Box::new(move || super::crypto_pbkdf2::derive(&request.digest, &password, &salt, request.iterations, request.length).map(Output::Derived).map_err(Failure::Pbkdf2))
         }
         Some(NativeRequest::Hkdf(mut hkdf)) => {
             let key = match hkdf.key.take() {
@@ -951,4 +977,39 @@ pub(crate) fn create_hkdf(
         "DERIVEBITSREQUEST",
         Some(NativeRequest::Hkdf(request)),
     )
+}
+
+#[cfg(quench_openssl_provider)]
+pub(crate) fn create_pbkdf2(c: &mut Context<'_>, job: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let missing = c.undefined();
+    let arg = |index:usize| args.get(index).copied().unwrap_or(missing);
+    let mode = uint(c,arg(0))?;
+    if mode > WEBCRYPTO { return Err(fail(c,"Invalid crypto job mode")); }
+    let (password, handle) = match c.bytes_prefix_rooted(arg(1),usize::MAX) {
+        Some(bytes) => (Material::new(bytes),false),
+        None => (super::crypto_key_shared_vm::secret_bytes(c,arg(1))?,true),
+    };
+    let salt = c.bytes_prefix_rooted(arg(2),usize::MAX).ok_or_else(||fail(c,"PBKDF2 salt must be a BufferSource"))?;
+    for (name,length) in [("pass",password.len()),("salt",salt.len())] {
+        if length > i32::MAX as usize {
+            let error = c.range_error_rooted(&format!("{name} is too large"))?;
+            let code = c.string_rooted("ERR_OUT_OF_RANGE");put(c,error,"code",code)?;
+            return Err(c.throw(error));
+        }
+    }
+    let iterations = uint(c,arg(3))?;
+    let length = uint(c,arg(4))?;
+    for (name,value) in [("iterations",iterations),("length",length)] {
+        if value > i32::MAX as u32 {
+            let error = c.range_error_rooted(&format!("{name} must be <= {}",i32::MAX))?;
+            let code=c.string_rooted("ERR_OUT_OF_RANGE");put(c,error,"code",code)?;
+            return Err(c.throw(error));
+        }
+    }
+    let name = c.string_text(arg(5))?.ok_or_else(||fail(c,"PBKDF2 digest must be a string"))?;
+    let digest=super::crypto_digest::Digest::from_sdk_name(&name).map(std::sync::Arc::new).map_err(|_|invalid_digest(c,&format!("Invalid digest: {}",super::crypto_strings::null_terminated_prefix(&name))))?;
+    let request=Pbkdf2Request{digest,password:(mode != SYNC || handle).then_some(password),salt:(mode != SYNC).then_some(salt),iterations,length:length as usize};
+    let mut fields=vec![("mode",arg(0))];
+    if mode==SYNC { if !handle {fields.push(("password",arg(1)));} fields.push(("salt",arg(2))); }
+    register(c,job,&fields,"PBKDF2REQUEST",Some(NativeRequest::Pbkdf2(request)))
 }
