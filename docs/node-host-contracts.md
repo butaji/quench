@@ -38,8 +38,14 @@ both creation names and that transition. The added metadata opcode requires
 bytecode format 90; opcodes outside the dense fast table use general dispatch.
 This covers those inference contexts, not every V8 debug-name inference rule.
 
-This describes the implemented subset; complete Node stack APIs and eval frames
-still require conformance work.
+CallSite `isEval` derives from the stored program's compilation origin, which
+is independent of its binding environment. Full eval, expression eval and
+Function-constructor bodies retain that origin across escaped closures and
+collection. Ordinary functions called from eval and host-compiled scripts remain
+source code, including host scripts with eval-like filenames. Captured CallSites
+copy the classification before their program can be reclaimed. Eval origins,
+filenames, source URLs and the complete Node stack API still require conformance
+work.
 
 Function factory origins derive from the existing function kind and creation
 realm. The realm owns its original constructors and intrinsic prototypes, so
