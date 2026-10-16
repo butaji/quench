@@ -632,6 +632,14 @@ freshly written binary measured 0.3 MB above the same file evicted, against 8 MB
 with fault-around), but comparisons still evict every binary first
 (`posix_fadvise(POSIX_FADV_DONTNEED)`).
 
+The static build also limits glibc's per-thread cache to two freed chunks per size class
+(`glibc.malloc.tcache_count=2`): the default seven keep freed chunks unmerged, and the
+heap grew past them by 70–280 KiB per V8-v7 fixture. glibc reads its tunables once, before
+any code of the executable runs, so a run whose environment sets no `GLIBC_TUNABLES`
+re-executes itself once from `.preinit_array` with the setting added, and the re-executed
+run removes it and its marker before the guest or a child process can observe the
+environment. An environment that sets `GLIBC_TUNABLES` leaves the allocator to it.
+
 Measure peak RSS with a launcher whose own image is small (`vfork`, `exec`,
 `wait4`): a forked interpreter's pre-`exec` image counts toward the child's
 `ru_maxrss`.
