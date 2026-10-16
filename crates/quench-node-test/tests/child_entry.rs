@@ -9543,3 +9543,8 @@ fn shadow_realms_own_original_node_error_policy_default_hooks_and_private_fallba
         &["--no-warnings", "--expose-internals", "--experimental-shadow-realm", "--expose-gc"],
     );
 }
+
+#[test]
+fn eval_uses_parsed_program_completion_grammar_and_original_source_positions() {
+    compare_node_source_with_args(include_str!("../node-tests/test-compiled-eval-source.js"), &[]);
+}

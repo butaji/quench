@@ -90,7 +90,7 @@ struct ErrorSourceLocation {
 enum ErrorDescription {
     Text {
         message: String,
-        eval_parser_diagnostic: bool,
+
     },
     DataClone(String),
     WasmTrap(crate::WasmTrap),
@@ -110,7 +110,7 @@ impl From<String> for ErrorMessage {
             payload: Box::new(ErrorPayload {
                 description: ErrorDescription::Text {
                     message,
-                    eval_parser_diagnostic: false,
+
                 },
                 thrown: None,
                 source_location: None,
@@ -138,7 +138,7 @@ impl JsError {
             payload: Box::new(ErrorPayload {
                 description: ErrorDescription::Text {
                     message,
-                    eval_parser_diagnostic: false,
+
                 },
                 thrown: Some(value),
                 source_location: None,
@@ -203,27 +203,6 @@ impl JsError {
 
     pub(crate) fn replace_thrown_value(&mut self, value: Value) {
         self.0.payload.thrown = Some(value);
-    }
-
-    pub(crate) fn is_eval_parser_diagnostic(&self) -> bool {
-        matches!(
-            self.0.payload.description,
-            ErrorDescription::Text {
-                eval_parser_diagnostic: true,
-                ..
-            }
-        )
-    }
-
-    pub(crate) fn mark_eval_parser_diagnostic(mut self) -> Self {
-        if let ErrorDescription::Text {
-            eval_parser_diagnostic,
-            ..
-        } = &mut self.0.payload.description
-        {
-            *eval_parser_diagnostic = true;
-        }
-        self
     }
 
     /// Inspect a thrown Wasm exception independently of guest traps and JS throws.
