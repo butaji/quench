@@ -204,6 +204,10 @@ impl<H: Host> Vm<H> {
             }
         };
         let removed = self.array_species_create(p, object, delete_count)?;
+        let items = args.get(2..).unwrap_or_default();
+        if self.array_splice_dense(object, length, start, delete_count, items, removed) {
+            return Ok(removed);
+        }
         // `removed` is held only here while guest code (getters, traps) can collect.
         self.with_call_roots([removed], |vm| {
             for offset in 0..delete_count {
@@ -256,6 +260,61 @@ impl<H: Host> Vm<H> {
             vm.set_array_like_length(p, object, new_length)?;
             Ok(removed)
         })
+    }
+
+    /// `splice` of a dense array (`dense_array_length`) as one vector splice, once every
+    /// guest-visible step before the moves has run: its length is still the one the
+    /// arguments were clamped to, each element it moves or removes is present, `removed` is
+    /// another dense array holding only holes, and no prototype accessor sees a grown index.
+    /// Each generic step then reads, writes or deletes an own writable data element.
+    fn array_splice_dense(
+        &mut self,
+        this: Value,
+        length: usize,
+        start: usize,
+        delete_count: usize,
+        items: &[Value],
+        removed: Value,
+    ) -> bool {
+        if this == removed || self.dense_array_length(this) != Some(length) {
+            return false;
+        }
+        let Some(removed_length) = self.dense_array_length(removed) else {
+            return false;
+        };
+        let removed_holds_holes = removed_length <= delete_count
+            && self
+                .heap
+                .array_elements(removed)
+                .is_some_and(|elements| elements.iter().all(|value| value.is_deleted()));
+        let moved_present = self
+            .heap
+            .array_elements(this)
+            .is_some_and(|elements| elements[start..].iter().all(|value| !value.is_deleted()));
+        let Some(new_length) = (length - delete_count)
+            .checked_add(items.len())
+            .filter(|length| *length <= MAX_ARRAY_LENGTH)
+        else {
+            return false;
+        };
+        let grown_index_has_accessor = (length..new_length).any(|index| {
+            self.lookup_array_index_atom(index)
+                .is_some_and(|atom| self.property_accessor(this, atom).is_some())
+        });
+        if !removed_holds_holes || !moved_present || grown_index_has_accessor {
+            return false;
+        }
+        let Some(object) = self.heap.array_mut(this) else {
+            unreachable!("matched an array above");
+        };
+        let taken = super::index::mutable_array_elements(object.elements_mut())
+            .splice(start..start + delete_count, items.iter().copied())
+            .collect::<Vec<_>>();
+        let Some(removed_object) = self.heap.array_mut(removed) else {
+            unreachable!("matched an array above");
+        };
+        *super::index::mutable_array_elements(removed_object.elements_mut()) = taken;
+        true
     }
 
     fn move_array_like_property(
@@ -584,17 +643,21 @@ impl<H: Host> Vm<H> {
             constructor = Value::UNDEFINED;
         }
         if self.is_object_like(constructor) {
-            let species = self
-                .well_known_symbols
-                .get("species")
-                .copied()
-                .ok_or_else(|| JsError("Symbol.species is not initialized".into()))?;
-            constructor = self.get_index(p, constructor, species)?;
+            constructor = self.species_of(p, constructor)?;
             if constructor.is_null() {
                 constructor = Value::UNDEFINED;
             }
         }
-        if constructor.is_undefined() {
+        // `new Array(length)` of this realm is ArrayCreate: Array.prototype is fixed.
+        let constructor_is_intrinsic_array = matches!(
+            self.heap.get(constructor),
+            Some(Cell::Function {
+                kind: FunctionKind::Native(Native::Array),
+                object,
+                ..
+            }) if object.realm == self.realm.globals
+        );
+        if constructor.is_undefined() || constructor_is_intrinsic_array {
             return self.array_create(p, length);
         }
         if !self.is_constructable(p, constructor) {
