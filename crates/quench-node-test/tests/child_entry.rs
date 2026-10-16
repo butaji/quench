@@ -9606,3 +9606,8 @@ fn native_protocol_constants_derive_from_configured_sdk_headers_and_preserve_des
 fn native_caller_location_uses_original_activations_independently_of_error_hooks() {
     compare_node_source_with_args(include_str!("../node-tests/test-native-caller-location.js"), &["--expose-internals", "--no-warnings"]);
 }
+
+#[test]
+fn filesystem_glob_policy_defers_promises_dependencies_and_preserves_data_descriptors() {
+    compare_node_source_with_args(include_str!("../node-tests/test-fs-promises-glob-lazy-policy.js"), &["--expose-internals", "--no-warnings"]);
+}
