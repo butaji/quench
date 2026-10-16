@@ -1,6 +1,6 @@
 'use strict';
 const assert=require('assert'),fs=require('fs'),os=require('os'),path=require('path');
-const stat=process.binding('fs').internalModuleStat;
+const stat=require('internal/test/binding').internalBinding('fs').internalModuleStat;
 const root=fs.mkdtempSync(path.join(os.tmpdir(),'quench-module-stat-'));
 const cwd=process.cwd();
 try {

@@ -9757,7 +9757,7 @@ fn promise_init_hooks_can_settle_await_sources_reentrantly() {
 
 #[test]
 fn fs_internal_module_stat_follows_links_returns_errno_and_resolves_node_cwd() {
-    compare_node_source_with_args(include_str!("../node-tests/test-fs-internal-module-stat.js"), &["--no-warnings"]);
+    compare_node_source_with_args(include_str!("../node-tests/test-fs-internal-module-stat.js"), &["--expose-internals", "--no-warnings"]);
 }
 
 #[test]
