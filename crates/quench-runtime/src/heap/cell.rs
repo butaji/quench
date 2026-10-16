@@ -586,7 +586,6 @@ pub(crate) enum Native {
     PromiseAllSettled,
     PromiseAllSettledKeyed,
     PromiseAny,
-    PromiseReactionJob,
     PromiseThenableJob,
     PromiseAggregateJob,
     PromiseAsyncResumeJob, AsyncFromSyncValue, AsyncFromSyncValueRejected, AsyncGeneratorDelegateFulfilled, AsyncGeneratorDelegateRejected,
@@ -899,7 +898,6 @@ impl Native {
                 | Self::PromiseAllSettled
                 | Self::PromiseAllSettledKeyed
                 | Self::PromiseAny
-                | Self::PromiseReactionJob
                 | Self::PromiseThenableJob
                 | Self::PromiseAggregateJob
                 | Self::PromiseAsyncResumeJob
