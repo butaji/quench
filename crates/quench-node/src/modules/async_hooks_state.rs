@@ -68,6 +68,10 @@ pub(crate) struct SharedAsyncHooksState {
     pub(super) module: Option<RootId>,
     pub(super) registry: super::async_hook_registry_shared_vm::Registry,
     pub(super) context_triggers: HashMap<u64, i64>,
+    /// Store snapshots have private identities; async-hooks observes their
+    /// actual Promise resource identity instead.
+    pub(super) job_resources: HashMap<u64, u64>,
+    pub(super) promise_resources: HashMap<u64, quench_runtime::HostWeakRoot>,
     pub(super) scoped_resource: Option<(u64, RootId)>,
     pub(super) local_stores: HashMap<(u64, u64), RootId>,
     pub(super) store_references: HashMap<RootId, usize>,
@@ -81,6 +85,8 @@ impl SharedAsyncHooksState {
             module: None,
             registry: super::async_hook_registry_shared_vm::Registry::new(),
             context_triggers: HashMap::new(),
+            job_resources: HashMap::new(),
+            promise_resources: HashMap::new(),
             scoped_resource: None,
             local_stores: HashMap::new(),
             store_references: HashMap::new(),

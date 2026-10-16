@@ -1009,4 +1009,24 @@ SDK MockTracker policy. The global test mock and per-callback mock trackers are
 real SDK instances. Configured SDK wrappers receive a private native require
 capability for the internal timer adapter; changing a public module filename
 cannot grant this capability. Ordinary guest imports keep their original
-visibility rules. Test scheduling/context lifecycle remains separate work.
+visibility rules.
+
+The node:test projection uses the original SDK harness for scheduling, hooks,
+subtests and test contexts. It exposes the SDK's real MockTracker, assertion
+registration and snapshot policy through native lazy accessors. File-oriented
+runner execution still requires a genuine V8 serializer and is unavailable.
+Repeated-string CLI option defaults come from the configured SDK declarations;
+startup environment and invocation values populate those lists.
+
+Core exposes real Promise creation, job-boundary and settlement observations to
+opted-in hosts. Node assigns Promise identities before observable init callbacks,
+keeps resource objects weakly, and maps private AsyncLocalStorage job snapshots
+to the actual execution resource. Init callbacks may collect or settle awaited
+sources reentrantly: incoming async closure state, suspended continuation handlers
+and detached reaction payloads remain rooted across those callbacks. Hosts without
+observers retain the optimized primitive-await path.
+
+The private fs internalModuleStat binding follows native filesystem symlinks and
+returns the configured SDK classifier protocol: directory1, other successful
+metadata0, or a negative libuv error. It resolves relative paths through Node's
+cwd owner. Original SDK recursive traversal owns policy for using this result.

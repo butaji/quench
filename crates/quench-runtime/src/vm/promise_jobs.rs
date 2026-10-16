@@ -475,6 +475,7 @@ impl<H: Host> Vm<H> {
             .map(|context| self.host.enter_job_context(context))
             .flatten();
         let outcome = self.with_call_roots([reaction.handler, reaction.next, value], |vm| {
+            vm.promise_job_boundary(reaction.execution_context, true)?;
             if !vm.is_function(reaction.handler) {
                 vm.settle_reaction(
                     p,
@@ -499,6 +500,9 @@ impl<H: Host> Vm<H> {
             vm.settle_reaction(p, reaction.next, state, result)?;
             Ok(Value::UNDEFINED)
         });
+        let after = self.with_call_roots([reaction.handler, reaction.next, value], |vm| {
+            vm.promise_job_boundary(reaction.execution_context, false)
+        });
         if reaction.execution_context.is_some() {
             self.host.restore_job_context(previous_context);
         }
@@ -506,7 +510,7 @@ impl<H: Host> Vm<H> {
             self.release_job_context(context);
         }
         self.switch_realm_global(previous_global);
-        outcome.map(|_| ())
+        outcome.and(after).map(|_| ())
     }
 
     pub(super) fn release_job_context(&mut self, context: HostExecutionContext) {
@@ -613,6 +617,7 @@ impl<H: Host> Vm<H> {
         let outcome = self.with_call_roots(
             [thenable.promise, thenable.thenable, thenable.then],
             |vm| {
+                vm.promise_job_boundary(thenable.execution_context, true)?;
                 if vm.is_intrinsic_promise_then(thenable.then)
                     && vm.realm.promise.records.contains_key(&thenable.thenable)
                     && !vm
@@ -633,12 +638,15 @@ impl<H: Host> Vm<H> {
                 Ok(Value::UNDEFINED)
             },
         );
+        let after = self.with_call_roots([thenable.promise, thenable.thenable, thenable.then], |vm| {
+            vm.promise_job_boundary(thenable.execution_context, false)
+        });
         if thenable.execution_context.is_some() {
             self.host.restore_job_context(previous_context);
         }
         if let Some(context) = thenable.execution_context {
             self.release_job_context(context);
         }
-        outcome
+        outcome.and_then(|value| after.map(|()| value))
     }
 }
