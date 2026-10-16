@@ -26,6 +26,12 @@ use quench_node_test::case_process::{
 const PARALLEL_DIR: &str = "tests/node/test/parallel";
 
 fn main() -> ExitCode {
+    #[cfg(target_os = "linux")]
+    if let Err(error) = quench_node::shared_run::initialize_cli_process_signals() {
+        eprintln!("initialize CLI process signals: {error}");
+        return std::process::ExitCode::FAILURE;
+    }
+
     let args: Vec<String> = std::env::args().skip(1).collect();
     if let Some(code) = worker_entry(&args) {
         return code;
