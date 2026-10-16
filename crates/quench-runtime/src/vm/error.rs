@@ -561,8 +561,7 @@ impl<H: Host> Vm<H> {
             let Some((record, module)) = self.source_call_site_record(frame, false) else { return Ok(fallback()); };
             let Some(program) = self.programs.get(frame.program) else { return Ok(fallback()); };
             let Some(function) = program.functions.get(frame.function as usize) else { return Ok(fallback()); };
-            let primary_constructor = self.programs.is_function_constructor(frame.program)
-                && function.parent == Some(ROOT_FUNCTION_ID);
+            let primary_constructor = self.programs.is_function_constructor_body(frame.program, frame.function);
             let name = function.name.or_else(|| (!primary_constructor)
                 .then(|| frame.context.callable().and_then(|callee| self.original_function_name(callee)))
                 .flatten()).map(|name| self.atom_value(name));
@@ -1397,7 +1396,7 @@ impl<H: Host> Vm<H> {
         })();
         self.set_active_program(active_program);
         let function = result?;
-        self.set_builtin_function_name(function, "anonymous")?;
+        self.set_function_name_text(function, "anonymous".to_owned());
         let function_source = match kind {
             crate::compile::DynamicFunctionKind::Ordinary => {
                 format!("function anonymous({parameters}\n) {{\n{source}\n}}")
