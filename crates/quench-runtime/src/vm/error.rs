@@ -1443,10 +1443,10 @@ impl<H: Host> Vm<H> {
             .alloc(Cell::Object(Self::empty_object(realm_iterator_proto)));
         let realm_async_iterator_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(realm_iterator_proto)));
+            .alloc(Cell::Object(Self::empty_object(object_prototype)));
         self.install_async_iterator_prototype(
             realm_async_iterator_proto,
-            realm_iterator_proto,
+            object_prototype,
             Some(global),
         )?;
         let realm_async_generator_proto = self

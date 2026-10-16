@@ -1183,6 +1183,103 @@ mod tests {
     }
 
     #[test]
+    fn regression_async_iterator_protocol_is_separate_from_sync_iterator_helpers() {
+        assert_output_in_execution_modes(
+            r#"
+function check(make) {
+  var value = make();
+  var generator = Object.getPrototypeOf(Object.getPrototypeOf(value));
+  var asyncIterator = Object.getPrototypeOf(generator);
+  print(typeof value[Symbol.iterator]);
+  print(typeof value[Symbol.asyncIterator]);
+  print(Object.getPrototypeOf(asyncIterator) === Object.prototype);
+  print(Object.hasOwn(generator, Symbol.asyncIterator));
+  print([typeof value.map, typeof value.take, typeof value[Symbol.dispose]].join(' '));
+  print(value[Symbol.asyncIterator]() === value);
+  print(Object.keys(Object.getOwnPropertyDescriptor(asyncIterator, Symbol.asyncIterator)).join(','));
+}
+check(function () { return (async function* () { yield 1; })(); });
+check(function () { return new (Object.getPrototypeOf(async function* () {}).constructor)('yield 1')(); });
+            "#,
+            &[
+                "undefined",
+                "function",
+                "true",
+                "false",
+                "undefined undefined undefined",
+                "true",
+                "value,writable,enumerable,configurable",
+                "undefined",
+                "function",
+                "true",
+                "false",
+                "undefined undefined undefined",
+                "true",
+                "value,writable,enumerable,configurable",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_generator_loop_return_closes_before_finally_and_awaits_async_cleanup() {
+        assert_output_in_execution_modes(
+            r#"
+'use strict';
+async function scenario(mode) {
+ const events=[],reason={};
+ const source={
+  [Symbol.asyncIterator](){return this},
+  async next(){events.push('next');return {done:false,value:1}},
+  async return(){events.push('close-start');await Promise.resolve();events.push('close-end');if(mode==='reject')throw reason;return {done:true}}
+ };
+ async function* generator(){try{for await(const value of source){yield value;if(mode==='explicit')return 'explicit'}}finally{events.push('outer-finally')}}
+ if(mode==='function'){async function fn(){try{for await(const value of source)return 'function'}finally{events.push('outer-finally')}}const result=await fn();events.push('result:'+result,'observed');print(mode+' '+JSON.stringify(events));return;}
+ const iterator=generator();await iterator.next();
+ try{const result=await(mode==='explicit'?iterator.next():iterator.return('return'));events.push('result:'+result.value)}catch(error){events.push('reason:'+(error===reason))}
+ events.push('observed');print(mode+' '+JSON.stringify(events));
+ await Promise.resolve();await Promise.resolve();print(mode+' settled '+JSON.stringify(events));
+}
+const events=[];const syncSource={[Symbol.iterator](){return this},next(){return {done:false,value:1}},return(){events.push('sync-close');return {done:true}}};function* syncGenerator(){try{for(const value of syncSource)yield value}finally{events.push('sync-finally')}}const sync=syncGenerator();sync.next();print('sync '+JSON.stringify(sync.return('result'))+' '+JSON.stringify(events));
+(async()=>{for(const mode of ['return','explicit','reject','function'])await scenario(mode)})().catch(e=>{print('unexpected '+String(e))});
+
+            "#,
+            &[
+                "sync {\"value\":\"result\",\"done\":true} [\"sync-close\",\"sync-finally\"]",
+                "return [\"next\",\"close-start\",\"close-end\",\"outer-finally\",\"result:return\",\"observed\"]",
+                "return settled [\"next\",\"close-start\",\"close-end\",\"outer-finally\",\"result:return\",\"observed\"]",
+                "explicit [\"next\",\"close-start\",\"close-end\",\"outer-finally\",\"result:explicit\",\"observed\"]",
+                "explicit settled [\"next\",\"close-start\",\"close-end\",\"outer-finally\",\"result:explicit\",\"observed\"]",
+                "reject [\"next\",\"close-start\",\"close-end\",\"outer-finally\",\"reason:true\",\"observed\"]",
+                "reject settled [\"next\",\"close-start\",\"close-end\",\"outer-finally\",\"reason:true\",\"observed\"]",
+                "function [\"next\",\"close-start\",\"close-end\",\"outer-finally\",\"result:function\",\"observed\"]",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_async_delegated_return_unwinds_outer_finally() {
+        assert_output_in_execution_modes(
+            r#"
+'use strict';
+(async()=>{
+ for(const mode of ['sync','async','missing']){
+  const events=[];
+  const inner=mode==='missing'?{[Symbol.iterator](){return this},next(){return{done:false,value:1}}}:mode==='sync'?(function*(){try{yield 1}finally{events.push('inner-finally')}})():(async function*(){try{yield 1}finally{events.push('inner-finally')}})();
+  async function* outer(){try{yield* inner}finally{events.push('outer-finally')}}
+  const g=outer();await g.next();print(mode+' '+JSON.stringify(await g.return('return'))+' '+JSON.stringify(events));
+ }
+})().catch(e=>{print('unexpected '+String(e))});
+
+            "#,
+            &[
+                "sync {\"value\":\"return\",\"done\":true} [\"inner-finally\",\"outer-finally\"]",
+                "async {\"value\":\"return\",\"done\":true} [\"inner-finally\",\"outer-finally\"]",
+                "missing {\"value\":\"return\",\"done\":true} [\"outer-finally\"]",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_generator_activation_binds_this_and_new_target() {
         assert_output_in_execution_modes(
             r#"

@@ -3640,13 +3640,7 @@ pub(crate) fn dispatch_warning(
     let code = string_property(context, warning, "code")?;
     let detail = string_property(context, warning, "detail")?;
 
-    let suppress_stderr = context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .exec_argv
-        .iter()
-        .any(|argument| argument == "--no-warnings");
+    let suppress_stderr = !context.host_mut().shared_state().borrow().cli_options.enabled("--warnings");
     if !suppress_stderr {
         let code = code.map_or_else(String::new, |code| format!(" [{code}]"));
         let mut output = format!("(node:{}){code} {name}: {message}\n", std::process::id());
