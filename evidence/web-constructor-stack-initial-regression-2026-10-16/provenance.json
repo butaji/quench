@@ -1,0 +1,9 @@
+{
+  "candidate_source": "992e960e268ae7d34cc86bd27a102d370db787cd",
+  "repair_source": "df33c1767aa08898b338d4ea42d6a9215b5072fe",
+  "oracle": "official Node v26.12.0",
+  "api_passed": 347,
+  "api_failed": 1,
+  "api_exit": 101,
+  "framework_web_instructions": "not run: API gate failed"
+}
