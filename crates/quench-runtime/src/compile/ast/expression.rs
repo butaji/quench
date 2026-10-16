@@ -9,7 +9,15 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(crate) fn expression_with_debug_name(&mut self, expression: &Expression<'_>, debug_name: Option<Atom>) -> Register {
-        let position = self.owner.source_position(expression.span().start);
+        let start = match expression {
+            Expression::CallExpression(call) => match &call.callee {
+                Expression::StaticMemberExpression(member) => member.property.span.start,
+                Expression::ComputedMemberExpression(_) | Expression::ParenthesizedExpression(_) => call.callee.span().end,
+                _ => expression.span().start,
+            },
+            _ => expression.span().start,
+        };
+        let position = self.owner.source_position(start);
         let previous = self
             .current_source_position
             .replace((position.line, position.column));

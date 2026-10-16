@@ -538,6 +538,38 @@ impl<H: Host> Vm<H> {
         Ok(self.constructor_name(receiver))
     }
 
+    /// A source projection of a genuine activation, without evaluating guest hooks.
+    pub(super) fn source_call_site_record(&self, frame: &Frame, hide_identity: bool) -> Option<(CallSiteRecord, bool)> {
+        if frame.context == CallContext::Internal && frame.function != ROOT_FUNCTION_ID {
+            return None;
+        }
+        let residual = self.programs.get(frame.program)?;
+        let function = residual.functions.get(frame.function as usize)?;
+        let pc = u32::try_from(frame.pc.saturating_sub(1)).unwrap_or(u32::MAX);
+        let position = residual.source_position(frame.function, pc)?;
+        let name = frame.context.callable().map_or_else(
+            || function.name.map_or(CallSiteName::Anonymous, |name| CallSiteName::Static(self.atom_value(name))),
+            CallSiteName::Callable,
+        );
+        Some((CallSiteRecord {
+            location: CallSiteLocation::Source {
+                file_name: residual.source_name.clone(),
+                line: position.line,
+                column: position.column,
+            },
+            name,
+            hide_identity,
+            is_constructor: frame.context.is_constructor(),
+            this_value: if frame.this == Value::DELETED { Value::UNDEFINED } else { frame.this },
+        }, residual.kind == crate::bytecode::ProgramKind::Module))
+    }
+
+    pub(super) fn map_call_site_source(host: &mut H, record: &mut CallSiteRecord, module: bool) {
+        if let CallSiteLocation::Source { file_name, .. } = &mut record.location {
+            *file_name = host.stack_source_name(file_name, module);
+        }
+    }
+
     pub(super) fn error_capture_stack_trace(
         &mut self,
         program: &ResidualProgram,
@@ -593,33 +625,10 @@ impl<H: Host> Vm<H> {
                 constructor_found = frame.context.callable() == Some(constructor_opt);
                 continue;
             }
-            // A PC without compiler-owned source metadata has no truthful JS location.
-            let pc = u32::try_from(frame.pc.saturating_sub(1)).unwrap_or(u32::MAX);
-            let Some(position) = residual.source_position(frame.function, pc) else {
-                continue;
-            };
-            let name = frame.context.callable().map_or_else(
-                || function.name.map_or(CallSiteName::Anonymous, |name| CallSiteName::Static(self.atom_value(name))),
-                CallSiteName::Callable,
-            );
-            records.push(CallSiteRecord {
-                location: CallSiteLocation::Source {
-                    file_name: self.host.stack_source_name(
-                        &residual.source_name,
-                        residual.kind == crate::bytecode::ProgramKind::Module,
-                    ),
-                    line: position.line,
-                    column: position.column,
-                },
-                name,
-                hide_identity,
-                is_constructor: frame.context.is_constructor(),
-                this_value: if frame.this == Value::DELETED {
-                    Value::UNDEFINED
-                } else {
-                    frame.this
-                },
-            });
+            if let Some((mut record, module)) = self.source_call_site_record(frame, hide_identity) {
+                Self::map_call_site_source(&mut self.host, &mut record, module);
+                records.push(record);
+            }
         }
 
         if constructor_found {
@@ -711,7 +720,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn call_site_name(&self, record: &CallSiteRecord) -> Option<JsString> {
+    pub(super) fn call_site_name(&self, record: &CallSiteRecord) -> Option<JsString> {
         let name = match &record.name {
             CallSiteName::Callable(function) => self.debug_function_name(*function)?,
             CallSiteName::Static(name) => name.clone(),

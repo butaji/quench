@@ -309,6 +309,24 @@ impl<H: Host> Vm<H> {
         Ok(self.strict_equal(self.embedding_value(left)?, self.embedding_value(right)?))
     }
 
+    pub(crate) fn embedding_source_stack_frames(&mut self, limit: usize) -> Vec<crate::SourceStackFrame> {
+        let records: Vec<_> = self.frames.iter().rev().filter_map(|frame| {
+            self.source_call_site_record(frame, false).map(|(record, module)| (frame.program, record, module))
+        }).take(limit).collect();
+        records.into_iter().map(|(program, mut record, module)| {
+            Self::map_call_site_source(&mut self.host, &mut record, module);
+            let name = self.call_site_name(&record).map_or_else(Vec::new, |name| name.units().to_vec());
+            let CallSiteLocation::Source { file_name, line, column } = record.location else { unreachable!("source projection"); };
+            crate::SourceStackFrame {
+                function_name: name,
+                script_id: u64::from(program.raw()) + 1,
+                script_name: file_name,
+                line_number: line,
+                column_number: column,
+            }
+        }).collect()
+    }
+
     pub(crate) fn embedding_call_stack_source_names(&self) -> Vec<String> {
         self.frames.iter().rev().filter_map(|frame| {
             self.programs.source_name(frame.program).map(str::to_owned)
