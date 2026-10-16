@@ -3535,12 +3535,157 @@ lane_handler! {
 }
 
 lane_handler! {
+    /// A `LoadName`'s first run: a name the global object answers whenever no global
+    /// lexical binding shadows it (`Vm::names_resolve_to_global_object`: a function of a
+    /// global-scope program whose names resolve statically, and a name no internal binding
+    /// owns) takes `lane_load_global_name`; any other always takes the general path.
+    #[inline(never)]
+    fn lane_load_name_first<>(cx, r, ip, i, view) {
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let vm = unsafe { vm(cx) };
+        let function = vm
+            .lane_stack
+            .activations
+            .last()
+            .map_or(vm.frames[unsafe { (*cx).frame }].function, |activation| activation.function);
+        let global = function != super::ROOT_FUNCTION_ID
+            && vm.programs.runs_in_global_scope(unsafe { (*cx).program })
+            && !vm.atom_class(i.imm()).contains(AtomClass::INTERNAL)
+            && code.functions.get(function as usize).is_some_and(|function| {
+                function.names_resolve_statically(&code.functions, &code.atoms)
+            });
+        if global {
+            requicken(ip, lane_load_global_name::<H>);
+            sibling!(lane_load_global_name::<H>, r, ip, Carried::SCRIPT)
+        }
+        requicken(ip, lane_exit::<H>);
+        exit(ip)
+    }
+}
+
+lane_handler! {
+    /// A `LoadName` of a global object property (`lane_load_name_first`) that no global
+    /// lexical binding shadows: the global object's cached field (`Vm::cached_field_hit`).
+    /// Any other read, including a cache miss, takes the general path, which caches it.
+    fn lane_load_global_name<>(cx, r, ip, i, view) {
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let vm = unsafe { vm(cx) };
+        let atom = i.imm();
+        if vm.realm.global_lexical_declarations.contains(&atom)
+            || vm.realm.global_lexical_bindings.contains_key(&atom)
+        {
+            return exit(ip);
+        }
+        let super::object::FieldCacheProbe::Hit(value) =
+            vm.cached_field_hit(code, vm.realm.globals, i.c)
+        else {
+            return exit(ip);
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::SCRIPT)
+    }
+}
+
+lane_handler! {
+    /// `new Array(...values)` of an intrinsic `Array`, which allocates without running guest
+    /// code: the array of the values passed, with the callee's own `prototype`. One Number
+    /// argument (a length), and any other construction, take the general path.
+    #[inline(never)]
+    fn lane_native_construct<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let callee = r.get(i.b);
+        let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
+        if (returns && vm.lane_stack.activations.is_empty())
+            || !matches!(
+                vm.heap.get(callee),
+                Some(Cell::Function {
+                    kind: FunctionKind::Native(Native::Array),
+                    ..
+                })
+            )
+        {
+            return exit(ip);
+        }
+        let prototype_atom = vm.prototype_atom();
+        let Some(prototype) = vm
+            .own_function_prototype_data(callee, prototype_atom)
+            .filter(|prototype| vm.object_data(*prototype).is_some())
+        else {
+            return exit(ip);
+        };
+        let argc = usize::from(ImmediateLayout::argument_count(i.imm()));
+        // SAFETY: the construction's window is registers of the running function.
+        let args = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(i.c)), argc) };
+        if let [length] = args
+            && length.as_number().is_some()
+        {
+            return exit(ip);
+        }
+        let array = vm.heap.alloc(Cell::Array {
+            object: crate::heap::ArrayObject::new(Vm::<H>::empty_object(prototype), Rc::new(args.to_vec())),
+        });
+        note_allocation(vm);
+        if returns {
+            let Some((registers, next, view)) = lane_complete_activation(cx, array) else {
+                unreachable!("a returning lane construction has an activation caller");
+            };
+            next!(cx, registers, next, view)
+        }
+        r.set(i.a, array);
+        next!(cx, r, following(ip), Carried::SCRIPT)
+    }
+}
+
+lane_handler! {
+    /// `Function.prototype.call` of a frameless target `f` (`f.call(thisArg, ...args)`):
+    /// `f`'s activation as `lane_script_call` makes it, with `this` the first value the call
+    /// passes and the remaining values its arguments. Any other takes the general path.
+    #[inline(never)]
+    fn lane_function_call<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let Some(target) = lane_script_target(cx, r.get(i.c)) else {
+            return exit(ip);
+        };
+        let window = ImmediateLayout::call_window_base(i.imm());
+        let argc = usize::from(ImmediateLayout::argument_count(i.imm()));
+        let receiver = if argc == 0 { Value::UNDEFINED } else { r.get(window) };
+        // `call_this_value` without its boxing of primitives, which allocates.
+        let this = if target.strict || vm.is_object_like(receiver) {
+            receiver
+        } else if receiver.is_null() || receiver.is_undefined() {
+            vm.realm.globals
+        } else {
+            return exit(ip);
+        };
+        // SAFETY: the values after `thisArg` are registers of the running function, which
+        // the activation copies before anything can move them.
+        let rest = unsafe { r.0.add(usize::from(window) + 1) };
+        let arguments = ActivationArguments::Kept(rest, argc.saturating_sub(1));
+        match lane_activate_keeping(cx, r, ip, target, arguments, this, false) {
+            Ok((registers, base)) => next!(cx, registers, base, Carried::SCRIPT),
+            Err(next) => next,
+        }
+    }
+}
+
+lane_handler! {
     /// A `Call` of `Array.prototype.push` or `pop` on a dense array (`Vm::array_push_dense`,
     /// `Vm::array_pop_dense`), which completes without calling out or allocating cells; out
     /// of line, so script calls keep their code. Any other call takes the general path.
     #[inline(never)]
     fn lane_native_call<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
+        if matches!(
+            vm.heap.get(r.get(i.b)),
+            Some(Cell::Function {
+                kind: FunctionKind::Native(Native::FunctionCall),
+                ..
+            })
+        ) {
+            sibling!(lane_function_call::<H>, r, ip, Carried::SCRIPT)
+        }
         // A call that returns its result completes its caller, which only an activation
         // does in the lane.
         let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
@@ -3597,7 +3742,7 @@ lane_handler! {
         }
         let Some(target) = lane_script_target(cx, callee).filter(|target| target.constructs)
         else {
-            return exit(ip);
+            sibling!(lane_native_construct::<H>, r, ip, Carried::SCRIPT)
         };
         if target.forwards {
             sibling!(lane_script_construct_keeping::<H>, r, ip, Carried::SCRIPT)
@@ -4462,6 +4607,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::CallKnown => Some(lane_call_known::<H>),
         Op::Call => Some(lane_script_call::<H>),
         Op::Construct => Some(lane_script_construct::<H>),
+        Op::LoadName => Some(lane_load_name_first::<H>),
         Op::MakeObject2 => Some(lane_make_object2::<H>),
         Op::CallForwardingArguments => Some(lane_forward_call::<H>),
         Op::SuperConstArrayObject2 => Some(lane_const_array_object2::<H>),
