@@ -1252,9 +1252,19 @@ pub(crate) enum StackData {
     CallSite(CallSiteRecord),
 }
 
+/// A prototype starts in setup mode; named native-info lookup makes its
+/// accessor layout observable through getter-free diagnostic reads.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum PrototypeLookupState {
+    #[default]
+    Ordinary,
+    Setup,
+    Ready,
+}
+
 #[derive(Clone, Debug, Default)]
 struct ObjectExtras {
-    used_as_prototype: bool,
+    prototype_lookup: PrototypeLookupState,
     /// The object's inline property values, displaced from its payload by the extras pointer.
     inline_properties: DisplacedInline,
     /// An array's storage position, displaced from its first payload word.
@@ -1641,11 +1651,19 @@ impl Object {
     }
 
     pub(crate) fn was_used_as_prototype(&self) -> bool {
-        self.extras().is_some_and(|extras| extras.used_as_prototype)
+        self.extras().is_some_and(|extras| extras.prototype_lookup != PrototypeLookupState::Ordinary)
     }
 
     pub(crate) fn mark_as_prototype(&mut self) {
-        if !self.was_used_as_prototype() { self.extras_mut().used_as_prototype = true; }
+        if !self.was_used_as_prototype() { self.extras_mut().prototype_lookup = PrototypeLookupState::Setup; }
+    }
+
+    pub(crate) fn prototype_lookup_ready(&self) -> bool {
+        self.extras().is_some_and(|extras| extras.prototype_lookup == PrototypeLookupState::Ready)
+    }
+
+    pub(crate) fn prepare_prototype_lookup(&mut self) {
+        if self.was_used_as_prototype() { self.extras_mut().prototype_lookup = PrototypeLookupState::Ready; }
     }
 
     pub(crate) fn shape(&self) -> u32 {
