@@ -371,7 +371,7 @@ impl<H: Host> Vm<H> {
         };
         for record in records {
             stack.push_str("\n    at ");
-            stack.push_str(&Self::format_call_site(record));
+            stack.push_str(&self.format_call_site(record));
         }
         Ok(self.heap.alloc(Cell::String(JsString::from_str(&stack))))
     }
@@ -439,7 +439,7 @@ impl<H: Host> Vm<H> {
                 if constructor_found {
                     records.push(CallSiteRecord {
                         location: CallSiteLocation::Native,
-                        function_name: Some(name.clone()),
+                        name: CallSiteName::Static(JsString::from_str(name)),
                         this_value: Value::UNDEFINED,
                     });
                 }
@@ -469,11 +469,10 @@ impl<H: Host> Vm<H> {
             let Some(position) = residual.source_position(frame.function, pc) else {
                 continue;
             };
-            let function_name = frame.context.callable()
-                .and_then(|callee| self.debug_function_name(callee))
-                .or_else(|| function.name.map(|name| self.atom_value(name)))
-                .map(|name| name.to_string())
-                .filter(|name| !name.is_empty() && !name.starts_with('\0'));
+            let name = frame.context.callable().map_or_else(
+                || function.name.map_or(CallSiteName::Anonymous, |name| CallSiteName::Static(self.atom_value(name))),
+                CallSiteName::Callable,
+            );
             records.push(CallSiteRecord {
                 location: CallSiteLocation::Source {
                     file_name: self.host.stack_source_name(
@@ -483,7 +482,7 @@ impl<H: Host> Vm<H> {
                     line: position.line,
                     column: position.column,
                 },
-                function_name,
+                name,
                 this_value: if hide_this || frame.this == Value::DELETED {
                     Value::UNDEFINED
                 } else {
@@ -496,7 +495,7 @@ impl<H: Host> Vm<H> {
             for (_, name) in native_frames.take(limit.saturating_sub(records.len())) {
                 records.push(CallSiteRecord {
                     location: CallSiteLocation::Native,
-                    function_name: Some(name.clone()),
+                    name: CallSiteName::Static(JsString::from_str(name)),
                     this_value: Value::UNDEFINED,
                 });
             }
@@ -579,7 +578,16 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn format_call_site(record: &CallSiteRecord) -> String {
+    fn call_site_name(&self, record: &CallSiteRecord) -> Option<JsString> {
+        let name = match &record.name {
+            CallSiteName::Callable(function) => self.debug_function_name(*function)?,
+            CallSiteName::Static(name) => name.clone(),
+            CallSiteName::Anonymous => return None,
+        };
+        (name.len() != 0).then_some(name)
+    }
+
+    fn format_call_site(&self, record: &CallSiteRecord) -> String {
         let location = match &record.location {
             CallSiteLocation::Source {
                 file_name,
@@ -588,9 +596,7 @@ impl<H: Host> Vm<H> {
             } => format!("{file_name}:{line}:{column}"),
             CallSiteLocation::Native => "native".to_owned(),
         };
-        record
-            .function_name
-            .as_ref()
+        self.call_site_name(record)
             .map_or(location.clone(), |name| format!("{name} ({location})"))
     }
 
@@ -617,10 +623,9 @@ impl<H: Host> Vm<H> {
                 CallSiteLocation::Native => Value::NULL,
             }),
             Native::CallSiteGetThis => Ok(record.this_value),
-            Native::CallSiteGetFunctionName | Native::CallSiteGetMethodName => Ok(record
-                .function_name
-                .map(|name| self.heap.alloc(Cell::String(name.into())))
-                .unwrap_or(Value::UNDEFINED)),
+            Native::CallSiteGetFunctionName | Native::CallSiteGetMethodName => Ok(self.call_site_name(&record)
+                .map(|name| self.heap.alloc(Cell::String(name)))
+                .unwrap_or(Value::NULL)),
             Native::CallSiteGetLineNumber => Ok(match record.location {
                 CallSiteLocation::Source { line, .. } => Value::number(f64::from(line)),
                 CallSiteLocation::Native => Value::NULL,
@@ -641,7 +646,7 @@ impl<H: Host> Vm<H> {
             Native::CallSiteGetTypeName | Native::CallSiteGetEvalOrigin => Ok(Value::UNDEFINED),
             Native::CallSiteToString => Ok(self
                 .heap
-                .alloc(Cell::String(Self::format_call_site(&record).into()))),
+                .alloc(Cell::String(self.format_call_site(&record).into()))),
             _ => Err(JsError::validation(
                 "invalid CallSite native dispatch".into(),
             )),

@@ -1367,3 +1367,35 @@ function checkPrototype(){if(constructedName(Object.getPrototypeOf(child))!==und
         }
     }
 }
+
+#[test]
+fn captured_errors_and_exposed_callsites_trace_callable_identity_until_release() {
+    let source = r#"
+var error,sites;
+Error.prepareStackTrace=(_,frames)=>frames;
+function createStack(){function Frame(){return new Error};rememberConstructor(Frame);error=Frame()}
+function exposeSites(){sites=error.stack;if(sites[0].getFunctionName()!=='Frame')throw Error('lost frame name')}
+function dropError(){error=null}
+function dropSites(){sites=null}
+"#;
+    for program in [
+        Engine::specialize_unspecialized(source,"stack-name-roots.js").unwrap(),
+        Engine::specialize(source,"stack-name-roots.js").unwrap(),
+    ] {
+        let mut runtime = Runtime::new(ConstructorProvenanceHost::default());
+        runtime.execute(&program).unwrap();
+        for (operation, alive) in [
+            ("createStack", true), ("exposeSites", true),
+            ("dropError", true), ("dropSites", false),
+        ] {
+            let global=runtime.global_root().unwrap();
+            let key=runtime.string_rooted(operation);
+            let function=runtime.get_property_rooted(global,key).unwrap();
+            let result=runtime.call_rooted(function,global,&[]).unwrap();
+            for root in [result,function,key,global]{assert!(runtime.release_root(root));}
+            runtime.collect(&program).unwrap();
+            let weak=runtime.host_mut().constructor.expect("remembered frame");
+            assert_eq!(runtime.host_weak_root_is_live(weak),alive,"{operation}");
+        }
+    }
+}
