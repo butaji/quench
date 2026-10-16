@@ -586,7 +586,6 @@ pub(crate) enum Native {
     PromiseAllSettled,
     PromiseAllSettledKeyed,
     PromiseAny,
-    PromiseReactionJob,
     PromiseThenableJob,
     PromiseAggregateJob,
     PromiseAsyncResumeJob, AsyncFromSyncValue, AsyncFromSyncValueRejected, AsyncGeneratorDelegateFulfilled, AsyncGeneratorDelegateRejected,
@@ -602,6 +601,8 @@ pub(crate) enum Native {
     /// A Wasm function as JavaScript sees it; its environment is the Wasm closure.
     WasmExportedFunction,
     HostFunction,
+    CallSiteConstructor,
+    CallSiteGetFunction,
 }
 
 /// A global's cold facts, boxed with its object part so the cell stays compact.
@@ -623,19 +624,14 @@ pub(crate) struct WasmMemoryHeader {
 pub(crate) enum WasmObjectSlot {
     Module(Box<crate::WasmModule>),
     /// The frozen exports object of an instance; its bindings stay alive through it.
-    Instance {
-        exports: Value,
-    },
+    Instance { exports: Value },
 }
 
 impl std::fmt::Debug for WasmObjectSlot {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Module(_) => f.write_str("Module"),
-            Self::Instance { exports } => f
-                .debug_struct("Instance")
-                .field("exports", exports)
-                .finish(),
+            Self::Instance { exports } => f.debug_struct("Instance").field("exports", exports).finish(),
         }
     }
 }
@@ -899,7 +895,6 @@ impl Native {
                 | Self::PromiseAllSettled
                 | Self::PromiseAllSettledKeyed
                 | Self::PromiseAny
-                | Self::PromiseReactionJob
                 | Self::PromiseThenableJob
                 | Self::PromiseAggregateJob
                 | Self::PromiseAsyncResumeJob
@@ -954,7 +949,11 @@ impl IteratorKind {
     pub(crate) fn is_collection_iterator(self) -> bool {
         matches!(
             self,
-            Self::MapKeys | Self::MapValues | Self::MapEntries | Self::SetValues | Self::SetEntries
+            Self::MapKeys
+                | Self::MapValues
+                | Self::MapEntries
+                | Self::SetValues
+                | Self::SetEntries
         )
     }
 }
@@ -1222,10 +1221,26 @@ pub(crate) enum CallSiteLocation {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) enum CallSiteName {
+    /// Resolve the safe debug name when a CallSite is read, not at capture.
+    Callable(Value),
+    Static(JsString),
+    Anonymous,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct CallSiteRecord {
     pub(crate) location: CallSiteLocation,
-    pub(crate) function_name: Option<String>,
+    pub(crate) name: CallSiteName,
     pub(crate) this_value: Value,
+    pub(crate) hide_identity: bool,
+}
+
+impl CallSiteRecord {
+    fn visit_roots(&self, visit: &mut impl FnMut(Value)) {
+        visit(self.this_value);
+        if let CallSiteName::Callable(function) = self.name { visit(function); }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1283,7 +1298,7 @@ impl StackData {
             (match &record.location {
                 CallSiteLocation::Source { file_name, .. } => file_name.capacity(),
                 CallSiteLocation::Native => 0,
-            }) + record.function_name.as_ref().map_or(0, String::capacity)
+            }) + match &record.name { CallSiteName::Static(name) => name.capacity(), _ => 0 }
         }
         match self {
             Self::Captured(records) => {
@@ -1601,10 +1616,12 @@ impl Object {
         match extras.stack_data.as_ref() {
             Some(StackData::Captured(records)) => {
                 for record in records {
-                    visit(record.this_value);
+                    record.visit_roots(&mut visit);
                 }
             }
-            Some(StackData::CallSite(record)) => visit(record.this_value),
+            Some(StackData::CallSite(record)) => {
+                record.visit_roots(&mut visit);
+            },
             Some(StackData::Formatted(value)) => visit(*value),
             None => {}
         }

@@ -145,3 +145,8 @@ pub(crate) mod os_binding_shared_vm;
 
 pub(crate) mod cli_options;
 pub(crate) mod cli_options_shared_vm;
+
+pub(crate) mod zlib_native_codec;
+pub(crate) mod zlib_native_shared_vm;
+
+pub(crate) mod native_work;

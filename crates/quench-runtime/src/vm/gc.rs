@@ -210,8 +210,7 @@ fn rebuild_shape(
         if let Some((_, attributes)) = entry
             && data.is_none()
         {
-            let attributes =
-                ShapeAttributes::record(attributes.attributes(old_accessors), accessors);
+            let attributes = ShapeAttributes::record(attributes.attributes(old_accessors), accessors);
             parent = append_compacted_shape(
                 shapes,
                 transitions,
@@ -424,6 +423,8 @@ impl<H: Host> Vm<H> {
                     intrinsics.constructor,
                     intrinsics.stack_getter,
                     intrinsics.stack_setter,
+                    intrinsics.call_site_constructor,
+                    intrinsics.call_site_prototype,
                 ]
             },
         ));
@@ -617,11 +618,7 @@ impl<H: Host> Vm<H> {
                 .iter()
                 .map(|job| job.promise),
         );
-        roots.extend(self.realm.jobs.iter().flat_map(|job| {
-            std::iter::once(job.callback)
-                .chain(std::iter::once(job.this))
-                .chain(job.args.iter().copied())
-        }));
+        roots.extend(self.realm.jobs.iter().flat_map(PendingJob::roots));
         roots.extend(self.realm.template_objects.values().copied());
         roots.extend(
             self.realm
@@ -767,7 +764,7 @@ impl<H: Host> Vm<H> {
         self.realm.jobs.extend(
             finalization_jobs
                 .into_iter()
-                .map(|(callback, held)| PendingJob {
+                .map(|(callback, held)| PendingJob::Call {
                     callback,
                     this: Value::UNDEFINED,
                     args: vec![held],
@@ -785,13 +782,6 @@ impl<H: Host> Vm<H> {
                         .iter()
                         .filter_map(|reaction| reaction.execution_context),
                 );
-            }
-            live
-        });
-        self.realm.promise.jobs.retain(|job, record| {
-            let live = self.heap.is_live(*job);
-            if !live {
-                abandoned_job_contexts.extend(record.execution_context);
             }
             live
         });
@@ -950,14 +940,17 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
         job: PendingJob,
     ) -> Result<(), JsError> {
-        let roots = [job.callback, job.this]
-            .into_iter()
-            .chain(job.args.iter().copied());
-        self.with_call_roots(roots, |vm| {
-            vm.call_value(program, job.callback, job.this, &job.args)
-                .map(|_| ())
+        let roots = job.roots();
+        self.with_call_roots(roots, |vm| match job {
+            PendingJob::Call {
+                callback,
+                this,
+                args,
+            } => vm.call_value(program, callback, this, &args).map(|_| ()),
+            PendingJob::Reaction(reaction) => vm.run_promise_reaction(program, reaction),
         })
     }
+
 
     pub(crate) fn drain_host_jobs(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
         self.advance_static_module_jobs(program)?;
@@ -1008,7 +1001,7 @@ mod tests {
             ShapeTransition::Add { key: PropertyKey::string(9), slot: 0, attributes: DEFAULT_DATA_ATTRIBUTES }, 1);
         let mut rebuilt = vec![Shape::root()];
         let shape = rebuild_shape(&shapes, &[], with_field, &mut rebuilt,
-            &mut Vec::new(), &mut Default::default());
+            &mut Vec::new(), &mut crate::vm::shape_transitions::ShapeTransitionIndex::default());
         assert_eq!(provenance::shape_names(&rebuilt, shape), (Some(7), Some((Value::heap(17), false))));
         assert_eq!(rebuilt[shape as usize].storage_len(), 1);
         assert_eq!(super::active_shape_attributes(&rebuilt, shape).len(), 1);
