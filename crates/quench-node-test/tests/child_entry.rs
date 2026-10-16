@@ -9438,3 +9438,8 @@ fn default_node_stack_policy_uses_real_coded_brands_and_system_errors() {
 fn node_compatibility_version_follows_bundled_library_target() {
     compare_node_source_with_args(include_str!("../node-tests/test-node-compatibility-version.js"), &[]);
 }
+
+#[test]
+fn boxed_primitive_brands_use_internal_values_and_reject_forged_properties_and_proxies() {
+    compare_node_source_with_args(include_str!("../node-tests/test-boxed-primitive-slots.js"), &[]);
+}

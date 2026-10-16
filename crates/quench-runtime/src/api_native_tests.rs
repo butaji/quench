@@ -1524,3 +1524,50 @@ function dropIterator(){state=null}
         }
     }
 }
+
+#[derive(Default)]
+struct BoxedPrimitiveHost {
+    payload: Option<HostWeakRoot>,
+}
+impl Host for BoxedPrimitiveHost {
+    fn write_line(&mut self, _: &str) {}
+    fn clock_millis(&mut self) -> f64 { 0.0 }
+    fn functions(&self) -> &[HostFunction<Self>] {
+        crate::host_functions![global "rememberPayload" (1) => remember_boxed_payload]
+    }
+}
+fn remember_boxed_payload(
+    context: &mut NativeContext<'_, BoxedPrimitiveHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let weak = context.host_weak_root(args[0])?;
+    context.host_mut().payload = Some(weak);
+    Ok(context.undefined())
+}
+#[test]
+fn boxed_primitive_internal_values_survive_collection_and_release_with_the_wrapper() {
+    let source = r#"
+var wrapper;
+function createWrapper(){const value=Symbol('payload');rememberPayload(value);wrapper=Object(value);Object.setPrototypeOf(wrapper,null)}
+function readWrapper(){const value=Symbol.prototype.valueOf.call(wrapper);if(typeof value!=='symbol'||value.description!=='payload')throw Error('lost wrapper payload')}
+function dropWrapper(){wrapper=null}
+"#;
+    for program in [
+        Engine::specialize_unspecialized(source, "boxed-primitive-roots.js").unwrap(),
+        Engine::specialize(source, "boxed-primitive-roots.js").unwrap(),
+    ] {
+        let mut runtime = Runtime::new(BoxedPrimitiveHost::default());
+        runtime.execute(&program).unwrap();
+        for (operation, alive) in [("createWrapper", true), ("readWrapper", true), ("dropWrapper", false)] {
+            let global = runtime.global_root().unwrap();
+            let key = runtime.string_rooted(operation);
+            let function = runtime.get_property_rooted(global, key).unwrap();
+            let result = runtime.call_rooted(function, global, &[]).unwrap();
+            for root in [result, function, key, global] { assert!(runtime.release_root(root)); }
+            runtime.collect(&program).unwrap();
+            let payload = runtime.host_mut().payload.unwrap();
+            assert_eq!(runtime.host_weak_root_is_live(payload), alive, "{operation}");
+        }
+    }
+}

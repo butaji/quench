@@ -97,13 +97,11 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn bigint_value_of(&mut self, p: &ResidualProgram, this: Value) -> Result<Value, JsError> {
+    pub(super) fn bigint_value_of(&mut self, p: &ResidualProgram, this: Value) -> Result<Value, JsError> {
         if matches!(self.heap.get(this), Some(Cell::BigInt(_))) {
             return Ok(this);
         }
-        let value_atom = self.intern_atom("\0quench:bigint-value");
-        let value = self
-            .own_property(this, value_atom)
+        let value = self.boxed_primitive_value(this)
             .unwrap_or(Value::UNDEFINED);
         if matches!(self.heap.get(value), Some(Cell::BigInt(_))) {
             Ok(value)
