@@ -46,6 +46,8 @@ cranelift-codegen = { version = "=0.134.3", default-features = false, features =
 cranelift-frontend = { version = "=0.134.3", default-features = false, features = ["std"] }
 cranelift-native = { version = "=0.134.3", default-features = false }
 libc = "0.2"
+# fdlibm atan is part of the shared binary64 Math rounding policy.
+libm = "=0.2.16"
 unicode-normalization = "0.1"
 unicode-segmentation = "1.13"
 

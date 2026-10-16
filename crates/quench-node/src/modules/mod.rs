@@ -95,6 +95,8 @@ pub(crate) mod string_decoder_codec;
 pub(crate) mod string_decoder_shared_vm;
 pub(crate) mod test_shared_vm;
 pub(crate) mod text_decoder_codec;
+#[cfg(quench_icu)]
+pub(crate) mod text_decoder_icu;
 pub(crate) mod text_decoder_shared_vm;
 pub(crate) mod timers_shared_vm;
 pub(crate) mod tls_shared_vm;

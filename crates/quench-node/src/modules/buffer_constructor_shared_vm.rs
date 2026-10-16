@@ -71,7 +71,7 @@ pub(crate) fn install(context: &mut Context<'_>, fast: RootId) -> Result<RootId,
     set(context, prototype, "constructor", constructor)?;
     name(context, fast, "FastBuffer")?;
     let retained = context.retain(fast)?;
-    let previous = context.host_mut().shared_state().borrow_mut().module_cache.insert(FAST_BUFFER_CACHE.to_owned(), retained);
+    let previous = context.host_mut().shared_state().borrow_mut().builtin_cache.insert(FAST_BUFFER_CACHE.to_owned(), retained);
     if let Some(previous) = previous { context.release_root(previous); }
     let is_buffer = context.host_constructor_with_data(
         crate::host::shared_vm::operation("bufferIsBuffer"),
@@ -209,10 +209,10 @@ pub(crate) fn of(
 /// Internal users and public Buffer allocations share one Uint8Array subclass.
 pub(crate) fn internal_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     let shared = context.host_mut().shared_state();
-    if shared.borrow().module_cache.get(FAST_BUFFER_CACHE).is_none() {
+    if shared.borrow().builtin_cache.get(FAST_BUFFER_CACHE).is_none() {
         crate::host::shared_vm::commonjs::buffer_module(context)?;
     }
-    let fast = shared.borrow().module_cache.get(FAST_BUFFER_CACHE).copied()
+    let fast = shared.borrow().builtin_cache.get(FAST_BUFFER_CACHE).copied()
         .ok_or_else(|| RootedError::host("canonical FastBuffer missing"))?;
     let module = context.object_rooted()?;
     let key = context.string_rooted("FastBuffer");

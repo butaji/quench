@@ -1128,6 +1128,26 @@ impl<H: Host> Vm<H> {
         self.set_property_with_program_mode(&program, object, atom, value, true)
     }
 
+    pub(crate) fn evaluate_module_sync(
+        &mut self,
+        module: &crate::ModuleSource,
+    ) -> Result<crate::SynchronousModule<Value>, JsError> {
+        let program = self.embedding_program()?;
+        self.synchronous_module_namespace(&program, module)
+    }
+
+    pub(crate) fn module_namespace_with_export_rooted(
+        &mut self,
+        namespace: RootId,
+        name: &str,
+        value: RootId,
+    ) -> Result<Value, JsError> {
+        let namespace = self.embedding_value(namespace)?;
+        let value = self.embedding_value(value)?;
+        let program = self.embedding_program()?;
+        self.module_namespace_with_export(&program, namespace, name, value)
+    }
+
     pub(crate) fn set_property_rooted(
         &mut self,
         object: RootId,

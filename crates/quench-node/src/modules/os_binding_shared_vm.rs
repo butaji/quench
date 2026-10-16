@@ -34,14 +34,14 @@ fn cached(
     build: fn(&mut Context<'_>) -> Result<RootId, RootedError>,
 ) -> Result<RootId, RootedError> {
     let shared = c.host_mut().shared_state();
-    if let Some(value) = shared.borrow().module_cache.get(key).copied() {
+    if let Some(value) = shared.borrow().builtin_cache.get(key).copied() {
         return Ok(value);
     }
     let value = build(c)?;
     let retained = c.retain(value)?;
     shared
         .borrow_mut()
-        .module_cache
+        .builtin_cache
         .insert(key.to_owned(), retained);
     Ok(value)
 }
