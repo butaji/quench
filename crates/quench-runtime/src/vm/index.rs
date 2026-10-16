@@ -35,11 +35,7 @@ impl<H: Host> Vm<H> {
             _ if value.as_number().is_some() => Native::Number,
             _ => return None,
         };
-        self.realm
-            .intrinsics
-            .builtin_prototypes
-            .get(&(self.realm.globals, native))
-            .copied()
+        self.realm.intrinsics.builtin_prototypes.get(&(self.realm.globals, native)).copied()
     }
 
     pub(super) fn require_object_coercible(
@@ -119,13 +115,9 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         if object.is_null() || object.is_undefined() {
             // A rejected base never invokes a property-key object's conversion hooks.
-            let property = if self.is_object_like(key) {
-                None
-            } else if let Some(Cell::Symbol(description)) = self.heap.get(key) {
-                Some(format!("Symbol({})", description.as_deref().unwrap_or("")))
-            } else {
-                Some(self.to_string(p, key)?)
-            };
+            let property = if self.is_object_like(key) { None }
+                else if let Some(Cell::Symbol(description)) = self.heap.get(key) { Some(format!("Symbol({})", description.as_deref().unwrap_or(""))) }
+                else { Some(self.to_string(p, key)?) };
             return Err(self.nullish_property_error(p, object, property.as_deref()));
         }
         let key = match self.heap.get(key) {

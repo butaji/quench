@@ -117,9 +117,7 @@ impl<H: Host> Vm<H> {
             Cell::Proxy { kind, .. } => *kind == ProxyKind::Constructor,
             Cell::Function { kind, .. } => match kind {
                 FunctionKind::Native(Native::HostFunction) => {
-                    let Cell::Function { env, .. } = cell else {
-                        unreachable!()
-                    };
+                    let Cell::Function { env, .. } = cell else { unreachable!() };
                     self.host_function_constructible(*env)
                 }
                 FunctionKind::User(program_id, id) | FunctionKind::NumericUser(program_id, id) => {
@@ -370,8 +368,7 @@ impl<H: Host> Vm<H> {
             && !function_plan.is_class_constructor;
         let shapes_key = usize::from(prototype.is_some());
         if ordinary && let Some(shapes) = self.closure_shapes[shapes_key] {
-            self.heap
-                .property_add(function, length_value, shapes.length);
+            self.heap.property_add(function, length_value, shapes.length);
             self.heap.property_add(function, name_value, shapes.name);
             if let (Some(prototype), Some((with_prototype, constructor))) =
                 (prototype, shapes.prototype)
