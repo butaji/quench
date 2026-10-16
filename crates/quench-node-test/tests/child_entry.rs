@@ -9656,3 +9656,48 @@ fn tcp_default_listen_backlog_matches_node_when_syscall_tracing_is_available() {
 fn tcp_option_listen_backlog_matches_node_truthiness_and_int32_when_tracing_is_available() {
     compare_node_source_with_args(include_str!("../node-tests/test-tcp-option-listen-backlog.js"), &[]);
 }
+
+#[test]
+fn net_listen_lifecycle_retains_dns_generations_callbacks_and_public_method_shapes() {
+    compare_node_source_with_args(include_str!("../node-tests/test-net-listen-lifecycle.js"), &["--expose-gc"]);
+}
+
+#[test]
+fn net_dns_iterator_errors_close_once_preserve_original_abrupt_values_and_survive_gc() {
+    compare_node_source_with_args(include_str!("../node-tests/test-net-dns-iterator-errors.js"), &["--expose-gc"]);
+}
+
+#[test]
+fn process_capture_callback_reset_prioritizes_null_and_original_type_validation() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-callback-reset.js"), &[]);
+}
+
+#[test]
+fn http_listening_derives_from_the_handle_and_close_cancels_pending_notification() {
+    compare_node_source_with_args(include_str!("../node-tests/test-http-listening-handle.js"), &[]);
+}
+
+#[test]
+fn filesystem_readdir_sync_uses_sdk_policy_with_raw_names_and_recursive_native_layout() {
+    compare_node_source_with_args(include_str!("../node-tests/test-fs-readdir-sdk-policy.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn process_capture_state_is_canonical_receiver_independent_and_survives_collection() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-canonical-state.js"), &["--expose-gc"]);
+}
+
+#[test]
+fn process_uncaught_monitor_precedes_capture_and_can_replace_the_pending_handler() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-monitor-capture-transition.js"), &[]);
+}
+
+#[test]
+fn process_uncaught_events_ignore_monitor_results_and_use_emit_truthiness() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-uncaught-emit-truthiness.js"), &[]);
+}
+
+#[test]
+fn process_capture_delivery_reloads_the_callback_after_the_null_check() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-getter-order.js"), &[]);
+}
