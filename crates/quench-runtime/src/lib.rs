@@ -44,3 +44,6 @@ pub use api::{
     NativeArithmetic, NativeContext, PromiseRejectionEvent, RootedError, RootedIterator, Runtime,
     RuntimeError, SourceKind, SynchronousModule,
 };
+
+#[cfg(test)]
+mod host_stack_tests;

@@ -220,6 +220,10 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
         context.seal_startup_intrinsics();
     }
     crate::host::resident_pages::release_read_only_pages();
+    if node_primordials_source(context).is_some() {
+        context.scoped(crate::modules::node_errors_shared_vm::install_stack_formatter)?;
+        context.seal_startup_intrinsics();
+    }
     context.scoped(preload_modules)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_preloads");
@@ -1618,13 +1622,17 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
                 .next()
                 .unwrap_or(crate::polyfills::bootstrap::dgram_tail::JS);
             let source = format!(
-                "(() => {{\n{}\n{}\n{}\n{}\n}})();",
+                "(__quenchDgramBufferSystemError => {{\n{}\n{}\n{}\n{}\n}})",
                 crate::polyfills::bootstrap::dgram_head::JS,
                 crate::polyfills::bootstrap::dgram::JS,
                 crate::polyfills::bootstrap::membership::JS,
                 dgram_tail,
             );
             let root = context.evaluate_script_rooted(&source, "node:dgram/bootstrap.js")?;
+            let codes = node_library_export(context, "internal/errors.js", "internal/errors.js", "codes")?;
+            let constructor = get(context, codes, "ERR_SOCKET_BUFFER_SIZE")?;
+            let undefined = context.undefined();
+            context.call_rooted(root, undefined, &[constructor])?;
             context.release_root(root);
             let global = context.global_root()?;
             get(context, global, "\0quench:dgram_module")
