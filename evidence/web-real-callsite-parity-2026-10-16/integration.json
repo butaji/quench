@@ -1,0 +1,8 @@
+{
+  "publication_source_parent": "7eea0faac3a1e9014cce4fc034ccb4b70a554b0a",
+  "additional_shared_source": "f2d37dccc077772a3dcac4dfd6d0bff558a9e1f2",
+  "workspace_check_exit": 0,
+  "frozen_qualified_parent": "0a6037fc7",
+  "broader_merged_verification": "pending; parent qualification does not prove later Buffer allocation/pooling source",
+  "operation_pc_and_extended_positions_excluded": true
+}
