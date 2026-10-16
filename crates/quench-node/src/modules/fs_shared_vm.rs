@@ -2950,14 +2950,26 @@ pub(crate) fn initialize_glob_policy(
         let function = get(context, policy, name)?;
         set(context, module, name, function)?;
     }
+    // Node's public fs module does not load its promises implementation until
+    // requested. In particular its readline dependencies must not eagerly
+    // capture the OS binding while merely requiring fs.
+    let promises = get(context, module, "promises")?;
+    let initializer = context.host_function(crate::host::shared_vm::operation("fsPromisesGlobInitialize"))?;
+    context.define_lazy_data_properties_rooted(promises, &["glob"], true, initializer)
+}
+
+pub(crate) fn initialize_promises_glob_policy(
+    context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId],
+) -> Result<RootId, RootedError> {
     let policy = crate::host::shared_vm::commonjs::node_library_module(
         context, "fs.js", "internal/fs/promises.js",
     )?;
     let exports = get(context, policy, "exports")?;
     let glob = get(context, exports, "glob")?;
+    let module = crate::host::shared_vm::commonjs::fs_module(context)?;
     let promises = get(context, module, "promises")?;
     set(context, promises, "glob", glob)?;
-    Ok(())
+    Ok(context.undefined())
 }
 
 /// The native filesystem and original fs utilities import one another. Keep the

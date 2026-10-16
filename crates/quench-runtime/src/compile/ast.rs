@@ -141,7 +141,7 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     pub(super) async_function: bool,
     pub(super) generator: bool,
     pub(super) this_override: Option<Register>,
-    pub(super) class_field_initializer: bool,
+    pub(super) class_initializer: bool,
     pub(super) optional_chain_end_edges: Option<Vec<usize>>,
     pub(super) with_depth: u16,
     inherited_with_depth: u16,
@@ -255,7 +255,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             async_function,
             generator,
             this_override: None,
-            class_field_initializer: false,
+            class_initializer: false,
             optional_chain_end_edges: None,
             with_depth,
             inherited_with_depth: with_depth,
@@ -526,7 +526,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                         class_constructor: false,
                         derived_constructor: false,
                         non_constructible: false,
-                        class_field_initializer: false,
+                        class_initializer: false,
                         instance_fields: None,
                         instance_private_methods: None,
                         super_static: false,
@@ -813,6 +813,12 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
 
     pub(super) fn push_lexical_bindings(&mut self, bindings: FxHashMap<Atom, Atom>) {
         self.push_lexical_bindings_with_immutability(bindings, FxHashSet::default());
+    }
+
+    pub(super) fn push_private_bindings(&mut self, bindings: FxHashMap<Atom, Atom>) {
+        self.push_lexical_bindings(bindings);
+        let scope = self.lexical_scopes.last_mut().expect("private lexical scope");
+        for kind in scope.kinds.values_mut() { *kind = LexicalBindingKind::PrivateName; }
     }
 
     pub(super) fn push_body_lexical_bindings(&mut self, bindings: &[(Atom, LexicalBindingKind)]) {
@@ -1118,7 +1124,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                             (self.is_compiler_binding(*atom)
                                 && !LexicalBindingKind::ALL
                                     .into_iter()
-                                    .any(|kind| name.starts_with(kind.capture_prefix()))
+                                    .any(|kind| kind != LexicalBindingKind::PrivateName && name.starts_with(kind.capture_prefix()))
                                 && !name.starts_with("\0quench:catch-capture:"))
                             .then_some((*atom, *slot))
                         })
@@ -1162,6 +1168,16 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                         .copied()
                         .unwrap_or(LexicalBindingKind::Mutable);
                     let name = self.owner.atoms[*source as usize].to_owned();
+                    if kind == LexicalBindingKind::PrivateName {
+                        let label = crate::bytecode::private_identity_label(&name);
+                        let stale = scope.keys().copied().filter(|atom| {
+                            let text: &str = self.owner.atoms[*atom as usize].as_ref();
+                            let identity = text.strip_prefix(LexicalBindingKind::PrivateName.capture_prefix()).unwrap_or(text);
+                            label.is_some() && crate::bytecode::private_identity_label(identity) == label
+                        }).collect::<Vec<_>>();
+                        for atom in stale { scope.remove(&atom); }
+                        scope.insert(*source, slot);
+                    }
                     for kind in LexicalBindingKind::ALL {
                         let marker = format!("{}{name}", kind.capture_prefix());
                         if let Some(marker) = self.owner.atoms.find(&marker).as_ref() {

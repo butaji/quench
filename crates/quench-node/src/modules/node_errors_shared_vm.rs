@@ -453,3 +453,56 @@ pub(crate) fn initialize_shadow_policy(
     context.define_data_property_rooted(constructor, key, prepare, true, false, true)?;
     get(context, errors, "prepareStackTraceCallback")
 }
+
+/// Project compiler-owned error source metadata for the original Node SDK policy.
+pub(crate) fn source_positions(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let absent = context.undefined();
+    let error = args.first().copied().unwrap_or(absent);
+    if !context.is_object_rooted(error)? {
+        let error = context.type_error_rooted("Error source positions require an object")?;
+        return Err(context.throw(error));
+    }
+    let Some(position) = context.error_source_position_rooted(error)? else {
+        return Ok(context.undefined());
+    };
+    let result = context.null_object_rooted()?;
+    let source_line = context.string_rooted(position.source_line.as_deref().unwrap_or(""));
+    let resource = match position.script_name {
+        Some(name) => context.string_rooted(&name),
+        None => context.undefined(),
+    };
+    let line = context.number(f64::from(position.line_number));
+    let column = context.number(f64::from(position.column_number.saturating_sub(1)));
+    for (name, value) in [("sourceLine", source_line), ("scriptResourceName", resource),
+        ("lineNumber", line), ("startColumn", column)] {
+        let key = context.string_rooted(name);
+        context.define_data_property_rooted(result, key, value, true, true, true)?;
+    }
+    Ok(result)
+}
+
+pub(crate) fn binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    crate::host::shared_vm::commonjs::cached_native_binding(context, "\0binding:errors", build_binding)
+}
+
+fn build_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    let binding = context.object_rooted()?;
+    let function = context.host_function_named(
+        crate::host::shared_vm::operation("errorSourcePositions"), "getErrorSourcePositions",
+    )?;
+    let key = context.string_rooted("getErrorSourcePositions");
+    context.define_data_property_rooted(binding, key, function, true, true, true)?;
+    let codes = context.object_rooted()?;
+    for &(name, code) in super::node_protocol_constants::EXIT_CODES {
+        let key = context.string_rooted(name);
+        let value = context.number(f64::from(code));
+        context.define_data_property_rooted(codes, key, value, false, true, false)?;
+    }
+    let key = context.string_rooted("exitCodes");
+    context.define_data_property_rooted(binding, key, codes, false, true, true)?;
+    Ok(binding)
+}
