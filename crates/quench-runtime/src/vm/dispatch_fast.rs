@@ -3127,6 +3127,7 @@ impl<H: Host> Vm<H> {
             let call_pc = unsafe { activation.call.offset_from(activation.caller_base) } as usize;
             let result = unsafe { (*activation.call).a };
             self.frames[caller].pc = call_pc + 1;
+            self.frames[caller].pc_is_resume = true;
             let count = usize::from(code.functions[activation.function as usize].registers);
             let window = &registers[activation.window..activation.window + count];
             let construct_this = activation
@@ -3910,6 +3911,7 @@ fn lane_call_frame<H: Host>(ip: Ip) -> Ip {
         return exit(ip);
     };
     vm.frames[caller].pc = call_pc + 1;
+    vm.frames[caller].pc_is_resume = true;
     unsafe { &mut *(*cx).pending }.push(PendingGeneralCall {
         caller,
         caller_cursor: None,

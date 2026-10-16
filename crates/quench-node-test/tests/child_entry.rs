@@ -9469,3 +9469,27 @@ fn callsite_columns_follow_member_parenthesized_and_constructor_call_syntax() {
 fn util_call_sites_capture_actual_metadata_without_error_hooks_and_use_node_validation() {
     compare_node_source_with_args(include_str!("../node-tests/test-util-real-call-sites.js"), &[]);
 }
+
+#[test]
+fn optional_private_and_complex_call_columns_follow_actual_syntax_tokens() {
+    for source in [include_str!("../node-tests/test-optional-private-call-columns.js"), include_str!("../node-tests/test-call-column-trivia.js"), include_str!("../node-tests/test-complex-call-columns.js"), include_str!("../node-tests/test-special-call-columns.js")] {
+        compare_node_source_with_args(source, &[]);
+    }
+}
+
+#[test]
+fn getter_operation_columns_remain_distinct_from_call_continuations() {
+    compare_node_source_with_args(include_str!("../node-tests/test-getter-call-columns.js"), &[]);
+}
+
+#[test]
+fn property_reads_and_writes_capture_their_own_operation_positions() {
+    for source in [include_str!("../node-tests/test-property-access-columns.js"), include_str!("../node-tests/test-assignment-access-columns.js")] {
+        compare_node_source_with_args(source, &[]);
+    }
+}
+
+#[test]
+fn source_positions_use_javascript_line_terminators_and_utf16_columns() {
+    compare_node_source_with_args(include_str!("../node-tests/test-source-line-terminators.js"), &[]);
+}
