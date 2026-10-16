@@ -8,7 +8,6 @@ static FIPS_GENERATION: Mutex<u64> = Mutex::new(0);
 #[derive(Clone, Copy)]
 pub enum Kind {
     Cipher,
-    Digest,
     Mac,
 }
 #[cfg_attr(test, link(name = "crypto"))]
@@ -18,11 +17,6 @@ unsafe extern "C" {
     fn EVP_default_properties_is_fips_enabled(ctx: *mut c_void) -> c_int;
     fn EVP_default_properties_enable_fips(ctx: *mut c_void, enable: c_int) -> c_int;
     fn EVP_CIPHER_do_all_provided(
-        ctx: *mut c_void,
-        cb: unsafe extern "C" fn(*mut c_void, *mut c_void),
-        arg: *mut c_void,
-    );
-    fn EVP_MD_do_all_provided(
         ctx: *mut c_void,
         cb: unsafe extern "C" fn(*mut c_void, *mut c_void),
         arg: *mut c_void,
@@ -37,11 +31,6 @@ unsafe extern "C" {
         cb: unsafe extern "C" fn(*const c_char, *mut c_void),
         arg: *mut c_void,
     ) -> c_int;
-    fn EVP_MD_names_do_all(
-        value: *const c_void,
-        cb: unsafe extern "C" fn(*const c_char, *mut c_void),
-        arg: *mut c_void,
-    ) -> c_int;
     fn EVP_MAC_names_do_all(
         value: *const c_void,
         cb: unsafe extern "C" fn(*const c_char, *mut c_void),
@@ -49,10 +38,8 @@ unsafe extern "C" {
     ) -> c_int;
     fn EVP_CIPHER_fetch(ctx: *mut c_void, name: *const c_char, props: *const c_char)
     -> *mut c_void;
-    fn EVP_MD_fetch(ctx: *mut c_void, name: *const c_char, props: *const c_char) -> *mut c_void;
     fn EVP_MAC_fetch(ctx: *mut c_void, name: *const c_char, props: *const c_char) -> *mut c_void;
     fn EVP_CIPHER_free(value: *mut c_void);
-    fn EVP_MD_free(value: *mut c_void);
     fn EVP_MAC_free(value: *mut c_void);
     fn EVP_PKEY_CTX_new_from_name(
         ctx: *mut c_void,
@@ -124,9 +111,6 @@ unsafe extern "C" fn algorithm(value: *mut c_void, arg: *mut c_void) {
             Kind::Cipher => {
                 EVP_CIPHER_names_do_all(value, name, arg);
             }
-            Kind::Digest => {
-                EVP_MD_names_do_all(value, name, arg);
-            }
             Kind::Mac => {
                 EVP_MAC_names_do_all(value, name, arg);
             }
@@ -141,7 +125,6 @@ fn available(kind: Kind, name: &str) -> bool {
     unsafe {
         let value = match kind {
             Kind::Cipher => EVP_CIPHER_fetch(ptr::null_mut(), name.as_ptr(), ptr::null()),
-            Kind::Digest => EVP_MD_fetch(ptr::null_mut(), name.as_ptr(), ptr::null()),
             Kind::Mac => EVP_MAC_fetch(ptr::null_mut(), name.as_ptr(), ptr::null()),
         };
         if value.is_null() {
@@ -149,7 +132,6 @@ fn available(kind: Kind, name: &str) -> bool {
         }
         match kind {
             Kind::Cipher => EVP_CIPHER_free(value),
-            Kind::Digest => EVP_MD_free(value),
             Kind::Mac => EVP_MAC_free(value),
         }
         true
@@ -165,7 +147,6 @@ pub fn names(kind: Kind) -> Vec<String> {
     unsafe {
         match kind {
             Kind::Cipher => EVP_CIPHER_do_all_provided(ptr::null_mut(), algorithm, arg),
-            Kind::Digest => EVP_MD_do_all_provided(ptr::null_mut(), algorithm, arg),
             Kind::Mac => EVP_MAC_do_all_provided(ptr::null_mut(), algorithm, arg),
         }
     }
@@ -211,7 +192,6 @@ mod tests {
     #[test]
     fn live_provider_and_generation() {
         assert!(names(Kind::Cipher).contains(&"aes-128-gcm".into()));
-        assert!(names(Kind::Digest).contains(&"sha256".into()));
         assert!(names(Kind::Mac).contains(&"hmac".into()));
         assert!(!key_available("SHA-256"));
         assert!(key_available("Ed25519"));
@@ -245,8 +225,10 @@ mod tests {
                 .output()
                 .expect("launch isolated OpenSSL provider transition test");
             assert!(output.status.success(), "child failed: {output:?}");
-            assert!(String::from_utf8_lossy(&output.stderr).contains(COMPLETED),
-                "child did not execute the actual transitions: {output:?}");
+            assert!(
+                String::from_utf8_lossy(&output.stderr).contains(COMPLETED),
+                "child did not execute the actual transitions: {output:?}"
+            );
             assert_eq!(fips_enabled(), before);
             assert_eq!(fips_generation(), generation);
         }

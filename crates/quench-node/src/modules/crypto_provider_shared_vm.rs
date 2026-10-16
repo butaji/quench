@@ -30,6 +30,7 @@ pub(crate) fn install(c: &mut Context<'_>, binding: RootId) -> Result<(), Rooted
         "setFipsCrypto",
         "getCiphers",
         "getHashes",
+        "getCachedAliases",
         "getMacs",
         "isKeyAlgorithmAvailable",
         "getOpenSSLSecLevelCrypto",
@@ -52,6 +53,8 @@ pub(crate) fn operation(
     let op = c.host_function_data()?;
     let op = c.to_string(op)?;
     match op.as_str() {
+        "getHashes" => super::crypto_secret_job_shared_vm::digest_inventory(c, false),
+        "getCachedAliases" => super::crypto_secret_job_shared_vm::digest_inventory(c, true),
         "secureHeapUsed" => Ok(c.bigint_rooted(native::secure_heap_used() as i128)),
         "secureBuffer" => {
             if native::secure_heap_initialized() {
@@ -100,10 +103,9 @@ pub(crate) fn operation(
                 .map_err(|stack| super::crypto_error_shared_vm::decorated(c, stack))?;
             Ok(c.number(builder.build().security_level() as f64))
         }
-        "getCiphers" | "getHashes" | "getMacs" => {
+        "getCiphers" | "getMacs" => {
             let kind = match op.as_str() {
                 "getCiphers" => native::Kind::Cipher,
-                "getHashes" => native::Kind::Digest,
                 _ => native::Kind::Mac,
             };
             let values = native::names(kind)
@@ -220,4 +222,9 @@ fn random_fill(c: &mut Context<'_>, args: &[RootId]) -> Result<RootId, RootedErr
     let source = c.uint8_array_rooted(&bytes)?;
     c.call_rooted(set, destination, &[source])?;
     Ok(c.undefined())
+}
+
+/// One generation owner for actual FIPS transitions and every SDK digest cache.
+pub(crate) fn fips_generation() -> u64 {
+    native::fips_generation()
 }
