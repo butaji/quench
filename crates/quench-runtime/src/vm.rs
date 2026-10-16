@@ -193,6 +193,7 @@ pub(super) struct Frame {
     pc: usize,
     /// Whether pc is a saved continuation after a call rather than the executing operation.
     pc_is_resume: bool,
+    source_field: Option<(usize, crate::bytecode::FieldPart)>,
     // The current operation's lexical projection, independent of the PC
     // published for GC roots or saved as the continuation after a call.
     binding_site_pc: Option<u32>,
@@ -256,6 +257,7 @@ impl Frame {
             function: 0,
             pc: 0,
             pc_is_resume: true,
+            source_field: None,
             binding_site_pc: None,
             env: Value::NULL,
             this: Value::UNDEFINED,

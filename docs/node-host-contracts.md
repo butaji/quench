@@ -76,9 +76,12 @@ Call positions use OXC expression/comment spans to identify method names and
 actual argument parentheses, including optional/private calls, returned
 functions, comments and line breaks. Property reads and writes have distinct
 operation positions, including assignments and updates. Source lines recognize
-all JavaScript line terminators and columns count UTF-16 units. Full fused
-sub-operation, eval/sourceURL, source-map and Node host-stack conformance remains
-open. Source IDs denote actual compiled units; missing host frames are not
+all JavaScript line terminators and columns count UTF-16 units. Fused
+field sites retain separate read/read/write source coordinates. A scoped active
+component selects the correct location while executing a getter or setter and
+restores the previous source context after success or failure. Bytecode format 91
+serializes these locations and rejects invalid coordinates. Complete eval/sourceURL,
+source-map and Node host-stack conformance remains open. Source IDs denote actual compiled units; missing host frames are not
 fabricated.
 
 ## Boxed primitive identity

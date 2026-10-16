@@ -668,14 +668,10 @@ impl<H: Host> Vm<H> {
                         unreachable!("field sink is only attached to nested field lookup")
                     };
                     let sink = p.field_sites[site].sink.expect("fused field sink");
-                    self.set_field_cached(
-                        p,
-                        self.frames[f].this,
-                        sink.0,
-                        v,
-                        sink.1,
-                        p.functions[self.frames[f].function as usize].strict,
-                    )?;
+                    self.with_field_source(f, site, crate::bytecode::FieldPart::Sink, |vm| vm.set_field_cached(
+                        p, vm.frames[f].this, sink.0, v, sink.1,
+                        p.functions[vm.frames[f].function as usize].strict,
+                    ))?;
                 }
                 if i.returns_from_frame() {
                     return Ok(StepResult::Return(v));
@@ -1537,17 +1533,28 @@ impl<H: Host> Vm<H> {
         }
     }
     #[inline(always)]
+    fn with_field_source<T>(&mut self, frame: usize, site: usize, part: crate::bytecode::FieldPart,
+        run: impl FnOnce(&mut Self) -> Result<T, JsError>) -> Result<T, JsError> {
+        let previous = self.frames[frame].source_field.replace((site, part));
+        let result = run(self);
+        self.frames[frame].source_field = previous;
+        result
+    }
+
     pub(super) fn resolve_field(
         &mut self,
         p: &ResidualProgram,
         frame: usize,
         site: usize,
     ) -> Result<Value, JsError> {
-        let site = p.field_sites[site];
+        let site_id = site;
+        let site = p.field_sites[site_id];
         let base = self.resolve_field_base(p, frame, site.base)?;
-        let value = self.get_field_cached(p, base, site.first.0, site.first.1)?;
+        let value = self.with_field_source(frame, site_id, crate::bytecode::FieldPart::First,
+            |vm| vm.get_field_cached(p, base, site.first.0, site.first.1))?;
         match site.second {
-            Some((atom, cache)) => self.get_field_cached(p, value, atom, cache),
+            Some((atom, cache)) => self.with_field_source(frame, site_id, crate::bytecode::FieldPart::Second,
+                |vm| vm.get_field_cached(p, value, atom, cache)),
             None => Ok(value),
         }
     }
