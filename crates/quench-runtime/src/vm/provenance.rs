@@ -76,22 +76,48 @@ impl<H: Host> Vm<H> {
             .map(|name| self.atom_value(name))
     }
 
+    fn constructed_shape(
+        &mut self,
+        shape: u32,
+        constructor: Value,
+        new_target_is_base: bool,
+    ) -> u32 {
+        if self.original_function_name(constructor).is_none()
+            || shape_names(&self.shapes, shape).1 == Some((constructor, new_target_is_base))
+        {
+            return shape;
+        }
+        self.append_cached_shape_transition(
+            shape,
+            ShapeTransition::Constructed {
+                constructor,
+                new_target_is_base,
+            },
+        )
+    }
+
     pub(super) fn capture_constructed_name(
         &mut self,
         object: &mut Object,
         constructor: Value,
         new_target_is_base: bool,
     ) {
-        if self.original_function_name(constructor).is_some() {
-            let shape = self.append_cached_shape_transition(
-                object.shape(),
-                ShapeTransition::Constructed {
-                    constructor,
-                    new_target_is_base,
-                },
-            );
-            object.set_shape(shape);
-        }
+        object.set_shape(self.constructed_shape(object.shape(), constructor, new_target_is_base));
+    }
+
+    pub(super) fn capture_constructed_value(
+        &mut self,
+        value: Value,
+        constructor: Value,
+        new_target_is_base: bool,
+    ) {
+        let Some(shape) = self.object_data(value).map(Object::shape) else {
+            return;
+        };
+        let shape = self.constructed_shape(shape, constructor, new_target_is_base);
+        self.object_data_mut(value)
+            .expect("constructed object")
+            .set_shape(shape);
     }
 
     pub(crate) fn embedding_original_function_name(
