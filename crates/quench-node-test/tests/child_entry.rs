@@ -9554,3 +9554,40 @@ fn eval_uses_parsed_program_completion_grammar_and_original_source_positions() {
     compare_node_source_with_args(include_str!("../node-tests/test-compiled-eval-source.js"), &[]);
 
 }
+
+#[test]
+fn fatal_source_excerpts_follow_javascript_line_terminators_and_original_file_lines() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("source-lines.cjs");
+    for separator in ["\n", "\r\n", "\r", "\u{2028}", "\u{2029}"] {
+        std::fs::write(&path, format!("void 0;{separator}  missing();")).unwrap();
+        let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+            let mut command = Command::new(executable);
+            command.arg(&path);
+            if executable != "node" {
+                command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            }
+            quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
+        });
+        for observation in &observations {
+            assert!(!observation.timed_out);
+            assert_eq!(observation.exit_code, Some(1));
+            assert!(observation.stdout.is_empty());
+        }
+        let excerpts = observations.each_ref().map(|observation| {
+            String::from_utf8_lossy(&observation.stderr).lines().take(4).map(str::to_owned).collect::<Vec<_>>()
+        });
+        assert_eq!(excerpts[0][1], "  missing();");
+        assert_eq!(excerpts[0], excerpts[1]);
+    }
+}
+
+#[test]
+fn eval_call_sites_capture_original_compiling_callers_and_hide_absent_script_names() {
+    compare_node_source_with_args(include_str!("../node-tests/test-callsite-eval-origins.js"), &["--expose-gc"]);
+}
+
+#[test]
+fn indirect_eval_script_identity_preserves_origins_fresh_values_templates_and_realm_isolation() {
+    compare_node_source_with_args(include_str!("../node-tests/test-indirect-eval-script-identity.js"), &[]);
+}

@@ -22,21 +22,26 @@ impl From<JsError> for IteratorHelperFailure {
 }
 
 impl<H: Host> Vm<H> {
-    pub(super) fn spread_to_array(
+    /// ArrayAccumulation of a spread element: every value `source` iterates is appended to the
+    /// literal `array`.
+    pub(super) fn spread_into_array(
         &mut self,
         p: &ResidualProgram,
+        array: Value,
         source: Value,
-    ) -> Result<Value, JsError> {
-        let roots = self.iterable_to_rooted_list(p, source)?;
-        let values = roots
-            .iter()
-            .map(|root| self.heap.root_value(*root).unwrap())
-            .collect();
-        let array = self.new_array(values);
-        for root in roots {
-            self.heap.release_root(root);
-        }
-        Ok(array)
+    ) -> Result<(), JsError> {
+        self.with_call_roots([array], |vm| {
+            let roots = vm.iterable_to_rooted_list(p, source)?;
+            let values = roots
+                .iter()
+                .map(|root| vm.heap.root_value(*root).unwrap())
+                .collect::<Vec<_>>();
+            let outcome = vm.append_array_literal_elements(p, array, values);
+            for root in roots {
+                vm.heap.release_root(root);
+            }
+            outcome
+        })
     }
 
     pub(super) fn iterable_to_rooted_list(
@@ -3097,6 +3102,54 @@ impl<H: Host> Vm<H> {
                 vm.iterator_result(Value::UNDEFINED, true)
             }
         })
+    }
+
+    /// One %ArrayIteratorPrototype%.next step without its result object: the next value, or
+    /// `None` once the iterator is (or becomes) done.
+    pub(super) fn array_iterator_step(
+        &mut self,
+        p: &ResidualProgram,
+        iterator: Value,
+    ) -> Result<Option<Value>, JsError> {
+        self.with_call_roots([iterator], |vm| {
+            let (source, kind, index) = match vm.heap.get(iterator) {
+                Some(Cell::Iterator {
+                    source,
+                    kind,
+                    index,
+                    done: false,
+                    ext,
+                    ..
+                }) if kind.is_array_iterator() => (*source, *kind, ext.position(*index)),
+                _ => return Ok(None),
+            };
+            match vm.array_iterator_item(p, iterator, source, kind, index)? {
+                Some((value, _)) => Ok(Some(value)),
+                None => {
+                    if let Some(Cell::Iterator { done, source, .. }) = vm.heap.get_mut(iterator) {
+                        *done = true;
+                        *source = Value::UNDEFINED;
+                    }
+                    Ok(None)
+                }
+            }
+        })
+    }
+
+    /// Whether `method` is this realm's %ArrayIteratorPrototype%.next and `iterator` one of
+    /// its array iterators, so a step may run without the call and its result object.
+    pub(super) fn steps_as_array_iterator(&self, iterator: Value, method: Value) -> bool {
+        matches!(
+            self.heap.get(method),
+            Some(Cell::Function {
+                kind: FunctionKind::Native(Native::ArrayIteratorNext),
+                object,
+                ..
+            }) if object.realm == self.realm.globals
+        ) && matches!(
+            self.heap.get(iterator),
+            Some(Cell::Iterator { kind, .. }) if kind.is_array_iterator()
+        )
     }
 
     fn array_iterator_item(
