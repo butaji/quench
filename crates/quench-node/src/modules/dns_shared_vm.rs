@@ -241,7 +241,7 @@ fn queue_callback(
         .queue_shared_immediate(
             id,
             crate::modules::shared_event_loop::SharedImmediateOwner::Host,
-            SharedCallback {
+            SharedCallback { execution: None,
                 callback,
                 receiver,
                 args,
