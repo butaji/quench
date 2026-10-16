@@ -598,7 +598,7 @@ impl<H: Host> Vm<H> {
                     vm.heap.alloc(Cell::Object(object))
                 };
                 let previous_target = vm.construct_target;
-                vm.construct_target = Some(new_target);
+                vm.construct_target = Some(ConstructionTarget { callee, new_target });
                 let result = if derived_constructor {
                     vm.call_user_for_construct(p, callee, args)
                         .map(|(value, this)| (value, Some(this)))
