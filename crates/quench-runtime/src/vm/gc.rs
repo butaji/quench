@@ -133,16 +133,16 @@ impl ParallelShapeTrace<'_> {
 
 fn append_compacted_shape(
     shapes: &mut Vec<Shape>,
-    transitions: &mut FxHashMap<(u32, ShapeTransitionKey), u32>,
+    transitions: &mut super::shape_transitions::ShapeTransitionIndex,
     parent: u32,
     transition: ShapeTransition,
     storage_len: usize,
 ) -> u32 {
     let cache_key = transition.cache_key();
     if let Some(key) = cache_key
-        && let Some(shape) = transitions.get(&(parent, key))
+        && let Some(shape) = transitions.get(shapes, parent, key)
     {
-        return *shape;
+        return shape;
     }
     let shape = u32::try_from(shapes.len()).expect("object shape table exhausted");
     let dictionary_trigger = match transition {
@@ -158,7 +158,7 @@ fn append_compacted_shape(
         parent_may_have_gc_roots,
     ));
     if let Some(key) = cache_key {
-        transitions.insert((parent, key), shape);
+        transitions.insert(shapes, parent, key, shape);
     }
     shape
 }
@@ -171,7 +171,7 @@ fn rebuild_shape(
     old_shape: u32,
     shapes: &mut Vec<Shape>,
     accessors: &mut Vec<ShapeAccessors>,
-    transitions: &mut FxHashMap<(u32, ShapeTransitionKey), u32>,
+    transitions: &mut super::shape_transitions::ShapeTransitionIndex,
 ) -> u32 {
     let mut parent = 0;
     for (slot, entry) in active_shape_attributes(old_shapes, old_shape)
@@ -847,7 +847,7 @@ impl<H: Host> Vm<H> {
         let live_shape_count = live_shapes.len();
         let mut mapping = vec![u32::MAX; old_shapes.len()];
         let mut shapes = Shape::table();
-        let mut transitions = FxHashMap::default();
+        let mut transitions = super::shape_transitions::ShapeTransitionIndex::default();
         let old_accessors = std::mem::take(&mut self.shape_accessors);
         let mut accessors = Vec::new();
         for old_shape in live_shapes {
