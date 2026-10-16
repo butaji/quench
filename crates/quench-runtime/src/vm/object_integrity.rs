@@ -660,35 +660,21 @@ impl<H: Host> Vm<H> {
                 object.set_frozen(true);
             }
         }
-        let mut keys = self.own_named_keys(target);
-        keys.extend(self.array_integrity_atoms(target));
-        for atom in keys {
-            let mut attributes = self
-                .property_attributes(target, PropertyKey::string(atom))
-                .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
-            attributes.configurable = false;
-            if freeze {
-                attributes.writable = false;
-            }
-            self.set_property_attributes(target, PropertyKey::string(atom), attributes);
-        }
-        let symbols = self
-            .object_data(target)
-            .map(|data| self.shape_keys(data.shape()))
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|key| matches!(key, PropertyKey::Symbol(_)))
-            .collect::<Vec<_>>();
-        for symbol in symbols {
-            let mut attributes = self
-                .property_attributes(target, symbol)
-                .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
-            attributes.configurable = false;
-            if freeze {
-                attributes.writable = false;
-            }
-            self.set_property_attributes(target, symbol, attributes);
-        }
+        let mut atoms = self.own_named_keys(target);
+        atoms.extend(self.array_integrity_atoms(target));
+        let mut keys = atoms.into_iter().map(PropertyKey::string).collect::<Vec<_>>();
+        keys.extend(
+            self.object_data(target)
+                .map(|data| self.shape_keys(data.shape()))
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|key| matches!(key, PropertyKey::Symbol(_))),
+        );
+        self.update_property_attributes(target, &keys, |attributes| PropertyAttributes {
+            configurable: false,
+            writable: attributes.writable && !freeze,
+            ..attributes
+        });
         Ok(target)
     }
 
