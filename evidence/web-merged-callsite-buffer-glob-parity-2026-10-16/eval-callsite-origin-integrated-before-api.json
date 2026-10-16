@@ -1,0 +1,8 @@
+{
+  "source": "74c05400b9f4dc7f099686aa0338936300d5db8f",
+  "binaries": {
+    "work/host-build/iteration/quench-node": "b7dfe1a48cf459edec8294a5acfa0e086106e0425f0579849553fa6b331bcf9e",
+    "work/host-build/iteration/run-parallel": "286a6d8b62ac53885205d18154588fa3a4d5f377b5d63e36abea8d11af837c03",
+    "work/host-build/iteration/deps/child_entry-70660f0a4dee9e77": "b0267eee956f6a6d5f6368437db456d368f267361ea20d722dd7ea67b48c1266"
+  }
+}
