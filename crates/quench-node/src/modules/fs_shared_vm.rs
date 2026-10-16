@@ -591,7 +591,7 @@ const READV_API: &str = quench_js_check::checked_js!(
 );
 
 const READDIR_FACTORY: &str = quench_js_check::checked_js!(
-    r#"(readDir, Dirent) => (path, options) => {
+    r#"(readDir, policy) => (path, options) => {
   if (typeof path !== "string" && !Buffer.isBuffer(path) && !(path instanceof URL)) {
     const received = path === null ? "null" : path === undefined ? "undefined" : `type ${typeof path}`;
     const error = new TypeError(`The "path" argument must be of type string, Buffer, or URL. Received ${received}`);
@@ -602,7 +602,7 @@ const READDIR_FACTORY: &str = quench_js_check::checked_js!(
   else if (path instanceof URL) path = path.pathname;
   const entries = readDir(path);
   if (!options || options.withFileTypes !== true) return entries.map((entry) => entry.name);
-  return entries.map((entry) => new Dirent(entry.name, entry.type, path));
+  return entries.map((entry) => new policy.Dirent(entry.name, entry.type, path));
 }"#
 );
 
@@ -639,7 +639,7 @@ const ASYNC_READDIR_FACTORY: &str = quench_js_check::checked_js!(
 );
 
 const OPENDIR_API: &str = quench_js_check::checked_js!(
-    r#"(readdirSync, Dirent) => {
+    r#"(readdirSync) => {
   const states = new WeakMap();
   const invalidThis = () => {
     const error = new TypeError('Receiver must be an instance of class Dir');
@@ -740,7 +740,7 @@ const OPENDIR_API: &str = quench_js_check::checked_js!(
     queueMicrotask(() => { try { callback(null, makeDir(path, options)); } catch (error) { callback(error); } });
   }
   const opendirPromise = (path, options) => Promise.resolve().then(() => makeDir(path, options));
-  return { Dir, Dirent, opendir, opendirSync, opendirPromise };
+  return { Dir, opendir, opendirSync, opendirPromise };
 }"#
 );
 
@@ -2060,10 +2060,8 @@ fn make_readdir_sync(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         context.host_function(crate::host::shared_vm::operation("fsReaddirSync"))?;
     let factory = context.evaluate_script_rooted(READDIR_FACTORY, "node:fs/shared-readdir.js")?;
     let undefined = context.undefined();
-    let dirent = crate::host::shared_vm::commonjs::node_library_export(
-        context, "fs.js", "internal/fs/utils.js", "Dirent",
-    )?;
-    context.call_rooted(factory, undefined, &[read_directory, dirent])
+    let policy = directory_policy(context)?;
+    context.call_rooted(factory, undefined, &[read_directory, policy])
 }
 
 fn make_readdir_async(
@@ -2159,17 +2157,12 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     set(context, module, "readdir", readdir)?;
     let opendir_factory =
         context.evaluate_script_rooted(OPENDIR_API, "node:fs/shared-opendir.js")?;
-    let dirent = crate::host::shared_vm::commonjs::node_library_export(
-        context, "fs.js", "internal/fs/utils.js", "Dirent",
-    )?;
-    let opendir_api = context.call_rooted(opendir_factory, undefined, &[readdir_sync, dirent])?;
+    let opendir_api = context.call_rooted(opendir_factory, undefined, &[readdir_sync])?;
     let dir_constructor = get(context, opendir_api, "Dir")?;
-    let dirent_constructor = get(context, opendir_api, "Dirent")?;
     let opendir = get(context, opendir_api, "opendir")?;
     let opendir_sync = get(context, opendir_api, "opendirSync")?;
     opendir_promise = get(context, opendir_api, "opendirPromise")?;
     set(context, module, "Dir", dir_constructor)?;
-    set(context, module, "Dirent", dirent_constructor)?;
     set(context, module, "opendir", opendir)?;
     set(context, module, "opendirSync", opendir_sync)?;
     let readlink_host =
@@ -2969,4 +2962,24 @@ pub(crate) fn initialize_glob_policy(
     let promises = get(context, module, "promises")?;
     set(context, promises, "glob", glob)?;
     Ok(())
+}
+
+/// The native filesystem and original fs utilities import one another. Keep the
+/// constructor in private policy and initialize it after the native module is
+/// cached, so both imports observe the same completed filesystem object.
+fn directory_policy(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    crate::host::shared_vm::commonjs::cached_native_binding(
+        context, "\0binding:fs-directory-policy", |context| context.null_object_rooted(),
+    )
+}
+
+pub(crate) fn initialize_directory_policy(
+    context: &mut NativeContext<'_, NodeHost>, module: RootId,
+) -> Result<(), RootedError> {
+    let dirent = crate::host::shared_vm::commonjs::node_library_export(
+        context, "fs.js", "internal/fs/utils.js", "Dirent",
+    )?;
+    let policy = directory_policy(context)?;
+    set(context, policy, "Dirent", dirent)?;
+    set(context, module, "Dirent", dirent)
 }
