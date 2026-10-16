@@ -90,7 +90,7 @@ struct ErrorSourceLocation {
 enum ErrorDescription {
     Text {
         message: String,
-        eval_parser_diagnostic: bool,
+
     },
     DataClone(String),
     WasmTrap(crate::WasmTrap),
@@ -110,7 +110,7 @@ impl From<String> for ErrorMessage {
             payload: Box::new(ErrorPayload {
                 description: ErrorDescription::Text {
                     message,
-                    eval_parser_diagnostic: false,
+
                 },
                 thrown: None,
                 source_location: None,
@@ -138,7 +138,7 @@ impl JsError {
             payload: Box::new(ErrorPayload {
                 description: ErrorDescription::Text {
                     message,
-                    eval_parser_diagnostic: false,
+
                 },
                 thrown: Some(value),
                 source_location: None,
@@ -203,27 +203,6 @@ impl JsError {
 
     pub(crate) fn replace_thrown_value(&mut self, value: Value) {
         self.0.payload.thrown = Some(value);
-    }
-
-    pub(crate) fn is_eval_parser_diagnostic(&self) -> bool {
-        matches!(
-            self.0.payload.description,
-            ErrorDescription::Text {
-                eval_parser_diagnostic: true,
-                ..
-            }
-        )
-    }
-
-    pub(crate) fn mark_eval_parser_diagnostic(mut self) -> Self {
-        if let ErrorDescription::Text {
-            eval_parser_diagnostic,
-            ..
-        } = &mut self.0.payload.description
-        {
-            *eval_parser_diagnostic = true;
-        }
-        self
     }
 
     /// Inspect a thrown Wasm exception independently of guest traps and JS throws.
@@ -538,6 +517,43 @@ impl<H: Host> Vm<H> {
         Ok(self.constructor_name(receiver))
     }
 
+    /// A source projection of a genuine activation, without evaluating guest hooks.
+    pub(super) fn source_call_site_record(&self, frame: &Frame, hide_identity: bool) -> Option<(CallSiteRecord, bool)> {
+        if frame.context == CallContext::Internal && frame.function != ROOT_FUNCTION_ID {
+            return None;
+        }
+        let residual = self.programs.get(frame.program)?;
+        let function = residual.functions.get(frame.function as usize)?;
+        let pc = u32::try_from(frame.source_instruction_pc()).unwrap_or(u32::MAX);
+        let position = if let Some((site, part)) = frame.source_field {
+            if let Some((line, column)) = residual.field_sites.get(site).and_then(|site| site.source(part)) {
+                residual.adjust_source_position(crate::bytecode::SourcePosition { pc, line, column })?
+            } else { residual.source_position(frame.function, pc)? }
+        } else { residual.source_position(frame.function, pc)? };
+        let name = frame.context.callable().map_or_else(
+            || function.name.map_or(CallSiteName::Anonymous, |name| CallSiteName::Static(self.atom_value(name))),
+            CallSiteName::Callable,
+        );
+        Some((CallSiteRecord {
+            location: CallSiteLocation::Source {
+                file_name: residual.source_name.clone(),
+                line: position.line,
+                column: position.column,
+            },
+            name,
+            hide_identity,
+            is_constructor: frame.context.is_constructor(),
+            is_eval: self.programs.is_eval(frame.program),
+            this_value: if frame.this == Value::DELETED { Value::UNDEFINED } else { frame.this },
+        }, residual.kind == crate::bytecode::ProgramKind::Module))
+    }
+
+    pub(super) fn map_call_site_source(host: &mut H, record: &mut CallSiteRecord, module: bool) {
+        if let CallSiteLocation::Source { file_name, .. } = &mut record.location {
+            *file_name = host.stack_source_name(file_name, module);
+        }
+    }
+
     pub(super) fn error_capture_stack_trace(
         &mut self,
         program: &ResidualProgram,
@@ -570,6 +586,7 @@ impl<H: Host> Vm<H> {
                         this_value: Value::UNDEFINED,
                         hide_identity: true,
                         is_constructor: false,
+                        is_eval: false,
                     });
                 }
             }
@@ -593,33 +610,10 @@ impl<H: Host> Vm<H> {
                 constructor_found = frame.context.callable() == Some(constructor_opt);
                 continue;
             }
-            // A PC without compiler-owned source metadata has no truthful JS location.
-            let pc = u32::try_from(frame.pc.saturating_sub(1)).unwrap_or(u32::MAX);
-            let Some(position) = residual.source_position(frame.function, pc) else {
-                continue;
-            };
-            let name = frame.context.callable().map_or_else(
-                || function.name.map_or(CallSiteName::Anonymous, |name| CallSiteName::Static(self.atom_value(name))),
-                CallSiteName::Callable,
-            );
-            records.push(CallSiteRecord {
-                location: CallSiteLocation::Source {
-                    file_name: self.host.stack_source_name(
-                        &residual.source_name,
-                        residual.kind == crate::bytecode::ProgramKind::Module,
-                    ),
-                    line: position.line,
-                    column: position.column,
-                },
-                name,
-                hide_identity,
-                is_constructor: frame.context.is_constructor(),
-                this_value: if frame.this == Value::DELETED {
-                    Value::UNDEFINED
-                } else {
-                    frame.this
-                },
-            });
+            if let Some((mut record, module)) = self.source_call_site_record(frame, hide_identity) {
+                Self::map_call_site_source(&mut self.host, &mut record, module);
+                records.push(record);
+            }
         }
 
         if constructor_found {
@@ -630,6 +624,7 @@ impl<H: Host> Vm<H> {
                     this_value: Value::UNDEFINED,
                     hide_identity: true,
                     is_constructor: false,
+                    is_eval: false,
                 });
             }
         }
@@ -711,7 +706,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn call_site_name(&self, record: &CallSiteRecord) -> Option<JsString> {
+    pub(super) fn call_site_name(&self, record: &CallSiteRecord) -> Option<JsString> {
         let name = match &record.name {
             CallSiteName::Callable(function) => self.debug_function_name(*function)?,
             CallSiteName::Static(name) => name.clone(),
@@ -792,7 +787,7 @@ impl<H: Host> Vm<H> {
                 CallSiteLocation::Source { column, .. } => Value::number(f64::from(column)),
                 CallSiteLocation::Native => Value::NULL,
             }),
-            Native::CallSiteIsEval => Ok(Value::FALSE),
+            Native::CallSiteIsEval => Ok(if record.is_eval { Value::TRUE } else { Value::FALSE }),
             Native::CallSiteIsConstructor => Ok(if record.is_constructor { Value::TRUE } else { Value::FALSE }),
             Native::CallSiteIsNative => {
                 Ok(if matches!(record.location, CallSiteLocation::Native) {
@@ -1014,14 +1009,9 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn box_primitive_object(&mut self, value: Value) -> Result<Value, JsError> {
-        let marker = match self.heap.get(value) {
-            Some(Cell::String(_)) => "\0quench:string-value",
-            Some(Cell::Symbol(_)) => "\0quench:symbol-value",
-            Some(Cell::BigInt(_)) => "\0quench:bigint-value",
-            _ if value.as_number().is_some() => "\0quench:number-value",
-            _ if value.as_bool().is_some() => "\0quench:boolean-value",
-            _ => return Ok(self.object()),
-        };
+        if !matches!(self.heap.get(value), Some(Cell::String(_) | Cell::Symbol(_) | Cell::BigInt(_)))
+            && value.as_number().is_none() && value.as_bool().is_none()
+        { return Ok(self.object()); }
         let prototype = self.primitive_prototype(value).unwrap_or(self.object_proto);
         let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
         if let Some(Cell::String(text)) = self.heap.get(value).cloned() {
@@ -1059,8 +1049,7 @@ impl<H: Host> Vm<H> {
                 },
             )?;
         }
-        let marker_atom = self.intern_atom(marker);
-        self.set_property(object, marker_atom, value)?;
+        self.object_data_mut(object).expect("primitive wrapper").set_boxed_primitive(value);
         Ok(object)
     }
 
@@ -1073,8 +1062,7 @@ impl<H: Host> Vm<H> {
         let prototype = self.realm.intrinsics.builtin_prototypes.get(&(realm, Native::BigInt)).copied()
             .or_else(|| self.primitive_prototype(value)).unwrap_or(self.object_proto);
         let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
-        let value_atom = self.intern_atom("\0quench:bigint-value");
-        self.set_property(object, value_atom, value)?;
+        self.object_data_mut(object).expect("bigint wrapper").set_boxed_primitive(value);
         Ok(object)
     }
 
@@ -1336,6 +1324,7 @@ impl<H: Host> Vm<H> {
         let Some(program_id) = self.store_dynamic_program(residual) else {
             return Err(self.type_error(program, "dynamic program store is full".into()));
         };
+        self.programs.set_origin(program_id, super::program_store::CompilationOrigin::Eval);
         let residual = self
             .programs
             .get(program_id)

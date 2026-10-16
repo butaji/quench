@@ -105,6 +105,7 @@ fusion_recipes! {
                         first: (atom, cache_site),
                         second: None,
                         sink: Some(sink),
+                        sources: [None; 3],
                     });
                     first.set_field_lookup_site(fields.len() - 1);
                 }
@@ -677,7 +678,7 @@ fn rewrite_once(
                     .iter()
                     .filter(|rule| rule.pattern == [first.op(), second.op()])
                     .find_map(|rule| {
-                        let replacement = apply_rule(*rule, first, *second, field_sites)?;
+                        let replacement = apply_rule(*rule, first, *second, field_sites, &function.source_positions, index)?;
                         let removed_definitions = original_definitions
                             & !liveness::definitions(replacement.as_wide(), superinstructions);
                         (live_out & removed_definitions == 0).then_some(replacement)
@@ -713,9 +714,21 @@ fn apply_rule(
     first: Instr,
     second: Instr,
     field_sites: &mut Vec<FieldSite>,
+    positions: &[crate::bytecode::SourcePosition],
+    pc: usize,
 ) -> Option<Instr> {
     let replacement = apply_recipe(rule.recipe, first, second, field_sites)?;
-    sound_replacement(first, second, replacement)
+    let replacement = sound_replacement(first, second, replacement)?;
+    if matches!(rule.recipe, Recipe::GetSetThis) {
+        if let Some(crate::bytecode::FieldLookup::Site(index)) = replacement.field_lookup() {
+            let at = |pc: usize| positions.partition_point(|p| p.pc as usize <= pc)
+                .checked_sub(1).map(|index| (positions[index].line, positions[index].column));
+            let site = &mut field_sites[index];
+            if site.sources[0].is_none() { site.sources[0] = at(pc); }
+            site.sources[2] = at(pc + 1);
+        }
+    }
+    Some(replacement)
 }
 
 fn sound_replacement(first: Instr, second: Instr, replacement: Instr) -> Option<Instr> {

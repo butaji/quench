@@ -1235,6 +1235,7 @@ pub(crate) struct CallSiteRecord {
     pub(crate) this_value: Value,
     pub(crate) hide_identity: bool,
     pub(crate) is_constructor: bool,
+    pub(crate) is_eval: bool,
 }
 
 impl CallSiteRecord {
@@ -1264,6 +1265,7 @@ struct ObjectExtras {
     error_data: bool,
     module_namespace: bool,
     external_address: Option<usize>,
+    boxed_primitive: Option<Value>,
     structured_clone_forbidden: bool,
     structured_transfer_forbidden: bool,
     module_bindings: Vec<(Atom, ProgramId, u16)>,
@@ -1598,6 +1600,15 @@ impl Object {
         self.extras().is_some_and(|extras| extras.error_data)
     }
 
+    /// Genuine primitive-wrapper data; guest properties cannot supply this slot.
+    pub(crate) fn boxed_primitive(&self) -> Option<Value> {
+        self.extras()?.boxed_primitive
+    }
+
+    pub(crate) fn set_boxed_primitive(&mut self, value: Value) {
+        self.extras_mut().boxed_primitive = Some(value);
+    }
+
     pub(crate) fn stack_data(&self) -> Option<&StackData> {
         self.extras()?.stack_data.as_ref()
     }
@@ -1606,11 +1617,12 @@ impl Object {
         self.extras_mut().stack_data = Some(data);
     }
 
-    /// Visit the values an object's extras keep alive: private-name homes and stack data.
+    /// Visit internal primitive data, private-name homes and captured stack roots.
     pub(crate) fn visit_extras_roots(&self, mut visit: impl FnMut(Value)) {
         let Some(extras) = self.extras() else {
             return;
         };
+        if let Some(value) = extras.boxed_primitive { visit(value); }
         for brand in &extras.private_names {
             visit(brand.home);
         }
