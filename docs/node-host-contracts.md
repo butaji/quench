@@ -945,6 +945,21 @@ Abrupt getters close the iterator without replacing the original thrown value;
 normal iterator-close failures remain observable. Tests collect during return
 and before callback delivery. Exception capture permits null reset before its
 occupied-slot check and uses the shared argument-type/coded-error policy.
+Its primary slot belongs to one retained process state object, reset with the
+VM heap. Set/has ignore their receiver; callback delivery uses that state as its
+receiver, so captureFn mutation remains observable. Guest string properties
+cannot impersonate the slot. GC and repeated-execution checks cover its roots.
+Uncaught delivery emits uncaughtExceptionMonitor before selecting the primary
+callback, then re-reads captureFn for the property call after its null check.
+Monitor results are ignored; uncaught event results use JavaScript truthiness.
+Both events share the canonical process-event dispatch operation.
+Auxiliary capture tries callbacks in reverse order and accepts only literal
+true. It re-reads the callback collection for each property call; ordinary
+subtraction owns length coercion, including fractional property keys and guest
+collection during coercion. The retained Runtime subtraction adapter shares the
+same VM operation as native contexts. Public capture methods have Node's public
+names and ordinary constructor shapes. Diagnostic report integration and
+internal auxiliary registration remain unqualified.
 Bound-handle error/reentry details, original native-source/stack fidelity,
 diagnostic report flags and the wider Node lifecycle backlog remain open.
 
