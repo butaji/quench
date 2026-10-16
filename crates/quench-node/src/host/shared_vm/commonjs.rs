@@ -170,15 +170,15 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     context.release_root(initializer);
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_process_surface");
-    crate::modules::buffer_shared_vm::install_global(context)?;
+    context.scoped(crate::modules::buffer_shared_vm::install_global)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_buffer_global");
-    crate::modules::url_shared_vm::install_global(context)?;
+    context.scoped(crate::modules::url_shared_vm::install_global)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_url_global");
     crate::host::resident_pages::release_read_only_pages();
-    install_shared_web_globals(context)?;
-    crate::modules::base64_shared_vm::install(context)?;
+    context.scoped(install_shared_web_globals)?;
+    context.scoped(crate::modules::base64_shared_vm::install)?;
     let console = cached_builtin(context, BuiltinModule::Console)?;
     let global = context.global_root()?;
     set(context, global, "console", console)?;
@@ -195,8 +195,8 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     let print_eval = context.host_function(crate::host::shared_vm::operation("nodePrintEvalScript"))?;
     let key = context.string_rooted("\0quench:evalScript");
     context.define_data_property_rooted(global, key, print_eval, false, false, false)?;
-    install_performance_global(context)?;
-    crate::modules::crypto_shared_vm::install_global(context)?;
+    context.scoped(install_performance_global)?;
+    context.scoped(crate::modules::crypto_shared_vm::install_global)?;
     if node_primordials_source(context).is_some() {
         // Node 24 exposes these well-known disposal symbols before its
         // primordial snapshot is built. The runtime may not provide them yet,
@@ -220,11 +220,11 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
         context.seal_startup_intrinsics();
     }
     crate::host::resident_pages::release_read_only_pages();
-    preload_modules(context)?;
+    context.scoped(preload_modules)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_preloads");
     if context.host_mut().eval_builtin_globals {
-        crate::modules::eval_globals_shared_vm::install(context)?;
+        context.scoped(crate::modules::eval_globals_shared_vm::install)?;
     }
     if context.is_module()? {
         return Ok(());
@@ -2373,12 +2373,13 @@ const getLinkedBinding = () => ({});
                     format!("{WRAPPER_PREFIX}{internal_binding}")
                 };
                 let wrapper_source = format!("{prefix}{text}{WRAPPER_SUFFIX}");
+                // The wrapper holds the text now, so the file is released before compiling it.
                 drop(text);
+                drop(file_text);
                 let wrapper = evaluate_wrapper(context, &prefix, &wrapper_source, &key)?;
                 // The compiled program keeps its own source; the module body runs inside this
-                // call, so the file text and wrapper are released before it.
+                // call, so the wrapper is released before it.
                 drop(wrapper_source);
-                drop(file_text);
                 if parent.is_none() {
                     crate::host::resident_pages::release_read_only_pages();
                     crate::host::resident_pages::quench_entry_compiled();
