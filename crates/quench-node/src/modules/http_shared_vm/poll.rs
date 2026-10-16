@@ -136,7 +136,7 @@ pub(crate) fn poll(
                 listener,
                 socket,
             } => {
-                let (server_id, net_server) = {
+                let (server_id, net_server, native_handle) = {
                     let host = shared_state.borrow();
                     (
                         host.http
@@ -144,6 +144,7 @@ pub(crate) fn poll(
                             .iter()
                             .find_map(|(id, server)| (server.listener == Some(listener)).then_some(*id)),
                         host.net_servers.get(&listener).map(|server| server.root),
+                        host.native_tcp_listeners.get(&listener).copied(),
                     )
                 };
                 if let Some(server_id) = server_id {
@@ -161,7 +162,7 @@ pub(crate) fn poll(
                         server.connections.insert(socket);
                     }
                     progressed = true;
-                } else if let Some(server_root) = net_server {
+                } else if net_server.is_some() || native_handle.is_some() {
                     let create = runtime.host_function(crate::host::shared_vm::operation("netSocketCreateHandle"))
                         .map_err(|error| error.to_string())?;
                     let undefined = runtime.root(Value::UNDEFINED);
@@ -171,9 +172,14 @@ pub(crate) fn poll(
                     runtime.release_root(undefined);
                     runtime.release_root(id);
                     let client_handle = client_handle.map_err(|error| error.to_string())?;
-                    let key = runtime.string_rooted("_handle");
-                    let server_handle = runtime.get_property_rooted(server_root, key).map_err(|error| error.to_string())?;
-                    runtime.release_root(key);
+                    let server_handle = if let Some(handle) = native_handle {
+                        runtime.root(runtime.rooted_value(handle).ok_or("native TCP listener expired")?)
+                    } else {
+                        let key = runtime.string_rooted("_handle");
+                        let handle = runtime.get_property_rooted(net_server.expect("public server"), key).map_err(|error| error.to_string())?;
+                        runtime.release_root(key);
+                        handle
+                    };
                     let success = runtime.root(Value::number(0.0));
                     queue_net_method_completion(runtime, shared_state, server_handle, "onconnection", &[success, client_handle], Some(NetDelivery::Connection(socket)))?;
                     runtime.release_root(success);

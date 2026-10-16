@@ -120,6 +120,12 @@ fn create_handle(
         }
     }
     register_identity(context, handle, id)?;
+    if matches!(kind, EndpointKind::Socket)
+        && super::net_shared_vm::socket_is_tcp(&context.host_mut().shared_state().borrow().tcp, id)
+    {
+        let prototype = super::tcp_binding::prototype(context)?;
+        context.set_prototype_rooted(handle, prototype)?;
+    }
     for (name, referenced) in [("ref", true), ("unref", false)] {
         let referenced = context.boolean(referenced);
         let data = context.array_rooted(&[id_root, handle, is_socket, referenced])?;
@@ -328,7 +334,7 @@ pub(crate) fn owner_symbol(context: &mut NativeContext<'_, NodeHost>) -> Result<
 }
 
 
-fn register_identity(context: &mut NativeContext<'_, NodeHost>, handle: RootId, id: u64) -> Result<(), RootedError> {
+pub(crate) fn register_identity(context: &mut NativeContext<'_, NodeHost>, handle: RootId, id: u64) -> Result<(), RootedError> {
     let shared = context.host_mut().shared_state();
     let entries = std::mem::take(&mut shared.borrow_mut().net_handle_identities);
     let mut live = Vec::with_capacity(entries.len() + 1);
@@ -394,7 +400,7 @@ pub(crate) fn close(context: &mut NativeContext<'_, NodeHost>, receiver: RootId,
     Ok(context.undefined())
 }
 
-fn onclose_symbol(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+pub(crate) fn onclose_symbol(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let shared = context.host_mut().shared_state();
     if let Some(symbol) = shared.borrow().net_handle_onclose_symbol { return Ok(symbol); }
     let symbol = context.symbol_rooted(Some("handle_onclose"));
@@ -422,9 +428,15 @@ pub(crate) fn prune(runtime: &mut quench_runtime::Runtime<NodeHost>) {
     let shared = runtime.host_mut().shared_state();
     let entries = std::mem::take(&mut shared.borrow_mut().net_handle_identities);
     let mut live = Vec::with_capacity(entries.len());
+    let mut dead = Vec::new();
     for (identity, id) in entries {
         if runtime.host_weak_root_is_live(identity) { live.push((identity, id)); }
-        else { runtime.release_host_weak_root(identity); }
+        else { runtime.release_host_weak_root(identity); dead.push(id); }
+    }
+    for id in dead {
+        if !live.iter().any(|(_, existing)| *existing == id) {
+            super::net_shared_vm::native_tcp_close(&mut shared.borrow_mut().tcp, id);
+        }
     }
     shared.borrow_mut().net_handle_identities = live;
 }
@@ -459,3 +471,4 @@ pub(crate) fn read_stop(context: &mut NativeContext<'_, NodeHost>, receiver: Roo
     super::net_shared_vm::stop_read(&mut context.host_mut().shared_state().borrow_mut().tcp, id);
     Ok(context.number(0.0))
 }
+
