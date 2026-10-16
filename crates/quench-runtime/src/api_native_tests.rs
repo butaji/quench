@@ -212,7 +212,10 @@ impl Host for TestHost {
     }
     fn functions(&self) -> &[HostFunction<Self>] {
         crate::host_functions![
+            #[cfg(not(any()))]
             global "echo" (1) => echo,
+            #[cfg(any())]
+            method "unavailable" (0) => unavailable_platform::callback,
             method "reenter" (1) => reenter,
             method "reject" (1) => reject,
             method "escaped" (0) => escaped,
@@ -996,5 +999,69 @@ fn native_promise_slots_preserve_identity_without_observation_or_guest_hooks() {
         let mut runtime=Runtime::new(PromiseSlotsHost);
         runtime.execute(&program).unwrap();
         assert!(runtime.take_promise_rejection_unhandled_events().is_empty());
+    }
+}
+
+struct FunctionMetadataHost;
+impl Host for FunctionMetadataHost {
+    fn write_line(&mut self, _: &str) {}
+    fn clock_millis(&mut self) -> f64 {
+        0.0
+    }
+    fn functions(&self) -> &[HostFunction<Self>] {
+        crate::host_functions![global "metadataCallback" (2) => empty_metadata_callback]
+    }
+    fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
+        let global = context.global_root()?;
+        let data = context.object_rooted()?;
+        for (name, constructor) in [("MetadataCaptured", false), ("MetadataCtor", true)] {
+            let function = if constructor {
+                context.host_constructor_with_data(HostFunctionId(0), data)?
+            } else {
+                context.host_function_with_data(HostFunctionId(0), data)?
+            };
+            let key = context.string_rooted(name);
+            context.define_data_property_rooted(global, key, function, true, true, true)?;
+        }
+        let anonymous = context.host_function_named(HostFunctionId(0), "")?;
+        let key = context.string_rooted("MetadataAnonymous");
+        context.define_data_property_rooted(global, key, anonymous, true, true, true)?;
+        Ok(())
+    }
+}
+fn empty_metadata_callback(
+    context: &mut NativeContext<'_, FunctionMetadataHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    Ok(context.undefined())
+}
+#[test]
+fn native_function_metadata_preserves_standard_key_order_and_constructor_views() {
+    let source = r#"
+for(const [functionValue,constructor] of [[metadataCallback,false],[MetadataCaptured,false],[MetadataCtor,true],[MetadataAnonymous,false]]) {
+ const keys=Reflect.ownKeys(functionValue).join(',');
+ if(keys!==(constructor?'length,name,prototype':'length,name'))throw Error(keys);
+ if(functionValue.name!==(functionValue===MetadataAnonymous?'':'metadataCallback')||functionValue.length!==2)throw Error('metadata values');
+ for(const name of ['length','name']){
+  const d=Object.getOwnPropertyDescriptor(functionValue,name);
+  if(d.writable||d.enumerable||!d.configurable)throw Error('metadata attributes');
+ }
+ if(constructor){if(!(new functionValue() instanceof functionValue))throw Error('constructor view');}
+ else{let threw=false;try{new functionValue()}catch(error){threw=error instanceof TypeError}if(!threw)throw Error('callback is constructible');}
+}
+"#;
+    for program in [
+        Engine::compile(crate::ExecutionRequest {
+            source,
+            name: "host-function-metadata.js",
+            kind: crate::SourceKind::Script,
+        })
+        .unwrap(),
+        Engine::specialize(source, "host-function-metadata.js").unwrap(),
+    ] {
+        Runtime::new(FunctionMetadataHost)
+            .execute(&program)
+            .unwrap();
     }
 }
