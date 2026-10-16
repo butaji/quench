@@ -1,0 +1,6 @@
+   Compiling zstd-sys v2.1.0+zstd.1.5.7
+   Compiling zstd-safe v7.3.0
+    Checking zstd v0.13.3
+    Checking quench-node v0.1.0 (/workspace/quench/crates/quench-node)
+    Checking quench-node-test v0.1.0 (/workspace/quench/crates/quench-node-test)
+    Finished `dev` profile [unoptimized] target(s) in 10.88s
