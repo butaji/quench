@@ -1014,14 +1014,9 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn box_primitive_object(&mut self, value: Value) -> Result<Value, JsError> {
-        let marker = match self.heap.get(value) {
-            Some(Cell::String(_)) => "\0quench:string-value",
-            Some(Cell::Symbol(_)) => "\0quench:symbol-value",
-            Some(Cell::BigInt(_)) => "\0quench:bigint-value",
-            _ if value.as_number().is_some() => "\0quench:number-value",
-            _ if value.as_bool().is_some() => "\0quench:boolean-value",
-            _ => return Ok(self.object()),
-        };
+        if !matches!(self.heap.get(value), Some(Cell::String(_) | Cell::Symbol(_) | Cell::BigInt(_)))
+            && value.as_number().is_none() && value.as_bool().is_none()
+        { return Ok(self.object()); }
         let prototype = self.primitive_prototype(value).unwrap_or(self.object_proto);
         let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
         if let Some(Cell::String(text)) = self.heap.get(value).cloned() {
@@ -1059,8 +1054,7 @@ impl<H: Host> Vm<H> {
                 },
             )?;
         }
-        let marker_atom = self.intern_atom(marker);
-        self.set_property(object, marker_atom, value)?;
+        self.object_data_mut(object).expect("primitive wrapper").set_boxed_primitive(value);
         Ok(object)
     }
 
@@ -1073,8 +1067,7 @@ impl<H: Host> Vm<H> {
         let prototype = self.realm.intrinsics.builtin_prototypes.get(&(realm, Native::BigInt)).copied()
             .or_else(|| self.primitive_prototype(value)).unwrap_or(self.object_proto);
         let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
-        let value_atom = self.intern_atom("\0quench:bigint-value");
-        self.set_property(object, value_atom, value)?;
+        self.object_data_mut(object).expect("bigint wrapper").set_boxed_primitive(value);
         Ok(object)
     }
 

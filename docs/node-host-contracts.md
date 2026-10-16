@@ -57,6 +57,16 @@ later attempt. Native coded errors share the library's private Node error symbol
 UDP buffer-size errors construct the original `ERR_SOCKET_BUFFER_SIZE` class,
 which owns its context getters and custom inspection behavior.
 
+## Boxed primitive identity
+
+Primitive wrappers carry their actual value in an object-internal payload.
+Builtin brands, primitive methods, constructor display, structured cloning and
+JSON unboxing derive from that payload. Public properties cannot manufacture or
+replace wrapper data, and Proxy wrappers do not inherit the target's brand.
+The payload follows the shared object-extras GC root visitor and releases when
+the wrapper dies. Intrinsic Boolean, Number and String prototypes have their
+specified primitive data; Symbol and BigInt prototypes do not.
+
 ## Event listeners
 
 EventEmitter dispatch and listener inspection use the same `_events` records.
