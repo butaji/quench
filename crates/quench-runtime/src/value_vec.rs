@@ -274,6 +274,17 @@ impl ValueArena {
             return;
         }
         // SAFETY: caller provides the same initialized-range invariant as get.
+        unsafe { self.set_flat_unchecked(vector, index, value) };
+    }
+
+    /// `set_unchecked` of a vector known not to be a dictionary.
+    ///
+    /// # Safety
+    /// As for `set_unchecked`, and `vector` is not a dictionary.
+    #[inline(always)]
+    pub(crate) unsafe fn set_flat_unchecked(&mut self, vector: ValueVec, index: usize, value: Value) {
+        debug_assert!(!vector.is_dictionary());
+        // SAFETY: caller provides the same initialized-range invariant as get.
         unsafe {
             *self.values.get_unchecked_mut(vector.start() + index) = value;
         }

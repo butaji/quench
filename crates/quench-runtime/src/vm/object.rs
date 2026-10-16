@@ -828,7 +828,9 @@ impl<H: Host> Vm<H> {
             return false;
         }
         // SAFETY: a matching immutable shape proves the cached slot layout.
-        unsafe { self.heap.record_property_set(record_id, cache.slot as usize, value) };
+        if !unsafe { self.heap.record_property_set_flat(record_id, cache.slot as usize, value) } {
+            return false;
+        }
         self.profile.field_cache_hit(0, 0);
         true
     }
