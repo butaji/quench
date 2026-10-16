@@ -117,7 +117,6 @@ impl<T: CollectionEntry> CollectionEntries<T> {
         self.live
     }
 
-    #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
     pub(crate) fn capacity(&self) -> usize {
         self.slots.capacity()
     }
