@@ -209,11 +209,15 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         {
             continue;
         }
-        let key = context.string_rooted(&name);
-        let value = context.string_rooted(&value);
-        if !context.set_property_rooted(env, key, value, env)? {
-            return Err(RootedError::host("cannot install process.env entry"));
-        }
+        // One entry's handles at a time, however large the environment.
+        context.scoped(|context| {
+            let key = context.string_rooted(&name);
+            let value = context.string_rooted(&value);
+            if !context.set_property_rooted(env, key, value, env)? {
+                return Err(RootedError::host("cannot install process.env entry"));
+            }
+            Ok(())
+        })?;
     }
     install(context, process, "env", env)?;
     let load_env_file =
@@ -277,9 +281,11 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     if !context.set_property_rooted(process, tag, process_tag, process)? {
         return Err(RootedError::host("cannot set process toStringTag"));
     }
-    install_config(context, process)?;
-    install_facts(context, process, "features", process_state::feature_facts())?;
-    install_versions(context, process)?;
+    context.scoped(|context| install_config(context, process))?;
+    context.scoped(|context| {
+        install_facts(context, process, "features", process_state::feature_facts())
+    })?;
+    context.scoped(|context| install_versions(context, process))?;
     install(context, global, "global", global)?;
     define_global_process(context, global, process)?;
     let retained = context.retain(process)?;
