@@ -968,3 +968,12 @@ unchanged SDK owns validation and Dirent construction. Existing filesystem
 adapters capture a Rust forwarding function to this same policy, initialized
 after the filesystem module is cached. Their outer asynchronous validation and
 scheduling remain separate compatibility work.
+
+## Configured CLI version and flag order
+
+The Node-compatible CLI derives --version/-v from the same configured SDK
+version as process.version and process.versions.node. It handles version flags
+while parsing startup options, before evaluating guest source. An explicit -- or
+the first guest argument ends option parsing, so later version spellings remain
+guest arguments. The oracle checks aliases, jitless ordering, eval side effects
+and both argument boundaries. General help/unknown-option parity remains open.
