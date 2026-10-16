@@ -4,6 +4,9 @@
 # Usage: callgrind-guard.sh BASE CANDIDATE OUTDIR
 set -euo pipefail
 base=$1; cand=$2; out=$3; mkdir -p "$out"
+# valgrind does not follow quench-node's one-time re-execution with glibc's thread-cache
+# setting; giving the run that setting directly measures the allocator production uses.
+export GLIBC_TUNABLES=${GLIBC_TUNABLES-glibc.malloc.tcache_count=2}
 suite=quench-bench/js-engine-benchmark/v8-v7
 # A quarter of quench-bench's fixed-work plan (Crypto 4, DeltaBlue 40, EarleyBoyer 3,
 # NavierStokes 5, RayTrace 10, RegExp 1, Richards 100, Splay 300), at least one run.

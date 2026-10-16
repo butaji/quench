@@ -1065,6 +1065,21 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.vm.release_root(root)
     }
 
+    /// Runs `step` and then releases the roots it created, so a long host call made of steps
+    /// that store their results in the heap (a bootstrap's installers) holds only one step's
+    /// handles at a time. On failure they stay, as the error's exception root must.
+    pub fn scoped(
+        &mut self,
+        step: impl FnOnce(&mut Self) -> Result<(), RootedError>,
+    ) -> Result<(), RootedError> {
+        let mark = self.roots.len();
+        step(self)?;
+        for root in self.roots.drain(mark..) {
+            self.vm.release_root(root);
+        }
+        Ok(())
+    }
+
     pub fn collect(&mut self) -> Result<(), RootedError> {
         let program = self
             .vm
