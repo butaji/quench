@@ -1,0 +1,313 @@
+{
+  "scope": "All-eight exact stock fixed-work software user-instruction regression screen",
+  "baseline_source": "7f8660459256f3552691074c219a14eb031132ba",
+  "candidate_source": "137e4d2a0352217f17d1409d9985b6bff0b7d60d",
+  "host": "Linux-6.18.44-x86_64-with-glibc2.41",
+  "instrumentation": "Valgrind Callgrind3.24.0, software Ir; no PMU",
+  "rows": [
+    {
+      "fixture": "quench-bench/js-engine-benchmark/v8-v7/crypto.js",
+      "metrics": {
+        "work": {
+          "aa0": 8917457387,
+          "aa1": 8917457291,
+          "observed_aa_relative_band": 1.0765400592037441e-08,
+          "before": 8917457423,
+          "candidate": 7216687740,
+          "relative_delta": -0.19072361126315635,
+          "within_one_percent_plus_observed_band": true
+        },
+        "setup": {
+          "aa0": 1863747676,
+          "aa1": 1863747549,
+          "observed_aa_relative_band": 6.814227606530846e-08,
+          "before": 1863747674,
+          "candidate": 168562022,
+          "relative_delta": -0.9095574876623561,
+          "within_one_percent_plus_observed_band": true
+        },
+        "marginal": {
+          "aa0": 7053709711,
+          "aa1": 7053709742,
+          "observed_aa_relative_band": 4.394850549584801e-09,
+          "before": 7053709749,
+          "candidate": 7048125718,
+          "relative_delta": -0.0007916445670013066,
+          "within_one_percent_plus_observed_band": true
+        }
+      },
+      "passes_instruction_screen": true
+    },
+    {
+      "fixture": "quench-bench/js-engine-benchmark/v8-v7/deltablue.js",
+      "metrics": {
+        "work": {
+          "aa0": 8356235471,
+          "aa1": 8356235440,
+          "observed_aa_relative_band": 3.709804519342265e-09,
+          "before": 8356235533,
+          "candidate": 6659054559,
+          "relative_delta": -0.20310353475528345,
+          "within_one_percent_plus_observed_band": true
+        },
+        "setup": {
+          "aa0": 1799882780,
+          "aa1": 1799882455,
+          "observed_aa_relative_band": 1.8056734710489748e-07,
+          "before": 1799882283,
+          "candidate": 104978079,
+          "relative_delta": -0.9416750306442124,
+          "within_one_percent_plus_observed_band": true
+        },
+        "marginal": {
+          "aa0": 6556352691,
+          "aa1": 6556352985,
+          "observed_aa_relative_band": 4.4842004976879604e-08,
+          "before": 6556353250,
+          "candidate": 6554076480,
+          "relative_delta": -0.000347261642743243,
+          "within_one_percent_plus_observed_band": true
+        }
+      },
+      "passes_instruction_screen": true
+    },
+    {
+      "fixture": "quench-bench/js-engine-benchmark/v8-v7/earley-boyer.js",
+      "metrics": {
+        "work": {
+          "aa0": 9331429061,
+          "aa1": 9331429244,
+          "observed_aa_relative_band": 1.961114410276499e-08,
+          "before": 9331428968,
+          "candidate": 7692509453,
+          "relative_delta": -0.17563435574768874,
+          "within_one_percent_plus_observed_band": true
+        },
+        "setup": {
+          "aa0": 2042459241,
+          "aa1": 2042459377,
+          "observed_aa_relative_band": 6.658639608074313e-08,
+          "before": 2042459355,
+          "candidate": 351722942,
+          "relative_delta": -0.8277943983859596,
+          "within_one_percent_plus_observed_band": true
+        },
+        "marginal": {
+          "aa0": 7288969820,
+          "aa1": 7288969867,
+          "observed_aa_relative_band": 6.448099136182183e-09,
+          "before": 7288969613,
+          "candidate": 7340786511,
+          "relative_delta": 0.00710894690898199,
+          "within_one_percent_plus_observed_band": true
+        }
+      },
+      "passes_instruction_screen": true
+    },
+    {
+      "fixture": "quench-bench/js-engine-benchmark/v8-v7/navier-stokes.js",
+      "metrics": {
+        "work": {
+          "aa0": 9487674727,
+          "aa1": 9487674388,
+          "observed_aa_relative_band": 3.5730568539405906e-08,
+          "before": 9487674335,
+          "candidate": 7756870140,
+          "relative_delta": -0.1824266025463236,
+          "within_one_percent_plus_observed_band": true
+        },
+        "setup": {
+          "aa0": 2404316050,
+          "aa1": 2404316088,
+          "observed_aa_relative_band": 1.580491050666987e-08,
+          "before": 2404316239,
+          "candidate": 673464988,
+          "relative_delta": -0.7198933413683939,
+          "within_one_percent_plus_observed_band": true
+        },
+        "marginal": {
+          "aa0": 7083358677,
+          "aa1": 7083358300,
+          "observed_aa_relative_band": 5.3223341815138735e-08,
+          "before": 7083358096,
+          "candidate": 7083405152,
+          "relative_delta": 6.643176776079231e-06,
+          "within_one_percent_plus_observed_band": true
+        }
+      },
+      "passes_instruction_screen": true
+    },
+    {
+      "fixture": "quench-bench/js-engine-benchmark/v8-v7/raytrace.js",
+      "metrics": {
+        "work": {
+          "aa0": 9854204231,
+          "aa1": 9854204319,
+          "observed_aa_relative_band": 8.930198515996234e-09,
+          "before": 9854204274,
+          "candidate": 8348097745,
+          "relative_delta": -0.1528389799036147,
+          "within_one_percent_plus_observed_band": true
+        },
+        "setup": {
+          "aa0": 1812374607,
+          "aa1": 1812374841,
+          "observed_aa_relative_band": 1.2911238057309638e-07,
+          "before": 1812374668,
+          "candidate": 117393558,
+          "relative_delta": -0.9352266614223058,
+          "within_one_percent_plus_observed_band": true
+        },
+        "marginal": {
+          "aa0": 8041829624,
+          "aa1": 8041829478,
+          "observed_aa_relative_band": 1.815507284746731e-08,
+          "before": 8041829606,
+          "candidate": 8230704187,
+          "relative_delta": 0.023486518647333796,
+          "within_one_percent_plus_observed_band": false
+        }
+      },
+      "passes_instruction_screen": false
+    },
+    {
+      "fixture": "quench-bench/js-engine-benchmark/v8-v7/regexp.js",
+      "metrics": {
+        "work": {
+          "aa0": 6618741524,
+          "aa1": 6618741802,
+          "observed_aa_relative_band": 4.200194236199637e-08,
+          "before": 6618741625,
+          "candidate": 4749730410,
+          "relative_delta": -0.2823816551382605,
+          "within_one_percent_plus_observed_band": true
+        },
+        "setup": {
+          "aa0": 4794378967,
+          "aa1": 4794378206,
+          "observed_aa_relative_band": 1.5872756952040925e-07,
+          "before": 4794378928,
+          "candidate": 2991522541,
+          "relative_delta": -0.37603543943325124,
+          "within_one_percent_plus_observed_band": true
+        },
+        "marginal": {
+          "aa0": 1824362557,
+          "aa1": 1824363596,
+          "observed_aa_relative_band": 5.695139905241982e-07,
+          "before": 1824362697,
+          "candidate": 1758207869,
+          "relative_delta": -0.03626188373002016,
+          "within_one_percent_plus_observed_band": true
+        }
+      },
+      "passes_instruction_screen": true
+    },
+    {
+      "fixture": "quench-bench/js-engine-benchmark/v8-v7/richards.js",
+      "metrics": {
+        "work": {
+          "aa0": 8945306097,
+          "aa1": 8945305854,
+          "observed_aa_relative_band": 2.7165085684726998e-08,
+          "before": 8945305937,
+          "candidate": 7250638507,
+          "relative_delta": -0.18944767702023874,
+          "within_one_percent_plus_observed_band": true
+        },
+        "setup": {
+          "aa0": 1787393913,
+          "aa1": 1787393761,
+          "observed_aa_relative_band": 8.504001933796612e-08,
+          "before": 1787393814,
+          "candidate": 92873702,
+          "relative_delta": -0.9480395975008113,
+          "within_one_percent_plus_observed_band": true
+        },
+        "marginal": {
+          "aa0": 7157912184,
+          "aa1": 7157912093,
+          "observed_aa_relative_band": 1.2713204467681635e-08,
+          "before": 7157912123,
+          "candidate": 7157764805,
+          "relative_delta": -2.058114118593797e-05,
+          "within_one_percent_plus_observed_band": true
+        }
+      },
+      "passes_instruction_screen": true
+    },
+    {
+      "fixture": "quench-bench/js-engine-benchmark/v8-v7/splay.js",
+      "metrics": {
+        "work": {
+          "aa0": 10943385668,
+          "aa1": 10943385470,
+          "observed_aa_relative_band": 1.809312123225428e-08,
+          "before": 10943385383,
+          "candidate": 9154966002,
+          "relative_delta": -0.16342469157471323,
+          "within_one_percent_plus_observed_band": true
+        },
+        "setup": {
+          "aa0": 3970294323,
+          "aa1": 3970294131,
+          "observed_aa_relative_band": 4.83591375512627e-08,
+          "before": 3970294170,
+          "candidate": 2222642269,
+          "relative_delta": -0.4401819679270768,
+          "within_one_percent_plus_observed_band": true
+        },
+        "marginal": {
+          "aa0": 6973091345,
+          "aa1": 6973091339,
+          "observed_aa_relative_band": 8.604505101550054e-10,
+          "before": 6973091213,
+          "candidate": 6932323733,
+          "relative_delta": -0.005846399932930291,
+          "within_one_percent_plus_observed_band": true
+        }
+      },
+      "passes_instruction_screen": true
+    }
+  ],
+  "all_eight_pass": false,
+  "limitations": [
+    "Single paired A/A control per fixture establishes the observed band only; not a stock11round performance win.",
+    "Exact existing quench-bench materializations/argv/stdout retained. Guest source, iterations, budgets and300000ms timeout unchanged. Count-only collector avoids wall-time contention retries.",
+    "Instrumented wall/RSS include profiler overhead; no native speed/RSS claim.",
+    "Valgrind reports unsupported userfaultfd syscall323; actual guest output equals the uninstrumented stock harness in all64 completed samples. Initial wrapper path failure and interrupted wall-retry harness attempt retained separately.",
+    "This screen qualifies the frozen utility SDK/strictness image, including shared private-class/backlog/lazy-policy source dcb47f45a; later shared HTTP lifecycle source is excluded."
+  ],
+  "raw": [
+    {
+      "path": "work/util-sdk-strict-instruction-guard/inputs.json",
+      "bytes": 450115,
+      "sha256": "55c2bd453111adda0912f3bfcfb2d2078ce5cd700e89e2f59fd2443a40e55981"
+    },
+    {
+      "path": "work/util-sdk-strict-instruction-guard/aa-counts.json",
+      "bytes": 27675,
+      "sha256": "ec1e040436e14fec9fb328b265bf103a1b18497a7ea6c739d62a00d519aa93e3"
+    },
+    {
+      "path": "work/util-sdk-strict-instruction-guard/ab-counts.json",
+      "bytes": 28804,
+      "sha256": "2a1e94dceeed1f21c72fb9284f07a9d863227cf25276f3f8abc76523b130f0c2"
+    },
+    {
+      "path": "work/util-sdk-strict-instruction-guard/wrapper.py",
+      "bytes": 1683,
+      "sha256": "f42c5127f52dbfc1c4a93230439a819945ba39ca5c86ee82e33acd8dd4c53e50"
+    },
+    {
+      "path": "work/util-sdk-strict-instruction-guard/count.py",
+      "bytes": 3158,
+      "sha256": "7e588d2943d90d2c8de6574ac4241d2674e87029509953579c3c12e49d39c746"
+    },
+    {
+      "path": "work/valgrind-local/receipt.json",
+      "bytes": 286,
+      "sha256": "51094178bedf85ea55362c25b428fe016c01e7ca9dda47d94c4f2cbeae67e45a"
+    }
+  ]
+}
