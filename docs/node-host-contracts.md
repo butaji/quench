@@ -81,11 +81,19 @@ cache rules. Parser-owned syntax includes nested template sites. Entries use the
 program store's existing reclamation lifecycle, validate the program identity
 on lookup and disappear when their program is reclaimed or the store resets.
 Complete V8 cache ageing, contextual direct-eval identity, sourceURL/source-map
-metadata, complete prototype-cache transitions and Function-constructor body
-positions remain open. Function-constructor public names are initialized as
+metadata, complete prototype-cache transitions, raw UTF16 Function-constructor
+source and compatibility-normalized parameter positions remain open. Function-constructor public names are initialized as
 creation data: public anonymous is distinct from the empty default source/debug
 name. Stack names and native constructor display share this distinction across
 all four constructor kinds without invoking public name getters.
+
+Function-constructor compilation and public source text share a kind-owned
+canonical renderer. Public source preserves parameter/body whitespace, and
+compiled source retains the expression wrapper that Node includes in first-line
+parameter columns. Body lines begin after the canonical header newline. OXC
+validates the generated identifier and parameter boundary; only the synthetic
+outer identifier is removed before semantic binding, so anonymous is not a
+self binding. Nested names and real parameter bindings remain intact.
 
 ## Parsed eval execution
 
