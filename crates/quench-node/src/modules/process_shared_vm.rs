@@ -111,6 +111,7 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     let raw_debug = context.host_function(crate::host::shared_vm::operation("processRawDebug"))?;
     install(context, process, "_rawDebug", raw_debug)?;
     for (name, operation) in [
+        ("binding", "processBinding"),
         ("setUncaughtExceptionCaptureCallback", "processSetUncaughtExceptionCaptureCallback"),
         ("hasUncaughtExceptionCaptureCallback", "processHasUncaughtExceptionCaptureCallback"),
     ] {
@@ -1843,18 +1844,15 @@ fn emit_before_exit(
         Err(failure) => return route_callback_failure(runtime, program, failure),
     };
     let event = runtime.string_rooted("beforeExit");
-    let callback = crate::modules::shared_event_loop::SharedCallback {
+    let callback = crate::modules::shared_event_loop::SharedCallback { execution: None,
         callback: operation,
         receiver: process,
         args: vec![event, code],
     };
-    let result = call_shared_callback(runtime, &callback);
+    let result = call_shared_callback(runtime, program, &callback);
     runtime.release_root(operation);
     runtime.release_root(event);
-    match result {
-        Ok(()) => Ok(()),
-        Err(failure) => route_callback_failure(runtime, program, failure),
-    }
+    result
 }
 
 pub(crate) fn finish_after_uncaught_error(
@@ -2340,10 +2338,7 @@ fn invoke_timer_callback(
     program: &quench_runtime::ResidualProgram,
     callback: &crate::modules::shared_event_loop::SharedCallback,
 ) -> Result<(), String> {
-    match call_shared_callback(runtime, callback) {
-        Ok(()) => Ok(()),
-        Err(failure) => route_callback_failure(runtime, program, failure),
-    }
+    call_shared_callback(runtime, program, callback)
 }
 
 fn invoke_async_callback(
@@ -2351,30 +2346,44 @@ fn invoke_async_callback(
     program: &quench_runtime::ResidualProgram,
     callback: crate::modules::shared_event_loop::SharedCallback,
 ) -> Result<(), String> {
-    let result = call_shared_callback(runtime, &callback);
+    let result = call_shared_callback(runtime, program, &callback);
     release_callback(runtime, callback);
-    match result {
-        Ok(()) => Ok(()),
-        Err(failure) => route_callback_failure(runtime, program, failure),
-    }
+    result
 }
 
 fn call_shared_callback(
     runtime: &mut quench_runtime::Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
     callback: &crate::modules::shared_event_loop::SharedCallback,
-) -> Result<(), RootedError> {
-    match runtime.call_rooted(callback.callback, callback.receiver, &callback.args) {
-        Ok(result) => {
-            runtime.release_root(result);
-            Ok(())
-        }
+) -> Result<(), String> {
+    let shared = runtime.host_mut().shared_state();
+    let scope = callback.execution.as_ref().map(|execution|
+        super::async_hooks_shared_vm::enter_resource_context(&shared, execution.id, execution.resource));
+    let before = match &callback.execution {
+        Some(execution) => super::async_hook_registry_shared_vm::emit_runtime(runtime, super::async_hook_registry_shared_vm::HookKind::Before, execution.id),
+        None => Ok(()),
+    };
+    let called = before.and_then(|()| runtime.call_rooted(callback.callback, callback.receiver, &callback.args));
+    let result = match called {
+        Ok(value) => { runtime.release_root(value); Ok(()) }
         Err(mut error) => {
             if error.exception.is_none() {
                 error.exception = error.error.thrown_value().map(|value| runtime.root(value));
             }
-            Err(error)
+            // Node's uncaught handler observes the failing resource. Only
+            // after that handler completes does the after hook/pop run.
+            route_callback_failure(runtime, program, error)
         }
-    }
+    };
+    let result = result.and_then(|()| match &callback.execution {
+        Some(execution) => match super::async_hook_registry_shared_vm::emit_runtime(runtime, super::async_hook_registry_shared_vm::HookKind::After, execution.id) {
+            Ok(()) => Ok(()),
+            Err(error) => route_callback_failure(runtime, program, error),
+        },
+        None => Ok(()),
+    });
+    drop(scope);
+    result
 }
 
 pub(super) fn route_callback_failure(
@@ -2516,6 +2525,15 @@ fn drain_shared_jobs(
             #[cfg(quench_icu)]
             super::icu_binding_shared_vm::prune(runtime);
             super::net_reference_shared_vm::prune(runtime);
+            super::contextify_shared_vm::prune(runtime);
+            if !runtime.host_mut().shared_state().borrow().async_hooks.promise_resources.is_empty() {
+                let prune = runtime.host_function(crate::host::shared_vm::operation("asyncPromisePrune"))
+                    .map_err(|error| rooted_error_message(runtime, program, error))?;
+                let result = runtime.call_rooted(prune, prune, &[]);
+                runtime.release_root(prune);
+                let result = result.map_err(|error| rooted_error_message(runtime, program, error))?;
+                runtime.release_root(result);
+            }
             super::fs_stat_watch_shared_vm::prune(runtime);
             return Ok(());
         }
@@ -3018,6 +3036,10 @@ fn release_callback(
     runtime: &mut quench_runtime::Runtime<NodeHost>,
     callback: crate::modules::shared_event_loop::SharedCallback,
 ) {
+    if let Some(execution) = callback.execution {
+        super::async_hooks_shared_vm::complete_runtime_context(runtime, execution.id);
+        runtime.release_root(execution.resource);
+    }
     release_callback_roots(runtime, callback.callback, callback.receiver, callback.args);
 }
 
@@ -3080,21 +3102,8 @@ pub(crate) fn next_tick(
         return Ok(context.undefined());
     }
 
-    let callback = context.retain(callback)?;
     let undefined = context.undefined();
-    let receiver = context.retain(undefined)?;
-    let retained_args = args[1..]
-        .iter()
-        .copied()
-        .map(|argument| context.retain(argument))
-        .collect::<Result<Vec<_>, _>>()?;
-    state.borrow_mut().scheduler.queue_shared_next_tick(
-        crate::modules::shared_event_loop::SharedCallback {
-            callback,
-            receiver,
-            args: retained_args,
-        },
-    );
+    super::shared_event_loop::queue_next_tick(context, callback, undefined, &args[1..])?;
     Ok(context.undefined())
 }
 
@@ -3184,7 +3193,7 @@ fn poll_process_signals(
         let event = runtime.string_rooted(&name);
         let signal = runtime.string_rooted(&name);
         state.borrow_mut().scheduler.queue_shared_next_tick(
-            crate::modules::shared_event_loop::SharedCallback {
+            crate::modules::shared_event_loop::SharedCallback { execution: None,
                 callback,
                 receiver,
                 args: vec![event, signal],
@@ -3377,23 +3386,21 @@ pub(crate) fn initialize_warning_policy(context: &mut NativeContext<'_, NodeHost
     let env = get(context, process, "env")?;
     let disabled = get(context, env, "NODE_NO_WARNINGS")?;
     if options.enabled("--warnings") && context.string_text(disabled)?.as_deref() != Some("1") {
-        // Node's listener, or, unless a script can reach Node's own to compare, a listener of
-        // the same name and length that sets up the console and Node's listener on its first
-        // warning: both cost more than the rest of the bootstrap, and most runs never warn.
-        let callback = if exposed {
-            warning_listener(context, process, &[])?
-        } else {
-            let factory = context.evaluate_script_rooted(
-                "(load) => function onWarning(warning) { return load()(warning); }",
-                "node:internal/process/warning-listener.js",
-            )?;
-            let load = context.host_function(crate::host::shared_vm::operation("processWarningListener"))?;
-            let undefined = context.undefined();
-            context.call_rooted(factory, undefined, &[load])?
-        };
+        let callback = warning_listener(context)?;
         let on = get(context, process, "on")?;
         let event = context.string_rooted("warning");
         context.call_rooted(on, process, &[event, callback])?;
+    }
+    if options.enabled("--pending-deprecation") {
+        let binding = get(context, process, "binding")?;
+        let deprecate = crate::host::shared_vm::commonjs::node_library_export(
+            context, "internal/process/pre_execution.js", "internal/util.js", "deprecate",
+        )?;
+        let message = context.string_rooted("process.binding() is deprecated. Please use public APIs instead.");
+        let code = context.string_rooted("DEP0111");
+        let undefined = context.undefined();
+        let binding = context.call_rooted(deprecate, undefined, &[binding, message, code])?;
+        install(context, process, "binding", binding)?;
     }
     Ok(())
 }
@@ -3411,20 +3418,7 @@ pub(crate) fn initialize_emit_warning(context: &mut NativeContext<'_, NodeHost>,
     Ok(context.undefined())
 }
 
-/// Node's `onWarning`, once its global console is initialized.
-pub(crate) fn warning_listener(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
-    let state = context.host_mut().shared_state();
-    if let Some(listener) = state.borrow().builtin_cache.get(WARNING_LISTENER).copied() {
-        return Ok(listener);
-    }
-    let console = crate::host::shared_vm::commonjs::node_library_module(context, "internal/process/pre_execution.js", "internal/console/global.js")?;
-    let initialize = crate::host::shared_vm::commonjs::node_library_export(context, "internal/process/pre_execution.js", "internal/console/constructor.js", "initializeGlobalConsole")?;
-    let undefined = context.undefined();
-    context.call_rooted(initialize, undefined, &[console])?;
-    let listener = warning_export(context, "onWarning")?;
-    let listener = context.retain(listener)?;
-    state.borrow_mut().builtin_cache.insert(WARNING_LISTENER.into(), listener);
-    Ok(listener)
+/// The Console module owns initialization; the SDK owns this public callback.
+fn warning_listener(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    warning_export(context, "onWarning")
 }
-
-const WARNING_LISTENER: &str = "\0node/process/warningListener";

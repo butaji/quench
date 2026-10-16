@@ -20,9 +20,9 @@ const TRACE_CALLBACK_WRAPPER: &str = r#"(function(complete, prefix, context, cal
     return complete(this, prefix, context, callback, ...arguments);
   };
 })"#;
-const CHANNEL_API_FACTORY: &str = r#"(function(api, traceNames, isPromise) {
-  const channels = new Map();
-  const channelStores = new WeakMap();
+const CHANNEL_API_FACTORY: &str = r#"(function(api, traceNames, isPromise, SafeMap, SafeWeakMap) {
+  const channels = new SafeMap();
+  const channelStores = new SafeWeakMap();
   const promisePrototype = Promise.prototype;
   const promisePrototypeThen = promisePrototype.then;
   const objectGetPrototypeOf = Object.getPrototypeOf;
@@ -48,7 +48,7 @@ const CHANNEL_API_FACTORY: &str = r#"(function(api, traceNames, isPromise) {
   class Channel {
     constructor(name) {
       this.name = name;
-      channelStores.set(this, new Map());
+      channelStores.set(this, new SafeMap());
     }
     get hasSubscribers() {
       return api.hasSubscribers(this.name) || channelStores.get(this).size > 0;
@@ -271,9 +271,14 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         .map(|name| context.string_rooted(name))
         .collect::<Vec<_>>();
     let trace_names = context.array_rooted(&trace_names)?;
+    let primordials = crate::host::shared_vm::commonjs::node_primordials(context)?
+        .ok_or_else(|| RootedError::host("diagnostics channels require the configured SDK primordials"))?;
+    let safe_map = property(context, primordials, "SafeMap")?;
+    let safe_weak_map = property(context, primordials, "SafeWeakMap")?;
     let undefined = context.undefined();
-    let channel_api =
-        context.call_rooted(factory, undefined, &[module, trace_names, is_promise])?;
+    let channel_api = context.call_rooted(
+        factory, undefined, &[module, trace_names, is_promise, safe_map, safe_weak_map],
+    )?;
     for name in ["Channel", "channel", "tracingChannel"] {
         let value = property(context, channel_api, name)?;
         set(context, module, name, value)?;
