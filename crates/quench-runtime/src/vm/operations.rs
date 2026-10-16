@@ -14,7 +14,7 @@ const EXPONENTIATION_ONE: f64 = 1.0;
 const EXPONENTIATION_TWO: f64 = 2.0;
 const ODD_INTEGER_PARITY: f64 = 1.0;
 /// The comparison operators occupy the binary operator discriminants up to this one.
-const LAST_COMPARISON_OPERATOR: u32 = BinaryOperator::GreaterEqualThan as u32;
+pub(super) const LAST_COMPARISON_OPERATOR: u32 = BinaryOperator::GreaterEqualThan as u32;
 
 /// A comparison operator applied to two numbers, or to two integers, which compare as the
 /// numbers they denote.
