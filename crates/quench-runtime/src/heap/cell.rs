@@ -1259,7 +1259,7 @@ impl CallSiteRecord {
 
 #[derive(Clone, Debug)]
 pub(crate) enum StackData {
-    Captured(Vec<CallSiteRecord>),
+    Captured { records: Vec<CallSiteRecord>, source: Option<crate::bytecode::ProgramSource> },
     Formatted(Value),
     CallSite(CallSiteRecord),
 }
@@ -1326,7 +1326,7 @@ impl StackData {
             }) + match &record.name { CallSiteName::Static(name) => name.capacity(), _ => 0 }
         }
         match self {
-            Self::Captured(records) => {
+            Self::Captured { records, .. } => {
                 records.capacity() * std::mem::size_of::<CallSiteRecord>()
                     + records.iter().map(record_bytes).sum::<usize>()
             }
@@ -1658,7 +1658,7 @@ impl Object {
             if let Some(value) = element.data { visit(value); }
         }
         match extras.stack_data.as_ref() {
-            Some(StackData::Captured(records)) => {
+            Some(StackData::Captured { records, .. }) => {
                 for record in records {
                     record.visit_roots(&mut visit);
                 }
