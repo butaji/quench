@@ -96,6 +96,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "processLoadEnvFile" (1) => crate::modules::process_shared_vm::load_env_file,
         method "processSetEnv" (2) => crate::modules::process_shared_vm::set_env,
         method "processDeleteEnv" (1) => crate::modules::process_shared_vm::delete_env,
+        method "processBinding" (1) => crate::modules::process_binding_shared_vm::binding,
         method "processSetUncaughtExceptionCaptureCallback" (1) => crate::modules::process_shared_vm::set_uncaught_exception_capture_callback,
         method "processHasUncaughtExceptionCaptureCallback" (0) => crate::modules::process_shared_vm::has_uncaught_exception_capture_callback,
         method "processGetActiveHandles" (0) => crate::modules::process_shared_vm::get_active_handles,
