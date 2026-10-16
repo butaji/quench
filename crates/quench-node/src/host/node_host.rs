@@ -112,6 +112,7 @@ pub(crate) struct SharedNodeState {
     pub(crate) cli_options: crate::modules::cli_options::CliOptions,
     pub(crate) report_config: crate::modules::report_configuration_shared_vm::State,
     initial_node_options: Option<String>,
+    initial_pending_deprecation: bool,
     pub(crate) fetch: crate::modules::fetch_shared_vm::FetchState,
     pub(crate) diagnostics: crate::modules::diagnostics_channel_shared_vm::SharedDiagnosticsState,
     pub(crate) http: crate::modules::http_shared_vm::State,
@@ -275,6 +276,7 @@ impl SharedNodeState {
             cli_options: Default::default(),
             report_config: Default::default(),
             initial_node_options: std::env::var("NODE_OPTIONS").ok(),
+            initial_pending_deprecation: std::env::var("NODE_PENDING_DEPRECATION").as_deref() == Ok("1"),
             fetch: crate::modules::fetch_shared_vm::FetchState::new(),
             diagnostics:
                 crate::modules::diagnostics_channel_shared_vm::SharedDiagnosticsState::default(),
@@ -382,7 +384,7 @@ impl NodeHost {
             );
         let net_family = crate::modules::net_config::auto_select_family_from_exec_argv(&exec_argv);
         let mut shared = self.shared_state.borrow_mut();
-        shared.cli_options=crate::modules::cli_options::CliOptions::parse(shared.initial_node_options.as_deref(),&exec_argv)?;
+        shared.cli_options=crate::modules::cli_options::CliOptions::parse(shared.initial_node_options.as_deref(),&exec_argv,shared.initial_pending_deprecation)?;
         shared.report_config=crate::modules::report_configuration_shared_vm::State::from_options(&shared.cli_options);
         shared.trace.configure(&exec_argv);
         shared.exec_argv = exec_argv;
