@@ -1,6 +1,12 @@
 'use strict';
 const assert = require('assert');
-const get = require('internal/test/binding').internalBinding('errors').getErrorSourcePositions;
+const { internalBinding } = require('internal/test/binding');
+const binding = internalBinding('errors');
+assert.strictEqual(binding, internalBinding('errors'));
+const get = binding.getErrorSourcePositions;
+assert.strictEqual(get.name, 'getErrorSourcePositions');
+assert.strictEqual(get.length, 0);
+assert.strictEqual(Object.hasOwn(get, 'prototype'), false);
 function factory() { return new Error('sample'); }
 function check(position, source) {
   assert.strictEqual(Object.getPrototypeOf(position), null);
