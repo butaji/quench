@@ -1,0 +1,12 @@
+
+running 1 test
+test function_constructor_default_debug_names_remain_distinct_from_public_names_and_descriptors ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 375 filtered out; finished in 0.40s
+
+
+running 1 test
+test function_prototype_info_lookups_preserve_native_accessor_layout_and_descriptor_transitions ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 375 filtered out; finished in 0.33s
+
