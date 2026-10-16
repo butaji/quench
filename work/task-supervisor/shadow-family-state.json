@@ -1,0 +1,13 @@
+{
+  "status": "complete",
+  "commands": [
+    [
+      "python3",
+      "/workspace/quench/work/shadow-stack-isolation/family.py"
+    ]
+  ],
+  "exit": 0,
+  "supervisor_pid": 2973694,
+  "session_id": 2973693,
+  "utc": "2026-10-16T07:34:28.036582+00:00"
+}
