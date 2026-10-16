@@ -78,6 +78,7 @@ pub(crate) mod net_lookup_shared_vm;
 pub(crate) mod net_options_shared_vm;
 pub(crate) mod net_reference_shared_vm;
 pub(crate) mod net_shared_vm;
+pub(crate) mod net_server_listen;
 pub(crate) mod node_errors_shared_vm;
 pub(crate) mod os_facts;
 pub(crate) mod memory_facts;
