@@ -190,8 +190,12 @@ impl ProgramStore {
         }
     }
 
-    pub(super) fn is_function_constructor(&self, id: ProgramId) -> bool {
-        self.entry(id).is_some_and(|entry| matches!(entry.origin, CompilationOrigin::FunctionConstructor { .. }))
+    pub(super) fn is_function_constructor_body(&self, id: ProgramId, function: u32) -> bool {
+        self.entry(id).is_some_and(|entry| {
+            matches!(entry.origin, CompilationOrigin::FunctionConstructor { .. })
+                && entry.residual.functions.get(function as usize)
+                    .is_some_and(|function| function.parent == Some(super::ROOT_FUNCTION_ID))
+        })
     }
 
     pub(crate) fn mark_global_scope(&mut self, id: ProgramId) {
