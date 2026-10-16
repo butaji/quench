@@ -247,7 +247,23 @@ impl<'a, H: Host> NativeContext<'a, H> {
         Ok(value.map(|value| self.scoped_value(value)))
     }
 
-    /// Test an internal-slot brand without invoking guest getters or proxy traps.
+    /// Snapshot a proxy's target and handler without invoking guest traps. Both
+    /// values are rooted in this native scope; revoked proxies contain nulls.
+    pub fn proxy_details_rooted(&mut self, root: RootId) -> Result<Option<(RootId, RootId)>, RootedError> {
+        let result = self.vm.embedding_proxy_details(root);
+        let pair = result.map_err(|error| self.error(error))?;
+        Ok(pair.map(|(target, handler)| (self.scoped_value(target), self.scoped_value(handler))))
+    }
+
+    /// Snapshot live Map/Set/weak collection entries, or the remaining entries of
+    /// their iterators, without invoking guest hooks or consuming the iterator.
+    /// Pair collections are flattened as key, value; returned values are scoped roots.
+    pub fn collection_preview_rooted(&mut self, root: RootId) -> Result<Option<(Vec<RootId>, bool)>, RootedError> {
+        let result = self.vm.embedding_collection_preview(root);
+        let snapshot = result.map_err(|error| self.error(error))?;
+        Ok(snapshot.map(|(values, key_value)| (values.into_iter().map(|value| self.scoped_value(value)).collect(), key_value)))
+    }
+
     /// Create an opaque, non-owning native address wrapper. Core never dereferences
     /// the address; the embedding retains ownership of its native allocation.
     pub fn external_rooted(&mut self, address: usize) -> Result<RootId, RootedError> {
