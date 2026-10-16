@@ -59,6 +59,9 @@ impl<H: Host> Vm<H> {
     ) -> Result<Option<Value>, JsError> {
         let receiver = self.heap.root_value(iterator).unwrap();
         let method = self.heap.root_value(next).unwrap();
+        if self.steps_as_array_iterator(receiver, method) {
+            return self.array_iterator_step(p, receiver);
+        }
         let step = self.call_value(p, method, receiver, &[])?;
         self.iterator_result_value(p, step)
     }

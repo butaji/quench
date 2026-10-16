@@ -121,17 +121,20 @@ impl<H: Host> Vm<H> {
                 .alloc(Cell::String(JsString::from_units(&flag_units)));
             return self.construct_regexp_native(p, &[pattern, flags], None);
         }
-        let text = match self.heap.get(source) {
-            Some(Cell::String(value)) => value.host_string().to_owned(),
+        let source_text = match self.heap.get(source) {
+            Some(Cell::String(value)) => value.clone(),
             _ => return Ok(source),
         };
+        let text = source_text.host_string().to_owned();
         let inherited_strict = self.direct_eval
             && (self.in_class_field_initializer(p)
                 || self.frames.last()
                     .and_then(|frame| p.functions.get(frame.function as usize))
                     .is_some_and(|function| function.strict));
         self.validate_eval_arguments_context(p, &text)?;
-        self.eval_global_script(p, &text, inherited_strict)
+        let source_name = format!("<Eval:{}>", self.programs.len());
+        let cache_source = (!self.direct_eval).then_some(source_text);
+        self.eval_global_script_with_cache(p, &text, inherited_strict, &source_name, cache_source)
     }
 
     pub(super) fn eval_global_script(
@@ -151,6 +154,20 @@ impl<H: Host> Vm<H> {
         strict: bool,
         source_name: &str,
     ) -> Result<Value, JsError> {
+        self.eval_global_script_with_cache(p, source, strict, source_name, None)
+    }
+
+    fn eval_global_script_with_cache(
+        &mut self,
+        p: &ResidualProgram,
+        source: &str,
+        strict: bool,
+        source_name: &str,
+        cache_source: Option<JsString>,
+    ) -> Result<Value, JsError> {
+        if let Some(program) = cache_source.as_ref().and_then(|source| self.programs.cached_global_eval(source)) {
+            return self.run_global_eval_program(p, program);
+        }
         if strict {
             self.validate_strict_eval(p, source)?;
         }
@@ -201,9 +218,16 @@ impl<H: Host> Vm<H> {
             self.syntax_error_result(p, &message)
                 .expect_err("dynamic eval syntax errors must throw")
         })?;
+        let cache_source = cache_source.filter(|_| {
+            residual.functions.first().is_some_and(|root| !root.strict)
+                && !crate::Engine::eval_has_tagged_template(source)
+        });
         let Some(program_id) = self.store_dynamic_program(residual) else {
             return Err(self.type_error(p, "dynamic program store is full".into()));
         };
+        let origin = self.capture_eval_origin(p)?;
+        self.programs.set_origin(program_id, super::program_store::CompilationOrigin::Eval { caller: Some(origin) });
+        if let Some(source) = cache_source { self.programs.cache_global_eval(source, program_id); }
         self.run_global_eval_program(p, program_id)
     }
 

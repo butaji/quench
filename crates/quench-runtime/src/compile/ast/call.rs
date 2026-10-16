@@ -1,3 +1,4 @@
+use super::array_literal::AccumulatedElement;
 use super::*;
 
 impl FunctionCompiler<'_, '_> {
@@ -268,7 +269,7 @@ impl FunctionCompiler<'_, '_> {
         let result = self.reg();
         let parameter_eval = self.parameter_context;
         let pc = self.emit(
-            Op::CallDirectEvalArray,
+            Op::CallArray,
             result,
             callee,
             this,
@@ -398,29 +399,13 @@ impl FunctionCompiler<'_, '_> {
         let callee = self.expression(&value.callee);
         if Self::has_spread(&value.arguments) {
             let arguments = self.spread_arguments(&value.arguments);
-            let reflect = self.load_name("Reflect");
-            let construct = self.reg();
-            let atom = self.owner.atom("construct");
-            let cache = self.owner.cache_site();
-            self.emit(
-                Op::GetField,
-                construct,
-                FieldBase::register(reflect).0,
-                cache,
-                atom,
-            );
-            let base = self.next_reg;
-            let callee_arg = self.reg();
-            self.emit(Op::Move, callee_arg, callee, 0, 0);
-            let arguments_arg = self.reg();
-            self.emit(Op::Move, arguments_arg, arguments, 0, 0);
             let dst = self.reg();
             self.emit(
-                Op::Call,
+                Op::Construct,
                 dst,
-                construct,
-                reflect,
-                crate::bytecode::ImmediateLayout::call_immediate(base, 2, false, false),
+                callee,
+                arguments,
+                crate::bytecode::ImmediateLayout::construct_immediate(1, false, true),
             );
             return dst;
         }
@@ -594,90 +579,30 @@ impl FunctionCompiler<'_, '_> {
         values: &[Argument<'_>],
     ) -> Register {
         let arguments = self.spread_arguments(values);
-
-        let apply = self.reg();
-        let apply_atom = self.owner.atom("apply");
-        let apply_cache = self.owner.cache_site();
-        self.emit(
-            Op::GetField,
-            apply,
-            FieldBase::register(callee).0,
-            apply_cache,
-            apply_atom,
-        );
         let base = self.next_reg;
-        let this_arg = self.reg();
-        self.emit(Op::Move, this_arg, this, 0, 0);
-        let values_arg = self.reg();
-        self.emit(Op::Move, values_arg, arguments, 0, 0);
+        let argument_array = self.reg();
+        self.emit(Op::Move, argument_array, arguments, 0, 0);
         let result = self.reg();
         self.emit(
-            Op::Call,
+            Op::CallArray,
             result,
-            apply,
             callee,
-            crate::bytecode::ImmediateLayout::call_immediate(base, 2, false, false),
+            this,
+            crate::bytecode::ImmediateLayout::call_immediate(base, 1, false, false),
         );
         result
     }
 
     pub(super) fn spread_arguments(&mut self, values: &[Argument<'_>]) -> Register {
-        let arguments = self.reg();
-        self.emit(Op::MakeArray, arguments, 0, 0, 0);
-
-        let push = self.reg();
-        let push_atom = self.owner.atom("push");
-        let push_cache = self.owner.cache_site();
-        self.emit(
-            Op::GetField,
-            push,
-            FieldBase::register(arguments).0,
-            push_cache,
-            push_atom,
-        );
-        for argument in values {
-            let (method, receiver, first, second) = match argument {
-                Argument::SpreadElement(spread) => {
-                    let value = self.expression(&spread.argument);
-                    let expanded = self.reg();
-                    self.emit(Op::SpreadToArray, expanded, value, 0, 0);
-                    let apply = self.reg();
-                    let apply_atom = self.owner.atom("apply");
-                    let apply_cache = self.owner.cache_site();
-                    self.emit(
-                        Op::GetField,
-                        apply,
-                        FieldBase::register(push).0,
-                        apply_cache,
-                        apply_atom,
-                    );
-                    (apply, push, arguments, Some(expanded))
+        let elements = values
+            .iter()
+            .map(|argument| match argument {
+                Argument::SpreadElement(spread) => AccumulatedElement::Spread(&spread.argument),
+                argument => {
+                    AccumulatedElement::Value(argument.as_expression().expect("expression argument"))
                 }
-                argument => (
-                    push,
-                    arguments,
-                    self.expression(argument.as_expression().expect("expression argument")),
-                    None,
-                ),
-            };
-            let base = self.next_reg;
-            let first_arg = self.reg();
-            self.emit(Op::Move, first_arg, first, 0, 0);
-            if let Some(second) = second {
-                let second_arg = self.reg();
-                self.emit(Op::Move, second_arg, second, 0, 0);
-            }
-            let result = self.reg();
-            let count = if second.is_some() { 2 } else { 1 };
-            self.emit(
-                Op::Call,
-                result,
-                method,
-                receiver,
-                crate::bytecode::ImmediateLayout::call_immediate(base, count, false, false),
-            );
-        }
-
-        arguments
+            })
+            .collect::<Vec<_>>();
+        self.accumulated_array(&elements)
     }
 }
