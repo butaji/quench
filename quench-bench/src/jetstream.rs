@@ -95,6 +95,24 @@ pub(crate) fn fixtures() -> Vec<PathBuf> {
 }
 
 /// A test is identified by its name under the corpus directory.
+/// Whether JetStream's driver tags the test `Wasm`, so it needs `WebAssembly`.
+pub(crate) fn requires_webassembly(file: &Path) -> bool {
+    std::fs::read_to_string(Path::new(SUITE_DIR).join("JetStreamDriver.js"))
+        .is_ok_and(|driver| driver_tags_wasm(&driver, &test_name(file)))
+}
+
+/// Whether `driver`'s declaration of `test` lists the `Wasm` tag.
+fn driver_tags_wasm(driver: &str, test: &str) -> bool {
+    let declaration = format!("name: \"{test}\"");
+    driver.split("new ").any(|benchmark| {
+        benchmark.contains(&declaration)
+            && benchmark
+                .lines()
+                .filter(|line| line.trim_start().starts_with("tags:"))
+                .any(|line| line.contains("\"Wasm\""))
+    })
+}
+
 pub(crate) fn fixture_path(name: &str) -> PathBuf {
     Path::new(SUITE_DIR).join(name)
 }
@@ -146,6 +164,20 @@ pub(crate) fn semantic_output(stdout: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wasm_tags_come_from_the_pinned_driver() {
+        let driver = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("jetstream/JetStreamDriver.js"),
+        )
+        .expect("pinned JetStream driver");
+        for wasm in ["quicksort-wasm", "sqlite3-wasm", "zlib-wasm", "argon2-wasm"] {
+            assert!(driver_tags_wasm(&driver, wasm), "{wasm}");
+        }
+        for javascript in ["web-ssr", "json-parse-inspector", "doxbee-async"] {
+            assert!(!driver_tags_wasm(&driver, javascript), "{javascript}");
+        }
+    }
 
     #[test]
     fn reads_the_test_score_not_its_sub_scores() {
