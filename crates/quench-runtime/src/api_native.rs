@@ -1,6 +1,14 @@
 use super::Runtime;
 use crate::{Host, JsError, RootId, RootedError, Value, vm::Vm};
 
+/// Immutable host Script code compiled for one runtime state. It retains no
+/// guest objects; each evaluation creates fresh runtime metadata and functions
+/// in the chosen realm. A reset or another runtime invalidates this handle.
+#[derive(Clone)]
+pub struct PreparedScript {
+    pub(crate) program: std::rc::Rc<crate::ResidualProgram>,
+}
+
 /// Opaque index into the embedding's stable native-operation table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HostFunctionId(pub u32);
@@ -610,6 +618,27 @@ impl<'a, H: Host> NativeContext<'a, H> {
         let result = self.vm.evaluate_embedding_specialized_script_in_realm_with_origin(
             global, source, name, (line_offset, column_offset),
         );
+        self.completion(result)
+    }
+
+    /// Compile host Script code once, preserving its original source positions.
+    pub fn prepare_specialized_script_in_realm_with_origin(
+        &mut self, global: RootId, source: &str, name: &str, line_offset: u32, column_offset: u32,
+    ) -> Result<PreparedScript, RootedError> {
+        self.vm.prepare_embedding_specialized_script_in_realm_with_origin(
+            global, source, name, (line_offset, column_offset),
+        ).map_err(|error| self.error(error))
+    }
+
+    pub fn prepared_script_is_current(&self, prepared: &PreparedScript) -> bool {
+        self.vm.prepared_script_is_current(prepared)
+    }
+
+    /// Evaluate shared code with fresh execution state and the target's intrinsics.
+    pub fn evaluate_prepared_script_in_realm_rooted(
+        &mut self, global: RootId, prepared: &PreparedScript,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.evaluate_embedding_prepared_script_in_realm(global, prepared);
         self.completion(result)
     }
 
