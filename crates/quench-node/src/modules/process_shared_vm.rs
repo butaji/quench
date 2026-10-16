@@ -1812,7 +1812,8 @@ pub(crate) fn finish_execution(
         }
     })();
     if process_control.requested_exit_code().is_some() {
-        return finish_requested_exit(runtime, program);
+        let exit = finish_requested_exit(runtime, program);
+        return if process_control.fatal_exception_handler_failed() { checkpoint.and(exit) } else { exit };
     }
     let shared_state = runtime.host_mut().shared_state();
     cleanup_environment(runtime, &shared_state);
@@ -1870,6 +1871,15 @@ pub(crate) fn finish_after_uncaught_error(
         .process_control
         .clone();
     let routed = emit_uncaught_exception(runtime, program, error);
+    if process_control.requested_exit_code().is_some() {
+        let exit = finish_requested_exit(runtime, program);
+        if process_control.fatal_exception_handler_failed() { return routed.and(exit).map(|_| true); }
+        if let Err(error) = exit {
+            process_control.fail_fatal_exception_handler();
+            return Err(error);
+        }
+        return Ok(true);
+    }
     if matches!(&routed, Ok(true)) {
         finish_execution(runtime, program)?;
         return Ok(true);
@@ -1920,6 +1930,20 @@ fn emit_uncaught_exception(
 }
 
 pub(crate) fn route_uncaught_exception_value(
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
+    exception: RootId,
+    origin: &str,
+) -> Result<bool, String> {
+    let routed = route_uncaught_exception_value_inner(runtime, program, exception, origin);
+    if routed.is_err() {
+        let control = runtime.host_mut().shared_state().borrow().process_control.clone();
+        if control.requested_exit_code().is_none() { control.fail_fatal_exception_handler(); }
+    }
+    routed
+}
+
+fn route_uncaught_exception_value_inner(
     runtime: &mut quench_runtime::Runtime<NodeHost>,
     program: &quench_runtime::ResidualProgram,
     exception: RootId,
