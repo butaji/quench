@@ -1,4 +1,5 @@
 mod compiled;
+mod shape_transitions;
 mod startup_intrinsics;
 mod wasm;
 pub use compiled::ExecutionMode;
@@ -1128,7 +1129,7 @@ pub(crate) struct Vm<H> {
     shapes: Vec<Shape>,
     /// The getters and setters of shapes' accessor descriptors (`ShapeAttributes`).
     shape_accessors: Vec<ShapeAccessors>,
-    transitions: FxHashMap<(u32, ShapeTransitionKey), u32>,
+    transitions: shape_transitions::ShapeTransitionIndex,
     atom_text: AtomTable,
     atoms: FxHashMap<u64, Atom>,
     atom_collisions: FxHashMap<u64, Vec<Atom>>,
@@ -1664,7 +1665,7 @@ impl<H: Host> Vm<H> {
             self.shapes.len(),
             self.shapes.capacity(),
             self.transitions.len(),
-            self.transitions.capacity() * size_of::<((u32, ShapeTransitionKey), u32)>(),
+            self.transitions.bytes(),
             self.field_caches.capacity() * size_of::<FieldCache>()
                 + self.megamorphic_field_indices.capacity() * size_of::<u32>()
                 + field_add_cache_bytes,
@@ -1700,8 +1701,7 @@ impl<H: Host> Vm<H> {
             .filter_map(|shape| shape.lookup_index.get())
             .map(|index| index.payload_capacity_bytes())
             .sum::<usize>();
-        let transition_table_bytes =
-            self.transitions.capacity() * size_of::<((u32, ShapeTransitionKey), u32)>();
+        let transition_table_bytes = self.transitions.bytes();
         let descriptor_side_table_bytes = self.descriptors.capacity()
             * size_of::<((Value, property_key::PropertyKey), PropertyAttributes)>();
         let cache_side_table_bytes = self.field_caches.capacity() * size_of::<FieldCache>()
