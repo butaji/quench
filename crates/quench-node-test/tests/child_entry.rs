@@ -9861,3 +9861,8 @@ fn process_binding_pending_warnings_follow_sdk_wrapper_native_once_state_and_fla
         compare_node_source_with_args(source, &flags);
     }
 }
+
+#[test]
+fn awaited_primitives_use_enclosing_async_promise_parent_for_real_hook_resources() {
+    compare_node_source_with_args(include_str!("../node-tests/test-await-primitive-promise-parent.js"), &[]);
+}
