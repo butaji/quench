@@ -10159,3 +10159,22 @@ if(fn().getFunctionName()!=='anonymous')throw Error('deleted length layout');
         Vm::new(SilentHost).execute(&program).unwrap();
     }
 }
+
+#[test]
+fn dynamic_function_canonical_source_and_wrapper_origins_match_in_both_modes() {
+    let source = r#"
+Error.prepareStackTrace=(_,frames)=>frames;
+const fn=Function(' \n return new Error().stack[0];\n '),frame=fn();
+if(frame.getLineNumber()!==4||frame.getColumnNumber()!==9)throw Error('body position');
+if(fn.toString()!=='function anonymous(\n) {\n \n return new Error().stack[0];\n \n}')throw Error('body source');
+const parameter=Function('p = new Error().stack[0]','return p;')();
+if(parameter.getLineNumber()!==1||parameter.getColumnNumber()!==25)throw Error('parameter position');
+if(Function('return typeof anonymous')()!=='undefined')throw Error('synthetic self binding');
+if(Function('anonymous=17','return anonymous')()!==17)throw Error('parameter shadow');
+let threw=false;try{Function('"use strict";return anonymous')()}catch(error){threw=error instanceof ReferenceError}
+if(!threw)throw Error('strict synthetic self binding');
+"#;
+    for program in [Engine::compile(crate::ExecutionRequest { source, name: "dynamic-function-source.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "dynamic-function-source.js").unwrap()] {
+        Vm::new(SilentHost).execute(&program).unwrap();
+    }
+}
