@@ -349,3 +349,31 @@ Bolted static against QuickJS 2026-06-04 (`board-bolt-vs-qjs-b17.txt`, evicted, 
 interleaved, medians KiB): Richards 3328 vs 3320, DeltaBlue 3692 vs 3680, NavierStokes 4628
 vs 4948, RayTrace 3456 vs 3348, Crypto 4116 vs 3484; EarleyBoyer 10268 vs 16716, Splay 48152
 vs 147000, RegExp 13176 vs 6708 (5 runs).
+
+## Scoped bootstrap roots, transition index, thread cache, lazy Node library modules
+
+- Bootstrap steps run as `NativeContext::scoped` steps: at most about 300 handles are live at
+  once instead of about 1100 (root table and context list 73 → 24 KiB).
+- A module's file text is released before its wrapper compiles.
+- Cached shape transitions are a `hashbrown::HashTable` of child ids, confirmed against the
+  shape table: 5 bytes an entry instead of 25–32.
+- The static build limits glibc's per-thread cache to two chunks per size class (one-time
+  re-execution with `GLIBC_TUNABLES`, removed from the guest environment); profiling and
+  guard runs set the tunable themselves (valgrind does not follow the re-execution).
+- Pinned Node library modules load on first use inside the startup intrinsics. The trunk had
+  started loading `internal/util/inspect.js` at every start: about 1G instructions and
+  9 MiB on every fixture (`board-trunk-eager-inspect.txt`: Richards 13.1 MiB, both sides
+  unbolted).
+
+Bolted static against QuickJS before the trunk merge (`board-bolt-vs-qjs-b20.txt`, 5 runs,
+medians KiB): Richards 3084 vs 3360, DeltaBlue 3496 vs 3632, RayTrace 3328 vs 3388,
+NavierStokes 4516 vs 4924, EarleyBoyer 9876 vs 16632, Splay 47544 vs 147012; Crypto 3792
+vs 3504 and RegExp 12832 vs 6796 remain.
+
+Guard (`guard-lazy-library-raw.txt`, base `origin/v2-merged` 5b9f578cb with the eager
+inspector, candidate this batch): start-up −1.0G to −1.1G instructions on every fixture; per
+run Crypto +0.03%, DeltaBlue +0.08%, EarleyBoyer +3.54%, NavierStokes +0.02%, RayTrace
++1.84%, RegExp +0.31%, Richards −0.07%, Splay −0.58%. Per function, EarleyBoyer's run
+differs by +11M in transition lookups (the trunk's constructed-shape transitions consult
+the index on every construction) and by collector work whose timing moves with the
+lighter start; Test262 stage 10 and stages 29–92 and Node `framework-core` 43/43 pass.

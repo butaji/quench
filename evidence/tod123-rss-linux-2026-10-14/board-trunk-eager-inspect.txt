@@ -1,0 +1,16 @@
+crypto qn-g4base 13588 13540 13568
+crypto qn-g4cand 12900 12788 12724
+deltablue qn-g4base 13508 13400 13480
+deltablue qn-g4cand 12708 12668 12688
+earley-boyer qn-g4base 19168 18776 18936
+earley-boyer qn-g4cand 18060 17904 18112
+navier-stokes qn-g4base 13044 13052 12996
+navier-stokes qn-g4cand 12216 12328 12336
+raytrace qn-g4base 13252 13332 13308
+raytrace qn-g4cand 12400 12388 12508
+regexp qn-g4base 17420 17512 17272
+regexp qn-g4cand 16684 16664 16820
+richards qn-g4base 13088 13084 13104
+richards qn-g4cand 12120 12164 12096
+splay qn-g4base 55100 54076 54148
+splay qn-g4cand 55000 54256 56012
