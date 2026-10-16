@@ -1081,6 +1081,30 @@ fn push_and_splice_growth_reaches_inherited_setters_and_proxy_traps() {
 }
 
 #[test]
+fn array_index_stores_respect_inherited_read_only_properties() {
+    // OrdinarySet: an index the receiver lacks fails when a prototype holds it read-only,
+    // whether defined so, frozen (array or object) or a String wrapper's character, and
+    // `push`/`splice` throw. A writable inherited element is shadowed by an own one.
+    let source = "var out = [];\n\
+         var readOnly = Object.create(Array.prototype); Object.defineProperty(readOnly, 1, { value: 'r' });\n\
+         var protos = [readOnly, Object.setPrototypeOf(Object.freeze(['a', 'b']), Array.prototype), Object.freeze(Object.setPrototypeOf({ 1: 'o' }, Array.prototype)), Object.setPrototypeOf(new String('ab'), Array.prototype), Object.setPrototypeOf({ 1: 'w' }, Array.prototype)];\n\
+         var ops = [function (a) { 'use strict'; a[1] = 'v'; }, function (a) { 'use strict'; Object.create(a)['1'] = 'v'; }, function (a) { a[1] = 'v'; }, function (a) { a['1'] = 'v'; }, function (a) { a.push('v'); }, function (a) { a.splice(1, 0, 'v'); }, function (a) { Object.create(a)[1] = 'v'; }];\n\
+         protos.forEach(function (proto) {\n\
+           out.push(ops.map(function (op) {\n\
+             var a = [0]; Object.setPrototypeOf(a, proto);\n\
+             try { (function () { 'use strict'; op(a); })(); return Object.keys(a).join(''); } catch (e) { return e.name[0]; }\n\
+           }).join(','));\n\
+           var sloppy = [0]; Object.setPrototypeOf(sloppy, proto); sloppy[1] = 'v';\n\
+           out.push(Object.keys(sloppy).join(''));\n\
+         });\n\
+         var result = out.join('|');";
+    assert_eq!(
+        global_text(source, "result"),
+        "T,T,0,0,T,T,0|0|T,T,0,0,T,T,0|0|T,T,0,0,T,T,0|0|T,T,0,0,T,T,0|0|01,0,01,01,01,01,0|01"
+    );
+}
+
+#[test]
 fn typed_array_index_stores_convert_and_ignore_out_of_range_indices() {
     // Integer-indexed stores go straight to TypedArraySetElement: values convert by kind,
     // out-of-range indices and prototype setters are never reached, and a non-typed
