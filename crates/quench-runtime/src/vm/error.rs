@@ -292,10 +292,9 @@ impl<H: Host> Vm<H> {
         let records = match self
             .object_data(receiver)
             .and_then(Object::stack_data)
-            .cloned()
         {
-            Some(StackData::Formatted(value)) => return Ok(value),
-            Some(StackData::Captured(records)) => records,
+            Some(StackData::Formatted(value)) => return Ok(*value),
+            Some(StackData::Captured { records, .. }) => records.clone(),
             _ => return Ok(Value::UNDEFINED),
         };
 
@@ -603,6 +602,8 @@ impl<H: Host> Vm<H> {
         let capture_limit = self.error_stack_trace_limit();
         let limit = capture_limit.unwrap_or(0);
         let mut records = Vec::with_capacity(self.frames.len().min(limit));
+        let mut source = None;
+        let mut source_captured = false;
         let mut native_frames = self.native_stack_frames.iter().rev().peekable();
         let mut constructor_found = !trim_constructor;
         let mut hide_identity = false;
@@ -645,6 +646,12 @@ impl<H: Host> Vm<H> {
                 continue;
             }
             if let Some((mut record, module)) = self.source_call_site_record(frame, hide_identity) {
+                if !source_captured {
+                    source_captured = true;
+                    // Share immutable compiler text, not a copied line per Error.
+                    // Captured positions remain valid after its Script is collected.
+                    source = residual.source.clone();
+                }
                 Self::map_call_site_source(&mut self.host, &mut record, module);
                 records.push(record);
             }
@@ -676,7 +683,7 @@ impl<H: Host> Vm<H> {
                 program,
                 target,
                 match capture_limit {
-                    Some(_) => StackData::Captured(records),
+                    Some(_) => StackData::Captured { records, source },
                     None => StackData::Formatted(Value::UNDEFINED),
                 },
             )?;
@@ -865,7 +872,7 @@ impl<H: Host> Vm<H> {
         if let Some(object) = self.object_data_mut(receiver) {
             if matches!(
                 object.stack_data(),
-                Some(StackData::Captured(_) | StackData::Formatted(_))
+                Some(StackData::Captured { .. } | StackData::Formatted(_))
             ) {
                 object.set_stack_data(StackData::Formatted(value));
             }

@@ -41,6 +41,15 @@ pub struct SourceStackFrame {
     pub column_number: u32,
 }
 
+/// Compiler-owned source for an unformatted captured error, or the current activation.
+/// Positions are one-based, as in source stack frames; hosts choose their API projection.
+pub struct ErrorSourcePosition {
+    pub source_line: Option<String>,
+    pub script_name: Option<String>,
+    pub line_number: u32,
+    pub column_number: u32,
+}
+
 /// Private weak host reference, pruned by the core collector before slot reuse.
 /// Its persistent root must be released when the host resource is discarded.
 #[derive(Clone, Copy, Debug)]
@@ -371,6 +380,16 @@ impl<'a, H: Host> NativeContext<'a, H> {
     /// Capture actual JavaScript source frames independently of Error hooks and stack limits.
     pub fn source_stack_frames(&mut self, limit: usize) -> Vec<SourceStackFrame> {
         self.vm.embedding_source_stack_frames(limit)
+    }
+
+    /// Read captured source without invoking properties, getters or proxy traps.
+    /// With no unformatted capture, project the current genuine source activation.
+    pub fn error_source_position_rooted(
+        &mut self,
+        error: RootId,
+    ) -> Result<Option<ErrorSourcePosition>, RootedError> {
+        let result = self.vm.embedding_error_source_position(error);
+        result.map_err(|error| self.error(error))
     }
 
     /// Compiler-owned source names of live JavaScript callers, nearest first.
