@@ -1104,6 +1104,29 @@ fn push_module_request(
     }
 }
 
+/// The functions and arrows written in `program`, each of which the compiler emits.
+fn source_function_count(program: &Program<'_>) -> usize {
+    struct Counter(usize);
+    impl<'a> oxc_ast_visit::Visit<'a> for Counter {
+        fn visit_function(
+            &mut self,
+            function: &oxc_ast::ast::Function<'a>,
+            flags: oxc_syntax::scope::ScopeFlags,
+        ) {
+            self.0 += 1;
+            oxc_ast_visit::walk::walk_function(self, function, flags);
+        }
+
+        fn visit_arrow_function_expression(&mut self, arrow: &ArrowFunctionExpression<'a>) {
+            self.0 += 1;
+            oxc_ast_visit::walk::walk_arrow_function_expression(self, arrow);
+        }
+    }
+    let mut counter = Counter(0);
+    oxc_ast_visit::Visit::visit_program(&mut counter, program);
+    counter.0
+}
+
 fn has_top_level_await(statements: &[Statement<'_>]) -> bool {
     struct Finder(bool);
     impl<'a> oxc_ast_visit::Visit<'a> for Finder {
@@ -1700,6 +1723,9 @@ impl<'a> Compiler<'a> {
         inherited_strict: bool,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         self.source_comments = program.comments.iter().map(|comment| comment.span).collect();
+        // One slot per source function and the root, reserved once: grown by doubling, the
+        // slots of a large script stood up to twice its functions beside its tree.
+        self.functions.reserve_exact(source_function_count(program) + 1);
         self.module_goal = module_goal;
         let module_requests = if module_goal {
             module_requests(&program.body)
@@ -1948,6 +1974,9 @@ impl<'a> Compiler<'a> {
             return Err(self.errors);
         }
         let mut functions: Vec<_> = self.functions.into_iter().map(Option::unwrap).collect();
+        // Functions the compiler synthesizes (class constructors and initializers) may have
+        // grown the reservation.
+        functions.shrink_to_fit();
         capture_layout::apply(&mut functions, &self.atoms);
         if self.mode == SpecializationMode::Enabled {
             Self::apply_rewrites(
