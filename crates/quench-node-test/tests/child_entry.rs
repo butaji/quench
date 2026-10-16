@@ -9876,3 +9876,8 @@ fn missing_internal_bindings_throw_native_module_errors_with_original_descriptor
 fn console_global_and_constructor_use_sdk_identity_namespace_and_output_policy() {
     compare_node_source_with_args(include_str!("../node-tests/test-console-sdk-authority.js"), &["--expose-internals", "--no-warnings"]);
 }
+
+#[test]
+fn errors_reserve_native_stack_before_fields_and_capture_after_observable_conversions() {
+    compare_node_source_with_args(include_str!("../node-tests/test-error-stack-layout.js"), &["--no-warnings", "--expose-internals"]);
+}
