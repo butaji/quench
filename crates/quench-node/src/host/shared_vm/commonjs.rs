@@ -1381,6 +1381,20 @@ fn cached_builtin(
     Ok(module)
 }
 
+/// One lifetime owner for native binding objects shared by configured libraries.
+pub(crate) fn cached_native_binding(
+    context: &mut Context<'_>,
+    key: &'static str,
+    build: impl FnOnce(&mut Context<'_>) -> Result<RootId, RootedError>,
+) -> Result<RootId, RootedError> {
+    let shared = context.host_mut().shared_state();
+    if let Some(value) = shared.borrow().builtin_cache.get(key).copied() { return Ok(value); }
+    let value = build(context)?;
+    let retained = context.retain(value)?;
+    shared.borrow_mut().builtin_cache.insert(key.to_owned(), retained);
+    Ok(value)
+}
+
 pub(crate) fn events_on_initialize(
     context: &mut Context<'_>, _: RootId, _: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -2119,8 +2133,8 @@ fn node_primordials_source(context: &mut Context<'_>) -> Option<PathBuf> {
 }
 
 /// Node's primordials snapshot, which only Node's internal modules and their host
-/// counterparts read: built on first use from the sealed intrinsics, so it captures the
-/// same originals at any time, and never paid for by a script that does not reach them.
+/// counterparts read. Node initialization captures it before guests can make
+/// public intrinsic properties nonconfigurable; later consumers share that owner.
 pub(crate) fn node_primordials(context: &mut Context<'_>) -> Result<Option<RootId>, RootedError> {
     let state = context.host_mut().shared_state();
     if let Some(primordials) = state.borrow().primordials_module {
@@ -2275,7 +2289,7 @@ const getLinkedBinding = () => ({});
     case "symbols":
     case "http2":
     case "fs_event_wrap": return __nativeInternalBinding(name);
-    case "util": return Object.assign({}, require("util"), {
+    case "util": return Object.assign({}, {
       privateSymbols: __nativeInternalBinding("util").privateSymbols,
       constants: __nativeInternalBinding("util").constants,
       getOwnNonIndexProperties: __nativeInternalBinding("util").getOwnNonIndexProperties,
@@ -2283,7 +2297,7 @@ const getLinkedBinding = () => ({});
       markPromiseAsHandled: __nativeInternalBinding("util").markPromiseAsHandled,
       getProxyDetails: __nativeInternalBinding("util").getProxyDetails,
       previewEntries: __nativeInternalBinding("util").previewEntries,
-      getConstructorName: (value) => value?.constructor?.name,
+      getConstructorName: __nativeInternalBinding("util").getConstructorName,
       getExternalValue: __nativeInternalBinding("util").getExternalValue,
       constructSharedArrayBuffer: (length) => new SharedArrayBuffer(length),
       guessHandleType: () => "UNKNOWN",

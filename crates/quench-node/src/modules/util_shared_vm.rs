@@ -54,143 +54,7 @@ const TYPE_PREDICATES: &[(&str, BuiltinBrand)] = &[
 pub(crate) const MAX_SAFE_INTEGER: f64 = ((1_u64 << f64::MANTISSA_DIGITS) - 1) as f64;
 
 const UTIL: &str = quench_js_check::checked_js!(
-    r#"((quote, shallowLabel, customHook, formatString, builtinHook, warnedCodes) => {
-  const propertyName = (key) => /^[A-Za-z_$][\w$]*$/.test(key) ? key : quote(key);
-
-  function inspect(value, options = {}) {
-    const settings = { ...inspect.defaultOptions, ...(options || {}) };
-    const maxDepth = settings.depth === null ? Infinity : Number(settings.depth);
-    const seen = new Set();
-
-    const render = (current, depth) => {
-      if (current === undefined) return "undefined";
-      if (current === null) return "null";
-      if (typeof current === "string") return quote(current);
-      if (typeof current === "boolean") return String(current);
-      if (typeof current === "bigint") return `${current}n`;
-      if (typeof current === "number") {
-        if (Number.isNaN(current)) return "NaN";
-        if (current === Infinity) return "Infinity";
-        if (current === -Infinity) return "-Infinity";
-        if (Object.is(current, -0)) return "-0";
-        return String(current);
-      }
-      if (typeof current === "symbol") return current.toString();
-      const custom = customHook(current, settings, settings.depth === null ? null : maxDepth - depth, inspect);
-      if (custom !== undefined) {
-        const value = custom[0];
-        return typeof value === "string" ? value : render(value, depth);
-      }
-      if (typeof current === "function") {
-        return current.name ? `[Function: ${current.name}]` : "[Function (anonymous)]";
-      }
-      if (current instanceof Error) {
-        if (current.name === "SystemError" && current.code === "ERR_SOCKET_BUFFER_SIZE" && current.info) {
-          const { code, message, errno, syscall } = current.info;
-          return `SystemError [ERR_SOCKET_BUFFER_SIZE]: ${current.message}\n` +
-            `  code: 'ERR_SOCKET_BUFFER_SIZE',\n` +
-            `  info: {\n` +
-            `    errno: ${errno},\n` +
-            `    code: '${code}',\n` +
-            `    message: '${message}',\n` +
-            `    syscall: '${syscall}'\n` +
-            `  },\n` +
-            `  errno: [Getter/Setter: ${current.errno}],\n` +
-            `  syscall: [Getter/Setter: '${current.syscall}']\n` +
-            `}`;
-        }
-        if (typeof current.stack === "string") return current.stack;
-        return `${current.name || "Error"}${current.message ? `: ${current.message}` : ""}`;
-      }
-      if (depth > maxDepth) {
-        return shallowLabel(current, settings);
-      }
-      if (seen.has(current)) return "[Circular]";
-      seen.add(current);
-      let result;
-      const builtin = builtinHook(current, settings, depth, render, propertyName);
-      if (builtin !== undefined) {
-        result = builtin;
-      } else if (Array.isArray(current)) {
-        const items = [];
-        for (let index = 0; index < current.length; index++) {
-          items.push(index in current ? render(current[index], depth + 1) : "<empty>");
-        }
-        result = items.length ? `[ ${items.join(", ")} ]` : "[]";
-      } else if (current instanceof RegExp) {
-        result = String(current);
-      } else if (current instanceof Map) {
-        const entries = [];
-        for (const [key, entry] of current) {
-          entries.push(`${render(key, depth + 1)} => ${render(entry, depth + 1)}`);
-        }
-        result = entries.length
-          ? `Map(${entries.length}) { ${entries.join(", ")} }`
-          : "Map(0) {}";
-      } else if (current instanceof Set) {
-        const entries = [...current].map((entry) => render(entry, depth + 1));
-        result = entries.length
-          ? `Set(${entries.length}) { ${entries.join(", ")} }`
-          : "Set(0) {}";
-      } else {
-        let keys = settings.showHidden
-          ? Object.getOwnPropertyNames(current)
-          : Object.keys(current);
-        if (settings.sorted) keys = keys.sort();
-        const entries = keys.map((key) => {
-          const descriptor = Object.getOwnPropertyDescriptor(current, key);
-          const value = descriptor && "value" in descriptor
-            ? render(descriptor.value, depth + 1)
-            : descriptor && descriptor.get && descriptor.set
-            ? "[Getter/Setter]"
-            : descriptor && descriptor.get
-            ? "[Getter]"
-            : descriptor && descriptor.set
-            ? "[Setter]"
-            : "undefined";
-          return `${propertyName(key)}: ${value}`;
-        });
-        result = entries.length ? `{ ${entries.join(", ")} }` : "{}";
-      }
-      seen.delete(current);
-      return result;
-    };
-
-    return render(value, 0);
-  }
-
-  function format(first, ...args) {
-    if (typeof first !== "string") {
-      return [first, ...args].map((value) => typeof value === "string" ? value : inspect(value)).join(" ");
-    }
-    let index = 0;
-    const output = first.replace(/%[sdifjoOc%]/g, (token) => {
-      if (token === "%%") return "%";
-      if (index >= args.length) return token;
-      const value = args[index++];
-      switch (token) {
-        case "%s": return formatString(value, inspect);
-        case "%d": return String(Number(value));
-        case "%i": return String(Number.parseInt(value, 10));
-        case "%f": return String(Number.parseFloat(value));
-        case "%j": try { return JSON.stringify(value); } catch { return "[Circular]"; }
-        case "%o":
-        case "%O": return typeof value === "string" ? value : inspect(value);
-        case "%c": return "";
-        default: return token;
-      }
-    });
-    return output + args.slice(index).map((value) => typeof value === "string" ? value : inspect(value)).map((value) => ` ${value}`).join("");
-  }
-
-  inspect.defaultOptions = {
-    colors: false,
-    depth: 2,
-    showHidden: false,
-    customInspect: true,
-    sorted: false,
-  };
-  inspect.custom = Symbol.for("nodejs.util.inspect.custom");
+    r#"((inspect, format, formatWithOptions, warnedCodes) => {
   const getCallSites = (frameCount = 10, options) => {
     if (frameCount !== null && typeof frameCount === "object") {
       options = frameCount;
@@ -347,6 +211,7 @@ const UTIL: &str = quench_js_check::checked_js!(
   promisify.custom = promisifyCustom;
   return {
     format,
+    formatWithOptions,
     inspect,
     getCallSites,
     inherits,
@@ -394,37 +259,16 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     if let Some(api) = cached {
         return Ok(api.module);
     }
+    let inspect = crate::host::shared_vm::commonjs::node_library_export(context, "util.js", "internal/util/inspect.js", "inspect")?;
+    let format = crate::host::shared_vm::commonjs::node_library_export(context, "util.js", "internal/util/inspect.js", "format")?;
+    let format_with_options = crate::host::shared_vm::commonjs::node_library_export(context, "util.js", "internal/util/inspect.js", "formatWithOptions")?;
     let factory = context.evaluate_script_rooted(UTIL, "node:util/shared.js")?;
-    let quote = context.host_function(crate::host::shared_vm::operation("utilInspectQuote"))?;
     let undefined = context.undefined();
-    let instance = context.evaluate_script_rooted(
-        "(object, constructor) => object instanceof constructor",
-        "node:util/instance.js",
-    )?;
-    let shallow = context.host_function_with_data(
-        crate::host::shared_vm::operation("utilInspectShallowLabel"),
-        instance,
-    )?;
-    let custom_key = context.evaluate_script_rooted(
-        "Symbol.for('nodejs.util.inspect.custom')",
-        "node:util/custom-symbol.js",
-    )?;
-    let custom = context.host_function_with_data(
-        crate::host::shared_vm::operation("utilInspectCustom"),
-        custom_key,
-    )?;
-    let format_string = super::util_format_string_shared_vm::function(context)?;
-    let builtin = super::util_inspect_builtin_shared_vm::function(context)?;
     let global = context.global_root()?;
     let set_key = context.string_rooted("Set");
     let set = context.get_property_rooted(global, set_key)?;
     let warned_codes = context.construct_rooted(set, set, &[])?;
-    let module = context.call_rooted(factory, undefined, &[quote, shallow, custom, format_string, builtin, warned_codes])?;
-    let inspect_key = context.string_rooted("inspect");
-    let inspect = context.get_property_rooted(module, inspect_key)?;
-    let defaults_key=context.string_rooted("defaultOptions");let defaults=context.get_property_rooted(inspect,defaults_key)?;
-    for(name,value)in[("maxArrayLength",super::util_inspect_builtin_shared_vm::DEFAULT_MAX_ARRAY_LENGTH),("breakLength",super::util_inspect_builtin_shared_vm::DEFAULT_BREAK_LENGTH)]{let key=context.string_rooted(name);let value=context.number(value);context.define_data_property_rooted(defaults,key,value,true,true,true)?;}
-
+    let module = context.call_rooted(factory, undefined, &[inspect, format, format_with_options, warned_codes])?;
     super::util_style_shared_vm::install(context, module, inspect)?;
     super::util_extend_shared_vm::install(context, module, warned_codes)?;
     let compare = context.host_function(crate::host::shared_vm::operation("isDeepStrictEqual"))?;
@@ -441,56 +285,11 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     context.set_property_rooted(module, parse_args_key, parse_args, module)?;
     let callbackify_key = context.string_rooted("callbackify");
     context.set_property_rooted(module, callbackify_key, callbackify, module)?;
+    let native_types = types_binding(context)?;
     let types = context.object_rooted()?;
-    for (index, &(name, brand)) in TYPE_PREDICATES.iter().enumerate() {
-        let data = context.number(index as f64);
-        let predicate = context
-            .host_function_with_data(crate::host::shared_vm::operation("utilTypeCheck"), data)?;
-        let name_key = context.string_rooted("name");
-        let (function_name, length) = match brand {
-            BuiltinBrand::ArrayBufferView => ("isView", 1),
-            BuiltinBrand::External
-            | BuiltinBrand::Date
-            | BuiltinBrand::RegExp
-            | BuiltinBrand::NativeError
-            | BuiltinBrand::Promise
-            | BuiltinBrand::Map
-            | BuiltinBrand::Set
-            | BuiltinBrand::WeakMap
-            | BuiltinBrand::WeakSet
-            | BuiltinBrand::Proxy
-            | BuiltinBrand::ArrayBuffer
-            | BuiltinBrand::SharedArrayBuffer
-            | BuiltinBrand::AnyArrayBuffer
-            | BuiltinBrand::ArgumentsObject
-            | BuiltinBrand::AsyncFunction
-            | BuiltinBrand::GeneratorFunction
-            | BuiltinBrand::GeneratorObject
-            | BuiltinBrand::MapIterator
-            | BuiltinBrand::SetIterator
-            | BuiltinBrand::ModuleNamespaceObject
-            | BuiltinBrand::BooleanObject
-            | BuiltinBrand::NumberObject
-            | BuiltinBrand::StringObject
-            | BuiltinBrand::SymbolObject
-            | BuiltinBrand::BigIntObject
-            | BuiltinBrand::BoxedPrimitive => ("", 0),
-            _ => (name, 1),
-        };
-        let name_value = context.string_rooted(function_name);
-        context.define_data_property_rooted(predicate, name_key, name_value, false, false, true)?;
-        let length_key = context.string_rooted("length");
-        let length_value = context.number(f64::from(length));
-        context.define_data_property_rooted(
-            predicate,
-            length_key,
-            length_value,
-            false,
-            false,
-            true,
-        )?;
-        let key = context.string_rooted(name);
-        context.set_property_rooted(types, key, predicate, types)?;
+    for key in context.own_keys_rooted(native_types)? {
+        let value = context.get_property_rooted(native_types, key)?;
+        context.define_data_property_rooted(types, key, value, true, true, true)?;
     }
     super::crypto_key_shared_vm::public_predicates(context, types)?;
     let key = context.string_rooted("types");
@@ -498,14 +297,6 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     // Retain original identities before publishing mutable util exports. Console
     // can request these lazily without observing later public export replacement.
     let formatters = context.null_object_rooted()?;
-    let native_types = context.object_rooted()?;
-    for &(name, _) in TYPE_PREDICATES {
-        let key = context.string_rooted(name);
-        let predicate = context.get_property_rooted(types, key)?;
-        context.define_data_property_rooted(native_types, key, predicate, true, true, true)?;
-    }
-    let key = context.string_rooted("nativeTypes");
-    context.define_data_property_rooted(formatters, key, native_types, false, false, false)?;
     for name in ["format", "formatWithOptions"] {
         let key = context.string_rooted(name);
         let function = context.get_property_rooted(module, key)?;
@@ -861,113 +652,6 @@ fn integer_separators(text: &str) -> String {
     result
 }
 
-/// Inspect's depth boundary derives the constructor from prototype descriptors,
-/// without invoking a user constructor getter.
-pub(crate) fn inspect_shallow_label(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let object = args.first().copied().unwrap_or_else(|| context.undefined());
-    // Empty ordinary null-prototype records keep their braces even beyond
-    // the depth limit. Internal-slot brands retain their specialized labels.
-    let mut ordinary = true;
-    for (_, brand) in TYPE_PREDICATES {
-        if context.has_builtin_brand_rooted(object, *brand)? {
-            ordinary = false;
-            break;
-        }
-    }
-    if ordinary && !context.is_array_rooted(object)? && !context.is_callable_rooted(object)? {
-        let prototype = context.prototype_rooted(object)?;
-        if context.rooted_value(prototype).is_some_and(|value| value.is_null()) {
-            let settings = args.get(1).copied().unwrap_or_else(|| context.undefined());
-            let hidden = if context.is_object_rooted(settings)? {
-                let key = context.string_rooted("showHidden");
-                let hidden = context.get_property_rooted(settings, key)?;
-                context.truthy_rooted(hidden)?
-            } else { false };
-            let keys = if hidden { context.own_keys_rooted(object)? }
-                else { context.enumerable_own_keys_rooted(object, true, true)? };
-            if keys.is_empty() {
-                return Ok(context.string_rooted("[Object: null prototype] {}"));
-            }
-        }
-    }
-    let mut current = object;
-    let constructor_key = context.string_rooted("constructor");
-    let value_key = context.string_rooted("value");
-    let name_key = context.string_rooted("name");
-    let instance = context.host_function_data()?;
-    let undefined = context.undefined();
-    while context.is_object_rooted(current)? {
-        let descriptor = context.own_property_descriptor_rooted(current, constructor_key)?;
-        if context.is_object_rooted(descriptor)? {
-            let constructor = context.get_property_rooted(descriptor, value_key)?;
-            if context.is_callable_rooted(constructor)? {
-                let name = context.get_property_rooted(constructor, name_key)?;
-                let name_text = context.to_string(name)?;
-                if !name_text.is_empty() {
-                    if let Ok(result) =
-                        context.call_rooted(instance, undefined, &[object, constructor])
-                    {
-                        if context.truthy_rooted(result)? {
-                            return Ok(context.string_rooted(&format!("[{name_text}]")));
-                        }
-                    }
-                }
-            }
-        }
-        current = context.prototype_rooted(current)?;
-    }
-    Ok(context.string_rooted("[Object: null prototype]"))
-}
-
-/// Custom inspect dispatch precedes ordinary formatting and the depth boundary.
-pub(crate) fn inspect_custom(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let undefined = context.undefined();
-    let object = args.first().copied().unwrap_or(undefined);
-    let settings = args.get(1).copied().unwrap_or(undefined);
-    let depth = args.get(2).copied().unwrap_or(undefined);
-    let inspect = args.get(3).copied().unwrap_or(undefined);
-    let enabled_key = context.string_rooted("customInspect");
-    let enabled = context.get_property_rooted(settings, enabled_key)?;
-    if !context.truthy_rooted(enabled)? {
-        return Ok(undefined);
-    }
-    let key = context.host_function_data()?;
-    let method = context.get_property_rooted(object, key)?;
-    if !context.is_callable_rooted(method)? || context.strict_equal_rooted(method, inspect)? {
-        return Ok(undefined);
-    }
-    let constructor_key = context.string_rooted("constructor");
-    let descriptor = context.own_property_descriptor_rooted(object, constructor_key)?;
-    if context.is_object_rooted(descriptor)? {
-        let value_key = context.string_rooted("value");
-        let constructor = context.get_property_rooted(descriptor, value_key)?;
-        if context
-            .rooted_value(constructor)
-            .is_some_and(|value| !value.is_null() && !value.is_undefined())
-        {
-            let prototype_key = context.string_rooted("prototype");
-            let prototype = context.get_property_rooted(constructor, prototype_key)?;
-            if context.strict_equal_rooted(prototype, object)? {
-                return Ok(undefined);
-            }
-        }
-    }
-    let result = context.call_rooted(method, object, &[depth, settings, inspect])?;
-    if context.strict_equal_rooted(result, object)? {
-        Ok(undefined)
-    } else {
-        context.array_rooted(&[result])
-    }
-}
-
 /// Node integer validators reject coercion of the value, then compare original bounds.
 pub(crate) fn validate_integer(context: &mut NativeContext<'_, NodeHost>, value: RootId, name: &str, minimum: f64, maximum: RootId) -> Result<f64, RootedError> {
     let Some(number) = context.rooted_value(value).and_then(|v| v.as_number()) else {
@@ -1019,21 +703,6 @@ pub(crate) fn validate_binding_integer(
             Err(context.throw(error))
         }
     }
-}
-
-pub(crate) fn typed_array_name(
-    context: &mut NativeContext<'_, NodeHost>,
-    value: RootId,
-) -> Result<&'static str, RootedError> {
-    for &(name, brand) in TYPE_PREDICATES {
-        if brand != BuiltinBrand::TypedArray
-            && name.ends_with("Array")
-            && context.has_builtin_brand_rooted(value, brand)?
-        {
-            return Ok(name.strip_prefix("is").expect("type predicate prefix"));
-        }
-    }
-    Err(RootedError::host("typed array brand has no display name"))
 }
 
 const ONLY_WRITABLE: u32 = 1;
@@ -1129,51 +798,14 @@ pub(crate) fn mark_promise_handled(
     Ok(context.undefined())
 }
 
-/// Read genuine Core proxy slots using the Node binding return convention.
-pub(crate) fn proxy_details(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let undefined = context.undefined();
-    let value = args.first().copied().unwrap_or(undefined);
-    let Some((target, handler)) = context.proxy_details_rooted(value)? else {
-        return Ok(undefined);
-    };
-    let show_both = if args.len() == 1 {
-        true
-    } else {
-        let yes = context.boolean(true);
-        context.strict_equal_rooted(args.get(1).copied().unwrap_or(undefined), yes)?
-    };
-    if show_both { context.array_rooted(&[target, handler]) } else { Ok(target) }
-}
-
-/// Node's entry preview is a non-consuming snapshot of genuine collection slots.
-pub(crate) fn preview_entries(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let undefined = context.undefined();
-    let value = args.first().copied().unwrap_or(undefined);
-    let Some((values, key_value)) = context.collection_preview_rooted(value)? else {
-        return Ok(undefined);
-    };
-    let entries = context.array_rooted(&values)?;
-    if args.len() == 1 { return Ok(entries); }
-    let key_value = context.boolean(key_value);
-    context.array_rooted(&[entries, key_value])
-}
-
 /// Cache the genuine internal key binding in Core-owned private formatter data.
 pub(crate) fn key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    let data = internal_formatters(context)?;
-    let cache_key = context.string_rooted("nativeKeyBinding");
-    let cached = context.own_property_descriptor_rooted(data, cache_key)?;
-    if context.is_object_rooted(cached)? { return get(context, cached, "value"); }
+    crate::host::shared_vm::commonjs::cached_native_binding(context, "\0binding:util", build_key_binding)
+}
+fn build_key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let binding = context.object_rooted()?;
     for (name, operation) in [
+        ("getConstructorName", "utilConstructorName"),
         ("getOwnNonIndexProperties", "utilOwnNonIndexProperties"),
         ("getPromiseDetails", "utilPromiseDetails"),
         ("getProxyDetails", "utilProxyDetails"),
@@ -1181,7 +813,15 @@ pub(crate) fn key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<R
         ("getExternalValue", "utilExternalValue"),
         ("markPromiseAsHandled", "utilMarkPromiseHandled"),
     ] {
-        let function = context.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+        let operation = crate::host::shared_vm::operation(operation);
+        let function = if name == "getConstructorName" {
+            let global = context.global_root()?;
+            let symbol = context.startup_data_property_rooted(global, "Symbol")
+                .ok_or_else(|| RootedError::host("original Symbol constructor missing"))?;
+            let tag = context.startup_data_property_rooted(symbol, "toStringTag")
+                .ok_or_else(|| RootedError::host("original toStringTag symbol missing"))?;
+            context.host_function_named_with_data(operation, name, tag)?
+        } else { context.host_function_named(operation, name)? };
         let key = context.string_rooted(name);
         context.define_data_property_rooted(binding, key, function, true, true, true)?;
     }
@@ -1212,29 +852,162 @@ pub(crate) fn key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<R
     }
     let key = context.string_rooted("constants");
     context.define_data_property_rooted(binding, key, constants, true, true, true)?;
-    context.define_data_property_rooted(data, cache_key, binding, false, false, false)?;
     Ok(binding)
 }
 
 /// Messaging hooks use realm-owned unique symbols, never registry aliases.
 pub(crate) fn symbols_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    let data = internal_formatters(context)?;
-    let key = context.string_rooted("nativeSymbolsBinding");
-    let cached = context.own_property_descriptor_rooted(data, key)?;
-    if context.is_object_rooted(cached)? { return get(context, cached, "value"); }
+    crate::host::shared_vm::commonjs::cached_native_binding(context, "\0binding:symbols", build_symbols_binding)
+}
+fn build_symbols_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let binding = context.object_rooted()?;
     for name in ["messaging_deserialize_symbol", "messaging_transfer_symbol", "messaging_clone_symbol", "messaging_transfer_list_symbol"] {
         let key = context.string_rooted(name);
         let symbol = context.symbol_rooted(Some(name));
         context.define_data_property_rooted(binding, key, symbol, true, true, true)?;
     }
-    context.define_data_property_rooted(data, key, binding, false, false, false)?;
     Ok(binding)
 }
 
 pub(crate) fn types_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    let data = internal_formatters(context)?;
-    get(context, data, "nativeTypes")
+    crate::host::shared_vm::commonjs::cached_native_binding(context, "\0binding:types", build_types_binding)
+}
+fn build_types_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    let types = context.object_rooted()?;
+    for (index, &(name, brand)) in TYPE_PREDICATES.iter().enumerate() {
+        let data = context.number(index as f64);
+        let predicate = context
+            .host_function_with_data(crate::host::shared_vm::operation("utilTypeCheck"), data)?;
+        let name_key = context.string_rooted("name");
+        let (function_name, length) = match brand {
+            BuiltinBrand::ArrayBufferView => ("isView", 1),
+            BuiltinBrand::External
+            | BuiltinBrand::Date
+            | BuiltinBrand::RegExp
+            | BuiltinBrand::NativeError
+            | BuiltinBrand::Promise
+            | BuiltinBrand::Map
+            | BuiltinBrand::Set
+            | BuiltinBrand::WeakMap
+            | BuiltinBrand::WeakSet
+            | BuiltinBrand::Proxy
+            | BuiltinBrand::ArrayBuffer
+            | BuiltinBrand::SharedArrayBuffer
+            | BuiltinBrand::AnyArrayBuffer
+            | BuiltinBrand::ArgumentsObject
+            | BuiltinBrand::AsyncFunction
+            | BuiltinBrand::GeneratorFunction
+            | BuiltinBrand::GeneratorObject
+            | BuiltinBrand::MapIterator
+            | BuiltinBrand::SetIterator
+            | BuiltinBrand::ModuleNamespaceObject
+            | BuiltinBrand::BooleanObject
+            | BuiltinBrand::NumberObject
+            | BuiltinBrand::StringObject
+            | BuiltinBrand::SymbolObject
+            | BuiltinBrand::BigIntObject
+            | BuiltinBrand::BoxedPrimitive => ("", 0),
+            _ => (name, 1),
+        };
+        let name_value = context.string_rooted(function_name);
+        context.define_data_property_rooted(predicate, name_key, name_value, false, false, true)?;
+        let length_key = context.string_rooted("length");
+        let length_value = context.number(f64::from(length));
+        context.define_data_property_rooted(
+            predicate,
+            length_key,
+            length_value,
+            false,
+            false,
+            true,
+        )?;
+        let key = context.string_rooted(name);
+        context.set_property_rooted(types, key, predicate, types)?;
+    }
+    Ok(types)
+}
+
+/// Node's optional full-details argument tests literal true, not truthiness.
+pub(crate) fn proxy_details(
+    context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let absent = context.undefined();
+    let value = args.first().copied().unwrap_or(absent);
+    let Some((target, handler)) = context.proxy_details_rooted(value)? else { return Ok(absent); };
+    let full = args.len() == 1 || args.get(1).and_then(|value| context.rooted_value(*value)).is_some_and(|value| value.as_bool() == Some(true));
+    if full { context.array_rooted(&[target, handler]) } else { Ok(target) }
+}
+
+/// One argument returns entries alone; any second argument requests both fields.
+pub(crate) fn preview_entries(
+    context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let absent = context.undefined();
+    let value = args.first().copied().unwrap_or(absent);
+    let Some(preview) = context.collection_preview_rooted(value)? else { return Ok(absent); };
+    let entries = context.array_rooted(&preview.entries)?;
+    if args.len() == 1 { Ok(entries) } else {
+        let paired = context.boolean(preview.is_key_value);
+        context.array_rooted(&[entries, paired])
+    }
+}
+
+/// Read an own data property without inheriting descriptor-object getters.
+fn inspection_data_property(
+    context: &mut NativeContext<'_, NodeHost>, object: RootId, key: RootId,
+) -> Result<Option<RootId>, RootedError> {
+    let descriptor = context.own_property_descriptor_rooted(object, key)?;
+    if context.is_object_rooted(descriptor)? {
+        for key in context.own_keys_rooted(descriptor)? {
+            if context.string_text(key)?.as_deref() == Some("value") {
+                return context.get_property_rooted(descriptor, key).map(Some);
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Native class fallback for inspection, without public constructor/tag getters.
+/// User base-constructor provenance is captured by Core at actual allocation.
+pub(crate) fn constructor_name(
+    context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let absent = context.undefined();
+    let value = args.first().copied().unwrap_or(absent);
+    if let Some(name) = context.constructed_name_rooted(value)? {
+        if context.string_text(name)?.is_some_and(|name| !name.is_empty() && name != "Object") { return Ok(name); }
+    }
+    if context.proxy_target_rooted(value)?.is_some() { return Ok(context.string_rooted("Object")); }
+    if context.is_array_rooted(value)? { return Ok(context.string_rooted("Array")); }
+    for &(name, brand) in TYPE_PREDICATES {
+        use BuiltinBrand as B;
+        if matches!(brand, B::Proxy | B::TypedArray | B::ArrayBufferView | B::AnyArrayBuffer | B::BoxedPrimitive | B::NativeError | B::GeneratorObject | B::MapIterator | B::SetIterator | B::ModuleNamespaceObject) { continue; }
+        if context.has_builtin_brand_rooted(value, brand)? {
+            let name = name.strip_prefix("is").expect("type predicate prefix");
+            let name = name.strip_suffix("Object").unwrap_or(name);
+            return Ok(context.string_rooted(name));
+        }
+    }
+    if context.is_callable_rooted(value)? { return Ok(context.string_rooted("Function")); }
+    if context.has_builtin_brand_rooted(value, BuiltinBrand::NativeError)? { return Ok(context.string_rooted("Error")); }
+    let tag = context.host_function_data()?;
+    let constructor_key = context.string_rooted("constructor");
+    let mut current = value;
+    while context.is_object_rooted(current)? {
+        if context.proxy_target_rooted(current)?.is_some() { break; }
+        if let Some(data) = inspection_data_property(context, current, tag)? {
+            if context.string_text(data)?.is_some() { return Ok(data); }
+        }
+        if !context.strict_equal_rooted(current, value)? {
+            if let Some(constructor) = inspection_data_property(context, current, constructor_key)? {
+                if let Some(name) = context.original_function_name_rooted(constructor)? {
+                    if context.string_text(name)?.is_some_and(|name| !name.is_empty() && name != "Object") { return Ok(name); }
+                }
+            }
+        }
+        current = context.prototype_rooted(current)?;
+    }
+    Ok(context.string_rooted("Object"))
 }
 
 /// External wrappers expose the stored address, without touching native memory.

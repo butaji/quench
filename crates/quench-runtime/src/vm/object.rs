@@ -89,7 +89,9 @@ fn derive_shape_lookup_index(shapes: &[Shape], shape: u32) -> ShapeLookupIndex {
                     attributes.insert(slot, value);
                 }
             }
-            ShapeTransition::Root
+            ShapeTransition::FunctionName { .. }
+            | ShapeTransition::Constructed { .. }
+            | ShapeTransition::Root
             | ShapeTransition::Vacant
             | ShapeTransition::Dictionary { .. } => {}
         }
@@ -194,7 +196,9 @@ impl<H: Host> Vm<H> {
                     ..
                 } if candidate == key => break Some(slot as usize),
                 ShapeTransition::Delete { key: candidate, .. } if candidate == key => break None,
-                ShapeTransition::Root
+                ShapeTransition::FunctionName { .. }
+                | ShapeTransition::Constructed { .. }
+                | ShapeTransition::Root
                 | ShapeTransition::Add { .. }
                 | ShapeTransition::Delete { .. }
                 | ShapeTransition::Vacant
@@ -264,7 +268,9 @@ impl<H: Host> Vm<H> {
                 ShapeTransition::Delete {
                     slot: candidate, ..
                 } if candidate as usize == slot => return Some(DEFAULT_PROPERTY_ATTRIBUTES),
-                ShapeTransition::Root
+                ShapeTransition::FunctionName { .. }
+                | ShapeTransition::Constructed { .. }
+                | ShapeTransition::Root
                 | ShapeTransition::Add { .. }
                 | ShapeTransition::Delete { .. }
                 | ShapeTransition::Vacant
@@ -2331,7 +2337,7 @@ impl<H: Host> Vm<H> {
         };
         self.append_cached_shape_transition(shape, transition)
     }
-    fn append_cached_shape_transition(&mut self, shape: u32, transition: ShapeTransition) -> u32 {
+    pub(super) fn append_cached_shape_transition(&mut self, shape: u32, transition: ShapeTransition) -> u32 {
         let key = transition.cache_key();
         if let Some(key) = key
             && let Some(next) = self.transitions.get(&(shape, key)).copied()
@@ -2348,12 +2354,12 @@ impl<H: Host> Vm<H> {
                 .checked_add(1)
                 .filter(|length| u32::try_from(*length).is_ok())
                 .expect("object property storage exhausted"),
-            ShapeTransition::Descriptor { .. } => storage_len,
+            ShapeTransition::Descriptor { .. } | ShapeTransition::FunctionName { .. } | ShapeTransition::Constructed { .. } => storage_len,
             ShapeTransition::Root
             | ShapeTransition::Delete { .. }
             | ShapeTransition::Vacant
             | ShapeTransition::Dictionary { .. } => {
-                unreachable!("cached shape transitions are adds or descriptors")
+                unreachable!("cached shape transitions are adds, descriptors or metadata")
             }
         };
         let mut next = self.append_shape(shape, transition, next_storage_len);

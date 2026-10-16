@@ -1,0 +1,31 @@
+{
+  "candidate_source": "da340caa88887f88b7356bac285499912e6deba8",
+  "oracle": "Node v26.12.0",
+  "api_tests": 301,
+  "runtime_tests": 632,
+  "framework_fixtures": 43,
+  "web_correctness_targets": 9,
+  "total_node_parity": false,
+  "benchmark_win": false,
+  "instrumented_executions_valid": true,
+  "instruction_limit_met": true,
+  "later_constructor_provenance_work_excluded": true,
+  "binaries": {
+    "baseline": {
+      "path": "work/quench-http-blockers-integrated",
+      "sha256": "700cb9c953c1ebbbefb0931d1cc48421d32f29399b7f9d13f0f59bd1f4b39352"
+    },
+    "candidate": {
+      "path": "work/quench-canonical-inspection-qualified",
+      "sha256": "e35864c42a665e725d3802f6bc2510dbad0bc1edf172b7312dac559696ca6e14"
+    },
+    "verifier": {
+      "path": "work/verify-fixed-work-frozen",
+      "sha256": "9864d2ae19cd20062e5e0e751a46ee9ed02d1526247203b9807aa12607bf0fa2"
+    },
+    "node": {
+      "path": "work/node-v26.12.0-linux-x64/bin/node",
+      "sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943"
+    }
+  }
+}
