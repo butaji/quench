@@ -2288,6 +2288,15 @@ fn load_with_resolution(
             set(context, module, "loaded", loaded)?;
             return Ok(exports);
         }
+        if filename.extension().and_then(|extension| extension.to_str()) == Some("node") {
+            // Module._extensions['.node']: process.dlopen(module, filename).
+            let path = context.string_rooted(&filename.to_string_lossy());
+            crate::modules::napi::dlopen(context, module, &[module, path])?;
+            let exports = get(context, module, "exports")?;
+            let loaded = context.boolean(true);
+            set(context, module, "loaded", loaded)?;
+            return Ok(exports);
+        }
         let file_text = match std::fs::read(filename) {
             Ok(bytes) => String::from_utf8(bytes)
                 .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned()),
@@ -2303,7 +2312,7 @@ fn load_with_resolution(
                 let exports = context.parse_json_rooted(text)?;
                 set(context, module, "exports", exports)?;
             }
-            Some("mjs" | "node") => {
+            Some("mjs") => {
                 return Err(RootedError::host(
                     "this module format is not implemented on the shared VM",
                 ));
