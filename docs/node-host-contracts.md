@@ -977,3 +977,27 @@ while parsing startup options, before evaluating guest source. An explicit -- or
 the first guest argument ends option parsing, so later version spellings remain
 guest arguments. The oracle checks aliases, jitless ordering, eval side effects
 and both argument boundaries. General help/unknown-option parity remains open.
+
+## Diagnostic-report configuration and one process listener store
+
+The lazy process.report getter returns the configured Node library's report
+object. Rust owns its mutable configuration, initialized from the same parsed
+startup options used by native option queries. The original SDK owns public
+validation, property/method descriptors, signal changes and field order.
+Report directory aliases, option/environment precedence, and report-signal's
+ordered implication of report-on-signal are covered against the oracle.
+
+Capture installation snapshots reportOnUncaughtException with strict true and
+then disables it. Clearing restores the saved flag only when auxiliary length
+is strictly numeric zero. The process.report reference is evaluated before the
+saved-flag getter on restoration; installation reads process.report separately
+for the read and write. Slot mutation precedes report getter failures.
+
+Process uses the common EventEmitter store for registration, dispatch,
+inspection, symbols, borrowed methods, prepending and mutable _events records.
+Signal watching and IPC counted references are actual listener add/remove
+observers; no second scheduler listener map mirrors those facts. Exit dispatch
+uses the public process emit hook after entering the named exit state.
+The Node26 ordinary once-wrapper shape is retained. Report generation/file I/O,
+abort toggles, default warning listener/source fidelity and the broader Node
+compatibility backlog remain unqualified.

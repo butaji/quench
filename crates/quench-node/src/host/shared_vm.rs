@@ -73,6 +73,9 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "webFetchInitialize" (0) => commonjs::initialize_fetch_apis,
         method "processSurfaceInitialize" (0) => commonjs::initialize_process_surface,
         method "processRawDebug" (0) => crate::modules::process_shared_vm::raw_debug,
+        method "processReport" (0) => crate::modules::report_configuration_shared_vm::report,
+        method "reportConfigGet" (0) => crate::modules::report_configuration_shared_vm::get,
+        method "reportConfigSet" (0) => crate::modules::report_configuration_shared_vm::set,
         method "processLoadEnvFile" (1) => crate::modules::process_shared_vm::load_env_file,
         method "processSetEnv" (2) => crate::modules::process_shared_vm::set_env,
         method "processDeleteEnv" (1) => crate::modules::process_shared_vm::delete_env,
@@ -81,11 +84,9 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "processGetActiveHandles" (0) => crate::modules::process_shared_vm::get_active_handles,
         method "processGetActiveNetworkResources" (0) => crate::modules::process_shared_vm::get_active_network_resources,
         method "nextTick" (1) => crate::modules::process_shared_vm::next_tick,
-        method "on" (2) => crate::modules::process_shared_vm::on,
-        method "processOnce" (2) => crate::modules::process_shared_vm::once,
-        method "processRemoveListener" (2) => crate::modules::process_shared_vm::remove_listener,
-        method "processRemoveAllListeners" (2) => crate::modules::process_shared_vm::remove_all_listeners,
-        method "processEmit" (2) => crate::modules::process_shared_vm::emit,
+        method "processStartListeningSignal" (1) => crate::modules::process_shared_vm::start_listening_signal,
+        method "processStopListeningSignal" (1) => crate::modules::process_shared_vm::stop_listening_signal,
+        method "processIpcListenerReference" (1) => crate::modules::child_process_ipc_shared_vm::listener_reference,
         method "processEmitWarning" (2) => crate::modules::process_shared_vm::emit_warning,
         method "processThrowWarning" (1) => crate::modules::process_shared_vm::throw_warning,
         method "processDispatchWarning" (1) => crate::modules::process_shared_vm::dispatch_warning,
@@ -1011,6 +1012,18 @@ fn install_event_emitter(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         let key = context.string_rooted(name);
         let stream = context.get_property_rooted(process, key)?;
         context.set_prototype_rooted(stream, prototype)?;
+    }
+    context.set_prototype_rooted(process, prototype)?;
+    context.call_rooted(emitter, process, &[])?;
+    let key = context.string_rooted("on");
+    let on = context.get_property_rooted(process, key)?;
+    for (event, operation_name, name) in [
+        ("newListener", "processStartListeningSignal", "startListeningIfSignal"),
+        ("removeListener", "processStopListeningSignal", "stopListeningIfSignal"),
+    ] {
+        let event = context.string_rooted(event);
+        let function = context.host_constructor_named(operation(operation_name), name)?;
+        context.call_rooted(on, process, &[event, function])?;
     }
     crate::modules::child_process_ipc_shared_vm::install_process(context, process, emitter)
 }
