@@ -201,6 +201,7 @@ const TRAPS: [crate::WasmTrap; 5] = [
 /// The status of a callout that raised: the VM's error (or panic) waits in
 /// the context.
 const RAISED_STATUS: i64 = TRAPS.len() as i64 + 1;
+const TERMINATED_STATUS: i64 = RAISED_STATUS + 1;
 
 fn trap_status(trap: crate::WasmTrap) -> i64 {
     TRAPS
@@ -219,6 +220,7 @@ const COMPILED_STACK_BUDGET: usize = 512 * 1024;
 #[repr(C)]
 struct CallContext {
     stack_limit: usize,
+    interrupt: *const std::sync::atomic::AtomicBool,
     table: *const usize,
     vm: *mut (),
     env: Value,
@@ -246,6 +248,7 @@ enum Raised {
     Panic(Box<dyn std::any::Any + Send>),
 }
 
+const CONTEXT_INTERRUPT: i32 = std::mem::offset_of!(CallContext, interrupt) as i32;
 const CONTEXT_STACK_LIMIT: i32 = std::mem::offset_of!(CallContext, stack_limit) as i32;
 const CONTEXT_TABLE: i32 = std::mem::offset_of!(CallContext, table) as i32;
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
@@ -1154,6 +1157,7 @@ struct Emitter<'a, 'b, H: Host> {
     length: Option<ir::Value>,
     memory: MemoryArguments,
     trap_blocks: [Option<ir::Block>; TRAPS.len()],
+    termination_block: Option<ir::Block>,
     /// Per callee, its imported name in this function.
     callees: Vec<Option<ir::FuncRef>>,
     callout_signature: Option<ir::SigRef>,
@@ -1265,7 +1269,20 @@ impl<H: Host> Emitter<'_, '_, H> {
         self.builder.seal_block(next);
     }
 
+    fn interrupt_safepoint(&mut self) {
+        let pointer=self.builder.ins().load(types::I64,MemFlagsData::trusted(),self.context,CONTEXT_INTERRUPT);
+        let requested=self.builder.ins().atomic_load(types::I8,MemFlagsData::trusted(),pointer);
+        let stop=self.builder.ins().icmp_imm_u(IntCC::NotEqual,requested,0);
+        let termination=match self.termination_block { Some(block)=>block,None=>{let block=self.builder.create_block();self.termination_block=Some(block);block} };
+        let next=self.builder.create_block();self.builder.ins().brif(stop,termination,&[],next,&[]);
+        self.builder.switch_to_block(next);self.builder.seal_block(next);
+    }
     fn finish_traps(&mut self) {
+        if let Some(block)=self.termination_block {
+            self.builder.switch_to_block(block);let status=self.builder.ins().iconst(types::I64,TERMINATED_STATUS);
+            let mut values=vec![status];if let Some(ty)=self.plan.result {let kind=Kind::of(ty).expect("planned");values.push(self.builder.ins().iconst(kind.ir(),0));}
+            self.builder.ins().return_(&values);
+        }
         for (index, block) in self.trap_blocks.into_iter().enumerate() {
             let Some(block) = block else { continue };
             self.builder.switch_to_block(block);
@@ -1738,6 +1755,7 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 
     fn jump(&mut self, target: usize) {
+        self.interrupt_safepoint();
         let mut block = self.edge(target);
         if self.threading
             && Some(block) == self.blocks[target]
@@ -1754,6 +1772,7 @@ impl<H: Host> Emitter<'_, '_, H> {
     /// only the exit passes (merge arguments) are computed after the loop,
     /// not on every iteration. The back edge stays direct.
     fn branch(&mut self, condition: ir::Value, target: usize, fallthrough: usize) {
+        self.interrupt_safepoint();
         let taken = self.edge(target);
         let next = self.edge(fallthrough);
         if target >= fallthrough {
@@ -1802,6 +1821,7 @@ impl<H: Host> Emitter<'_, '_, H> {
     /// Emit the threaded copy `thread` into `block`.
     fn emit_thread(&mut self, function: &Function, block: ir::Block, thread: &Thread) {
         self.builder.switch_to_block(block);
+        self.interrupt_safepoint();
         for (index, &pc) in thread.path.iter().enumerate() {
             let instruction = self.instructions[pc];
             match instruction.op().control_flow_layout() {
@@ -1843,6 +1863,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         instruction: WideInstruction,
     ) -> bool {
         let op = instruction.op();
+        if op == Op::WasmBranchTable { self.interrupt_safepoint(); }
         let (a, b, c) = (instruction.a(), instruction.b(), instruction.c());
         if let Some(operator) = I32BinaryOperator::from_register_op(op) {
             let left = self.read(b, Kind::I32);
@@ -2214,6 +2235,7 @@ impl<H: Host> Analysis<'_, H> {
             length,
             memory,
             trap_blocks: [None; TRAPS.len()],
+            termination_block: None,
             callees: vec![None; plans.len()],
             callout_signature: None,
             plans,
@@ -2973,6 +2995,7 @@ impl<H: Host> Vm<H> {
         });
         let mut context = CallContext {
             stack_limit: stack_pointer.saturating_sub(COMPILED_STACK_BUDGET),
+            interrupt: self.execution_interrupt.atomic_flag(),
             table: compiled.table.as_ptr(),
             vm: (self as *mut Self).cast(),
             env,
@@ -3011,6 +3034,7 @@ impl<H: Host> Vm<H> {
             // grows memory.
             None => unsafe { (function.entry)(&mut context, base, length, raw.as_ptr(), &mut out) },
         };
+        if i64::from(status) == TERMINATED_STATUS { return Some(Err(JsError::execution_terminated())); }
         if i64::from(status) == RAISED_STATUS {
             return match context.raised.take()? {
                 Raised::Error(error) => Some(Err(error)),
