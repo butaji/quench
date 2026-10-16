@@ -10285,3 +10285,63 @@ new Negative().read()();
         std::fs::remove_file(path).unwrap();
     }
 }
+
+#[test]
+fn private_brands_follow_field_initialization_in_original_and_decoded_programs() {
+    let source = r#"
+class Instance {#field=1;#method(){}get #accessor(){return 2}static has(object){return [#field in object,#method in object,#accessor in object]}}
+if(Instance.has(Instance.prototype).join(',')!=='false,false,false')throw Error('prototype branded');
+if(Instance.has(new Instance()).join(',')!=='true,true,true')throw Error('instance missing brand');
+class Static {static before=[#field in this,#method in this,#accessor in this];static #field=1;static #method(){}static get #accessor(){return 2}static after=[#field in this,#method in this,#accessor in this]}
+if(Static.before.join(',')!=='false,true,true'||Static.after.join(',')!=='true,true,true')throw Error('static ordering');
+class Base {constructor(object){return object}}
+class Stamp extends Base {#x=7;static has(object){return #x in object}static read(object){return object.#x}}
+if(Stamp.has(Stamp.prototype))throw Error('prototype already stamped');
+new Stamp(Stamp.prototype);
+if(!Stamp.has(Stamp.prototype)||Stamp.read(Stamp.prototype)!==7)throw Error('prototype stamp missing');
+"#;
+    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
+        let program = compile(source, "private-brand-initialization.js").unwrap();
+        Vm::new(SilentHost).execute(&program).unwrap();
+        let path = std::env::temp_dir().join(format!("quench-private-brands-{}-{}", std::process::id(), program.specialized));
+        program.write_binary(&path).unwrap();
+        let decoded = crate::ResidualProgram::read_binary(&path).unwrap();
+        Vm::new(SilentHost).execute(&decoded).unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[test]
+fn static_block_eval_inherits_strictness_and_its_actual_super_home() {
+    let source = r#"
+class Base {static value=7;static get receiver(){return this.name}static set update(value){this.updated=value}}
+class Derived extends Base {
+ static #value=3;
+ static {
+  if(eval('super.value')!==7||eval('super.receiver')!=='Derived'||eval('this.#value')!==3)throw Error('static context');
+  if((()=>eval('super.value'))()!==7)throw Error('arrow home');
+  let invalid;try{(function(){eval('super.value')})()}catch(error){invalid=error.name}
+  if(invalid!=='SyntaxError')throw Error('ordinary super accepted');
+  if(!eval('new.target === undefined'))throw Error('static new.target');
+  for(const source of ['typeof arguments','(()=>typeof arguments)()']){let error;try{eval(source)}catch(caught){error=caught.name}if(error!=='SyntaxError')throw Error('static arguments accepted')}
+  if(eval('(function(){return typeof arguments})()')!=='object')throw Error('ordinary arguments lost');
+  eval('super.update=9');if(this.updated!==9)throw Error('setter receiver');
+  let strict;try{eval('quenchStaticUnbound=1')}catch(error){strict=error.name}
+  if(strict!=='ReferenceError')throw Error('sloppy static eval');
+  Object.defineProperty(this,'locked',{value:1});let locked;try{this.locked=2}catch(error){locked=error.name}
+  if(locked!=='TypeError')throw Error('sloppy static write');
+  var local=11;if(eval('local')!==11)throw Error('local missing');
+ }
+ static {if(typeof local!=='undefined')throw Error('static scopes merged')}
+}
+"#;
+    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
+        let program = compile(source, "static-block-context.js").unwrap();
+        Vm::new(SilentHost).execute(&program).unwrap();
+        let path = std::env::temp_dir().join(format!("quench-static-context-{}-{}", std::process::id(), program.specialized));
+        program.write_binary(&path).unwrap();
+        let decoded = crate::ResidualProgram::read_binary(&path).unwrap();
+        Vm::new(SilentHost).execute(&decoded).unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+}
