@@ -9,6 +9,8 @@ pub(crate) mod async_hook_registry_shared_vm;
 pub(crate) mod async_hooks_shared_vm;
 pub(crate) mod async_hooks_state;
 pub(crate) mod buffer_codec;
+pub(crate) mod buffer_pool_shared_vm;
+pub(crate) mod buffer_alloc_shared_vm;
 pub(crate) mod buffer_shared_vm;
 pub(crate) mod buffer_search_shared_vm;
 pub(crate) mod buffer_bigint_shared_vm;
