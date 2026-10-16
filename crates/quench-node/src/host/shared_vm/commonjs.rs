@@ -222,6 +222,8 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     crate::host::resident_pages::release_read_only_pages();
     if node_primordials_source(context).is_some() {
         context.scoped(crate::modules::node_errors_shared_vm::install_stack_formatter)?;
+        context.scoped(crate::modules::buffer_policy_shared_vm::initialize)?;
+        context.scoped(crate::modules::util_shared_vm::initialize_call_site_policy)?;
         context.seal_startup_intrinsics();
     }
     context.scoped(preload_modules)?;
@@ -2306,105 +2308,7 @@ fn load_with_resolution(
 const getLinkedBinding = () => ({});
 "#
                 } else if in_node_internal {
-                    r#"const internalBinding = (name) => {
-  switch (String(name)) {
-    case "os":
-    case "credentials":
-    case "config":
-    case "icu":
-    case "encoding_binding":
-    case "zlib":
-    case "symbols":
-    case "http2":
-    case "fs_event_wrap": return __nativeInternalBinding(name);
-    case "util": return Object.assign({}, {
-      privateSymbols: __nativeInternalBinding("util").privateSymbols,
-      constants: __nativeInternalBinding("util").constants,
-      getOwnNonIndexProperties: __nativeInternalBinding("util").getOwnNonIndexProperties,
-      getPromiseDetails: __nativeInternalBinding("util").getPromiseDetails,
-      markPromiseAsHandled: __nativeInternalBinding("util").markPromiseAsHandled,
-      getProxyDetails: __nativeInternalBinding("util").getProxyDetails,
-      previewEntries: __nativeInternalBinding("util").previewEntries,
-      getConstructorName: __nativeInternalBinding("util").getConstructorName,
-      getCallSites: __nativeInternalBinding("util").getCallSites,
-      getExternalValue: __nativeInternalBinding("util").getExternalValue,
-      constructSharedArrayBuffer: (length) => new SharedArrayBuffer(length),
-      guessHandleType: () => "UNKNOWN",
-      defineLazyProperties: () => undefined,
-      sleep: () => undefined,
-    });
-    case "types": return __nativeInternalBinding("types");
-    case "constants": return {
-      fs: __nativeInternalBinding("constants").fs,
-      zlib: __nativeInternalBinding("constants").zlib,
-      os: __nativeInternalBinding("constants").os || { signals: (require("os").constants || {}).signals || {}, errno: { EISDIR: -21 } },
-      crypto: { ENGINE_METHOD_ALL: 0xffff },
-    };
-    case "options": return __nativeInternalBinding("options");
-    case "string_decoder": return __nativeInternalBinding("string_decoder");
-    case "buffer": return Object.assign({}, require("buffer"), __nativeInternalBinding("buffer"));
-    case "fs": return require("fs");
-    case "crypto": {
-      const crypto = require("crypto");
-      return Object.assign({}, crypto, __nativeInternalBinding("crypto_keys"), {
-        setEngine: __nativeInternalBinding("crypto").setEngine,
-        getFipsCrypto: () => crypto.getFips(),
-        getCachedAliases: () => ({}),
-        getOpenSSLSecLevelCrypto: () => 0,
-        secureHeapUsed: () => undefined,
-      });
-    }
-    case "mksnapshot": return {
-      isBuildingSnapshotBuffer: [false],
-      setSerializeCallback: () => {},
-      setDeserializeCallback: () => {},
-      setDeserializeMainFunction: () => {},
-    };
-    case "process": return process;
-    case "messaging": return { DOMException: globalThis.DOMException };
-    case "performance": return {
-      constants: { NODE_PERFORMANCE_MILESTONE_TIME_ORIGIN: 0, NODE_PERFORMANCE_MILESTONE_TIME_ORIGIN_TIMESTAMP: 1 },
-      milestones: [0, 0], now: () => require("perf_hooks").performance.now() * 1e6,
-    };
-    case "uv": {
-      const errors = [
-        [-1, "EPERM", "operation not permitted"], [-2, "ENOENT", "no such file or directory"],
-        [-3, "ESRCH", "no such process"], [-4, "EINTR", "interrupted system call"],
-        [-5, "EIO", "i/o error"], [-6, "ENXIO", "no such device or address"],
-        [-7, "E2BIG", "argument list too long"], [-8, "ENOEXEC", "exec format error"],
-        [-9, "EBADF", "bad file descriptor"], [-10, "ECHILD", "no child processes"],
-        [-11, "EAGAIN", "resource temporarily unavailable"], [-12, "ENOMEM", "not enough memory"],
-        [-13, "EACCES", "permission denied"], [-14, "EFAULT", "bad address"],
-        [-16, "EBUSY", "resource busy or locked"], [-17, "EEXIST", "file already exists"],
-        [-18, "EXDEV", "cross-device link not permitted"], [-19, "ENODEV", "no such device"],
-        [-20, "ENOTDIR", "not a directory"], [-21, "EISDIR", "illegal operation on a directory"],
-        [-22, "EINVAL", "invalid argument"], [-23, "ENFILE", "file table overflow"],
-        [-24, "EMFILE", "too many open files"], [-25, "ENOTTY", "inappropriate ioctl for device"],
-        [-27, "EFBIG", "file too large"], [-28, "ENOSPC", "no space left on device"],
-        [-29, "ESPIPE", "invalid seek"], [-30, "EROFS", "read-only file system"],
-        [-31, "EMLINK", "too many links"], [-32, "EPIPE", "broken pipe"],
-        [-33, "EDOM", "argument out of domain"], [-34, "ERANGE", "result out of range"],
-        [-36, "ENAMETOOLONG", "name too long"], [-38, "ENOSYS", "function not implemented"],
-        [-39, "ENOTEMPTY", "directory not empty"], [-40, "ELOOP", "too many symbolic links encountered"],
-        [-75, "EOVERFLOW", "value too large for defined data type"], [-95, "ENOTSUP", "operation not supported"],
-        [-98, "EADDRINUSE", "address already in use"], [-99, "EADDRNOTAVAIL", "address not available"],
-        [-100, "ENETDOWN", "network is down"], [-101, "ENETUNREACH", "network is unreachable"],
-        [-103, "ECONNABORTED", "software caused connection abort"], [-104, "ECONNRESET", "connection reset by peer"],
-        [-105, "ENOBUFS", "no buffer space available"], [-106, "EISCONN", "socket is already connected"],
-        [-107, "ENOTCONN", "socket is not connected"], [-108, "ESHUTDOWN", "cannot send after socket shutdown"],
-        [-110, "ETIMEDOUT", "connection timed out"], [-111, "ECONNREFUSED", "connection refused"],
-        [-113, "EHOSTUNREACH", "no route to host"], [-114, "EALREADY", "operation already in progress"],
-        [-115, "EINPROGRESS", "operation now in progress"], [-125, "ECANCELED", "operation canceled"],
-      ];
-      const errmap = new Map(errors.map(([errno, code, message]) => [errno, [code, message]]));
-      const binding = { UV_UNKNOWN: -4094, UV_ENOTSOCK: -88, getErrorMap: () => errmap };
-      for (const [errno, code] of errors) binding[`UV_${code}`] = errno;
-      return binding;
-    }
-    default: return {};
-  }
-};
-"#
+                    node_internal_binding_source()
                 } else {
                     ""
                 };
@@ -2577,4 +2481,165 @@ fn set(
             "cannot set module property {name}"
         )))
     }
+}
+
+pub(crate) fn node_internal_binding_source() -> &'static str {
+    r#"const internalBinding = (name) => {
+  switch (String(name)) {
+    case "os":
+    case "credentials":
+    case "config":
+    case "icu":
+    case "encoding_binding":
+    case "zlib":
+    case "symbols":
+    case "http2":
+    case "fs_event_wrap": return __nativeInternalBinding(name);
+    case "util": return Object.assign({}, {
+      privateSymbols: __nativeInternalBinding("util").privateSymbols,
+      constants: __nativeInternalBinding("util").constants,
+      getOwnNonIndexProperties: __nativeInternalBinding("util").getOwnNonIndexProperties,
+      getPromiseDetails: __nativeInternalBinding("util").getPromiseDetails,
+      markPromiseAsHandled: __nativeInternalBinding("util").markPromiseAsHandled,
+      getProxyDetails: __nativeInternalBinding("util").getProxyDetails,
+      previewEntries: __nativeInternalBinding("util").previewEntries,
+      getConstructorName: __nativeInternalBinding("util").getConstructorName,
+      getCallSites: __nativeInternalBinding("util").getCallSites,
+      getExternalValue: __nativeInternalBinding("util").getExternalValue,
+      constructSharedArrayBuffer: (length) => new SharedArrayBuffer(length),
+      guessHandleType: () => "UNKNOWN",
+      defineLazyProperties: () => undefined,
+      sleep: () => undefined,
+    });
+    case "types": return __nativeInternalBinding("types");
+    case "constants": return {
+      fs: __nativeInternalBinding("constants").fs,
+      zlib: __nativeInternalBinding("constants").zlib,
+      os: __nativeInternalBinding("constants").os || { signals: (require("os").constants || {}).signals || {}, errno: { EISDIR: -21 } },
+      crypto: { ENGINE_METHOD_ALL: 0xffff },
+    };
+    case "options": return __nativeInternalBinding("options");
+    case "string_decoder": return __nativeInternalBinding("string_decoder");
+    case "buffer": return Object.assign({}, require("buffer"), __nativeInternalBinding("buffer"));
+    case "fs": return require("fs");
+    case "crypto": {
+      const crypto = require("crypto");
+      return Object.assign({}, crypto, __nativeInternalBinding("crypto_keys"), {
+        setEngine: __nativeInternalBinding("crypto").setEngine,
+        getFipsCrypto: () => crypto.getFips(),
+        getCachedAliases: () => ({}),
+        getOpenSSLSecLevelCrypto: () => 0,
+        secureHeapUsed: () => undefined,
+      });
+    }
+    case "mksnapshot": return {
+      isBuildingSnapshotBuffer: [false],
+      setSerializeCallback: () => {},
+      setDeserializeCallback: () => {},
+      setDeserializeMainFunction: () => {},
+    };
+    case "process": return process;
+    case "messaging": return { DOMException: globalThis.DOMException };
+    case "performance": return {
+      constants: { NODE_PERFORMANCE_MILESTONE_TIME_ORIGIN: 0, NODE_PERFORMANCE_MILESTONE_TIME_ORIGIN_TIMESTAMP: 1 },
+      milestones: [0, 0], now: () => require("perf_hooks").performance.now() * 1e6,
+    };
+    case "uv": {
+      const errors = [
+        [-1, "EPERM", "operation not permitted"], [-2, "ENOENT", "no such file or directory"],
+        [-3, "ESRCH", "no such process"], [-4, "EINTR", "interrupted system call"],
+        [-5, "EIO", "i/o error"], [-6, "ENXIO", "no such device or address"],
+        [-7, "E2BIG", "argument list too long"], [-8, "ENOEXEC", "exec format error"],
+        [-9, "EBADF", "bad file descriptor"], [-10, "ECHILD", "no child processes"],
+        [-11, "EAGAIN", "resource temporarily unavailable"], [-12, "ENOMEM", "not enough memory"],
+        [-13, "EACCES", "permission denied"], [-14, "EFAULT", "bad address"],
+        [-16, "EBUSY", "resource busy or locked"], [-17, "EEXIST", "file already exists"],
+        [-18, "EXDEV", "cross-device link not permitted"], [-19, "ENODEV", "no such device"],
+        [-20, "ENOTDIR", "not a directory"], [-21, "EISDIR", "illegal operation on a directory"],
+        [-22, "EINVAL", "invalid argument"], [-23, "ENFILE", "file table overflow"],
+        [-24, "EMFILE", "too many open files"], [-25, "ENOTTY", "inappropriate ioctl for device"],
+        [-27, "EFBIG", "file too large"], [-28, "ENOSPC", "no space left on device"],
+        [-29, "ESPIPE", "invalid seek"], [-30, "EROFS", "read-only file system"],
+        [-31, "EMLINK", "too many links"], [-32, "EPIPE", "broken pipe"],
+        [-33, "EDOM", "argument out of domain"], [-34, "ERANGE", "result out of range"],
+        [-36, "ENAMETOOLONG", "name too long"], [-38, "ENOSYS", "function not implemented"],
+        [-39, "ENOTEMPTY", "directory not empty"], [-40, "ELOOP", "too many symbolic links encountered"],
+        [-75, "EOVERFLOW", "value too large for defined data type"], [-95, "ENOTSUP", "operation not supported"],
+        [-98, "EADDRINUSE", "address already in use"], [-99, "EADDRNOTAVAIL", "address not available"],
+        [-100, "ENETDOWN", "network is down"], [-101, "ENETUNREACH", "network is unreachable"],
+        [-103, "ECONNABORTED", "software caused connection abort"], [-104, "ECONNRESET", "connection reset by peer"],
+        [-105, "ENOBUFS", "no buffer space available"], [-106, "EISCONN", "socket is already connected"],
+        [-107, "ENOTCONN", "socket is not connected"], [-108, "ESHUTDOWN", "cannot send after socket shutdown"],
+        [-110, "ETIMEDOUT", "connection timed out"], [-111, "ECONNREFUSED", "connection refused"],
+        [-113, "EHOSTUNREACH", "no route to host"], [-114, "EALREADY", "operation already in progress"],
+        [-115, "EINPROGRESS", "operation now in progress"], [-125, "ECANCELED", "operation canceled"],
+      ];
+      const errmap = new Map(errors.map(([errno, code, message]) => [errno, [code, message]]));
+      const binding = { UV_UNKNOWN: -4094, UV_ENOTSOCK: -88, getErrorMap: () => errmap };
+      for (const [errno, code] of errors) binding[`UV_${code}`] = errno;
+      return binding;
+    }
+    default: return {};
+  }
+};
+"#
+}
+
+/// Execute an unchanged configured Node library module in a fresh language realm.
+/// The private CJS environment supplies host services without exposing globals.
+pub(crate) fn node_library_module_in_realm(
+    context: &mut Context<'_>,
+    global: RootId,
+    relative: &str,
+    exports: RootId,
+    primordials: RootId,
+) -> Result<RootId, RootedError> {
+    let root = context.host_mut().node_library_root.clone();
+    let path = root.join("lib").join(relative);
+    let source = match std::fs::read_to_string(&path) {
+        Ok(source) => source,
+        Err(error) => crate::node_sources::source(&path, &root)
+            .map(str::to_owned)
+            .ok_or_else(|| RootedError::host(format!("{}: {error}", path.display())))?,
+    };
+    let module = context.object_rooted()?;
+    set(context, module, "exports", exports)?;
+    let require = create_require(context, &path)?;
+    let name = context.string_rooted(&path.to_string_lossy());
+    let directory = context.string_rooted(&path.parent().unwrap().to_string_lossy());
+    let prefix = format!(
+        "(function(exports, require, module, __filename, __dirname, primordials, __nativeInternalBinding, process) {{ {}",
+        node_internal_binding_source(),
+    );
+    let wrapper = format!("{prefix}{source}\n}})");
+    let line_offset = u32::try_from(prefix.bytes().filter(|byte| *byte == b'\n').count())
+        .map_err(|_| RootedError::host("realm wrapper line origin exceeds compiler positions"))?;
+    let column_offset = u32::try_from(prefix.rsplit('\n').next().unwrap_or("").encode_utf16().count())
+        .map_err(|_| RootedError::host("realm wrapper column origin exceeds compiler positions"))?;
+    let factory = context.evaluate_specialized_script_in_realm_with_origin_rooted(
+        global, &wrapper, &path.to_string_lossy(), line_offset, column_offset,
+    )?;
+    let native_binding =
+        context.host_function(crate::host::shared_vm::operation("traceInternal"))?;
+    let process = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .process_module
+        .ok_or_else(|| RootedError::host("Node process is not initialized"))?;
+    context.call_rooted(
+        factory,
+        exports,
+        &[
+            exports,
+            require,
+            module,
+            name,
+            directory,
+            primordials,
+            native_binding,
+            process,
+        ],
+    )?;
+    get(context, module, "exports")
 }

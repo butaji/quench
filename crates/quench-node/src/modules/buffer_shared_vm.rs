@@ -598,6 +598,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
             set(context, module, name, value)?;
         }
     }
+    super::buffer_latin1_shared_vm::install(context, module)?;
     Ok(module)
 }
 
