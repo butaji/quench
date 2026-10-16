@@ -1,7 +1,7 @@
 //! Shared digest authority for the OpenSSL >=3 native backend.
 //! Fetched Md owns EVP_MD throughout all MdCtx operations. No pointer is
 //! disguised as a static MessageDigest, and no algorithm-name table is used.
-use foreign_types::ForeignType;
+use foreign_types::{ForeignType, ForeignTypeRef};
 use openssl::{error::ErrorStack, hash::MessageDigest, md::Md, md_ctx::MdCtx, pkey::PKey};
 use openssl_sys::EVP_MD;
 use std::{
@@ -57,9 +57,26 @@ impl From<ErrorStack> for DigestError {
     }
 }
 pub struct Digest {
-    md: Md,
+    md: NativeDigest,
 }
+// A fetched digest owns its provider reference. OpenSSL's legacy descriptors are
+// genuinely process-static objects; never cast a fetched pointer to that lifetime.
+enum NativeDigest { Fetched(Md), Legacy(MessageDigest) }
 impl Digest {
+    /// ncrypto::Digest::FromName accepts known legacy descriptors even when
+    /// their provider is unavailable; the actual operation then owns failure.
+    pub(crate) fn from_sdk_name(name: &str) -> Result<Self, DigestError> {
+        if let Some(digest) = Self::fetch_preserving_errors(name) { return Ok(digest); }
+        let name = name.split('\0').next().unwrap_or("");
+        let legacy = if matches!(name, "dss1" | "DSS1") { Some(MessageDigest::sha1()) }
+                     else { MessageDigest::from_name(name) };
+        match legacy {
+            Some(md) if md.as_ptr() != unsafe { openssl_sys::EVP_md_null() } =>
+                Ok(Self { md: NativeDigest::Legacy(md) }),
+            _ => Err(DigestError::Unsupported),
+        }
+    }
+
     pub(crate) fn fetch_preserving_errors(name: &str) -> Option<Self> {
         struct Scope(bool);
         unsafe extern "C" {
@@ -112,7 +129,7 @@ impl Digest {
         if unsafe { EVP_MD_is_a(md.as_ptr(), c"NULL".as_ptr()) } == 1 {
             return None;
         }
-        Some(Self { md })
+        Some(Self { md: NativeDigest::Fetched(md) })
     }
     pub(crate) fn aliases(&self) -> Vec<String> {
         unsafe extern "C" fn collect(name: *const c_char, data: *mut c_void) {
@@ -126,27 +143,32 @@ impl Digest {
         let mut names = Vec::new();
         unsafe {
             EVP_MD_names_do_all(
-                self.md.as_ptr(),
+                self.native_md().as_ptr(),
                 Some(collect),
                 &mut names as *mut _ as *mut c_void,
             )
         };
         names
     }
-    pub(crate) fn native_md(&self) -> &openssl::md::MdRef { &self.md }
+    pub(crate) fn native_md(&self) -> &openssl::md::MdRef {
+        match &self.md {
+            NativeDigest::Fetched(md) => md,
+            NativeDigest::Legacy(md) => unsafe { openssl::md::MdRef::from_ptr(md.as_ptr() as *mut EVP_MD) },
+        }
+    }
     pub(crate) fn identity(&self) -> usize {
-        self.md.as_ptr() as usize
+        self.native_md().as_ptr() as usize
     }
 
     pub fn fetch(name: &str) -> Result<Self, DigestError> {
         Self::fetch_preserving_errors(name).ok_or(DigestError::Unsupported)
     }
     pub fn size(&self) -> usize {
-        let size = self.md.size();
+        let size = self.native_md().size();
         // Node26 DEP0198 compatibility: OpenSSL3.4+ removed SHAKE defaults.
         // Native digest identity determines this SDK policy, including aliases.
         if size == 0 && self.is_xof() {
-            match self.md.type_().short_name().ok() {
+            match self.native_md().type_().short_name().ok() {
                 Some("SHAKE128") => 16,
                 Some("SHAKE256") => 32,
                 _ => size,
@@ -156,7 +178,7 @@ impl Digest {
         }
     }
     pub fn is_xof(&self) -> bool {
-        unsafe { EVP_MD_get_flags(self.md.as_ptr()) & EVP_MD_FLAG_XOF != 0 }
+        unsafe { EVP_MD_get_flags(self.native_md().as_ptr()) & EVP_MD_FLAG_XOF != 0 }
     }
     pub fn hash(&self, input: &[u8], output_length: Option<usize>) -> Result<Vec<u8>, DigestError> {
         let expected = self.size();
@@ -173,7 +195,7 @@ impl Digest {
             .map_err(|_| DigestError::Allocation)?;
         output.resize(size, 0);
         let mut ctx = MdCtx::new()?;
-        ctx.digest_init(&self.md)?;
+        ctx.digest_init(self.native_md())?;
         ctx.digest_update(input)?;
         if self.is_xof() {
             ctx.digest_final_xof(&mut output)?;
@@ -191,7 +213,7 @@ impl Digest {
         let key = if key.is_empty() { &[0u8][..] } else { key };
         let pkey = PKey::hmac(key)?;
         let mut ctx = MdCtx::new()?;
-        ctx.digest_sign_init(Some(&self.md), &pkey)?;
+        ctx.digest_sign_init(Some(self.native_md()), &pkey)?;
         ctx.digest_sign_update(input)?;
         let mut output = Vec::new();
         ctx.digest_sign_final_to_vec(&mut output)?;

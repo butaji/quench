@@ -10146,3 +10146,20 @@ fn crypto_original_sdk_hash_hmac_state_copy_and_errors() {
         &["--no-warnings", "--expose-internals"],
     );
 }
+
+
+#[test]
+fn crypto_original_sdk_hkdf_uses_native_provider_jobs_and_async_context() {
+    compare_node_file_source_with_args(
+        include_str!("../node-tests/test-crypto-native-sdk-hkdf.js"),
+        &["--no-warnings", "--expose-internals"],
+    );
+}
+
+#[test]
+fn abort_timeouts_use_original_sdk_weak_owners_and_listener_persistence() {
+    compare_node_file_source_with_args(
+        include_str!("../node-tests/test-abort-timeout-native-weak-lifetime.js"),
+        &["--no-warnings", "--expose-gc"],
+    );
+}
