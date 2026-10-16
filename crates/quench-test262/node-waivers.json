@@ -63,7 +63,7 @@
         },
         {
           "path": "built-ins/Error/prototype/stack/instance-not-enumerable.js",
-          "failure": "quench runtime: Test262Error: Error: getOwnPropertyNames does not include \"stack\" Expected SameValue(«1», «-1») to be true"
+          "failure": "quench runtime: Test262Error: Error: getOwnPropertyNames does not include \"stack\" Expected SameValue(«0», «-1») to be true"
         },
         {
           "path": "built-ins/Error/prototype/stack/prop-desc.js",
