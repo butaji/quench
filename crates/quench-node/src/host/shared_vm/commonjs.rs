@@ -1692,12 +1692,10 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             set(context, module, "ChildProcess", constructor)?;
             Ok(module)
         }
-        // Fastify imports both alternatives at module initialization. Its
-        // selected HTTP/1 path does not access the HTTPS transport.
-        BuiltinModule::Https => context.evaluate_script_rooted(
-            "({ request: function request() { throw new Error('HTTPS transport is unavailable'); }, get: function get() { throw new Error('HTTPS transport is unavailable'); } })",
-            "node:https.js",
-        ),
+        BuiltinModule::Https => {
+            let http = cached_builtin(context, BuiltinModule::Http)?;
+            crate::modules::http_shared_vm::https_module(context, http)
+        }
         BuiltinModule::TraceEvents => crate::modules::trace_shared_vm::module(context),
         BuiltinModule::Http2Binding => {
             let binding = context.object_rooted()?;
