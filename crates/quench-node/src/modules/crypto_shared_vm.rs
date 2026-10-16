@@ -139,7 +139,7 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
       state.lifecycle = "finalized";
       const input = state.chunks.flat();
       state.chunks = [];
-      const bytes = Buffer.from(hashDigest(state.name, input, state.outputLength ?? 0));
+      const bytes = Buffer.from(hashDigest(state.name, input, state.outputLength));
       return outputEncoding === undefined
         ? bytes
         : bytes.toString(outputEncoding);
@@ -1866,17 +1866,28 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
 );
 
 /// Node exposes crypto before imports, but initializes its implementation lazily.
-pub(crate) fn install_global(
-    context: &mut NativeContext<'_, NodeHost>,
-) -> Result<(), RootedError> {
+pub(crate) fn install_global(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
     let global = context.global_root()?;
 
     #[cfg(quench_openssl_provider)]
     {
-        let exceptions=context.host_function(crate::host::shared_vm::operation("webDomExceptionInitialize"))?;
-        context.define_lazy_data_properties_rooted(global,&["DOMException","QuotaExceededError"],false,exceptions)?;
-        let initialize=context.host_function(crate::host::shared_vm::operation("cryptoWebClasses"))?;
-        context.define_lazy_data_properties_rooted(global,&["Crypto","SubtleCrypto","CryptoKey"],false,initialize)?;
+        let exceptions = context.host_function(crate::host::shared_vm::operation(
+            "webDomExceptionInitialize",
+        ))?;
+        context.define_lazy_data_properties_rooted(
+            global,
+            &["DOMException", "QuotaExceededError"],
+            false,
+            exceptions,
+        )?;
+        let initialize =
+            context.host_function(crate::host::shared_vm::operation("cryptoWebClasses"))?;
+        context.define_lazy_data_properties_rooted(
+            global,
+            &["Crypto", "SubtleCrypto", "CryptoKey"],
+            false,
+            initialize,
+        )?;
     }
     let getter = context.host_function(crate::host::shared_vm::operation("get crypto"))?;
     let descriptor = context.null_object_rooted()?;
@@ -1902,15 +1913,20 @@ pub(crate) fn module(
     context: &mut NativeContext<'_, NodeHost>,
     transform: RootId,
 ) -> Result<RootId, RootedError> {
-
     #[cfg(quench_openssl_provider)]
     let (webcrypto, random_values) = {
-        let getter=context.host_function(crate::host::shared_vm::operation("cryptoWebNamespace"))?;
-        let random=crate::host::shared_vm::commonjs::node_library_export(context,"crypto.js","internal/crypto/random.js","getRandomValues")?;
-        (getter,random)
+        let getter =
+            context.host_function(crate::host::shared_vm::operation("cryptoWebNamespace"))?;
+        let random = crate::host::shared_vm::commonjs::node_library_export(
+            context,
+            "crypto.js",
+            "internal/crypto/random.js",
+            "getRandomValues",
+        )?;
+        (getter, random)
     };
     #[cfg(not(quench_openssl_provider))]
-    let (webcrypto,random_values)=(context.undefined(),context.undefined());
+    let (webcrypto, random_values) = (context.undefined(), context.undefined());
     let factory = context.evaluate_script_rooted(CRYPTO_FACTORY, "node:crypto/shared.js")?;
     let hash = context.host_function(crate::host::shared_vm::operation("cryptoHash"))?;
     let hmac = context.host_function(crate::host::shared_vm::operation("cryptoHmac"))?;
@@ -1927,9 +1943,11 @@ pub(crate) fn module(
     ))?;
     let rsa_crypt = context.host_function(crate::host::shared_vm::operation("cryptoRsaCrypt"))?;
     let set_engine = context.host_function(crate::host::shared_vm::operation("cryptoSetEngine"))?;
-    let capture_brands = context.host_function(crate::host::shared_vm::operation("cryptoCaptureKeyBrands"))?;
+    let capture_brands =
+        context.host_function(crate::host::shared_vm::operation("cryptoCaptureKeyBrands"))?;
     let ecdh = context.host_function(crate::host::shared_vm::operation("cryptoEcdh"))?;
-    let handle_symbol = context.host_function(crate::host::shared_vm::operation("cryptoHandleSymbol"))?;
+    let handle_symbol =
+        context.host_function(crate::host::shared_vm::operation("cryptoHandleSymbol"))?;
     let global = context.global_root()?;
     let buffer = get(context, global, "Buffer")?;
     let undefined = context.undefined();
@@ -1959,9 +1977,9 @@ pub(crate) fn module(
     )?;
     #[cfg(quench_openssl_provider)]
     {
-        let binding=super::tls_shared_vm::facade::binding(context)?;
-        let get_fips=get(context,binding,"getFipsCrypto")?;
-        set(context,module,"getFips",get_fips)?;
+        let binding = super::tls_shared_vm::facade::binding(context)?;
+        let get_fips = get(context, binding, "getFipsCrypto")?;
+        set(context, module, "getFips", get_fips)?;
     }
     Ok(module)
 }
@@ -2446,7 +2464,7 @@ pub(crate) fn ecdh(
         _ => {
             return Err(RootedError::host(format!(
                 "Unknown ECDH operation: {action}"
-            )))
+            )));
         }
     };
     let values = output
@@ -2712,6 +2730,7 @@ pub(crate) fn cipher_process(
     Ok(result)
 }
 
+#[cfg(not(quench_openssl_provider))]
 pub(crate) fn hash(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
@@ -2769,6 +2788,7 @@ pub(crate) fn hash(
     context.array_rooted(&values)
 }
 
+#[cfg(not(quench_openssl_provider))]
 pub(crate) fn hmac(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
@@ -3024,4 +3044,79 @@ pub(crate) fn handle_symbol(
     )?;
     let symbol = state.borrow().crypto_handle_symbol;
     symbol.ok_or_else(|| RootedError::host("Node crypto handle symbol capture missing"))
+}
+
+#[cfg(quench_openssl_provider)]
+pub(crate) fn hash(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    use super::crypto_digest_error::{self as errors, Operation};
+    let algorithm = args
+        .first()
+        .copied()
+        .and_then(|root| context.string_text(root).ok().flatten())
+        .ok_or_else(|| RootedError::host("crypto hash algorithm is not a string"))?;
+    let input = args
+        .get(1)
+        .copied()
+        .ok_or_else(|| RootedError::host("crypto hash input is missing"))?;
+    let bytes = byte_array(context, input)?;
+    let length = args
+        .get(2)
+        .and_then(|root| context.rooted_value(*root))
+        .filter(|value| !value.is_undefined())
+        .map(|value| {
+            value
+                .as_number()
+                .filter(|n| n.is_finite() && *n >= 0.0 && n.fract() == 0.0)
+                .map(|n| n as usize)
+                .ok_or_else(|| RootedError::host("Invalid digest output length"))
+        })
+        .transpose()?;
+    let digest = super::crypto_digest::Digest::fetch(&algorithm)
+        .map_err(|error| errors::throw(context, Operation::Hash, error))?;
+    let output = digest
+        .hash(&bytes, length)
+        .map_err(|error| errors::throw(context, Operation::Hash, error))?;
+    let roots = output
+        .into_iter()
+        .map(|byte| context.number(f64::from(byte)))
+        .collect::<Vec<_>>();
+    context.array_rooted(&roots)
+}
+#[cfg(quench_openssl_provider)]
+pub(crate) fn hmac(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    use super::crypto_digest_error::{self as errors, Operation};
+    let algorithm = args
+        .first()
+        .copied()
+        .and_then(|root| context.string_text(root).ok().flatten())
+        .ok_or_else(|| RootedError::host("crypto HMAC algorithm is not a string"))?;
+    let key = args
+        .get(1)
+        .copied()
+        .ok_or_else(|| RootedError::host("crypto HMAC key is missing"))?;
+    let input = args
+        .get(2)
+        .copied()
+        .ok_or_else(|| RootedError::host("crypto HMAC input is missing"))?;
+    let key = byte_array(context, key)?;
+    let input = byte_array(context, input)?;
+    let operation = Operation::Hmac(&algorithm);
+    let digest = super::crypto_digest::Digest::fetch(&algorithm)
+        .map_err(|error| errors::throw(context, operation, error))?;
+    let output = digest
+        .hmac(&key, &input)
+        .map_err(|error| errors::throw(context, operation, error))?;
+    let roots = output
+        .into_iter()
+        .map(|byte| context.number(f64::from(byte)))
+        .collect::<Vec<_>>();
+    context.array_rooted(&roots)
 }

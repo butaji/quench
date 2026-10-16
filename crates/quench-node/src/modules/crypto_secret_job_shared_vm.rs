@@ -12,16 +12,38 @@ const CACHE: &str = "\0crypto:secret-job";
 pub(crate) struct State {
     running: Vec<Running>,
     resources: Vec<Resource>,
+    #[cfg(quench_openssl_provider)]
+    hashes: Vec<ConfiguredHash>,
+    #[cfg(quench_openssl_provider)]
+    digests: super::crypto_digest_cache::Registry,
 }
 struct Resource {
     identity: HostWeakRoot,
     id: u64,
 }
+#[cfg(quench_openssl_provider)]
+struct ConfiguredHash {
+    identity: HostWeakRoot,
+    request: HashRequest,
+}
+#[cfg(quench_openssl_provider)]
+struct HashRequest {
+    digest: std::sync::Arc<super::crypto_digest::Digest>,
+    input: Option<Vec<u8>>,
+    output_length: Option<usize>,
+}
+enum Output {
+    Key(Material),
+    #[cfg(quench_openssl_provider)]
+    Digest(Vec<u8>),
+}
 enum Failure {
     Crypto(openssl::error::ErrorStack),
     WorkerDisconnected,
+    #[cfg(quench_openssl_provider)]
+    Digest(super::crypto_digest::DigestError),
 }
-type Outcome = Result<Material, Failure>;
+type Outcome = Result<Output, Failure>;
 enum Delivery {
     Pending(Receiver<Outcome>),
     Ready(Outcome),
@@ -53,7 +75,7 @@ fn generate(bits: u32, mode: u32) -> Outcome {
             *last &= u8::MAX << (BITS_PER_BYTE - bits % BITS_PER_BYTE);
         }
     }
-    Ok(material)
+    Ok(Output::Key(material))
 }
 fn get(c: &mut Context<'_>, o: RootId, name: &str) -> Result<RootId, RootedError> {
     let name = c.string_rooted(name);
@@ -111,11 +133,9 @@ pub(crate) fn install(c: &mut Context<'_>, binding: RootId) -> Result<(), Rooted
         .borrow_mut()
         .builtin_cache
         .insert(CACHE.into(), root);
-    let ctor = c.host_constructor(crate::host::shared_vm::operation("cryptoSecretJobNew"))?;
-    let proto = get(c, ctor, "prototype")?;
-    let run = c.host_function(crate::host::shared_vm::operation("cryptoSecretJobRun"))?;
-    put(c, proto, "run", run)?;
-    put(c, binding, "SecretKeyGenJob", ctor)?;
+    install_job_class(c, binding, "SecretKeyGenJob", "cryptoSecretJobNew")?;
+    #[cfg(quench_openssl_provider)]
+    install_job_class(c, binding, "HashJob", "cryptoHashJobNew")?;
     for (name, value) in [
         ("kCryptoJobAsync", ASYNC),
         ("kCryptoJobSync", SYNC),
@@ -125,6 +145,29 @@ pub(crate) fn install(c: &mut Context<'_>, binding: RootId) -> Result<(), Rooted
         put(c, binding, name, value)?;
     }
     Ok(())
+}
+fn install_job_class(
+    c: &mut Context<'_>,
+    binding: RootId,
+    name: &str,
+    operation: &str,
+) -> Result<(), RootedError> {
+    let constructor = c.host_constructor(crate::host::shared_vm::operation(operation))?;
+    let key = c.string_rooted("name");
+    let name_value = c.string_rooted(name);
+    c.define_data_property_rooted(constructor, key, name_value, false, false, true)?;
+    let key = c.string_rooted("length");
+    let zero = c.number(0.0);
+    c.define_data_property_rooted(constructor, key, zero, false, false, true)?;
+    let prototype = get(c, constructor, "prototype")?;
+    // V8 gives each job class its own wrapper; the shared native operation is
+    // authoritative while method identity remains constructor-specific.
+    let run = c.host_function_named(
+        crate::host::shared_vm::operation("cryptoSecretJobRun"),
+        "run",
+    )?;
+    put(c, prototype, "run", run)?;
+    put(c, binding, name, constructor)
 }
 fn record(c: &mut Context<'_>, job: RootId) -> Result<RootId, RootedError> {
     let api = api(c)?;
@@ -147,16 +190,33 @@ pub(crate) fn create(
         return Err(fail(c, "Invalid crypto job mode"));
     }
     uint(c, arg(1))?;
+    let fields = [
+        ("mode", arg(0)),
+        ("bits", arg(1)),
+        ("algorithm", arg(2)),
+        ("usages", arg(3)),
+        ("extractable", arg(4)),
+    ];
+    register(
+        c,
+        job,
+        &fields,
+        "KEYGENREQUEST",
+        #[cfg(quench_openssl_provider)]
+        None,
+    )
+}
+fn register(
+    c: &mut Context<'_>,
+    job: RootId,
+    fields: &[(&str, RootId)],
+    resource_type: &str,
+    #[cfg(quench_openssl_provider)] hash: Option<HashRequest>,
+) -> Result<RootId, RootedError> {
     let api = api(c)?;
     let record = c.null_object_rooted()?;
-    for (name, i) in [
-        ("mode", 0),
-        ("bits", 1),
-        ("algorithm", 2),
-        ("usages", 3),
-        ("extractable", 4),
-    ] {
-        put(c, record, name, arg(i))?;
+    for (name, value) in fields {
+        put(c, record, name, *value)?;
     }
     let no = c.boolean(false);
     put(c, record, "started", no)?;
@@ -173,10 +233,152 @@ pub(crate) fn create(
         .crypto_secret_jobs
         .resources
         .push(Resource { identity, id });
-    // Canonical resource creation snapshots ALS stores before guest init hooks.
-    // No RefCell borrow is held across the reentrant init callback.
-    super::async_hooks_shared_vm::emit_init(c, job, "KEYGENREQUEST", id)?;
+    #[cfg(quench_openssl_provider)]
+    if let Some(request) = hash {
+        let identity = c.host_weak_root(job)?;
+        shared
+            .borrow_mut()
+            .crypto_secret_jobs
+            .hashes
+            .push(ConfiguredHash { identity, request });
+    }
+    super::async_hooks_shared_vm::emit_init(c, job, resource_type, id)?;
     Ok(job)
+}
+#[cfg(quench_openssl_provider)]
+fn invalid_digest(c: &mut Context<'_>, message: &str) -> RootedError {
+    match c.error_rooted(message) {
+        Ok(error) => {
+            let result = (|| {
+                let key = c.string_rooted("code");
+                let code = c.string_rooted("ERR_CRYPTO_INVALID_DIGEST");
+                c.define_data_property_rooted(error, key, code, true, true, true)?;
+                Ok::<_, RootedError>(c.throw(error))
+            })();
+            result.unwrap_or_else(|error| error)
+        }
+        Err(error) => error,
+    }
+}
+#[cfg(quench_openssl_provider)]
+pub(crate) fn create_hash(
+    c: &mut Context<'_>,
+    job: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let missing = c.undefined();
+    let arg = |i: usize| args.get(i).copied().unwrap_or(missing);
+    let mode = uint(c, arg(0))?;
+    if mode > WEBCRYPTO {
+        return Err(fail(c, "Invalid crypto job mode"));
+    }
+    let Some(name) = c.string_text(arg(1))? else {
+        return Err(fail(c, "Hash algorithm must be a string"));
+    };
+    let shared = c.host_mut().shared_state();
+    let fetched = shared
+        .borrow_mut()
+        .crypto_secret_jobs
+        .digests
+        .resolve(&name, super::crypto_provider_shared_vm::fips_generation);
+    let digest = fetched.map_err(|_| invalid_digest(c, &format!("Invalid digest: {name}")))?;
+    let Some(bytes) = c.bytes_prefix_rooted(arg(2), usize::MAX) else {
+        return Err(fail(c, "Hash input must be a BufferSource"));
+    };
+    if bytes.len() > i32::MAX as usize {
+        let error = c.range_error_rooted("data is too big")?;
+        return Err(c.throw(error));
+    }
+    let length = c
+        .rooted_value(arg(3))
+        .and_then(|value| value.as_number())
+        .filter(|n| *n >= 0.0 && *n <= u32::MAX as f64 && n.fract() == 0.0)
+        .map(|n| (n as u32 / u8::BITS) as usize);
+    if length.is_some_and(|length| length != digest.size() && !digest.is_xof()) {
+        return Err(invalid_digest(c, "Digest method not supported"));
+    }
+    if args.get(4..).is_some_and(|options| {
+        options.iter().any(|value| {
+            !c.rooted_value(*value)
+                .is_some_and(|value| value.is_undefined())
+        })
+    }) {
+        return Err(invalid_digest(
+            c,
+            "Customized cSHAKE digest parameters are not supported by this native job",
+        ));
+    }
+    // Async/WebCrypto native jobs own the constructor-time snapshot. Sync jobs
+    // retain their original BufferSource and read it when run synchronously.
+    let request = HashRequest {
+        digest,
+        input: (mode != SYNC).then_some(bytes),
+        output_length: length,
+    };
+    let mut fields = vec![("mode", arg(0))];
+    if mode == SYNC {
+        fields.push(("data", arg(2)));
+    }
+    register(c, job, &fields, "HASHREQUEST", Some(request))
+}
+#[cfg(quench_openssl_provider)]
+fn take_hash(c: &mut Context<'_>, job: RootId) -> Result<Option<HashRequest>, RootedError> {
+    let shared = c.host_mut().shared_state();
+    let identities = shared
+        .borrow()
+        .crypto_secret_jobs
+        .hashes
+        .iter()
+        .map(|job| job.identity)
+        .collect::<Vec<_>>();
+    for (i, identity) in identities.into_iter().enumerate() {
+        if let Some(value) = c.resolve_host_weak_root(identity) {
+            if c.strict_equal_rooted(value, job)? {
+                let configured = shared.borrow_mut().crypto_secret_jobs.hashes.remove(i);
+                c.release_host_weak_root(configured.identity);
+                return Ok(Some(configured.request));
+            }
+        }
+    }
+    Ok(None)
+}
+#[cfg(quench_openssl_provider)]
+pub(crate) fn digest_inventory(c: &mut Context<'_>, aliases: bool) -> Result<RootId, RootedError> {
+    let shared = c.host_mut().shared_state();
+    let synchronized = shared
+        .borrow_mut()
+        .crypto_secret_jobs
+        .digests
+        .synchronize(super::crypto_provider_shared_vm::fips_generation);
+    synchronized.map_err(|error| native_error(c, Failure::Digest(error)))?;
+    if aliases {
+        let values = shared
+            .borrow()
+            .crypto_secret_jobs
+            .digests
+            .aliases()
+            .map(|(name, id)| (name.to_owned(), id))
+            .collect::<Vec<_>>();
+        let result = c.null_object_rooted()?;
+        for (name, id) in values {
+            let value = c.number(id as f64);
+            put(c, result, &name, value)?;
+        }
+        Ok(result)
+    } else {
+        let names = shared
+            .borrow()
+            .crypto_secret_jobs
+            .digests
+            .names()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        let values = names
+            .into_iter()
+            .map(|name| c.string_rooted(&name))
+            .collect::<Vec<_>>();
+        c.array_rooted(&values)
+    }
 }
 pub(crate) fn executor(
     c: &mut Context<'_>,
@@ -207,9 +409,40 @@ fn encode(
         },
     )
 }
+fn encode_output(
+    c: &mut Context<'_>,
+    record: RootId,
+    output: Output,
+    mode: u32,
+) -> Result<RootId, RootedError> {
+    match output {
+        Output::Key(material) => encode(c, record, &material.0, mode),
+        #[cfg(quench_openssl_provider)]
+        Output::Digest(bytes) => c.with_startup_intrinsics(|c| {
+            let global = c.global_root()?;
+            let ctor = get(c, global, "Uint8Array")?;
+            let proto = get(c, ctor, "prototype")?;
+            let proto = c.prototype_rooted(proto)?;
+            let key = c.string_rooted("buffer");
+            let descriptor = c.own_property_descriptor_rooted(proto, key)?;
+            let getter = get(c, descriptor, "get")?;
+            let bytes = c.uint8_array_rooted(&bytes)?;
+            c.call_rooted(getter, bytes, &[])
+        }),
+    }
+}
 fn native_error(c: &mut Context<'_>, failure: Failure) -> RootedError {
     match failure {
         Failure::Crypto(stack) => super::crypto_error_shared_vm::decorated(c, stack),
+        #[cfg(quench_openssl_provider)]
+        Failure::Digest(super::crypto_digest::DigestError::OpenSsl(stack)) => {
+            super::crypto_error_shared_vm::decorated(c, stack)
+        }
+        #[cfg(quench_openssl_provider)]
+        Failure::Digest(error) => match c.error_rooted(&error.to_string()) {
+            Ok(error) => c.throw(error),
+            Err(error) => error,
+        },
         Failure::WorkerDisconnected => match c.error_rooted("Secret key worker disconnected") {
             Ok(error) => c.throw(error),
             Err(error) => error,
@@ -308,13 +541,40 @@ pub(crate) fn run(c: &mut Context<'_>, job: RootId, _: &[RootId]) -> Result<Root
     }
     let mode = get(c, record, "mode")?;
     let mode = uint(c, mode)?;
-    let bits = get(c, record, "bits")?;
-    let bits = uint(c, bits)?;
+    #[cfg(quench_openssl_provider)]
+    let hash = take_hash(c, job)?;
+    #[cfg(quench_openssl_provider)]
+    let work: Box<dyn FnOnce() -> Outcome + Send> = if let Some(mut hash) = hash {
+        let input = match hash.input.take() {
+            Some(input) => input,
+            None => {
+                let value = get(c, record, "data")?;
+                c.bytes_prefix_rooted(value, usize::MAX)
+                    .ok_or_else(|| fail(c, "Hash input is detached"))?
+            }
+        };
+        Box::new(move || {
+            hash.digest
+                .hash(&input, hash.output_length)
+                .map(Output::Digest)
+                .map_err(Failure::Digest)
+        })
+    } else {
+        let bits = get(c, record, "bits")?;
+        let bits = uint(c, bits)?;
+        Box::new(move || generate(bits, mode))
+    };
+    #[cfg(not(quench_openssl_provider))]
+    let work: Box<dyn FnOnce() -> Outcome + Send> = {
+        let bits = get(c, record, "bits")?;
+        let bits = uint(c, bits)?;
+        Box::new(move || generate(bits, mode))
+    };
     let yes = c.boolean(true);
     put(c, record, "started", yes)?;
     if mode == SYNC {
-        let result = generate(bits, mode).map_err(|stack| native_error(c, stack));
-        let result = result.and_then(|material| encode(c, record, &material.0, mode));
+        let result = work().map_err(|failure| native_error(c, failure));
+        let result = result.and_then(|output| encode_output(c, record, output, mode));
         let missing = c.undefined();
         return match result {
             Ok(key) => c.array_rooted(&[missing, key]),
@@ -342,7 +602,7 @@ pub(crate) fn run(c: &mut Context<'_>, job: RootId, _: &[RootId]) -> Result<Root
     let (sender, receiver) = mpsc::channel();
     let shared = c.host_mut().shared_state();
     let worker = shared.borrow_mut().native_tasks.submit(move || {
-        let result = generate(bits, mode);
+        let result = work();
         let _ = sender.send(result);
     });
     if let Err(error) = worker {
@@ -454,7 +714,7 @@ pub(crate) fn complete(
     let mode = get(c, record, "mode")?;
     let mode = uint(c, mode)?;
     let result = match outcome {
-        Ok(material) => encode(c, record, &material.0, mode),
+        Ok(output) => encode_output(c, record, output, mode),
         Err(failure) => Err(native_error(c, failure)),
     };
     let undefined = c.undefined();
@@ -502,6 +762,21 @@ pub(crate) fn complete(
 }
 pub(crate) fn prune(runtime: &mut Runtime<NodeHost>) {
     let shared = runtime.host_mut().shared_state();
+    #[cfg(quench_openssl_provider)]
+    {
+        let dead = shared
+            .borrow()
+            .crypto_secret_jobs
+            .hashes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, job)| (!runtime.host_weak_root_is_live(job.identity)).then_some(i))
+            .collect::<Vec<_>>();
+        for index in dead.into_iter().rev() {
+            let job = shared.borrow_mut().crypto_secret_jobs.hashes.remove(index);
+            runtime.release_host_weak_root(job.identity);
+        }
+    }
     let dead = shared
         .borrow()
         .crypto_secret_jobs
@@ -534,6 +809,14 @@ pub(crate) fn prune(runtime: &mut Runtime<NodeHost>) {
 }
 pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
     let shared = runtime.host_mut().shared_state();
+    #[cfg(quench_openssl_provider)]
+    {
+        let hashes = std::mem::take(&mut shared.borrow_mut().crypto_secret_jobs.hashes);
+        for job in hashes {
+            runtime.release_host_weak_root(job.identity);
+        }
+        shared.borrow_mut().crypto_secret_jobs.digests = Default::default();
+    }
     let entries = std::mem::take(&mut shared.borrow_mut().crypto_secret_jobs.running);
     for entry in entries {
         runtime.release_host_weak_root(entry.identity);

@@ -19,6 +19,9 @@ pub(crate) mod write_stream;
 #[path = "fs_shared_vm/write_public.rs"]
 pub(crate) mod write_public;
 
+#[path = "fs_shared_vm/metadata_public.rs"]
+pub(crate) mod metadata_public;
+
 const PROMISES_FACTORY: &str = quench_js_check::checked_js!(
     r#"(readFile, stat, lstat, readdir, readlink, realpath, openSync, closeSync, readSync, writeSync, fstatSync, fchmodSync, fsyncSync, fdatasyncSync, writeFileSync, appendFileSync, readvSync, writevSync, createReadStream, normalizeRead, apply) => ({
   readFile: (...args) => Promise.resolve().then(() => {
@@ -2093,6 +2096,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         context.evaluate_script_rooted(STAT_SYNC_API, "node:fs/shared-stat-sync.js")?;
     let undefined = context.undefined();
     let stat_sync = context.call_rooted(stat_factory, undefined, &[stat_host])?;
+    let stat_sync = metadata_public::wrap(context, stat_sync, "statSync")?;
     set(context, module, "statSync", stat_sync)?;
     let statfs_host = context.host_function(crate::host::shared_vm::operation("fsStatfsSync"))?;
     let statfs_factory =
@@ -2131,6 +2135,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let chmod_sync = get(context, exists_api, "chmodSync")?;
     let fchmod = get(context, exists_api, "fchmod")?;
     let fchmod_sync = get(context, exists_api, "fchmodSync")?;
+    let fchmod_sync = metadata_public::wrap(context, fchmod_sync, "fchmodSync")?;
     set(context, module, "exists", exists)?;
     set(context, module, "existsSync", exists_sync)?;
     set(context, module, "access", access)?;
@@ -2144,6 +2149,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         context.evaluate_script_rooted(STAT_SYNC_API, "node:fs/shared-lstat-sync.js")?;
     let undefined = context.undefined();
     let lstat_sync = context.call_rooted(lstat_factory, undefined, &[lstat_host])?;
+    let lstat_sync = metadata_public::wrap(context, lstat_sync, "lstatSync")?;
     set(context, module, "lstatSync", lstat_sync)?;
     let lstat_factory =
         context.evaluate_script_rooted(ASYNC_LSTAT_API, "node:fs/shared-async-lstat.js")?;
@@ -2203,6 +2209,11 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let rm = context.call_rooted(factory, undefined, &[rm])?;
     set(context, module, "rm", rm)?;
     sync::install(context, module)?;
+    for name in ["fstatSync", "closeSync"] {
+        let original = get(context, module, name)?;
+        let function = metadata_public::wrap(context, original, name)?;
+        set(context, module, name, function)?;
+    }
     // SDK policy runs before data/path conversion. Replace the legacy public
     // byte shim before callbacks, promises and cp capture these functions.
     for (name, operation) in [("writeFileSync", "fsWriteFilePublic"), ("appendFileSync", "fsAppendFilePublic")] {
