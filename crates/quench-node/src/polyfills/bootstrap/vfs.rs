@@ -1059,7 +1059,7 @@ class __QuenchVirtualFileSystem {
       globalThis.__nodeFdPaths[fd] = this.__realPath(path);
       globalThis.__quenchVfsFdHandles ||= new Map();
       globalThis.__quenchVfsFdHandles.set(fd, {
-        entry: this.__makeHandle(path, flags, fd)
+        entry: globalThis.__quenchVfsBindPosition(this.__fdPositions, fd, this.__makeHandle(path, flags, fd))
       });
       return fd;
     }
@@ -1083,12 +1083,10 @@ class __QuenchVirtualFileSystem {
     ) {
       this.writeFileSync(key, "");
     }
-    const fd = __quenchVfsNextFd++;
+    const entry = this.__makeHandle(key, flags);
+    const fd = globalThis.__quenchVfsOpenDescriptor(entry);
+    globalThis.__quenchVfsBindPosition(this.__fdPositions, fd, entry);
     this.__fds.set(fd, key);
-    globalThis.__quenchVfsFdHandles ||= new Map();
-    globalThis.__quenchVfsFdHandles.set(fd, {
-      entry: this.__makeHandle(key, flags)
-    });
     this.__fdPositions.set(
       fd,
       String(flags).includes("a") ? this.readFileSync(key).length : 0
@@ -1198,12 +1196,14 @@ class __QuenchVirtualFileSystem {
     if (this.__realFds.delete(fd)) {
       this.__fds.delete(fd);
       if (globalThis.__nodeFdPaths) delete globalThis.__nodeFdPaths[fd];
+      globalThis.__quenchVfsFdHandles?.delete(fd);
+      this.__fdPositions.delete(fd);
       return __quenchVfsNative.close(fd);
     }
     if (!this.__fds.delete(fd)) throw __quenchVfsError("EBADF", "close", fd);
     this.__closedFds.add(fd);
+    globalThis.__quenchVfsCloseDescriptor(fd);
     this.__fdPositions.delete(fd);
-    globalThis.__quenchVfsFdHandles?.delete(fd);
   }
   watch(path, options, listener) {
     if (typeof options === "function") {
@@ -1382,154 +1382,10 @@ class __QuenchVirtualFileSystem {
     }
   }
   createReadStream(path, options = {}) {
-    if (options.start !== undefined && Number(options.start) < 0) {
-      throw Object.assign(new RangeError("start out of range"), { code: "ERR_OUT_OF_RANGE" });
-    }
-    if (options.end !== undefined && Number(options.end) < 0) {
-      throw Object.assign(new RangeError("end out of range"), { code: "ERR_OUT_OF_RANGE" });
-    }
-    if (
-      options.start !== undefined &&
-      options.end !== undefined &&
-      Number(options.start) > Number(options.end)
-    ) {
-      throw Object.assign(new RangeError("start out of range"), { code: "ERR_OUT_OF_RANGE" });
-    }
-    const stream = new globalThis.__nodeStream.Readable({
-      highWaterMark: options.highWaterMark,
-      read() {}
-    });
-    stream.path = path;
-    stream.fd = typeof options.fd === "number" ? options.fd : null;
-    stream.pending = true;
-    stream.bytesRead = 0;
-    stream.close = (callback) => {
-      if (stream.fd !== null) {
-        try {
-          this.closeSync(stream.fd);
-        } catch (_) {}
-        stream.fd = null;
-      }
-      if (typeof callback === "function") queueMicrotask(callback);
-      return stream;
-    };
-    setTimeout(() => {
-      try {
-        const fd = stream.fd === null ? this.openSync(path, "r") : stream.fd;
-        stream.fd = fd;
-        stream.pending = false;
-        stream.emit("open", fd);
-        stream.emit("ready");
-        const bytes = __quenchVfsBuffer.from(this.readFileSync(fd));
-        const start = options.start ?? 0;
-        const end = options.end === undefined ? bytes.length : options.end + 1;
-        const chunk = bytes.subarray(start, Math.min(end, bytes.length));
-        if (options.encoding) stream.setEncoding(options.encoding);
-        if (chunk.length) {
-          stream.bytesRead = chunk.length;
-          stream.push(
-            options.encoding ? chunk.toString(options.encoding) : chunk
-          );
-        }
-        stream.push(null);
-        if (options.autoClose !== false && options.fd === undefined) {
-          stream.once("end", () => stream.close());
-        }
-      } catch (error) {
-        stream.emit("error", error);
-        stream.destroy();
-      }
-    }, 0);
-    return stream;
+    return new globalThis.__quenchVfsReadStream(this, path, options);
   }
   createWriteStream(path, options = {}) {
-    if (options.flush !== undefined && options.flush !== null && typeof options.flush !== "boolean") {
-      throw Object.assign(new TypeError('The "flush" option must be of type boolean'), {
-        code: "ERR_INVALID_ARG_TYPE",
-      });
-    }
-    const flags = options.flags || "w";
-    const suppliedFd = typeof options.fd === "number";
-    const autoClose = options.autoClose !== false;
-    let closed = false;
-    const closeDescriptor = (emitClose = true) => {
-      if (closed || stream.fd === null) return;
-      const fd = stream.fd;
-      if (autoClose || explicitClose) {
-        if (options.flush === true) this.fsyncSync(fd);
-        this.closeSync(fd);
-      }
-      if (autoClose || explicitClose) {
-        stream.fd = null;
-        closed = true;
-        stream.closed = true;
-        if (emitClose) stream.emit("close");
-      }
-    };
-    let explicitClose = false;
-    const stream = new globalThis.__nodeStream.Writable({
-      write: (chunk, encoding, callback) => {
-        try {
-          const data =
-            typeof chunk === "string" ? chunk : __quenchVfsBuffer.from(chunk);
-          if (stream.fd === null) {
-            stream.fd = this.openSync(path, flags);
-          }
-          if (stream.bytesWritten === 0 && options.start !== undefined && !flags.includes("a")) {
-            this.__fdPositions.set(stream.fd, Number(options.start));
-          }
-          this.writeSync(stream.fd, data, 0, data.length, null);
-          stream.bytesWritten += data.length;
-          stream.pending = false;
-          callback();
-        } catch (error) {
-          callback(error);
-        }
-      }
-    });
-    stream.path = path;
-    stream.fd = typeof options.fd === "number" ? options.fd : null;
-    stream.pending = true;
-    stream.bytesWritten = 0;
-    stream.closed = false;
-    stream.autoClose = autoClose;
-    stream.close = (callback) => {
-      explicitClose = true;
-      const finishClose = () => {
-        try {
-          closeDescriptor();
-          if (typeof callback === "function") queueMicrotask(() => callback());
-        } catch (error) {
-          if (typeof callback === "function") queueMicrotask(() => callback(error));
-          else stream.emit("error", error);
-        }
-      };
-      if (stream.writableFinished) finishClose();
-      else stream.once("finish", finishClose);
-      if (!stream.writableEnded) stream.end();
-      return stream;
-    };
-    stream.once("finish", () => {
-      if (autoClose) closeDescriptor(false);
-    });
-    setTimeout(() => {
-      try {
-        if (stream.fd === null) {
-          stream.fd = this.openSync(path, flags);
-          if (options.start !== undefined && !flags.includes("a")) {
-            this.__fdPositions.set(stream.fd, Number(options.start));
-          }
-        } else if (options.start !== undefined && !flags.includes("a")) {
-          this.__fdPositions.set(stream.fd, Number(options.start));
-        }
-        stream.pending = false;
-        if (!suppliedFd) stream.emit("open", stream.fd);
-        stream.emit("ready");
-      } catch (error) {
-        stream.emit("error", error);
-      }
-    }, 0);
-    return stream;
+    return new globalThis.__quenchVfsWriteStream(this, path, options);
   }
   readdirSync(path, options = {}) {
     if (this.__isReal()) {
@@ -2145,7 +2001,6 @@ for (const name of __quenchVfsMutationMethods) {
   };
 }
 const __quenchVfsMounts = new Set();
-let __quenchVfsNextFd = 0x40000000;
 let __quenchVfsNextIno = 1;
 const __quenchVfsStats = (kind, size = 0, options = {}) => {
   const bigint = options?.bigint === true;
@@ -2385,7 +2240,7 @@ if (typeof __quenchVfsOriginalCreateReadStream === "function") {
       __quenchVfsRelative(vfs, path),
       options || {}
     );
-    stream.path = path;
+    globalThis.__quenchVfsStreamPath(stream, path);
     return stream;
   };
 }
@@ -2400,7 +2255,7 @@ if (typeof __quenchVfsOriginalCreateWriteStream === "function") {
       __quenchVfsRelative(vfs, path),
       options || {}
     );
-    stream.path = path;
+    globalThis.__quenchVfsStreamPath(stream, path);
     return stream;
   };
 }

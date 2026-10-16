@@ -971,21 +971,11 @@ fn url_constructor(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, 
     Ok(constructor)
 }
 
-pub(crate) fn comparison_href(
-    context: &mut NativeContext<'_, NodeHost>,
-    value: RootId,
-) -> Result<Option<RootId>, RootedError> {
-    let state = context.host_mut().shared_state().borrow().url_state;
-    let Some(state) = state else {
-        return Ok(None);
-    };
-    let data = context.weak_map_get_rooted(state, value)?;
-    let undefined = context.undefined();
-    if context.same_value_rooted(data, undefined)? {
-        return Ok(None);
-    }
-    let key = context.string_rooted("href");
-    context.get_property_rooted(value, key).map(Some)
+/// Share the structural URL contract with native file URL conversion.
+pub(crate) fn is_url(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let value = args.first().copied().unwrap_or_else(|| context.undefined());
+    let matches = is_url_like(context, value)?;
+    Ok(context.boolean(matches))
 }
 
 pub(crate) fn parse(
