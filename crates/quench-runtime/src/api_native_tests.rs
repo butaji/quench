@@ -1183,3 +1183,67 @@ for(const [functionValue,constructor] of [[metadataCallback,false],[MetadataCapt
             .unwrap();
     }
 }
+
+struct ProtectedStartupHost;
+impl Host for ProtectedStartupHost {
+    fn write_line(&mut self, _: &str) {}
+    fn clock_millis(&mut self) -> f64 { 0.0 }
+    fn functions(&self) -> &[HostFunction<Self>] {
+        crate::host_functions![global "protectedStartup" (1) => protected_startup]
+    }
+    fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
+        context.seal_startup_intrinsics();
+        Ok(())
+    }
+}
+fn protected_startup(
+    context: &mut NativeContext<'_, ProtectedStartupHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let fail = args.first().is_some_and(|arg| context.rooted_value(*arg).and_then(Value::as_bool) == Some(true));
+    context.with_startup_intrinsics(|context| {
+        let result = context.evaluate_script_rooted(
+            "JSON.stringify([[1,2,3].slice(1), [2,3].map(x=>x*2), 'abc'.slice(1), Object.entries({x:1})])",
+            "protected-startup-originals.js",
+        )?;
+        context.collect()?;
+        if fail {
+            context.evaluate_script_rooted("throw globalThis.protectedMarker", "protected-startup-throw.js")
+        } else {
+            Ok(result)
+        }
+    })
+}
+#[test]
+fn startup_intrinsics_restore_frozen_replacements_and_deleted_nonextensible_properties() {
+    let source = r#"
+const descriptor=Object.getOwnPropertyDescriptor;
+const bad=function bad(){throw Error('guest replacement');};
+const getter=function getter(){throw Error('guest getter');};
+globalThis.protectedMarker={};
+Object.defineProperty(Array.prototype,'slice',{value:bad,writable:false,configurable:false});
+delete Array.prototype.map;
+Object.preventExtensions(Array.prototype);
+Object.defineProperty(String.prototype,'slice',{get:getter,configurable:false});
+Object.defineProperty(Object,'entries',{value:bad,writable:false,configurable:false});
+function check(){
+ const a=descriptor(Array.prototype,'slice'),s=descriptor(String.prototype,'slice'),o=descriptor(Object,'entries');
+ if(a.value!==bad||a.writable||a.configurable||s.get!==getter||s.configurable||o.value!==bad||o.writable||o.configurable)throw Error('guest descriptor changed');
+ if(Object.isExtensible(Array.prototype)||descriptor(Array.prototype,'map')!==undefined)throw Error('guest integrity changed');
+}
+check();
+if(protectedStartup(false)!=='[[2,3],[4,6],"bc",[["x",1]]]')throw Error('startup values changed');
+check();
+try{protectedStartup(true);throw Error('missing throw');}catch(error){if(error!==protectedMarker)throw error;}
+check();
+if(protectedStartup(false)!=='[[2,3],[4,6],"bc",[["x",1]]]')throw Error('repeated startup changed');
+check();
+"#;
+    for program in [
+        Engine::compile(crate::ExecutionRequest { source, name: "protected-startup.js", kind: crate::SourceKind::Script }).unwrap(),
+        Engine::specialize(source, "protected-startup.js").unwrap(),
+    ] {
+        Runtime::new(ProtectedStartupHost).execute(&program).unwrap();
+    }
+}
