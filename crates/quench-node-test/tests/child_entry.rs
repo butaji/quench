@@ -9637,3 +9637,18 @@ fn tcp_default_listen_backlog_matches_node_when_syscall_tracing_is_available() {
 fn tcp_option_listen_backlog_matches_node_truthiness_and_int32_when_tracing_is_available() {
     compare_node_source_with_args(include_str!("../node-tests/test-tcp-option-listen-backlog.js"), &[]);
 }
+
+#[test]
+fn net_listen_lifecycle_retains_dns_generations_callbacks_and_public_method_shapes() {
+    compare_node_source_with_args(include_str!("../node-tests/test-net-listen-lifecycle.js"), &["--expose-gc"]);
+}
+
+#[test]
+fn net_dns_iterator_errors_close_once_preserve_original_abrupt_values_and_survive_gc() {
+    compare_node_source_with_args(include_str!("../node-tests/test-net-dns-iterator-errors.js"), &["--expose-gc"]);
+}
+
+#[test]
+fn process_capture_callback_reset_prioritizes_null_and_original_type_validation() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-callback-reset.js"), &[]);
+}
