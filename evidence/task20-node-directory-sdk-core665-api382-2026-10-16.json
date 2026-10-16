@@ -1,0 +1,673 @@
+{
+  "scope": "Original Node synchronous directory policy over real Rust native directory scanning",
+  "source_commit": "91843065e29a0f672319b5a37cf36ba9c6b5a222",
+  "host": "Linux-6.18.44-x86_64-with-glibc2.41",
+  "node_latest_stable": "v26.12.0",
+  "release_index": {
+    "path": "work/fs-readdir-policy/node-release-index-2026-10-16T115908.json",
+    "bytes": 333611,
+    "sha256": "b52f521b8e24898364b74f03596afef1f97c1448014df7c2b5ebdcd2b69ca4a9"
+  },
+  "tracked_crate_files": 689,
+  "checks": {
+    "core": 665,
+    "node_api": 382,
+    "framework": 43,
+    "shared": 7,
+    "workspace_all_targets": true,
+    "differentials": 5,
+    "framework_scenarios": 3,
+    "fixed_work_valid": 8,
+    "fixed_work_clean": 0
+  },
+  "family": {
+    "runs": [
+      {
+        "label": "before",
+        "group": "test-fs-readdir",
+        "command": [
+          "/workspace/quench/work/function-source-merge-bin/run-parallel",
+          "--all",
+          "--parallel-dir",
+          "/workspace/work/node-stable-release/node-v26.12.0/test/parallel",
+          "--filter",
+          "test-fs-readdir",
+          "--jobs",
+          "4",
+          "--timeout-secs",
+          "30",
+          "--results",
+          "/workspace/quench/work/fs-readdir-policy/family-before-test-fs-readdir.json"
+        ],
+        "exit": 1,
+        "counts": {
+          "skip": 2,
+          "pass": 7,
+          "fail": 4
+        },
+        "inventory_hash": "d0c87534792835dc"
+      },
+      {
+        "label": "before",
+        "group": "test-fs-glob",
+        "command": [
+          "/workspace/quench/work/function-source-merge-bin/run-parallel",
+          "--all",
+          "--parallel-dir",
+          "/workspace/work/node-stable-release/node-v26.12.0/test/parallel",
+          "--filter",
+          "test-fs-glob",
+          "--jobs",
+          "4",
+          "--timeout-secs",
+          "30",
+          "--results",
+          "/workspace/quench/work/fs-readdir-policy/family-before-test-fs-glob.json"
+        ],
+        "exit": 1,
+        "counts": {
+          "fail": 2,
+          "pass": 1
+        },
+        "inventory_hash": "a1cc5539923e9a17"
+      },
+      {
+        "label": "before",
+        "group": "test-fs-opendir",
+        "command": [
+          "/workspace/quench/work/function-source-merge-bin/run-parallel",
+          "--all",
+          "--parallel-dir",
+          "/workspace/work/node-stable-release/node-v26.12.0/test/parallel",
+          "--filter",
+          "test-fs-opendir",
+          "--jobs",
+          "4",
+          "--timeout-secs",
+          "30",
+          "--results",
+          "/workspace/quench/work/fs-readdir-policy/family-before-test-fs-opendir.json"
+        ],
+        "exit": 0,
+        "counts": {
+          "pass": 1
+        },
+        "inventory_hash": "acda455e225bf20c"
+      },
+      {
+        "label": "before",
+        "group": "test-fs-cp",
+        "command": [
+          "/workspace/quench/work/function-source-merge-bin/run-parallel",
+          "--all",
+          "--parallel-dir",
+          "/workspace/work/node-stable-release/node-v26.12.0/test/parallel",
+          "--filter",
+          "test-fs-cp",
+          "--jobs",
+          "4",
+          "--timeout-secs",
+          "30",
+          "--results",
+          "/workspace/quench/work/fs-readdir-policy/family-before-test-fs-cp.json"
+        ],
+        "exit": 1,
+        "counts": {
+          "pass": 82,
+          "fail": 8
+        },
+        "inventory_hash": "cf022defceab5df7"
+      },
+      {
+        "label": "candidate",
+        "group": "test-fs-readdir",
+        "command": [
+          "/workspace/quench/work/fs-readdir-bin/run-parallel",
+          "--all",
+          "--parallel-dir",
+          "/workspace/work/node-stable-release/node-v26.12.0/test/parallel",
+          "--filter",
+          "test-fs-readdir",
+          "--jobs",
+          "4",
+          "--timeout-secs",
+          "30",
+          "--results",
+          "/workspace/quench/work/fs-readdir-policy/family-candidate-test-fs-readdir.json"
+        ],
+        "exit": 1,
+        "counts": {
+          "skip": 2,
+          "pass": 8,
+          "fail": 3
+        },
+        "inventory_hash": "d0c87534792835dc"
+      },
+      {
+        "label": "candidate",
+        "group": "test-fs-glob",
+        "command": [
+          "/workspace/quench/work/fs-readdir-bin/run-parallel",
+          "--all",
+          "--parallel-dir",
+          "/workspace/work/node-stable-release/node-v26.12.0/test/parallel",
+          "--filter",
+          "test-fs-glob",
+          "--jobs",
+          "4",
+          "--timeout-secs",
+          "30",
+          "--results",
+          "/workspace/quench/work/fs-readdir-policy/family-candidate-test-fs-glob.json"
+        ],
+        "exit": 1,
+        "counts": {
+          "fail": 2,
+          "pass": 1
+        },
+        "inventory_hash": "a1cc5539923e9a17"
+      },
+      {
+        "label": "candidate",
+        "group": "test-fs-opendir",
+        "command": [
+          "/workspace/quench/work/fs-readdir-bin/run-parallel",
+          "--all",
+          "--parallel-dir",
+          "/workspace/work/node-stable-release/node-v26.12.0/test/parallel",
+          "--filter",
+          "test-fs-opendir",
+          "--jobs",
+          "4",
+          "--timeout-secs",
+          "30",
+          "--results",
+          "/workspace/quench/work/fs-readdir-policy/family-candidate-test-fs-opendir.json"
+        ],
+        "exit": 0,
+        "counts": {
+          "pass": 1
+        },
+        "inventory_hash": "acda455e225bf20c"
+      },
+      {
+        "label": "candidate",
+        "group": "test-fs-cp",
+        "command": [
+          "/workspace/quench/work/fs-readdir-bin/run-parallel",
+          "--all",
+          "--parallel-dir",
+          "/workspace/work/node-stable-release/node-v26.12.0/test/parallel",
+          "--filter",
+          "test-fs-cp",
+          "--jobs",
+          "4",
+          "--timeout-secs",
+          "30",
+          "--results",
+          "/workspace/quench/work/fs-readdir-policy/family-candidate-test-fs-cp.json"
+        ],
+        "exit": 1,
+        "counts": {
+          "pass": 82,
+          "fail": 8
+        },
+        "inventory_hash": "cf022defceab5df7"
+      }
+    ],
+    "before": {
+      "pass": 91,
+      "fail": 14,
+      "skip": 2
+    },
+    "candidate": {
+      "pass": 92,
+      "fail": 13,
+      "skip": 2
+    },
+    "total": 107,
+    "gained": [
+      "test-fs-readdir-ucs2.js"
+    ],
+    "lost": [],
+    "skip_changes": {}
+  },
+  "full_audits": {
+    "latest_stable": {
+      "passing": 1793,
+      "total": 5015,
+      "source_commit": "7f8660459256f3552691074c219a14eb031132ba"
+    },
+    "pinned": {
+      "passing": 1821,
+      "total": 4727,
+      "source_commit": "7f8660459256f3552691074c219a14eb031132ba"
+    }
+  },
+  "limitations": [
+    "Goal remains open: latest completed frozen7f stable1793/5015 and pinned1821/4727 include lost passes to timeouts; these full results are not adjusted using selected-case gains.",
+    "Candidate918 full inventories not yet run. Selected107 filesystem family91to92pass, zero losses/skip changes; gain readdir-ucs2.",
+    "Original asynchronous outer validation and scheduling remain separate compatibility work; no placeholder native request classes were added.",
+    "Initial Core compile stopped before tests because sparse checkout omitted included fixtures; exact tracked blobs restored, unchanged665 tests passed.",
+    "Initial long-worktree API run381pass/1Node-oracle-fail because byte-cwd filename exceeded NAME_MAX. Same binary and assertions passed from canonical baseline test working directory.",
+    "Canonical full API retry380pass/2child-timing failures retained; exact Node/before/candidate controls all passed, final unchanged382 complete run passed after full-audit workers finished. Original deadlines/assertions retained.",
+    "Functional milestone only. Native fixed-work8valid0clean has no PMU counts. Separate real Callgrind A/A8 control and A/B instruction screen use exact preserved stock materializations; no speed or instrumented-RSS claim."
+  ],
+  "raw": [
+    {
+      "path": "work/fs-readdir-policy/all-api-canonical-first-concurrent-timing-failures.log",
+      "bytes": 32730,
+      "sha256": "bc0ab13badfe3a51b417c5c0619bd711a5936883b8ed30852a05770ac3c7397e"
+    },
+    {
+      "path": "work/fs-readdir-policy/all-api-initial-long-cwd-oracle-failure.log",
+      "bytes": 32831,
+      "sha256": "b0cf9b323779c050e5667a1ac14fa94f8e6cbb2cf13fe99cd93e83061dc42d65"
+    },
+    {
+      "path": "work/fs-readdir-policy/all-api.log",
+      "bytes": 31345,
+      "sha256": "6c687080dd93518e2d00481564c8aa87c835664aced7242b49e8ab01339a6f49"
+    },
+    {
+      "path": "work/fs-readdir-policy/before-oracle.err",
+      "bytes": 90,
+      "sha256": "f536c19b84eacd166baff7011713b7a9952b48fab4f88571f6b2e3191c877c16"
+    },
+    {
+      "path": "work/fs-readdir-policy/before-oracle.json",
+      "bytes": 97,
+      "sha256": "48dd29677cc6718c39e485684280ae51641b91a4e61a27baf5187e65d9a60e5d"
+    },
+    {
+      "path": "work/fs-readdir-policy/before-oracle.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/fs-readdir-policy/buffer-concat-oracle.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/fs-readdir-policy/buffer-concat-oracle.log",
+      "bytes": 945,
+      "sha256": "6952b631101e34ed06edc5159ea6b526493f0567d64f94710f686417c70d0b7d"
+    },
+    {
+      "path": "work/fs-readdir-policy/buffer-latin1-oracle.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/fs-readdir-policy/buffer-latin1-oracle.log",
+      "bytes": 1863,
+      "sha256": "09939bcf717a24a1d1193e5d2dbf4d0d6b23ecbde28bc8e551a3afaef73c562a"
+    },
+    {
+      "path": "work/fs-readdir-policy/buffer-oracle.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/fs-readdir-policy/buffer-oracle.log",
+      "bytes": 4169,
+      "sha256": "f9d0f3418b5812dbcd7e927283a12ea6ff35b6b736c9073a3243ad20342338ce"
+    },
+    {
+      "path": "work/fs-readdir-policy/buffer-poison-oracle.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/fs-readdir-policy/buffer-poison-oracle.log",
+      "bytes": 476,
+      "sha256": "13189736a66e7b1615619955feaa462064b24ed73d07b84b76bd4d5c21fd39e8"
+    },
+    {
+      "path": "work/fs-readdir-policy/check-forwarding-supervisor.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/fs-readdir-policy/check-forwarding.log",
+      "bytes": 219,
+      "sha256": "7cbc1e15f057bb0ace5230dbc66ea74c5d72321a113ce2ce44faef11fb1511e5"
+    },
+    {
+      "path": "work/fs-readdir-policy/check-forwarding.sh",
+      "bytes": 221,
+      "sha256": "c3e80094073f240450603dcba57fdd128c0708833df64a752aee4cf27671049c"
+    },
+    {
+      "path": "work/fs-readdir-policy/check-supervisor.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/fs-readdir-policy/check.log",
+      "bytes": 7989,
+      "sha256": "f662ade8a67d0f38854aedf398993fc304fd771b8e48952be57b642d554ea8a5"
+    },
+    {
+      "path": "work/fs-readdir-policy/check.sh",
+      "bytes": 210,
+      "sha256": "dd9802d33aeb5a81381a79b727aed4e160db47c1d2261c770a49c4079a281245"
+    },
+    {
+      "path": "work/fs-readdir-policy/child-cwd-canonical-directory-control.log",
+      "bytes": 204,
+      "sha256": "2c34f4081c8f54767ede877a4a8ba01065c691d8556a270074e6d918cf701f75"
+    },
+    {
+      "path": "work/fs-readdir-policy/completed-iteration-cache-reclamation.json",
+      "bytes": 3401,
+      "sha256": "b1dfb53d069d7b7a5ac92c70a7e48f9a41eaa77966413217a8c626ac091411a2"
+    },
+    {
+      "path": "work/fs-readdir-policy/core-initial-missing-checkout-fixtures.log",
+      "bytes": 9040,
+      "sha256": "9ca60befcf2c4ec76d74c2548aaaf4f8889b73f815ab54936ec16f0ff5999232"
+    },
+    {
+      "path": "work/fs-readdir-policy/core.log",
+      "bytes": 58787,
+      "sha256": "92e07fde3b5ed2cb8bda64d0b7cda69d16bf3a9e978e6bf0600e8d8ba30f74a8"
+    },
+    {
+      "path": "work/fs-readdir-policy/core664-cache-reclamation.json",
+      "bytes": 275,
+      "sha256": "5ee5e66d468ec7afd784da9e27ea07e0d6c98fb4ee05dbf46199a17a74f9fac1"
+    },
+    {
+      "path": "work/fs-readdir-policy/extras-supervisor.log",
+      "bytes": 610,
+      "sha256": "e5196b47109a91766ecbc8b4127a80156d665acd357153cff2cf9f280de4acd1"
+    },
+    {
+      "path": "work/fs-readdir-policy/extras.sh",
+      "bytes": 2548,
+      "sha256": "9c33ef3824d9a891cd652393124f55b63317990070a18887b04f22ceb6cfeb90"
+    },
+    {
+      "path": "work/fs-readdir-policy/family-before-test-fs-cp.json",
+      "bytes": 40680,
+      "sha256": "a38a4bab6f12c6c88470d6b2dd2057999e81b3c0295ce7ce8e166c853334ef1c"
+    },
+    {
+      "path": "work/fs-readdir-policy/family-before-test-fs-cp.log",
+      "bytes": 10170,
+      "sha256": "24002bd1d25e204b27d1e61363023d65c5a2780e1aed87c90eeb381379672c3a"
+    },
+    {
+      "path": "work/fs-readdir-policy/family-before-test-fs-glob.json",
+      "bytes": 2761,
+      "sha256": "f784c1a730f8da400261a15650df15c09c19977d2d77de6fc17cc9b988a06059"
+    },
+    {
+      "path": "work/fs-readdir-policy/family-before-test-fs-glob.log",
+      "bytes": 390,
+      "sha256": "a168b3aea42f3a4a2a811e141ca465715690a84fc74510f45e06faa534058787"
+    },
+    {
+      "path": "work/fs-readdir-policy/family-before-test-fs-opendir.json",
+      "bytes": 668,
+      "sha256": "c09fe05cb38f553f653fe5cce27c5e3a2c3f929f762dbdcb05f9437602b20376"
+    },
+    {
+      "path": "work/fs-readdir-policy/family-before-test-fs-opendir.log",
+      "bytes": 187,
+      "sha256": "091034aa56795c26af19f660e1ef60fe33ac1d52c88087b1d91a22800af16243"
+    },
+    {
+      "path": "work/fs-readdir-policy/family-before-test-fs-readdir.json",
+      "bytes": 11936,
+      "sha256": "14ae27dbca69bc616d636c31ec76d3ae1c15221fc6a4cac87589417b2c9114fe"
+    },
+    {
+      "path": "work/fs-readdir-policy/family-before-test-fs-readdir.log",
+      "bytes": 1422,
+      "sha256": "8755f86f076083143ba70db5866896c0599b3012d6ff6091f291983437b2fb40"
+    },
+    {
+      "path": "work/fs-readdir-policy/family-candidate-test-fs-cp.json",
+      "bytes": 40680,
+      "sha256": "66458633c6d01fde2170c5a0182f13c79fec46a6777d44979880e4a15b4d043f"
+    },
+    {
+      "path": "work/fs-readdir-policy/family-candidate-test-fs-cp.log",
+      "bytes": 10170,
+      "sha256": "7d2ae33391a7cf7bee61ef050e97dcf298909d62877f7073cdc69660746e60fe"
+    },
+    {
+      "path": "work/fs-readdir-policy/family-candidate-test-fs-glob.json",
+      "bytes": 2761,
+      "sha256": "f784c1a730f8da400261a15650df15c09c19977d2d77de6fc17cc9b988a06059"
+    },
+    {
+      "path": "work/fs-readdir-policy/family-candidate-test-fs-glob.log",
+      "bytes": 390,
+      "sha256": "a168b3aea42f3a4a2a811e141ca465715690a84fc74510f45e06faa534058787"
+    },
+    {
+      "path": "work/fs-readdir-policy/family-candidate-test-fs-opendir.json",
+      "bytes": 668,
+      "sha256": "c09fe05cb38f553f653fe5cce27c5e3a2c3f929f762dbdcb05f9437602b20376"
+    },
+    {
+      "path": "work/fs-readdir-policy/family-candidate-test-fs-opendir.log",
+      "bytes": 187,
+      "sha256": "091034aa56795c26af19f660e1ef60fe33ac1d52c88087b1d91a22800af16243"
+    },
+    {
+      "path": "work/fs-readdir-policy/family-candidate-test-fs-readdir.json",
+      "bytes": 13771,
+      "sha256": "7b886c7b390c9a0e2a494b2743ad031202c743a4ca37db6994e353890de79962"
+    },
+    {
+      "path": "work/fs-readdir-policy/family-candidate-test-fs-readdir.log",
+      "bytes": 1422,
+      "sha256": "928667fd976b1ee7428623c4869c49702a77b39891190336c93f870505e259a8"
+    },
+    {
+      "path": "work/fs-readdir-policy/family-driver.log",
+      "bytes": 3855,
+      "sha256": "66d1b93f3e1af05cd64e02ceadf3937ca2c8611c24a20c6f9b85945cec9398a5"
+    },
+    {
+      "path": "work/fs-readdir-policy/family-receipt.json",
+      "bytes": 5307,
+      "sha256": "50b23e3db1876c01b66d435fc723f6e3e656c608faac7711eca822172f1a41d5"
+    },
+    {
+      "path": "work/fs-readdir-policy/family.py",
+      "bytes": 1864,
+      "sha256": "5f2980e757f5a2c632754fe658f3f21ef7d0fceb02204c1f1850e3d8c4711821"
+    },
+    {
+      "path": "work/fs-readdir-policy/fetch.log",
+      "bytes": 94,
+      "sha256": "2bebec4c4307c5f4c6553a368dd9ca82251624fa73d0d22e711dcc257844180a"
+    },
+    {
+      "path": "work/fs-readdir-policy/final-check.log",
+      "bytes": 164,
+      "sha256": "c57d9f15abf6729b3d81b7dee970b27f6ca0032a7cefb0c6db92e15d760292e1"
+    },
+    {
+      "path": "work/fs-readdir-policy/fixed-work.json",
+      "bytes": 154375,
+      "sha256": "7d2ce893f03179f11dd8d58ed36a9047d35845cf5314bca610daf6eab35f0424"
+    },
+    {
+      "path": "work/fs-readdir-policy/fixed-work.log",
+      "bytes": 1126,
+      "sha256": "ad2d7fbd5612a1ec8417af72822ba29264046484f65c28625fb778675e6d473f"
+    },
+    {
+      "path": "work/fs-readdir-policy/focused.log",
+      "bytes": 489,
+      "sha256": "742b316d033a74383a76ad459acd62b96198fa9334f70e1ad6d691290c5228a3"
+    },
+    {
+      "path": "work/fs-readdir-policy/framework-scenarios.json",
+      "bytes": 1532,
+      "sha256": "430b01db7c0b95dabde93c79e4d6e37720d49c1a3e13c7d3491f1ec7b4998e8f"
+    },
+    {
+      "path": "work/fs-readdir-policy/framework.log",
+      "bytes": 5045,
+      "sha256": "d4bd72fba3a8f1a98ce277a6bb8f802a7ecade6dcd9ea20c0ded1aeb70488b8b"
+    },
+    {
+      "path": "work/fs-readdir-policy/fs.js.stable-source.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/fs-readdir-policy/full-gates-supervisor.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/fs-readdir-policy/full-gates.sh",
+      "bytes": 925,
+      "sha256": "755c1728f1c54758138bab5645a0884ea11ac3d20231c43dea9555d9d14d8a8c"
+    },
+    {
+      "path": "work/fs-readdir-policy/incoming-merge.log",
+      "bytes": 996,
+      "sha256": "5d03590969f21bbb1170c1ea9b501c0d996a954cb7f15c971e446c146540f02b"
+    },
+    {
+      "path": "work/fs-readdir-policy/native-contract.md",
+      "bytes": 2473,
+      "sha256": "b7b84b73cf700c48e970063323d63e0ca3016bb3e8997e24c4104889b6451117"
+    },
+    {
+      "path": "work/fs-readdir-policy/node-oracle-final.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/fs-readdir-policy/node-oracle-final.log",
+      "bytes": 6332,
+      "sha256": "64f12bd2dae48bb09da42f33d9574c311b93a35de7e56dd1eaf99606249bb948"
+    },
+    {
+      "path": "work/fs-readdir-policy/node-oracle.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/fs-readdir-policy/node-oracle.log",
+      "bytes": 5921,
+      "sha256": "d4e209f06793457a7bb0f3f6a4f7a8e551213168f8afc4d33efcb85b14c77906"
+    },
+    {
+      "path": "work/fs-readdir-policy/node-release-index-2026-10-16T115908.json",
+      "bytes": 333611,
+      "sha256": "b52f521b8e24898364b74f03596afef1f97c1448014df7c2b5ebdcd2b69ca4a9"
+    },
+    {
+      "path": "work/fs-readdir-policy/node_file.cc.stable-source.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/fs-readdir-policy/paired-build.log",
+      "bytes": 7071,
+      "sha256": "ed19ef167800776d56b4ffaf9a5d8e1c68b437f711c2ea77d40c8565d742327c"
+    },
+    {
+      "path": "work/fs-readdir-policy/qualify-freeze-boundary-supervisor.log",
+      "bytes": 84,
+      "sha256": "9ba08c5345db28166db8c2e86df7ba512f1c81f625d6384ea5fde9dc47f86321"
+    },
+    {
+      "path": "work/fs-readdir-policy/qualify-supervisor.log",
+      "bytes": 305,
+      "sha256": "e8d86638756731380539bb1d15dca6fa738287db17c408e5a7833d02c7c325e0"
+    },
+    {
+      "path": "work/fs-readdir-policy/qualify.sh",
+      "bytes": 1519,
+      "sha256": "63035587b0f6538c2660f261cdfa3e66ae40d7b5a203505e4bd9b133070fc9c6"
+    },
+    {
+      "path": "work/fs-readdir-policy/resume-supervisor.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/fs-readdir-policy/resume.sh",
+      "bytes": 1355,
+      "sha256": "48dbd61af52ea3d984a31763576c1a0287e5bba3b0acffca36a342d6c1001a2c"
+    },
+    {
+      "path": "work/fs-readdir-policy/shadow-node.log",
+      "bytes": 195,
+      "sha256": "5bb1c6f6a341403cc0fb9a357f431916fbbeb47d4b36b6b0a8179f599a2f7a1f"
+    },
+    {
+      "path": "work/fs-readdir-policy/shadow-quench.log",
+      "bytes": 195,
+      "sha256": "5bb1c6f6a341403cc0fb9a357f431916fbbeb47d4b36b6b0a8179f599a2f7a1f"
+    },
+    {
+      "path": "work/fs-readdir-policy/shadow.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/fs-readdir-policy/shared.log",
+      "bytes": 929,
+      "sha256": "3044cb68ca3cfb0cb81af44c5a2cb31d323bf96dcfb44f9e77acf90b533acec2"
+    },
+    {
+      "path": "work/fs-readdir-policy/stable-failure-clusters.json",
+      "bytes": 8197,
+      "sha256": "8f13b400d713696cb7555b9f0c16958faadbac5716916cd35a04209589c75caa"
+    },
+    {
+      "path": "work/fs-readdir-policy/stable-missing-call-sites.json",
+      "bytes": 145520,
+      "sha256": "bed511d86de2bea8629a273112263e824a2e50599a588688f4d8a6312529dd46"
+    },
+    {
+      "path": "work/fs-readdir-policy/stale-check-metadata-reclamation.json",
+      "bytes": 210201,
+      "sha256": "645b27d61df2e45efd0b41ce93f7b3db50b843ceeeecca1b7577d6364c2f18c8"
+    },
+    {
+      "path": "work/fs-readdir-policy/timing-controls.json",
+      "bytes": 15370,
+      "sha256": "c45485f6c06433b3ec7f0585d76a345c5fae4b820440a98d519b4dbeed305994"
+    },
+    {
+      "path": "work/fs-readdir-policy/timing-controls.py",
+      "bytes": 1303,
+      "sha256": "61aba0d71e6830e869e8f649d67b46577611f77bdc7a3018b96b3814030c3fd0"
+    },
+    {
+      "path": "work/fs-readdir-policy/workspace.log",
+      "bytes": 8261,
+      "sha256": "cfadecfc6d58995261e762f4f2444e37794eebf42196a880f9fe8f217d3dbd54"
+    },
+    {
+      "path": "work/fs-readdir-bin/source-commit.txt",
+      "bytes": 41,
+      "sha256": "1e6db6777422a5d9f6eb91a4d0b1170b55f9429ebf5fd53e598fddb9e343035c"
+    },
+    {
+      "path": "work/fs-readdir-bin/source-sha256.json",
+      "bytes": 84906,
+      "sha256": "46b58f69b96e5a56335cb8dc7139e9af7df86016e5f01fad09c52ef491b1716f"
+    },
+    {
+      "path": "work/fs-readdir-bin/sha256.txt",
+      "bytes": 235,
+      "sha256": "e14878eb86f082fdf62570b4243779c8567174b3ab4d99ebc32069245788f3a6"
+    }
+  ]
+}
