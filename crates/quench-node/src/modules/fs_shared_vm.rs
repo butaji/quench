@@ -590,22 +590,6 @@ const READV_API: &str = quench_js_check::checked_js!(
 }"#
 );
 
-const READDIR_FACTORY: &str = quench_js_check::checked_js!(
-    r#"(readDir, policy) => (path, options) => {
-  if (typeof path !== "string" && !Buffer.isBuffer(path) && !(path instanceof URL)) {
-    const received = path === null ? "null" : path === undefined ? "undefined" : `type ${typeof path}`;
-    const error = new TypeError(`The "path" argument must be of type string, Buffer, or URL. Received ${received}`);
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
-  }
-  if (Buffer.isBuffer(path)) path = path.toString();
-  else if (path instanceof URL) path = path.pathname;
-  const entries = readDir(path);
-  if (!options || options.withFileTypes !== true) return entries.map((entry) => entry.name);
-  return entries.map((entry) => new policy.Dirent(entry.name, entry.type, path));
-}"#
-);
-
 const ASYNC_READDIR_FACTORY: &str = quench_js_check::checked_js!(
     r#"(readdirSync) => function readdir(path, options, callback) {
   if (typeof options === "function") {
@@ -1935,14 +1919,14 @@ const ASYNC_READLINK_API: &str = r#"(readlinkSync) => {
 
 const UV_FS_SYMLINK_DIR: i32 = 1;
 const UV_FS_SYMLINK_JUNCTION: i32 = 2;
-const UV_DIRENT_UNKNOWN: i32 = 0;
-const UV_DIRENT_FILE: i32 = 1;
-const UV_DIRENT_DIR: i32 = 2;
-const UV_DIRENT_LINK: i32 = 3;
-const UV_DIRENT_FIFO: i32 = 4;
-const UV_DIRENT_SOCKET: i32 = 5;
-const UV_DIRENT_CHAR: i32 = 6;
-const UV_DIRENT_BLOCK: i32 = 7;
+pub(super) const UV_DIRENT_UNKNOWN: i32 = 0;
+pub(super) const UV_DIRENT_FILE: i32 = 1;
+pub(super) const UV_DIRENT_DIR: i32 = 2;
+pub(super) const UV_DIRENT_LINK: i32 = 3;
+pub(super) const UV_DIRENT_FIFO: i32 = 4;
+pub(super) const UV_DIRENT_SOCKET: i32 = 5;
+pub(super) const UV_DIRENT_CHAR: i32 = 6;
+pub(super) const UV_DIRENT_BLOCK: i32 = 7;
 const UV_FS_O_FILEMAP: i32 = 0;
 const UV_FS_COPYFILE_EXCL: i32 = 1;
 const UV_FS_COPYFILE_FICLONE: i32 = 2;
@@ -2056,12 +2040,18 @@ pub(crate) fn fs_constants(context: &mut NativeContext<'_, NodeHost>) -> Result<
 }
 
 fn make_readdir_sync(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    let read_directory =
-        context.host_function(crate::host::shared_vm::operation("fsReaddirSync"))?;
-    let factory = context.evaluate_script_rooted(READDIR_FACTORY, "node:fs/shared-readdir.js")?;
-    let undefined = context.undefined();
+    context.host_function(crate::host::shared_vm::operation("fsReaddirPolicy"))
+}
+
+/// Existing filesystem adapters retain this indirection during module bootstrap.
+/// Once initialized, every captured reader uses the same configured SDK policy.
+pub(crate) fn readdir_policy(
+    context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId],
+) -> Result<RootId, RootedError> {
     let policy = directory_policy(context)?;
-    context.call_rooted(factory, undefined, &[read_directory, policy])
+    let function = get(context, policy, "readdirSync")?;
+    let undefined = context.undefined();
+    context.call_rooted(function, undefined, args)
 }
 
 fn make_readdir_async(
@@ -2946,10 +2936,13 @@ pub(crate) fn initialize_glob_policy(
     context: &mut NativeContext<'_, NodeHost>, module: RootId,
 ) -> Result<(), RootedError> {
     let policy = crate::host::shared_vm::commonjs::node_library_module(context, "fs.js", "fs.js")?;
-    for name in ["glob", "globSync"] {
+    for name in ["glob", "globSync", "readdirSync"] {
         let function = get(context, policy, name)?;
         set(context, module, name, function)?;
     }
+    let directory = directory_policy(context)?;
+    let readdir = get(context, policy, "readdirSync")?;
+    set(context, directory, "readdirSync", readdir)?;
     // Node's public fs module does not load its promises implementation until
     // requested. In particular its readline dependencies must not eagerly
     // capture the OS binding while merely requiring fs.

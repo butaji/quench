@@ -138,25 +138,15 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
     if (!(this instanceof Server)) return new Server(options, listener);
     initServerEmitterOperation(this);
     this._handle = null; this._unref = false;
-    this.listening = false;
     if (typeof options === 'function') listener = options;
     serverOptionsOperation(options);
     if (typeof listener === 'function') this.on('connection', listener);
     initServerOptionsOperation(this, options);
   }
-  Server.prototype.listen = function(port, host, callback) {
-      if (typeof port === 'function') { callback = port; port = 0; }
-      const plan = endpointOperation(port, host, callback, false);
-      port = plan.address; host = plan.host; callback = plan.callback;
-      const options = plan.options;
-      if (typeof callback === 'function') this.once('listening', callback);
-      listenOperation(this, port, host, options);
-      this.listening = true;
-      return this;
-    };
+  Server.prototype.listen = listenOperation;
   Server.prototype.getConnections = getConnections;
-  Server.prototype.address = function() { return addressOperation(this); };
-  Server.prototype.close = function(callback) { if (typeof callback === 'function') this.once('close', callback); closeOperation(this); this.listening = false; return this; };
+  Server.prototype.address = addressOperation;
+  Server.prototype.close = closeOperation;
   Server.prototype.ref = function() { 'use strict'; return referenceOperation(this, true); };
   Server.prototype.unref = function() { 'use strict'; return referenceOperation(this, false); };
   const createServer = function createServer(options, listener) { return new Server(options, listener); };
@@ -621,7 +611,7 @@ pub(crate) fn listen_with_backlog(
     listen_with_reuse_port(transport, address, false, backlog)
 }
 
-fn listen_with_reuse_port(
+pub(super) fn listen_with_reuse_port(
     transport: &mut Transport,
     address: SocketAddr,
     reuse_port: bool,
@@ -640,7 +630,7 @@ fn listen_with_reuse_port(
 }
 
 // Node's net.Server.listen uses 511 when no backlog was supplied.
-const DEFAULT_TCP_LISTEN_BACKLOG: i32 = 511;
+pub(super) const DEFAULT_TCP_LISTEN_BACKLOG: i32 = 511;
 
 pub(crate) fn listen_backlog(
     context: &mut NativeContext<'_, NodeHost>,
@@ -650,6 +640,13 @@ pub(crate) fn listen_backlog(
     let key = context.string_rooted("backlog");
     let value = context.get_property_rooted(options, key)?;
     if !context.truthy_rooted(value)? { return Ok(DEFAULT_TCP_LISTEN_BACKLOG); }
+    convert_listen_backlog(context, value)
+}
+
+pub(super) fn convert_listen_backlog(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: RootId,
+) -> Result<i32, RootedError> {
     // TCPWrap::Listen uses ToInt32 after the JavaScript truthy default.
     // Apply ToNumber first so BigInt and Symbol preserve that conversion's error.
     let number = context.to_number(value)?;
@@ -1311,9 +1308,9 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         .net_socket_close_completed = Some(close_completed);
     let encoding =
         context.host_function(crate::host::shared_vm::operation("netSocketSetEncoding"))?;
-    let listen = context.host_function(crate::host::shared_vm::operation("netServerListen"))?;
-    let close = context.host_function(crate::host::shared_vm::operation("netServerClose"))?;
-    let address = context.host_function(crate::host::shared_vm::operation("netServerAddress"))?;
+    let listen = context.host_constructor_named(crate::host::shared_vm::operation("netServerListen"), "")?;
+    let close = context.host_constructor_named(crate::host::shared_vm::operation("netServerClose"), "")?;
+    let address = context.host_constructor_named(crate::host::shared_vm::operation("netServerAddress"), "")?;
     let stream = crate::host::shared_vm::commonjs::stream_module(context)?;
     let duplex_key = context.string_rooted("Duplex");
     let duplex = context.get_property_rooted(stream, duplex_key)?;
@@ -1435,6 +1432,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let emitter_prototype = context.get_property_rooted(emitter, key)?;
     context.set_prototype_rooted(server_prototype, emitter_prototype)?;
     context.set_prototype_rooted(server, emitter)?;
+    super::net_server_listen::install(context, server_prototype)?;
     for name in [
         "Socket",
         "Stream",
@@ -1800,114 +1798,29 @@ pub(crate) fn set_encoding_operation(
     Ok(context.undefined())
 }
 
-pub(crate) fn server_listen_operation(
+#[cfg(unix)]
+pub(super) fn listen_local_server(
     context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
+    server: RootId,
+    path: &str,
 ) -> Result<RootId, RootedError> {
-    let server = args
-        .first()
-        .copied()
-        .ok_or_else(|| RootedError::host("net.Server.listen requires a server"))?;
-    #[cfg(unix)]
-    if let Some(path) = args
-        .get(1)
-        .copied()
-        .map(|root| context.string_text(root))
-        .transpose()?
-        .flatten()
-    {
-        let shared = context.host_mut().shared_state();
-        let resolved = resolve_local_path(&shared.borrow().cwd, &path);
-        let result = resolved.and_then(|resolved| {
-            listen_local(&mut shared.borrow_mut().tcp, resolved, path.clone())
-        });
-        return match result {
-            Ok(id) => register_server(context, server, id),
-            Err(error) => queue_listen_error(context, server, error, &path),
-        };
-    }
-    let port = args
-        .get(1)
-        .and_then(|root| context.rooted_value(*root))
-        .and_then(Value::as_number)
-        .filter(|port| port.fract() == 0.0 && (0.0..=65535.0).contains(port))
-        .ok_or_else(|| RootedError::host("invalid TCP port"))? as u16;
-    let requested = args.get(2).copied().unwrap_or_else(|| context.undefined());
-    let default_address = !context.truthy_rooted(requested)?;
-    let host = context.string_text(requested)?.filter(|host| !host.is_empty())
-        .unwrap_or_else(|| Ipv6Addr::UNSPECIFIED.to_string());
-    let address = (host.as_str(), port)
-        .to_socket_addrs()
-        .map_err(|error| RootedError::host(error.to_string()))?
-        .next()
-        .ok_or_else(|| RootedError::host("net.Server.listen host did not resolve"))?;
     let shared = context.host_mut().shared_state();
-    let reuse_port = if let Some(options) = args
-        .get(3)
-        .copied()
-        .filter(|root| context.is_object_rooted(*root).unwrap_or(false))
-    {
-        let key = context.string_rooted("reusePort");
-        let value = context.get_property_rooted(options, key)?;
-        let yes = context.boolean(true);
-        context.strict_equal_rooted(value, yes)?
-    } else {
-        false
-    };
-    let options = args.get(3).copied().filter(|root| context.is_object_rooted(*root).unwrap_or(false));
-    let backlog = listen_backlog(context, options)?;
-    let listener = listen_with_reuse_port(&mut shared.borrow_mut().tcp, address, reuse_port, backlog);
-    // Node tries the IPv6 wildcard first when no host was requested, then
-    // falls back to the IPv4 wildcard if that platform cannot bind IPv6.
-    let listener = match listener {
-        Err(_) if default_address => listen_with_reuse_port(
-            &mut shared.borrow_mut().tcp,
-            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port),
-            reuse_port,
-            backlog,
-        ),
-        result => result,
-    }.map_err(RootedError::host)?;
-    register_server(context, server, listener)
-}
-
-pub(crate) fn server_close_operation(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let server = args
-        .first()
-        .copied()
-        .ok_or_else(|| RootedError::host("net.Server.close requires a server"))?;
-    let id = server_id(context, server)?;
-    let shared = context.host_mut().shared_state();
-    {
-        let mut state = shared.borrow_mut();
-        if let Some(listener) = state.net_servers.get_mut(&id).map(|server| {
-            server.closing = true;
-            server.listener
-        }) {
-            close_listener(&mut state.tcp, listener);
-        }
+    let resolved = resolve_local_path(&shared.borrow().cwd, path);
+    let result = resolved.and_then(|resolved| {
+        listen_local(&mut shared.borrow_mut().tcp, resolved, path.to_owned())
+    });
+    match result {
+        Ok(id) => register_server(context, server, id),
+        Err(error) => queue_listen_error(context, server, error, path),
     }
-    let key = context.string_rooted("_handle");
-    let null = context.null();
-    context.set_property_rooted(server, key, null, server)?;
-    Ok(server)
 }
 
 pub(crate) fn server_address_operation(
     context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
+    server: RootId,
+    _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let server = args
-        .first()
-        .copied()
-        .ok_or_else(|| RootedError::host("net.Server.address requires a server"))?;
-    let id = server_id(context, server)?;
+    let Some(id) = optional_server_id(context, server)? else { return Ok(context.null()); };
     let shared = context.host_mut().shared_state();
     let local = listener_path(&shared.borrow().tcp, id).map(str::to_owned);
     if let Some(path) = local {
@@ -1934,18 +1847,16 @@ pub(crate) fn server_address_operation(
     Ok(object)
 }
 
-fn server_id(
+pub(super) fn optional_server_id(
     context: &mut NativeContext<'_, NodeHost>,
     server: RootId,
-) -> Result<u64, RootedError> {
+) -> Result<Option<u64>, RootedError> {
     let key = context.string_rooted("__quenchNetServerId");
     let value = context.get_property_rooted(server, key)?;
-    context
-        .rooted_value(value)
+    Ok(context.rooted_value(value)
         .and_then(Value::as_number)
         .filter(|id| id.is_finite() && id.fract() == 0.0 && *id >= 0.0)
-        .map(|id| id as u64)
-        .ok_or_else(|| RootedError::host("net server identifier is invalid"))
+        .map(|id| id as u64))
 }
 
 fn socket_id(
@@ -2079,7 +1990,7 @@ pub(super) fn register_socket(
     Ok(socket)
 }
 
-fn register_server(
+pub(super) fn register_server(
     context: &mut NativeContext<'_, NodeHost>,
     server: RootId,
     listener: u64,
