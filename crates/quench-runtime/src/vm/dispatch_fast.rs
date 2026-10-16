@@ -4317,7 +4317,7 @@ pub(super) fn lane_fields_fit(instruction: WideInstruction, function: &Function)
                         .register_index()
                         .is_none_or(|register| register < registers)
             }
-            FieldLayout::OptionalRegister => value
+            FieldLayout::OptionalRegister | FieldLayout::OptionalReadRegister => value
                 .checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS)
                 .is_none_or(|register| register < registers),
             FieldLayout::Operand => {
