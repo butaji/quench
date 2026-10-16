@@ -300,7 +300,8 @@ fn preload_modules(context: &mut Context<'_>) -> Result<(), RootedError> {
 }
 
 fn install_vfs_globals(context: &mut Context<'_>) -> Result<(), RootedError> {
-    // The VFS sources wrap `globalThis.__nodeFs`, which building `fs` defines.
+    // The configured SDK owns public VFS policy; retain only native descriptor
+    // and stream bridges here, without evaluating the superseded JS facade.
     cached_builtin(context, BuiltinModule::Fs)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_vfs_fs_module");
@@ -340,15 +341,6 @@ fn install_vfs_globals(context: &mut Context<'_>) -> Result<(), RootedError> {
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_vfs_globals");
 
-    let source = format!(
-        "{}\n{}",
-        crate::polyfills::bootstrap::vfs_head::JS,
-        crate::polyfills::bootstrap::vfs::JS
-    );
-    let root = context.evaluate_script_rooted(&source, "node:bootstrap/vfs.js")?;
-    context.release_root(root);
-    #[cfg(feature = "profile-memory")]
-    context.profile_memory_checkpoint("node_vfs_polyfill");
     Ok(())
 }
 
