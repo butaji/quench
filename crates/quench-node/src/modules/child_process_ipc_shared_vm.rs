@@ -47,7 +47,7 @@ struct PendingWrite {
 /// implicit references from process message/disconnect listeners.
 enum CountedReferences {
     Parent { count: f64, referenced: bool },
-    Process { adjustment: f64 },
+    Process { count: f64 },
 }
 
 impl CountedReferences {
@@ -62,14 +62,14 @@ impl CountedReferences {
                     *referenced = false;
                 }
             }
-            Self::Process { adjustment } => *adjustment += delta,
+            Self::Process { count } => *count += delta,
         }
     }
 
-    fn referenced(&self, process_listeners: usize) -> bool {
+    fn referenced(&self) -> bool {
         match self {
             Self::Parent { referenced, .. } => *referenced,
-            Self::Process { adjustment } => process_listeners as f64 + adjustment > 0.0,
+            Self::Process { count } => *count > 0.0,
         }
     }
 }
@@ -108,7 +108,7 @@ impl IpcChannel {
                 || matches!(self.phase, Phase::Disconnecting(_))
                 || self
                     .reference
-                    .unwrap_or_else(|| self.counted_references.referenced(0)))
+                    .unwrap_or_else(|| self.counted_references.referenced()))
     }
 
     #[cfg(unix)]
@@ -341,7 +341,7 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
                 .set_nonblocking(true)
                 .map_err(|error| RootedError::host(error.to_string()))?;
             let mut channel = IpcChannel::new(socket);
-            channel.counted_references = CountedReferences::Process { adjustment: 0.0 };
+            channel.counted_references = CountedReferences::Process { count: 0.0 };
             state.borrow_mut().process_ipc.channel = Some(channel);
         }
     }
@@ -382,7 +382,19 @@ pub(crate) fn install_process(
     if let Some(previous) = previous {
         context.release_root(previous);
     }
-    install(context, PROCESS_OWNER, process)
+    install(context, PROCESS_OWNER, process)?;
+    if state.borrow().process_ipc.channel.is_some() {
+        let control = super::event_constructor_shared_vm::get(context, process, "channel")?;
+        let on = super::event_constructor_shared_vm::get(context, process, "on")?;
+        for (event, name, add) in [("newListener", "onNewListener", true), ("removeListener", "onRemoveListener", false)] {
+            let event = context.string_rooted(event);
+            let add = context.boolean(add);
+            let data = context.array_rooted(&[control, add])?;
+            let callback = context.host_constructor_named_with_data(crate::host::shared_vm::operation("processIpcListenerReference"), name, data)?;
+            context.call_rooted(on, process, &[event, callback])?;
+        }
+    }
+    Ok(())
 }
 
 /// The IPC surface factory, evaluated under the startup intrinsics when the
@@ -680,12 +692,7 @@ pub(crate) fn has_work(state: &SharedNodeState) -> bool {
         || !channel.completed.is_empty()
         || matches!(channel.phase, Phase::Disconnecting(_))
         || channel.reference.unwrap_or_else(|| {
-            channel.counted_references.referenced(
-                ["message", "disconnect"]
-                    .iter()
-                    .map(|name| state.scheduler.shared_string_listener_count(name))
-                    .sum(),
-            )
+            channel.counted_references.referenced()
         })
 }
 
@@ -745,7 +752,7 @@ pub(crate) fn poll(
                 .host_function(crate::host::shared_vm::operation("ipcComplete"))
                 .map_err(|error| runtime.format_error(program, &error.error))?;
             state.borrow_mut().scheduler.queue_shared_next_tick(
-                super::shared_event_loop::SharedCallback {
+                super::shared_event_loop::SharedCallback { execution: None,
                     callback: complete,
                     receiver,
                     args: vec![callback, failed],
@@ -764,7 +771,7 @@ pub(crate) fn poll(
             );
             let text = runtime.string_rooted(&String::from_utf8_lossy(&bytes));
             state.borrow_mut().scheduler.queue_shared_next_tick(
-                super::shared_event_loop::SharedCallback {
+                super::shared_event_loop::SharedCallback { execution: None,
                     callback: decode,
                     receiver,
                     args: vec![target, text],
@@ -808,7 +815,7 @@ fn queue_event(
         .shared_state()
         .borrow_mut()
         .scheduler
-        .queue_shared_next_tick(super::shared_event_loop::SharedCallback {
+        .queue_shared_next_tick(super::shared_event_loop::SharedCallback { execution: None,
             callback: emit,
             receiver,
             args,
@@ -887,4 +894,17 @@ pub(crate) fn decode(
     }
     let event = context.string_rooted(event);
     emit(context, undefined, &[target, event, message])
+}
+
+pub(crate) fn listener_reference(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let name = args.first().copied().unwrap_or_else(|| context.undefined());
+    if context.string_text(name)?.is_some_and(|name| matches!(name.as_str(), "message" | "disconnect")) {
+        let data = context.host_function_data()?;
+        let control = super::event_constructor_shared_vm::get(context, data, "0")?;
+        let add = super::event_constructor_shared_vm::get(context, data, "1")?;
+        let name = if context.truthy_rooted(add)? { "refCounted" } else { "unrefCounted" };
+        let method = super::event_constructor_shared_vm::get(context, control, name)?;
+        context.call_rooted(method, control, &[])?;
+    }
+    Ok(context.undefined())
 }

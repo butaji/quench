@@ -13,9 +13,9 @@ fn set(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, name: &str, 
     Ok(())
 }
 fn read_error(context: &mut NativeContext<'_, NodeHost>, socket: RootId, status: RootId) -> Result<(), RootedError> {
-    let undefined = context.undefined();
-    let code = super::util_system_error_shared_vm::get_system_error_name(context, undefined, &[status])?;
-    let text = context.to_string(code)?;
+    let status_number = context.to_number(status)?;
+    let text = super::util_system_error_shared_vm::system_error_name(status_number);
+    let code = context.string_rooted(&text);
     let error = context.error_rooted(&format!("read {text}"))?;
     set(context, error, "code", code)?;
     set(context, error, "errno", status)?;

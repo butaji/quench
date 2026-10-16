@@ -12,6 +12,8 @@ mod cell_access;
 mod buffer_bytes;
 mod collection_entries;
 mod external;
+mod memory_stats;
+pub use memory_stats::HeapMemoryComposition;
 #[cfg(feature = "profile-memory")]
 mod memory_profile;
 mod records;
@@ -42,8 +44,9 @@ const LARGE_HEAP_MINIMUM_LIVE_CELLS: usize = 1 << 16;
 /// and paired stock rounds rose Splay about 20%, EarleyBoyer 15% and RayTrace 40%. Max
 /// RSS rises with it.
 pub(crate) const MINIMUM_GC_ALLOCATION_HEADROOM: usize = 1 << 18;
-/// String payload bytes that weigh as one more allocation toward the next collection.
-const STRING_BYTES_PER_ALLOCATION: usize = 64;
+/// Payload bytes beside a cell (string units, array elements) that weigh as one more
+/// allocation toward the next collection.
+const PAYLOAD_BYTES_PER_ALLOCATION: usize = 64;
 const PARALLEL_MARK_MINIMUM_SLOTS: usize = 50_000;
 const PARALLEL_MARK_MAX_THREADS: usize = 4;
 // Paired Splay screens on the 4-vCPU Linux host favored the collector thread;
@@ -156,7 +159,6 @@ pub(super) struct Slot {
 }
 
 impl Slot {
-    #[cfg(feature = "profile-memory")]
     fn is_live(&self) -> bool {
         self.cell.is_some()
     }
@@ -358,6 +360,8 @@ pub(crate) struct Heap {
     external_bytes: usize,
     allocations: usize,
     allocations_since_full: usize,
+    /// Payload bytes grown since the last charge, below one allocation's weight.
+    uncharged_payload_bytes: usize,
     full_collection_growth_limit: usize,
     old_live: usize,
     threshold: usize,
@@ -600,7 +604,6 @@ impl Default for GcProfile {
     }
 }
 
-#[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
 #[repr(usize)]
 #[derive(Clone, Copy)]
 pub(crate) enum CellKind {
@@ -640,10 +643,8 @@ pub(crate) enum CellKind {
     WasmTag,
     WasmException,
 }
-#[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
 impl CellKind {
     pub(crate) const COUNT: usize = Self::WasmException as usize + 1;
-    #[cfg(feature = "profile-memory")]
     pub(crate) const NAMES: [&'static str; Self::COUNT] = [
         "object",
         "array",
@@ -801,7 +802,10 @@ impl Heap {
             self.gc_profile.allocated_size_buckets[kind][Self::size_bucket(bytes)] += 1;
         }
         let weight = 1 + match &cell {
-            Cell::String(text) => text.flat_unit_bytes() / STRING_BYTES_PER_ALLOCATION,
+            Cell::String(text) => text.flat_unit_bytes() / PAYLOAD_BYTES_PER_ALLOCATION,
+            Cell::Array { object } => {
+                object.elements().capacity() * size_of::<Value>() / PAYLOAD_BYTES_PER_ALLOCATION
+            }
             _ => 0,
         };
         self.allocations += weight;
@@ -1050,6 +1054,15 @@ impl Heap {
     #[inline(always)]
     pub(crate) fn collection_epoch(&self) -> u64 {
         self.collections
+    }
+    /// Charges payload a live cell grew outside `alloc` (array elements) toward the next
+    /// collection, at the weight `alloc` gives a cell's own payload.
+    pub(crate) fn charge_payload_growth(&mut self, bytes: usize) {
+        let pending = self.uncharged_payload_bytes.saturating_add(bytes);
+        let weight = pending / PAYLOAD_BYTES_PER_ALLOCATION;
+        self.uncharged_payload_bytes = pending % PAYLOAD_BYTES_PER_ALLOCATION;
+        self.allocations += weight;
+        self.allocations_since_full = self.allocations_since_full.saturating_add(weight);
     }
     pub fn should_collect(&self) -> bool {
         self.allocations >= self.threshold
@@ -2503,7 +2516,6 @@ impl Heap {
                 .filter(|value| value.is_heap()),
         );
     }
-    #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
     pub(super) fn cell_kind(cell: &Cell) -> CellKind {
         match cell {
             Cell::Object(_)
@@ -2550,7 +2562,6 @@ impl Heap {
             Cell::TemporalInstant { .. } => CellKind::TemporalInstant,
         }
     }
-    #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
     pub(super) fn cell_payload_bytes(cell: &Cell) -> usize {
         let object_extra_bytes = cell
             .object()

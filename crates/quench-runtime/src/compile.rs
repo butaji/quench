@@ -930,7 +930,7 @@ impl Engine {
             .into_iter()
             .filter_map(|(span, name)| annex_b_forbidden_names.contains(&name).then_some(span))
             .collect();
-        let program = compiler.program(&parsed.program, module_goal, inherited_strict);
+        let emitted = compiler.program(&parsed.program, module_goal, inherited_strict);
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("QUENCH_MEMORY").is_some() {
             eprintln!(
@@ -939,7 +939,12 @@ impl Engine {
                 allocator.capacity(),
             );
         }
-        program
+        // The tree is the largest structure of a compilation; the passes that finish the
+        // program do not read it.
+        drop(parsed);
+        drop(allocator);
+        let (compiler, module) = emitted?;
+        compiler.finish(module)
     }
 
     pub(crate) fn strict_eval_syntax_error(source: &str, in_function: bool) -> Option<String> {
@@ -1102,6 +1107,36 @@ fn push_module_request(
             module_type,
         });
     }
+}
+
+/// The functions and arrows written in `program`, each of which the compiler emits.
+/// The module records `Compiler::program` reads from the tree for `Compiler::finish`.
+struct ModuleParts {
+    requests: Vec<crate::bytecode::ModuleRequest>,
+    imports: Vec<crate::bytecode::ModuleImportBinding>,
+    link_plan: Option<crate::bytecode::ModuleLinkPlan>,
+}
+
+fn source_function_count(program: &Program<'_>) -> usize {
+    struct Counter(usize);
+    impl<'a> oxc_ast_visit::Visit<'a> for Counter {
+        fn visit_function(
+            &mut self,
+            function: &oxc_ast::ast::Function<'a>,
+            flags: oxc_syntax::scope::ScopeFlags,
+        ) {
+            self.0 += 1;
+            oxc_ast_visit::walk::walk_function(self, function, flags);
+        }
+
+        fn visit_arrow_function_expression(&mut self, arrow: &ArrowFunctionExpression<'a>) {
+            self.0 += 1;
+            oxc_ast_visit::walk::walk_arrow_function_expression(self, arrow);
+        }
+    }
+    let mut counter = Counter(0);
+    oxc_ast_visit::Visit::visit_program(&mut counter, program);
+    counter.0
 }
 
 fn has_top_level_await(statements: &[Statement<'_>]) -> bool {
@@ -1693,13 +1728,18 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    /// Emits every function of `program`: all the compiler reads of its tree. `finish` makes
+    /// the residual program from what this leaves, after the caller has dropped the tree.
     fn program(
         mut self,
         program: &Program<'_>,
         module_goal: bool,
         inherited_strict: bool,
-    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+    ) -> Result<(Self, ModuleParts), Vec<Diagnostic>> {
         self.source_comments = program.comments.iter().map(|comment| comment.span).collect();
+        // One slot per source function and the root, reserved once: grown by doubling, the
+        // slots of a large script stood up to twice its functions beside its tree.
+        self.functions.reserve_exact(source_function_count(program) + 1);
         self.module_goal = module_goal;
         let module_requests = if module_goal {
             module_requests(&program.body)
@@ -1947,8 +1987,31 @@ impl<'a> Compiler<'a> {
         if !self.errors.is_empty() {
             return Err(self.errors);
         }
+        Ok((
+            self,
+            ModuleParts {
+                requests: module_requests,
+                imports: module_imports,
+                link_plan: module_link_plan,
+            },
+        ))
+    }
+
+    /// The residual program of the functions `program` emitted.
+    fn finish(mut self, module: ModuleParts) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        let ModuleParts {
+            requests: module_requests,
+            imports: module_imports,
+            link_plan: module_link_plan,
+        } = module;
         let mut functions: Vec<_> = self.functions.into_iter().map(Option::unwrap).collect();
+        // Functions the compiler synthesizes (class constructors and initializers) may have
+        // grown the reservation.
+        functions.shrink_to_fit();
         capture_layout::apply(&mut functions, &self.atoms);
+        for function in &mut functions {
+            Self::elide_unobservable_tdz(function, &self.atoms);
+        }
         if self.mode == SpecializationMode::Enabled {
             Self::apply_rewrites(
                 &mut functions,
@@ -2010,7 +2073,9 @@ impl<'a> Compiler<'a> {
         }
         for function in &mut functions {
             function.code.shrink_to_fit();
+            function.wide.shrink_to_fit();
             function.handlers.shrink_to_fit();
+            function.source_positions.shrink_to_fit();
         }
         let (mut method_sites, mut method_arguments) =
             Self::flatten_method_sites(self.method_sites);
@@ -2636,6 +2701,22 @@ impl<'a> Compiler<'a> {
             DispatchClass::Numeric
         } else {
             DispatchClass::General
+        }
+    }
+
+    /// Drops the TDZ resets of slots whose uninitialized state no access can observe
+    /// (`unobservable_tdz_slots`), so their loads and stores need no TDZ check.
+    fn elide_unobservable_tdz(function: &mut BcFunction, atoms: &CompilerAtoms<'_>) {
+        let slots = function.unobservable_tdz_slots(|atom| atoms.get(atom as usize));
+        if !slots.contains(&true) {
+            return;
+        }
+        for instruction in &mut function.code {
+            if instruction.op() == Op::InitializeTdz
+                && slots.get(instruction.local_slot()) == Some(&true)
+            {
+                *instruction = Instr::new(Op::Nop, 0, 0, 0, 0);
+            }
         }
     }
 

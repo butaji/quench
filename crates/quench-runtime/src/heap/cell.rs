@@ -74,7 +74,6 @@ impl WeakMapEntries {
         );
     }
 
-    #[cfg(any(feature = "profile-memory", feature = "profile-aggregate"))]
     pub(crate) fn allocated_bytes(&self) -> usize {
         self.ordered.capacity() * std::mem::size_of::<(Value, Value)>()
             + self.indices.capacity() * std::mem::size_of::<(Value, usize)>()
@@ -1298,7 +1297,6 @@ struct ObjectExtras {
     indexed_descriptors: bool,
 }
 impl ObjectExtras {
-    #[cfg(any(feature = "profile-memory", feature = "profile-aggregate"))]
     fn allocated_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
             + self
@@ -1317,7 +1315,6 @@ impl ObjectExtras {
     }
 }
 impl StackData {
-    #[cfg(any(feature = "profile-memory", feature = "profile-aggregate"))]
     fn allocated_bytes(&self) -> usize {
         fn record_bytes(record: &CallSiteRecord) -> usize {
             (match &record.location {
@@ -1808,7 +1805,6 @@ impl Object {
         }
         true
     }
-    #[cfg(any(feature = "profile-memory", feature = "profile-aggregate"))]
     pub(crate) fn allocated_extra_bytes(&self) -> usize {
         self.extras().map_or(0, ObjectExtras::allocated_bytes)
     }
@@ -2291,7 +2287,6 @@ pub(crate) enum Cell {
     },
 }
 
-#[cfg(feature = "profile-memory")]
 impl Cell {
     pub(crate) fn profile_variant_name(&self) -> &'static str {
         match self {

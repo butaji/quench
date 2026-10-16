@@ -1075,11 +1075,14 @@ lane_handler! {
 }
 
 lane_handler! {
-    /// `lane_set_index` past a record array.
+    /// `lane_set_index` past a record array, or appending to a dense array at its length.
     #[inline(never)]
     fn lane_set_index_slot<>(cx, r, ip, i, view) {
-        let (object, key) = (r.get(i.b), r.get(i.c));
-        if !(unsafe { vm(cx) }).try_replace_dense_element(object, key, r.get(i.a)) {
+        let (object, key, value) = (r.get(i.b), r.get(i.c), r.get(i.a));
+        let vm = unsafe { vm(cx) };
+        if !vm.try_replace_dense_element(object, key, value)
+            && !vm.try_append_dense_element(object, key, value)
+        {
             return exit(ip);
         }
         next!(cx, r, following(ip), view)
@@ -4935,7 +4938,7 @@ pub(super) fn lane_fields_fit(instruction: WideInstruction, function: &Function)
                         .register_index()
                         .is_none_or(|register| register < registers)
             }
-            FieldLayout::OptionalRegister => value
+            FieldLayout::OptionalRegister | FieldLayout::OptionalReadRegister => value
                 .checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS)
                 .is_none_or(|register| register < registers),
             FieldLayout::Operand => {
@@ -5081,6 +5084,8 @@ fn derive_lane_view<H: Host>(
     let memory_register = memory_register(function);
     let jump_targets = jump_targets(function);
     let resolves_names = function.has_dynamic_scope_access();
+    // One function-wide fact, consulted per local load; it scans the whole body.
+    let forwards_arguments = std::cell::OnceCell::new();
     let mut producer: Option<u16> = None;
     // Per instruction: the general path executes it, and its record reads
     // the accumulator.
@@ -5152,8 +5157,8 @@ fn derive_lane_view<H: Host>(
                     )
                 })
             } else if matches!(op, Op::LoadLocal | Op::LoadLocalPlain)
-                && function.forwards_arguments_only()
                 && function.arguments_slot == u16::try_from(instruction.local_slot()).ok()
+                && *forwards_arguments.get_or_init(|| function.forwards_arguments_only())
             {
                 Some(LaneHandler {
                     handler: lane_load_forwarded_arguments::<H> as Handler,
