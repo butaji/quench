@@ -1491,3 +1491,36 @@ if(Object.getPrototypeOf(async function(){})!==asyncPrototype||Object.getPrototy
             .unwrap();
     }
 }
+
+#[test]
+fn completed_generator_creation_origin_retains_then_releases_its_function_identity() {
+    let source = r#"
+var state;
+function createIterator(){function* Creator(){};rememberConstructor(Creator);const value=Creator();state={value,next:value.next};Object.setPrototypeOf(value,null);Object.defineProperty(Creator,'name',{value:'Changed'})}
+function closeIterator(){state.next.call(state.value);if(constructedName(state.value)!=='Changed')throw Error('lost completed generator origin')}
+function dropIterator(){state=null}
+"#;
+    for program in [
+        Engine::specialize_unspecialized(source, "generator-origin-roots.js").unwrap(),
+        Engine::specialize(source, "generator-origin-roots.js").unwrap(),
+    ] {
+        let mut runtime = Runtime::new(ConstructorProvenanceHost::default());
+        runtime.execute(&program).unwrap();
+        for (operation, alive) in [
+            ("createIterator", true),
+            ("closeIterator", true),
+            ("dropIterator", false),
+        ] {
+            let global = runtime.global_root().unwrap();
+            let key = runtime.string_rooted(operation);
+            let function = runtime.get_property_rooted(global, key).unwrap();
+            let result = runtime.call_rooted(function, global, &[]).unwrap();
+            for root in [result, function, key, global] {
+                assert!(runtime.release_root(root));
+            }
+            runtime.collect(&program).unwrap();
+            let weak = runtime.host_mut().constructor.unwrap();
+            assert_eq!(runtime.host_weak_root_is_live(weak), alive, "{operation}");
+        }
+    }
+}
