@@ -1428,10 +1428,15 @@ pub(crate) fn node_library_export(
     get(context, library, name)
 }
 
+/// A module of the pinned Node library, loaded on first use inside the startup intrinsics:
+/// its initialization captures the original intrinsic methods however a script has replaced
+/// or frozen them since (`with_startup_intrinsics` restores even nonconfigurable ones).
 pub(crate) fn node_library_module(context: &mut Context<'_>, owner: &str, relative: &str) -> Result<RootId, RootedError> {
     let root = context.host_mut().node_library_root.clone();
     let parent = module_record(context, &root.join("lib").join(owner), None, false)?;
-    load(context, &root.join("lib").join(relative), Some(parent), EntryGoal::CommonJs)
+    context.with_startup_intrinsics(|context| {
+        load(context, &root.join("lib").join(relative), Some(parent), EntryGoal::CommonJs)
+    })
 }
 
 pub(crate) fn module_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
