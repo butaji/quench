@@ -1,0 +1,56 @@
+{
+  "schema_version": 2,
+  "inventory_hash": "d8c444e61d27d1f9",
+  "timeout_secs": 30,
+  "jobs": 1,
+  "node_version": "v27.0.0-nightly20260819c79868f102",
+  "runtime_commit": "c4ad13141380166a761b91359e0519cdeb51292c",
+  "tests_node_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+  "platform": "linux-x86_64",
+  "results": [
+    {
+      "fixture": "/workspace/work/node-fixtures/test/parallel/test-stream2-read-sync-stack.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": [
+            114,
+            101,
+            97,
+            100,
+            97,
+            98,
+            108,
+            101,
+            32,
+            50,
+            54,
+            50,
+            49,
+            52,
+            52,
+            10,
+            114,
+            101,
+            97,
+            100,
+            97,
+            98,
+            108,
+            101,
+            32,
+            48,
+            10
+          ]
+        }
+      }
+    }
+  ]
+}
