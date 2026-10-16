@@ -43,7 +43,7 @@ pub(super) fn active_shape_attributes(
                 }
             }
             ShapeTransition::Vacant => entries.push(None),
-            ShapeTransition::Root | ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured | ShapeTransition::Constructed { .. } | ShapeTransition::Dictionary { .. } => {}
+            ShapeTransition::Root | ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured | ShapeTransition::FunctionLengthReconfigured | ShapeTransition::Constructed { .. } | ShapeTransition::Dictionary { .. } => {}
         }
     }
     entries
@@ -187,6 +187,7 @@ fn rebuild_shape(
     for transition in [
         function_name.map(|name| ShapeTransition::FunctionName { name }),
         name_reconfigured.then_some(ShapeTransition::FunctionNameReconfigured),
+        provenance::shape_function_length_reconfigured(old_shapes, old_shape).then_some(ShapeTransition::FunctionLengthReconfigured),
         constructed_name.map(|(constructor, new_target_is_base)| ShapeTransition::Constructed { constructor, new_target_is_base }),
     ].into_iter().flatten() {
         parent = append_compacted_shape(shapes, transitions, parent, transition, 0);
@@ -1005,7 +1006,9 @@ mod tests {
             ShapeTransition::FunctionName { name: 7 }, 0);
         let reconfigured = append_compacted_shape(&mut shapes, &mut transitions, named,
             ShapeTransition::FunctionNameReconfigured, 0);
-        let created = append_compacted_shape(&mut shapes, &mut transitions, reconfigured,
+        let length_reconfigured = append_compacted_shape(&mut shapes, &mut transitions, reconfigured,
+            ShapeTransition::FunctionLengthReconfigured, 0);
+        let created = append_compacted_shape(&mut shapes, &mut transitions, length_reconfigured,
             ShapeTransition::Constructed { constructor: Value::heap(17), new_target_is_base: false }, 0);
         let with_field = append_compacted_shape(&mut shapes, &mut transitions, created,
             ShapeTransition::Add { key: PropertyKey::string(9), slot: 0, attributes: DEFAULT_DATA_ATTRIBUTES }, 1);
@@ -1013,6 +1016,7 @@ mod tests {
         let shape = rebuild_shape(&shapes, &[], with_field, &mut rebuilt,
             &mut Vec::new(), &mut crate::vm::shape_transitions::ShapeTransitionIndex::default());
         assert_eq!(provenance::shape_names(&rebuilt, shape), (Some(7), Some((Value::heap(17), false)), true));
+        assert!(provenance::shape_function_length_reconfigured(&rebuilt, shape));
         assert_eq!(rebuilt[shape as usize].storage_len(), 1);
         assert_eq!(super::active_shape_attributes(&rebuilt, shape).len(), 1);
     }

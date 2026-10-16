@@ -709,6 +709,7 @@ enum ShapeTransition {
     Root,
     FunctionName { name: Atom },
     FunctionNameReconfigured,
+    FunctionLengthReconfigured,
     Constructed { constructor: Value, new_target_is_base: bool },
     Add {
         key: property_key::PropertyKey,
@@ -732,6 +733,7 @@ enum ShapeTransition {
 enum ShapeTransitionKey {
     FunctionName(Atom),
     FunctionNameReconfigured,
+    FunctionLengthReconfigured,
     Constructed(Value, bool),
     AddString(Atom, DataAttributes),
     /// A descriptor without accessor functions (`ShapeAttributes::accessors` is
@@ -841,7 +843,7 @@ impl ShapeTransition {
         match self {
             Self::Add { key, .. } => key.symbol_value().is_some(),
             Self::Descriptor { attributes, .. } => attributes.accessors != NO_SHAPE_ACCESSORS,
-            Self::Root | Self::FunctionName { .. } | Self::FunctionNameReconfigured | Self::Constructed { .. } | Self::Delete { .. } | Self::Vacant | Self::Dictionary { .. } => false,
+            Self::Root | Self::FunctionName { .. } | Self::FunctionNameReconfigured | Self::FunctionLengthReconfigured | Self::Constructed { .. } | Self::Delete { .. } | Self::Vacant | Self::Dictionary { .. } => false,
         }
     }
 
@@ -849,6 +851,7 @@ impl ShapeTransition {
         match self {
             Self::FunctionName { name } => Some(ShapeTransitionKey::FunctionName(name)),
             Self::FunctionNameReconfigured => Some(ShapeTransitionKey::FunctionNameReconfigured),
+            Self::FunctionLengthReconfigured => Some(ShapeTransitionKey::FunctionLengthReconfigured),
             Self::Constructed { constructor, new_target_is_base } => Some(ShapeTransitionKey::Constructed(constructor, new_target_is_base)),
             Self::Add {
                 key: PropertyKey::String(atom),
