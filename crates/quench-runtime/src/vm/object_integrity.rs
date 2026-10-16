@@ -51,6 +51,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let _stack = self.enter_stack()?;
         self.with_call_roots([target, key], |vm| {
+            if vm.is_host_private_symbol(key) && matches!(vm.heap.get(target), Some(Cell::Proxy { .. })) { return Ok(Value::TRUE); }
             if let Some((target, handler)) = vm.proxy_parts(target) {
                 if handler.is_null() {
                     return Err(vm.type_error(p, "cannot access a revoked proxy".into()));
@@ -393,6 +394,7 @@ impl<H: Host> Vm<H> {
         exists: bool,
     ) -> Result<(), JsError> {
         if !exists
+            && !key.symbol_value().is_some_and(|symbol| self.is_host_private_symbol(symbol))
             && self
                 .object_data(object)
                 .is_some_and(|object| !object.is_extensible())

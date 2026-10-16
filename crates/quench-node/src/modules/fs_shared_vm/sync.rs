@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_TEMP_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
-const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSync, symlinkSync, linkSync, renameSync, unlinkSync, chownSync, lchownSync, fchownSync, truncateSync, ftruncateSync, writeFileSync, openSync, closeSync, fstatSync, readSyncNative, writeSyncNative, writeDescriptor, syncDescriptor) => {
+const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSync, symlinkSync, linkSync, renameSync, unlinkSync, chownSync, lchownSync, fchownSync, truncateSync, ftruncateSync, openSync, closeSync, fstatSync, readSyncNative, writeSyncNative, syncDescriptor) => {
   let warnedMkdtempX = false;
   const normalizePath = (path) =>
     typeof path === 'string' ? path : Buffer.isBuffer(path) ? path.toString() : ArrayBuffer.isView(path) && !(path instanceof DataView) ? Buffer.from(path).toString() : path instanceof URL ? decodeURIComponent(path.pathname) : path;
@@ -81,18 +81,6 @@ const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSy
     }
     return mkdtempSync(normalized);
   };
-  const writeBytes = (data, options) => {
-    const encoding = typeof options === 'string' ? options : options?.encoding;
-    if (typeof data === 'string') return Buffer.from(data, encoding);
-    if (!ArrayBuffer.isView(data)) {
-      const error = new TypeError(
-        'The "data" argument must be of type string or an instance of Buffer, TypedArray, or DataView',
-      );
-      error.code = 'ERR_INVALID_ARG_TYPE';
-      throw error;
-    }
-    return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-  };
   const normalizeMode = (mode) => {
     if (typeof mode === "string") {
       const parsed = Number.parseInt(mode, 8);
@@ -131,9 +119,6 @@ const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSy
       throw error;
     }
   };
-  const descriptorArgument = (path) =>
-    typeof path === "number" ? path :
-      path && typeof path === "object" && typeof path.fd === "number" ? path.fd : null;
   const validateReadWriteRange = (buffer, offset, length) => {
     for (const [name, value] of [["offset", offset], ["length", length]]) {
       if (value != null && typeof value !== "number") {
@@ -260,25 +245,6 @@ const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSy
       validateFd(fd);
       return ftruncateSync(fd, validateLength(length));
     },
-    writeFileSync(path, data, options) {
-      const fd = descriptorArgument(path);
-      if (fd !== null) {
-        writeDescriptor(fd, writeBytes(data, options), null);
-        return undefined;
-      }
-      return writeFileSync(normalizePath(path), writeBytes(data, options), options);
-    },
-    appendFileSync(path, data, options) {
-      const fd = descriptorArgument(path);
-      if (fd !== null) {
-        writeDescriptor(fd, writeBytes(data, options), null);
-        return undefined;
-      }
-      const settings = typeof options === "string"
-        ? { encoding: options, flag: "a" }
-        : { ...(options || {}), flag: options?.flag || "a" };
-      return writeFileSync(normalizePath(path), writeBytes(data, settings), settings);
-    },
     openSync(path, flags, mode) {
       return openSync(path, flags, mode);
     },
@@ -319,14 +285,11 @@ pub(crate) fn install(
     let truncate = context.host_function(crate::host::shared_vm::operation("fsTruncateSync"))?;
     let ftruncate = context.host_function(crate::host::shared_vm::operation("fsFtruncateSync"))?;
     let rm = context.host_function(crate::host::shared_vm::operation("fsRmSync"))?;
-    let write = context.host_function(crate::host::shared_vm::operation("fsWriteFileSync"))?;
     let open = context.host_function(crate::host::shared_vm::operation("fsOpenSync"))?;
     let close = context.host_function(crate::host::shared_vm::operation("fsCloseSync"))?;
     let fstat = context.host_function(crate::host::shared_vm::operation("fsFstatSync"))?;
     let read_sync = context.host_function(crate::host::shared_vm::operation("fsReadSync"))?;
     let write_sync = context.host_function(crate::host::shared_vm::operation("fsWriteSync"))?;
-    let write_descriptor =
-        context.host_function(crate::host::shared_vm::operation("fsWriteDescriptor"))?;
     let sync_descriptor =
         context.host_function(crate::host::shared_vm::operation("fsSyncDescriptor"))?;
     let factory = context.evaluate_script_rooted(SYNC_API, "node:fs/shared-sync.js")?;
@@ -349,13 +312,11 @@ pub(crate) fn install(
             fchown,
             truncate,
             ftruncate,
-            write,
             open,
             close,
             fstat,
             read_sync,
             write_sync,
-            write_descriptor,
             sync_descriptor,
         ],
     )?;
@@ -375,8 +336,6 @@ pub(crate) fn install(
         ("truncateSync", "truncateSync"),
         ("ftruncateSync", "ftruncateSync"),
         ("rmSync", "rmSync"),
-        ("writeFileSync", "writeFileSync"),
-        ("appendFileSync", "appendFileSync"),
         ("openSync", "openSync"),
         ("closeSync", "closeSync"),
         ("fstatSync", "fstatSync"),
@@ -1018,27 +977,6 @@ pub(crate) fn rm_complete(
     context.call_rooted(callback, undefined, &[error])
 }
 
-pub(crate) fn write_file_sync(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let path = path_argument(context, args.first().copied())?;
-    let bytes = byte_view(context, args.get(1).copied())?;
-    let options = write_options(context, args.get(2).copied())?;
-    if !ops::valid_write_flag(options.flag.as_deref()) {
-        return Err(invalid_value(
-            context,
-            "flag",
-            options.flag.as_deref().unwrap_or("w"),
-        )?);
-    }
-    if let Err(error) = ops::write_file(&path, &bytes, options) {
-        return throw_operation_error(context, &error);
-    }
-    Ok(context.undefined())
-}
-
 fn path_argument(
     context: &mut NativeContext<'_, NodeHost>,
     path: Option<RootId>,
@@ -1127,44 +1065,6 @@ fn rm_options(
     let force = property(context, value, "force")?;
     let force = context.truthy_rooted(force)?;
     Ok(ops::RmOptions { recursive, force })
-}
-
-fn write_options(
-    context: &mut NativeContext<'_, NodeHost>,
-    options: Option<RootId>,
-) -> Result<ops::WriteOptions, RootedError> {
-    let Some(value) = options else {
-        return Ok(ops::WriteOptions::default());
-    };
-    let rooted = context.rooted_value(value).unwrap_or(Value::UNDEFINED);
-    if rooted.is_undefined() || rooted.is_null() {
-        return Ok(ops::WriteOptions::default());
-    }
-    if context.string_text(value)?.is_some() {
-        return Ok(ops::WriteOptions {
-            flag: None,
-            ..ops::WriteOptions::default()
-        });
-    }
-    if !context.is_object_rooted(value)? {
-        return Err(invalid_options_type(context, value)?);
-    }
-
-    let flag_value = property(context, value, "flag")?;
-    let flag = context.string_text(flag_value)?;
-    let mode = property(context, value, "mode")?;
-    let mode = context
-        .rooted_value(mode)
-        .and_then(Value::as_number)
-        .map(|mode| mode as u32);
-    let flush = property(context, value, "flush")?;
-    let flush_value = context.rooted_value(flush).unwrap_or(Value::UNDEFINED);
-    let flush = match flush_value.as_bool() {
-        Some(value) => value,
-        None if flush_value.is_undefined() || flush_value.is_null() => false,
-        None => return Err(option_type_error(context, "flush", flush)?),
-    };
-    Ok(ops::WriteOptions { flag, mode, flush })
 }
 
 pub(super) fn byte_view(

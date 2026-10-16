@@ -44,6 +44,9 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         c.set_prototype_rooted(tp, lp)?;
         c.set_prototype_rooted(lp, hp)?;
         for (p, n, op) in [
+            (lp, "writeBuffer", "nativeStreamWriteBuffer"),
+            (lp, "readStart", "nativeStreamReadStart"),
+            (lp, "readStop", "nativeStreamReadStop"),
             (tp, "bind", "nativeTcpBind"),
             (tp, "bind6", "nativeTcpBind6"),
             (tp, "listen", "nativeTcpListen"),
@@ -223,6 +226,7 @@ pub(crate) fn close(
         .borrow_mut()
         .net_handle_close_callbacks
         .insert(endpoint, root);
+    super::stream_binding::release_reader(c, endpoint);
     net::native_tcp_close(&mut shared.borrow_mut().tcp, endpoint);
     let listening = shared.borrow_mut().native_tcp_listeners.remove(&endpoint);
     if let Some(root) = listening {

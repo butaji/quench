@@ -2106,6 +2106,28 @@ impl RegExpLegacyOwner {
     }
 }
 
+/// Native host-private keys remain symbol primitives, but do not participate in
+/// ordinary property reflection, inheritance, or proxy interception.
+#[derive(Clone, Debug)]
+pub(crate) struct SymbolData {
+    pub(crate) description: Option<String>,
+    pub(crate) kind: SymbolKind,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SymbolKind { Public, HostPrivate }
+impl SymbolData {
+    pub(crate) fn public(description: Option<String>) -> Self {
+        Self { description, kind: SymbolKind::Public }
+    }
+    pub(crate) fn host_private(description: Option<String>) -> Self {
+        Self { description, kind: SymbolKind::HostPrivate }
+    }
+}
+impl std::ops::Deref for SymbolData {
+    type Target = Option<String>;
+    fn deref(&self) -> &Self::Target { &self.description }
+}
+
 #[derive(Clone, Debug)]
 #[rustfmt::skip]
 pub(crate) enum Cell {
@@ -2234,7 +2256,7 @@ pub(crate) enum Cell {
         declarations: Box<crate::WasmTypes>,
     },
     String(JsString), BigInt(String),
-    Symbol(Option<String>),
+    Symbol(SymbolData),
     Date { milliseconds: f64, object: Box<Object> },
     RegExp {
         object: Box<Object>,

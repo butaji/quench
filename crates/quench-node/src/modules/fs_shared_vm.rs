@@ -16,6 +16,9 @@ pub(crate) mod file_handle_read;
 #[path = "fs_shared_vm/write_stream.rs"]
 pub(crate) mod write_stream;
 
+#[path = "fs_shared_vm/write_public.rs"]
+pub(crate) mod write_public;
+
 const PROMISES_FACTORY: &str = quench_js_check::checked_js!(
     r#"(readFile, stat, lstat, readdir, readlink, realpath, openSync, closeSync, readSync, writeSync, fstatSync, fchmodSync, fsyncSync, fdatasyncSync, writeFileSync, appendFileSync, readvSync, writevSync, createReadStream, normalizeRead, apply) => ({
   readFile: (...args) => Promise.resolve().then(() => {
@@ -2200,6 +2203,12 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let rm = context.call_rooted(factory, undefined, &[rm])?;
     set(context, module, "rm", rm)?;
     sync::install(context, module)?;
+    // SDK policy runs before data/path conversion. Replace the legacy public
+    // byte shim before callbacks, promises and cp capture these functions.
+    for (name, operation) in [("writeFileSync", "fsWriteFilePublic"), ("appendFileSync", "fsAppendFilePublic")] {
+        let function = context.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+        set(context, module, name, function)?;
+    }
     let mkdir_sync = get(context, module, "mkdirSync")?;
     let mkdir_sync = super::fs_policy_shared_vm::wrap_vfs_pair(context, mkdir_sync, "mkdirSync")?;
     set(context, module, "mkdirSync", mkdir_sync)?;

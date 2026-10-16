@@ -22,6 +22,8 @@ pub(crate) fn install(c: &mut Context<'_>, binding: RootId) -> Result<(), Rooted
         c.define_data_property_rooted(binding, key, value, true, true, true)?;
     }
     for name in [
+        "secureBuffer",
+        "secureHeapUsed",
         "randomFillSync",
         "getFipsCrypto",
         "getFipsCryptoGeneration",
@@ -50,6 +52,28 @@ pub(crate) fn operation(
     let op = c.host_function_data()?;
     let op = c.to_string(op)?;
     match op.as_str() {
+        "secureHeapUsed" => Ok(c.bigint_rooted(native::secure_heap_used() as i128)),
+        "secureBuffer" => {
+            if native::secure_heap_initialized() {
+                let error = c.error_rooted(
+                    "Active OpenSSL secure heap requires native backing-store adoption",
+                )?;
+                let key = c.string_rooted("code");
+                let code = c.string_rooted("ERR_OPERATION_FAILED");
+                c.define_data_property_rooted(error, key, code, true, true, true)?;
+                return Err(c.throw(error));
+            }
+            let value = args.first().copied().unwrap_or_else(|| c.undefined());
+            let length = c
+                .rooted_value(value)
+                .and_then(|v| v.as_number())
+                .filter(|n| n.is_finite() && *n >= 0.0 && *n <= u32::MAX as f64 && n.fract() == 0.0)
+                .ok_or_else(|| RootedError::host("Invalid native secure buffer length"))?
+                as usize;
+            // With secure heap disabled, ordinary VM-owned backing is the same
+            // allowed allocation class as Node's sandbox copy; GC owns lifetime.
+            c.uint8_array_rooted(&vec![0; length])
+        }
         "randomFillSync" => random_fill(c, args),
         "getFipsCrypto" => Ok(c.number(if native::fips_enabled() { 1.0 } else { 0.0 })),
         "getFipsCryptoGeneration" => Ok(c.bigint_rooted(i128::from(native::fips_generation()))),
