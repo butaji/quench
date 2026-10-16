@@ -98,8 +98,8 @@ impl ProgramStore {
     }
 
     /// Inserts dynamic code that `reclaim_unreferenced` may later drop.
-    pub(crate) fn insert_reclaimable(&mut self, program: ResidualProgram) -> Option<ProgramId> {
-        let id = self.insert(program)?;
+    pub(crate) fn insert_reclaimable_shared(&mut self, program: Rc<ResidualProgram>) -> Option<ProgramId> {
+        let id = self.insert_shared(program)?;
         if let Some(entry) = self.entry_mut(id) {
             entry.reclaimable = true;
         }
