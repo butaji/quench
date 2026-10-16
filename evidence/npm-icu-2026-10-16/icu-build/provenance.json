@@ -1,0 +1,8 @@
+{
+  "node_source": "26e72d85a611e222e3f06025de8a3c496923bacd",
+  "icu": "78.3",
+  "common_objects": 202,
+  "data_sha256": "f294f56707f4bbbc669d291ff537f632eb8d363a8ea60b70b091cdf273ea0499",
+  "platform": "Linux-6.18.44-x86_64-with-glibc2.41",
+  "compiler": "g++ (Debian 14.2.0-19) 14.2.0"
+}
