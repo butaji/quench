@@ -62,7 +62,8 @@ pub(crate) fn append(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<
         let flag = c.string_rooted("a");
         super::set(c, options, "flag", flag)?;
     }
-    fs_call(c, "writeFileSync", &[path, data, options])
+    fs_call(c, "writeFileSync", &[path, data, options])?;
+    Ok(undefined)
 }
 
 pub(crate) fn write(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
