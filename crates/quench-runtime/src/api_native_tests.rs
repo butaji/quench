@@ -1658,8 +1658,9 @@ impl Host for ErrorSourceHost {
     fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
         let first_source = "new Error('first')";
         let second_source = "\nnew Error('second')";
-        let first = context.evaluate_script_rooted(first_source, "same-source-name.js")?;
-        let second = context.evaluate_script_rooted(second_source, "same-source-name.js")?;
+        let global = context.global_root()?;
+        let first = context.evaluate_script_in_realm_rooted(global, first_source, "same-source-name.js")?;
+        let second = context.evaluate_script_in_realm_rooted(global, second_source, "same-source-name.js")?;
         // The metadata owns immutable source text, not a lookup by a reusable filename
         // or a borrowed Script slot. Collection and later compilation must preserve it.
         context.collect()?;
@@ -1670,6 +1671,12 @@ impl Host for ErrorSourceHost {
             assert_eq!(position.line_number, line);
             assert_eq!(position.column_number, 1);
         }
+        let eval = context.evaluate_script_rooted("new Error('eval')", "named-eval.js")?;
+        context.collect()?;
+        let position = context.error_source_position_rooted(eval)?.expect("captured eval source");
+        assert_eq!(position.source_line.as_deref(), Some("new Error('eval')"));
+        assert_eq!(position.script_name, None);
+        assert_eq!((position.line_number, position.column_number), (1, 1));
         Ok(())
     }
 }
