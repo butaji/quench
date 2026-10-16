@@ -43,6 +43,7 @@ pub(crate) mod crypto_digest;
 pub(crate) mod crypto_digest_error;
 pub(crate) mod crypto_engine_shared_vm;
 pub(crate) mod crypto_error_shared_vm;
+#[cfg(not(quench_openssl_provider))]
 pub(crate) mod crypto_sha1;
 pub(crate) mod crypto_shared_vm;
 pub(crate) mod crypto_strings;
