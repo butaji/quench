@@ -105,6 +105,18 @@ impl<H: Host> Runtime<H> {
         self.execute_value(program).map(drop)
     }
 
+    /// Evaluate each `(source, name)` as a global Script of the entry's realm,
+    /// in order, then execute the entry. A module entry and the modules it
+    /// loads observe the scripts' global bindings, as with host-run harnesses.
+    pub fn execute_after_scripts(
+        &mut self,
+        scripts: &[(&str, &str)],
+        program: &ResidualProgram,
+    ) -> Result<(), JsError> {
+        program.validate().map_err(JsError::validation)?;
+        self.vm.execute_after_scripts(scripts, program).map(drop)
+    }
+
     /// Execute the entry while leaving VM jobs queued for the embedder's
     /// event-loop checkpoint. Call `run_host_jobs` after host nextTick work,
     /// then `finish_deferred_execution` once the host loop is complete.
@@ -4658,6 +4670,58 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
             let program = compile(SOURCE, "cyclic-module-graph/entry.mjs").unwrap();
             runtime.execute(&program).unwrap();
             assert_eq!(view.0.borrow().as_slice(), &["true", "[\"b\",\"a\"]", "1", "true", "true", "true", "2:2:2", "2", "true", "true", "true", "true", "true"]);
+        }
+    }
+
+    #[test]
+    fn regression_linking_leaves_deferred_and_source_requests_unevaluated() {
+        const SOURCE: &str = r#"
+            import './setup.mjs';
+            import defer * as deferred from './deferred.mjs';
+            import defer * as cyclic from './deferred-self.mjs';
+            import { source } from './source-reexport.mjs';
+            import { harness } from './harness-reader.mjs';
+            log.push('entry');
+            print(deferred.value + cyclic.value);
+            print(log.join());
+            print(globalThis.selfAccess);
+            print(source instanceof $262.AbstractModuleSource);
+            print(harness);
+        "#;
+        const MODULES: &[(&str, &str)] = &[
+            ("setup.mjs", "globalThis.log = [];"),
+            ("deferred.mjs", "import './async.mjs'; log.push('deferred'); export const value = 1;"),
+            ("async.mjs", "log.push('async start'); await 0; log.push('async end');"),
+            ("deferred-self.mjs", "import defer * as self from './deferred-self.mjs'; try { self.value; } catch (error) { globalThis.selfAccess = error instanceof TypeError; } export const value = 2;"),
+            ("source-1.mjs", "import source source from '<source>'; export { source };"),
+            ("source-2.mjs", "import source source from '<source>'; export { source };"),
+            ("source-reexport.mjs", "export * from './source-1.mjs'; export * from './source-2.mjs';"),
+            ("harness-reader.mjs", "export const harness = typeof harnessGlobal;"),
+        ];
+        struct ModuleCapture(Capture);
+        impl Host for ModuleCapture {
+            fn write_line(&mut self, text: &str) { self.0.write_line(text); }
+            fn globals(&self) -> &'static [crate::HostGlobal] { self.0.globals() }
+            fn clock_millis(&mut self) -> f64 { 0.0 }
+            fn has_module_source(&self, module: &crate::ModuleSource) -> bool { module.name == "<source>" }
+            fn resolve_dynamic_import(&mut self, _: &str, specifier: &str) -> Result<Option<crate::ModuleSource>, String> {
+                if specifier == "<source>" {
+                    return Ok(Some(crate::ModuleSource { name: specifier.into(), source: String::new(), bytes: Vec::new() }));
+                }
+                let name = specifier.rsplit('/').next().unwrap();
+                Ok(MODULES.iter().find(|(candidate, _)| *candidate == name).map(|(_, source)| crate::ModuleSource {
+                    name: format!("deferred-module-graph/{name}"), source: (*source).into(), bytes: source.as_bytes().to_vec(),
+                }))
+            }
+        }
+        for compile in [Engine::specialize_module as fn(&str, &str) -> _, Engine::specialize_module_unspecialized] {
+            let view = Capture::default();
+            let mut runtime = Runtime::new(ModuleCapture(view.clone()));
+            let program = compile(SOURCE, "deferred-module-graph/entry.mjs").unwrap();
+            runtime
+                .execute_after_scripts(&[("function harnessGlobal() {}", "harness.js")], &program)
+                .unwrap();
+            assert_eq!(view.0.borrow().as_slice(), &["3", "async start,async end,entry,deferred", "true", "true", "function"]);
         }
     }
 

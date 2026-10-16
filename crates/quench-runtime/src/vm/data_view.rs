@@ -89,10 +89,10 @@ impl<H: Host> Vm<H> {
             let getter = self.native_with_realm(*native, global, global);
             self.set_builtin_function_name(getter, &format!("get {name}"))?;
             let atom = self.intern_atom(name);
-            self.set_property(prototype, atom, getter)?;
-            self.set_property_attributes(
+            self.set_property_with_attributes(
                 prototype,
-                PropertyKey::string(atom),
+                atom,
+                getter,
                 PropertyAttributes {
                     writable: false,
                     enumerable: false,
@@ -101,7 +101,7 @@ impl<H: Host> Vm<H> {
                     getter: Some(getter),
                     setter: None,
                 },
-            );
+            )?;
         }
         if self.well_known_symbols.contains_key("toStringTag") {
             self.install_builtin_to_string_tag(prototype, "DataView")?;
@@ -110,10 +110,10 @@ impl<H: Host> Vm<H> {
             self.global(program, "DataView", constructor)
         } else {
             let atom = self.intern_atom("DataView");
-            self.set_property(global, atom, constructor)?;
-            self.set_property_attributes(
+            self.set_property_with_attributes(
                 global,
-                PropertyKey::string(atom),
+                atom,
+                constructor,
                 PropertyAttributes {
                     writable: true,
                     enumerable: false,
@@ -122,7 +122,7 @@ impl<H: Host> Vm<H> {
                     getter: None,
                     setter: None,
                 },
-            );
+            )?;
             Ok(())
         }
     }
