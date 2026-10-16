@@ -9631,3 +9631,18 @@ fn function_constructor_sources_preserve_whitespace_parameter_positions_and_synt
 fn private_fields_keep_class_creation_identity_and_atomic_internal_initialization() {
     compare_node_source_with_args(include_str!("../node-tests/test-private-field-identity.js"), &[]);
 }
+
+#[test]
+fn private_eval_environments_cross_static_instance_and_ordinary_function_boundaries() {
+    compare_node_source_with_args(include_str!("../node-tests/test-private-eval-environments.js"), &[]);
+}
+
+#[test]
+fn private_brands_follow_initialization_without_branding_the_declaring_prototype() {
+    compare_node_source_with_args(include_str!("../node-tests/test-private-brand-initialization.js"), &[]);
+}
+
+#[test]
+fn static_blocks_retain_strict_eval_super_receiver_and_separate_var_contexts() {
+    compare_node_source_with_args(include_str!("../node-tests/test-static-block-context.js"), &[]);
+}

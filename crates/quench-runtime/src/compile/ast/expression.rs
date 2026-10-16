@@ -535,7 +535,7 @@ impl FunctionCompiler<'_, '_> {
             self.super_home,
             self.super_home_atom,
             self.strict,
-            self.class_field_initializer,
+            self.class_initializer,
             lexical_this_atom,
             self.super_call_binds_this,
             self.with_depth,

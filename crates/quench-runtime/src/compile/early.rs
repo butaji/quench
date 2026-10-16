@@ -31,7 +31,7 @@ pub(super) fn normalize_hashbang(source: &str) -> Cow<'_, str> {
 }
 
 /// Eval may inherit new.target from a function, but never its Return grammar.
-pub(super) fn field_eval_references_arguments(statements: &[Statement<'_>]) -> bool {
+pub(super) fn class_eval_references_arguments(statements: &[Statement<'_>]) -> bool {
     struct Arguments(bool);
     impl<'a> Visit<'a> for Arguments {
         fn visit_identifier_reference(
