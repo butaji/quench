@@ -1904,6 +1904,7 @@ pub(crate) fn finish_requested_exit(
     cleanup_environment(runtime, &shared_state);
     if process_control.exit_without_event() {
         super::tls_shared_vm::contexts::cleanup(runtime);
+        super::zlib_native_shared_vm::cleanup(runtime);
         #[cfg(quench_icu)]
         super::icu_binding_shared_vm::cleanup(runtime);
         super::buffer_shared_vm::cleanup(runtime);
@@ -2480,6 +2481,7 @@ fn drain_shared_jobs(
         if unhandled.is_empty() {
             runtime.clear_kept_objects();
             crate::modules::zlib_stream_shared_vm::prune(runtime);
+            super::zlib_native_shared_vm::prune(runtime);
             super::fs_watch_shared_vm::prune(runtime);
             super::tls_shared_vm::contexts::prune(runtime);
             #[cfg(quench_icu)]
@@ -2995,6 +2997,7 @@ fn emit_exit(
 ) -> Result<(), String> {
     let result = emit_exit_inner(runtime, program, code);
     super::tls_shared_vm::contexts::cleanup(runtime);
+        super::zlib_native_shared_vm::cleanup(runtime);
     #[cfg(quench_icu)]
     super::icu_binding_shared_vm::cleanup(runtime);
     super::buffer_shared_vm::cleanup(runtime);
