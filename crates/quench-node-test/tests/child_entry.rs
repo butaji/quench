@@ -9022,3 +9022,15 @@ fn cli_signal_defaults_reset_inherited_ignores_before_vm_workers_start() {
 fn file_handle_read_parameters_preserve_defaults_options_getter_order_and_result_prototype() {
     compare_node_stream_source(include_str!("../node-tests/test-file-handle-read-parameters.js"));
 }
+
+#[test]
+fn implemented_cli_option_snapshots_tokenization_and_stream_iterator_policy_match_node() {
+    for flags in [&["--no-warnings","--expose-internals"][..], &["--no-warnings","--expose-internals","--experimental-stream-iter"][..]] {
+        compare_node_source_with_args(include_str!("../node-tests/test-cli-options-stream-iter.js"),flags);
+    }
+}
+
+#[test]
+fn stream_iterator_webidl_uses_genuine_original_abort_signal_brands() {
+    compare_node_source_with_args(include_str!("../node-tests/test-stream-iter-abort-brand.js"),&["--no-warnings","--expose-internals","--experimental-stream-iter"]);
+}

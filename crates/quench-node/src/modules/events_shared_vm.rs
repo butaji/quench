@@ -343,7 +343,10 @@ pub(crate) fn initialize_event_globals(
     let signal_prototype = get(context, signal, "prototype")?;
     let target_prototype = get(context, target, "prototype")?;
     context.set_prototype_rooted(signal_prototype, target_prototype)?;
-    set(context, data, "abortState", abort_state)?;
+    let state_lookup=get(context,abort_state,"0")?;
+    let state_map=get(context,abort_state,"1")?;
+    set(context,data,"abortStateMap",state_map)?;
+    set(context, data, "abortState", state_lookup)?;
     Ok(undefined)
 }
 
@@ -480,4 +483,26 @@ pub(super) fn listener_records(
     (0..length)
         .map(|index| get(context, records, &index.to_string()))
         .collect()
+}
+
+/// The configured Web IDL converter uses the original provider's actual private
+/// WeakMap brand, independent of guest prototypes or public WeakMap methods.
+pub(crate) fn adopt_abort_converter(context: &mut NativeContext<'_, NodeHost>, webidl: RootId) -> Result<(),RootedError> {
+    context.with_startup_intrinsics(|context| {
+        let global=context.global_root()?;get(context,global,"AbortSignal")?;
+        let data=context.host_mut().shared_state().borrow().event_targets_api
+            .ok_or_else(||RootedError::host("EventTarget API missing"))?;
+        let map=get(context,data,"abortStateMap")?;
+        let predicate=context.host_function_with_data(crate::host::shared_vm::operation("abortSignalBrand"),map)?;
+        let factory=get(context,webidl,"createInterfaceConverter")?;
+        let name=context.string_rooted("AbortSignal");let undefined=context.undefined();
+        let converter=context.call_rooted(factory,undefined,&[name,predicate])?;
+        let converters=get(context,webidl,"converters")?;set(context,converters,"AbortSignal",converter)
+    })
+}
+pub(crate) fn abort_signal_brand(context: &mut NativeContext<'_,NodeHost>,_:RootId,args:&[RootId])->Result<RootId,RootedError>{
+    let value=args.first().copied().unwrap_or_else(||context.undefined());
+    if !context.is_object_rooted(value)? { return Ok(context.boolean(false)); }
+    let map=context.host_function_data()?;let state=context.weak_map_get_rooted(map,value)?;
+    let branded=!context.rooted_value(state).is_some_and(|v|v.is_undefined());Ok(context.boolean(branded))
 }

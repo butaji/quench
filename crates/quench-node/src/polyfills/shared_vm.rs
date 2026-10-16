@@ -288,7 +288,7 @@ pub const ABORT: &str = quench_js_check::checked_js!(
     writable: true,
     configurable: true,
   });
-  return (signal) => signalStates.get(signal);
+  return [(signal) => signalStates.get(signal), signalStates];
 })
 "#
 );
