@@ -668,7 +668,9 @@ fn schedule_timer(
     crate::modules::async_hooks_shared_vm::emit_init(context, handle, "Timeout", async_id)?;
     // The public callback/argument slots are canonical; the scheduler retains
     // only an invocation view and the original handle.
-    let callback = SharedCallback {
+    let callback = SharedCallback { execution: Some(crate::modules::shared_event_loop::CallbackExecution {
+        id: async_id, resource: context.retain(handle)?,
+    }),
         callback: context.retain(api.timer_callback)?,
         receiver: context.retain(handle)?,
         args: Vec::new(),
@@ -1077,6 +1079,8 @@ pub(crate) fn set_immediate(
     }
     let async_id =
         crate::modules::async_hooks_shared_vm::create_context(&context.host_mut().shared_state());
+    let async_value = context.number(async_id as f64);
+    context.define_data_property_rooted(handle, api.async_id_key, async_value, true, true, true)?;
     crate::modules::async_hooks_shared_vm::emit_init(context, handle, "Immediate", async_id)?;
     let callback = context.retain(callback)?;
     let receiver = context.retain(handle)?;
@@ -1093,7 +1097,9 @@ pub(crate) fn set_immediate(
         .queue_shared_immediate(
             id,
             crate::modules::shared_event_loop::SharedImmediateOwner::Guest,
-            SharedCallback {
+            SharedCallback { execution: Some(crate::modules::shared_event_loop::CallbackExecution {
+                id: async_id, resource: context.retain(handle)?,
+            }),
                 callback,
                 receiver,
                 args,
@@ -1132,7 +1138,7 @@ pub(crate) fn clear_immediate(
                     .scheduler
                     .transition_shared_immediate_ref(false);
             }
-            release_callback(context, immediate.callback);
+            release_callback(context, immediate.callback)?;
             let settled = context.null();
             if !context.set_property_rooted(handle, api.refed_key, settled, handle)? {
                 let error = context.type_error_rooted("Cannot settle Immediate reference state")?;
@@ -1176,7 +1182,7 @@ pub(crate) fn clear_timer(
             .borrow_mut()
             .scheduler
             .cancel_shared_timer(id);
-        if let Some(callback) = callback { release_callback(context, callback); }
+        if let Some(callback) = callback { release_callback(context, callback)?; }
         let inactive = context.number(-1.0);
         install(context, handle, TIMER_DELAY, inactive)?;
     }
@@ -1254,12 +1260,18 @@ fn operation_pending(
     Ok(property_text(context, operation, PROMISE_STATE)? == PROMISE_PENDING)
 }
 
-fn release_callback(context: &mut NativeContext<'_, NodeHost>, callback: SharedCallback) {
+fn release_callback(context: &mut NativeContext<'_, NodeHost>, callback: SharedCallback) -> Result<(), RootedError> {
+    let completed = if let Some(execution) = callback.execution {
+        let result = crate::modules::async_hooks_shared_vm::complete_callback_context(context, execution.id);
+        context.release_root(execution.resource);
+        result
+    } else { Ok(()) };
     context.release_root(callback.callback);
     context.release_root(callback.receiver);
     for argument in callback.args {
         context.release_root(argument);
     }
+    completed
 }
 
 pub(crate) fn active_resources(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
@@ -1407,10 +1419,6 @@ pub(crate) fn refresh(context: &mut NativeContext<'_, NodeHost>, receiver: RootI
     let Some(id) = timer_id(context, receiver)? else { return Ok(receiver); };
     let state = context.host_mut().shared_state();
     let existing = state.borrow_mut().scheduler.refresh_shared_timer(id, delay);
-    if !existing {
-        let callback = SharedCallback { callback: context.retain(api.timer_callback)?, receiver: context.retain(receiver)?, args: Vec::new() };
-        state.borrow_mut().scheduler.queue_shared_timer(id, delay, None, callback);
-    }
     let destroyed = property(context, receiver, TIMER_DESTROYED)?;
     let initialize = if context.truthy_rooted(destroyed)? { true } else {
         let async_id = context.get_property_rooted(receiver, api.async_id_key)?;
@@ -1427,6 +1435,14 @@ pub(crate) fn refresh(context: &mut NativeContext<'_, NodeHost>, receiver: RootI
     let value = context.boolean(refed);
     context.set_property_rooted(receiver, api.refed_key, value, receiver)?;
     state.borrow_mut().scheduler.set_shared_timer_ref(id, refed);
+    if !existing {
+        let value = context.get_property_rooted(receiver, api.async_id_key)?;
+        let async_id = context.rooted_value(value).and_then(|v| v.as_number()).ok_or_else(|| RootedError::host("timer async identity"))? as u64;
+        let callback = SharedCallback { execution: Some(crate::modules::shared_event_loop::CallbackExecution {
+            id: async_id, resource: context.retain(receiver)?,
+        }), callback: context.retain(api.timer_callback)?, receiver: context.retain(receiver)?, args: Vec::new() };
+        state.borrow_mut().scheduler.queue_shared_timer(id, delay, None, callback);
+    }
     Ok(receiver)
 }
 
