@@ -1,0 +1,1 @@
+Error.prepareStackTrace=(_,frames)=>frames.slice(0,1).map(f=>f.getFunctionName());function Original(){return new Error};const e=Original();Object.defineProperty(Original,'name',{value:'Changed'});console.log(JSON.stringify(e.stack));
