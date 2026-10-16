@@ -91,4 +91,39 @@ impl TcpOwned {
     pub(crate) fn into_listener(self) -> TcpListener {
         self.socket.into()
     }
+pub(crate) fn start_connect(&mut self, address: SocketAddr) -> io::Result<()> {
+    if self.socket.local_addr()?.is_ipv6() != address.is_ipv6() {
+        if self.phase == Phase::Bound {
+            return Err(io::Error::from_raw_os_error(libc::EINVAL));
+        }
+        self.socket = Self::socket(address.is_ipv6())?;
+    }
+    match self.socket.connect(&address.into()) {
+        Ok(()) => {}
+        Err(error)
+            if error.kind() == io::ErrorKind::WouldBlock
+                || matches!(
+                    error.raw_os_error(),
+                    Some(libc::EINPROGRESS) | Some(libc::EALREADY)
+                ) => {}
+        Err(error) => return Err(error),
+    }
+    // A successful connect submission implicitly binds the actual OS socket.
+    self.phase = Phase::Bound;
+    Ok(())
+}
+pub(crate) fn connect_ready(&self) -> io::Result<bool> {
+    if let Some(error) = self.socket.take_error()? {
+        return Err(error);
+    }
+    match self.socket.peer_addr() {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::NotConnected => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+pub(crate) fn into_stream(self) -> std::net::TcpStream {
+    self.socket.into()
+}
+
 }

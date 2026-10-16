@@ -44,6 +44,9 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         c.set_prototype_rooted(tp, lp)?;
         c.set_prototype_rooted(lp, hp)?;
         for (p, n, op) in [
+            (tp,"connect","nativeStreamConnect"),
+            (tp,"connect6","nativeStreamConnect6"),
+            (lp,"shutdown","nativeStreamShutdown"),
             (lp, "writeBuffer", "nativeStreamWriteBuffer"),
             (lp, "readStart", "nativeStreamReadStart"),
             (lp, "readStop", "nativeStreamReadStop"),
@@ -67,6 +70,8 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         let k = c.string_rooted("writeQueueSize");
         c.define_property_descriptor_rooted(lp, k, d)?;
         put(c, b, "TCP", tcp)?;
+        let connect=c.host_constructor_named(crate::host::shared_vm::operation("nativeStreamConnectWrap"),"TCPConnectWrap")?;
+        put(c,b,"TCPConnectWrap",connect)?;
         let constants = c.object_rooted()?;
         for (n, v) in [
             ("SOCKET", 0),
