@@ -842,6 +842,54 @@ The native class fallback reads builtin slots and data tags without public
 constructor or tag getters. Original user-constructor provenance after mutation
 and exact Node stack rendering remain separate compatibility gaps.
 
+## Native SDK protocol tables and caller capture
+
+The errors binding's exit codes and modules binding's compile-cache status names
+are generated from the configured SDK's C++ macro tables. Property descriptors,
+ordering and binding identity follow Node. These protocol declarations do not
+claim implementation of compile-cache operations or other missing bindings.
+
+The utility caller-location binding projects genuine compiler-owned activations,
+skipping its immediate JavaScript caller. Error hooks, public function-name
+getters and stack limits do not participate. Missing callers and unnamed eval
+Scripts produce undefined rather than fabricated bootstrap frames.
+
+The original promises glob policy materializes as a lazy data property, keeping
+its real function descriptor and identity. Merely loading native fs no longer
+imports the promises implementation's readline/history/OS dependencies. This
+preserves Node's binding-capture order and avoids loading unrelated modules.
+
+## Owned host Script code
+
+Core's `CompiledScript` handle owns one logical source record, while each realm
+uses a separate execution instance and caches. Detailed captures project the
+actual source record identity across those instances. Repeated runs in one realm
+reuse its template sites while producing fresh objects and functions.
+
+The opaque owner retains compiler code only. Realm associations are weak and
+pruned immediately after collection, before heap slot reuse. Reclamation retains
+live owners and the source records of escaped functions; dropping owners allows
+unused code and execution caches to be collected. Runtime reset or a foreign
+runtime rejects the handle through the existing atom-sequence ownership guard.
+This Core primitive does not by itself implement native `ContextifyScript`, VM
+timeouts, cached bytecode or code-generation restrictions.
+
+## Configured synchronous directory policy
+
+`fs.readdirSync` executes the configured Node SDK policy over native Rust
+`readdir` and `readdirRecursive` bindings. Linux scanning preserves raw filename
+bytes and reported directory types. Recursive walks follow directory symlinks,
+resolve unknown types with real metadata, and flatten lexical directory scans in
+breadth-first order. Actual scan errors retain their syscall and input path.
+
+Encoding uses the shared Buffer codecs; Buffer results retain the original
+filename bytes. Recursive Dirent results use Node's packed native layout, with
+Uint8 types and aligned Uint32 directory counts sharing one ArrayBuffer. The
+unchanged SDK owns validation and Dirent construction. Existing filesystem
+adapters capture a Rust forwarding function to this same policy, initialized
+after the filesystem module is cached. Their outer asynchronous validation and
+scheduling remain separate compatibility work.
+
 ## Private data fields
 
 Private data lives with its receiver, keyed by the actual declaring home and
@@ -921,12 +969,31 @@ covers top-level, next-tick, promise, auxiliary and explicit-exit paths.
 Bound-handle error/reentry details, original native-source/stack fidelity,
 diagnostic report flags and the wider Node lifecycle backlog remain open.
 
-## Native SDK protocol tables and caller capture
+The public utility module retains the configured SDK's actual exports object,
+including its lazy properties and shared warning caches. Rust owns the native
+`util.defineLazyProperties` protocol: each property uses Core's lazy data slot,
+loads its original SDK module on observation, and becomes a writable data
+property. Assignment and descriptor reflection use the same Core operation as
+other lazy host properties. No duplicate JavaScript utility policy is installed.
+The already qualified callbackify, argument parsing, styling and environment
+adapters remain native. Public terminal escape stripping uses the original SDK
+inspect policy, including terminated OSC hyperlinks and colon-delimited CSI
+parameters; its UTF-16 and argument validation behavior share that owner. Abort transfer/weak-event and signal-tracing exports
+remain unavailable until their genuine host dependencies exist.
 
-The errors binding's exit codes and modules binding's compile-cache status names
-are generated from the configured SDK's C++ macro tables. Property descriptors,
-ordering and binding identity follow Node. These protocol declarations do not
-claim implementation of compile-cache operations or other missing bindings.
+The libuv utility binding derives its complete error inventory, ordering and
+messages from the configured SDK's `UV_ERRNO_MAP`. A target C preprocessor
+resolves `uv/errno.h` numeric definitions during the Rust build; it executes no
+host API implementation or target program. Rust publishes immutable numeric
+constants and constructs fresh error maps and fresh value arrays on each call,
+using startup intrinsics. SDK utility policy owns public argument validation and
+error construction; native I/O uses the same status-name authority directly.
+
+Configured SDK module wrappers execute in strict mode before binding setup,
+including prepared realm wrappers. Binding setup must not invalidate the SDK's
+strict directive: assignment errors on primitive targets, rejected proxy writes
+and nonwritable properties retain Node's behavior. Application CommonJS wrappers
+retain their source-directed strictness.
 
 The utility caller-location binding projects genuine compiler-owned activations,
 skipping its immediate JavaScript caller. Error hooks, public function-name
