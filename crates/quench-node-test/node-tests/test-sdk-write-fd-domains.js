@@ -27,7 +27,7 @@ try {
     }
     calls = [];
     let outcome = 'ok';
-    try { saved.writeFileSync(value, 'x'); }
+    try { saved.writeFileSync(value, Object.is(value, -0) ? '' : 'x'); }
     catch (error) {
       outcome = error.code;
       assert.equal(error.code, owned ? 'EBADF' : 'ERR_INVALID_ARG_TYPE');
