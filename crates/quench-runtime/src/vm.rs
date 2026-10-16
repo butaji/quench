@@ -461,6 +461,8 @@ struct RealmIntrinsics {
     arguments_objects: FxHashMap<(Value, bool), ArgumentsObjectTemplate>,
     iterator_prototypes: FxHashMap<Value, IteratorRealmPrototypes>,
     builtin_prototypes: FxHashMap<(Value, Native), Value>,
+    /// Original per-realm constructors for function factory allocations.
+    function_constructors: FxHashMap<(Value, Native), Value>,
     promise_constructors: FxHashMap<Value, Value>,
     error_intrinsics: FxHashMap<Value, ErrorRealmIntrinsics>,
     regexp_intrinsics: FxHashMap<Value, regexp::RegExpIntrinsics>,

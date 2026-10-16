@@ -134,6 +134,33 @@ impl<H: Host> Vm<H> {
             .map(|name| self.atom_value(name)))
     }
 
+    /// A function's existing code kind and creation realm own its factory origin.
+    /// Bound functions have no such ordinary-function constructor projection.
+    fn function_factory_constructor(&self, value: Value) -> Option<Value> {
+        let Cell::Function { object, kind, .. } = self.heap.get(value)? else {
+            return None;
+        };
+        let intrinsic = match *kind {
+            FunctionKind::User(program, id) | FunctionKind::NumericUser(program, id) => {
+                let program = self.programs.get(program)?;
+                let function = program.functions.get(id as usize)?;
+                match (function.is_async, function.is_generator) {
+                    (true, true) => Native::AsyncGeneratorFunction,
+                    (false, true) => Native::GeneratorFunction,
+                    (true, false) => Native::AsyncFunction,
+                    (false, false) => Native::Function,
+                }
+            }
+            FunctionKind::Native(Native::FunctionBoundCall) => return None,
+            FunctionKind::Native(_) => Native::Function,
+        };
+        self.realm
+            .intrinsics
+            .function_constructors
+            .get(&(object.realm, intrinsic))
+            .copied()
+    }
+
     pub(crate) fn embedding_constructed_name(
         &self,
         root: RootId,
@@ -147,6 +174,10 @@ impl<H: Host> Vm<H> {
         }
         Ok(shape_names(&self.shapes, object.shape())
             .1
+            .or_else(|| {
+                self.function_factory_constructor(value)
+                    .map(|constructor| (constructor, true))
+            })
             .filter(|(_, new_target_is_base)| *new_target_is_base)
             .and_then(|(constructor, _)| self.debug_function_name(constructor)))
     }

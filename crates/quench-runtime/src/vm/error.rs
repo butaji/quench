@@ -1019,6 +1019,10 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         self.global(program, "globalThis", self.realm.globals)?;
         let function = self.native_value(Native::Function);
+        self.realm
+            .intrinsics
+            .function_constructors
+            .insert((self.realm.globals, Native::Function), function);
         self.set_builtin_value_named(function, "prototype", self.function_proto)?;
         let prototype = self.prototype_atom();
         self.set_property_attributes(
@@ -1575,6 +1579,11 @@ impl<H: Host> Vm<H> {
                 .builtin_prototypes
                 .insert((global, native), prototype);
             let constructor = self.native_with_realm(native, global, global);
+            self.set_builtin_function_name(constructor, name)?;
+            self.realm
+                .intrinsics
+                .function_constructors
+                .insert((global, native), constructor);
             self.object_data_mut(constructor)
                 .expect("realm dynamic function")
                 .set_proto(function);
@@ -1988,6 +1997,10 @@ impl<H: Host> Vm<H> {
             .intrinsics
             .builtin_prototypes
             .insert((global, Native::Function), prototype);
+        self.realm
+            .intrinsics
+            .function_constructors
+            .insert((global, Native::Function), constructor);
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
         let prototype_atom = self.prototype_atom();
         self.set_property_attributes(

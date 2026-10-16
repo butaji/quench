@@ -987,6 +987,8 @@ pub(crate) fn constructor_name(
         if matches!(
             brand,
             B::Proxy
+                | B::AsyncFunction
+                | B::GeneratorFunction
                 | B::AnyArrayBuffer
                 | B::BoxedPrimitive
                 | B::NativeError
