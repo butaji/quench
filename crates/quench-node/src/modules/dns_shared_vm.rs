@@ -1,11 +1,9 @@
 //! Shared-VM `dns.lookup` projection over the operating system resolver.
 
 use crate::host::NodeHost;
-use crate::modules::shared_event_loop::SharedCallback;
 use quench_runtime::{NativeContext, RootId, RootedError, Value};
-use std::net::{IpAddr, ToSocketAddrs};
+use std::net::IpAddr;
 
-const DNS_LOOKUP_PORT: u16 = 0;
 use super::net_config::{ANY_FAMILY, IPV4_FAMILY, IPV6_FAMILY};
 const DNS_SYSCALL: &str = "getaddrinfo";
 const NOT_FOUND_CODE: &str = "ENOTFOUND";
@@ -14,174 +12,137 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let module = context.object_rooted()?;
     let lookup = context.host_function(crate::host::shared_vm::operation("dnsLookup"))?;
     set(context, module, "lookup", lookup)?;
+    let promises = context.object_rooted()?;
+    let promised = context.host_function(crate::host::shared_vm::operation("dnsPromiseLookup"))?;
+    set(context, promises, "lookup", promised)?;
+    set(context, module, "promises", promises)?;
+    for (name, operation) in [("getDefaultResultOrder", "dnsGetDefaultOrder"), ("setDefaultResultOrder", "dnsSetDefaultOrder")] {
+        let method = context.host_function(crate::host::shared_vm::operation(operation))?;
+        set(context, module, name, method)?;
+        set(context, promises, name, method)?;
+    }
+    context.with_startup_intrinsics(|context| {
+        let global = context.global_root()?;
+        let key = context.string_rooted("Symbol"); let symbol = context.get_property_rooted(global, key)?;
+        let key = context.string_rooted("for"); let symbol_for = context.get_property_rooted(symbol, key)?;
+        let name = context.string_rooted("nodejs.util.promisify.custom");
+        let custom = context.call_rooted(symbol_for, symbol, &[name])?;
+        context.define_data_property_rooted(lookup, custom, promised, false, false, true)
+    })?;
     Ok(module)
 }
 
-/// Node's callback form of lookup. OS resolution happens here; the callback is
-/// retained by the host event loop and runs in the next immediate phase.
+/// Native lookup policy: numeric results use nextTick; OS completions use poll dispatch.
 pub(crate) fn lookup(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let Some(hostname_root) = args.first().copied() else {
-        return throw_type(context, "The \"hostname\" argument must be of type string");
-    };
-    let Some(hostname) = context.string_text(hostname_root)? else {
-        return throw_type(context, "The \"hostname\" argument must be of type string");
-    };
-    if hostname.is_empty() || hostname.contains('\0') {
-        return throw_invalid_value(
-            context,
-            "The argument 'hostname' must be a string without null bytes.",
-        );
-    }
+    let hostname_root = args.first().copied().unwrap_or_else(|| context.undefined());
+    let name = context.string_rooted("hostname");
+    validate(context, "validateStringWithoutNullBytes", &[hostname_root, name])?;
+    let hostname = context.string_text(hostname_root)?.expect("SDK validated hostname string");
+    if hostname.is_empty() { invalid_argument_value(context, "hostname", hostname_root, Some("must be a non-empty string"))?; }
 
     let (family, all, callback) = lookup_arguments(context, args)?;
-    let resolved = resolve(&hostname, family);
-    let callback_args = match resolved {
-        Ok(addresses) if all => success_all(context, addresses)?,
-        Ok(addresses) => {
-            let first = addresses
-                .into_iter()
-                .next()
-                .expect("successful resolution has at least one address");
-            vec![
-                context.null(),
-                context.string_rooted(&first.to_string()),
-                context.number(f64::from(family_of(first))),
-            ]
+    let default_order = default_order(context)?;
+    let mut order = match default_order.as_str() { "ipv4first" => 1, "ipv6first" => 2, _ => 0 };
+    let mut hints = 0;
+    if let Some(options) = args.get(1).copied() {
+        if context.rooted_value(options).is_some_and(|value| value.is_heap()) && context.string_text(options)?.is_none() && !context.is_callable_rooted(options)? {
+            for name in ["verbatim", "order", "hints"] {
+                let key = context.string_rooted(name);
+                let value = context.get_property_rooted(options, key)?;
+                if context.rooted_value(value).is_some_and(|v| v.is_undefined() || v.is_null()) { continue; }
+                match name {
+                    "verbatim" => {
+                        let name = context.string_rooted("options.verbatim"); validate(context, "validateBoolean", &[value, name])?;
+                        order = if context.rooted_value(value).and_then(Value::as_bool).expect("SDK validated boolean") { 0 } else { 1 };
+                    }
+                    "order" => { order = match validate_order(context, value, "options.order")?.as_str() { "ipv4first" => 1, "ipv6first" => 2, _ => 0 }; }
+                    "hints" => {
+                        let name = context.string_rooted("options.hints"); validate(context, "validateNumber", &[value, name])?;
+                        let number = context.rooted_value(value).and_then(Value::as_number).expect("SDK validated number");
+                        let uint32_modulus = u32::MAX as f64 + 1.0;
+                        hints = if !number.is_finite() || number == 0.0 { 0 } else { number.trunc().rem_euclid(uint32_modulus) as u32 as i32 };
+                        if hints & !(libc::AI_ADDRCONFIG | libc::AI_ALL | libc::AI_V4MAPPED) != 0 {
+                            let hints_root = context.number((hints as u32) as f64);
+                            invalid_argument_value(context, "hints", hints_root, None)?;
+                        }
+                    }
+                    _ => unreachable!(),
+                }
+            }
         }
-        Err(()) if all => vec![not_found_error(context, &hostname)?],
-        Err(()) => vec![
-            not_found_error(context, &hostname)?,
-            context.undefined(),
-            context.undefined(),
-        ],
-    };
+    }
+    if let Ok(address) = hostname.parse::<IpAddr>() {
+        let callback_args = if all { success_all(context, vec![address])? } else {
+            vec![context.null(), context.string_rooted(&hostname), context.number(f64::from(family_of(address)))]
+        };
+        let undefined = context.undefined();
+        crate::modules::shared_event_loop::queue_next_tick(context, callback, undefined, &callback_args)?;
+        return Ok(context.undefined());
+    }
+    let binding = crate::host::shared_vm::commonjs::cares_binding(context)?;
+    let key = context.string_rooted("getaddrinfo");
+    let operation = context.get_property_rooted(binding, key)?;
+    let key = context.string_rooted("GetAddrInfoReqWrap");
+    let constructor = context.get_property_rooted(binding, key)?;
+    let request = context.construct_rooted(constructor, constructor, &[])?;
+    set(context, request, "callback", callback)?;
+    set_str(context, request, "hostname", &hostname)?;
+    let all_root = context.boolean(all);
+    set(context, request, "all", all_root)?;
+    let complete = context.host_function(crate::host::shared_vm::operation("dnsLookupComplete"))?;
+    set(context, request, "oncomplete", complete)?;
+    let family = context.number(family as f64);
+    let hints = context.number(hints as f64);
+    let order = context.number(order as f64);
+    let hostname_root = context.string_rooted(&hostname);
+    let status = context.call_rooted(operation, binding, &[request, hostname_root, family, hints, order])?;
+    if context.rooted_value(status).and_then(Value::as_number).is_some_and(|status| status != 0.0) {
+        let addresses = context.null();
+        crate::modules::shared_event_loop::queue_next_tick(context, complete, request, &[status, addresses])?;
+    }
 
-    queue_callback(context, callback, callback_args)?;
     Ok(context.undefined())
 }
 
-fn lookup_arguments(
-    context: &mut NativeContext<'_, NodeHost>,
-    args: &[RootId],
-) -> Result<(u8, bool, RootId), RootedError> {
-    let (options, callback) = match args.get(1).copied() {
-        Some(callback) if context.is_callable_rooted(callback)? => (None, Some(callback)),
-        Some(options) => (Some(options), args.get(2).copied()),
-        None => (None, None),
-    };
-    let Some(callback) = callback else {
-        let error = invalid_type_error(
-            context,
-            "The \"callback\" argument must be of type function",
-        )?;
-        return Err(context.throw(error));
-    };
-    if !context.is_callable_rooted(callback)? {
-        let error = invalid_type_error(
-            context,
-            "The \"callback\" argument must be of type function",
-        )?;
-        return Err(context.throw(error));
+fn lookup_arguments(context: &mut NativeContext<'_, NodeHost>, args: &[RootId]) -> Result<(u8, bool, RootId), RootedError> {
+    let undefined = context.undefined();
+    let second = args.get(1).copied().unwrap_or(undefined);
+    let second_is_callback = context.is_callable_rooted(second)?;
+    let callback = if second_is_callback { second } else { args.get(2).copied().unwrap_or(undefined) };
+    let name = context.string_rooted("callback");
+    validate(context, "validateFunction", &[callback, name])?;
+    if second_is_callback { return Ok((ANY_FAMILY, false, callback)); }
+    let value = context.rooted_value(second).unwrap_or(Value::UNDEFINED);
+    if value.is_null() || value.is_undefined() { return Ok((ANY_FAMILY, false, callback)); }
+    if value.as_number().is_some() { return Ok((validated_family(context, second)?, false, callback)); }
+    if !value.is_heap() || context.string_text(second)?.is_some() {
+        let name = context.string_rooted("options");
+        validate(context, "validateObject", &[second, name])?;
     }
-
-    let Some(options) = options else {
-        return Ok((ANY_FAMILY, false, callback));
+    let key = context.string_rooted("family"); let family_root = context.get_property_rooted(second, key)?;
+    let value = context.rooted_value(family_root).unwrap_or(Value::UNDEFINED);
+    let family = if value.is_null() || value.is_undefined() { ANY_FAMILY } else {
+        match context.string_text(family_root)?.as_deref() { Some("IPv4") => IPV4_FAMILY, Some("IPv6") => IPV6_FAMILY, _ => validated_family(context, family_root)? }
     };
-    let option_value = context
-        .rooted_value(options)
-        .ok_or_else(|| RootedError::host("invalid dns.lookup options root"))?;
-    if option_value.is_undefined() || option_value.is_null() {
-        return Ok((ANY_FAMILY, false, callback));
-    }
-    if let Some(number) = option_value.as_number() {
-        let family = parse_family(context, number)?;
-        return Ok((family, false, callback));
-    }
-    if !option_value.is_heap() || context.string_text(options)?.is_some() {
-        let error = invalid_type_error(
-            context,
-            "The \"options\" argument must be of type object or number",
-        )?;
-        return Err(context.throw(error));
-    }
-
-    let family_key = context.string_rooted("family");
-    let family_value = context.get_property_rooted(options, family_key)?;
-    let family_value = context
-        .rooted_value(family_value)
-        .unwrap_or(Value::UNDEFINED);
-    let family = if family_value.is_undefined() {
-        ANY_FAMILY
-    } else if let Some(number) = family_value.as_number() {
-        parse_family(context, number)?
-    } else {
-        let error = invalid_type_error(
-            context,
-            "The \"options.family\" property must be of type number",
-        )?;
-        return Err(context.throw(error));
-    };
-
-    let all_key = context.string_rooted("all");
-    let all_value = context.get_property_rooted(options, all_key)?;
-    let all_value = context.rooted_value(all_value).unwrap_or(Value::UNDEFINED);
-    let all = match all_value.as_bool() {
-        Some(all) => all,
-        None if all_value.is_undefined() => false,
-        None => {
-            let error = invalid_type_error(
-                context,
-                "The \"options.all\" property must be of type boolean",
-            )?;
-            return Err(context.throw(error));
-        }
+    let key = context.string_rooted("all"); let all_root = context.get_property_rooted(second, key)?;
+    let value = context.rooted_value(all_root).unwrap_or(Value::UNDEFINED);
+    let all = if value.is_null() || value.is_undefined() { false } else {
+        let name = context.string_rooted("options.all"); validate(context, "validateBoolean", &[all_root, name])?;
+        value.as_bool().expect("SDK validated boolean")
     };
     Ok((family, all, callback))
 }
-
-fn parse_family(context: &mut NativeContext<'_, NodeHost>, family: f64) -> Result<u8, RootedError> {
-    if !family.is_finite() || family.fract() != 0.0 {
-        let error = invalid_value_error(
-            context,
-            "The property 'options.family' must be one of: 0, 4, 6",
-        )?;
-        return Err(context.throw(error));
-    }
-    let family = family as i32;
-    match family {
-        0 => Ok(ANY_FAMILY),
-        4 => Ok(IPV4_FAMILY),
-        6 => Ok(IPV6_FAMILY),
-        _ => {
-            let error = invalid_value_error(
-                context,
-                "The property 'options.family' must be one of: 0, 4, 6",
-            )?;
-            Err(context.throw(error))
-        }
-    }
+fn validated_family(context: &mut NativeContext<'_, NodeHost>, value: RootId) -> Result<u8, RootedError> {
+    let name = context.string_rooted("family");
+    let values = [context.number(ANY_FAMILY as f64), context.number(IPV4_FAMILY as f64), context.number(IPV6_FAMILY as f64)];
+    let allowed = context.array_rooted(&values)?;
+    validate(context, "validateOneOf", &[value, name, allowed])?;
+    Ok(context.rooted_value(value).and_then(Value::as_number).expect("SDK validated family") as u8)
 }
-
-fn resolve(hostname: &str, family: u8) -> Result<Vec<IpAddr>, ()> {
-    (hostname, DNS_LOOKUP_PORT)
-        .to_socket_addrs()
-        .map_err(|_| ())
-        .map(|addresses| {
-            addresses
-                .filter_map(|address| {
-                    let ip = address.ip();
-                    let address_family = family_of(ip);
-                    (family == ANY_FAMILY || family == address_family).then_some(ip)
-                })
-                .collect::<Vec<IpAddr>>()
-        })
-        .and_then(|addresses| (!addresses.is_empty()).then_some(addresses).ok_or(()))
-}
-
 fn family_of(address: IpAddr) -> u8 {
     match address {
         IpAddr::V4(_) => IPV4_FAMILY,
@@ -213,75 +174,6 @@ fn not_found_error(
     set_str(context, error, "syscall", DNS_SYSCALL)?;
     set_str(context, error, "hostname", hostname)?;
     Ok(error)
-}
-
-fn queue_callback(
-    context: &mut NativeContext<'_, NodeHost>,
-    callback: RootId,
-    args: Vec<RootId>,
-) -> Result<(), RootedError> {
-    let state = context.host_mut().shared_state();
-    let id = state
-        .borrow_mut()
-        .scheduler
-        .reserve_shared_immediate_id()
-        .ok_or_else(|| RootedError::host("shared immediate identifier space exhausted"))?;
-    let callback = context.retain(callback)?;
-    let undefined = context.undefined();
-    let receiver = context.retain(undefined)?;
-    let args = args
-        .into_iter()
-        .map(|argument| context.retain(argument))
-        .collect::<Result<Vec<_>, _>>()?;
-    context
-        .host_mut()
-        .shared_state()
-        .borrow_mut()
-        .scheduler
-        .queue_shared_immediate(
-            id,
-            crate::modules::shared_event_loop::SharedImmediateOwner::Host,
-            SharedCallback { execution: None,
-                callback,
-                receiver,
-                args,
-            },
-        );
-    Ok(())
-}
-
-fn invalid_type_error(
-    context: &mut NativeContext<'_, NodeHost>,
-    message: &str,
-) -> Result<RootId, RootedError> {
-    let error = context.type_error_rooted(message)?;
-    set_str(context, error, "code", "ERR_INVALID_ARG_TYPE")?;
-    Ok(error)
-}
-
-fn invalid_value_error(
-    context: &mut NativeContext<'_, NodeHost>,
-    message: &str,
-) -> Result<RootId, RootedError> {
-    let error = context.type_error_rooted(message)?;
-    set_str(context, error, "code", "ERR_INVALID_ARG_VALUE")?;
-    Ok(error)
-}
-
-fn throw_type<T>(
-    context: &mut NativeContext<'_, NodeHost>,
-    message: &str,
-) -> Result<T, RootedError> {
-    let error = invalid_type_error(context, message)?;
-    Err(context.throw(error))
-}
-
-fn throw_invalid_value<T>(
-    context: &mut NativeContext<'_, NodeHost>,
-    message: &str,
-) -> Result<T, RootedError> {
-    let error = invalid_value_error(context, message)?;
-    Err(context.throw(error))
 }
 
 fn set(
@@ -316,4 +208,117 @@ fn set_number(
 ) -> Result<(), RootedError> {
     let value = context.number(value);
     set(context, object, name, value)
+}
+
+pub(crate) fn complete(context: &mut NativeContext<'_, NodeHost>, request: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let status = args.first().copied().unwrap_or_else(|| context.undefined());
+    let addresses = args.get(1).copied().unwrap_or_else(|| context.undefined());
+    complete_lookup(context, request, status, addresses)?;
+    Ok(context.undefined())
+}
+fn complete_lookup(context: &mut NativeContext<'_, NodeHost>, request: RootId, status: RootId, addresses: RootId) -> Result<(), RootedError> {
+    let key = context.string_rooted("callback"); let callback = context.get_property_rooted(request, key)?;
+    let key = context.string_rooted("hostname"); let hostname = context.get_property_rooted(request, key)?;
+    let hostname = context.string_text(hostname)?.unwrap_or_default();
+    let key = context.string_rooted("all"); let all = context.get_property_rooted(request, key)?;
+    let all = context.rooted_value(all).and_then(Value::as_bool).unwrap_or(false);
+    let status_number = context.rooted_value(status).and_then(Value::as_number).unwrap_or(0.0);
+    if status_number != 0.0 {
+        let native_code = crate::modules::util_system_error_shared_vm::system_error_name(status_number);
+        let code = if matches!(native_code.as_str(), "EAI_NODATA" | "EAI_NONAME") { "ENOTFOUND" } else { native_code.as_str() };
+        let error = context.error_rooted(&format!("getaddrinfo {code} {hostname}"))?;
+        set_str(context, error, "code", code)?;
+        set_str(context, error, "syscall", "getaddrinfo")?;
+        set_str(context, error, "hostname", &hostname)?;
+        set(context, error, "errno", status)?;
+        let undefined = context.undefined();
+        context.call_rooted(callback, undefined, &[error])?;
+        return Ok(());
+    }
+    let key = context.string_rooted("length"); let length = context.get_property_rooted(addresses, key)?;
+    let length = context.rooted_value(length).and_then(Value::as_number).unwrap_or(0.0) as usize;
+    let mut results = Vec::with_capacity(length);
+    for index in 0..length {
+        let key = context.string_rooted(&index.to_string()); let value = context.get_property_rooted(addresses, key)?;
+        if let Some(address) = context.string_text(value)?.and_then(|s| s.parse::<IpAddr>().ok()) { results.push(address); }
+    }
+    let args = if all { success_all(context, results)? } else if let Some(address) = results.first() {
+        vec![context.null(), context.string_rooted(&address.to_string()), context.number(family_of(*address) as f64)]
+    } else { vec![not_found_error(context, &hostname)?] };
+    let undefined = context.undefined(); context.call_rooted(callback, undefined, &args)?;
+    Ok(())
+}
+pub(crate) fn promise_lookup(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let capability = context.with_startup_intrinsics(|context| {
+        let global = context.global_root()?;
+        let key = context.string_rooted("Promise"); let promise = context.get_property_rooted(global, key)?;
+        let key = context.string_rooted("withResolvers"); let factory = context.get_property_rooted(promise, key)?;
+        context.call_rooted(factory, promise, &[])
+    })?;
+    let key = context.string_rooted("promise"); let promise = context.get_property_rooted(capability, key)?;
+    let callback = context.host_function_with_data(crate::host::shared_vm::operation("dnsPromiseComplete"), capability)?;
+    let undefined = context.undefined();
+    let hostname = args.first().copied().unwrap_or(undefined);
+    let options = args.get(1).copied().unwrap_or(undefined);
+    lookup(context, undefined, &[hostname, options, callback])?;
+    Ok(promise)
+}
+pub(crate) fn promise_complete(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let capability = context.host_function_data()?;
+    let undefined = context.undefined();
+    let error = args.first().copied().unwrap_or(undefined);
+    let failed = context.rooted_value(error).is_some_and(|value| !value.is_null() && !value.is_undefined());
+    let key = context.string_rooted(if failed { "reject" } else { "resolve" });
+    let callback = context.get_property_rooted(capability, key)?;
+    let result = if failed { error } else if let Some(family) = args.get(2).copied() {
+        let result = context.object_rooted()?;
+        let address = args.get(1).copied().unwrap_or(undefined);
+        set(context, result, "address", address)?;
+        set(context, result, "family", family)?;
+        result
+    } else { args.get(1).copied().unwrap_or(undefined) };
+    context.call_rooted(callback, undefined, &[result])
+}
+// The pinned SDK validators own enum validation, received-value formatting, and errors.
+fn validate(context: &mut NativeContext<'_, NodeHost>, name: &str, args: &[RootId]) -> Result<(), RootedError> {
+    let validator = crate::host::shared_vm::commonjs::node_library_export(context, "dns.js", "internal/validators.js", name)?;
+    let undefined = context.undefined();
+    context.call_rooted(validator, undefined, args)?;
+    Ok(())
+}
+fn validate_order(context: &mut NativeContext<'_, NodeHost>, value: RootId, name: &str) -> Result<String, RootedError> {
+    let name = context.string_rooted(name);
+    let values = [context.string_rooted("verbatim"), context.string_rooted("ipv4first"), context.string_rooted("ipv6first")];
+    let allowed = context.array_rooted(&values)?;
+    validate(context, "validateOneOf", &[value, name, allowed])?;
+    Ok(context.string_text(value)?.expect("SDK validated string enum"))
+}
+fn default_order(context: &mut NativeContext<'_, NodeHost>) -> Result<String, RootedError> {
+    let state = context.host_mut().shared_state();
+    if let Some(order) = state.borrow().dns.default_order.clone() { return Ok(order); }
+    let initial = state.borrow().cli_options.string_value("--dns-result-order").unwrap_or("verbatim").to_owned();
+    let initial_root = context.string_rooted(&initial);
+    let initial = validate_order(context, initial_root, "--dns-result-order")?;
+    state.borrow_mut().dns.default_order = Some(initial.clone());
+    Ok(initial)
+}
+pub(crate) fn get_default_order(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let order = default_order(context)?;
+    Ok(context.string_rooted(&order))
+}
+pub(crate) fn set_default_order(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let value = args.first().copied().unwrap_or_else(|| context.undefined());
+    let order = validate_order(context, value, "dnsOrder")?;
+    context.host_mut().shared_state().borrow_mut().dns.default_order = Some(order);
+    Ok(context.undefined())
+}
+fn invalid_argument_value(context: &mut NativeContext<'_, NodeHost>, name: &str, value: RootId, reason: Option<&str>) -> Result<(), RootedError> {
+    let codes = crate::host::shared_vm::commonjs::node_library_export(context, "dns.js", "internal/errors.js", "codes")?;
+    let key = context.string_rooted("ERR_INVALID_ARG_VALUE");
+    let constructor = context.get_property_rooted(codes, key)?;
+    let name = context.string_rooted(name);
+    let mut args = vec![name, value];
+    if let Some(reason) = reason { args.push(context.string_rooted(reason)); }
+    let error = context.construct_rooted(constructor, constructor, &args)?;
+    Err(context.throw(error))
 }

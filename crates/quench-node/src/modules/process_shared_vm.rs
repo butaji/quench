@@ -1904,6 +1904,7 @@ pub(crate) fn finish_requested_exit(
         super::tls_shared_vm::contexts::cleanup(runtime);
         runtime.host_mut().shared_state().borrow_mut().native_tasks.shutdown();
         super::crypto_secret_job_shared_vm::cleanup(runtime);
+        super::cares_binding::cleanup(runtime);
         super::zlib_native_shared_vm::cleanup(runtime);
         #[cfg(quench_icu)]
         super::icu_binding_shared_vm::cleanup(runtime);
@@ -2059,6 +2060,9 @@ fn drain_checkpoint(
             continue;
         }
         if crate::modules::child_process_shared_vm::poll(runtime, program, &shared_state)? {
+            continue;
+        }
+        if crate::modules::cares_binding::poll(runtime, program)? {
             continue;
         }
         if crate::modules::fetch_shared_vm::poll(runtime, program, &shared_state)? {
@@ -2245,7 +2249,8 @@ fn run_and_clear_native_immediates(
 }
 
 fn has_referenced_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeState>>) -> bool {
-    crate::modules::child_process_ipc_shared_vm::has_work(&shared_state.borrow())
+    shared_state.borrow().dns.has_work()
+        || crate::modules::child_process_ipc_shared_vm::has_work(&shared_state.borrow())
         || crate::modules::process_stdin_shared_vm::has_work(&shared_state.borrow().stdin)
         || crate::modules::fetch_shared_vm::has_pending(shared_state)
         || crate::modules::child_process_shared_vm::has_pending(shared_state)
@@ -2343,7 +2348,7 @@ fn invoke_timer_callback(
     call_shared_callback(runtime, program, callback)
 }
 
-fn invoke_async_callback(
+pub(super) fn invoke_async_callback(
     runtime: &mut quench_runtime::Runtime<NodeHost>,
     program: &quench_runtime::ResidualProgram,
     callback: crate::modules::shared_event_loop::SharedCallback,
@@ -2996,6 +3001,8 @@ fn cleanup_environment(
     state: &Rc<RefCell<crate::host::SharedNodeState>>,
 ) {
     let _span = crate::modules::trace_state::EnvironmentSpan::enter(state, "RunCleanup");
+    state.borrow_mut().native_tasks.shutdown();
+    crate::modules::cares_binding::cleanup(runtime);
     crate::modules::http_shared_vm::cleanup(runtime, state);
     super::fs_watch_shared_vm::cleanup(runtime);
     super::fs_stat_watch_shared_vm::cleanup(runtime);
@@ -3011,6 +3018,7 @@ fn emit_exit(
     super::tls_shared_vm::contexts::cleanup(runtime);
         runtime.host_mut().shared_state().borrow_mut().native_tasks.shutdown();
         super::crypto_secret_job_shared_vm::cleanup(runtime);
+        super::cares_binding::cleanup(runtime);
         super::zlib_native_shared_vm::cleanup(runtime);
     #[cfg(quench_icu)]
     super::icu_binding_shared_vm::cleanup(runtime);
