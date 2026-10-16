@@ -10138,3 +10138,11 @@ fn child_process_direct_spawn_validates_in_sdk_order_and_closes_with_errno() {
         &["--no-warnings", "--expose-internals"],
     );
 }
+
+#[test]
+fn crypto_original_sdk_hash_hmac_state_copy_and_errors() {
+    compare_node_file_source_with_args(
+        include_str!("../node-tests/test-crypto-native-stateful-sdk-hash.js"),
+        &["--no-warnings", "--expose-internals"],
+    );
+}
