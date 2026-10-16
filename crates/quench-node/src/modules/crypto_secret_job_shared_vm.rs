@@ -247,7 +247,7 @@ fn register(
 }
 #[cfg(quench_openssl_provider)]
 fn invalid_digest(c: &mut Context<'_>, message: &str) -> RootedError {
-    match c.error_rooted(message) {
+    match c.type_error_rooted(message) {
         Ok(error) => {
             let result = (|| {
                 let key = c.string_rooted("code");

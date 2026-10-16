@@ -5,7 +5,6 @@ use foreign_types::ForeignType;
 use openssl::{error::ErrorStack, hash::MessageDigest, md::Md, md_ctx::MdCtx, pkey::PKey};
 use openssl_sys::EVP_MD;
 use std::{
-    collections::BTreeSet,
     ffi::{CStr, c_char, c_int, c_ulong, c_void},
     ptr,
 };
@@ -115,6 +114,25 @@ impl Digest {
         }
         Some(Self { md })
     }
+    pub(crate) fn aliases(&self) -> Vec<String> {
+        unsafe extern "C" fn collect(name: *const c_char, data: *mut c_void) {
+            if !name.is_null() {
+                let name = unsafe { CStr::from_ptr(name) }
+                    .to_string_lossy()
+                    .into_owned();
+                unsafe { &mut *(data as *mut Vec<String>) }.push(name);
+            }
+        }
+        let mut names = Vec::new();
+        unsafe {
+            EVP_MD_names_do_all(
+                self.md.as_ptr(),
+                Some(collect),
+                &mut names as *mut _ as *mut c_void,
+            )
+        };
+        names
+    }
     pub(crate) fn identity(&self) -> usize {
         self.md.as_ptr() as usize
     }
@@ -188,9 +206,9 @@ unsafe extern "C" fn legacy_name(
     if from.is_null() {
         return;
     }
-    let names = unsafe { &mut *(data as *mut BTreeSet<String>) };
+    let names = unsafe { &mut *(data as *mut Vec<String>) };
     if let Ok(name) = unsafe { CStr::from_ptr(from) }.to_str() {
-        names.insert(name.to_owned());
+        names.push(name.to_owned());
     }
 }
 unsafe extern "C" fn provider_name(name: *const c_char, data: *mut c_void) {
@@ -203,7 +221,7 @@ unsafe extern "C" fn provider_name(name: *const c_char, data: *mut c_void) {
     if name.contains('.') && name.bytes().all(|b| b.is_ascii_digit() || b == b'.') {
         return;
     }
-    unsafe { &mut *(data as *mut BTreeSet<String>) }.insert(name.to_ascii_lowercase());
+    unsafe { &mut *(data as *mut Vec<String>) }.push(name.to_ascii_lowercase());
 }
 unsafe extern "C" fn provider_names(md: *mut EVP_MD, data: *mut c_void) {
     unsafe { EVP_MD_names_do_all(md, Some(provider_name), data) };
@@ -212,7 +230,7 @@ unsafe extern "C" fn provider_names(md: *mut EVP_MD, data: *mut c_void) {
 /// No global cache: provider/FIPS selection changes cannot leave stale names.
 pub fn supported_names() -> Vec<String> {
     openssl::init();
-    let mut names = BTreeSet::<String>::new();
+    let mut names = Vec::<String>::new();
     let data = &mut names as *mut _ as *mut c_void;
     unsafe {
         EVP_MD_do_all_sorted(Some(legacy_name), data);
