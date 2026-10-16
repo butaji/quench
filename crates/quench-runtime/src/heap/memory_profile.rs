@@ -590,7 +590,7 @@ fn cell_bytes(cell: &Cell) -> usize {
             }
             Cell::String(value) => value.capacity(),
             Cell::BigInt(value) | Cell::Error(value) => value.capacity(),
-            Cell::Symbol(value) => value.as_ref().map_or(0, String::capacity),
+            Cell::Symbol(value) => value.as_ref().map_or(0, |description| description.len()),
             Cell::Date { .. } => 0,
             Cell::RegExp { meta, .. } => meta.source.capacity() + meta.flags.capacity(),
         }
