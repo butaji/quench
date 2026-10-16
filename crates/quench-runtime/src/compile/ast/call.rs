@@ -320,8 +320,13 @@ impl FunctionCompiler<'_, '_> {
     pub(super) fn record_lexical_binding_site(&mut self, pc: usize) {
         let mut visible = rustc_hash::FxHashSet::default();
         let mut bindings = Vec::new();
+        let mut private_labels = FxHashSet::default();
         for scope in self.lexical_scopes.iter().rev() {
             for atom in scope.bindings.keys() {
+                if scope.kinds.get(atom) == Some(&LexicalBindingKind::PrivateName)
+                    && let Some(label) = crate::bytecode::private_identity_label(&self.owner.atoms[*atom as usize])
+                    && !private_labels.insert(label)
+                { continue; }
                 if scope.kinds.get(atom) != Some(&LexicalBindingKind::FunctionName)
                     && visible.insert(*atom)
                     && let Some(binding) = self.lexical_binding_projection(scope, *atom)
@@ -357,6 +362,26 @@ impl FunctionCompiler<'_, '_> {
                         declaration: crate::bytecode::EvalBindingDeclaration::Lexical,
                     });
                 }
+            }
+        }
+        // Eval may mention private names only in its string. Its class home
+        // still needs the same lexical capture that compiled super access uses.
+        if self.dynamic_eval && let Some(atom) = self.super_home_atom {
+            let location = self.local_slots.get(&atom).copied()
+                .map(crate::bytecode::EvalBindingLocation::Local)
+                .or_else(|| self.scopes.iter().enumerate().find_map(|(depth, scope)| {
+                    let slot = *scope.get(&atom)?;
+                    let depth = u16::try_from(depth).ok()?;
+                    Some(crate::bytecode::EvalBindingLocation::Capture { depth, slot })
+                }));
+            if let Some(location) = location
+                && !direct.iter().any(|binding| binding.atom == atom)
+            {
+                direct.push(crate::bytecode::EvalBinding {
+                    atom, location, with_depth: 0,
+                    kind: LexicalBindingKind::Mutable,
+                    declaration: crate::bytecode::EvalBindingDeclaration::Variable,
+                });
             }
         }
         direct.sort_unstable_by_key(|binding| binding.atom);

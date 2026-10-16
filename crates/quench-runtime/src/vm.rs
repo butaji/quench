@@ -900,15 +900,47 @@ impl DictionaryTrigger {
     }
 }
 struct ShapeLookupIndex {
+    /// The shape's live properties in definition order, with their slots.
     entries: Vec<(property_key::PropertyKey, u32)>,
-    slots: FxHashMap<property_key::PropertyKey, u32>,
+    /// Positions in `entries`, hashed by key: the pairs themselves are stored once.
+    positions: hashbrown::HashTable<u32>,
     attributes: FxHashMap<u32, ShapeAttributes>,
 }
-#[cfg(feature = "profile-memory")]
 impl ShapeLookupIndex {
+    fn key_hash(key: property_key::PropertyKey) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = rustc_hash::FxHasher::default();
+        key.hash(&mut hasher);
+        hasher.finish()
+    }
+    fn new(
+        entries: Vec<(property_key::PropertyKey, u32)>,
+        attributes: FxHashMap<u32, ShapeAttributes>,
+    ) -> Self {
+        let mut positions = hashbrown::HashTable::with_capacity(entries.len());
+        for (position, &(key, _)) in entries.iter().enumerate() {
+            let position = u32::try_from(position).expect("shape width fits u32");
+            positions.insert_unique(Self::key_hash(key), position, |&position| {
+                Self::key_hash(entries[position as usize].0)
+            });
+        }
+        Self {
+            entries,
+            positions,
+            attributes,
+        }
+    }
+    fn slot(&self, key: property_key::PropertyKey) -> Option<u32> {
+        self.positions
+            .find(Self::key_hash(key), |&position| {
+                self.entries[position as usize].0 == key
+            })
+            .map(|&position| self.entries[position as usize].1)
+    }
+    #[cfg(feature = "profile-memory")]
     fn payload_capacity_bytes(&self) -> usize {
         self.entries.capacity() * size_of::<(property_key::PropertyKey, u32)>()
-            + self.slots.capacity() * size_of::<(property_key::PropertyKey, u32)>()
+            + self.positions.capacity() * (size_of::<u32>() + 1)
             + self.attributes.capacity() * size_of::<(u32, ShapeAttributes)>()
     }
 }
@@ -1241,10 +1273,6 @@ pub(crate) struct Vm<H> {
     invalidated_methods: FxHashMap<MethodCacheKey, InvalidatedMethod>,
     object_shapes: Vec<u32>,
     descriptors: FxHashMap<(Value, property_key::PropertyKey), PropertyAttributes>,
-    /// Whether any object has held an accessor keyed by an array-index name. Accessors are
-    /// recorded only through `set_property_attributes` and `insert_descriptor`; until one
-    /// is, no index store or append can reach an inherited setter.
-    array_index_accessor_defined: bool,
     // Weak identities; captured environments remain authoritative in function cells.
     function_values: FxHashMap<(ProgramId, u32), Vec<WeakHandle>>,
     /// The JavaScript wrapper of each exported Wasm closure, so every export of one

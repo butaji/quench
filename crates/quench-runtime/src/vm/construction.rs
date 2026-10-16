@@ -690,7 +690,7 @@ impl<H: Host> Vm<H> {
             && !function.is_generator
             && !function.is_class_constructor
             && !function.derived_constructor
-            && !function.class_field_initializer
+            && !function.class_initializer
             && !function.parameter_eval_arguments_error
             && function.instance_initializer.is_none()
     }

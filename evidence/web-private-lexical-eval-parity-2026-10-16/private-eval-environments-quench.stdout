@@ -1,0 +1,1 @@
+[[["value",1],["throw","SyntaxError","Private field '#static' must be declared in an enclosing class"],["throw","SyntaxError","Private identifier '#instance' is not allowed outside class bodies"]],[["throw","SyntaxError","Private field '#instance' must be declared in an enclosing class"],["value",2]]]

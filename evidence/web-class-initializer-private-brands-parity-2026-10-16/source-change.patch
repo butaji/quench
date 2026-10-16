@@ -1,0 +1,798 @@
+diff --git a/crates/quench-node-test/node-tests/test-private-brand-initialization.js b/crates/quench-node-test/node-tests/test-private-brand-initialization.js
+new file mode 100644
+index 000000000..a6fdffc33
+--- /dev/null
++++ b/crates/quench-node-test/node-tests/test-private-brand-initialization.js
+@@ -0,0 +1,16 @@
++function outcome(fn){try{return ['value',fn()]}catch(error){return ['throw',error.name]}}
++const out=[];
++class Instance {#field=1;#method(){return 2}get #accessor(){return 3}static has(object){return [#field in object,#method in object,#accessor in object]}}
++out.push(['prototype',Instance.has(Instance.prototype)],['instance',Instance.has(new Instance())]);
++class Static {static before=[#field in this,#method in this,#accessor in this];static #field=1;static #method(){}static get #accessor(){return 2}static after=[#field in this,#method in this,#accessor in this]}
++out.push(['static',Static.before,Static.after]);
++class Earlier {static #first=[#first in this,#second in this];static #second=[#first in this,#second in this];static read(){return [this.#first,this.#second]}}
++out.push(['order',Earlier.read()]);
++class Pair {#data=1;get #value(){return this.#data}set #value(value){this.#data=value}read(){this.#value=2;return this.#value}static has(object){return #value in object}}
++out.push(['pair',outcome(()=>new Pair().read()),Pair.has(Pair.prototype)]);
++class ReturnValue {constructor(object){return object}}
++class Stamp extends ReturnValue {#x=7;static has(object){return #x in object}static read(object){return object.#x}}
++const prototype=Stamp.prototype;out.push(['stamp-before',Stamp.has(prototype)]);
++new Stamp(prototype);out.push(['stamp-after',Stamp.has(prototype),Stamp.read(prototype)]);
++out.push(['stamp-twice',outcome(()=>new Stamp(prototype)),Stamp.read(prototype)]);
++console.log(JSON.stringify(out));
+diff --git a/crates/quench-node-test/node-tests/test-static-block-context.js b/crates/quench-node-test/node-tests/test-static-block-context.js
+new file mode 100644
+index 000000000..993130485
+--- /dev/null
++++ b/crates/quench-node-test/node-tests/test-static-block-context.js
+@@ -0,0 +1,18 @@
++function outcome(fn){try{return ['value',fn()]}catch(error){return ['throw',error.name]}}
++const out=[];
++class Base {static value=7;static get receiver(){return this.name}static set setValue(value){this.received=value}}
++class Derived extends Base {
++ static #value=3;
++ static {
++  out.push(['direct',outcome(()=>super.value),outcome(()=>eval('super.value')),outcome(()=>eval('super.receiver')),outcome(()=>eval('this.#value'))]);
++  out.push(['arrow',outcome(()=>eval('super.value'))]);
++  out.push(['ordinary',outcome(function(){return eval('super.value')})]);
++  out.push(['arguments',outcome(()=>eval('typeof arguments')),outcome(()=>eval('(()=>typeof arguments)()')),outcome(()=>eval('(function(){return typeof arguments})()'))]);
++  out.push(['target',outcome(()=>eval('new.target === undefined'))]);
++  out.push(['setter',outcome(()=>eval('super.setValue=9')),this.received]);
++  out.push(['strict',outcome(()=>eval('quenchStaticBlockUnbound=1')),outcome(()=>{Object.defineProperty(this,'locked',{value:1});this.locked=2})]);
++  var local=11;out.push(['local',eval('local')]);
++ }
++ static {out.push(['separate',typeof local])}
++}
++console.log(JSON.stringify(out));
+diff --git a/crates/quench-node-test/tests/child_entry.rs b/crates/quench-node-test/tests/child_entry.rs
+index 4ebdfe11f..d84464fff 100644
+--- a/crates/quench-node-test/tests/child_entry.rs
++++ b/crates/quench-node-test/tests/child_entry.rs
+@@ -9617,3 +9617,13 @@ fn private_fields_keep_class_creation_identity_and_atomic_internal_initializatio
+ fn private_eval_environments_cross_static_instance_and_ordinary_function_boundaries() {
+     compare_node_source_with_args(include_str!("../node-tests/test-private-eval-environments.js"), &[]);
+ }
++
++#[test]
++fn private_brands_follow_initialization_without_branding_the_declaring_prototype() {
++    compare_node_source_with_args(include_str!("../node-tests/test-private-brand-initialization.js"), &[]);
++}
++
++#[test]
++fn static_blocks_retain_strict_eval_super_receiver_and_separate_var_contexts() {
++    compare_node_source_with_args(include_str!("../node-tests/test-static-block-context.js"), &[]);
++}
+diff --git a/crates/quench-runtime/src/bytecode.rs b/crates/quench-runtime/src/bytecode.rs
+index d88ec2e9d..b01c18de7 100644
+--- a/crates/quench-runtime/src/bytecode.rs
++++ b/crates/quench-runtime/src/bytecode.rs
+@@ -1021,7 +1021,7 @@ pub struct Function {
+     /// Lexical HomeObject captured by methods and arrows containing `super`.
+     pub super_home_atom: Option<Atom>,
+     pub constructible: bool,
+-    pub class_field_initializer: bool,
++    pub class_initializer: bool,
+     pub parameter_eval_arguments_error: bool,
+     pub arguments_slot: Option<u16>,
+     pub simple_parameters: bool,
+@@ -1130,7 +1130,7 @@ pub(crate) enum PlainLocalContextIneligibility {
+     AsyncFunction,
+     GeneratorFunction,
+     ClassConstructor,
+-    ClassFieldInitializer,
++    ClassInitializer,
+     NonSimpleParameters,
+     LegacyCaptureLayout,
+     DynamicNameResolution,
+@@ -1153,7 +1153,7 @@ impl Function {
+     /// A terminal return may skip its following Return instruction without being a
+     /// proper tail call: the caller must still catch the callee's abrupt completion.
+     pub(crate) fn permits_js_tail_call_at(&self, pc: u32) -> bool {
+-        self.strict && !self.class_field_initializer && self.handler_at(pc).is_none()
++        self.strict && !self.class_initializer && self.handler_at(pc).is_none()
+     }
+ 
+     pub(crate) fn handler_at(&self, pc: u32) -> Option<Handler> {
+@@ -1208,8 +1208,8 @@ impl Function {
+         if self.is_class_constructor {
+             return Some(PlainLocalContextIneligibility::ClassConstructor);
+         }
+-        if self.class_field_initializer {
+-            return Some(PlainLocalContextIneligibility::ClassFieldInitializer);
++        if self.class_initializer {
++            return Some(PlainLocalContextIneligibility::ClassInitializer);
+         }
+         if !self.simple_parameters {
+             return Some(PlainLocalContextIneligibility::NonSimpleParameters);
+@@ -1286,7 +1286,7 @@ impl Function {
+                 || self.is_generator
+                 || self.is_class_constructor
+                 || self.derived_constructor
+-                || self.class_field_initializer
++                || self.class_initializer
+                 || self.instance_initializer.is_some()
+                 || self.inherited_with_scope
+                 || !self.binding_sites.is_empty()
+@@ -1407,7 +1407,7 @@ impl Function {
+                 && !self.is_generator
+                 && !self.is_class_constructor
+                 && !self.derived_constructor
+-                && !self.class_field_initializer
++                && !self.class_initializer
+                 && !self.parameter_eval_arguments_error;
+             let legacy_reflection = !self.has_restricted_legacy_caller_access();
+             let live_parameters = self.reflects_live_parameters(atoms);
+diff --git a/crates/quench-runtime/src/bytecode/binary.rs b/crates/quench-runtime/src/bytecode/binary.rs
+index 90f8959e6..49518a1a2 100644
+--- a/crates/quench-runtime/src/bytecode/binary.rs
++++ b/crates/quench-runtime/src/bytecode/binary.rs
+@@ -201,7 +201,7 @@ pub(super) fn write_program(
+         out.option_u32(function.instance_initializer);
+         out.u32(function.super_home_atom.unwrap_or(u32::MAX));
+         out.u8(u8::from(function.constructible));
+-        out.u8(u8::from(function.class_field_initializer));
++        out.u8(u8::from(function.class_initializer));
+         out.u8(u8::from(function.parameter_eval_arguments_error));
+         out.u8(u8::from(function.simple_parameters));
+         out.u8(u8::from(function.strict));
+@@ -522,7 +522,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
+             1 => true,
+             _ => return Err("invalid constructible function flag".into()),
+         };
+-        let class_field_initializer = match input.u8()? {
++        let class_initializer = match input.u8()? {
+             0 => false,
+             1 => true,
+             _ => return Err("invalid class field initializer flag".into()),
+@@ -676,7 +676,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
+             instance_initializer,
+             super_home_atom,
+             constructible,
+-            class_field_initializer,
++            class_initializer,
+             parameter_eval_arguments_error,
+             arguments_slot,
+             simple_parameters,
+diff --git a/crates/quench-runtime/src/bytecode/tests.rs b/crates/quench-runtime/src/bytecode/tests.rs
+index 93637f47a..6a8eb1758 100644
+--- a/crates/quench-runtime/src/bytecode/tests.rs
++++ b/crates/quench-runtime/src/bytecode/tests.rs
+@@ -138,7 +138,7 @@ fn decoder_rejects_out_of_range_local_load() {
+             instance_initializer: None,
+             super_home_atom: None,
+             constructible: true,
+-            class_field_initializer: false,
++            class_initializer: false,
+             parameter_eval_arguments_error: false,
+             arguments_slot: None,
+             simple_parameters: true,
+@@ -221,7 +221,7 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
+             instance_initializer: None,
+             super_home_atom: None,
+             constructible: true,
+-            class_field_initializer: false,
++            class_initializer: false,
+             parameter_eval_arguments_error: false,
+             arguments_slot: None,
+             simple_parameters: true,
+diff --git a/crates/quench-runtime/src/bytecode/validate.rs b/crates/quench-runtime/src/bytecode/validate.rs
+index c2f6f9113..556c1f9b1 100644
+--- a/crates/quench-runtime/src/bytecode/validate.rs
++++ b/crates/quench-runtime/src/bytecode/validate.rs
+@@ -164,7 +164,7 @@ fn promoted_local_layout_is_valid(function: &super::Function, atoms: &super::Ato
+         && !function.is_generator
+         && !function.is_class_constructor
+         && !function.derived_constructor
+-        && !function.class_field_initializer
++        && !function.class_initializer
+         && function.simple_parameters
+         && !function.rest
+         && function.arguments_slot.is_none()
+@@ -591,7 +591,7 @@ impl ResidualProgram {
+                         function.derived_constructor
+                             && initializer as usize != index
+                             && plan.parent == function.parent
+-                            && plan.class_field_initializer
++                            && plan.class_initializer
+                             && !plan.constructible
+                             && plan.instance_initializer.is_none()
+                     });
+@@ -1062,7 +1062,7 @@ fn selective_capture_layout_is_eligible(
+         && !function.is_generator
+         && !function.is_class_constructor
+         && !function.derived_constructor
+-        && !function.class_field_initializer
++        && !function.class_initializer
+         && function.simple_parameters
+         && local_atoms_are_static
+         && mapped_arguments_are_captured
+@@ -1194,7 +1194,7 @@ mod tests {
+             instance_initializer: None,
+             super_home_atom: None,
+             constructible: true,
+-            class_field_initializer: false,
++            class_initializer: false,
+             parameter_eval_arguments_error: false,
+             arguments_slot: None,
+             simple_parameters: true,
+diff --git a/crates/quench-runtime/src/compile.rs b/crates/quench-runtime/src/compile.rs
+index 19ffebecf..a7f48b916 100644
+--- a/crates/quench-runtime/src/compile.rs
++++ b/crates/quench-runtime/src/compile.rs
+@@ -187,7 +187,7 @@ pub(crate) struct EvalContext {
+     pub in_function: bool,
+     pub home_atom: Option<Atom>,
+     pub super_calls: bool,
+-    pub field_initializer: bool,
++    pub class_initializer: bool,
+ }
+ 
+ #[derive(Clone, Copy)]
+@@ -268,7 +268,7 @@ impl Engine {
+         })
+     }
+ 
+-    pub(crate) fn field_eval_references_arguments(source: &str) -> bool {
++    pub(crate) fn class_eval_references_arguments(source: &str) -> bool {
+         let context = eval_context_source(source, &[], true);
+         let allocator = Allocator::with_capacity(context.len());
+         let mut parsed = annex_b_targets::parse_program(&allocator, &context, SourceType::script());
+@@ -276,7 +276,7 @@ impl Engine {
+             return false; // The normal eval compiler owns syntax and exhaustion errors.
+         }
+         eval_method_body(&mut parsed.program, false)
+-            .is_some_and(|body| early::field_eval_references_arguments(&body.statements))
++            .is_some_and(|body| early::class_eval_references_arguments(&body.statements))
+     }
+ 
+     pub(crate) fn static_module_has_early_error(source: &str) -> bool {
+@@ -1444,7 +1444,7 @@ struct FunctionOptions<'a> {
+     class_constructor: bool,
+     derived_constructor: bool,
+     non_constructible: bool,
+-    class_field_initializer: bool,
++    class_initializer: bool,
+     instance_fields: Option<&'a [ClassField<'a>]>,
+     instance_private_methods: Option<&'a [Atom]>,
+     super_static: bool,
+@@ -1759,9 +1759,9 @@ impl<'a> Compiler<'a> {
+                 class_constructor: false,
+                 derived_constructor: false,
+                 non_constructible: false,
+-                class_field_initializer: self
++                class_initializer: self
+                     .eval_context
+-                    .is_some_and(|context| context.field_initializer),
++                    .is_some_and(|context| context.class_initializer),
+                 instance_fields: None,
+                 instance_private_methods: None,
+                 super_static: false,
+@@ -2377,7 +2377,7 @@ impl<'a> Compiler<'a> {
+             && !options.generator
+             && !options.class_constructor
+             && !options.derived_constructor
+-            && !options.class_field_initializer
++            && !options.class_initializer
+             && !options.implicit_super
+             && options.with_depth == 0
+             && self.eval_context.is_none()
+@@ -2447,7 +2447,7 @@ impl<'a> Compiler<'a> {
+                     .eval_context
+                     .is_some_and(|context| context.super_calls));
+         function.strict = root_strict;
+-        function.class_field_initializer = options.class_field_initializer;
++        function.class_initializer = options.class_initializer;
+         if capture_script_completion {
+             let completion = function.reg();
+             // Directive expressions precede the body and contribute its initial completion.
+@@ -2564,7 +2564,7 @@ impl<'a> Compiler<'a> {
+             constructible: !options.non_constructible
+                 && !options.async_function
+                 && !options.generator,
+-            class_field_initializer: options.class_field_initializer,
++            class_initializer: options.class_initializer,
+             parameter_eval_arguments_error: function.parameter_eval_arguments_error,
+             arguments_slot,
+             simple_parameters,
+diff --git a/crates/quench-runtime/src/compile/arrow.rs b/crates/quench-runtime/src/compile/arrow.rs
+index d5fd810c1..0b231194d 100644
+--- a/crates/quench-runtime/src/compile/arrow.rs
++++ b/crates/quench-runtime/src/compile/arrow.rs
+@@ -10,7 +10,7 @@ impl Compiler<'_> {
+         super_home: bool,
+         super_home_atom: Option<Atom>,
+         inherited_strict: bool,
+-        class_field_initializer: bool,
++        class_initializer: bool,
+         lexical_this_atom: Option<Atom>,
+         super_call_binds_this: bool,
+         with_depth: u16,
+@@ -78,7 +78,7 @@ impl Compiler<'_> {
+         function.super_static = super_static;
+         function.super_home = super_home;
+         function.super_home_atom = super_home_atom;
+-        function.class_field_initializer = class_field_initializer;
++        function.class_initializer = class_initializer;
+         function.super_call_binds_this = super_call_binds_this;
+         function.this_override = lexical_this_atom.map(|atom| function.load_atom(atom));
+         function.dynamic_eval = early::parameters_contain_direct_eval(&value.params)
+@@ -136,7 +136,7 @@ impl Compiler<'_> {
+             instance_initializer: None,
+             super_home_atom,
+             constructible: false,
+-            class_field_initializer,
++            class_initializer,
+             parameter_eval_arguments_error: false,
+             arguments_slot: None,
+             simple_parameters: !FunctionCompiler::has_non_simple_parameters(&value.params),
+diff --git a/crates/quench-runtime/src/compile/ast.rs b/crates/quench-runtime/src/compile/ast.rs
+index 3d736130a..137325541 100644
+--- a/crates/quench-runtime/src/compile/ast.rs
++++ b/crates/quench-runtime/src/compile/ast.rs
+@@ -141,7 +141,7 @@ pub(super) struct FunctionCompiler<'a, 'b> {
+     pub(super) async_function: bool,
+     pub(super) generator: bool,
+     pub(super) this_override: Option<Register>,
+-    pub(super) class_field_initializer: bool,
++    pub(super) class_initializer: bool,
+     pub(super) optional_chain_end_edges: Option<Vec<usize>>,
+     pub(super) with_depth: u16,
+     inherited_with_depth: u16,
+@@ -255,7 +255,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
+             async_function,
+             generator,
+             this_override: None,
+-            class_field_initializer: false,
++            class_initializer: false,
+             optional_chain_end_edges: None,
+             with_depth,
+             inherited_with_depth: with_depth,
+@@ -526,7 +526,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
+                         class_constructor: false,
+                         derived_constructor: false,
+                         non_constructible: false,
+-                        class_field_initializer: false,
++                        class_initializer: false,
+                         instance_fields: None,
+                         instance_private_methods: None,
+                         super_static: false,
+diff --git a/crates/quench-runtime/src/compile/ast/expression.rs b/crates/quench-runtime/src/compile/ast/expression.rs
+index 7c295e8f6..f9e893f45 100644
+--- a/crates/quench-runtime/src/compile/ast/expression.rs
++++ b/crates/quench-runtime/src/compile/ast/expression.rs
+@@ -535,7 +535,7 @@ impl FunctionCompiler<'_, '_> {
+             self.super_home,
+             self.super_home_atom,
+             self.strict,
+-            self.class_field_initializer,
++            self.class_initializer,
+             lexical_this_atom,
+             self.super_call_binds_this,
+             self.with_depth,
+diff --git a/crates/quench-runtime/src/compile/capture_layout.rs b/crates/quench-runtime/src/compile/capture_layout.rs
+index 0c68163ad..18af9df22 100644
+--- a/crates/quench-runtime/src/compile/capture_layout.rs
++++ b/crates/quench-runtime/src/compile/capture_layout.rs
+@@ -132,7 +132,7 @@ fn selective_layout_is_safe(function: &Function, id: usize, has_dynamic_descenda
+         && !function.is_generator
+         && !function.is_class_constructor
+         && !function.derived_constructor
+-        && !function.class_field_initializer
++        && !function.class_initializer
+         && function.simple_parameters
+         && !function.has_dynamic_scope_access()
+ }
+diff --git a/crates/quench-runtime/src/compile/class.rs b/crates/quench-runtime/src/compile/class.rs
+index 9b714ea0b..0042979e7 100644
+--- a/crates/quench-runtime/src/compile/class.rs
++++ b/crates/quench-runtime/src/compile/class.rs
+@@ -151,6 +151,11 @@ impl FunctionCompiler<'_, '_> {
+             self.hidden_local(&format!("\0quench:home:class:{}", class.span.start));
+         let mut private_bindings = FxHashMap::default();
+         for element in &class.body.body {
++            if let ClassElement::AccessorProperty(accessor) = element {
++                let atom = self.owner.private_name_atom(accessor.span);
++                let home = if accessor.r#static { class_home_atom } else { constructor_home_atom };
++                private_bindings.insert(atom, home);
++            }
+             let (key, is_static) = match element {
+                 ClassElement::PropertyDefinition(field) => (&field.key, field.r#static),
+                 ClassElement::MethodDefinition(method) => (&method.key, method.r#static),
+@@ -190,7 +195,7 @@ impl FunctionCompiler<'_, '_> {
+                 &scopes,
+                 Some(self.function_id),
+                 FunctionOptions {
+-                    class_field_initializer: true,
++                    class_initializer: true,
+                     non_constructible: true,
+                     super_home: true,
+                     super_home_atom: Some(if class_field_static(*field) {
+@@ -250,7 +255,7 @@ impl FunctionCompiler<'_, '_> {
+                         class_constructor: true,
+                         derived_constructor: implicit_super,
+                         non_constructible: false,
+-                        class_field_initializer: false,
++                        class_initializer: false,
+                         instance_fields: Some(&instance_fields),
+                         instance_private_methods: Some(&instance_private_methods),
+                         super_static: false,
+@@ -275,7 +280,7 @@ impl FunctionCompiler<'_, '_> {
+                 FunctionOptions {
+                     instance_fields: Some(&instance_fields),
+                     instance_private_methods: Some(&instance_private_methods),
+-                    class_field_initializer: true,
++                    class_initializer: true,
+                     non_constructible: true,
+                     super_home: true,
+                     super_home_atom: Some(constructor_home_atom),
+@@ -317,39 +322,28 @@ impl FunctionCompiler<'_, '_> {
+         self.define_class_method(prototype, class_value, None, Some("constructor"));
+         self.store_atom(constructor_home_atom, prototype);
+ 
++        // Static methods/accessors exist before static fields execute. Data
++        // fields acquire their brand only when their initializer completes;
++        // instance members never brand the prototype merely by being declared.
++        let mut initialized_static_names = FxHashSet::default();
+         for element in &class.body.body {
+-            let (name, is_static) = match element {
+-                ClassElement::PropertyDefinition(field) => match &field.key {
+-                    PropertyKey::PrivateIdentifier(identifier) => {
+-                        (Some(identifier.span), field.r#static)
+-                    }
+-                    _ => (None, false),
+-                },
+-                ClassElement::MethodDefinition(method) => match &method.key {
+-                    PropertyKey::PrivateIdentifier(identifier) => {
+-                        (Some(identifier.span), method.r#static)
+-                    }
+-                    _ => (None, false),
+-                },
+-                ClassElement::AccessorProperty(accessor) => {
+-                    (Some(accessor.span), accessor.r#static)
++            let (name, accessor_name) = match element {
++                ClassElement::MethodDefinition(method) if method.r#static => {
++                    (matches!(&method.key, PropertyKey::PrivateIdentifier(_))
++                        .then(|| method.key.span()), None)
+                 }
+-                _ => (None, false),
+-            };
+-            let accessor_name = match element {
+-                ClassElement::AccessorProperty(accessor) => {
+-                    matches!(&accessor.key, PropertyKey::PrivateIdentifier(_))
+-                        .then(|| accessor.key.span())
++                ClassElement::AccessorProperty(accessor) if accessor.r#static => {
++                    (Some(accessor.span), matches!(&accessor.key, PropertyKey::PrivateIdentifier(_))
++                        .then(|| accessor.key.span()))
+                 }
+-                _ => None,
++                _ => continue,
+             };
+             for name in name.into_iter().chain(accessor_name) {
+-                let target = if is_static { class_value } else { prototype };
+                 let atom = self.owner.private_name_atom(name);
+-                if self.owner.private_name_is_overridden(atom) {
+-                    continue;
+-                }
+-                self.emit(Op::MarkPrivateName, 0, target, target, atom);
++                if self.owner.private_name_is_overridden(atom)
++                    || !initialized_static_names.insert(atom)
++                { continue; }
++                self.emit(Op::MarkPrivateName, 0, class_value, class_value, atom);
+             }
+         }
+ 
+@@ -627,6 +621,7 @@ impl FunctionCompiler<'_, '_> {
+                         block,
+                         &scopes,
+                         Some(self.function_id),
++                        class_home_atom,
+                         self.with_depth,
+                     );
+                     let function = self.reg();
+@@ -1013,7 +1008,7 @@ impl Compiler<'_> {
+                 derived_constructor: method.kind == MethodDefinitionKind::Constructor
+                     && derived_constructor,
+                 non_constructible: method.kind != MethodDefinitionKind::Constructor,
+-                class_field_initializer: false,
++                class_initializer: false,
+                 instance_fields,
+                 instance_private_methods,
+                 super_static: method.r#static,
+@@ -1032,6 +1027,7 @@ impl Compiler<'_> {
+         block: &StaticBlock<'_>,
+         scopes: &[Rc<FxHashMap<Atom, u16>>],
+         parent: Option<u32>,
++        home_atom: Atom,
+         with_depth: u16,
+     ) -> u32 {
+         self.compile_function(
+@@ -1050,16 +1046,16 @@ impl Compiler<'_> {
+                 class_constructor: false,
+                 derived_constructor: false,
+                 non_constructible: false,
+-                class_field_initializer: false,
++                class_initializer: true,
+                 instance_fields: None,
+                 instance_private_methods: None,
+                 super_static: true,
+-                super_home: false,
+-                super_home_atom: None,
++                super_home: true,
++                super_home_atom: Some(home_atom),
+                 rest_override: false,
+                 implicit_super: false,
+                 with_depth,
+-                strict: false,
++                strict: true,
+             },
+         )
+     }
+diff --git a/crates/quench-runtime/src/compile/early.rs b/crates/quench-runtime/src/compile/early.rs
+index 189a360f0..9dd860117 100644
+--- a/crates/quench-runtime/src/compile/early.rs
++++ b/crates/quench-runtime/src/compile/early.rs
+@@ -31,7 +31,7 @@ pub(super) fn normalize_hashbang(source: &str) -> Cow<'_, str> {
+ }
+ 
+ /// Eval may inherit new.target from a function, but never its Return grammar.
+-pub(super) fn field_eval_references_arguments(statements: &[Statement<'_>]) -> bool {
++pub(super) fn class_eval_references_arguments(statements: &[Statement<'_>]) -> bool {
+     struct Arguments(bool);
+     impl<'a> Visit<'a> for Arguments {
+         fn visit_identifier_reference(
+diff --git a/crates/quench-runtime/src/compile/liveness.rs b/crates/quench-runtime/src/compile/liveness.rs
+index e162d8151..13273041e 100644
+--- a/crates/quench-runtime/src/compile/liveness.rs
++++ b/crates/quench-runtime/src/compile/liveness.rs
+@@ -349,7 +349,7 @@ mod tests {
+             instance_initializer: None,
+             super_home_atom: None,
+             constructible: true,
+-            class_field_initializer: false,
++            class_initializer: false,
+             parameter_eval_arguments_error: false,
+             arguments_slot: None,
+             simple_parameters: true,
+diff --git a/crates/quench-runtime/src/compile/numeric.rs b/crates/quench-runtime/src/compile/numeric.rs
+index 137ff4fd1..64452b169 100644
+--- a/crates/quench-runtime/src/compile/numeric.rs
++++ b/crates/quench-runtime/src/compile/numeric.rs
+@@ -228,7 +228,7 @@ mod tests {
+             instance_initializer: None,
+             super_home_atom: None,
+             constructible: true,
+-            class_field_initializer: false,
++            class_initializer: false,
+             parameter_eval_arguments_error: false,
+             arguments_slot: None,
+             simple_parameters: true,
+@@ -311,7 +311,7 @@ mod tests {
+             instance_initializer: None,
+             super_home_atom: None,
+             constructible: true,
+-            class_field_initializer: false,
++            class_initializer: false,
+             parameter_eval_arguments_error: false,
+             arguments_slot: None,
+             simple_parameters: true,
+diff --git a/crates/quench-runtime/src/profile/dispatch_pairs.rs b/crates/quench-runtime/src/profile/dispatch_pairs.rs
+index 4cd79f367..d6ef984dc 100644
+--- a/crates/quench-runtime/src/profile/dispatch_pairs.rs
++++ b/crates/quench-runtime/src/profile/dispatch_pairs.rs
+@@ -123,7 +123,7 @@ mod tests {
+             derived_constructor: false,
+             instance_initializer: None,
+             super_home_atom: None,
+-            class_field_initializer: false,
++            class_initializer: false,
+             locals: 0,
+             local_atoms: vec![],
+             environment_atoms: vec![],
+diff --git a/crates/quench-runtime/src/vm/construction.rs b/crates/quench-runtime/src/vm/construction.rs
+index 6e6b7b881..fa97e728e 100644
+--- a/crates/quench-runtime/src/vm/construction.rs
++++ b/crates/quench-runtime/src/vm/construction.rs
+@@ -690,7 +690,7 @@ impl<H: Host> Vm<H> {
+             && !function.is_generator
+             && !function.is_class_constructor
+             && !function.derived_constructor
+-            && !function.class_field_initializer
++            && !function.class_initializer
+             && !function.parameter_eval_arguments_error
+             && function.instance_initializer.is_none()
+     }
+diff --git a/crates/quench-runtime/src/vm/eval.rs b/crates/quench-runtime/src/vm/eval.rs
+index 8f499c1e5..a86a2923b 100644
+--- a/crates/quench-runtime/src/vm/eval.rs
++++ b/crates/quench-runtime/src/vm/eval.rs
+@@ -128,7 +128,7 @@ impl<H: Host> Vm<H> {
+         };
+         let text = source_text.host_string().to_owned();
+         let inherited_strict = self.direct_eval
+-            && (self.in_class_field_initializer(p)
++            && (self.in_class_initializer(p)
+                 || self.frames.last()
+                     .and_then(|frame| p.functions.get(frame.function as usize))
+                     .is_some_and(|function| function.strict));
+@@ -311,7 +311,7 @@ impl<H: Host> Vm<H> {
+         p: &ResidualProgram,
+         program_id: super::ProgramId,
+     ) -> Result<Value, JsError> {
+-        let field_initializer = self.direct_eval && self.in_class_field_initializer(p);
++        let class_initializer = self.direct_eval && self.in_class_initializer(p);
+         let residual = self
+             .programs
+             .get(program_id)
+@@ -446,8 +446,8 @@ impl<H: Host> Vm<H> {
+             } else {
+                 Value::NULL
+             };
+-            let parent = if direct_eval && (root_scope || field_initializer) {
+-                let dynamic_bindings = if field_initializer {
++            let parent = if direct_eval && (root_scope || class_initializer) {
++                let dynamic_bindings = if class_initializer {
+                     vec![
+                         (self.runtime_atoms.new_target, Value::UNDEFINED),
+                         (
+@@ -551,31 +551,31 @@ impl<H: Host> Vm<H> {
+         source: &str,
+     ) -> Result<(), JsError> {
+         if self.direct_eval
+-            && self.in_class_field_initializer(p)
+-            && crate::Engine::field_eval_references_arguments(source)
++            && self.in_class_initializer(p)
++            && crate::Engine::class_eval_references_arguments(source)
+         {
+             return self
+                 .syntax_error_result(
+                     p,
+-                    "arguments is not allowed in class field initializer eval",
++                    "'arguments' is not allowed in class field initializer or static initialization block",
+                 )
+                 .map(drop);
+         }
+         Ok(())
+     }
+ 
+-    fn in_class_field_initializer(&mut self, p: &ResidualProgram) -> bool {
++    fn in_class_initializer(&mut self, p: &ResidualProgram) -> bool {
+         self.frames
+             .last()
+             .and_then(|frame| p.functions.get(frame.function as usize))
+-            .is_some_and(|function| function.class_field_initializer)
++            .is_some_and(|function| function.class_initializer)
+     }
+ 
+     fn direct_eval_function_context(&mut self, p: &ResidualProgram) -> bool {
+         if !self.direct_eval {
+             return false;
+         }
+-        if self.in_class_field_initializer(p) {
++        if self.in_class_initializer(p) {
+             return true;
+         }
+         let new_target = self.runtime_atoms.new_target;
+@@ -727,10 +727,10 @@ impl<H: Host> Vm<H> {
+             .functions
+             .get(self.frames[frame].function as usize)?
+             .super_home_atom;
+-        let field_initializer = self.in_class_field_initializer(p);
++        let class_initializer = self.in_class_initializer(p);
+         let atom = self.runtime_atoms.lexical_this;
+         let super_calls = home_atom.is_some()
+-            && !field_initializer
++            && !class_initializer
+             && self
+                 .lexical_this_owner(frame, atom)
+                 .and_then(|(program, function, _)| {
+@@ -746,7 +746,7 @@ impl<H: Host> Vm<H> {
+             in_function: self.direct_eval_function_context(p),
+             home_atom,
+             super_calls,
+-            field_initializer,
++            class_initializer,
+         })
+     }
+ 
+diff --git a/crates/quench-runtime/src/vm/tests.rs b/crates/quench-runtime/src/vm/tests.rs
+index e52ac6d7f..053ead932 100644
+--- a/crates/quench-runtime/src/vm/tests.rs
++++ b/crates/quench-runtime/src/vm/tests.rs
+@@ -10285,3 +10285,63 @@ new Negative().read()();
+         std::fs::remove_file(path).unwrap();
+     }
+ }
++
++#[test]
++fn private_brands_follow_field_initialization_in_original_and_decoded_programs() {
++    let source = r#"
++class Instance {#field=1;#method(){}get #accessor(){return 2}static has(object){return [#field in object,#method in object,#accessor in object]}}
++if(Instance.has(Instance.prototype).join(',')!=='false,false,false')throw Error('prototype branded');
++if(Instance.has(new Instance()).join(',')!=='true,true,true')throw Error('instance missing brand');
++class Static {static before=[#field in this,#method in this,#accessor in this];static #field=1;static #method(){}static get #accessor(){return 2}static after=[#field in this,#method in this,#accessor in this]}
++if(Static.before.join(',')!=='false,true,true'||Static.after.join(',')!=='true,true,true')throw Error('static ordering');
++class Base {constructor(object){return object}}
++class Stamp extends Base {#x=7;static has(object){return #x in object}static read(object){return object.#x}}
++if(Stamp.has(Stamp.prototype))throw Error('prototype already stamped');
++new Stamp(Stamp.prototype);
++if(!Stamp.has(Stamp.prototype)||Stamp.read(Stamp.prototype)!==7)throw Error('prototype stamp missing');
++"#;
++    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
++        let program = compile(source, "private-brand-initialization.js").unwrap();
++        Vm::new(SilentHost).execute(&program).unwrap();
++        let path = std::env::temp_dir().join(format!("quench-private-brands-{}-{}", std::process::id(), program.specialized));
++        program.write_binary(&path).unwrap();
++        let decoded = crate::ResidualProgram::read_binary(&path).unwrap();
++        Vm::new(SilentHost).execute(&decoded).unwrap();
++        std::fs::remove_file(path).unwrap();
++    }
++}
++
++#[test]
++fn static_block_eval_inherits_strictness_and_its_actual_super_home() {
++    let source = r#"
++class Base {static value=7;static get receiver(){return this.name}static set update(value){this.updated=value}}
++class Derived extends Base {
++ static #value=3;
++ static {
++  if(eval('super.value')!==7||eval('super.receiver')!=='Derived'||eval('this.#value')!==3)throw Error('static context');
++  if((()=>eval('super.value'))()!==7)throw Error('arrow home');
++  let invalid;try{(function(){eval('super.value')})()}catch(error){invalid=error.name}
++  if(invalid!=='SyntaxError')throw Error('ordinary super accepted');
++  if(!eval('new.target === undefined'))throw Error('static new.target');
++  for(const source of ['typeof arguments','(()=>typeof arguments)()']){let error;try{eval(source)}catch(caught){error=caught.name}if(error!=='SyntaxError')throw Error('static arguments accepted')}
++  if(eval('(function(){return typeof arguments})()')!=='object')throw Error('ordinary arguments lost');
++  eval('super.update=9');if(this.updated!==9)throw Error('setter receiver');
++  let strict;try{eval('quenchStaticUnbound=1')}catch(error){strict=error.name}
++  if(strict!=='ReferenceError')throw Error('sloppy static eval');
++  Object.defineProperty(this,'locked',{value:1});let locked;try{this.locked=2}catch(error){locked=error.name}
++  if(locked!=='TypeError')throw Error('sloppy static write');
++  var local=11;if(eval('local')!==11)throw Error('local missing');
++ }
++ static {if(typeof local!=='undefined')throw Error('static scopes merged')}
++}
++"#;
++    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
++        let program = compile(source, "static-block-context.js").unwrap();
++        Vm::new(SilentHost).execute(&program).unwrap();
++        let path = std::env::temp_dir().join(format!("quench-static-context-{}-{}", std::process::id(), program.specialized));
++        program.write_binary(&path).unwrap();
++        let decoded = crate::ResidualProgram::read_binary(&path).unwrap();
++        Vm::new(SilentHost).execute(&decoded).unwrap();
++        std::fs::remove_file(path).unwrap();
++    }
++}
+diff --git a/crates/quench-runtime/src/wasm.rs b/crates/quench-runtime/src/wasm.rs
+index e6ec9c4d8..3ff962078 100644
+--- a/crates/quench-runtime/src/wasm.rs
++++ b/crates/quench-runtime/src/wasm.rs
+@@ -898,7 +898,7 @@ impl Engine {
+                 instance_initializer: None,
+                 super_home_atom: None,
+                 constructible: false,
+-                class_field_initializer: false,
++                class_initializer: false,
+                 parameter_eval_arguments_error: false,
+                 arguments_slot: None,
+                 simple_parameters: true,
+diff --git a/docs/node-host-contracts.md b/docs/node-host-contracts.md
+index 6247b0a0b..b14f3a76d 100644
+--- a/docs/node-host-contracts.md
++++ b/docs/node-host-contracts.md
+@@ -854,3 +854,16 @@ use that binding metadata. Ordinary-function eval uses OXC's ordinary-function
+ grammar inside a private-name parsing context, and the extracted body must match
+ the generated source boundaries. Complete private-environment contexts and the
+ ordinary NUL string-key namespace remain separate conformance work.
++
++Private membership follows initialization: prototypes acquire no brand merely
++from a declaration, static data fields remain absent until initialization, and
++static private methods/accessors precede static fields. Auto-accessor backing
++identities retain their own lexical declaring-home binding, including public
++instance auto-accessors whose backing name is not visible to eval.
++
++Static blocks retain the actual class home for `super` and execute in strict
++mode. The compiler's class-initializer context is shared by field initializers,
++static blocks and their arrows: eval forbids lexical `arguments`, preserves
++`this`, and supplies undefined `new.target`. Ordinary nested functions introduce
++their own context. The existing serialized initializer flag represents this
++shared context; static blocks keep distinct variable scopes.

@@ -408,6 +408,8 @@ pub(crate) fn server_listen(
         None => false,
     };
     let address = listen_address(context, first, first_is_callback, args.get(1).copied())?;
+    let options = first.filter(|root| context.is_object_rooted(*root).unwrap_or(false) && !first_is_callback);
+    let backlog = net_shared_vm::listen_backlog(context, options)?;
     let host = context.host_mut().shared_state();
     {
         let mut guard = host.borrow_mut();
@@ -417,7 +419,7 @@ pub(crate) fn server_listen(
         if server.listener.is_some() {
             return Err(RootedError::host("shared HTTP server is already listening"));
         }
-        let listener = net_shared_vm::listen(&mut guard.tcp, address).map_err(RootedError::host)?;
+        let listener = net_shared_vm::listen_with_backlog(&mut guard.tcp, address, backlog).map_err(RootedError::host)?;
         let server = guard.http.servers.get_mut(&id).unwrap();
         server.listener = Some(listener);
         server.listening_pending = true;

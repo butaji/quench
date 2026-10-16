@@ -222,8 +222,13 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     crate::host::resident_pages::release_read_only_pages();
     if node_primordials_source(context).is_some() {
         context.scoped(crate::modules::node_errors_shared_vm::install_stack_formatter)?;
-        context.scoped(crate::modules::buffer_policy_shared_vm::initialize)?;
-        context.scoped(crate::modules::util_shared_vm::initialize_call_site_policy)?;
+        // Node's policies hold the validators and error codes they import. Only a script
+        // that can require internal modules can replace those exports before a policy's
+        // first use, so only then are the policies captured before it runs.
+        if internals_exposed(context) {
+            context.scoped(crate::modules::buffer_policy_shared_vm::initialize)?;
+            context.scoped(crate::modules::util_shared_vm::initialize_call_site_policy)?;
+        }
         context.seal_startup_intrinsics();
     }
     context.scoped(preload_modules)?;
@@ -1112,14 +1117,15 @@ impl BuiltinModule {
     }
 }
 
-fn internal_timers_exposed(context: &mut Context<'_>) -> bool {
+/// Whether scripts can require Node's internal modules (`--expose-internals`).
+fn internals_exposed(context: &mut Context<'_>) -> bool {
     context.host_mut().shared_state().borrow().cli_options.enabled("--expose-internals")
 }
 
 fn requested_builtin(context: &mut Context<'_>, specifier: &str) -> Option<BuiltinModule> {
     let builtin = BuiltinModule::from_specifier(specifier)?;
     if matches!(builtin,BuiltinModule::StreamIter | BuiltinModule::ZlibIter) && !context.host_mut().shared_state().borrow().cli_options.enabled("--experimental-stream-iter") { return None; }
-    if matches!(builtin, BuiltinModule::InternalTimers) && !internal_timers_exposed(context) {
+    if matches!(builtin, BuiltinModule::InternalTimers) && !internals_exposed(context) {
         None
     } else { Some(builtin) }
 }
@@ -1802,7 +1808,7 @@ fn resolve_filename(
     let node_lib = context.host_mut().node_library_root.join("lib");
     let internal_specifier = specifier.strip_prefix("node:").unwrap_or(specifier);
     let node_internal = (internal_specifier.starts_with("internal/")
-        && (internal_specifier != "internal/timers" || internal_timers_exposed(context)))
+        && (internal_specifier != "internal/timers" || internals_exposed(context)))
         || (internal_specifier.starts_with('_')
             && node_lib
                 .join(internal_specifier)

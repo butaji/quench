@@ -1081,6 +1081,30 @@ fn push_and_splice_growth_reaches_inherited_setters_and_proxy_traps() {
 }
 
 #[test]
+fn array_index_stores_respect_inherited_read_only_properties() {
+    // OrdinarySet: an index the receiver lacks fails when a prototype holds it read-only,
+    // whether defined so, frozen (array or object) or a String wrapper's character, and
+    // `push`/`splice` throw. A writable inherited element is shadowed by an own one.
+    let source = "var out = [];\n\
+         var readOnly = Object.create(Array.prototype); Object.defineProperty(readOnly, 1, { value: 'r' });\n\
+         var protos = [readOnly, Object.setPrototypeOf(Object.freeze(['a', 'b']), Array.prototype), Object.freeze(Object.setPrototypeOf({ 1: 'o' }, Array.prototype)), Object.setPrototypeOf(new String('ab'), Array.prototype), Object.setPrototypeOf({ 1: 'w' }, Array.prototype)];\n\
+         var ops = [function (a) { 'use strict'; a[1] = 'v'; }, function (a) { 'use strict'; Object.create(a)['1'] = 'v'; }, function (a) { a[1] = 'v'; }, function (a) { a['1'] = 'v'; }, function (a) { a.push('v'); }, function (a) { a.splice(1, 0, 'v'); }, function (a) { Object.create(a)[1] = 'v'; }];\n\
+         protos.forEach(function (proto) {\n\
+           out.push(ops.map(function (op) {\n\
+             var a = [0]; Object.setPrototypeOf(a, proto);\n\
+             try { (function () { 'use strict'; op(a); })(); return Object.keys(a).join(''); } catch (e) { return e.name[0]; }\n\
+           }).join(','));\n\
+           var sloppy = [0]; Object.setPrototypeOf(sloppy, proto); sloppy[1] = 'v';\n\
+           out.push(Object.keys(sloppy).join(''));\n\
+         });\n\
+         var result = out.join('|');";
+    assert_eq!(
+        global_text(source, "result"),
+        "T,T,0,0,T,T,0|0|T,T,0,0,T,T,0|0|T,T,0,0,T,T,0|0|T,T,0,0,T,T,0|0|01,0,01,01,01,01,0|01"
+    );
+}
+
+#[test]
 fn typed_array_index_stores_convert_and_ignore_out_of_range_indices() {
     // Integer-indexed stores go straight to TypedArraySetElement: values convert by kind,
     // out-of-range indices and prototype setters are never reached, and a non-typed
@@ -10234,5 +10258,151 @@ if(!threw)throw Error('strict synthetic self binding');
 "#;
     for program in [Engine::compile(crate::ExecutionRequest { source, name: "dynamic-function-source.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "dynamic-function-source.js").unwrap()] {
         Vm::new(SilentHost).execute(&program).unwrap();
+    }
+}
+
+#[test]
+fn private_data_fields_keep_distinct_homes_and_duplicate_values_in_both_modes() {
+    let source = r#"
+class Base {constructor(object){return object}}
+function make(){return class extends Base {#x;constructor(object,value){super(object);this.#x=value}read(){return this.#x}write(value){this.#x=value}evaluate(){return eval('this.#x')}}}
+const A=make(),B=make();
+for(const object of [{},[],function(){},Object.create(null),Object.freeze({}),Object.seal({}),Object.preventExtensions({})]) {
+ new A(object,1);new B(object,2);
+ if(A.prototype.read.call(object)!==1||B.prototype.read.call(object)!==2)throw Error('aliased class home');
+ A.prototype.write.call(object,3);let duplicate;
+ try{new A(object,4)}catch(error){duplicate=error.message}
+ if(duplicate!=='Cannot initialize #x twice on the same object')throw Error('duplicate error');
+ if(A.prototype.read.call(object)!==3||B.prototype.read.call(object)!==2)throw Error('duplicate overwrote data');
+ if(A.prototype.evaluate.call(object)!==3||B.prototype.evaluate.call(object)!==2)throw Error('private eval home');
+}
+"#;
+    for program in [Engine::compile(crate::ExecutionRequest { source, name: "private-field-identity.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "private-field-identity.js").unwrap()] {
+        Vm::new(SilentHost).execute(&program).unwrap();
+        let path = std::env::temp_dir().join(format!("quench-private-data-{}-{}", std::process::id(), program.specialized));
+        program.write_binary(&path).unwrap();
+        let decoded = crate::ResidualProgram::read_binary(&path).unwrap();
+        Vm::new(SilentHost).execute(&decoded).unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[test]
+fn private_data_values_survive_collection_and_release_without_their_receiver() {
+    let source = r#"
+class Base {constructor(object){return object}}
+function make(){return class extends Base {#x;constructor(object,value){super(object);this.#x=value}read(){return this.#x}}}
+globalThis.A=make();globalThis.B=make();globalThis.first={value:1};globalThis.second={value:2};globalThis.instance={};
+new A(instance,first);new B(instance,second);
+"#;
+    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
+        let program = compile(source, "private-data-roots.js").unwrap();
+        let mut vm = Vm::new(SilentHost);
+        vm.execute(&program).unwrap();
+        let mut weak = Vec::new();
+        for name in ["first", "second"] {
+            let atom = vm.intern_atom(name);
+            let value = vm.own_property(vm.realm.globals, atom).unwrap();
+            let strong = vm.heap.root(value);
+            weak.push(vm.embedding_host_weak_root(strong).unwrap());
+            vm.heap.release_root(strong);
+            vm.set_property(vm.realm.globals, atom, Value::UNDEFINED).unwrap();
+        }
+        vm.collect_now(&program);
+        for root in &weak { assert!(vm.embedding_host_weak_value(*root).is_some()); }
+        let instance = vm.intern_atom("instance");
+        vm.set_property(vm.realm.globals, instance, Value::UNDEFINED).unwrap();
+        vm.collect_now(&program);
+        for root in weak {
+            assert!(vm.embedding_host_weak_value(root).is_none());
+            vm.heap.release_root(root);
+        }
+    }
+}
+
+#[test]
+fn private_lexical_bindings_survive_ordinary_closures_and_binary_round_trips() {
+    let source = r#"
+class Mixed {
+ #instance=1;static #static=2;
+ read(){const object=this;return function(){return [eval('object.#instance'),eval('Mixed.#static')]}}
+ static read(object){return eval('#instance in object')}
+}
+const object=new Mixed(), read=object.read();
+if(read().join(',')!=='1,2'||!Mixed.read(object))throw Error('mixed private environment');
+class Outer {#outer=3; create(){const outer=this;return class {#inner=4;read(){const inner=this;return function(){return [eval('outer.#outer'),eval('inner.#inner')]}}}}}
+const Inner=new Outer().create();
+if(new Inner().read()().join(',')!=='3,4')throw Error('outer private environment');
+class Negative {#x;read(){return function(){for(const source of ['super.x','super()','return 1','#missing in {}']){let name;try{eval(source)}catch(error){name=error.name}if(name!=='SyntaxError')throw Error('accepted '+source)}}}}
+new Negative().read()();
+"#;
+    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
+        let program = compile(source, "private-lexical-bindings.js").unwrap();
+        Vm::new(SilentHost).execute(&program).unwrap();
+        let path = std::env::temp_dir().join(format!("quench-private-lexical-{}-{}", std::process::id(), program.specialized));
+        program.write_binary(&path).unwrap();
+        let decoded = crate::ResidualProgram::read_binary(&path).unwrap();
+        Vm::new(SilentHost).execute(&decoded).unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[test]
+fn private_brands_follow_field_initialization_in_original_and_decoded_programs() {
+    let source = r#"
+class Instance {#field=1;#method(){}get #accessor(){return 2}static has(object){return [#field in object,#method in object,#accessor in object]}}
+if(Instance.has(Instance.prototype).join(',')!=='false,false,false')throw Error('prototype branded');
+if(Instance.has(new Instance()).join(',')!=='true,true,true')throw Error('instance missing brand');
+class Static {static before=[#field in this,#method in this,#accessor in this];static #field=1;static #method(){}static get #accessor(){return 2}static after=[#field in this,#method in this,#accessor in this]}
+if(Static.before.join(',')!=='false,true,true'||Static.after.join(',')!=='true,true,true')throw Error('static ordering');
+class Base {constructor(object){return object}}
+class Stamp extends Base {#x=7;static has(object){return #x in object}static read(object){return object.#x}}
+if(Stamp.has(Stamp.prototype))throw Error('prototype already stamped');
+new Stamp(Stamp.prototype);
+if(!Stamp.has(Stamp.prototype)||Stamp.read(Stamp.prototype)!==7)throw Error('prototype stamp missing');
+"#;
+    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
+        let program = compile(source, "private-brand-initialization.js").unwrap();
+        Vm::new(SilentHost).execute(&program).unwrap();
+        let path = std::env::temp_dir().join(format!("quench-private-brands-{}-{}", std::process::id(), program.specialized));
+        program.write_binary(&path).unwrap();
+        let decoded = crate::ResidualProgram::read_binary(&path).unwrap();
+        Vm::new(SilentHost).execute(&decoded).unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[test]
+fn static_block_eval_inherits_strictness_and_its_actual_super_home() {
+    let source = r#"
+class Base {static value=7;static get receiver(){return this.name}static set update(value){this.updated=value}}
+class Derived extends Base {
+ static #value=3;
+ static {
+  if(eval('super.value')!==7||eval('super.receiver')!=='Derived'||eval('this.#value')!==3)throw Error('static context');
+  if((()=>eval('super.value'))()!==7)throw Error('arrow home');
+  let invalid;try{(function(){eval('super.value')})()}catch(error){invalid=error.name}
+  if(invalid!=='SyntaxError')throw Error('ordinary super accepted');
+  if(!eval('new.target === undefined'))throw Error('static new.target');
+  for(const source of ['typeof arguments','(()=>typeof arguments)()']){let error;try{eval(source)}catch(caught){error=caught.name}if(error!=='SyntaxError')throw Error('static arguments accepted')}
+  if(eval('(function(){return typeof arguments})()')!=='object')throw Error('ordinary arguments lost');
+  eval('super.update=9');if(this.updated!==9)throw Error('setter receiver');
+  let strict;try{eval('quenchStaticUnbound=1')}catch(error){strict=error.name}
+  if(strict!=='ReferenceError')throw Error('sloppy static eval');
+  Object.defineProperty(this,'locked',{value:1});let locked;try{this.locked=2}catch(error){locked=error.name}
+  if(locked!=='TypeError')throw Error('sloppy static write');
+  var local=11;if(eval('local')!==11)throw Error('local missing');
+ }
+ static {if(typeof local!=='undefined')throw Error('static scopes merged')}
+}
+"#;
+    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
+        let program = compile(source, "static-block-context.js").unwrap();
+        Vm::new(SilentHost).execute(&program).unwrap();
+        let path = std::env::temp_dir().join(format!("quench-static-context-{}-{}", std::process::id(), program.specialized));
+        program.write_binary(&path).unwrap();
+        let decoded = crate::ResidualProgram::read_binary(&path).unwrap();
+        Vm::new(SilentHost).execute(&decoded).unwrap();
+        std::fs::remove_file(path).unwrap();
     }
 }

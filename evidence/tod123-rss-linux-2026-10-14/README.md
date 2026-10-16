@@ -403,3 +403,28 @@ work (`active_shape_attributes` +9M) whose timing moves with the lighter start; 
 run is 2.30G → 1.50G. Node `framework-core` 43/43; `child_entry` error tests match the
 trunk's failures (Node 22 oracle) except the trunk's new call-site test, whose remaining
 differences are Node 27 validator messages.
+
+## Internal policies on first use, single-copy shape lookup index
+
+- The trunk's buffer and call-site policies loaded `util.js`, `internal/errors.js` and
+  `internal/validators.js` at every start (13776 against 3536 KiB on an empty script, static
+  unbolted, base `origin/v2-merged` b7723be8e). Only a script given `--expose-internals` can
+  replace those exports before a policy's first use, so only then are the policies captured
+  before it runs; otherwise each loads on first use.
+- A shape's lookup index kept every (key, slot) pair twice; its key map is now a table of
+  positions into the ordered entries (421 → 219 KiB on an empty script).
+
+Bolted static against QuickJS (`board-bolt-vs-qjs-b24.txt`, 3 runs, KiB): Richards 3260 vs
+3304–3484, DeltaBlue 3640–3644 vs 3596–3856, RayTrace 3484–3488 vs 3488–3524, NavierStokes
+4680–4684 vs 4996–5096, EarleyBoyer 9912–10084 vs 16264–16828, Splay 47908–48024 vs
+146944–147036; Crypto 4048–4132 vs 3460–3612 and RegExp 12964–13236 vs 6656–6844 remain.
+
+Guard (`guard-lazy-policies-raw.txt`, base b7723be8e): start-up −1.28G to −1.36G
+instructions on every fixture; per run Crypto −0.01%, DeltaBlue −0.23%, EarleyBoyer −0.06%,
+NavierStokes 0.00%, RayTrace +2.21%, RegExp −3.44%, Richards −0.09%, Splay −0.72%.
+RayTrace's +14M per run is collector work only (219M → 259M per three runs; the rest
+1707M → 1703M): the base collects 89M during its heavier start-up. Its whole run is 3.30G →
+2.05G. Runtime lib 660/660, Test262 stages 29–92 pass, `framework-core` 43/43, `child_entry`
+error/buffer/shadow/call-site failures equal the trunk's. Stage 10's
+`dynamic-import/usage-from-eval.js` fails on the trunk's runtime as well (missing module
+fixture under eval).
