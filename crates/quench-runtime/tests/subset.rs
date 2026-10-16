@@ -388,3 +388,11 @@ fn nested_direct_eval_vars_belong_to_the_calling_function() {
         ["undefined,false,number,undefined,undefined"]
     );
 }
+
+#[test]
+fn private_members_resolve_on_branded_proxy_receivers() {
+    assert_eq!(
+        output("class Base { constructor() { return new Proxy(this, {}); } } class F extends Base { #x = 1; t() { return this.#x; } } class M extends Base { #m() { return 2; } t() { return this.#m(); } } class G extends Base { get #g() { return 3; } t() { return this.#g; } } print([F, M, G].map(C => new C().t()).join(' '));"),
+        ["1 2 3"]
+    );
+}
