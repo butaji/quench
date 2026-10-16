@@ -7,7 +7,6 @@ use std::ffi::{c_char, c_int};
 pub enum Operation<'a> {
     Hash,
     Hmac(&'a str),
-    OneShot(&'a str),
 }
 unsafe extern "C" {
     fn ERR_new();
@@ -45,10 +44,6 @@ pub fn throw<H: Host>(
                     "Invalid digest: {}",
                     name.split('\0').next().unwrap()
                 )),
-                Operation::OneShot(name) => context.error_rooted(&format!(
-                    "Digest method {} is not supported",
-                    name.split('\0').next().unwrap()
-                )),
             };
             let root = match result {
                 Ok(root) => root,
@@ -65,15 +60,9 @@ pub fn throw<H: Host>(
             }
             root
         }
-        DigestError::InvalidLength { actual, .. } => match operation {
-            Operation::OneShot(name) => match context.error_rooted(&format!(
-                "Output length {actual} is invalid for {name}, which does not support XOF"
-            )) {
-                Ok(root) => root,
-                Err(e) => return e,
-            },
-            _ => return crypto_error_shared_vm::decorated(context, invalid_xof_length()),
-        },
+        DigestError::InvalidLength { .. } => {
+            return crypto_error_shared_vm::decorated(context, invalid_xof_length());
+        }
         DigestError::OpenSsl(stack) => return crypto_error_shared_vm::decorated(context, stack),
         DigestError::Allocation => {
             match context.range_error_rooted("Digest output allocation failed") {

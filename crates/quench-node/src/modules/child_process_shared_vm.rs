@@ -448,15 +448,15 @@ pub(crate) fn spawn_child(
             // Keep cancellation ownership if OS wait-thread creation fails.
             let wait_owner = std::sync::Arc::new(std::sync::Mutex::new(Some(child)));
             let thread_owner = wait_owner.clone();
-            let (cancel, cancellation) = mpsc::channel::<()>();
+            let (cancel, cancellation) = Cancellation::new(pid);
             let wait_thread = std::thread::Builder::new()
                 .name("quench-child-wait".into())
                 .spawn(move || {
                     let mut child = thread_owner.lock().expect("child ownership poisoned")
                         .take().expect("child waiter owns process");
-                    // Cancellation is serialized with try_wait against the actual Child.
-                    // The waiter remains its sole owner and always reaps after kill.
-                    let status = loop {
+                    // Linux pidfd cancellation preserves identity while wait blocks.
+                    // Fallback serializes cancellation with the sole Child owner.
+                    let status = if let Some(cancellation) = cancellation { loop {
                         match child.try_wait() {
                             Ok(Some(status)) => break Some(status),
                             Err(_) => break None,
@@ -475,7 +475,8 @@ pub(crate) fn spawn_child(
                             }
                             Err(mpsc::RecvTimeoutError::Timeout) => {}
                         }
-                    };
+                    }
+                    } else { child.wait().ok() };
                     let (code, signal) = status.map(|status|
                         (status.code(), signal_name(&status).map(str::to_owned)))
                         .unwrap_or((None, None));
@@ -2045,7 +2046,7 @@ fn cleanup_failed_initialization(context: &mut NativeContext<'_, NodeHost>, star
     let process = id.and_then(|id| context.host_mut().shared_state().borrow_mut()
         .child_processes.remove(&id));
     if let Some(process) = process {
-        let _ = process.cancel.send(());
+        let _ = process.cancel.cancel();
         for root in [process.child, process.stdout, process.stderr, process.stdin_stream]
             .into_iter().flatten() {
             context.release_root(root);
@@ -2092,4 +2093,47 @@ pub(crate) fn construct_child(
     let spawn = property(context, child, "spawn")?;
     context.call_rooted(spawn, child, &[options])?;
     Ok(child)
+}
+
+/// Cancellation owns a kernel process identity on Linux. The owned-Child channel
+/// fallback is retained on other platforms and kernels denying pidfd_open.
+pub(crate) enum Cancellation {
+    #[cfg(target_os = "linux")]
+    PidFd(std::os::fd::OwnedFd),
+    OwnedChild(mpsc::Sender<()>),
+}
+impl Cancellation {
+    fn new(pid: u32) -> (Self, Option<mpsc::Receiver<()>>) {
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::fd::FromRawFd;
+            // Called while this thread still owns the unreaped Child, before
+            // starting its waiter. PID reuse is therefore impossible here.
+            let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0u32) };
+            if fd >= 0 {
+                let fd = unsafe { std::os::fd::OwnedFd::from_raw_fd(fd as i32) };
+                return (Self::PidFd(fd), None);
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = pid;
+        let (sender, receiver) = mpsc::channel();
+        (Self::OwnedChild(sender), Some(receiver))
+    }
+    fn cancel(&self) -> std::io::Result<()> {
+        match self {
+            #[cfg(target_os = "linux")]
+            Self::PidFd(fd) => {
+                use std::os::fd::AsRawFd;
+                let result = unsafe {
+                    libc::syscall(libc::SYS_pidfd_send_signal, fd.as_raw_fd(),
+                        libc::SIGKILL, std::ptr::null::<libc::siginfo_t>(), 0u32)
+                };
+                if result < 0 { Err(std::io::Error::last_os_error()) } else { Ok(()) }
+            }
+            Self::OwnedChild(sender) => sender.send(()).map_err(|_| {
+                std::io::Error::new(std::io::ErrorKind::BrokenPipe, "child waiter has exited")
+            }),
+        }
+    }
 }
