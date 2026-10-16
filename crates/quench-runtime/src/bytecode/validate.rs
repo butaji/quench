@@ -172,12 +172,13 @@ fn promoted_local_layout_is_valid(function: &super::Function, atoms: &super::Ato
         && function.binding_sites.is_empty()
         && !has_dynamic_local_resolution
         && !function.code.iter().any(|instruction| {
-            matches!(instruction.op(), Op::MakeClosure | Op::CallDirectEvalArray)
-                || instruction.op() == Op::Call && instruction.direct_eval()
+            instruction.op() == Op::MakeClosure
+                || instruction.op().is_call_with_eval_flags() && instruction.direct_eval()
         })
         && !function.wide.iter().any(|instruction| {
-            matches!(instruction.op(), Op::MakeClosure | Op::CallDirectEvalArray)
-                || instruction.op() == Op::Call && ImmediateLayout::direct_eval(instruction.imm())
+            instruction.op() == Op::MakeClosure
+                || instruction.op().is_call_with_eval_flags()
+                    && ImmediateLayout::direct_eval(instruction.imm())
         });
     eligible_function
         && promoted.iter().enumerate().all(|(index, entry)| {
@@ -1014,10 +1015,8 @@ fn has_dynamic_scope_access(function: &super::Function) -> bool {
             .filter_map(|packed| instruction_at(function, *packed))
             .chain(function.wide.iter().copied())
             .any(|instruction| {
-                matches!(
-                    instruction.op(),
-                    super::Op::ResolveName | super::Op::CallDirectEvalArray
-                ) || (instruction.op() == super::Op::Call
+                instruction.op() == super::Op::ResolveName
+                    || (instruction.op().is_call_with_eval_flags()
                     && (super::ImmediateLayout::direct_eval(instruction.imm())
                         || super::ImmediateLayout::parameter_eval(instruction.imm())))
             })
