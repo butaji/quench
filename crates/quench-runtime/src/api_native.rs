@@ -75,6 +75,34 @@ pub struct RootedIterator {
     next: RootId,
 }
 
+/// An ECMAScript language type; `Function` marks callable objects.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ValueType {
+    Undefined,
+    Null,
+    Boolean,
+    Number,
+    String,
+    Symbol,
+    BigInt,
+    Object,
+    Function,
+}
+
+/// The bytes an ArrayBuffer or view names. `kind` is the view's specific brand
+/// (`ArrayBuffer`, `SharedArrayBuffer`, `DataView` or a typed-array constructor brand).
+#[derive(Clone, Copy, Debug)]
+pub struct BufferStorage {
+    pub kind: BuiltinBrand,
+    /// The first byte of the view (the buffer's base plus `byte_offset`); null when empty.
+    pub data: *mut u8,
+    pub byte_offset: usize,
+    pub byte_length: usize,
+    /// Element count for a typed array, otherwise the byte length.
+    pub length: usize,
+    pub buffer: RootId,
+}
+
 /// Builtin internal-slot brands, independent of prototypes and guest property hooks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BuiltinBrand {
@@ -202,6 +230,8 @@ macro_rules! host_functions {
 pub struct NativeContext<'a, H: Host> {
     vm: &'a mut Vm<H>,
     roots: Vec<RootId>,
+    /// `new.target` when this context runs a host constructor's [[Construct]].
+    new_target: Option<Value>,
 }
 
 impl<'a, H: Host> NativeContext<'a, H> {
@@ -217,7 +247,69 @@ impl<'a, H: Host> NativeContext<'a, H> {
         Self {
             vm,
             roots: Vec::new(),
+            new_target: None,
         }
+    }
+
+    pub(crate) fn with_new_target(vm: &'a mut Vm<H>, new_target: Option<Value>) -> Self {
+        Self {
+            vm,
+            roots: Vec::new(),
+            new_target,
+        }
+    }
+
+    /// A root in this callback's scope naming the same value as `root`, which may be a
+    /// promoted root the host releases separately.
+    pub fn scope_root(&mut self, root: RootId) -> Option<RootId> {
+        self.vm.root_value(root).map(|value| self.scoped_value(value))
+    }
+
+    /// Classify a rooted value without coercion or guest effects.
+    pub fn value_type_rooted(&self, root: RootId) -> Option<ValueType> {
+        self.vm.root_value(root).map(|value| self.vm.value_type(value))
+    }
+
+    /// `new.target` of the running host callback: `Some` only while it is constructed.
+    pub fn new_target_rooted(&mut self) -> Option<RootId> {
+        self.new_target.map(|value| self.scoped_value(value))
+    }
+
+    /// The number of roots this callback scope holds; a later
+    /// [`release_roots_since`](Self::release_roots_since) closes a nested scope at it.
+    pub fn root_scope_mark(&self) -> usize {
+        self.roots.len()
+    }
+
+    /// Release the roots created after `mark`, except `keep`, which move to the
+    /// enclosing scope (an escaped handle).
+    pub fn release_roots_since(&mut self, mark: usize, keep: &[RootId]) {
+        if mark >= self.roots.len() {
+            return;
+        }
+        let created = self.roots.split_off(mark);
+        for root in created {
+            if keep.contains(&root) {
+                self.roots.push(root);
+            } else {
+                self.vm.release_root(root);
+            }
+        }
+    }
+
+    /// The pinned bytes of an ArrayBuffer, typed array or DataView. A fixed buffer keeps
+    /// this address for its lifetime, so native code may hold the pointer while the
+    /// buffer is reachable; a resizable buffer keeps it only until it resizes.
+    pub fn buffer_storage_rooted(
+        &mut self,
+        root: RootId,
+    ) -> Result<Option<BufferStorage>, RootedError> {
+        let result = self.vm.embedding_buffer_storage(root);
+        let storage = result.map_err(|error| self.error(error))?;
+        Ok(storage.map(|(storage, buffer)| BufferStorage {
+            buffer: self.scoped_value(buffer),
+            ..storage
+        }))
     }
 
     pub(crate) fn scoped_value(&mut self, value: Value) -> RootId {
