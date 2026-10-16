@@ -1780,6 +1780,9 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
       randomFillSync(values);
       return values;
   };
+  function getRandomValues(array) {
+    return webCrypto.getRandomValues(array);
+  }
   const api = {
     Hash: HashConstructor,
     Verify,
@@ -1852,6 +1855,7 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
   });
   Object.defineProperties(api, {
     webcrypto: { enumerable: true, get() { return webCrypto; } },
+    getRandomValues: { enumerable: true, get: () => getRandomValues },
     pseudoRandomBytes: { configurable: true, writable: true, value: pseudoRandomBuffer },
     prng: { configurable: true, value: randomBuffer },
     rng: { configurable: true, value: randomBuffer },
