@@ -1463,3 +1463,111 @@ check();
         Runtime::new(ProtectedStartupHost).execute(&program).unwrap();
     }
 }
+
+#[test]
+fn function_factories_preserve_original_intrinsic_constructor_and_prototype_identity() {
+    let source = r#"
+const factories=[()=>function(){},()=>()=>{},()=>async function(){},()=>function*(){},()=>async function*(){}];
+for(const factory of factories){
+ const first=factory(),prototype=Object.getPrototypeOf(first),C=prototype.constructor;
+ const name=Object.getOwnPropertyDescriptor(C,'name'),descriptor=Object.getOwnPropertyDescriptor(prototype,'constructor');
+ Object.defineProperty(C,'name',{value:'Changed'+name.value});
+ Object.defineProperty(prototype,'constructor',{value:null});
+ const second=factory();
+ if(Object.getPrototypeOf(second)!==prototype)throw Error('factory prototype follows public constructor');
+ for(const value of [first,second]){Object.setPrototypeOf(value,null);if(constructedName(value)!=='Changed'+name.value)throw Error('factory lost original constructor')}
+ Object.defineProperty(prototype,'constructor',descriptor);Object.defineProperty(C,'name',name);
+}
+const asyncPrototype=Object.getPrototypeOf(async function(){}),generatorPrototype=Object.getPrototypeOf(function*(){}),asyncGeneratorPrototype=Object.getPrototypeOf(async function*(){});
+globalThis.AsyncFunction={prototype:{fake:true}};globalThis.GeneratorFunction={prototype:{fake:true}};globalThis.AsyncGeneratorFunction={prototype:{fake:true}};
+if(Object.getPrototypeOf(async function(){})!==asyncPrototype||Object.getPrototypeOf(function*(){})!==generatorPrototype||Object.getPrototypeOf(async function*(){})!==asyncGeneratorPrototype)throw Error('factory follows mutable globals');
+"#;
+    for program in [
+        Engine::specialize_unspecialized(source, "function-factory-origins.js").unwrap(),
+        Engine::specialize(source, "function-factory-origins.js").unwrap(),
+    ] {
+        Runtime::new(ConstructorProvenanceHost::default())
+            .execute(&program)
+            .unwrap();
+    }
+}
+
+#[test]
+fn completed_generator_creation_origin_retains_then_releases_its_function_identity() {
+    let source = r#"
+var state;
+function createIterator(){function* Creator(){};rememberConstructor(Creator);const value=Creator();state={value,next:value.next};Object.setPrototypeOf(value,null);Object.defineProperty(Creator,'name',{value:'Changed'})}
+function closeIterator(){state.next.call(state.value);if(constructedName(state.value)!=='Changed')throw Error('lost completed generator origin')}
+function dropIterator(){state=null}
+"#;
+    for program in [
+        Engine::specialize_unspecialized(source, "generator-origin-roots.js").unwrap(),
+        Engine::specialize(source, "generator-origin-roots.js").unwrap(),
+    ] {
+        let mut runtime = Runtime::new(ConstructorProvenanceHost::default());
+        runtime.execute(&program).unwrap();
+        for (operation, alive) in [
+            ("createIterator", true),
+            ("closeIterator", true),
+            ("dropIterator", false),
+        ] {
+            let global = runtime.global_root().unwrap();
+            let key = runtime.string_rooted(operation);
+            let function = runtime.get_property_rooted(global, key).unwrap();
+            let result = runtime.call_rooted(function, global, &[]).unwrap();
+            for root in [result, function, key, global] {
+                assert!(runtime.release_root(root));
+            }
+            runtime.collect(&program).unwrap();
+            let weak = runtime.host_mut().constructor.unwrap();
+            assert_eq!(runtime.host_weak_root_is_live(weak), alive, "{operation}");
+        }
+    }
+}
+
+#[derive(Default)]
+struct BoxedPrimitiveHost {
+    payload: Option<HostWeakRoot>,
+}
+impl Host for BoxedPrimitiveHost {
+    fn write_line(&mut self, _: &str) {}
+    fn clock_millis(&mut self) -> f64 { 0.0 }
+    fn functions(&self) -> &[HostFunction<Self>] {
+        crate::host_functions![global "rememberPayload" (1) => remember_boxed_payload]
+    }
+}
+fn remember_boxed_payload(
+    context: &mut NativeContext<'_, BoxedPrimitiveHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let weak = context.host_weak_root(args[0])?;
+    context.host_mut().payload = Some(weak);
+    Ok(context.undefined())
+}
+#[test]
+fn boxed_primitive_internal_values_survive_collection_and_release_with_the_wrapper() {
+    let source = r#"
+var wrapper;
+function createWrapper(){const value=Symbol('payload');rememberPayload(value);wrapper=Object(value);Object.setPrototypeOf(wrapper,null)}
+function readWrapper(){const value=Symbol.prototype.valueOf.call(wrapper);if(typeof value!=='symbol'||value.description!=='payload')throw Error('lost wrapper payload')}
+function dropWrapper(){wrapper=null}
+"#;
+    for program in [
+        Engine::specialize_unspecialized(source, "boxed-primitive-roots.js").unwrap(),
+        Engine::specialize(source, "boxed-primitive-roots.js").unwrap(),
+    ] {
+        let mut runtime = Runtime::new(BoxedPrimitiveHost::default());
+        runtime.execute(&program).unwrap();
+        for (operation, alive) in [("createWrapper", true), ("readWrapper", true), ("dropWrapper", false)] {
+            let global = runtime.global_root().unwrap();
+            let key = runtime.string_rooted(operation);
+            let function = runtime.get_property_rooted(global, key).unwrap();
+            let result = runtime.call_rooted(function, global, &[]).unwrap();
+            for root in [result, function, key, global] { assert!(runtime.release_root(root)); }
+            runtime.collect(&program).unwrap();
+            let payload = runtime.host_mut().payload.unwrap();
+            assert_eq!(runtime.host_weak_root_is_live(payload), alive, "{operation}");
+        }
+    }
+}

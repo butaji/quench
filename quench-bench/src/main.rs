@@ -207,6 +207,15 @@ impl Suite {
             Self::JetStream3 => jetstream::semantic_output(stdout),
         }
     }
+
+    /// Why `engine` cannot run `file`, when it cannot.
+    fn unsupported_reason(self, file: &Path, engine: &EngineSpec) -> Option<String> {
+        match self {
+            Self::V8V7 => None,
+            Self::JetStream3 => (jetstream::requires_webassembly(file) && !engine.webassembly)
+                .then(|| "the test is tagged Wasm and the engine has no WebAssembly".to_string()),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -220,6 +229,8 @@ struct EngineSpec {
     jit_proof_command: Vec<String>,
     jit_proof: String,
     executable_sha256: String,
+    /// Whether the engine exposes `WebAssembly`, probed with its measurement arguments.
+    webassembly: bool,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -234,6 +245,13 @@ struct EngineRecord {
     jit_mode: String,
     jit_proof_command: Vec<String>,
     jit_proof: String,
+    #[serde(default = "webassembly_assumed")]
+    webassembly: bool,
+}
+
+/// Reports written before the probe existed measured only engines that ran every fixture.
+fn webassembly_assumed() -> bool {
+    true
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -333,6 +351,9 @@ struct FixtureRecord {
     valid: bool,
     output_equal: bool,
     summaries: BTreeMap<String, EngineSummary>,
+    /// Engines that cannot run the fixture, with the reason; they are not measured on it.
+    #[serde(default)]
+    unsupported_engines: BTreeMap<String, String>,
     rounds: Vec<RoundRecord>,
 }
 
@@ -655,6 +676,7 @@ impl EngineSpec {
             jit_mode: self.jit_mode.to_string(),
             jit_proof_command: self.jit_proof_command.clone(),
             jit_proof: self.jit_proof.clone(),
+            webassembly: self.webassembly,
         }
     }
 }
@@ -889,7 +911,19 @@ fn prepare_engines(options: &Options) -> Vec<EngineSpec> {
             "node" => node_engine(options),
             _ => unreachable!("suites name only known engines"),
         })
+        .map(|mut engine| {
+            engine.webassembly = probe_webassembly(&engine);
+            engine
+        })
         .collect()
+}
+
+/// Runs `typeof WebAssembly` with the engine's measurement arguments and environment.
+fn probe_webassembly(engine: &EngineSpec) -> bool {
+    let mut args = engine.argv.iter().map(String::as_str).collect::<Vec<_>>();
+    args.extend(["-e", "console.log(typeof WebAssembly)"]);
+    let probe = capture(&engine.executable, &args, &engine.env);
+    probe.status == 0 && probe.stdout.trim() == "object"
 }
 
 fn node_engine(options: &Options) -> EngineSpec {
@@ -1008,6 +1042,7 @@ fn spec(
         jit_proof_command: Vec::new(),
         jit_proof: String::new(),
         executable_sha256: sha,
+        webassembly: false,
     }
 }
 
@@ -1574,6 +1609,18 @@ fn run_fixture(
     rounds: usize,
     timeout_ms: u64,
 ) -> FixtureRecord {
+    let (supported, unsupported): (Vec<_>, Vec<_>) = engines
+        .iter()
+        .map(|engine| (engine, suite.unsupported_reason(file, engine)))
+        .partition(|(_, reason)| reason.is_none());
+    let unsupported_engines = unsupported
+        .into_iter()
+        .filter_map(|(engine, reason)| Some((engine.name.to_string(), reason?)))
+        .collect();
+    let engines = &supported
+        .into_iter()
+        .map(|(engine, _)| engine.clone())
+        .collect::<Vec<_>>()[..];
     let (temporary, arguments) = suite.materialize(file);
     let mut results = Vec::with_capacity(rounds);
     for round in 0..rounds {
@@ -1608,6 +1655,7 @@ fn run_fixture(
         valid,
         output_equal,
         summaries,
+        unsupported_engines,
         rounds: results,
     }
 }
@@ -2542,6 +2590,7 @@ mod tests {
                 valid: false,
                 output_equal: false,
                 summaries: BTreeMap::new(),
+                unsupported_engines: BTreeMap::new(),
                 rounds: Vec::new(),
             },
         );

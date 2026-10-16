@@ -43,7 +43,7 @@ pub(super) fn active_shape_attributes(
                 }
             }
             ShapeTransition::Vacant => entries.push(None),
-            ShapeTransition::Root | ShapeTransition::FunctionName { .. } | ShapeTransition::Constructed { .. } | ShapeTransition::Dictionary { .. } => {}
+            ShapeTransition::Root | ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured | ShapeTransition::Constructed { .. } | ShapeTransition::Dictionary { .. } => {}
         }
     }
     entries
@@ -183,9 +183,10 @@ fn rebuild_shape(
     transitions: &mut super::shape_transitions::ShapeTransitionIndex,
 ) -> u32 {
     let mut parent = 0;
-    let (function_name, constructed_name) = provenance::shape_names(old_shapes, old_shape);
+    let (function_name, constructed_name, name_reconfigured) = provenance::shape_names(old_shapes, old_shape);
     for transition in [
         function_name.map(|name| ShapeTransition::FunctionName { name }),
+        name_reconfigured.then_some(ShapeTransition::FunctionNameReconfigured),
         constructed_name.map(|(constructor, new_target_is_base)| ShapeTransition::Constructed { constructor, new_target_is_base }),
     ].into_iter().flatten() {
         parent = append_compacted_shape(shapes, transitions, parent, transition, 0);
@@ -408,6 +409,13 @@ impl<H: Host> Vm<H> {
                 .builtin_prototypes
                 .iter()
                 .flat_map(|((realm, _), prototype)| [*realm, *prototype]),
+        );
+        roots.extend(
+            self.realm
+                .intrinsics
+                .function_constructors
+                .iter()
+                .flat_map(|((realm, _), constructor)| [*realm, *constructor]),
         );
         roots.extend(
             self.realm
@@ -995,14 +1003,16 @@ mod tests {
         let mut transitions = crate::vm::shape_transitions::ShapeTransitionIndex::default();
         let named = append_compacted_shape(&mut shapes, &mut transitions, 0,
             ShapeTransition::FunctionName { name: 7 }, 0);
-        let created = append_compacted_shape(&mut shapes, &mut transitions, named,
+        let reconfigured = append_compacted_shape(&mut shapes, &mut transitions, named,
+            ShapeTransition::FunctionNameReconfigured, 0);
+        let created = append_compacted_shape(&mut shapes, &mut transitions, reconfigured,
             ShapeTransition::Constructed { constructor: Value::heap(17), new_target_is_base: false }, 0);
         let with_field = append_compacted_shape(&mut shapes, &mut transitions, created,
             ShapeTransition::Add { key: PropertyKey::string(9), slot: 0, attributes: DEFAULT_DATA_ATTRIBUTES }, 1);
         let mut rebuilt = vec![Shape::root()];
         let shape = rebuild_shape(&shapes, &[], with_field, &mut rebuilt,
             &mut Vec::new(), &mut crate::vm::shape_transitions::ShapeTransitionIndex::default());
-        assert_eq!(provenance::shape_names(&rebuilt, shape), (Some(7), Some((Value::heap(17), false))));
+        assert_eq!(provenance::shape_names(&rebuilt, shape), (Some(7), Some((Value::heap(17), false)), true));
         assert_eq!(rebuilt[shape as usize].storage_len(), 1);
         assert_eq!(super::active_shape_attributes(&rebuilt, shape).len(), 1);
     }

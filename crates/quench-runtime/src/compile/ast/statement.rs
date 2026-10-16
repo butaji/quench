@@ -396,7 +396,12 @@ impl FunctionCompiler<'_, '_> {
             {
                 self.named_class_expression(class, identifier.name.as_str())
             }
-            _ => self.expression(initializer),
+            _ => {
+                let debug_name = if !is_anonymous_function_definition(initializer) {
+                    if let BindingPattern::BindingIdentifier(identifier) = binding { Some(self.owner.atom(identifier.name.as_str())) } else { None }
+                } else { None };
+                self.expression_with_debug_name(initializer, debug_name)
+            },
         };
         if is_anonymous_function_definition(initializer)
             && let BindingPattern::BindingIdentifier(identifier) = binding

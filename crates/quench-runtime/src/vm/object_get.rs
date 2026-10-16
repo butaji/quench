@@ -2,21 +2,37 @@ use super::property_key::PropertyKey;
 use super::*;
 use crate::heap::PrivateBrand;
 
+pub(super) enum DiagnosticProperty {
+    Absent,
+    Data(Value),
+    Blocked,
+}
+
 impl<H: Host> Vm<H> {
+    pub(super) fn diagnostic_own_property(&self, object: Value, key: PropertyKey) -> DiagnosticProperty {
+        if self.default_function_name_info(object, key)
+            || self.proxy_parts(object).is_some()
+            || self.property_attributes(object, key).is_some_and(|attributes| attributes.accessor)
+        {
+            return DiagnosticProperty::Blocked;
+        }
+        let value = match key {
+            PropertyKey::String(atom) => self.own_property(object, atom),
+            PropertyKey::Symbol(symbol) => self.symbol_property(object, symbol),
+            PropertyKey::Private(_) => return DiagnosticProperty::Blocked,
+        };
+        value.map_or(DiagnosticProperty::Absent, DiagnosticProperty::Data)
+    }
+
     /// Inspect data properties for diagnostics without invoking accessors or Proxy traps.
     pub(super) fn diagnostic_data_property(&self, mut object: Value, key: PropertyKey) -> Option<Value> {
         loop {
-            if self.proxy_parts(object).is_some() { return None; }
             let data = self.object_data(object)?;
-            if self.property_attributes(object, key).is_some_and(|attributes| attributes.accessor) {
-                return None;
+            match self.diagnostic_own_property(object, key) {
+                DiagnosticProperty::Data(value) => return Some(value),
+                DiagnosticProperty::Blocked => return None,
+                DiagnosticProperty::Absent => {}
             }
-            let value = match key {
-                PropertyKey::String(atom) => self.own_property(object, atom),
-                PropertyKey::Symbol(symbol) => self.symbol_property(object, symbol),
-                PropertyKey::Private(_) => None,
-            };
-            if value.is_some() { return value; }
             object = data.proto();
             if object.is_null() { return None; }
         }

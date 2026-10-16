@@ -173,8 +173,12 @@ impl<H: Host> Vm<H> {
             .and_then(|function| self.own_property(function, prototype_atom))
             .filter(|prototype| self.object_data(*prototype).is_some())
             .unwrap_or(default_prototype);
+        let mut object = Self::empty_object(generator_prototype);
+        if let Some(function) = function_object {
+            self.capture_constructed_name(&mut object, function, true);
+        }
         let generator = self.heap.alloc(Cell::Iterator {
-            object: Box::new(Self::empty_object(generator_prototype)),
+            object: Box::new(object),
             source: Value::NULL,
             kind: if function.is_async {
                 IteratorKind::AsyncGenerator
