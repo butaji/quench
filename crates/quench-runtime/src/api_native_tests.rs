@@ -14,6 +14,15 @@ impl Host for CapturingHost {
         crate::host_functions![method "captured" (0) => captured]
     }
     fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
+        let external = context.external_rooted(0x1234)?;
+        assert_eq!(context.external_address_rooted(external), Some(0x1234));
+        assert!(context.has_builtin_brand_rooted(external, BuiltinBrand::External)?);
+        let object = context.object_rooted()?;
+        assert!(!context.has_builtin_brand_rooted(object, BuiltinBrand::External)?);
+        assert_eq!(context.external_address_rooted(object), None);
+        let global = context.global_root()?;
+        let key = context.string_rooted("external");
+        context.set_property_rooted(global, key, external, global)?;
         let data = context.object_rooted()?;
         let key = context.string_rooted("answer");
         let answer = context.number(42.0);
@@ -33,6 +42,13 @@ fn captured(
 ) -> Result<RootId, RootedError> {
     let data = context.host_function_data()?;
     context.collect()?;
+    let global = context.global_root()?;
+    let key = context.string_rooted("external");
+    let external = context.get_property_rooted(global, key)?;
+    assert_eq!(context.external_address_rooted(external), Some(0x1234));
+    assert!(context.has_builtin_brand_rooted(external, BuiltinBrand::External)?);
+    let fake = context.evaluate_script_rooted("Object.create(external)", "external-prototype.js")?;
+    assert!(!context.has_builtin_brand_rooted(fake, BuiltinBrand::External)?);
     // Named host re-entry must neither reset roots nor capture the calling frame.
     let wrapper = context.evaluate_script_rooted(
         "(function(value) { if (typeof callerLocal !== 'undefined') throw 1; return value; });",
@@ -61,6 +77,9 @@ fn captured_host_environment_survives_scope_drop_collection_and_guest_reentry() 
     runtime.execute(&program).unwrap();
     runtime.collect(&program).unwrap();
     let global = runtime.global_root().unwrap();
+    let key = runtime.string_rooted("external");
+    let external = runtime.get_property_rooted(global, key).unwrap();
+    assert!(runtime.rooted_value(external).is_some());
     let key = runtime.string_rooted("result");
     let data = runtime.get_property_rooted(global, key).unwrap();
     let key = runtime.string_rooted("answer");
