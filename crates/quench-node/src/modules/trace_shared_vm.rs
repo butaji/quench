@@ -404,6 +404,7 @@ fn build_internal_binding(
             Ok(binding)
         }
         "symbols" => return super::util_shared_vm::symbols_binding(context),
+        "cares_wrap" => return crate::host::shared_vm::commonjs::cares_binding(context),
         "http2" => return crate::host::shared_vm::commonjs::http2_binding(context),
         "buffer" => return super::buffer_fill_shared_vm::binding(context),
         "crypto" => return super::tls_shared_vm::facade::binding(context),

@@ -883,6 +883,7 @@ pub(crate) fn require_for_module(
             | BuiltinModule::InternalChildProcess
             | BuiltinModule::Https
             | BuiltinModule::Http2
+            | BuiltinModule::DnsPromises
             | BuiltinModule::Http2Binding
             | BuiltinModule::Inspector
             | BuiltinModule::Repl
@@ -1031,6 +1032,8 @@ enum BuiltinModule {
     Https,
     Http2,
     Http2Binding,
+    CaresBinding,
+    DnsPromises,
     Vm,
     Inspector,
     Repl,
@@ -1090,6 +1093,8 @@ impl BuiltinModule {
             Self::Dgram => Some("dgram"),
             Self::Https => Some("https"),
             Self::Http2 => Some("http2"),
+            Self::DnsPromises => Some("dns/promises"),
+            Self::CaresBinding => Some("internalBinding/cares_wrap"),
             Self::Http2Binding => Some("internalBinding/http2"),
             Self::Vm => Some("vm"),
             Self::Inspector => Some("inspector"),
@@ -1322,6 +1327,8 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ),
     ("dns", BuiltinModule::Dns),
     ("node:dns", BuiltinModule::Dns),
+    ("dns/promises", BuiltinModule::DnsPromises),
+    ("node:dns/promises", BuiltinModule::DnsPromises),
     ("dgram", BuiltinModule::Dgram),
     ("node:dgram", BuiltinModule::Dgram),
     ("internal/dgram", BuiltinModule::InternalDgram),
@@ -1461,6 +1468,10 @@ pub(crate) fn module_module(context: &mut Context<'_>) -> Result<RootId, RootedE
 
 pub(crate) fn stream_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     cached_builtin(context, BuiltinModule::Stream)
+}
+
+pub(crate) fn cares_binding(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    cached_builtin(context, BuiltinModule::CaresBinding)
 }
 
 pub(crate) fn http2_binding(context: &mut Context<'_>) -> Result<RootId, RootedError> {
@@ -1691,6 +1702,8 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             "node:https.js",
         ),
         BuiltinModule::TraceEvents => crate::modules::trace_shared_vm::module(context),
+        BuiltinModule::DnsPromises => { let dns = dns_module(context)?; get(context, dns, "promises") },
+        BuiltinModule::CaresBinding => crate::modules::cares_binding::module(context),
         BuiltinModule::Http2Binding => {
             let binding = context.object_rooted()?;
             // Native constant values and attributes from Node v26.12.0's HTTP/2
@@ -2549,6 +2562,7 @@ pub(crate) fn node_internal_binding_source() -> &'static str {
     case "encoding_binding":
     case "zlib":
     case "symbols":
+    case "cares_wrap":
     case "http2":
     case "fs_event_wrap":
     case "errors":

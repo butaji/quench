@@ -43,6 +43,8 @@ pub(crate) mod crypto_shared_vm;
 pub(crate) mod crypto_strings;
 pub(crate) mod diagnostics_channel_shared_vm;
 pub(crate) mod dns_shared_vm;
+pub(crate) mod native_task_pool;
+pub(crate) mod cares_binding;
 pub(crate) mod domain_shared_vm;
 pub(crate) mod emitter_async_resource_shared_vm;
 pub(crate) mod event_constructor_shared_vm;
@@ -162,4 +164,3 @@ pub(crate) mod native_work;
 pub(crate) mod report_configuration_shared_vm;
 
 pub(crate) mod crypto_secret_job_shared_vm;
-pub(crate) mod native_task_pool;
