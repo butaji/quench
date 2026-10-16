@@ -9459,3 +9459,35 @@ fn native_buffer_pool_shares_real_aligned_backing_and_preserves_reentrant_copies
 fn boxed_primitive_brands_use_internal_values_and_reject_forged_properties_and_proxies() {
     compare_node_source_with_args(include_str!("../node-tests/test-boxed-primitive-slots.js"), &[]);
 }
+
+#[test]
+fn native_buffer_unsafe_allocations_preserve_alignment_pooling_snapshots_and_errors() {
+    compare_node_source_with_args(
+        include_str!("../node-tests/test-native-buffer-unsafe-alignment.js"),
+        &["--no-warnings", "--expose-internals", "--expose-gc"],
+    );
+}
+
+#[test]
+fn native_buffer_concat_preserves_pooling_proxy_reads_reentrancy_and_padding() {
+    compare_node_source_with_args(
+        include_str!("../node-tests/test-native-buffer-concat-pool.js"),
+        &[],
+    );
+}
+
+#[test]
+fn native_buffer_latin1_classifies_actual_units_and_preserves_original_validation() {
+    compare_node_source_with_args(
+        include_str!("../node-tests/test-native-buffer-latin1.js"),
+        &["--no-warnings", "--expose-internals"],
+    );
+}
+
+#[test]
+fn native_buffer_public_policy_captures_original_validators_and_coded_constructors() {
+    compare_node_source_with_args(
+        include_str!("../node-tests/test-native-buffer-policy-captures.js"),
+        &["--no-warnings", "--expose-internals"],
+    );
+}

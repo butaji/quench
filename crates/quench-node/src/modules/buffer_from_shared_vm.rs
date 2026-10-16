@@ -74,8 +74,10 @@ pub(crate) fn install(
         let f = getter(c, typed, k)?;
         put(c, data, n, f)?;
     }
-    let set = get(c, typed, "set")?;
-    put(c, data, "set", set)?;
+    for name in ["set", "subarray", "fill"] {
+        let method = get(c, typed, name)?;
+        put(c, data, name, method)?;
+    }
     super::buffer_pool_shared_vm::install(c, data, public)?;
     let global = c.global_root()?;
     let symbol = get(c, global, "Symbol")?;
@@ -100,6 +102,7 @@ pub(crate) fn install(
             put(c, from_data, "from", f)?;
         }
     }
+    super::buffer_pool_shared_vm::install_public_allocators(c, data, public)?;
     Ok(())
 }
 
