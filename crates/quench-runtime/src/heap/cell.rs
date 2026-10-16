@@ -2110,21 +2110,23 @@ impl RegExpLegacyOwner {
 /// ordinary property reflection, inheritance, or proxy interception.
 #[derive(Clone, Debug)]
 pub(crate) struct SymbolData {
-    pub(crate) description: Option<String>,
+    // Descriptions are immutable; a slice avoids String capacity metadata so
+    // the private-kind tag fits without growing every arena cell.
+    pub(crate) description: Option<Box<str>>,
     pub(crate) kind: SymbolKind,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SymbolKind { Public, HostPrivate }
 impl SymbolData {
     pub(crate) fn public(description: Option<String>) -> Self {
-        Self { description, kind: SymbolKind::Public }
+        Self { description: description.map(String::into_boxed_str), kind: SymbolKind::Public }
     }
     pub(crate) fn host_private(description: Option<String>) -> Self {
-        Self { description, kind: SymbolKind::HostPrivate }
+        Self { description: description.map(String::into_boxed_str), kind: SymbolKind::HostPrivate }
     }
 }
 impl std::ops::Deref for SymbolData {
-    type Target = Option<String>;
+    type Target = Option<Box<str>>;
     fn deref(&self) -> &Self::Target { &self.description }
 }
 
