@@ -570,6 +570,7 @@ impl<H: Host> Vm<H> {
             name,
             hide_identity,
             is_constructor: frame.context.is_constructor(),
+            is_eval: self.programs.is_eval(frame.program),
             this_value: if frame.this == Value::DELETED { Value::UNDEFINED } else { frame.this },
         }, residual.kind == crate::bytecode::ProgramKind::Module))
     }
@@ -612,6 +613,7 @@ impl<H: Host> Vm<H> {
                         this_value: Value::UNDEFINED,
                         hide_identity: true,
                         is_constructor: false,
+                        is_eval: false,
                     });
                 }
             }
@@ -649,6 +651,7 @@ impl<H: Host> Vm<H> {
                     this_value: Value::UNDEFINED,
                     hide_identity: true,
                     is_constructor: false,
+                    is_eval: false,
                 });
             }
         }
@@ -811,7 +814,7 @@ impl<H: Host> Vm<H> {
                 CallSiteLocation::Source { column, .. } => Value::number(f64::from(column)),
                 CallSiteLocation::Native => Value::NULL,
             }),
-            Native::CallSiteIsEval => Ok(Value::FALSE),
+            Native::CallSiteIsEval => Ok(if record.is_eval { Value::TRUE } else { Value::FALSE }),
             Native::CallSiteIsConstructor => Ok(if record.is_constructor { Value::TRUE } else { Value::FALSE }),
             Native::CallSiteIsNative => {
                 Ok(if matches!(record.location, CallSiteLocation::Native) {
@@ -1348,6 +1351,7 @@ impl<H: Host> Vm<H> {
         let Some(program_id) = self.store_dynamic_program(residual) else {
             return Err(self.type_error(program, "dynamic program store is full".into()));
         };
+        self.programs.set_origin(program_id, super::program_store::CompilationOrigin::Eval);
         let residual = self
             .programs
             .get(program_id)
