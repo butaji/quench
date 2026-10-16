@@ -4,6 +4,44 @@ use super::*;
 // V8 JSFunction::kNameDescriptorIndex: length precedes the native name accessor.
 const FUNCTION_NATIVE_NAME_DESCRIPTOR_INDEX: usize = 1;
 
+/// A memo of `Vm::constructed_shape`: the shape an object of `shape` takes when
+/// `constructor` constructs it. The answer depends only on that key, the constructor's
+/// immutable original name and the shape tree, so it holds until a collection, which can
+/// renumber shapes or reuse a dead constructor's cell and so clears every entry.
+#[derive(Clone, Copy)]
+pub(super) struct ConstructedShape {
+    shape: u32,
+    constructor: Value,
+    new_target_is_base: bool,
+    constructed: u32,
+}
+
+/// Entries in the direct-mapped `Vm::constructed_shapes` memo; a power of two.
+pub(super) const CONSTRUCTED_SHAPE_ENTRIES: usize = 64;
+
+impl ConstructedShape {
+    /// An entry no construction matches: no constructor is `undefined`.
+    pub(super) const EMPTY: Self = Self {
+        shape: u32::MAX,
+        constructor: Value::UNDEFINED,
+        new_target_is_base: false,
+        constructed: u32::MAX,
+    };
+
+    fn cache_index(&self) -> usize {
+        // Heap handles differ in their low payload bits; the shape separates one
+        // constructor's bases.
+        let handle = self.constructor.heap_index().unwrap_or_default() as usize;
+        (handle ^ self.shape as usize) & (CONSTRUCTED_SHAPE_ENTRIES - 1)
+    }
+
+    fn same_construction(&self, other: &Self) -> bool {
+        self.shape == other.shape
+            && self.constructor == other.constructor
+            && self.new_target_is_base == other.new_target_is_base
+    }
+}
+
 pub(super) fn shape_names(shapes: &[Shape], shape: u32) -> (Option<Atom>, Option<(Value, bool)>, bool) {
     let (mut function, mut constructed, mut reconfigured) = (None, None, false);
     let mut current = Some(shape);
@@ -48,6 +86,10 @@ impl<H: Host> Vm<H> {
 
     fn capture_function_name_atom(&mut self, function: Value, name: Atom) {
         let Some(shape) = self.object_data(function).map(Object::shape) else { return; };
+        // A first original name makes the function record what it constructs.
+        if shape_names(&self.shapes, shape).0.is_none() {
+            self.constructed_shapes.fill(ConstructedShape::EMPTY);
+        }
         let shape = self.append_cached_shape_transition(shape, ShapeTransition::FunctionName { name });
         self.object_data_mut(function).expect("function object").set_shape(shape);
     }
@@ -91,10 +133,22 @@ impl<H: Host> Vm<H> {
     /// Reflect.get and computed-key reads retain the setup-mode accessor view.
     #[inline(always)]
     pub(super) fn prepare_named_function_info_lookup(&mut self, object: Value, atom: Atom) {
-        let name = atom == self.runtime_atoms.name;
-        if name || atom == self.length_atom {
-            self.prepare_function_info_prototypes(object, atom, name);
+        if !self.reads_function_info(atom) {
+            return;
         }
+        // An array's own `length` answers the read before any function's could.
+        let array_length = atom == self.length_atom
+            && self.heap.array(object).is_some_and(|array| !array.is_arguments_object());
+        if !array_length {
+            self.prepare_function_info_prototypes(object, atom, atom == self.runtime_atoms.name);
+        }
+    }
+
+    /// Whether a named read of `atom` can enter prototype lookup mode: the function
+    /// information keys `name` and `length`. Fixed per read site, so a site may decide it once.
+    #[inline(always)]
+    pub(super) fn reads_function_info(&self, atom: Atom) -> bool {
+        atom == self.runtime_atoms.name || atom == self.length_atom
     }
 
     // Ordinary property reads never need text inspection or a prototype walk.
@@ -157,6 +211,23 @@ impl<H: Host> Vm<H> {
     }
 
     fn constructed_shape(
+        &mut self,
+        shape: u32,
+        constructor: Value,
+        new_target_is_base: bool,
+    ) -> u32 {
+        let entry = ConstructedShape { shape, constructor, new_target_is_base, constructed: shape };
+        let index = entry.cache_index();
+        let cached = self.constructed_shapes[index];
+        if cached.same_construction(&entry) {
+            return cached.constructed;
+        }
+        let constructed = self.derive_constructed_shape(shape, constructor, new_target_is_base);
+        self.constructed_shapes[index] = ConstructedShape { constructed, ..entry };
+        constructed
+    }
+
+    fn derive_constructed_shape(
         &mut self,
         shape: u32,
         constructor: Value,
