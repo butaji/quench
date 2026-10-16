@@ -90,7 +90,7 @@ impl<H: Host> Vm<H> {
         lane: bool,
     ) -> GeneralCodeCursor {
         GeneralCodeCursor {
-            lane: if lane {
+            lane: if lane && self.lane_admits(program) {
                 self.lane_view(program_id, function)
             } else {
                 std::ptr::null()
