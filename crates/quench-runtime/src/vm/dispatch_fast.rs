@@ -3474,11 +3474,13 @@ fn lane_activate<H: Host>(
     let argc = ImmediateLayout::argument_count(i.imm());
     let count = usize::from(target.registers);
     // A call that returns its callee's completion completes its caller too, which only an
-    // activation's return does in the lane; a strict caller makes it a tail call instead.
+    // activation's return does in the lane. A host permitting proper tail calls
+    // sends strict terminal calls to the general dispatch path instead.
     let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
     if returns
         && vm.lane_stack.activations.last().is_none_or(|caller| {
-            unsafe { &*(*cx).code }.functions[caller.function as usize].strict
+            vm.host.proper_tail_calls()
+                && unsafe { &*(*cx).code }.functions[caller.function as usize].strict
         })
     {
         return Err(exit(ip));
@@ -3582,11 +3584,13 @@ fn lane_activate_keeping<H: Host>(
     // A forwarding activation keeps every value passed after its registers.
     let window_size = if target.forwards { count + argc } else { count };
     // A call that returns its callee's completion completes its caller too, which only an
-    // activation's return does in the lane; a strict caller makes it a tail call instead.
+    // activation's return does in the lane. A host permitting proper tail calls
+    // sends strict terminal calls to the general dispatch path instead.
     let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
     if returns
         && vm.lane_stack.activations.last().is_none_or(|caller| {
-            unsafe { &*(*cx).code }.functions[caller.function as usize].strict
+            vm.host.proper_tail_calls()
+                && unsafe { &*(*cx).code }.functions[caller.function as usize].strict
         })
     {
         return Err(exit(ip));

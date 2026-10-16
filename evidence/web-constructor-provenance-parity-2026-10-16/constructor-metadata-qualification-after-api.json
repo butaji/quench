@@ -1,0 +1,22 @@
+{
+  "candidate_source": "318ac0b29c19e22b5c8e1b6bd8c41ff410a0f4a8",
+  "binaries": {
+    "cli": {
+      "path": "work/quench-constructor-metadata-qualified",
+      "sha256": "c612b8524bc6fb0975db3bb5e9b59b926a1143947656b905a3772abdc1cf250f"
+    },
+    "runner": {
+      "path": "work/host-build/iteration/run-parallel",
+      "sha256": "ff9862f0d5c91c642fb44d89234ffcb50beff588053e5b5a5b11911ab147129b"
+    },
+    "api_tests": {
+      "path": "work/host-build/iteration/deps/child_entry-a67896ab5b9c716a",
+      "sha256": "1b3fe87bd1f48cd342dff62b836acf84ec2b90c2d2feb222dec2012b1a675f73"
+    }
+  },
+  "identity_checks": {
+    "cli": true,
+    "runner": true,
+    "api_tests": true
+  }
+}

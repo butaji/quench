@@ -19,8 +19,6 @@ const TYPE_PREDICATES: &[(&str, BuiltinBrand)] = &[
     ("isAnyArrayBuffer", BuiltinBrand::AnyArrayBuffer),
     ("isExternal", BuiltinBrand::External),
     ("isDataView", BuiltinBrand::DataView),
-    ("isTypedArray", BuiltinBrand::TypedArray),
-    ("isArrayBufferView", BuiltinBrand::ArrayBufferView),
     ("isArgumentsObject", BuiltinBrand::ArgumentsObject),
     ("isAsyncFunction", BuiltinBrand::AsyncFunction),
     ("isGeneratorFunction", BuiltinBrand::GeneratorFunction),
@@ -285,13 +283,9 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     context.set_property_rooted(module, parse_args_key, parse_args, module)?;
     let callbackify_key = context.string_rooted("callbackify");
     context.set_property_rooted(module, callbackify_key, callbackify, module)?;
-    let native_types = types_binding(context)?;
-    let types = context.object_rooted()?;
-    for key in context.own_keys_rooted(native_types)? {
-        let value = context.get_property_rooted(native_types, key)?;
-        context.define_data_property_rooted(types, key, value, true, true, true)?;
-    }
-    super::crypto_key_shared_vm::public_predicates(context, types)?;
+    let types = crate::host::shared_vm::commonjs::node_library_module(
+        context, "util.js", "internal/util/types.js",
+    )?;
     let key = context.string_rooted("types");
     context.set_property_rooted(module, key, types, module)?;
     // Retain original identities before publishing mutable util exports. Console
@@ -873,56 +867,52 @@ pub(crate) fn types_binding(context: &mut NativeContext<'_, NodeHost>) -> Result
     crate::host::shared_vm::commonjs::cached_native_binding(context, "\0binding:types", build_types_binding)
 }
 fn build_types_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    // node_types.cc's raw native slot predicates, in its export order. The
+    // configured internal/util/types.js owns JavaScript predicates and aliases.
+    use BuiltinBrand as B;
+    const NATIVE_BRANDS: &[BuiltinBrand] = &[
+        B::ArgumentsObject,
+        B::ArrayBuffer,
+        B::AsyncFunction,
+        B::BigIntObject,
+        B::BooleanObject,
+        B::Date,
+        B::External,
+        B::GeneratorFunction,
+        B::GeneratorObject,
+        B::Map,
+        B::MapIterator,
+        B::ModuleNamespaceObject,
+        B::NativeError,
+        B::NumberObject,
+        B::Promise,
+        B::Proxy,
+        B::RegExp,
+        B::Set,
+        B::SetIterator,
+        B::SharedArrayBuffer,
+        B::StringObject,
+        B::SymbolObject,
+        B::WeakMap,
+        B::WeakSet,
+        B::AnyArrayBuffer,
+        B::BoxedPrimitive,
+    ];
     let types = context.object_rooted()?;
-    for (index, &(name, brand)) in TYPE_PREDICATES.iter().enumerate() {
+    for brand in NATIVE_BRANDS {
+        let (index, (name, _)) = TYPE_PREDICATES
+            .iter()
+            .enumerate()
+            .find(|(_, (_, candidate))| candidate == brand)
+            .expect("native type predicate brand");
         let data = context.number(index as f64);
-        let predicate = context
-            .host_function_with_data(crate::host::shared_vm::operation("utilTypeCheck"), data)?;
-        let name_key = context.string_rooted("name");
-        let (function_name, length) = match brand {
-            BuiltinBrand::ArrayBufferView => ("isView", 1),
-            BuiltinBrand::External
-            | BuiltinBrand::Date
-            | BuiltinBrand::RegExp
-            | BuiltinBrand::NativeError
-            | BuiltinBrand::Promise
-            | BuiltinBrand::Map
-            | BuiltinBrand::Set
-            | BuiltinBrand::WeakMap
-            | BuiltinBrand::WeakSet
-            | BuiltinBrand::Proxy
-            | BuiltinBrand::ArrayBuffer
-            | BuiltinBrand::SharedArrayBuffer
-            | BuiltinBrand::AnyArrayBuffer
-            | BuiltinBrand::ArgumentsObject
-            | BuiltinBrand::AsyncFunction
-            | BuiltinBrand::GeneratorFunction
-            | BuiltinBrand::GeneratorObject
-            | BuiltinBrand::MapIterator
-            | BuiltinBrand::SetIterator
-            | BuiltinBrand::ModuleNamespaceObject
-            | BuiltinBrand::BooleanObject
-            | BuiltinBrand::NumberObject
-            | BuiltinBrand::StringObject
-            | BuiltinBrand::SymbolObject
-            | BuiltinBrand::BigIntObject
-            | BuiltinBrand::BoxedPrimitive => ("", 0),
-            _ => (name, 1),
-        };
-        let name_value = context.string_rooted(function_name);
-        context.define_data_property_rooted(predicate, name_key, name_value, false, false, true)?;
-        let length_key = context.string_rooted("length");
-        let length_value = context.number(f64::from(length));
-        context.define_data_property_rooted(
-            predicate,
-            length_key,
-            length_value,
-            false,
-            false,
-            true,
+        let predicate = context.host_function_named_with_data(
+            crate::host::shared_vm::operation("utilTypeCheck"),
+            "",
+            data,
         )?;
         let key = context.string_rooted(name);
-        context.set_property_rooted(types, key, predicate, types)?;
+        context.define_data_property_rooted(types, key, predicate, true, true, true)?;
     }
     Ok(types)
 }
@@ -970,44 +960,84 @@ fn inspection_data_property(
 /// Native class fallback for inspection, without public constructor/tag getters.
 /// User base-constructor provenance is captured by Core at actual allocation.
 pub(crate) fn constructor_name(
-    context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId],
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let absent = context.undefined();
     let value = args.first().copied().unwrap_or(absent);
     if let Some(name) = context.constructed_name_rooted(value)? {
-        if context.string_text(name)?.is_some_and(|name| !name.is_empty() && name != "Object") { return Ok(name); }
+        if context
+            .string_text(name)?
+            .is_some_and(|name| !name.is_empty() && name != "Object")
+        {
+            return Ok(name);
+        }
     }
-    if context.proxy_target_rooted(value)?.is_some() { return Ok(context.string_rooted("Object")); }
-    if context.is_array_rooted(value)? { return Ok(context.string_rooted("Array")); }
+    if context.proxy_target_rooted(value)?.is_some() {
+        return Ok(context.string_rooted("Object"));
+    }
+    let mut fallback = if context.is_array_rooted(value)? {
+        "Array"
+    } else {
+        "Object"
+    };
     for &(name, brand) in TYPE_PREDICATES {
         use BuiltinBrand as B;
-        if matches!(brand, B::Proxy | B::TypedArray | B::ArrayBufferView | B::AnyArrayBuffer | B::BoxedPrimitive | B::NativeError | B::GeneratorObject | B::MapIterator | B::SetIterator | B::ModuleNamespaceObject) { continue; }
+        if matches!(
+            brand,
+            B::Proxy
+                | B::AnyArrayBuffer
+                | B::BoxedPrimitive
+                | B::NativeError
+                | B::GeneratorObject
+                | B::MapIterator
+                | B::SetIterator
+                | B::ModuleNamespaceObject
+        ) {
+            continue;
+        }
         if context.has_builtin_brand_rooted(value, brand)? {
             let name = name.strip_prefix("is").expect("type predicate prefix");
             let name = name.strip_suffix("Object").unwrap_or(name);
-            return Ok(context.string_rooted(name));
+            fallback = name;
+            break;
         }
     }
-    if context.is_callable_rooted(value)? { return Ok(context.string_rooted("Function")); }
-    if context.has_builtin_brand_rooted(value, BuiltinBrand::NativeError)? { return Ok(context.string_rooted("Error")); }
+    if fallback == "Object" && context.is_callable_rooted(value)? {
+        fallback = "Function";
+    }
+    if fallback == "Object" && context.has_builtin_brand_rooted(value, BuiltinBrand::NativeError)? {
+        fallback = "Error";
+    }
     let tag = context.host_function_data()?;
     let constructor_key = context.string_rooted("constructor");
     let mut current = value;
     while context.is_object_rooted(current)? {
-        if context.proxy_target_rooted(current)?.is_some() { break; }
+        if context.proxy_target_rooted(current)?.is_some() {
+            break;
+        }
         if let Some(data) = inspection_data_property(context, current, tag)? {
-            if context.string_text(data)?.is_some() { return Ok(data); }
+            if context.string_text(data)?.is_some() {
+                return Ok(data);
+            }
         }
         if !context.strict_equal_rooted(current, value)? {
-            if let Some(constructor) = inspection_data_property(context, current, constructor_key)? {
+            if let Some(constructor) = inspection_data_property(context, current, constructor_key)?
+            {
                 if let Some(name) = context.original_function_name_rooted(constructor)? {
-                    if context.string_text(name)?.is_some_and(|name| !name.is_empty() && name != "Object") { return Ok(name); }
+                    if context
+                        .string_text(name)?
+                        .is_some_and(|name| !name.is_empty() && name != "Object")
+                    {
+                        return Ok(name);
+                    }
                 }
             }
         }
         current = context.prototype_rooted(current)?;
     }
-    Ok(context.string_rooted("Object"))
+    Ok(context.string_rooted(fallback))
 }
 
 /// External wrappers expose the stored address, without touching native memory.

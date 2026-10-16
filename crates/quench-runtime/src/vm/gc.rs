@@ -423,6 +423,8 @@ impl<H: Host> Vm<H> {
                     intrinsics.constructor,
                     intrinsics.stack_getter,
                     intrinsics.stack_setter,
+                    intrinsics.call_site_constructor,
+                    intrinsics.call_site_prototype,
                 ]
             },
         ));
