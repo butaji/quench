@@ -2541,6 +2541,7 @@ pub(crate) fn node_internal_binding_source() -> &'static str {
       previewEntries: __nativeInternalBinding("util").previewEntries,
       getConstructorName: __nativeInternalBinding("util").getConstructorName,
       getCallSites: __nativeInternalBinding("util").getCallSites,
+      getCallerLocation: __nativeInternalBinding("util").getCallerLocation,
       getExternalValue: __nativeInternalBinding("util").getExternalValue,
       constructSharedArrayBuffer: (length) => new SharedArrayBuffer(length),
       guessHandleType: () => "UNKNOWN",
