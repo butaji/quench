@@ -18,6 +18,17 @@ const normalize = entries => entries.map(entry => typeof entry === 'string' ? en
     fs.mkdirSync(path.join(root, 'outside'));
     for (const name of ['a.txt', 'b.js', '.hidden', 'nested/c.txt', 'nested/d.js', 'outside/secret.txt']) fs.writeFileSync(path.join(root,name), name);
     fs.symlinkSync(path.join(root, 'outside'), path.join(root, 'nested', 'link'), 'dir');
+    const regularFile = path.join(root, 'a.txt');
+    const checkScandir = error => {
+      assert.strictEqual(error.code, 'ENOTDIR');
+      assert.strictEqual(error.syscall, 'scandir');
+      assert.strictEqual(error.path, regularFile);
+      assert.strictEqual(error.message, `ENOTDIR: not a directory, scandir '${regularFile}'`);
+      assert(error.errno < 0);
+    };
+    assert.throws(() => fs.readdirSync(regularFile, {withFileTypes:true}), error => {checkScandir(error);return true;});
+    await new Promise((resolve,reject) => fs.readdir(regularFile, {withFileTypes:true}, error => {try{checkScandir(error);resolve();}catch(e){reject(e)}}));
+
     for (const [pattern, extra] of [
       ['**/*.txt', {}], [['*.js','nested/*.txt'], {}],
       ['**/*', {exclude:['outside/**']}], ['**/*', {withFileTypes:true, followSymlinks:false}],
