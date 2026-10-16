@@ -297,11 +297,10 @@ impl<H: Host> Vm<H> {
         else {
             return false;
         };
-        let grown_index_has_accessor = (length..new_length).any(|index| {
-            self.lookup_array_index_atom(index)
-                .is_some_and(|atom| self.property_accessor(this, atom).is_some())
-        });
-        if !removed_holds_holes || !moved_present || grown_index_has_accessor {
+        if !removed_holds_holes
+            || !moved_present
+            || !self.array_indices_store_plainly(this, length..new_length)
+        {
             return false;
         }
         let Some(object) = self.heap.array_mut(this) else {
@@ -454,21 +453,16 @@ impl<H: Host> Vm<H> {
         Some(length)
     }
 
-    /// `push` onto a dense array (`dense_array_length`) as one append, when no prototype
-    /// provides an accessor for an appended index (an index no atom names cannot key any
-    /// named property).
+    /// `push` onto a dense array (`dense_array_length`) as one append, when each appended
+    /// index stores plainly (`array_indices_store_plainly`).
     pub(super) fn array_push_dense(&mut self, this: Value, args: &[Value]) -> Option<Value> {
         let length = self.dense_array_length(this)?;
         let final_length = length.checked_add(args.len())?;
         if final_length > MAX_ARRAY_LENGTH {
             return None;
         }
-        for index in length..final_length {
-            if let Some(atom) = self.lookup_array_index_atom(index)
-                && self.property_accessor(this, atom).is_some()
-            {
-                return None;
-            }
+        if !self.array_indices_store_plainly(this, length..final_length) {
+            return None;
         }
         let Some(object) = self.heap.array_mut(this) else {
             unreachable!("matched an array above");

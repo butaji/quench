@@ -126,6 +126,7 @@ impl<H: Host> Vm<H> {
             invalidated_methods: FxHashMap::default(),
             object_shapes: vec![],
             descriptors: FxHashMap::default(),
+            array_index_accessor_defined: false,
             function_values: FxHashMap::default(),
             wasm_exported_functions: FxHashMap::default(),
             private_homes: FxHashMap::default(),
