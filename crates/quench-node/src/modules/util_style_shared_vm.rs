@@ -3,132 +3,18 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 const DEFAULT_FOREGROUND: u16 = 39;
-const DEFAULT_BACKGROUND: u16 = 49;
 const BOLD: u16 = 1;
 const DIM: u16 = 2;
-const COLORS: &[(&str, u16, u16)] = &[
-    ("reset", 0, 0),
-    ("bold", BOLD, 22),
-    ("dim", DIM, 22),
-    ("italic", 3, 23),
-    ("underline", 4, 24),
-    ("blink", 5, 25),
-    ("inverse", 7, 27),
-    ("hidden", 8, 28),
-    ("strikethrough", 9, 29),
-    ("doubleunderline", 21, 24),
-    ("black", 30, DEFAULT_FOREGROUND),
-    ("red", 31, DEFAULT_FOREGROUND),
-    ("green", 32, DEFAULT_FOREGROUND),
-    ("yellow", 33, DEFAULT_FOREGROUND),
-    ("blue", 34, DEFAULT_FOREGROUND),
-    ("magenta", 35, DEFAULT_FOREGROUND),
-    ("cyan", 36, DEFAULT_FOREGROUND),
-    ("white", 37, DEFAULT_FOREGROUND),
-    ("bgBlack", 40, DEFAULT_BACKGROUND),
-    ("bgRed", 41, DEFAULT_BACKGROUND),
-    ("bgGreen", 42, DEFAULT_BACKGROUND),
-    ("bgYellow", 43, DEFAULT_BACKGROUND),
-    ("bgBlue", 44, DEFAULT_BACKGROUND),
-    ("bgMagenta", 45, DEFAULT_BACKGROUND),
-    ("bgCyan", 46, DEFAULT_BACKGROUND),
-    ("bgWhite", 47, DEFAULT_BACKGROUND),
-    ("framed", 51, 54),
-    ("overlined", 53, 55),
-    ("gray", 90, DEFAULT_FOREGROUND),
-    ("redBright", 91, DEFAULT_FOREGROUND),
-    ("greenBright", 92, DEFAULT_FOREGROUND),
-    ("yellowBright", 93, DEFAULT_FOREGROUND),
-    ("blueBright", 94, DEFAULT_FOREGROUND),
-    ("magentaBright", 95, DEFAULT_FOREGROUND),
-    ("cyanBright", 96, DEFAULT_FOREGROUND),
-    ("whiteBright", 97, DEFAULT_FOREGROUND),
-    ("bgGray", 100, DEFAULT_BACKGROUND),
-    ("bgRedBright", 101, DEFAULT_BACKGROUND),
-    ("bgGreenBright", 102, DEFAULT_BACKGROUND),
-    ("bgYellowBright", 103, DEFAULT_BACKGROUND),
-    ("bgBlueBright", 104, DEFAULT_BACKGROUND),
-    ("bgMagentaBright", 105, DEFAULT_BACKGROUND),
-    ("bgCyanBright", 106, DEFAULT_BACKGROUND),
-    ("bgWhiteBright", 107, DEFAULT_BACKGROUND),
-];
-const ALIASES: &[(&str, &str)] = &[
-    ("grey", "gray"),
-    ("blackBright", "gray"),
-    ("bgGrey", "bgGray"),
-    ("bgBlackBright", "bgGray"),
-    ("faint", "dim"),
-    ("crossedout", "strikethrough"),
-    ("strikeThrough", "strikethrough"),
-    ("crossedOut", "strikethrough"),
-    ("conceal", "hidden"),
-    ("swapColors", "inverse"),
-    ("swapcolors", "inverse"),
-    ("doubleUnderline", "doubleunderline"),
-];
-
 pub(crate) fn install(
     context: &mut NativeContext<'_, NodeHost>,
     module: RootId,
     inspect: RootId,
 ) -> Result<(), RootedError> {
-    let colors = context.null_object_rooted()?;
-    for &(name, open, close) in COLORS {
-        let open = context.number(f64::from(open));
-        let close = context.number(f64::from(close));
-        let codes = context.array_rooted(&[open, close])?;
-        set(context, colors, name, codes)?;
-    }
-    for &(alias, target) in ALIASES {
-        let target = context.string_rooted(target);
-        let getter = context.host_function_with_data(
-            crate::host::shared_vm::operation("utilColorAliasGet"),
-            target,
-        )?;
-        let setter = context.host_function_with_data(
-            crate::host::shared_vm::operation("utilColorAliasSet"),
-            target,
-        )?;
-        for (function, name) in [(getter, "get"), (setter, "set")] {
-            let key = context.string_rooted("name");
-            let name = context.string_rooted(name);
-            context.define_data_property_rooted(function, key, name, false, false, true)?;
-        }
-        let descriptor = context.null_object_rooted()?;
-        set(context, descriptor, "get", getter)?;
-        set(context, descriptor, "set", setter)?;
-        let yes = context.boolean(true);
-        let no = context.boolean(false);
-        set(context, descriptor, "configurable", yes)?;
-        set(context, descriptor, "enumerable", no)?;
-        let key = context.string_rooted(alias);
-        context.define_property_descriptor_rooted(colors, key, descriptor)?;
-    }
-    set(context, inspect, "colors", colors)?;
     let null = context.null();
     let data = context.array_rooted(&[inspect, null])?;
     let style =
         context.host_function_with_data(crate::host::shared_vm::operation("styleText"), data)?;
     set(context, module, "styleText", style)
-}
-
-pub(crate) fn alias_get(
-    context: &mut NativeContext<'_, NodeHost>,
-    receiver: RootId,
-    _: &[RootId],
-) -> Result<RootId, RootedError> {
-    let target = context.host_function_data()?;
-    context.get_property_rooted(receiver, target)
-}
-pub(crate) fn alias_set(
-    context: &mut NativeContext<'_, NodeHost>,
-    receiver: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let target = context.host_function_data()?;
-    let value = args.first().copied().unwrap_or_else(|| context.undefined());
-    context.set_property_rooted(receiver, target, value, receiver)?;
-    Ok(context.undefined())
 }
 
 #[derive(Clone)]

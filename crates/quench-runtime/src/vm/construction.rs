@@ -105,6 +105,7 @@ impl<H: Host> Vm<H> {
         };
         if let Some(slot) = self.shape_slot(object.shape(), name_atom) {
             self.heap.property_set(function, slot, value);
+            self.capture_function_name(function, value);
         }
     }
 
@@ -375,6 +376,7 @@ impl<H: Host> Vm<H> {
                 self.heap.property_add(function, prototype, with_prototype);
                 self.heap.property_add(prototype, function, constructor);
             }
+            self.capture_function_name(function, name_value);
             return Ok(function);
         }
         let mut recorded = ClosureShapes {
@@ -460,6 +462,7 @@ impl<H: Host> Vm<H> {
         {
             self.closure_shapes[shapes_key] = Some(recorded);
         }
+        self.capture_function_name(function, name_value);
         Ok(function)
     }
 
@@ -631,7 +634,9 @@ impl<H: Host> Vm<H> {
                     Value::UNDEFINED
                 } else {
                     let proto = vm.prototype_from_constructor(p, new_target)?;
-                    vm.heap.alloc(Cell::Object(Self::empty_object(proto)))
+                    let mut object = Self::empty_object(proto);
+                    vm.capture_constructed_name(&mut object, callee, callee == new_target);
+                    vm.heap.alloc(Cell::Object(object))
                 };
                 let previous_target = vm.construct_target;
                 vm.construct_target = Some(new_target);
@@ -737,7 +742,9 @@ impl<H: Host> Vm<H> {
         let prototype_atom = self.prototype_atom();
         let prototype = self.own_function_prototype_data(callee, prototype_atom)?;
         self.object_data(prototype)?;
-        Some(self.heap.alloc(Cell::Object(Self::empty_object(prototype))))
+        let mut object = Self::empty_object(prototype);
+        self.capture_constructed_name(&mut object, callee, true);
+        Some(self.heap.alloc(Cell::Object(object)))
     }
 
     pub(super) fn own_function_prototype_data(

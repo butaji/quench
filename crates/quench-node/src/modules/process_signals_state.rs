@@ -43,6 +43,32 @@ mod platform {
         ("SIGPWR", libc::SIGPWR),
         ("SIGSYS", libc::SIGSYS),
     ];
+    // Apply only at an executable's process boundary, before starting VM workers.
+    // Node ResetSignalHandlers resets inherited ignores for standard POSIX signals;
+    // genuine installed handlers survive. SIGPIPE and SIGXFSZ are ignored by policy.
+    pub(crate) fn reset_cli_dispositions() -> std::io::Result<()> {
+        for (index, (_, signal)) in SIGNALS.iter().enumerate() {
+            if matches!(*signal, libc::SIGKILL | libc::SIGSTOP)
+                || SIGNALS[..index].iter().any(|(_, prior)| prior == signal)
+            { continue; }
+            let ignore = matches!(*signal, libc::SIGPIPE | libc::SIGXFSZ);
+            let mut previous: libc::sigaction = unsafe { std::mem::zeroed() };
+            if unsafe { libc::sigaction(*signal, std::ptr::null(), &mut previous) } != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            if !ignore && (previous.sa_flags & libc::SA_SIGINFO != 0 || previous.sa_sigaction != libc::SIG_IGN) {
+                continue;
+            }
+            let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+            unsafe { libc::sigemptyset(&mut action.sa_mask); }
+            action.sa_sigaction = if ignore { libc::SIG_IGN } else { libc::SIG_DFL };
+            if unsafe { libc::sigaction(*signal, &action, std::ptr::null_mut()) } != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+        }
+        Ok(())
+    }
+
     const INVALID_FD: RawFd = -1;
     static WRITE_FD: AtomicI32 = AtomicI32::new(INVALID_FD);
     static ACTIVE_HANDLERS: AtomicUsize = AtomicUsize::new(0);
@@ -405,3 +431,6 @@ impl Drop for ParentSignalMask {
         }
     }
 }
+
+#[cfg(target_os = "linux")]
+pub(crate) use platform::reset_cli_dispositions;
