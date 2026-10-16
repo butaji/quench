@@ -1183,6 +1183,44 @@ mod tests {
     }
 
     #[test]
+    fn regression_async_iterator_protocol_is_separate_from_sync_iterator_helpers() {
+        assert_output_in_execution_modes(
+            r#"
+function check(make) {
+  var value = make();
+  var generator = Object.getPrototypeOf(Object.getPrototypeOf(value));
+  var asyncIterator = Object.getPrototypeOf(generator);
+  print(typeof value[Symbol.iterator]);
+  print(typeof value[Symbol.asyncIterator]);
+  print(Object.getPrototypeOf(asyncIterator) === Object.prototype);
+  print(Object.hasOwn(generator, Symbol.asyncIterator));
+  print(typeof value.map, typeof value.take, typeof value[Symbol.dispose]);
+  print(value[Symbol.asyncIterator]() === value);
+  print(Object.keys(Object.getOwnPropertyDescriptor(asyncIterator, Symbol.asyncIterator)).join(','));
+}
+check(function () { return (async function* () { yield 1; })(); });
+check(function () { return new (Object.getPrototypeOf(async function* () {}).constructor)('yield 1')(); });
+            "#,
+            &[
+                "undefined",
+                "function",
+                "true",
+                "false",
+                "undefined undefined undefined",
+                "true",
+                "value,writable,enumerable,configurable",
+                "undefined",
+                "function",
+                "true",
+                "false",
+                "undefined undefined undefined",
+                "true",
+                "value,writable,enumerable,configurable",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_generator_activation_binds_this_and_new_target() {
         assert_output_in_execution_modes(
             r#"
