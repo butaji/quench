@@ -900,6 +900,7 @@ impl FunctionCompiler<'_, '_> {
         );
         self.iterator_closures.push(IteratorClosure {
             iterator: iterator_atom,
+            asynchronous: false,
             control_depth: self.controls.len(),
         });
         let error_atom = self.hidden_local("\0quench:binding-iterator-error");
