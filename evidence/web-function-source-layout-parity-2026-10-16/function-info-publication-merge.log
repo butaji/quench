@@ -1,0 +1,5 @@
+Auto-merging crates/quench-node-test/tests/child_entry.rs
+CONFLICT (content): Merge conflict in crates/quench-node-test/tests/child_entry.rs
+Auto-merging crates/quench-runtime/src/vm.rs
+Auto-merging crates/quench-runtime/src/vm/program_store.rs
+Automatic merge failed; fix conflicts and then commit the result.
