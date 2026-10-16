@@ -1161,12 +1161,7 @@ lane_handler! {
 fn lane_object_pair<H: Host>(cx: *mut LaneContext<H>, r: Registers, i: &LaneInstruction) -> Value {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
-    let value = vm.object_pair(
-        unsafe { &*(*cx).code },
-        i.imm() as usize,
-        r.get(i.b),
-        r.get(i.c),
-    );
+    let value = vm.object_pair(unsafe { &*(*cx).code }, i.imm() as usize, r.get(i.b), r.get(i.c));
     note_allocation(vm);
     value
 }
@@ -3192,11 +3187,7 @@ impl<H: Host> Vm<H> {
     /// The lane's `this` for frame `frame` (`LaneContext::this`).
     fn frame_lane_this(&self, frame: usize) -> Value {
         let frame = &self.frames[frame];
-        if frame.fixed_this {
-            frame.this
-        } else {
-            Value::DELETED
-        }
+        if frame.fixed_this { frame.this } else { Value::DELETED }
     }
 
     /// The cached frameless target of a lane call to `callee`, if resolved.
@@ -3252,8 +3243,7 @@ impl<H: Host> Vm<H> {
 
     /// The lane view of `function`, derived on first use.
     fn lane_view_any(&self, program: ProgramId, function: u32) -> Option<*const LaneView> {
-        self.programs
-            .lane_view(program, function, derive_lane_view::<H>)
+        self.programs.lane_view(program, function, derive_lane_view::<H>)
     }
 }
 
@@ -3433,19 +3423,10 @@ unsafe fn lane_kept_arguments<H: Host>(cx: *mut LaneContext<H>) -> Option<Activa
         ));
     }
     let activation = vm.lane_stack.activations.last()?;
-    let script = activation
-        .script
-        .as_ref()
-        .filter(|script| script.forwards)?;
-    let registers =
-        usize::from(unsafe { &*(*cx).code }.functions[activation.function as usize].registers);
+    let script = activation.script.as_ref().filter(|script| script.forwards)?;
+    let registers = usize::from(unsafe { &*(*cx).code }.functions[activation.function as usize].registers);
     // SAFETY: the activation's window holds its registers, then its kept values.
-    let values = unsafe {
-        vm.lane_stack
-            .values
-            .as_ptr()
-            .add(activation.window + registers)
-    };
+    let values = unsafe { vm.lane_stack.values.as_ptr().add(activation.window + registers) };
     Some(ActivationArguments::Kept(values, usize::from(script.argc)))
 }
 
@@ -3496,11 +3477,9 @@ fn lane_activate<H: Host>(
     // activation's return does in the lane; a strict caller makes it a tail call instead.
     let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
     if returns
-        && vm
-            .lane_stack
-            .activations
-            .last()
-            .is_none_or(|caller| unsafe { &*(*cx).code }.functions[caller.function as usize].strict)
+        && vm.lane_stack.activations.last().is_none_or(|caller| {
+            unsafe { &*(*cx).code }.functions[caller.function as usize].strict
+        })
     {
         return Err(exit(ip));
     }
@@ -3606,11 +3585,9 @@ fn lane_activate_keeping<H: Host>(
     // activation's return does in the lane; a strict caller makes it a tail call instead.
     let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
     if returns
-        && vm
-            .lane_stack
-            .activations
-            .last()
-            .is_none_or(|caller| unsafe { &*(*cx).code }.functions[caller.function as usize].strict)
+        && vm.lane_stack.activations.last().is_none_or(|caller| {
+            unsafe { &*(*cx).code }.functions[caller.function as usize].strict
+        })
     {
         return Err(exit(ip));
     }
@@ -3744,9 +3721,7 @@ fn lane_script_call_frame<H: Host>(ip: Ip) -> Ip {
     vm.materialize_lane_activations(cx);
     if values_full {
         let capacity = vm.lane_stack.values.capacity();
-        vm.lane_stack
-            .values
-            .reserve((2 * capacity).max(LANE_SCRIPT_WINDOW));
+        vm.lane_stack.values.reserve((2 * capacity).max(LANE_SCRIPT_WINDOW));
     }
     if activations_full {
         let capacity = vm.lane_stack.activations.capacity();
@@ -3944,11 +3919,7 @@ fn lane_complete_activation<H: Host>(
                 integers: crate::value::IntegerEncoding::TAG,
                 acc: Value::UNDEFINED,
             };
-            return Some((
-                activation.caller_registers,
-                following(activation.call),
-                view,
-            ));
+            return Some((activation.caller_registers, following(activation.call), view));
         }
         // The call returns its callee's completion, and `lane_script_call` makes such a call
         // only from an activation, which completes in turn.
@@ -4276,7 +4247,8 @@ pub(super) fn lane_fields_fit(instruction: WideInstruction, function: &Function)
                             | Op::Unary
                             | Op::MakeObject2
                             | Op::SuperConstArrayObject2
-                    ) || (op == Op::Binary && instruction.returns_from_frame())) =>
+                    )
+                        || (op == Op::Binary && instruction.returns_from_frame())) =>
             {
                 instruction.result_register() < registers
             }
@@ -4336,7 +4308,9 @@ fn lane_operand(
 fn lane_call_fits(instruction: WideInstruction) -> bool {
     match instruction.op() {
         Op::Call => {
-            lane_returns(instruction) && !instruction.direct_eval() && !instruction.parameter_eval()
+            lane_returns(instruction)
+                && !instruction.direct_eval()
+                && !instruction.parameter_eval()
         }
         Op::CallForwardingArguments => lane_returns(instruction),
         Op::Construct => {
@@ -5116,7 +5090,9 @@ fn specialize_register_operands<H: Host>(
                 Value::UNDEFINED => Some(NULLISH_UNDEFINED),
                 _ => None,
             })
-            .filter(|_| super::operations::equality_operator(u32::from(instruction.a())).is_some());
+            .filter(|_| {
+                super::operations::equality_operator(u32::from(instruction.a())).is_some()
+            });
         if let Some(constant) = nullish {
             let handler: Handler = if backward {
                 lane_jump_nullish_false::<H, true>

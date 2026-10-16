@@ -4,20 +4,11 @@ use crate::heap::PrivateBrand;
 
 impl<H: Host> Vm<H> {
     /// Inspect data properties for diagnostics without invoking accessors or Proxy traps.
-    pub(super) fn diagnostic_data_property(
-        &self,
-        mut object: Value,
-        key: PropertyKey,
-    ) -> Option<Value> {
+    pub(super) fn diagnostic_data_property(&self, mut object: Value, key: PropertyKey) -> Option<Value> {
         loop {
-            if self.proxy_parts(object).is_some() {
-                return None;
-            }
+            if self.proxy_parts(object).is_some() { return None; }
             let data = self.object_data(object)?;
-            if self
-                .property_attributes(object, key)
-                .is_some_and(|attributes| attributes.accessor)
-            {
+            if self.property_attributes(object, key).is_some_and(|attributes| attributes.accessor) {
                 return None;
             }
             let value = match key {
@@ -25,31 +16,15 @@ impl<H: Host> Vm<H> {
                 PropertyKey::Symbol(symbol) => self.symbol_property(object, symbol),
                 PropertyKey::Private(_) => None,
             };
-            if value.is_some() {
-                return value;
-            }
+            if value.is_some() { return value; }
             object = data.proto();
-            if object.is_null() {
-                return None;
-            }
+            if object.is_null() { return None; }
         }
     }
 
-    pub(super) fn nullish_property_error(
-        &mut self,
-        p: &ResidualProgram,
-        object: Value,
-        property: Option<&str>,
-    ) -> JsError {
-        let kind = if object.is_null() {
-            "null"
-        } else {
-            "undefined"
-        };
-        let message = match property {
-            Some(property) => format!("Cannot read properties of {kind} (reading '{property}')"),
-            None => format!("Cannot read properties of {kind}"),
-        };
+    pub(super) fn nullish_property_error(&mut self, p: &ResidualProgram, object: Value, property: Option<&str>) -> JsError {
+        let kind = if object.is_null() { "null" } else { "undefined" };
+        let message = match property { Some(property) => format!("Cannot read properties of {kind} (reading '{property}')"), None => format!("Cannot read properties of {kind}") };
         self.type_error(p, message)
     }
 
@@ -258,25 +233,13 @@ impl<H: Host> Vm<H> {
                 let receiver = self.heap.root_value(receiver).unwrap();
                 let value = self.heap.root_value(value).unwrap();
                 if let Some((inner, handler)) = self.proxy_parts(delegate_target) {
-                    return self
-                        .proxy_set_mode(p, inner, handler, receiver, property, value, strict);
+                    return self.proxy_set_mode(p, inner, handler, receiver, property, value, strict);
                 }
                 return match property {
                     PropertyKey::String(atom) => {
-                        let written = self.set_property_with_receiver(
-                            p,
-                            delegate_target,
-                            atom,
-                            value,
-                            receiver,
-                        )?;
+                        let written = self.set_property_with_receiver(p, delegate_target, atom, value, receiver)?;
                         if !written && strict {
-                            return Err(self.rejected_assignment_error(
-                                p,
-                                self.heap.root_value(target).unwrap(),
-                                atom,
-                                true,
-                            ));
+                            return Err(self.rejected_assignment_error(p, self.heap.root_value(target).unwrap(), atom, true));
                         }
                         Ok(written)
                     }
@@ -307,10 +270,7 @@ impl<H: Host> Vm<H> {
             if !self.truthy(result) {
                 if strict {
                     let property = self.detail_string(self.heap.root_value(key).unwrap());
-                    return Err(self.type_error(
-                        p,
-                        format!("'set' on proxy: trap returned falsish for property '{property}'"),
-                    ));
+                    return Err(self.type_error(p, format!("'set' on proxy: trap returned falsish for property '{property}'")));
                 }
                 return Ok(false);
             }
