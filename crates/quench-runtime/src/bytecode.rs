@@ -1142,8 +1142,6 @@ pub(crate) enum PlainLocalSlotIneligibility {
     Tdz,
     SelfBinding,
     Captured,
-    NotEnvironmentVisible,
-    Lexical,
     HiddenName,
 }
 
@@ -1270,6 +1268,126 @@ impl Function {
                 .is_some_and(|name| self.plain_local_slot_is_safe(slot, name, tdz_slots[slot]));
         }
         plain
+    }
+
+    /// Slots whose uninitialized state no access can observe: in a plain-local context, each
+    /// slot that is plain but for its TDZ, and whose every access other than a TDZ reset
+    /// (`InitializeTdz`) or an initializing store runs, on every normal and exceptional path
+    /// from entry, only after an initializing store with no reset since. Resetting such a
+    /// slot to its uninitialized hole then changes nothing any access sees.
+    pub(crate) fn unobservable_tdz_slots<'a>(
+        &self,
+        atom_name: impl Fn(Atom) -> Option<&'a str>,
+    ) -> Vec<bool> {
+        let locals = usize::from(self.locals);
+        let mut candidates = vec![false; locals];
+        if !self.plain_local_context_is_safe() {
+            return candidates;
+        }
+        let decoded = self.instructions().collect::<Vec<_>>();
+        for instruction in &decoded {
+            if instruction.op() == Op::InitializeTdz
+                && let Some(candidate) = candidates.get_mut(instruction.local_slot())
+            {
+                *candidate = true;
+            }
+        }
+        for (slot, candidate) in candidates.iter_mut().enumerate() {
+            *candidate = *candidate
+                && self
+                    .local_atoms
+                    .get(slot)
+                    .and_then(|atom| atom_name(*atom))
+                    .is_some_and(|name| self.plain_local_slot_is_safe(slot, name, false));
+        }
+        if !candidates.contains(&true) {
+            return candidates;
+        }
+        let initializing = |instruction: WideInstruction| {
+            matches!(instruction.op(), Op::StoreLocal | Op::StoreLocalPlain)
+                && instruction.boolean_field(InstructionField::C) == Some(true)
+        };
+        // Must-initialized slots on entry to each instruction. An instruction no path reaches
+        // keeps every slot (it never runs); `visited` makes each reached one transfer once.
+        let words = locals.div_ceil(u64::BITS as usize);
+        let len = decoded.len();
+        let mut entry = vec![vec![u64::MAX; words]; len + 1];
+        entry[0].fill(0);
+        let mut visited = vec![false; len + 1];
+        let mut work = vec![0];
+        while let Some(pc) = work.pop() {
+            if pc >= len {
+                continue;
+            }
+            visited[pc] = true;
+            let instruction = decoded[pc];
+            let before = entry[pc].clone();
+            let mut after = before.clone();
+            if instruction.op() == Op::InitializeTdz || initializing(instruction) {
+                let slot = instruction.local_slot();
+                let (word, bit) = (slot / u64::BITS as usize, 1u64 << (slot % u64::BITS as usize));
+                if instruction.op() == Op::InitializeTdz {
+                    after[word] &= !bit;
+                } else {
+                    after[word] |= bit;
+                }
+            }
+            let mut meet = |target: usize, state: &[u64]| {
+                let Some(current) = entry.get_mut(target) else {
+                    return;
+                };
+                let mut changed = false;
+                for (word, incoming) in current.iter_mut().zip(state) {
+                    let next = *word & incoming;
+                    changed |= next != *word;
+                    *word = next;
+                }
+                if changed || !visited[target] {
+                    visited[target] = true;
+                    work.push(target);
+                }
+            };
+            match instruction.op().control_flow_layout() {
+                ControlFlowLayout::Jump => meet(instruction.jump_target() as usize, &after),
+                ControlFlowLayout::ConditionalJump => {
+                    meet(pc + 1, &after);
+                    meet(instruction.jump_target() as usize, &after);
+                }
+                ControlFlowLayout::BranchTable => {
+                    for target in branch_table_entries(pc, instruction) {
+                        meet(target, &after);
+                    }
+                }
+                ControlFlowLayout::Terminal => {}
+                ControlFlowLayout::Call | ControlFlowLayout::Fallthrough
+                    if instruction.returns_from_frame() => {}
+                ControlFlowLayout::Call | ControlFlowLayout::Fallthrough => meet(pc + 1, &after),
+            }
+            for handler in &self.handlers {
+                if pc as u32 >= handler.start && (pc as u32) < handler.end {
+                    meet(handler.target as usize, &before);
+                    if let Some(target) = handler.return_target {
+                        meet(target as usize, &before);
+                    }
+                }
+            }
+        }
+        for (pc, instruction) in decoded.iter().enumerate() {
+            if instruction.op().immediate_role() != ImmediateRole::LocalSlot
+                || instruction.op() == Op::InitializeTdz
+                || initializing(*instruction)
+            {
+                continue;
+            }
+            let slot = instruction.local_slot();
+            let (word, bit) = (slot / u64::BITS as usize, 1u64 << (slot % u64::BITS as usize));
+            if entry[pc][word] & bit == 0
+                && let Some(candidate) = candidates.get_mut(slot)
+            {
+                *candidate = false;
+            }
+        }
+        candidates
     }
 
     /// Whether anything can read an activation's implicit `new.target` and lexical-this
@@ -1562,9 +1680,9 @@ impl Function {
         atom_name: &str,
         has_tdz: bool,
     ) -> Option<PlainLocalSlotIneligibility> {
-        let Some(&atom) = self.local_atoms.get(slot) else {
+        if self.local_atoms.get(slot).is_none() {
             return Some(PlainLocalSlotIneligibility::MissingAtom);
-        };
+        }
         if has_tdz {
             return Some(PlainLocalSlotIneligibility::Tdz);
         }
@@ -1586,13 +1704,7 @@ impl Function {
         {
             return Some(PlainLocalSlotIneligibility::MappedArgument);
         }
-        if !self.environment_atoms.contains(&atom) {
-            return Some(PlainLocalSlotIneligibility::NotEnvironmentVisible);
-        }
-        if self.lexical_atoms.contains(&atom) {
-            return Some(PlainLocalSlotIneligibility::Lexical);
-        }
-        if atom_name.starts_with('\0') {
+        if local_name_requires_environment(atom_name) {
             return Some(PlainLocalSlotIneligibility::HiddenName);
         }
         None
