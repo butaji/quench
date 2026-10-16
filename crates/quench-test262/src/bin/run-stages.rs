@@ -114,7 +114,7 @@ fn run() -> Result<(), String> {
             files
         };
         total_selected += files.len();
-        let mut current_passes = std::collections::HashSet::new();
+        let mut settled = std::collections::HashSet::new();
         let mut passed = 0;
         let mut waived = 0;
         let mut failed = 0;
@@ -135,8 +135,9 @@ fn run() -> Result<(), String> {
                     &outcome,
                     adjudication.waiver(),
                 ));
-                if outcome.is_ok() {
-                    current_passes.insert(relative);
+                // Passes and failures exactly as waived settle a frozen expectation.
+                if outcome.is_ok() || adjudication.waiver().is_some() {
+                    settled.insert(relative);
                 }
                 match adjudication {
                     Adjudication::Pass => {
@@ -186,7 +187,7 @@ fn run() -> Result<(), String> {
         write_outcome_report(&report_outcomes, &provenance)?;
         let mut stage_regressed = false;
         if let Some(baseline) = &baseline {
-            let regressions = baseline.regressions(&current_passes, |relative| {
+            let regressions = baseline.regressions(&settled, |relative| {
                 let path = args.root.join("test").join(relative);
                 stage.owns_file(&path, &stages)
                     && args

@@ -255,11 +255,16 @@ fn embed_node_protocol_constants(root: &Path) {
     }
     let codes = entries(root, "node_exit_code.h", "EXIT_CODE_LIST");
     let statuses = entries(root, "compile_cache.h", "COMPILE_CACHE_STATUS");
-    let mut output = String::from("pub(crate) const EXIT_CODES: &[(&str, i32)] = &[\n");
-    for code in codes {
+    let codes = codes.iter().map(|code| {
         let (name, value) = code.split_once(',').expect("Node exit code pair");
         let value: i32 = value.trim().parse().expect("numeric Node exit code");
-        output.push_str(&format!("    ({:?}, {value}),\n", format!("k{}", name.trim())));
+        (name.trim(), value)
+    }).collect::<Vec<_>>();
+    let mut output = String::from("#[repr(i32)]\npub(crate) enum ExitCode {\n");
+    for (name, value) in &codes { output.push_str(&format!("    {name} = {value},\n")); }
+    output.push_str("}\npub(crate) const EXIT_CODES: &[(&str, i32)] = &[\n");
+    for (name, _) in &codes {
+        output.push_str(&format!("    ({:?}, ExitCode::{name} as i32),\n", format!("k{name}")));
     }
     output.push_str("];\npub(crate) const COMPILE_CACHE_STATUS: &[&str] = &[\n");
     for status in statuses { output.push_str(&format!("    {status:?},\n")); }

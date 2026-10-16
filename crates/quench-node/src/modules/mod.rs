@@ -79,6 +79,7 @@ pub(crate) mod net_lookup_shared_vm;
 pub(crate) mod net_options_shared_vm;
 pub(crate) mod net_reference_shared_vm;
 pub(crate) mod net_shared_vm;
+pub(crate) mod net_server_listen;
 pub(crate) mod node_errors_shared_vm;
 pub(crate) mod node_protocol_constants;
 pub(crate) mod os_facts;
@@ -156,3 +157,5 @@ pub(crate) mod zlib_native_codec;
 pub(crate) mod zlib_native_shared_vm;
 
 pub(crate) mod native_work;
+
+pub(crate) mod report_configuration_shared_vm;
