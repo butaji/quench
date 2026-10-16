@@ -60,6 +60,8 @@ fn invalid_inputs_are_rejected_before_guest_effects() {
         for error in [
             runtime.get_property_rooted(invalid, key).unwrap_err(),
             runtime.get_property_rooted(target, invalid).unwrap_err(),
+            runtime.subtract_rooted(invalid, key).unwrap_err(),
+            runtime.subtract_rooted(key, invalid).unwrap_err(),
             runtime.call_rooted(invalid, receiver, &[]).unwrap_err(),
             runtime.call_rooted(callback, invalid, &[]).unwrap_err(),
             runtime
@@ -356,4 +358,32 @@ fn initialization_and_reset_bound_embedding_roots() {
             .exception
             .is_none()
     );
+}
+
+#[test]
+fn rooted_subtraction_uses_guest_coercion_and_retains_abrupt_completions() {
+    let (mut runtime, program, host) = initialized(
+        "var left = {valueOf(){print('left'); $262.gc(); return 7;}};
+         var right = {valueOf(){print('right'); $262.gc(); return 2;}};
+         var thrown = {marker: 42};
+         var abrupt = {valueOf(){throw thrown;}};
+         var bigint = 1n;",
+    );
+    let global = runtime.global_root().unwrap();
+    let left = property(&mut runtime, global, "left");
+    let right = property(&mut runtime, global, "right");
+    let result = runtime.subtract_rooted(left, right).unwrap();
+    assert_eq!(runtime.rooted_value(result).unwrap().as_number(), Some(5.0));
+    assert_eq!(host.0.borrow().as_slice(), ["left", "right"]);
+    let abrupt = property(&mut runtime, global, "abrupt");
+    let thrown = property(&mut runtime, global, "thrown");
+    let error = runtime.subtract_rooted(abrupt, right).unwrap_err();
+    let exception = error.exception.unwrap();
+    runtime.collect(&program).unwrap();
+    assert_eq!(runtime.rooted_value(exception), runtime.rooted_value(thrown));
+    let bigint = property(&mut runtime, global, "bigint");
+    let error = runtime.subtract_rooted(bigint, right).unwrap_err();
+    assert!(error.to_string().contains("BigInt"));
+    if let Some(exception) = error.exception { runtime.release_root(exception); }
+    for root in [global, left, right, result, abrupt, thrown, exception, bigint] { assert!(runtime.release_root(root)); }
 }

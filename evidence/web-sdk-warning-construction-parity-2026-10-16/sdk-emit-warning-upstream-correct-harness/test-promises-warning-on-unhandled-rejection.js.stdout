@@ -1,0 +1,1 @@
+PASS tests/node/test/parallel/test-promises-warning-on-unhandled-rejection.js

@@ -1,0 +1,66 @@
+    Checking quench-node v0.1.0 (/workspace/quench/crates/quench-node)
+error[E0774]: `derive` may only be applied to `struct`s, `enum`s and `union`s
+  --> crates/quench-node/src/modules/shared_event_loop.rs:90:1
+   |
+90 | #[derive(Clone, Debug)]
+   | ^^^^^^^^^^^^^^^^^^^^^^^ not applicable here
+91 | const FIRST_SHARED_IMMEDIATE_ID: u64 = 1;
+   | ----------------------------------------- not a `struct`, `enum` or `union`
+
+error[E0603]: function `get` is private
+    --> crates/quench-node/src/host/shared_vm.rs:1018:59
+     |
+1018 |     let on = crate::modules::event_constructor_shared_vm::get(context, process, "on")?;
+     |                                                           ^^^ private function
+     |
+note: the function `get` is defined here
+    --> crates/quench-node/src/modules/event_constructor_shared_vm.rs:6:1
+     |
+   6 | / pub(super) fn get(
+   7 | |     context: &mut NativeContext<'_, NodeHost>,
+   8 | |     object: RootId,
+   9 | |     name: &str,
+...    |
+  12 | |     context.get_property_rooted(object, key)
+  13 | | }
+     | |_^
+
+error[E0599]: no method named `take_shared_next_tick` found for struct `SharedEventLoop` in the current scope
+    --> crates/quench-node/src/modules/process_shared_vm.rs:2492:66
+     |
+2492 |             let callback = { shared_state.borrow_mut().scheduler.take_shared_next_tick() };
+     |                                                                  ^^^^^^^^^^^^^^^^^^^^^
+     |
+    ::: crates/quench-node/src/modules/shared_event_loop.rs:8:1
+     |
+   8 | pub struct SharedEventLoop {
+     | -------------------------- method `take_shared_next_tick` not found for this struct
+     |
+help: there is a method `queue_shared_next_tick` with a similar name, but with different arguments
+    --> crates/quench-node/src/modules/shared_event_loop.rs:123:5
+     |
+ 123 |     pub fn queue_shared_next_tick(&mut self, callback: SharedCallback) {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0599]: no method named `has_shared_next_ticks` found for struct `SharedEventLoop` in the current scope
+    --> crates/quench-node/src/modules/process_shared_vm.rs:2510:44
+     |
+2510 |         if shared_state.borrow().scheduler.has_shared_next_ticks() {
+     |                                            ^^^^^^^^^^^^^^^^^^^^^
+     |
+    ::: crates/quench-node/src/modules/shared_event_loop.rs:8:1
+     |
+   8 | pub struct SharedEventLoop {
+     | -------------------------- method `has_shared_next_ticks` not found for this struct
+     |
+help: there is a method `queue_shared_next_tick` with a similar name, but with different arguments
+    --> crates/quench-node/src/modules/shared_event_loop.rs:123:5
+     |
+ 123 |     pub fn queue_shared_next_tick(&mut self, callback: SharedCallback) {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Some errors have detailed explanations: E0599, E0603, E0774.
+For more information about an error, try `rustc --explain E0599`.
+error: could not compile `quench-node` (lib) due to 4 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `quench-node` (lib test) due to 4 previous errors

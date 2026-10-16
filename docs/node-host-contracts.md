@@ -897,6 +897,27 @@ Abrupt getters close the iterator without replacing the original thrown value;
 normal iterator-close failures remain observable. Tests collect during return
 and before callback delivery. Exception capture permits null reset before its
 occupied-slot check and uses the shared argument-type/coded-error policy.
+Its primary slot belongs to one retained process state object, reset with the
+VM heap. Set/has ignore their receiver; callback delivery uses that state as its
+receiver, so captureFn mutation remains observable. Guest string properties
+cannot impersonate the slot. GC and repeated-execution checks cover its roots.
+Uncaught delivery emits uncaughtExceptionMonitor before selecting the primary
+callback, then re-reads captureFn for the property call after its null check.
+Monitor results are ignored; uncaught event results use JavaScript truthiness.
+Both events share the canonical process-event dispatch operation.
+Auxiliary capture tries callbacks in reverse order and accepts only literal
+true. It re-reads the callback collection for each property call; ordinary
+subtraction owns length coercion, including fractional property keys and guest
+collection during coercion. The retained Runtime subtraction adapter shares the
+same VM operation as native contexts. Public capture methods have Node's public
+names and ordinary constructor shapes. Diagnostic report integration and
+internal auxiliary registration remain unqualified.
+A thrown monitor, primary, auxiliary or uncaught listener enters a distinct
+fatal-handler exit state, using the configured SDK's typed exit code and
+suppressing normal exit events. Explicit exits retain their own status and event
+policy, including an explicitly requested code 7. The protocol enum and public
+binding table derive from the same header declaration. A 19-child oracle matrix
+covers top-level, next-tick, promise, auxiliary and explicit-exit paths.
 Bound-handle error/reentry details, original native-source/stack fidelity,
 diagnostic report flags and the wider Node lifecycle backlog remain open.
 
@@ -947,3 +968,58 @@ unchanged SDK owns validation and Dirent construction. Existing filesystem
 adapters capture a Rust forwarding function to this same policy, initialized
 after the filesystem module is cached. Their outer asynchronous validation and
 scheduling remain separate compatibility work.
+
+## Configured CLI version and flag order
+
+The Node-compatible CLI derives --version/-v from the same configured SDK
+version as process.version and process.versions.node. It handles version flags
+while parsing startup options, before evaluating guest source. An explicit -- or
+the first guest argument ends option parsing, so later version spellings remain
+guest arguments. The oracle checks aliases, jitless ordering, eval side effects
+and both argument boundaries. General help/unknown-option parity remains open.
+
+## Diagnostic-report configuration and one process listener store
+
+The lazy process.report getter returns the configured Node library's report
+object. Rust owns its mutable configuration, initialized from the same parsed
+startup options used by native option queries. The original SDK owns public
+validation, property/method descriptors, signal changes and field order.
+Report directory aliases, option/environment precedence, and report-signal's
+ordered implication of report-on-signal are covered against the oracle.
+
+Capture installation snapshots reportOnUncaughtException with strict true and
+then disables it. Clearing restores the saved flag only when auxiliary length
+is strictly numeric zero. The process.report reference is evaluated before the
+saved-flag getter on restoration; installation reads process.report separately
+for the read and write. Slot mutation precedes report getter failures.
+
+Process uses the common EventEmitter store for registration, dispatch,
+inspection, symbols, borrowed methods, prepending and mutable _events records.
+Signal watching and IPC counted references are actual listener add/remove
+observers; no second scheduler listener map mirrors those facts. Exit dispatch
+uses the public process emit hook after entering the named exit state.
+The Node26 ordinary once-wrapper shape is retained. Report generation/file I/O,
+abort toggles, default warning listener/source fidelity and the broader Node
+compatibility backlog remain unqualified.
+
+## Warning listener policy
+
+The configured SDK's onWarning function is the actual default listener. Native
+warning dispatch only emits the warning event, so listener removal and warning
+suppression follow the common EventEmitter store. The original global console
+is initialized with its lazy process streams before this policy can write.
+The CLI option owner supplies repeatable disable-warning values, redirect paths
+and trace/deprecation flags. Truthy startup aliases have Node's read-only,
+configurable descriptors; absent flags do not create false-valued properties.
+Native warning construction retains its explicit internal rejection metadata;
+public emitWarning metadata has Node's name, length and ordinary constructor
+shape and accesses the canonical process independently of global replacement.
+
+### Public warning construction
+
+`process.emitWarning` is the configured Node SDK function, including argument
+validation, option getter order, stack-constructor handling and function source.
+Rust promise-rejection delivery calls this public function with the normal
+string/type or Error arguments; it does not attach private string-key options.
+The SDK also owns the default warning listener. Full diagnostic report generation,
+exception abort/async-hook contracts and total Node compatibility remain open.
