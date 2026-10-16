@@ -9227,3 +9227,18 @@ fn stream_iterator_webidl_uses_genuine_original_abort_signal_brands() {
 fn internal_abort_operation_uses_original_provider_state_reason_and_dependent_delivery() {
     compare_node_source_with_args(include_str!("../node-tests/test-internal-abort-provider.js"),&["--no-warnings","--expose-internals"]);
 }
+
+#[test]
+fn async_iterator_protocol_and_secondary_realm_inheritance_match_node() {
+    compare_node_stream_source(include_str!("../node-tests/test-async-iterator-protocol.js"));
+}
+
+#[test]
+fn generator_loop_return_preserves_cleanup_order_rejections_and_finally() {
+    compare_node_stream_source(include_str!("../node-tests/test-generator-loop-return.js"));
+}
+
+#[test]
+fn async_delegated_return_unwinds_original_generator_finally() {
+    compare_node_stream_source(include_str!("../node-tests/test-async-delegate-return.js"));
+}
