@@ -210,8 +210,7 @@ fn rebuild_shape(
         if let Some((_, attributes)) = entry
             && data.is_none()
         {
-            let attributes =
-                ShapeAttributes::record(attributes.attributes(old_accessors), accessors);
+            let attributes = ShapeAttributes::record(attributes.attributes(old_accessors), accessors);
             parent = append_compacted_shape(
                 shapes,
                 transitions,
