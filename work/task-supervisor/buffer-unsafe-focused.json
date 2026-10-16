@@ -1,0 +1,11 @@
+{
+  "cwd": "/workspace/quench",
+  "commands": [
+    [
+      "bash",
+      "/workspace/quench/work/native-buffer-unsafe/build-focused.sh"
+    ]
+  ],
+  "state": "/workspace/quench/work/task-supervisor/buffer-unsafe-focused-state.json",
+  "log": "/workspace/quench/work/task-supervisor/buffer-unsafe-focused.log"
+}

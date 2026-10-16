@@ -1,0 +1,28 @@
+{
+  "schema_version": 2,
+  "inventory_hash": "26de2ba3c7d356d3",
+  "timeout_secs": 30,
+  "jobs": 1,
+  "node_version": "v26.12.0",
+  "runtime_commit": "f2d37dccc077772a3dcac4dfd6d0bff558a9e1f2",
+  "tests_node_commit": "unknown",
+  "platform": "linux-x86_64",
+  "results": [
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-buffer-concat.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    }
+  ]
+}

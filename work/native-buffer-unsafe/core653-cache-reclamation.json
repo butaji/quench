@@ -1,0 +1,7 @@
+{
+  "path": "target/debug/deps/quench_runtime-faba0c2c63dca90b",
+  "bytes": 558601168,
+  "sha256": "b9f158e975c6f243954bc6729e395e5e6d3a73c02e1620c5937bba4fca7c635c",
+  "utc": "2026-10-16T06:41:16.622502+00:00",
+  "reason": "Completed owned Core653 test executable cache; passing log/source qualification already published to both branches. New changes are Node-only and unchanged Core will be verified by exact manifest. Immutable binary bundles retained."
+}

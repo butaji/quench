@@ -1,0 +1,26 @@
+{
+  "baseline_counts": {
+    "timeout": 93,
+    "fail": 2502,
+    "pass": 1783,
+    "skip": 637
+  },
+  "counts": {
+    "timeout": 94,
+    "fail": 2497,
+    "pass": 1787,
+    "skip": 637
+  },
+  "gained": [
+    "test-buffer-pool-untransferable.js",
+    "test-dgram-socket-buffer-size.js",
+    "test-error-prepare-stack-trace.js",
+    "test-release-npm.js",
+    "test-stream-iter-readable-interop.js"
+  ],
+  "lost": [
+    "test-shadow-realm-prepare-stack-trace.js"
+  ],
+  "new_skips": [],
+  "removed_skips": []
+}

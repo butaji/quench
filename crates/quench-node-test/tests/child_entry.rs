@@ -9503,3 +9503,43 @@ fn fused_field_reads_preserve_each_getter_operation_source() {
 fn callsite_eval_classification_follows_compilation_origin_and_survives_escaped_closures() {
     compare_node_source_with_args(include_str!("../node-tests/test-callsite-eval-origin.js"), &["--expose-gc"]);
 }
+
+#[test]
+fn native_buffer_unsafe_allocations_preserve_alignment_pooling_snapshots_and_errors() {
+    compare_node_source_with_args(
+        include_str!("../node-tests/test-native-buffer-unsafe-alignment.js"),
+        &["--no-warnings", "--expose-internals", "--expose-gc"],
+    );
+}
+
+#[test]
+fn native_buffer_concat_preserves_pooling_proxy_reads_reentrancy_and_padding() {
+    compare_node_source_with_args(
+        include_str!("../node-tests/test-native-buffer-concat-pool.js"),
+        &[],
+    );
+}
+
+#[test]
+fn native_buffer_latin1_classifies_actual_units_and_preserves_original_validation() {
+    compare_node_source_with_args(
+        include_str!("../node-tests/test-native-buffer-latin1.js"),
+        &["--no-warnings", "--expose-internals"],
+    );
+}
+
+#[test]
+fn native_buffer_public_policy_captures_original_validators_and_coded_constructors() {
+    compare_node_source_with_args(
+        include_str!("../node-tests/test-native-buffer-policy-captures.js"),
+        &["--no-warnings", "--expose-internals"],
+    );
+}
+
+#[test]
+fn shadow_realms_own_original_node_error_policy_default_hooks_and_private_fallbacks() {
+    compare_node_source_with_args(
+        include_str!("../node-tests/test-shadow-stack-policy-isolation.js"),
+        &["--no-warnings", "--expose-internals", "--experimental-shadow-realm", "--expose-gc"],
+    );
+}
