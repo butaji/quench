@@ -764,7 +764,11 @@ pub(crate) fn require_for_module(
             );
         }
         Some(BuiltinModule::InternalTestBinding) => {
-            return node_library_module(context, "internal/test/binding.js", "internal/test/binding.js");
+            // Unlike internal policy initialization, this guest-facing SDK bridge
+            // must observe the current process.emitWarning and warning options.
+            // Its intrinsic operations already come from the SDK primordials.
+            let root = context.host_mut().node_library_root.clone();
+            return load(context, &root.join("lib/internal/test/binding.js"), Some(parent), EntryGoal::CommonJs);
         }
         Some(BuiltinModule::InternalBlockList) => {
             return context.evaluate_script_rooted(
@@ -2354,6 +2358,10 @@ fn load_with_resolution(
 };
 const getLinkedBinding = () => ({});
 "#
+                } else if library_relative == Some(Path::new("lib/internal/test/binding.js")) {
+                    // This configured SDK entry exposes the engine's raw binding
+                    // objects; it must not expose per-module library adapters.
+                    "const internalBinding = __nativeInternalBinding;"
                 } else if in_node_internal {
                     node_internal_binding_source()
                 } else {
