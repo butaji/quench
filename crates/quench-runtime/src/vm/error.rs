@@ -546,7 +546,11 @@ impl<H: Host> Vm<H> {
         let residual = self.programs.get(frame.program)?;
         let function = residual.functions.get(frame.function as usize)?;
         let pc = u32::try_from(frame.source_instruction_pc()).unwrap_or(u32::MAX);
-        let position = residual.source_position(frame.function, pc)?;
+        let position = if let Some((site, part)) = frame.source_field {
+            if let Some((line, column)) = residual.field_sites.get(site).and_then(|site| site.source(part)) {
+                residual.adjust_source_position(crate::bytecode::SourcePosition { pc, line, column })?
+            } else { residual.source_position(frame.function, pc)? }
+        } else { residual.source_position(frame.function, pc)? };
         let name = frame.context.callable().map_or_else(
             || function.name.map_or(CallSiteName::Anonymous, |name| CallSiteName::Static(self.atom_value(name))),
             CallSiteName::Callable,
