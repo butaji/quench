@@ -1662,6 +1662,8 @@ fn queue_native_read(
     bytes: Option<&[u8]>,
     count: i32,
 ) -> Result<bool, String> {
+    // Public Socket ownership is authoritative after admission/adoption.
+    if shared_state.borrow().net_sockets.contains_key(&socket) { return Ok(false); }
     let handle = shared_state
         .borrow()
         .native_stream
