@@ -11,6 +11,7 @@ const CALL_SITE_METHODS: &[(&str, Native)] = &[
     ("getColumnNumber", Native::CallSiteGetColumnNumber),
     ("getEvalOrigin", Native::CallSiteGetEvalOrigin),
     ("getFileName", Native::CallSiteGetFileName),
+    ("getFunction", Native::CallSiteGetFunction),
     ("getFunctionName", Native::CallSiteGetFunctionName),
     ("getLineNumber", Native::CallSiteGetLineNumber),
     ("getMethodName", Native::CallSiteGetMethodName),
@@ -44,6 +45,7 @@ pub(super) fn error_native_length(native: Native) -> Option<f64> {
         | Native::ErrorStackGetter
         | Native::CallSiteGetFileName
         | Native::CallSiteGetThis
+        | Native::CallSiteGetFunction
         | Native::CallSiteGetFunctionName
         | Native::CallSiteGetLineNumber
         | Native::CallSiteGetColumnNumber
@@ -426,7 +428,7 @@ impl<H: Host> Vm<H> {
         let mut records = Vec::with_capacity(self.frames.len().min(limit));
         let mut native_frames = self.native_stack_frames.iter().rev().peekable();
         let mut constructor_found = !trim_constructor;
-        let mut hide_this = false;
+        let mut hide_identity = false;
         for (depth, frame) in self.frames.iter().enumerate().rev() {
             while records.len() < limit
                 && native_frames
@@ -439,6 +441,7 @@ impl<H: Host> Vm<H> {
                         location: CallSiteLocation::Native,
                         name: CallSiteName::Static(JsString::from_str(name)),
                         this_value: Value::UNDEFINED,
+                        hide_identity: true,
                     });
                 }
             }
@@ -457,7 +460,7 @@ impl<H: Host> Vm<H> {
             let Some(function) = residual.functions.get(frame.function as usize) else {
                 continue;
             };
-            hide_this |= function.strict;
+            hide_identity |= function.strict;
             if !constructor_found {
                 constructor_found = frame.context.callable() == Some(constructor_opt);
                 continue;
@@ -481,7 +484,8 @@ impl<H: Host> Vm<H> {
                     column: position.column,
                 },
                 name,
-                this_value: if hide_this || frame.this == Value::DELETED {
+                hide_identity,
+                this_value: if frame.this == Value::DELETED {
                     Value::UNDEFINED
                 } else {
                     frame.this
@@ -495,6 +499,7 @@ impl<H: Host> Vm<H> {
                     location: CallSiteLocation::Native,
                     name: CallSiteName::Static(JsString::from_str(name)),
                     this_value: Value::UNDEFINED,
+                    hide_identity: true,
                 });
             }
         }
@@ -634,7 +639,11 @@ impl<H: Host> Vm<H> {
                 }
                 CallSiteLocation::Native => Value::NULL,
             }),
-            Native::CallSiteGetThis => Ok(record.this_value),
+            Native::CallSiteGetThis => Ok(if record.hide_identity { Value::UNDEFINED } else { record.this_value }),
+            Native::CallSiteGetFunction => Ok(match record.name {
+                CallSiteName::Callable(function) if !record.hide_identity => function,
+                _ => Value::UNDEFINED,
+            }),
             Native::CallSiteGetFunctionName | Native::CallSiteGetMethodName => Ok(self.call_site_name(&record)
                 .map(|name| self.heap.alloc(Cell::String(name)))
                 .unwrap_or(Value::NULL)),
