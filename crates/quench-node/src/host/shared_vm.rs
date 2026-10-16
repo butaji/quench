@@ -292,6 +292,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "BrotliEncoder" (0) => crate::modules::zlib_native_shared_vm::create_brotli_encoder,
         #[cfg(quench_node_brotli)]
         method "BrotliDecoder" (0) => crate::modules::zlib_native_shared_vm::create_brotli_decoder,
+        method "ZstdCompress" (0) => crate::modules::zlib_native_shared_vm::create_zstd_compress,
+        method "ZstdDecompress" (0) => crate::modules::zlib_native_shared_vm::create_zstd_decompress,
         method "Zlib" (0) => crate::modules::zlib_native_shared_vm::create,
         method "zlibNativeInit" (0) => crate::modules::zlib_native_shared_vm::initialize,
         method "zlibNativeWrite" (0) => crate::modules::zlib_native_shared_vm::write,
