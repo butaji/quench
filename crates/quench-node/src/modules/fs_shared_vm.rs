@@ -2940,15 +2940,11 @@ pub(super) fn stream_io_error(
     Ok(context.throw(exception))
 }
 
-/// Capture unchanged Node glob policy before guest code can replace its imports.
-/// Traversal uses the public filesystem primitives backed by this host.
+/// Install unchanged Node glob exports when the native fs module is first
+/// required. The original policy retains its own lazy traversal-module import.
 pub(crate) fn initialize_glob_policy(
-    context: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, NodeHost>, module: RootId,
 ) -> Result<(), RootedError> {
-    let module = crate::host::shared_vm::commonjs::fs_module(context)?;
-    crate::host::shared_vm::commonjs::node_library_module(
-        context, "fs.js", "internal/fs/glob.js",
-    )?;
     let policy = crate::host::shared_vm::commonjs::node_library_module(context, "fs.js", "fs.js")?;
     for name in ["glob", "globSync"] {
         let function = get(context, policy, name)?;
