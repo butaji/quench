@@ -657,3 +657,22 @@ guest children inherit the logical process priority. The requested process
 operation determines the public result and original Node policy constructs
 system errors from the native context. This does not claim Node worker-thread
 semantics or complete Node API parity.
+
+## Canonical inspection and native snapshots
+
+The configured Node `internal/util/inspect.js` owns public `inspect`, `format`
+and `formatWithOptions` identities and internal formatting. Its initialization
+runs before guest code because it captures private state using intrinsic
+methods; nonconfigurable guest replacements remain intact afterward. Native
+key, type and symbol bindings have independent cache ownership, so they do not
+recursively require public formatter construction. The partial duplicate
+renderers and their color-table copies are removed.
+
+Core snapshots expose Proxy target/handler pairs and collection entries without
+traps, public methods or cursor advancement. Revoked proxies preserve nulls.
+Collection snapshots read the live Map/Set slots and current iterator cursor,
+including deletion/clear transitions; scoped roots keep entries alive across
+native reentry and collection. Node policy derives display strings from them.
+The native class fallback reads builtin slots and data tags without public
+constructor or tag getters. Original user-constructor provenance after mutation
+and exact Node stack rendering remain separate compatibility gaps.

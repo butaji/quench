@@ -1065,3 +1065,83 @@ for(const [functionValue,constructor] of [[metadataCallback,false],[MetadataCapt
             .unwrap();
     }
 }
+
+#[derive(Default)]
+struct ProxySnapshotHost;
+impl Host for ProxySnapshotHost {
+    fn write_line(&mut self, _: &str) {}
+    fn clock_millis(&mut self) -> f64 { 0.0 }
+    fn functions(&self) -> &[HostFunction<Self>] {
+        crate::host_functions![global "snapshotProxy" (2) => snapshot_proxy]
+    }
+}
+fn snapshot_proxy(
+    context: &mut NativeContext<'_, ProxySnapshotHost>, _: RootId, args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let undefined = context.undefined();
+    let proxy = args.first().copied().unwrap_or(undefined);
+    let Some((target, handler)) = context.proxy_details_rooted(proxy)? else { return Ok(undefined); };
+    if let Some(callback) = args.get(1).copied() {
+        context.call_rooted(callback, undefined, &[])?;
+    }
+    context.collect()?;
+    context.array_rooted(&[target, handler])
+}
+#[test]
+fn native_proxy_snapshots_survive_revocation_reentry_and_collection_without_traps() {
+    let source = r#"
+let target={tag:'target'},handler={tag:'handler',get(){throw Error('proxy trap')}};
+const pair=Proxy.revocable(target,handler);
+const held=snapshotProxy(pair.proxy,()=>{target=null;handler=null;pair.revoke()});
+if(held[0].tag!=='target'||held[1].tag!=='handler')throw Error('snapshot lost roots');
+const revoked=snapshotProxy(pair.proxy);
+if(revoked[0]!==null||revoked[1]!==null)throw Error('revoked snapshot');
+if(snapshotProxy({})!==undefined)throw Error('ordinary object snapshot');
+"#;
+    for program in [
+        Engine::specialize_unspecialized(source, "proxy-snapshot.js").unwrap(),
+        Engine::specialize(source, "proxy-snapshot.js").unwrap(),
+    ] {
+        Runtime::new(ProxySnapshotHost).execute(&program).unwrap();
+    }
+}
+
+#[derive(Default)]
+struct CollectionPreviewHost;
+impl Host for CollectionPreviewHost {
+    fn write_line(&mut self, _: &str) {}
+    fn clock_millis(&mut self) -> f64 { 0.0 }
+    fn functions(&self) -> &[HostFunction<Self>] {
+        crate::host_functions![global "previewCollection" (2) => preview_collection]
+    }
+}
+fn preview_collection(
+    context: &mut NativeContext<'_, CollectionPreviewHost>, _: RootId, args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let undefined = context.undefined();
+    let source = args.first().copied().unwrap_or(undefined);
+    let Some(preview) = context.collection_preview_rooted(source)? else { return Ok(undefined); };
+    if let Some(callback) = args.get(1).copied() { context.call_rooted(callback, undefined, &[])?; }
+    context.collect()?;
+    let entries = context.array_rooted(&preview.entries)?;
+    let paired = context.boolean(preview.is_key_value);
+    context.array_rooted(&[entries, paired])
+}
+#[test]
+fn native_collection_previews_keep_cursors_and_root_entries_across_clear_and_collection() {
+    let source = r#"
+const map=new Map([[{key:1},{value:2}]]),iterator=map.entries();
+const snapshot=previewCollection(iterator,()=>map.clear());
+if(!snapshot[1]||snapshot[0][0].key!==1||snapshot[0][1].value!==2)throw Error('preview roots');
+if(!iterator.next().done)throw Error('clear visibility');
+map.set('a',1);map.set('b',2);const keys=map.keys();keys.next();
+const view=previewCollection(keys);if(view[1]||view[0].join()!=='b'||keys.next().value!=='b')throw Error('preview consumed iterator');
+if(previewCollection({})!==undefined)throw Error('ordinary object preview');
+"#;
+    for program in [
+        Engine::specialize_unspecialized(source, "collection-preview.js").unwrap(),
+        Engine::specialize(source, "collection-preview.js").unwrap(),
+    ] {
+        Runtime::new(CollectionPreviewHost).execute(&program).unwrap();
+    }
+}
