@@ -1,0 +1,9 @@
+
+running 4 tests
+test process_capture_callback_reset_prioritizes_null_and_original_type_validation ... ok
+test process_capture_delivery_reloads_the_callback_after_the_null_check ... ok
+test process_capture_methods_have_public_names_and_ordinary_constructor_shapes ... ok
+test process_capture_state_is_canonical_receiver_independent_and_survives_collection ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 395 filtered out; finished in 0.54s
+

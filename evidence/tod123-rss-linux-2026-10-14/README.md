@@ -428,3 +428,22 @@ RayTrace's +14M per run is collector work only (219M → 259M per three runs; th
 error/buffer/shadow/call-site failures equal the trunk's. Stage 10's
 `dynamic-import/usage-from-eval.js` fails on the trunk's runtime as well (missing module
 fixture under eval).
+
+## Host regexes no longer widen the JS regex engine
+
+- `quench-node`'s host regexes (ANSI stripping, `path.matchesGlob`) took the `regex` crate
+  with default features; feature unification gave every crate-backed JavaScript RegExp a
+  lazy DFA and its caches, and the binary the full Unicode tables. Neither host pattern
+  needs them; `quench-node` now asks for `quench-regexp`'s feature set.
+
+Bolted static, retrained orders (`board-bolt-b25-trimmed-regex.txt`, 3 runs, KiB): RegExp
+11664–11676 (was 12964–13236), Crypto 4008–4032, DeltaBlue 3632–3760, EarleyBoyer
+9876–9912, NavierStokes 4560–4688, RayTrace 3468–3472, Richards 3248, Splay 48008–48020.
+
+Guard (`guard-trimmed-regex-raw.txt`, base the previous candidate 89d86f247, candidate
+this commit after the trunk merge): per run RegExp +7.78% — its searches move from the
+lazy DFA (−170M) to the bounded backtracker (+381M) and its visited-set clearing (+56M);
+the wall-clock score is unchanged (538 against 528). DeltaBlue +0.47%, others within
+±0.13%. NavierStokes' start-up +32M is the trunk's indexed-store exotic checks
+(`prototype_chain_has_indexed_set_exotic`, c21d556db) merged in between. The trade buys
+1.3 MiB of RegExp's resident set.

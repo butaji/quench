@@ -366,6 +366,7 @@ pub(crate) fn internal_binding(
         "credentials" => return super::os_binding_shared_vm::credentials_binding(context),
         "fs" => return super::fs_directory_shared_vm::binding(context),
         "errors" => return super::node_errors_shared_vm::binding(context),
+        "report" => return super::report_configuration_shared_vm::binding(context),
         "modules" => return crate::host::shared_vm::commonjs::cached_native_binding(
             context, "\0binding:modules", module_protocol_binding,
         ),

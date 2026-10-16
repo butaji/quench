@@ -1,0 +1,17 @@
+==715426== Callgrind, a call-graph generating cache profiler
+==715426== Copyright (C) 2002-2017, and GNU GPL'd, by Josef Weidendorfer et al.
+==715426== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info
+==715426== Command: /workspace/quench/work/quench-net-server-http-handle-qualified /workspace/quench/work/clone-callgrind/splay-0.js
+==715426== Parent PID: 712861
+==715426== 
+==715426== For interactive control, run 'callgrind_control -h'.
+--715426-- WARNING: unhandled amd64-linux syscall: 323
+--715426-- You may be able to write your own handler.
+--715426-- Read the file README_MISSING_SYSCALL_OR_IOCTL.
+--715426-- Nevertheless we consider this a bug.  Please report
+--715426-- it at http://valgrind.org/support/bug_reports.html.
+==715426== 
+==715426== Events    : Ir
+==715426== Collected : 4686088936
+==715426== 
+==715426== I   refs:      4,686,088,936
