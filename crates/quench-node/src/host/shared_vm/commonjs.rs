@@ -224,6 +224,7 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
         context.scoped(crate::modules::node_errors_shared_vm::install_stack_formatter)?;
         context.scoped(crate::modules::buffer_policy_shared_vm::initialize)?;
         context.scoped(crate::modules::util_shared_vm::initialize_call_site_policy)?;
+        context.scoped(crate::modules::fs_shared_vm::initialize_glob_policy)?;
         context.seal_startup_intrinsics();
     }
     context.scoped(preload_modules)?;
@@ -1801,6 +1802,17 @@ fn resolve_filename(
                 .join(internal_specifier)
                 .with_extension("js")
                 .is_file());
+    if node_internal {
+        if let Some((_, relative)) = crate::node_sources::BUNDLED_DEPENDENCIES
+            .iter().find(|(name, _)| *name == internal_specifier)
+        {
+            let root = context.host_mut().node_library_root.clone();
+            let path = root.join(relative);
+            if path.is_file() || crate::node_sources::source(&path, &root).is_some() {
+                return Ok(path);
+            }
+        }
+    }
     let virtual_path = if node_internal {
         Some(node_lib.join(internal_specifier).with_extension("js"))
     } else if specifier.starts_with("./") || specifier.starts_with("../") {

@@ -662,6 +662,35 @@ fn symlink_loop(path: &Path) -> bool {
     false
 }
 
+fn directory_entry_type(kind: std::fs::FileType) -> i32 {
+    if kind.is_file() {
+        return super::UV_DIRENT_FILE;
+    }
+    if kind.is_dir() {
+        return super::UV_DIRENT_DIR;
+    }
+    if kind.is_symlink() {
+        return super::UV_DIRENT_LINK;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::FileTypeExt;
+        if kind.is_block_device() {
+            return super::UV_DIRENT_BLOCK;
+        }
+        if kind.is_char_device() {
+            return super::UV_DIRENT_CHAR;
+        }
+        if kind.is_fifo() {
+            return super::UV_DIRENT_FIFO;
+        }
+        if kind.is_socket() {
+            return super::UV_DIRENT_SOCKET;
+        }
+    }
+    super::UV_DIRENT_UNKNOWN
+}
+
 pub(crate) fn read_dir_sync(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
@@ -678,34 +707,21 @@ pub(crate) fn read_dir_sync(
         Ok(entries) => entries,
         Err(error) => return Err(stat_error(context, error, &path)?),
     };
+    let mut entries = match entries.collect::<Result<Vec<_>, _>>() {
+        Ok(entries) => entries,
+        Err(error) => return Err(stat_error(context, error, &path)?),
+    };
+    entries.sort_by_key(|entry| entry.file_name());
     let mut names = Vec::new();
     for entry in entries {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(error) => return Err(stat_error(context, error, &path)?),
-        };
-        let metadata = match entry.metadata() {
-            Ok(metadata) => metadata,
+        let file_type = match entry.file_type() {
+            Ok(file_type) => file_type,
             Err(error) => return Err(stat_error(context, error, &path)?),
         };
         let dirent = context.object_rooted()?;
-        set_string(
-            context,
-            dirent,
-            "name",
-            &entry.file_name().to_string_lossy(),
-        )?;
-        set_bool(context, dirent, "isFile", metadata.is_file())?;
-        set_bool(context, dirent, "isDirectory", metadata.is_dir())?;
-        set_bool(
-            context,
-            dirent,
-            "isSymbolicLink",
-            metadata.file_type().is_symlink(),
-        )?;
-        for name in ["isBlockDevice", "isCharacterDevice", "isFIFO", "isSocket"] {
-            set_bool(context, dirent, name, false)?;
-        }
+        set_string(context, dirent, "name", &entry.file_name().to_string_lossy())?;
+        let kind = context.number(f64::from(directory_entry_type(file_type)));
+        super::set(context, dirent, "type", kind)?;
         names.push(dirent);
     }
     context.array_rooted(&names)
