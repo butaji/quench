@@ -3262,7 +3262,7 @@ lane_handler! {
         }
         let vm = unsafe { vm(cx) };
         let Some(target) = lane_script_target(cx, r.get(i.b)) else {
-            return exit(ip);
+            sibling!(lane_native_call::<H>, r, ip, Carried::SCRIPT)
         };
         if target.forwards {
             sibling!(lane_script_call_keeping::<H>, r, ip, Carried::SCRIPT)
@@ -3281,6 +3281,54 @@ lane_handler! {
             Ok((registers, base)) => next!(cx, registers, base, Carried::SCRIPT),
             Err(next) => next,
         }
+    }
+}
+
+lane_handler! {
+    /// A `Call` of `Array.prototype.push` or `pop` on a dense array (`Vm::array_push_dense`,
+    /// `Vm::array_pop_dense`), which completes without calling out or allocating cells; out
+    /// of line, so script calls keep their code. Any other call takes the general path.
+    #[inline(never)]
+    fn lane_native_call<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        // A call that returns its result completes its caller, which only an activation
+        // does in the lane.
+        let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
+        if returns && vm.lane_stack.activations.is_empty() {
+            return exit(ip);
+        }
+        let receiver = r.get(i.c);
+        let value = match vm.heap.get(r.get(i.b)) {
+            Some(Cell::Function {
+                kind: FunctionKind::Native(Native::ArrayPush),
+                ..
+            }) => {
+                let window = ImmediateLayout::call_window_base(i.imm());
+                let argc = ImmediateLayout::argument_count(i.imm());
+                // SAFETY: the call's window is registers of the running function, which
+                // the push neither moves nor frees.
+                let args = unsafe {
+                    std::slice::from_raw_parts(r.0.add(usize::from(window)), usize::from(argc))
+                };
+                vm.array_push_dense(receiver, args)
+            }
+            Some(Cell::Function {
+                kind: FunctionKind::Native(Native::ArrayPop),
+                ..
+            }) => vm.array_pop_dense(receiver),
+            _ => None,
+        };
+        let Some(value) = value else {
+            return exit(ip);
+        };
+        if returns {
+            let Some((registers, next, view)) = lane_complete_activation(cx, value) else {
+                unreachable!("a returning lane call has an activation caller");
+            };
+            next!(cx, registers, next, view)
+        }
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::SCRIPT)
     }
 }
 

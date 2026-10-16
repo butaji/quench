@@ -1567,6 +1567,7 @@ dependencies = [
  "socket2",
  "sysinfo",
  "url",
+ "zlib-rs",
  "zstd",
 ]
 

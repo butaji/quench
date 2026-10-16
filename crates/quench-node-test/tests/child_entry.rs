@@ -9413,3 +9413,28 @@ fn callsite_type_names_and_constructor_flags_follow_actual_activation_and_receiv
 fn inferred_debug_names_preserve_empty_public_names_and_native_name_property_state() {
     compare_node_source_with_args(include_str!("../node-tests/test-inferred-function-debug-names.js"), &[]);
 }
+
+#[test]
+fn native_zlib_streaming_counts_bytes_pending_close_and_iterable_pipelines_match_node() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-zlib-streaming.js"), &["--no-warnings", "--expose-internals", "--experimental-stream-iter"]);
+}
+
+#[test]
+fn native_brotli_streaming_bytes_dictionaries_and_errors_match_node() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-brotli-streaming.js"), &["--no-warnings", "--expose-internals", "--experimental-stream-iter"]);
+}
+
+#[test]
+fn native_zstd_streaming_frames_dictionaries_pledges_and_errors_match_node() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-zstd-streaming.js"), &["--no-warnings", "--expose-internals", "--experimental-stream-iter"]);
+}
+
+#[test]
+fn default_node_stack_policy_uses_real_coded_brands_and_system_errors() {
+    compare_node_source_with_args(include_str!("../node-tests/test-node-error-stack-policy.js"), &["--no-warnings", "--expose-internals"]);
+}
+
+#[test]
+fn node_compatibility_version_follows_bundled_library_target() {
+    compare_node_source_with_args(include_str!("../node-tests/test-node-compatibility-version.js"), &[]);
+}

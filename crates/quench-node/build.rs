@@ -36,6 +36,8 @@ fn on_path(program: &str) -> bool {
 fn main() {
     embed_node_sources();
     configure_icu();
+    configure_native_zlib();
+    configure_native_brotli();
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed={X86_64_LINUX_ORDER}");
     println!("cargo:rerun-if-changed={X86_64_LINUX_STATIC_ORDER}");
@@ -85,6 +87,40 @@ fn main() {
     }
 }
 
+/// The Node version denotes the compatibility target of the bundled library,
+/// independent of Quench's engine version and implemented capability flags.
+fn configure_node_compat_version(root: &std::path::Path) {
+    let path = root.join("src/node_version.h");
+    println!("cargo:rerun-if-changed={}", path.display());
+    let header = std::fs::read_to_string(path).expect("read bundled Node version");
+    let definition = |name: &str| -> u32 {
+        header
+            .lines()
+            .find_map(|line| {
+                let mut words = line.split_whitespace();
+                (words.next() == Some("#define") && words.next() == Some(name)).then(|| {
+                    words
+                        .next()
+                        .expect("version definition")
+                        .parse()
+                        .expect("numeric Node version")
+                })
+            })
+            .expect("Node version definition")
+    };
+    let suffix = if definition("NODE_VERSION_IS_RELEASE") == 1 {
+        ""
+    } else {
+        "-pre"
+    };
+    println!(
+        "cargo:rustc-env=QUENCH_NODE_COMPAT_VERSION={}.{}.{}{suffix}",
+        definition("NODE_MAJOR_VERSION"),
+        definition("NODE_MINOR_VERSION"),
+        definition("NODE_PATCH_VERSION")
+    );
+}
+
 /// Node's pinned library runs as guest JavaScript in the shared VM. Embedding
 /// its immutable sources makes built-ins independent of a development checkout.
 fn embed_node_sources() {
@@ -92,6 +128,7 @@ fn embed_node_sources() {
         .join("../../tests/node")
         .canonicalize()
         .expect("initialize tests/node submodule");
+    configure_node_compat_version(&root);
     let mut pending = vec![root.join("lib")];
     let mut files = vec![root.join("deps/undici/undici.js")];
     while let Some(directory) = pending.pop() {
@@ -160,4 +197,35 @@ fn configure_icu() {
     for name in library.libs {
         println!("cargo:rustc-link-lib={name}");
     }
+}
+
+/// Link the matching Node codec when explicitly available; other hosts keep
+/// the portable Rust codec rather than gaining a new system dependency.
+fn configure_native_zlib() {
+    println!("cargo:rustc-check-cfg=cfg(quench_node_zlib)");
+    let Ok(library) = pkg_config::Config::new()
+        .cargo_metadata(false)
+        .probe("quench-node-zlib")
+    else {
+        return;
+    };
+    println!("cargo:rustc-cfg=quench_node_zlib");
+    for directory in library.link_paths {
+        println!("cargo:rustc-link-search=native={}", directory.display());
+    }
+}
+
+fn configure_native_brotli() {
+    println!("cargo:rustc-check-cfg=cfg(quench_node_brotli)");
+    let Ok(library) = pkg_config::Config::new()
+        .cargo_metadata(false)
+        .probe("quench-node-brotli")
+    else {
+        return;
+    };
+    println!("cargo:rustc-cfg=quench_node_brotli");
+    for directory in library.link_paths {
+        println!("cargo:rustc-link-search=native={}", directory.display());
+    }
+    println!("cargo:rustc-link-lib=m");
 }

@@ -4,6 +4,14 @@ Node API policy belongs to `quench-node`; JavaScript coercions, property access,
 exceptions, roots and jobs use the shared VM. Existing class/function bridges
 supply observable syntax and delegate policy to native operations.
 
+## Node compatibility target
+
+`process.version` and `process.versions.node` identify the bundled Node standard
+library's compatibility target. The build derives this version from that
+checkout's `src/node_version.h`; it is independent of Quench's engine version.
+This version does not establish complete API parity. Implemented capability
+flags and native dependency metadata have their own contracts.
+
 ## Captured JavaScript stacks
 
 The Node host disables ECMAScript proper tail calls: strict caller frames remain
@@ -39,6 +47,15 @@ changing public globals or prototype `constructor` properties cannot redirect
 later factory allocations. Constructor debug names observe data properties and
 preserve original names when accessors would otherwise execute. Native and bound
 functions retain their distinct constructor-name behavior.
+
+The optional retained host stack-policy callback receives the realm global,
+original error and genuine captured CallSites. The Node host uses the configured
+library's `prepareStackTraceCallback` and public `ErrorPrepareStackTrace`, so
+internal overrides and user hooks follow the original algorithm. Formatted values
+are cached after success; a thrown formatter leaves the capture available for a
+later attempt. Native coded errors share the library's private Node error symbol.
+UDP buffer-size errors construct the original `ERR_SOCKET_BUFFER_SIZE` class,
+which owns its context getters and custom inspection behavior.
 
 ## Event listeners
 
