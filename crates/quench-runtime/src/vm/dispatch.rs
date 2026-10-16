@@ -797,9 +797,20 @@ impl<H: Host> Vm<H> {
                 let value = self.get_iterator(p, self.read(f, i.register_b()))?;
                 self.write(f, i.result_register(), value);
             }
-            Op::SpreadToArray => {
-                let array = self.spread_to_array(p, self.read(f, i.register_b()))?;
-                self.write(f, i.result_register(), array);
+            Op::AppendArray => {
+                let array = self.read(f, i.register_a());
+                self.append_array_literal_holes(array, i.array_length())?;
+                if let Some(register) = i.optional_register_b() {
+                    let value = self.read(f, register);
+                    let spread = i
+                        .boolean_field(crate::bytecode::InstructionField::C)
+                        .expect("validated boolean field");
+                    if spread {
+                        self.spread_into_array(p, array, value)?;
+                    } else {
+                        self.append_array_literal_elements(p, array, [value])?;
+                    }
+                }
             }
             Op::RequireObjectCoercible => {
                 self.require_object_coercible(p, self.read(f, i.register_b()))?;
@@ -1150,7 +1161,7 @@ impl<H: Host> Vm<H> {
                     *pc = i.jump_target() as usize;
                 }
             }
-            Op::Call | Op::CallDirectEvalArray | Op::CallForwardingArguments => {
+            Op::Call | Op::CallArray | Op::CallForwardingArguments => {
                 if i.op() == Op::CallForwardingArguments
                     && let Some(result) =
                         self.forward_activation_arguments(p, f, i, *pc, allow_inline_calls)
@@ -1159,10 +1170,10 @@ impl<H: Host> Vm<H> {
                 }
                 self.profile.call_source(0);
                 let window = i.call_window();
-                // A spread direct-eval array is read before any call state changes, since
+                // A spread argument array is read before any call state changes, since
                 // reading it can fail; register windows are copied only on the paths that
                 // need an owned argument list.
-                let spread_arguments = if i.op() == Op::CallDirectEvalArray {
+                let spread_arguments = if i.op() == Op::CallArray {
                     let array = self.read(f, window.base);
                     Some(CallArguments::from_values(self.array_values(array)?))
                 } else {
@@ -1465,7 +1476,7 @@ impl<H: Host> Vm<H> {
                         let array = self.read(f, register);
                         if !self.heap.array(array).is_some() {
                             return Err(JsError(
-                                "super constructor arguments are not an array".into(),
+                                "constructor arguments are not an array".into(),
                             ));
                         }
                         self.call_argument_list(p, array, false)?

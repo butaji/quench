@@ -1,0 +1,21 @@
+On branch v2-web
+Your branch is ahead of 'origin/v2-web' by 2 commits.
+  (use "git push" to publish your local commits)
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   crates/quench-node-test/tests/child_entry.rs
+	modified:   crates/quench-runtime/src/compile.rs
+	modified:   crates/quench-runtime/src/compile/rewrite.rs
+	modified:   crates/quench-runtime/src/heap/cell.rs
+	modified:   crates/quench-runtime/src/vm/error.rs
+	modified:   crates/quench-runtime/src/vm/eval.rs
+	modified:   crates/quench-runtime/src/vm/program_store.rs
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	crates/quench-node-test/node-tests/test-callsite-eval-origins.js
+	crates/quench-node-test/node-tests/test-indirect-eval-script-identity.js
+
+no changes added to commit (use "git add" and/or "git commit -a")
