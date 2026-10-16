@@ -1581,7 +1581,6 @@ impl<H: Host> Vm<H> {
         .then_some((cache.slots, cache.root))
     }
 
-
     /// `direct_capture` through the frame's cached innermost slots. The cache names the
     /// environment, whether it is the frame's own, and the collection it was taken in: while
     /// all three are unchanged the walk ends at the same live cell, whose slot storage never
