@@ -1546,12 +1546,7 @@ impl<'a> Compiler<'a> {
         private_name_ids: FxHashMap<(u32, u32), u32>,
     ) -> Self {
         let atoms = CompilerAtoms::new(atom_prefix);
-        let mut source_line_starts = vec![0];
-        source_line_starts.extend(text.char_indices().filter_map(|(index, character)| {
-            let crlf_prefix = character == '\r' && text.as_bytes().get(index + 1) == Some(&b'\n');
-            (matches!(character, '\n' | '\r' | '\u{2028}' | '\u{2029}') && !crlf_prefix)
-                .then_some(index + character.len_utf8())
-        }));
+        let source_line_starts = crate::bytecode::source_line_starts(text).collect();
         let mut excess = 0;
         let source_utf16_excess = text
             .char_indices()
