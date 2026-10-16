@@ -6,12 +6,26 @@ impl<H: Host> Vm<H> {
     pub(super) fn diagnostic_object_receiver(&mut self, object: Value) -> String {
         let to_string = self.intern_atom("toString");
         let method = self.diagnostic_data_property(object, PropertyKey::string(to_string));
-        if method.is_some_and(|method| matches!(self.heap.get(method), Some(Cell::Function { kind: FunctionKind::Native(Native::ObjectPrototypeToString), .. }))) {
+        if method.is_some_and(|method| {
+            matches!(
+                self.heap.get(method),
+                Some(Cell::Function {
+                    kind: FunctionKind::Native(Native::ObjectPrototypeToString),
+                    ..
+                })
+            )
+        }) {
             return "#<Object>".to_owned();
         }
-        let tag = self.well_known_symbols.get("toStringTag").copied()
+        let tag = self
+            .well_known_symbols
+            .get("toStringTag")
+            .copied()
             .and_then(|symbol| self.diagnostic_data_property(object, PropertyKey::symbol(symbol)))
-            .and_then(|value| match self.heap.get(value) { Some(Cell::String(text)) => Some(text.host_string().to_owned()), _ => None });
+            .and_then(|value| match self.heap.get(value) {
+                Some(Cell::String(text)) => Some(text.host_string().to_owned()),
+                _ => None,
+            });
         format!("[object {}]", tag.as_deref().unwrap_or("Object"))
     }
     pub(super) fn nullish_assignment_error(
@@ -52,26 +66,53 @@ impl<H: Host> Vm<H> {
         };
         let value = self.detail_string(object);
         let string_readonly = match self.heap.get(object) {
-            Some(Cell::String(text)) => key == "length" || super::object_static::array_index(&key).is_some_and(|index| (index as usize) < text.len()),
+            Some(Cell::String(text)) => {
+                key == "length"
+                    || super::object_static::array_index(&key)
+                        .is_some_and(|index| (index as usize) < text.len())
+            }
             _ => false,
         };
         if string_readonly {
-            return self.type_error(p, format!("Cannot assign to read only property '{key}' of string '{value}'"));
+            return self.type_error(
+                p,
+                format!("Cannot assign to read only property '{key}' of string '{value}'"),
+            );
         }
         let mut prototype = self.primitive_prototype(object);
         while let Some(holder) = prototype {
-            if self.proxy_parts(holder).is_some() { break; }
+            if self.proxy_parts(holder).is_some() {
+                break;
+            }
             if let Some(attributes) = self.property_attributes(holder, PropertyKey::string(atom)) {
                 if attributes.accessor && attributes.setter.is_none() {
-                    let class = match kind { "boolean" => "Boolean", "number" => "Number", "string" => "String", "symbol" => "Symbol", "bigint" => "BigInt", _ => "Object" };
-                    return self.type_error(p, format!("Cannot set property {key} of [object {class}] which has only a getter"));
+                    let class = match kind {
+                        "boolean" => "Boolean",
+                        "number" => "Number",
+                        "string" => "String",
+                        "symbol" => "Symbol",
+                        "bigint" => "BigInt",
+                        _ => "Object",
+                    };
+                    return self.type_error(
+                        p,
+                        format!(
+                            "Cannot set property {key} of [object {class}] which has only a getter"
+                        ),
+                    );
                 }
                 if !attributes.accessor && !attributes.writable {
-                    return self.type_error(p, format!("Cannot assign to read only property '{key}' of {kind} '{value}'"));
+                    return self.type_error(
+                        p,
+                        format!("Cannot assign to read only property '{key}' of {kind} '{value}'"),
+                    );
                 }
                 break;
             }
-            prototype = self.object_data(holder).map(|data| data.proto()).filter(|value| !value.is_null());
+            prototype = self
+                .object_data(holder)
+                .map(|data| data.proto())
+                .filter(|value| !value.is_null());
         }
         self.type_error(
             p,
@@ -94,7 +135,11 @@ impl<H: Host> Vm<H> {
                 break;
             }
             if let Some(attributes) = self.property_attributes(holder, PropertyKey::string(atom)) {
-                let receiver = if self.heap.object_record(object).is_some() { self.diagnostic_object_receiver(object) } else { self.detail_string(object) };
+                let receiver = if self.heap.object_record(object).is_some() {
+                    self.diagnostic_object_receiver(object)
+                } else {
+                    self.detail_string(object)
+                };
                 if attributes.accessor && attributes.setter.is_none() {
                     return self.type_error(
                         p,
