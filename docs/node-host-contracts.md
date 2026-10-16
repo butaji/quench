@@ -889,3 +889,46 @@ unchanged SDK owns validation and Dirent construction. Existing filesystem
 adapters capture a Rust forwarding function to this same policy, initialized
 after the filesystem module is cached. Their outer asynchronous validation and
 scheduling remain separate compatibility work.
+
+## Private data fields
+
+Private data lives with its receiver, keyed by the actual declaring home and
+logical name. A private element retains both that home and its data through
+collection. Different creations of one class expression can stamp the same
+object without sharing values. Initialization checks duplicates before changing
+the stored value; private data and method brands do not consult public
+extensibility or Proxy traps, including revoked Proxy receivers.
+
+The atomic private-data definition operation is serialized in bytecode format
+92. Round-trip execution and generic/specialized collection tests cover the
+representation. Eval-capable methods retain their synthetic class-home capture
+in dynamic-name metadata, even when private syntax appears only inside eval's
+string. Bytecode format 93 adds lexical private-name bindings that retain each
+name's actual declaring home independently of the method's super home. Static
+and instance names, escaped ordinary closures, and outer/shadowed class names
+use that binding metadata. Ordinary-function eval uses OXC's ordinary-function
+grammar inside a private-name parsing context, and the extracted body must match
+the generated source boundaries. Complete private-environment contexts and the
+ordinary NUL string-key namespace remain separate conformance work.
+
+Private membership follows initialization: prototypes acquire no brand merely
+from a declaration, static data fields remain absent until initialization, and
+static private methods/accessors precede static fields. Auto-accessor backing
+identities retain their own lexical declaring-home binding, including public
+instance auto-accessors whose backing name is not visible to eval.
+
+Static blocks retain the actual class home for `super` and execute in strict
+mode. The compiler's class-initializer context is shared by field initializers,
+static blocks and their arrows: eval forbids lexical `arguments`, preserves
+`this`, and supplies undefined `new.target`. Ordinary nested functions introduce
+their own context. The existing serialized initializer flag represents this
+shared context; static blocks keep distinct variable scopes.
+
+TCP listeners share one native socket-creation path and Node's default backlog
+of 511, including ordinary net and HTTP listeners. Unix binds enable address
+reuse as libuv does; unsupported reuse-port requests retain their early error.
+Supplied `options.backlog` uses the JavaScript truthy default followed by shared
+ToNumber/ToInt32 conversion. Linux syscall comparisons cover default, IPv4,
+reuse-port and HTTP listeners plus numeric/string/nonfinite/wrapped options.
+The comparison explicitly reports when syscall tracing is unavailable.
+Positional backlog overloads and DNS-deferred coercion/error timing remain open.

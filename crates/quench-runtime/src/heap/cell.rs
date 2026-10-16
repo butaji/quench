@@ -1292,7 +1292,7 @@ struct ObjectExtras {
     structured_transfer_forbidden: bool,
     module_bindings: Vec<(Atom, ProgramId, u16)>,
     deferred_module: Option<crate::ModuleSource>,
-    private_names: Vec<PrivateBrand>,
+    private_elements: Vec<PrivateElement>,
     stack_data: Option<StackData>,
     /// An index-keyed property descriptor has been recorded for this object; never cleared.
     indexed_descriptors: bool,
@@ -1309,7 +1309,7 @@ impl ObjectExtras {
             + self.deferred_module.as_ref().map_or(0, |module| {
                 module.name.capacity() + module.source.capacity() + module.bytes.capacity()
             })
-            + self.private_names.capacity() * std::mem::size_of::<PrivateBrand>()
+            + self.private_elements.capacity() * std::mem::size_of::<PrivateElement>()
             + self
                 .stack_data
                 .as_ref()
@@ -1340,6 +1340,14 @@ pub(crate) struct PrivateBrand {
     pub home: Value,
     pub name: Atom,
 }
+/// A name's actual class home and its data share one lifetime-owned entry.
+#[derive(Clone, Copy, Debug)]
+struct PrivateElement {
+    brand: PrivateBrand,
+    // Brand-only entries name methods/accessors or reserve a class-home declaration.
+    data: Option<Value>,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct FinalizationEntry {
     pub target: WeakHandle,
@@ -1645,8 +1653,9 @@ impl Object {
             return;
         };
         if let Some(value) = extras.boxed_primitive { visit(value); }
-        for brand in &extras.private_names {
-            visit(brand.home);
+        for element in &extras.private_elements {
+            visit(element.brand.home);
+            if let Some(value) = element.data { visit(value); }
         }
         match extras.stack_data.as_ref() {
             Some(StackData::Captured { records, .. }) => {
@@ -1765,17 +1774,34 @@ impl Object {
     pub(crate) fn set_deferred_module(&mut self, module: Option<crate::ModuleSource>) {
         self.extras_mut().deferred_module = module;
     }
-    pub(crate) fn private_names(&self) -> &[PrivateBrand] {
-        self.extras().map_or(&[], |extras| &extras.private_names)
+    pub(crate) fn private_names(&self) -> impl Iterator<Item = PrivateBrand> + '_ {
+        self.extras().into_iter().flat_map(|extras| extras.private_elements.iter().map(|element| element.brand))
     }
     pub(crate) fn has_private_name(&self, brand: PrivateBrand) -> bool {
-        self.private_names().contains(&brand)
+        self.private_names().any(|candidate| candidate == brand)
     }
     pub(crate) fn add_private_name(&mut self, brand: PrivateBrand) {
-        let names = &mut self.extras_mut().private_names;
-        if !names.contains(&brand) {
-            names.push(brand);
+        if !self.has_private_name(brand) {
+            self.extras_mut().private_elements.push(PrivateElement { brand, data: None });
         }
+    }
+    pub(crate) fn private_field(&self, brand: PrivateBrand) -> Option<Value> {
+        self.extras()?.private_elements.iter().find(|element| element.brand == brand)?.data
+    }
+    pub(crate) fn set_private_field(&mut self, brand: PrivateBrand, value: Value) -> bool {
+        let Some(element) = self.extras_mut().private_elements.iter_mut().find(|element| element.brand == brand && element.data.is_some()) else { return false; };
+        element.data = Some(value);
+        true
+    }
+    pub(crate) fn initialize_private_field(&mut self, brand: PrivateBrand, value: Value) -> bool {
+        let elements = &mut self.extras_mut().private_elements;
+        if let Some(element) = elements.iter_mut().find(|element| element.brand == brand) {
+            if element.data.is_some() { return false; }
+            element.data = Some(value);
+        } else {
+            elements.push(PrivateElement { brand, data: Some(value) });
+        }
+        true
     }
     #[cfg(any(feature = "profile-memory", feature = "profile-aggregate"))]
     pub(crate) fn allocated_extra_bytes(&self) -> usize {

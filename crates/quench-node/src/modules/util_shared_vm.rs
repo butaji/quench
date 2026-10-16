@@ -236,8 +236,8 @@ pub(crate) fn internal_inspect(
         .ok_or_else(|| RootedError::host("util intrinsics missing"))
 }
 
-/// Capture the configured call-site policy before guests can replace internal
-/// validator exports. The original Node module retains those lexical imports.
+/// Captures the configured call-site policy: the original Node module retains its
+/// validator imports whatever a script later does to their exports.
 pub(crate) fn initialize_call_site_policy(
     context: &mut NativeContext<'_, NodeHost>,
 ) -> Result<(), RootedError> {
