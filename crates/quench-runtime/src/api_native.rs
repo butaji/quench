@@ -283,6 +283,13 @@ impl<'a, H: Host> NativeContext<'a, H> {
         Ok(name.map(|name| self.string_units_rooted(&name.units().to_vec())))
     }
 
+    /// Constructor display from creation identity and safe prototype data.
+    pub fn constructor_name_rooted(&mut self, root: RootId) -> Result<Option<RootId>, RootedError> {
+        let result = self.vm.embedding_constructor_name(root);
+        let name = result.map_err(|error| self.error(error))?;
+        Ok(name.map(|name| self.string_units_rooted(&name.units().to_vec())))
+    }
+
     /// Snapshot collection entries without advancing iterators or invoking hooks.
     pub fn collection_preview_rooted(&mut self, root: RootId) -> Result<Option<CollectionPreview>, RootedError> {
         let result = self.vm.embedding_collection_preview(root);

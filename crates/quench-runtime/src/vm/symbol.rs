@@ -117,8 +117,7 @@ impl<H: Host> Vm<H> {
                 let value = if matches!(self.heap.get(this), Some(Cell::Symbol(_))) {
                     this
                 } else {
-                    let value_atom = self.intern_atom("\0quench:symbol-value");
-                    self.own_property(this, value_atom)
+                    self.boxed_primitive_value(this)
                         .filter(|value| matches!(self.heap.get(*value), Some(Cell::Symbol(_))))
                         .ok_or_else(|| {
                             self.type_error(p, "Symbol method receiver is not a symbol".into())
@@ -134,8 +133,7 @@ impl<H: Host> Vm<H> {
                 if matches!(self.heap.get(this), Some(Cell::Symbol(_))) {
                     Ok(this)
                 } else {
-                    let value_atom = self.intern_atom("\0quench:symbol-value");
-                    self.own_property(this, value_atom).ok_or_else(|| {
+                    self.boxed_primitive_value(this).filter(|value| matches!(self.heap.get(*value), Some(Cell::Symbol(_)))).ok_or_else(|| {
                         self.type_error(
                             p,
                             "Symbol.prototype.valueOf called on incompatible receiver".into(),
@@ -147,8 +145,7 @@ impl<H: Host> Vm<H> {
                 let symbol = if matches!(self.heap.get(this), Some(Cell::Symbol(_))) {
                     this
                 } else {
-                    let value_atom = self.intern_atom("\0quench:symbol-value");
-                    self.own_property(this, value_atom)
+                    self.boxed_primitive_value(this)
                         .filter(|value| matches!(self.heap.get(*value), Some(Cell::Symbol(_))))
                         .ok_or_else(|| {
                             self.type_error(

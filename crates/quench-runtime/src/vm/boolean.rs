@@ -19,20 +19,7 @@ impl<H: Host> Vm<H> {
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
         self.realm.intrinsics.builtin_prototypes.insert((global, Native::Boolean), prototype);
-        let boolean_value = self.intern_atom("\0quench:boolean-value");
-        self.set_property_with_attributes(
-            prototype,
-            boolean_value,
-            Value::FALSE,
-            PropertyAttributes {
-                writable: false,
-                enumerable: false,
-                configurable: false,
-                accessor: false,
-                getter: None,
-                setter: None,
-            },
-        )?;
+        self.object_data_mut(prototype).expect("primitive prototype").set_boxed_primitive(Value::FALSE);
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
         let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
@@ -81,9 +68,7 @@ impl<H: Host> Vm<H> {
         if receiver.as_bool().is_some() {
             return Some(receiver);
         }
-        let value_atom = self.intern_atom("\0quench:boolean-value");
-        if let Some(value) = self
-            .own_property(receiver, value_atom)
+        if let Some(value) = self.boxed_primitive_value(receiver)
             .filter(|value| value.as_bool().is_some())
         {
             return Some(value);

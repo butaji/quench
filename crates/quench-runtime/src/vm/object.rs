@@ -89,7 +89,7 @@ fn derive_shape_lookup_index(shapes: &[Shape], shape: u32) -> ShapeLookupIndex {
                     attributes.insert(slot, value);
                 }
             }
-            ShapeTransition::FunctionName { .. }
+            ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured
             | ShapeTransition::Constructed { .. }
             | ShapeTransition::Root
             | ShapeTransition::Vacant
@@ -196,7 +196,7 @@ impl<H: Host> Vm<H> {
                     ..
                 } if candidate == key => break Some(slot as usize),
                 ShapeTransition::Delete { key: candidate, .. } if candidate == key => break None,
-                ShapeTransition::FunctionName { .. }
+                ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured
                 | ShapeTransition::Constructed { .. }
                 | ShapeTransition::Root
                 | ShapeTransition::Add { .. }
@@ -268,7 +268,7 @@ impl<H: Host> Vm<H> {
                 ShapeTransition::Delete {
                     slot: candidate, ..
                 } if candidate as usize == slot => return Some(DEFAULT_PROPERTY_ATTRIBUTES),
-                ShapeTransition::FunctionName { .. }
+                ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured
                 | ShapeTransition::Constructed { .. }
                 | ShapeTransition::Root
                 | ShapeTransition::Add { .. }
@@ -2384,7 +2384,7 @@ impl<H: Host> Vm<H> {
                 .checked_add(1)
                 .filter(|length| u32::try_from(*length).is_ok())
                 .expect("object property storage exhausted"),
-            ShapeTransition::Descriptor { .. } | ShapeTransition::FunctionName { .. } | ShapeTransition::Constructed { .. } => storage_len,
+            ShapeTransition::Descriptor { .. } | ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured | ShapeTransition::Constructed { .. } => storage_len,
             ShapeTransition::Root
             | ShapeTransition::Delete { .. }
             | ShapeTransition::Vacant
@@ -2445,6 +2445,7 @@ impl<H: Host> Vm<H> {
         self.object_data_mut(object)
             .expect("object survived property deletion")
             .set_shape(next_id);
+        self.reconfigure_function_name(object, key);
         self.invalidate_method_caches_for_key(key);
     }
 }
