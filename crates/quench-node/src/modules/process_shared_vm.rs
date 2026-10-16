@@ -1936,9 +1936,12 @@ pub(crate) fn route_uncaught_exception_value(
     exception: RootId,
     origin: &str,
 ) -> Result<bool, String> {
-    let Some(process) = shared_process_root(runtime) else {
-        return Ok(false);
-    };
+    let origin_value = runtime.string_rooted(origin);
+    let monitored = call_process_event(runtime, program, "uncaughtExceptionMonitor", &[exception, origin_value]);
+    runtime.release_root(origin_value);
+    let Some(monitored) = monitored? else { return Ok(false); };
+    runtime.release_root(monitored);
+
     let state = runtime.host_mut().shared_state().borrow().process_capture_state
         .ok_or_else(|| "process capture state is not initialized".to_owned())?;
     let capture_key = runtime.string_rooted("captureFn");
@@ -1958,6 +1961,8 @@ pub(crate) fn route_uncaught_exception_value(
         .rooted_value(capture)
         .is_some_and(|value| !value.is_null());
     if has_capture {
+        runtime.release_root(capture);
+        let capture = get_rooted_property(runtime, program, state, "captureFn")?;
         let captured = runtime.call_rooted(capture, state, &[exception]);
         runtime.release_root(capture);
         return match captured {
@@ -1976,45 +1981,9 @@ pub(crate) fn route_uncaught_exception_value(
     }
     runtime.release_root(capture);
     let origin = runtime.string_rooted(origin);
-    let event = runtime.string_rooted("uncaughtException");
-    let emit_name = runtime.string_rooted("emit");
-    let emit = runtime.get_property_rooted(process, emit_name);
-    runtime.release_root(emit_name);
-    let emit = match emit {
-        Ok(emit) => emit,
-        Err(error) => {
-            let message = runtime.format_error(program, &error.error);
-            if let Some(exception) = error.exception {
-                runtime.release_root(exception);
-            }
-            runtime.release_root(event);
-            runtime.release_root(origin);
-            return Err(message);
-        }
-    };
-    let emitted = runtime.call_rooted(emit, process, &[event, exception, origin]);
-    runtime.release_root(emit);
-    runtime.release_root(event);
+    let handled = emit_process_event(runtime, program, "uncaughtException", &[exception, origin]);
     runtime.release_root(origin);
-    let emitted = match emitted {
-        Ok(emitted) => emitted,
-        Err(error) => {
-            let message = runtime.format_error(program, &error.error);
-            if let Some(exception) = error.exception {
-                runtime.release_root(exception);
-            }
-            return Err(message);
-        }
-    };
-    let handled = runtime
-        .rooted_value(emitted)
-        .and_then(quench_runtime::Value::as_bool)
-        .ok_or_else(|| "process.emit returned a non-boolean result".to_owned());
-    runtime.release_root(emitted);
-    match handled {
-        Ok(handled) => Ok(handled),
-        Err(message) => Err(message),
-    }
+    handled
 }
 
 fn drain_checkpoint(
@@ -2801,14 +2770,14 @@ fn rooted_error_message(
     message
 }
 
-fn emit_process_event(
+fn call_process_event(
     runtime: &mut quench_runtime::Runtime<NodeHost>,
     program: &quench_runtime::ResidualProgram,
     event_name: &str,
     args: &[RootId],
-) -> Result<bool, String> {
+) -> Result<Option<RootId>, String> {
     let Some(process) = shared_process_root(runtime) else {
-        return Ok(false);
+        return Ok(None);
     };
     let event = runtime.string_rooted(event_name);
     let emit = get_rooted_property(runtime, program, process, "emit");
@@ -2826,10 +2795,17 @@ fn emit_process_event(
     runtime.release_root(emit);
     runtime.release_root(event);
     let emitted = emitted.map_err(|error| rooted_error_message(runtime, program, error))?;
-    let handled = runtime
-        .rooted_value(emitted)
-        .and_then(Value::as_bool)
-        .ok_or_else(|| "process.emit returned a non-boolean result".to_owned());
+    Ok(Some(emitted))
+}
+
+fn emit_process_event(
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
+    event_name: &str,
+    args: &[RootId],
+) -> Result<bool, String> {
+    let Some(emitted) = call_process_event(runtime, program, event_name, args)? else { return Ok(false); };
+    let handled = runtime.truthy_rooted(emitted).map_err(|error| runtime.format_error(program, &error));
     runtime.release_root(emitted);
     handled
 }
