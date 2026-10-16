@@ -9242,3 +9242,8 @@ fn generator_loop_return_preserves_cleanup_order_rejections_and_finally() {
 fn async_delegated_return_unwinds_original_generator_finally() {
     compare_node_stream_source(include_str!("../node-tests/test-async-delegate-return.js"));
 }
+
+#[test]
+fn abort_listener_errors_are_reported_on_ticks_without_replacing_source_errors() {
+    compare_node_source_with_args(include_str!("../node-tests/test-abort-listener-errors.js"), &["--no-warnings", "--experimental-stream-iter"]);
+}

@@ -286,6 +286,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "abortSignalBrand" (1) => crate::modules::events_shared_vm::abort_signal_brand,
         method "abortAddEventListener" (6) => crate::modules::events_abort_shared_vm::abort_add_event_listener,
         method "abortDispatchListeners" (4) => crate::modules::events_abort_shared_vm::abort_dispatch_listeners,
+        method "eventTargetQueueError" (1) => crate::modules::events_abort_shared_vm::queue_listener_error,
+        method "eventTargetRethrow" (0) => crate::modules::events_abort_shared_vm::rethrow_listener_error,
         method "eventsAddAbortListener" (2) => crate::modules::events_abort_shared_vm::add_abort_listener,
         method "abortListenerDispose" (0) => crate::modules::events_abort_shared_vm::abort_listener_dispose,
         method "abortedListenerJob" (0) => crate::modules::events_abort_shared_vm::aborted_listener_job,
