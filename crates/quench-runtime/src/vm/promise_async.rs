@@ -84,7 +84,10 @@ impl<H: Host> Vm<H> {
             && !self.is_object_like(source)
         {
             self.with_call_roots([Some(source), Some(promise), generator].into_iter().flatten(), |vm| {
-                vm.promise_for_value(p, source)
+                let parent = vm.realm.promise.records.get(&promise).and_then(|record| record.host_context);
+                let awaited = vm.promise_object_with_parent(parent)?;
+                vm.with_call_roots([awaited], |vm| vm.promise_resolve_value(p, awaited, source))?;
+                Ok(awaited)
             })?
         } else {
             source
