@@ -106,6 +106,9 @@ impl<H: Host> Vm<H> {
                 Value::FALSE
             });
         }
+        if args.first().is_some_and(|view| self.is_shared_block_view(*view)) {
+            return self.shared_atomics(p, native, args);
+        }
         if matches!(native, Native::AtomicsWait | Native::AtomicsWaitAsync) {
             return self.atomic_wait(p, native, args);
         }
@@ -163,7 +166,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn atomic_array_kind(
+    pub(super) fn atomic_array_kind(
         &mut self,
         p: &ResidualProgram,
         view: Value,
@@ -190,7 +193,7 @@ impl<H: Host> Vm<H> {
         Ok(kind)
     }
 
-    fn atomic_index(
+    pub(super) fn atomic_index(
         &mut self,
         p: &ResidualProgram,
         value: Option<Value>,
@@ -206,7 +209,7 @@ impl<H: Host> Vm<H> {
         Ok(integer as usize)
     }
 
-    fn atomic_validate_index(
+    pub(super) fn atomic_validate_index(
         &mut self,
         p: &ResidualProgram,
         length: usize,
@@ -302,7 +305,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn atomic_number_value(&self, kind: TypedArrayKind, value: f64) -> f64 {
+    pub(super) fn atomic_number_value(&self, kind: TypedArrayKind, value: f64) -> f64 {
         match kind {
             TypedArrayKind::Int8 => Self::uint8_from_value(value) as i8 as f64,
             TypedArrayKind::Uint8 => Self::uint8_from_value(value) as f64,
@@ -314,7 +317,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn atomic_number_bits(kind: TypedArrayKind, value: f64) -> u32 {
+    pub(super) fn atomic_number_bits(kind: TypedArrayKind, value: f64) -> u32 {
         if kind == TypedArrayKind::Uint32 {
             value as u32
         } else {
@@ -385,12 +388,12 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn normalize_atomic_bigint(&self, value: num_bigint::BigInt) -> num_bigint::BigInt {
+    pub(super) fn normalize_atomic_bigint(&self, value: num_bigint::BigInt) -> num_bigint::BigInt {
         let modulus = num_bigint::BigInt::from(1_u8) << 64;
         ((value % &modulus) + &modulus) % modulus
     }
 
-    fn atomic_require_writable(&mut self, p: &ResidualProgram, view: Value) -> Result<(), JsError> {
+    pub(super) fn atomic_require_writable(&mut self, p: &ResidualProgram, view: Value) -> Result<(), JsError> {
         if let Some(Cell::TypedArray { buffer, .. }) = self.heap.get(view)
             && matches!(
                 self.heap.get(*buffer),
@@ -405,7 +408,7 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
-    fn atomic_wait(
+    pub(super) fn atomic_wait(
         &mut self,
         p: &ResidualProgram,
         native: Native,

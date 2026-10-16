@@ -864,6 +864,29 @@ impl<'a, H: Host> NativeContext<'a, H> {
 
     /// Clone with an already-converted transfer sequence. Host Web IDL conversion
     /// owns iteration; the VM must not consult the public iterator a second time.
+    /// Serialize `value` for another agent: `transfers` (ArrayBuffers) move into the
+    /// result, and each of `host_objects` becomes a reference the receiver supplies.
+    pub fn serialize_rooted(
+        &mut self,
+        value: RootId,
+        transfers: &[RootId],
+        host_objects: &[RootId],
+    ) -> Result<crate::SerializedValue, RootedError> {
+        self.vm
+            .embedding_serialize(value, transfers, host_objects)
+            .map_err(|error| self.error(error))
+    }
+
+    /// Deserialize into this heap, substituting `host_objects` in the sender's order.
+    pub fn deserialize_rooted(
+        &mut self,
+        serialized: crate::SerializedValue,
+        host_objects: &[RootId],
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.embedding_deserialize(serialized, host_objects);
+        self.completion(result)
+    }
+
     pub fn structured_clone_with_transfers_rooted(
         &mut self,
         value: RootId,
