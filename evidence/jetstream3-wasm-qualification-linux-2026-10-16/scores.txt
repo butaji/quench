@@ -1,0 +1,13 @@
+# JetStream 3 Wasm tests, 11 matched rounds, Linux x86_64 4 vCPU 15 GiB (cloud container)
+# quench-bench --suite jetstream3 --runs 11; source b25cd40c (clean), corpus 06785cf8 (clean).
+# Node v26.10.0 --jitless has no WebAssembly: recorded as unsupported; Bun 1.4.2 BUN_JSC_useJIT=0 is the bar.
+# test | quench median Score / max RSS MB | bun no-JIT median Score / max RSS MB | result
+
+HashSet-wasm | 21.96 / 35.2 | 5.9 / 42.1 | WIN (Score and RSS)
+argon2-wasm | - / 28.0 | 2.56 / 41.4 | quench incomplete (timeout)
+gcc-loops-wasm | 17.69 / 37.2 | 4.0 / 42.9 | WIN (Score and RSS)
+quicksort-wasm | 40.51 / 27.0 | 12.98 / 40.2 | WIN (Score and RSS)
+richards-wasm | 2.59 / 26.6 | 6.69 / 39.2 | Score below bar
+sqlite3-wasm | 3.23 / 80.9 | 1.7 / 57.9 | RSS above bar
+tsf-wasm | 12.07 / 52.4 | 5.47 / 52.6 | WIN (Score and RSS)
+zlib-wasm | 18.08 / 34.5 | 6.24 / 46.5 | WIN (Score and RSS)
