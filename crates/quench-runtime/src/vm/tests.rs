@@ -10163,6 +10163,43 @@ fn typed_array_base_methods_validate_backing_before_arguments_with_node_diagnost
 }
 
 #[test]
+fn owned_host_script_code_reclaims_after_owners_and_escaped_functions_drop() {
+    let mut vm = Vm::new(SilentHost);
+    let program = Engine::specialize("void 0", "owned-code-lifetime.js").unwrap();
+    vm.execute(&program).unwrap();
+    let before = vm.programs.live_count();
+    let script = vm.compile_embedding_host_script("({value:42})", "owned-object.js", (0, 0)).unwrap();
+    let owner = Rc::downgrade(&script.state);
+    vm.collect_now(&program);
+    vm.collect_now(&program);
+    let value = vm.evaluate_embedding_compiled_script(&script).unwrap();
+    let root = vm.heap.root(value);
+    vm.collect_now(&program);
+    vm.collect_now(&program);
+    assert!(vm.compiled_script_is_current(&script));
+    drop(script);
+    assert!(owner.upgrade().is_none());
+    vm.heap.release_root(root);
+    vm.collect_now(&program);
+    vm.collect_now(&program);
+    assert_eq!(vm.programs.live_count(), before);
+
+    let script = vm.compile_embedding_host_script("(()=>41)", "escaped-owned.js", (0, 0)).unwrap();
+    let function = vm.evaluate_embedding_compiled_script(&script).unwrap();
+    let root = vm.heap.root(function);
+    drop(script);
+    vm.collect_now(&program);
+    vm.collect_now(&program);
+    assert!(vm.programs.live_count() > before);
+    let function = vm.heap.root_value(root).unwrap();
+    assert_eq!(vm.call_value(&program, function, Value::UNDEFINED, &[]).unwrap(), Value::number(41.0));
+    vm.heap.release_root(root);
+    vm.collect_now(&program);
+    vm.collect_now(&program);
+    assert_eq!(vm.programs.live_count(), before);
+}
+
+#[test]
 fn function_native_info_lookup_transitions_match_in_both_execution_modes() {
     let source = r#"
 Error.prepareStackTrace=(_,frames)=>frames;

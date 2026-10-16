@@ -275,6 +275,45 @@ impl<H: Host> Vm<H> {
         Ok(crate::PreparedScript { program: Rc::new(residual) })
     }
 
+    pub(crate) fn compile_embedding_host_script(
+        &mut self, source: &str, name: &str, origin: (u32, u32),
+    ) -> Result<crate::CompiledScript, JsError> {
+        let prepared = self.prepare_embedding_specialized_script(source, name, Some(origin))?;
+        let context = self.embedding_program()?;
+        let Some(source) = self.store_dynamic_program_shared(prepared.program.clone()) else {
+            return Err(self.type_error(&context, "dynamic program store is full".into()));
+        };
+        let state = Rc::new(crate::api::CompiledScriptState { program: prepared.program, source });
+        self.programs.register_owned_script(&state);
+        Ok(crate::CompiledScript { state })
+    }
+
+    pub(crate) fn compiled_script_is_current(&self, script: &crate::CompiledScript) -> bool {
+        script.state.program.atoms.belongs_to(&self.atom_sequence)
+            && self.programs.owns_script(&script.state)
+    }
+
+    pub(crate) fn evaluate_embedding_compiled_script(
+        &mut self, script: &crate::CompiledScript,
+    ) -> Result<Value, JsError> {
+        let context = self.embedding_program()?;
+        if !self.compiled_script_is_current(script) {
+            return Err(self.type_error(&context, "compiled Script belongs to a different runtime state".into()));
+        }
+        let realm = self.heap.weak_handle(self.realm.globals).expect("live realm global");
+        let id = match self.programs.owned_script_instance(script.state.source, realm) {
+            Some(id) => id,
+            None => {
+                let Some(id) = self.store_dynamic_program_shared(script.state.program.clone()) else {
+                    return Err(self.type_error(&context, "dynamic program store is full".into()));
+                };
+                self.programs.bind_script_instance(script.state.source, realm, id);
+                id
+            }
+        };
+        self.run_global_eval_program(&context, id)
+    }
+
     pub(crate) fn prepared_script_is_current(&self, prepared: &crate::PreparedScript) -> bool {
         prepared.program.atoms.belongs_to(&self.atom_sequence)
     }

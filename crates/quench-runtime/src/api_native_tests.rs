@@ -1649,3 +1649,144 @@ fn prepared_host_scripts_share_code_but_own_realm_state_and_reject_runtime_reset
         assert_eq!(state.borrow().invalidations, 2);
     }
 }
+
+struct ErrorSourceHost;
+impl Host for ErrorSourceHost {
+    fn write_line(&mut self, _: &str) {}
+    fn clock_millis(&mut self) -> f64 { 0.0 }
+    fn functions(&self) -> &[HostFunction<Self>] { &[] }
+    fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
+        let first_source = "new Error('first')";
+        let second_source = "\nnew Error('second')";
+        let global = context.global_root()?;
+        let first = context.evaluate_script_in_realm_rooted(global, first_source, "same-source-name.js")?;
+        let second = context.evaluate_script_in_realm_rooted(global, second_source, "same-source-name.js")?;
+        // The metadata owns immutable source text, not a lookup by a reusable filename
+        // or a borrowed Script slot. Collection and later compilation must preserve it.
+        context.collect()?;
+        for (error, source, line) in [(first, first_source, 1), (second, second_source.trim_start(), 2)] {
+            let position = context.error_source_position_rooted(error)?.expect("captured source");
+            assert_eq!(position.source_line.as_deref(), Some(source));
+            assert_eq!(position.script_name.as_deref(), Some("same-source-name.js"));
+            assert_eq!(position.line_number, line);
+            assert_eq!(position.column_number, 1);
+        }
+        let eval = context.evaluate_script_rooted("new Error('eval')", "named-eval.js")?;
+        context.collect()?;
+        let position = context.error_source_position_rooted(eval)?.expect("captured eval source");
+        assert_eq!(position.source_line.as_deref(), Some("new Error('eval')"));
+        assert_eq!(position.script_name, None);
+        assert_eq!((position.line_number, position.column_number), (1, 1));
+        Ok(())
+    }
+}
+
+#[test]
+fn error_source_metadata_owns_original_text_across_same_named_scripts_and_collection() {
+    for program in [
+        Engine::specialize_unspecialized("void 0", "error-source-entry.js").unwrap(),
+        Engine::specialize("void 0", "error-source-entry.js").unwrap(),
+    ] {
+        let mut runtime = Runtime::new(ErrorSourceHost);
+        runtime.execute(&program).unwrap();
+    }
+}
+
+#[derive(Default)]
+struct CompiledScriptStateForTest {
+    script: Option<CompiledScript>,
+    invalidations: usize,
+}
+struct CompiledScriptHost(Rc<RefCell<CompiledScriptStateForTest>>);
+impl Host for CompiledScriptHost {
+    fn write_line(&mut self, _: &str) {}
+    fn clock_millis(&mut self) -> f64 { 0.0 }
+    fn functions(&self) -> &[HostFunction<Self>] {
+        crate::host_functions![method "scriptIdentity" (0) => compiled_script_identity]
+    }
+    fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
+        let state = context.host_mut().0.clone();
+        let previous = state.borrow().script.clone();
+        if let Some(script) = previous {
+            assert!(!context.compiled_script_is_current(&script));
+            let global = context.global_root()?;
+            assert!(context.evaluate_compiled_script_in_realm_rooted(global, &script).is_err());
+            state.borrow_mut().invalidations += 1;
+            return Ok(());
+        }
+        let first = context.create_realm_rooted()?;
+        let second = context.create_realm_rooted()?;
+        for global in [first, second] {
+            let function = context.host_function(HostFunctionId(0))?;
+            let key = context.string_rooted("scriptIdentity");
+            context.define_data_property_rooted(global, key, function, true, true, true)?;
+        }
+        let script = context.compile_script_in_realm_with_origin(first,
+            "({identity:scriptIdentity(), array:[], error:new Error('owned'), template:((x)=>x)`site`, Class:class { #value=1; read(){return this.#value} }})",
+            "owned-host-script.js", 0, 0)?;
+        context.collect()?;
+        context.collect()?;
+        let left = context.evaluate_compiled_script_in_realm_rooted(first, &script)?;
+        let again = context.evaluate_compiled_script_in_realm_rooted(first, &script)?;
+        let right = context.evaluate_compiled_script_in_realm_rooted(second, &script)?;
+        context.collect()?;
+        let get = |context: &mut NativeContext<'_, Self>, object, name| {
+            let key = context.string_rooted(name);
+            context.get_property_rooted(object, key)
+        };
+        for name in ["identity", "template"] {
+            let a = get(context, left, name)?;
+            let b = get(context, again, name)?;
+            assert!(context.strict_equal_rooted(a, b)?);
+            let c = get(context, right, name)?;
+            assert_eq!(context.strict_equal_rooted(a, c)?, name == "identity");
+        }
+        for name in ["array", "error"] {
+            let a = get(context, left, name)?;
+            let b = get(context, again, name)?;
+            assert!(!context.strict_equal_rooted(a, b)?);
+            let c = get(context, right, name)?;
+            let a = context.prototype_rooted(a)?;
+            let c = context.prototype_rooted(c)?;
+            assert!(!context.strict_equal_rooted(a, c)?);
+        }
+        let first_class = get(context, left, "Class")?;
+        let second_class = get(context, again, "Class")?;
+        assert!(!context.strict_equal_rooted(first_class, second_class)?);
+        let first_instance = context.construct_rooted(first_class, first_class, &[])?;
+        let second_instance = context.construct_rooted(second_class, second_class, &[])?;
+        let read = get(context, first_instance, "read")?;
+        let one = context.call_rooted(read, first_instance, &[])?;
+        assert_eq!(context.rooted_value(one), Some(Value::number(1.0)));
+        assert!(context.call_rooted(read, second_instance, &[]).is_err());
+        let after = context.evaluate_compiled_script_in_realm_rooted(first, &script)?;
+        let old = get(context, left, "identity")?;
+        let fresh = get(context, after, "identity")?;
+        assert!(context.strict_equal_rooted(old, fresh)?);
+        state.borrow_mut().script = Some(script);
+        Ok(())
+    }
+}
+fn compiled_script_identity(
+    context: &mut NativeContext<'_, CompiledScriptHost>, _: RootId, _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let frame = context.source_stack_frames(1).pop().expect("actual Script activation");
+    assert_eq!(frame.script_name, "owned-host-script.js");
+    assert!(!frame.is_eval);
+    Ok(context.number(frame.script_id as f64))
+}
+#[test]
+fn compiled_host_scripts_keep_source_identity_and_own_separate_realm_execution_state() {
+    for program in [
+        Engine::specialize_unspecialized("void 0", "owned-entry.js").unwrap(),
+        Engine::specialize("void 0", "owned-entry.js").unwrap(),
+    ] {
+        let state = Rc::new(RefCell::new(CompiledScriptStateForTest::default()));
+        let mut runtime = Runtime::new(CompiledScriptHost(state.clone()));
+        runtime.execute(&program).unwrap();
+        runtime.execute(&program).unwrap();
+        let mut foreign = Runtime::new(CompiledScriptHost(state.clone()));
+        foreign.execute(&program).unwrap();
+        assert_eq!(state.borrow().invalidations, 2);
+    }
+}
