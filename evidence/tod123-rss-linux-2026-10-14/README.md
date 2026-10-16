@@ -447,3 +447,28 @@ the wall-clock score is unchanged (538 against 528). DeltaBlue +0.47%, others wi
 ±0.13%. NavierStokes' start-up +32M is the trunk's indexed-store exotic checks
 (`prototype_chain_has_indexed_set_exotic`, c21d556db) merged in between. The trade buys
 1.3 MiB of RegExp's resident set.
+
+## Array element payload charged toward the next collection
+
+- A collection is due after a weighted count of allocations; a string's flat units already
+  weighed one allocation per 64 bytes, but an array's elements weighed nothing however far
+  they grew. Array elements now weigh by the same rule: their capacity at allocation and
+  each growth of the backing vector (indexed stores, `push`), remainders carried forward.
+  The headroom factors (decision 21) are unchanged.
+
+Paired unbolted runs against the previous build (decision 5): Splay 48330 → 42430 KiB,
+DeltaBlue 4052 → 3832, Crypto 4430 → 4274, RegExp 12074 → 11886, others within noise;
+every fixture's score equal or higher.
+
+Bolted static against QuickJS (`board-bolt-vs-qjs-b26.txt`, 3 runs, KiB): Richards
+3216–3384 vs 3276–3480, DeltaBlue 3464 vs 3616–3928, RayTrace 3268–3456 vs 3372–3500,
+NavierStokes 4388–4516 vs 4928–5080, EarleyBoyer 9832–9956 vs 16472–16640, Splay
+42056–42184 vs 146884–147080; Crypto 3740–3944 vs 3516–3668 and RegExp 11388–11408 vs
+6636–6848 remain. Node 22 and Bun, with and without their JITs (`board-node-bun.txt`):
+every fixture at least 23 MiB (Bun without JIT), Splay 63–447 MiB.
+
+Guard (`guard-array-payload-raw.txt`, base `origin/v2-merged` f9355e67c): per run
+Crypto 0.00%, DeltaBlue +0.76%, EarleyBoyer +0.56%, NavierStokes 0.00%, RayTrace +0.06%,
+RegExp +0.67%, Richards 0.00%, Splay +0.56%: the added collections. Splay's set-up runs
++144M (its extra collections, which take 6 MiB off its peak). Runtime lib 671/671,
+Test262 stages 29–92 and `framework-core` 43/43 pass.
