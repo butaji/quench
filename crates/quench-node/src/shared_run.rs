@@ -4,6 +4,13 @@ use crate::host::NodeHost;
 use quench_runtime::{Engine, ExecutionRequest, Runtime, SourceKind};
 use std::{path::PathBuf, process::ExitCode};
 
+/// Initialize signal policy only at an executable's process boundary. Embedders
+/// using execute_shared retain ownership of their inherited signal dispositions.
+#[cfg(target_os = "linux")]
+pub fn initialize_cli_process_signals() -> std::io::Result<()> {
+    crate::modules::process_signals_state::reset_cli_dispositions()
+}
+
 const UNSETTLED_TOP_LEVEL_AWAIT_EXIT: u8 = 13;
 /// Select the child process's raw stdout/stderr boundary for Quench workers.
 pub const CHILD_RUNNER_ENV: &str = "QUENCH_CHILD_RUNNER";

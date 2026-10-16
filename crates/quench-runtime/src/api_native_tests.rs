@@ -949,25 +949,48 @@ impl Host for SnapshotMetadataHost {
     fn write_line(&mut self, _: &str) {}
     fn clock_millis(&mut self) -> f64 { 0.0 }
     fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> { context.seal_startup_intrinsics(); Ok(()) }
-    fn functions(&self) -> &[HostFunction<Self>] { crate::host_functions![global "nativeSnapshotMetadata" (1) => native_snapshot_metadata] }
+    fn functions(&self) -> &[HostFunction<Self>] { crate::host_functions![global "nativeSnapshotMetadata" (1) => native_snapshot_metadata, global "nativeCollectionPreview" (1) => native_collection_preview] }
+}
+fn native_collection_preview(context: &mut NativeContext<'_, SnapshotMetadataHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let value = args.first().copied().unwrap_or_else(|| context.undefined());
+    let Some(preview) = context.collection_preview_rooted(value)? else { return Ok(context.undefined()); };
+    if args.len() > 1 { context.evaluate_script_rooted("previewOwner.clear()", "clear-preview-owner.js")?; }
+    context.collect()?;
+    let values = context.array_rooted(&preview.entries)?;
+    let pairs = context.boolean(preview.is_key_value);
+    context.array_rooted(&[values, pairs])
 }
 fn native_snapshot_metadata(context: &mut NativeContext<'_, SnapshotMetadataHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let value = args.first().copied().unwrap_or_else(|| context.undefined());
     let target = context.proxy_target_rooted(value)?.unwrap_or_else(|| context.undefined());
+    let (detail_target, handler) = context.proxy_details_rooted(value)?
+        .unwrap_or_else(|| (context.undefined(), context.undefined()));
     context.collect()?;
     let object = context.boolean(context.has_startup_global_name("Object"));
     let added = context.boolean(context.has_startup_global_name("AddedAfterBootstrap"));
-    context.array_rooted(&[object, added, target])
+    context.array_rooted(&[object, added, target, detail_target, handler])
 }
 #[test]
 fn native_bootstrap_names_and_proxy_targets_survive_mutation_revocation_and_collection() {
     let source=r#"
       delete globalThis.Object;globalThis.AddedAfterBootstrap=function AddedAfterBootstrap(){};
-      const target={marker:42};const pair=Proxy.revocable(target,{});
+      let traps=0;
+      const target={marker:42};
+      const handler={get(){traps++;throw Error('introspection invoked get');},ownKeys(){traps++;throw Error('introspection invoked ownKeys');}};
+      const pair=Proxy.revocable(target,handler);
       const info=nativeSnapshotMetadata(pair.proxy);
-      if(info[0]!==true||info[1]!==false||info[2]!==target)throw Error('snapshot or original target changed');
-      pair.revoke();if(nativeSnapshotMetadata(pair.proxy)[2]!==null)throw Error('revoked target changed');
+      if(info[0]!==true||info[1]!==false||info[2]!==target||info[3]!==target||info[4]!==handler||traps!==0)throw Error('snapshot or proxy slots changed');
+      pair.revoke();const revoked=nativeSnapshotMetadata(pair.proxy);if(revoked[2]!==null||revoked[3]!==null||revoked[4]!==null||traps!==0)throw Error('revoked slots changed');
       if(nativeSnapshotMetadata(target)[2]!==undefined)throw Error('ordinary object acquired proxy slots');
+      const map=new Map([[1,'a'],[2,'b'],[3,'c']]);const iterator=map.entries();iterator.next();map.delete(2);map.set(4,'d');
+      const preview=nativeCollectionPreview(iterator);
+      if(preview[1]!==true||preview[0].join(',')!=='3,c,4,d'||iterator.next().value.join(',')!=='3,c')throw Error('preview consumed iterator or ignored live slots');
+      const setPreview=nativeCollectionPreview(new Set([42]).entries());
+      if(setPreview[1]!==true||setPreview[0].join(',')!=='42,42')throw Error('Set pair preview changed');
+      if(nativeCollectionPreview(new Proxy(map,handler))!==undefined||traps!==0)throw Error('preview invoked proxy traps');
+      globalThis.previewOwner=new Map([[{key:42},{marker:99}]]);
+      const retained=nativeCollectionPreview(previewOwner,true);
+      if(previewOwner.size!==0||retained[0][0].key!==42||retained[0][1].marker!==99)throw Error('preview roots lost cleared entries');
     "#;
     for program in [Engine::compile(crate::ExecutionRequest{source,name:"native-snapshot-metadata.js",kind:crate::SourceKind::Script}).unwrap(),Engine::specialize(source,"native-snapshot-metadata.js").unwrap()] {
         Runtime::new(SnapshotMetadataHost).execute(&program).unwrap();

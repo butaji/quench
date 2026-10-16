@@ -804,17 +804,12 @@ pub(crate) fn key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<R
 }
 fn build_key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let binding = context.object_rooted()?;
-    let function = context.host_function(crate::host::shared_vm::operation("utilOwnNonIndexProperties"))?;
-    let key = context.string_rooted("name");
-    let name = context.string_rooted("getOwnNonIndexProperties");
-    context.define_data_property_rooted(function, key, name, false, false, true)?;
-    let key = context.string_rooted("getOwnNonIndexProperties");
-    context.define_data_property_rooted(binding, key, function, true, true, true)?;
     for (name, operation) in [
         ("getConstructorName", "utilConstructorName"),
+        ("getOwnNonIndexProperties", "utilOwnNonIndexProperties"),
+        ("getPromiseDetails", "utilPromiseDetails"),
         ("getProxyDetails", "utilProxyDetails"),
         ("previewEntries", "utilPreviewEntries"),
-        ("getPromiseDetails", "utilPromiseDetails"),
         ("getExternalValue", "utilExternalValue"),
         ("markPromiseAsHandled", "utilMarkPromiseHandled"),
     ] {
