@@ -472,6 +472,8 @@ struct ErrorRealmIntrinsics {
     constructor: Value,
     stack_getter: Value,
     stack_setter: Value,
+    call_site_constructor: Value,
+    call_site_prototype: Value,
 }
 #[derive(Clone, Copy)]
 struct ArgumentsObjectTemplate {
