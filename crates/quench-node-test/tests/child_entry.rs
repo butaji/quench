@@ -9686,3 +9686,18 @@ fn filesystem_readdir_sync_uses_sdk_policy_with_raw_names_and_recursive_native_l
 fn process_capture_state_is_canonical_receiver_independent_and_survives_collection() {
     compare_node_source_with_args(include_str!("../node-tests/test-process-capture-canonical-state.js"), &["--expose-gc"]);
 }
+
+#[test]
+fn process_uncaught_monitor_precedes_capture_and_can_replace_the_pending_handler() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-monitor-capture-transition.js"), &[]);
+}
+
+#[test]
+fn process_uncaught_events_ignore_monitor_results_and_use_emit_truthiness() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-uncaught-emit-truthiness.js"), &[]);
+}
+
+#[test]
+fn process_capture_delivery_reloads_the_callback_after_the_null_check() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-getter-order.js"), &[]);
+}
