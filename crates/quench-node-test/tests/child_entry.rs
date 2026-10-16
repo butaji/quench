@@ -9626,3 +9626,8 @@ fn function_prototype_info_lookups_preserve_native_accessor_layout_and_descripto
 fn function_constructor_sources_preserve_whitespace_parameter_positions_and_synthetic_name_scope() {
     compare_node_source_with_args(include_str!("../node-tests/test-function-constructor-source-layout.js"), &[]);
 }
+
+#[test]
+fn filesystem_readdir_sync_uses_sdk_policy_with_raw_names_and_recursive_native_layout() {
+    compare_node_source_with_args(include_str!("../node-tests/test-fs-readdir-sdk-policy.js"), &["--expose-internals", "--no-warnings"]);
+}
