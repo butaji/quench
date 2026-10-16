@@ -490,6 +490,7 @@ impl<H: Host> Vm<H> {
         self.field_add_sets.clear();
         self.megamorphic_field_indices.fill(NO_MEGAMORPHIC_FIELD);
         self.megamorphic_fields.clear();
+        self.inherited_field_indices.fill(NO_INHERITED_FIELD);
         self.inherited_field_caches.clear();
         self.instanceof_constructor_layout = None;
         self.closure_shapes = [None; 2];
@@ -834,6 +835,30 @@ impl<H: Host> Vm<H> {
         true
     }
 
+    /// The add `cached_field_add_hit` makes for a lane: an ordinary record's cached add,
+    /// without the specialization test (`Vm::lane_admits`) or the store probe before it. The
+    /// caller proved `atom` eligible (`field_cache_atom_eligible`) for the site.
+    #[inline(always)]
+    pub(super) fn primary_field_add_hit(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        atom: Atom,
+        value: Value,
+        site: u16,
+    ) -> bool {
+        debug_assert!(self.lane_admits(p) && self.field_cache_atom_eligible(atom));
+        let Some(data) = self.heap.object_record(object) else {
+            return false;
+        };
+        if data.is_module_namespace() || data.is_arguments_object() || !data.is_extensible() {
+            return false;
+        }
+        let (shape, proto) = (data.shape(), data.proto());
+        let site = self.field_cache_index(site);
+        self.try_cached_field_add(object, atom, shape, proto, value, site)
+    }
+
     /// Whether the site has recorded a cached property add (`try_cached_field_add`).
     pub(super) fn field_site_adds(&self, site: u16) -> bool {
         self.field_add_indices[self.field_cache_index(site)] != NO_FIELD_ADD_SET
@@ -877,8 +902,7 @@ impl<H: Host> Vm<H> {
 
     /// Whether the site has an inherited entry (`inherited_field_hit`).
     pub(super) fn field_site_inherited(&self, site: u16) -> bool {
-        self.inherited_field_caches
-            .contains_key(&self.field_cache_index(site))
+        self.inherited_field_indices[self.field_cache_index(site)] != NO_INHERITED_FIELD
     }
 
     /// Whether the site's primary entry names a prototype holder (`primary_holder_field_hit`).
@@ -1312,7 +1336,13 @@ impl<H: Host> Vm<H> {
         }
         let (cache, value) = self.inherited_field(receiver, atom)?;
         if self.field_cache_records(site) {
-            self.inherited_field_caches.insert(site, cache);
+            match self.inherited_field_indices[site] {
+                NO_INHERITED_FIELD => {
+                    self.inherited_field_indices[site] = self.inherited_field_caches.len() as u32;
+                    self.inherited_field_caches.push(cache);
+                }
+                index => self.inherited_field_caches[index as usize] = cache,
+            }
         }
         Some(value)
     }
@@ -1326,7 +1356,13 @@ impl<H: Host> Vm<H> {
         site: usize,
         receiver: &Object,
     ) -> Option<FieldCacheHit> {
-        let cache = self.inherited_field_caches.get(&site)?;
+        // SAFETY: compiler-produced sites index exactly-sized cache vectors; every other
+        // index was installed together with its entry.
+        let index = unsafe { *self.inherited_field_indices.get_unchecked(site) };
+        if index == NO_INHERITED_FIELD {
+            return None;
+        }
+        let cache = unsafe { self.inherited_field_caches.get_unchecked(index as usize) };
         if cache.receiver != receiver.shape() {
             return None;
         }
