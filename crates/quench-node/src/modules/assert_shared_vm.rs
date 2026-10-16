@@ -12,22 +12,6 @@ pub(crate) fn module(
     Ok(module)
 }
 
-/// util and assert use the same comparison owner; load it after util initializes.
-pub(crate) fn is_deep_strict_equal(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let compare = crate::host::shared_vm::commonjs::node_library_export(
-        context,
-        "util.js",
-        "internal/util/comparisons.js",
-        "isDeepStrictEqual",
-    )?;
-    let missing = context.undefined();
-    context.call_rooted(compare, missing, args)
-}
-
 const SCALAR_GUARDS: &str = "\0builtin:assert/scalar-guards";
 
 fn get(

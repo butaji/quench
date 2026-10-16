@@ -132,6 +132,7 @@ fn embed_node_sources() {
         .expect("initialize tests/node submodule");
     configure_node_compat_version(&root);
     embed_node_protocol_constants(&root);
+    embed_uv_error_constants(&root);
     let mut pending = vec![root.join("lib")];
     let mut files = BUNDLED_DEPENDENCIES.iter().map(|(_, path)| root.join(path)).collect::<Vec<_>>();
     while let Some(directory) = pending.pop() {
@@ -267,5 +268,64 @@ fn embed_node_protocol_constants(root: &Path) {
     let path = std::path::PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("node_protocol_constants.rs");
     if std::fs::read_to_string(&path).ok().as_deref() != Some(&output) {
         std::fs::write(path, output).expect("write Node protocol constants");
+    }
+}
+
+/// Read protocol facts through the target C preprocessor; Rust owns the API.
+/// This uses libuv's own errno macros, including target-specific fallback codes.
+fn embed_uv_error_constants(root: &Path) {
+    let include = root.join("deps/uv/include");
+    for header in ["uv.h", "uv/errno.h"] {
+        println!("cargo:rerun-if-changed={}", include.join(header).display());
+    }
+    let out = std::path::PathBuf::from(env::var_os("OUT_DIR").unwrap());
+    let input = out.join("node_uv_error_constants.c");
+    let header = std::fs::read_to_string(include.join("uv.h")).expect("read libuv error macro");
+    let mut lines = header.lines().skip_while(|line| !line.starts_with("#define UV_ERRNO_MAP(XX)"));
+    let mut definition = String::new();
+    loop {
+        let line = lines.next().expect("complete libuv error macro");
+        definition.push_str(line);
+        definition.push('\n');
+        if !line.ends_with('\\') { break; }
+    }
+    // uv.h undefines UV__ERR after its enum; errno.h deliberately owns that
+    // target-specific sign operation, so preprocess its macros directly.
+    std::fs::write(&input, format!(r#"#include <uv/errno.h>
+{definition}
+#define QUENCH_UV_ROW(code, message) QUENCH_UV_ROW_BEGIN UV__##code, #code, message QUENCH_UV_ROW_END
+QUENCH_UV_ERRORS_BEGIN
+UV_ERRNO_MAP(QUENCH_UV_ROW)
+QUENCH_UV_ERRORS_END
+"#)).expect("write libuv protocol input");
+    let compiler = cc::Build::new().get_compiler();
+    let mut command = compiler.to_command();
+    if compiler.is_like_msvc() {
+        command.arg("/EP").arg("/I").arg(&include);
+    } else {
+        command.args(["-E", "-P", "-I"]).arg(&include);
+    }
+    let result = command.arg(&input).output().expect("preprocess libuv protocol facts");
+    assert!(result.status.success(), "libuv protocol preprocessor: {}", String::from_utf8_lossy(&result.stderr));
+    let source = String::from_utf8(result.stdout).expect("UTF-8 libuv protocol output");
+    let rows = source.split_once("QUENCH_UV_ERRORS_BEGIN").expect("libuv protocol start").1
+        .split_once("QUENCH_UV_ERRORS_END").expect("libuv protocol end").0;
+    let mut output = String::from("pub(crate) const UV_ERRORS: &[(i32, &str, &str)] = &[\n");
+    for row in rows.split("QUENCH_UV_ROW_END") {
+        let row = row.trim();
+        if row.is_empty() { continue; }
+        let row = row.strip_prefix("QUENCH_UV_ROW_BEGIN").expect("libuv error row");
+        let mut fields = row.splitn(3, ',');
+        let number = fields.next().expect("libuv numeric code");
+        let digits = number.chars().filter(|c| !c.is_whitespace() && *c != '(' && *c != ')').collect::<String>();
+        let number: i32 = digits.parse().expect("literal target libuv code");
+        let name = fields.next().expect("libuv error name").trim();
+        let message = fields.next().expect("libuv error message").trim();
+        output.push_str(&format!("    ({number}, {name}, {message}),\n"));
+    }
+    output.push_str("];\n");
+    let path = out.join("node_uv_errors.rs");
+    if std::fs::read_to_string(&path).ok().as_deref() != Some(&output) {
+        std::fs::write(path, output).expect("write libuv protocol constants");
     }
 }

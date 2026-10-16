@@ -932,3 +932,21 @@ ToNumber/ToInt32 conversion. Linux syscall comparisons cover default, IPv4,
 reuse-port and HTTP listeners plus numeric/string/nonfinite/wrapped options.
 The comparison explicitly reports when syscall tracing is unavailable.
 Positional backlog overloads and DNS-deferred coercion/error timing remain open.
+
+The public utility module retains the configured SDK's actual exports object,
+including its lazy properties and shared warning caches. Rust owns the native
+`util.defineLazyProperties` protocol: each property uses Core's lazy data slot,
+loads its original SDK module on observation, and becomes a writable data
+property. Assignment and descriptor reflection use the same Core operation as
+other lazy host properties. No duplicate JavaScript utility policy is installed.
+The already qualified callbackify, argument parsing, styling and environment
+adapters remain native. Abort transfer/weak-event and signal-tracing exports
+remain unavailable until their genuine host dependencies exist.
+
+The libuv utility binding derives its complete error inventory, ordering and
+messages from the configured SDK's `UV_ERRNO_MAP`. A target C preprocessor
+resolves `uv/errno.h` numeric definitions during the Rust build; it executes no
+host API implementation or target program. Rust publishes immutable numeric
+constants and constructs fresh error maps and fresh value arrays on each call,
+using startup intrinsics. SDK utility policy owns public argument validation and
+error construction; native I/O uses the same status-name authority directly.
