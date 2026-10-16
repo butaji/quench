@@ -43,9 +43,8 @@ is independent of its binding environment. Full eval, expression eval and
 Function-constructor bodies retain that origin across escaped closures and
 collection. Ordinary functions called from eval and host-compiled scripts remain
 source code, including host scripts with eval-like filenames. Captured CallSites
-copy the classification before their program can be reclaimed. Eval origins,
-filenames, source URLs and the complete Node stack API still require conformance
-work.
+copy the classification before their program can be reclaimed. Complete eval/sourceURL/source-map metadata and the Node stack API still
+require conformance work.
 
 Function factory origins derive from the existing function kind and creation
 realm. The realm owns its original constructors and intrinsic prototypes, so
@@ -63,6 +62,22 @@ later attempt. Native coded errors share the library's private Node error symbol
 UDP buffer-size errors construct the original `ERR_SOCKET_BUFFER_SIZE` class,
 which owns its context getters and custom inspection behavior.
 
+Eval CallSites retain the actual compiling caller's immutable source name and
+position, including nested eval and Function-constructor origins. Capture reads
+compiler/creation metadata and executes no public name getters. Unnamed eval
+scripts expose an absent filename through CallSites and an empty script name
+through detailed capture. Empty frame debug names use the eval display label.
+Wide call anchors use the decoded opcode during source relocation.
+
+Indirect global eval reuses live compiled-script identity across contexts;
+execution supplies the target realm and allocates fresh values. Strict scripts
+and tagged-template syntax are excluded according to the configured Node/V8
+cache rules. Parser-owned syntax includes nested template sites. Entries use the
+program store's existing reclamation lifecycle, validate the program identity
+on lookup and disappear when their program is reclaimed or the store resets.
+Complete V8 cache ageing, contextual direct-eval identity, sourceURL/source-map
+metadata and Function-constructor default debug names/positions remain open.
+
 ## Parsed eval execution
 
 Direct and indirect eval execute the existing OXC-compiled Eval goal, retaining
@@ -72,8 +87,8 @@ source substrings or inserts an expression-return wrapper. Binding scopes,
 strictness, early errors and captured environments share the compiler and VM
 operations used by other code. A lone regexp expression uses OXC's literal span
 and flags with the original UTF-16 pattern units, preserving lone surrogates.
-Eval-origin descriptions, synthetic filenames and Function-constructor wrapper
-positions still need separate conformance work.
+Complete eval/sourceURL metadata, synthetic diagnostic filenames and
+Function-constructor wrapper positions still need separate conformance work.
 
 ## Detailed source stack capture
 

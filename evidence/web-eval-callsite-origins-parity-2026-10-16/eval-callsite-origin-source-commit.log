@@ -1,0 +1,4 @@
+[v2-web 725f91d33] Retain compiling eval origins and shared indirect script identities
+ 11 files changed, 265 insertions(+), 30 deletions(-)
+ create mode 100644 crates/quench-node-test/node-tests/test-callsite-eval-origins.js
+ create mode 100644 crates/quench-node-test/node-tests/test-indirect-eval-script-identity.js

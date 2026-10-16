@@ -1,0 +1,19 @@
+   Compiling quench-runtime v0.1.0 (/workspace/quench/crates/quench-runtime)
+   Compiling quench-wasm v0.1.0 (/workspace/quench/crates/quench-wasm)
+   Compiling quench-node v0.1.0 (/workspace/quench/crates/quench-node)
+   Compiling quench-node-test v0.1.0 (/workspace/quench/crates/quench-node-test)
+    Finished `iteration` profile [optimized] target(s) in 45.83s
+     Running tests/child_entry.rs (work/host-build/iteration/deps/child_entry-70660f0a4dee9e77)
+
+running 8 tests
+test callsite_eval_classification_follows_compilation_origin_and_survives_escaped_closures ... ok
+test cli_eval_builtin_accessors_preserve_blocked_cache_inherited_setters_and_errors ... ok
+test cli_eval_builtin_globals_preserve_lazy_descriptors_cache_and_assignment ... ok
+test cli_eval_builtin_globals_use_original_module_identity_and_mutable_require_hook ... ok
+test eval_call_sites_capture_original_compiling_callers_and_hide_absent_script_names ... ok
+test eval_uses_parsed_program_completion_grammar_and_original_source_positions ... ok
+test indirect_eval_script_identity_preserves_origins_fresh_values_templates_and_realm_isolation ... ok
+test util_parse_args_default_argv_matches_eval_print_and_file_entry_forms ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 360 filtered out; finished in 5.44s
+
