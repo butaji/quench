@@ -9681,3 +9681,8 @@ fn http_listening_derives_from_the_handle_and_close_cancels_pending_notification
 fn filesystem_readdir_sync_uses_sdk_policy_with_raw_names_and_recursive_native_layout() {
     compare_node_source_with_args(include_str!("../node-tests/test-fs-readdir-sdk-policy.js"), &["--expose-internals", "--no-warnings"]);
 }
+
+#[test]
+fn process_capture_state_is_canonical_receiver_independent_and_survives_collection() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-canonical-state.js"), &["--expose-gc"]);
+}
