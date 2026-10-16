@@ -1,6 +1,36 @@
 use super::*;
 
 impl FunctionCompiler<'_, '_> {
+    pub(super) fn with_source_offset<T>(&mut self, offset: u32, emit: impl FnOnce(&mut Self) -> T) -> T {
+        let position = self.owner.source_position(offset);
+        let previous = self.current_source_position.replace((position.line, position.column));
+        let result = emit(self);
+        self.current_source_position = previous;
+        result
+    }
+
+    pub(super) fn static_access_source_offset(&self, member: &StaticMemberExpression<'_>) -> u32 {
+        if member.optional {
+            self.owner.source_delimiter(member.object.span().end, member.span.end, '?')
+        } else { member.property.span.start }
+    }
+
+    pub(super) fn computed_access_source_offset(&self, member: &ComputedMemberExpression<'_>) -> u32 {
+        self.owner.source_delimiter(member.object.span().end, member.span.end, '[')
+    }
+
+    pub(super) fn call_source_offset(&self, call: &CallExpression<'_>) -> u32 {
+        if !call.optional {
+            match &call.callee {
+                Expression::Identifier(_) | Expression::Super(_) => return call.callee.span().start,
+                Expression::StaticMemberExpression(member) => return member.property.span.start,
+                _ => {}
+            }
+        }
+        let start = call.type_arguments.as_ref().map_or(call.callee.span().end, |arguments| arguments.span.end);
+        self.owner.source_delimiter(start, call.span.end, '(')
+    }
+
     pub(super) fn throw_invalid_call_assignment(&mut self, call: &Expression<'_>) -> Register {
         if self.strict {
             self.owner
@@ -418,13 +448,10 @@ impl FunctionCompiler<'_, '_> {
         };
         let atom = self.owner.atom(member.property.name.as_str());
         let cache = self.owner.cache_site();
-        self.emit(
-            Op::GetField,
-            callee,
-            FieldBase::register(receiver).0,
-            cache,
-            atom,
-        );
+        let source = self.static_access_source_offset(member);
+        self.with_source_offset(source, |compiler| compiler.emit(
+            Op::GetField, callee, FieldBase::register(receiver).0, cache, atom,
+        ));
         if let Some(end) = end {
             self.patch(end);
         }
@@ -448,7 +475,8 @@ impl FunctionCompiler<'_, '_> {
             (self.reg(), None)
         };
         let key = self.expression_outside_optional_chain(&member.expression);
-        self.emit(Op::GetIndex, callee, receiver, key, 0);
+        let source = self.computed_access_source_offset(member);
+        self.with_source_offset(source, |compiler| compiler.emit(Op::GetIndex, callee, receiver, key, 0));
         if let Some(end) = end {
             self.patch(end);
         }
@@ -469,13 +497,9 @@ impl FunctionCompiler<'_, '_> {
         };
         let atom = self.owner.private_name_atom(member.field.span);
         let cache = self.owner.cache_site();
-        self.emit(
-            Op::GetField,
-            callee,
-            FieldBase::register(receiver).0,
-            cache,
-            atom,
-        );
+        self.with_source_offset(member.field.span.start, |compiler| compiler.emit(
+            Op::GetField, callee, FieldBase::register(receiver).0, cache, atom,
+        ));
         if let Some(end) = end {
             self.patch(end);
         }

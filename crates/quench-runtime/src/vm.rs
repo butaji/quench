@@ -191,6 +191,8 @@ pub(super) struct Frame {
     program: ProgramId,
     function: u32,
     pc: usize,
+    /// Whether pc is a saved continuation after a call rather than the executing operation.
+    pc_is_resume: bool,
     // The current operation's lexical projection, independent of the PC
     // published for GC roots or saved as the continuation after a call.
     binding_site_pc: Option<u32>,
@@ -241,6 +243,10 @@ impl Default for CaptureCache {
 }
 
 impl Frame {
+    fn source_instruction_pc(&self) -> usize {
+        if self.pc_is_resume { self.pc.saturating_sub(1) } else { self.pc }
+    }
+
     fn empty(program: ProgramId, with_base: usize) -> Self {
         Self {
             context: CallContext::Internal,
@@ -249,6 +255,7 @@ impl Frame {
             program,
             function: 0,
             pc: 0,
+            pc_is_resume: true,
             binding_site_pc: None,
             env: Value::NULL,
             this: Value::UNDEFINED,

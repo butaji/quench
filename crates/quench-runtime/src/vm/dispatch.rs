@@ -78,6 +78,7 @@ impl<H: Host> Vm<H> {
         let window = i.call_window();
         let this = self.read(f, i.register_c());
         self.frames[f].pc = pc;
+        self.frames[f].pc_is_resume = true;
         self.profile.call_target(1, usize::from(window.count));
         // Collection happens only at back edges, tail calls and explicit host safepoints, none
         // of which can run while a frame is pushed; afterwards the new frame itself roots the
@@ -211,6 +212,7 @@ impl<H: Host> Vm<H> {
         }
         self.profile.call_source(0);
         self.frames[f].pc = pc;
+        self.frames[f].pc_is_resume = true;
         self.profile.call_target(1, arguments.len());
         let call_guard = self.push_general_user_frame(
             p,
@@ -1117,6 +1119,7 @@ impl<H: Host> Vm<H> {
             Op::Jump => {
                 *pc = i.jump_target() as usize;
                 self.frames[f].pc = *pc;
+                self.frames[f].pc_is_resume = true;
                 self.maybe_collect(p);
             }
             Op::JumpFalse => {
@@ -1173,6 +1176,7 @@ impl<H: Host> Vm<H> {
                 let callee = self.read(f, i.register_b());
                 let caller = &mut *self.frames[f];
                 caller.pc = *pc;
+                caller.pc_is_resume = true;
                 debug_assert_eq!(caller.program, self.active_program);
                 let direct_eval = i.direct_eval()
                     && matches!(
@@ -1339,6 +1343,7 @@ impl<H: Host> Vm<H> {
                     return Ok(StepResult::Continue);
                 }
                 self.frames[f].pc = *pc;
+                self.frames[f].pc_is_resume = true;
                 let call_guard = self.push_wasm_frame(
                     p,
                     f,
@@ -1360,6 +1365,7 @@ impl<H: Host> Vm<H> {
                 let parent = self.capture_env(f, 0).unwrap_or(self.frames[f].env);
                 self.profile.call_target(1, usize::from(window.count));
                 self.frames[f].pc = *pc;
+                self.frames[f].pc_is_resume = true;
                 let terminal = i.returns_from_frame();
                 if ((p.kind == crate::bytecode::ProgramKind::Wasm && i.returns_from_frame())
                     || (p.kind != crate::bytecode::ProgramKind::Wasm
@@ -1400,6 +1406,7 @@ impl<H: Host> Vm<H> {
                 self.profile.call_source(2);
                 let this = self.read(f, i.register_b());
                 self.frames[f].pc = *pc;
+                self.frames[f].pc_is_resume = true;
                 let value = self.call_method_site_safe(p, f, i.method_site_index(), this)?;
                 if i.returns_from_frame() {
                     self.profile.terminal_call(1);
@@ -1417,6 +1424,7 @@ impl<H: Host> Vm<H> {
                     self.frames[f].this
                 };
                 self.frames[f].pc = *pc;
+                self.frames[f].pc_is_resume = true;
                 let value = self.call_method_site_safe(p, f, method_site, this)?;
                 if i.returns_from_frame() {
                     self.profile.terminal_call(2);
@@ -1437,6 +1445,7 @@ impl<H: Host> Vm<H> {
                     if let Some((id, env, this)) = self.inline_construct_target(p, f, callee) {
                         let arguments: *const [Value] = self.register_window(f, window);
                         self.frames[f].pc = *pc;
+                        self.frames[f].pc_is_resume = true;
                         self.construct_target = Some(ConstructionTarget { callee, new_target: callee });
                         // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
                         let pushed = self.push_general_user_frame(
@@ -1470,6 +1479,7 @@ impl<H: Host> Vm<H> {
                     }
                 };
                 self.frames[f].pc = *pc;
+                self.frames[f].pc_is_resume = true;
                 let callee = self.read(f, i.register_b());
                 let v = if i.is_super_construct() {
                     self.construct_super_value(p, callee, &args)?
