@@ -5,16 +5,20 @@ use super::*;
 const ASSIGNMENT_TO_CONSTANT: &str = "Assignment to constant variable.";
 impl FunctionCompiler<'_, '_> {
     pub(crate) fn expression(&mut self, expression: &Expression<'_>) -> Register {
+        self.expression_with_debug_name(expression, None)
+    }
+
+    pub(crate) fn expression_with_debug_name(&mut self, expression: &Expression<'_>, debug_name: Option<Atom>) -> Register {
         let position = self.owner.source_position(expression.span().start);
         let previous = self
             .current_source_position
             .replace((position.line, position.column));
-        let result = self.expression_at_current_position(expression);
+        let result = self.expression_at_current_position(expression, debug_name);
         self.current_source_position = previous;
         result
     }
 
-    fn expression_at_current_position(&mut self, expression: &Expression<'_>) -> Register {
+    fn expression_at_current_position(&mut self, expression: &Expression<'_>, debug_name: Option<Atom>) -> Register {
         // Only a direct read or update of a local consumes the last-operand mark; every
         // nested operand starts unmarked.
         let last_operand = std::mem::take(&mut self.last_operand);
@@ -45,8 +49,16 @@ impl FunctionCompiler<'_, '_> {
                 result
             }
             Expression::Super(_) => self.super_base(),
-            Expression::FunctionExpression(value) => self.function_expression(value),
-            Expression::ArrowFunctionExpression(value) => self.arrow_function_expression(value),
+            Expression::FunctionExpression(value) => {
+                let function = self.function_expression(value);
+                if value.id.is_none() { if let Some(name) = debug_name { self.emit(Op::SetFunctionDebugName, function, 0, 0, name); } }
+                function
+            },
+            Expression::ArrowFunctionExpression(value) => {
+                let function = self.arrow_function_expression(value);
+                if let Some(name) = debug_name { self.emit(Op::SetFunctionDebugName, function, 0, 0, name); }
+                function
+            },
             Expression::ClassExpression(value) => self.class_expression(value),
             Expression::ArrayExpression(value) => self.array_expression(value),
             Expression::ObjectExpression(value) => self.object_expression(value),
@@ -71,8 +83,8 @@ impl FunctionCompiler<'_, '_> {
                 result
             }
             Expression::UnaryExpression(value) => self.unary(value),
-            Expression::LogicalExpression(value) => self.logical(value),
-            Expression::ConditionalExpression(value) => self.conditional(value),
+            Expression::LogicalExpression(value) => self.logical(value, debug_name),
+            Expression::ConditionalExpression(value) => self.conditional(value, debug_name),
             Expression::CallExpression(value) if value.optional => self.optional_call(value),
             Expression::CallExpression(value) => self.call(value),
             Expression::ImportExpression(value) => {
@@ -110,8 +122,8 @@ impl FunctionCompiler<'_, '_> {
                 result
             }
             Expression::NewExpression(value) => self.construct(value),
-            Expression::SequenceExpression(value) => self.sequence_expression(value),
-            Expression::ParenthesizedExpression(value) => self.expression(&value.expression),
+            Expression::SequenceExpression(value) => self.sequence_expression(value, debug_name),
+            Expression::ParenthesizedExpression(value) => self.expression_with_debug_name(&value.expression, debug_name),
             Expression::AwaitExpression(value) if self.async_function => {
                 let source = self.expression(&value.argument);
                 let destination = self.reg();

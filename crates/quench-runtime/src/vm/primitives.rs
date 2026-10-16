@@ -125,21 +125,12 @@ impl<H: Host> Vm<H> {
                 }
                 self.string_from_units(&well_formed)
             }
-            Native::BigIntValueOf => {
-                if matches!(self.heap.get(this), Some(Cell::BigInt(_))) {
-                    return Ok(this);
-                }
-                let value_atom = self.intern_atom("\0quench:bigint-value");
-                self.own_property(this, value_atom).ok_or_else(|| {
-                    JsError("BigInt.prototype.valueOf called on incompatible receiver".into())
-                })
-            }
+            Native::BigIntValueOf => self.bigint_value_of(p, this),
             Native::StringToString | Native::StringValueOf => {
                 if matches!(self.heap.get(this), Some(Cell::String(_))) {
                     Ok(this)
                 } else {
-                    let value_atom = self.intern_atom("\0quench:string-value");
-                    self.own_property(this, value_atom).ok_or_else(|| {
+                    self.boxed_primitive_value(this).filter(|value| matches!(self.heap.get(*value), Some(Cell::String(_)))).ok_or_else(|| {
                         self.type_error(p, "String method called on incompatible receiver".into())
                     })
                 }
@@ -148,8 +139,7 @@ impl<H: Host> Vm<H> {
                 if this.as_number().is_some() {
                     Ok(this)
                 } else {
-                    let value_atom = self.intern_atom("\0quench:number-value");
-                    self.own_property(this, value_atom).ok_or_else(|| {
+                    self.boxed_primitive_value(this).filter(|value| value.as_number().is_some()).ok_or_else(|| {
                         self.type_error(
                             p,
                             "Number.prototype.valueOf called on incompatible receiver".into(),

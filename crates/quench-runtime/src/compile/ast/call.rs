@@ -108,37 +108,37 @@ impl FunctionCompiler<'_, '_> {
         self.literal(Constant::Undefined)
     }
 
-    pub(super) fn logical(&mut self, value: &LogicalExpression<'_>) -> Register {
+    pub(super) fn logical(&mut self, value: &LogicalExpression<'_>, debug_name: Option<Atom>) -> Register {
         if value.operator.is_coalesce() {
-            return self.coalesce(value);
+            return self.coalesce(value, debug_name);
         }
-        let left = self.expression(&value.left);
+        let left = self.expression_with_debug_name(&value.left, debug_name);
         let dst = self.reg();
         self.emit(Op::Move, dst, left, 0, 0);
         let jump = self.emit(Op::JumpFalse, left, 0, 0, 0);
         if value.operator.is_or() {
             let skip = self.emit(Op::Jump, 0, 0, 0, 0);
             self.patch(jump);
-            let right = self.expression(&value.right);
+            let right = self.expression_with_debug_name(&value.right, debug_name);
             self.emit(Op::Move, dst, right, 0, 0);
             self.patch(skip);
         } else {
-            let right = self.expression(&value.right);
+            let right = self.expression_with_debug_name(&value.right, debug_name);
             self.emit(Op::Move, dst, right, 0, 0);
             self.patch(jump);
         }
         dst
     }
 
-    pub(super) fn conditional(&mut self, value: &ConditionalExpression<'_>) -> Register {
+    pub(super) fn conditional(&mut self, value: &ConditionalExpression<'_>, debug_name: Option<Atom>) -> Register {
         let dst = self.reg();
         let test = self.expression(&value.test);
         let other = self.emit(Op::JumpFalse, test, 0, 0, 0);
-        let yes = self.expression(&value.consequent);
+        let yes = self.expression_with_debug_name(&value.consequent, debug_name);
         self.emit(Op::Move, dst, yes, 0, 0);
         let end = self.emit(Op::Jump, 0, 0, 0, 0);
         self.patch(other);
-        let no = self.expression(&value.alternate);
+        let no = self.expression_with_debug_name(&value.alternate, debug_name);
         self.emit(Op::Move, dst, no, 0, 0);
         self.patch(end);
         dst

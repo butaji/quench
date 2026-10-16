@@ -1,0 +1,36 @@
+
+running 1 test
+test boxed_primitive_brands_use_internal_values_and_reject_forged_properties_and_proxies ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 353 filtered out; finished in 0.37s
+
+
+running 1 test
+test native_zlib_streaming_counts_bytes_pending_close_and_iterable_pipelines_match_node ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 353 filtered out; finished in 0.57s
+
+
+running 1 test
+test native_brotli_streaming_bytes_dictionaries_and_errors_match_node ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 353 filtered out; finished in 0.54s
+
+
+running 1 test
+test native_zstd_streaming_frames_dictionaries_pledges_and_errors_match_node ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 353 filtered out; finished in 0.60s
+
+
+running 1 test
+test default_node_stack_policy_uses_real_coded_brands_and_system_errors ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 353 filtered out; finished in 0.51s
+
+
+running 1 test
+test node_compatibility_version_follows_bundled_library_target ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 353 filtered out; finished in 0.31s
+

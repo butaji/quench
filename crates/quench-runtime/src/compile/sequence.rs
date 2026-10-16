@@ -1,8 +1,8 @@
 use super::*;
 
 impl FunctionCompiler<'_, '_> {
-    pub(super) fn coalesce(&mut self, value: &oxc_ast::ast::LogicalExpression<'_>) -> Register {
-        let left = self.expression(&value.left);
+    pub(super) fn coalesce(&mut self, value: &oxc_ast::ast::LogicalExpression<'_>, debug_name: Option<Atom>) -> Register {
+        let left = self.expression_with_debug_name(&value.left, debug_name);
         let result = self.literal(Constant::Undefined);
         self.emit(Op::Move, result, left, 0, 0);
 
@@ -25,7 +25,7 @@ impl FunctionCompiler<'_, '_> {
         let use_left = self.emit(Op::JumpFalse, is_undefined, 0, 0, 0);
 
         self.patch_instruction(use_right_from_null, self.code.len() as u32);
-        let right = self.expression(&value.right);
+        let right = self.expression_with_debug_name(&value.right, debug_name);
         self.emit(Op::Move, result, right, 0, 0);
         self.patch_instruction(use_left, self.code.len() as u32);
         result
@@ -34,10 +34,11 @@ impl FunctionCompiler<'_, '_> {
     pub(super) fn sequence_expression(
         &mut self,
         sequence: &oxc_ast::ast::SequenceExpression<'_>,
+        debug_name: Option<Atom>,
     ) -> Register {
         let mut result = self.literal(Constant::Undefined);
-        for expression in &sequence.expressions {
-            result = self.expression(expression);
+        for (index, expression) in sequence.expressions.iter().enumerate() {
+            result = self.expression_with_debug_name(expression, if index + 1 == sequence.expressions.len() { debug_name } else { None });
         }
         result
     }

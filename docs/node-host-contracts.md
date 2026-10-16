@@ -23,8 +23,30 @@ receiver. Strict-frame visibility controls `getFunction` and `getThis`; function
 debug names are derived when read. Method names inspect receiver descriptors
 without executing accessors or Proxy traps, including inherited properties and
 ambiguous enumerable aliases. CallSites share a realm-owned native prototype.
+Constructor flags come from actual activation entry, including materialized
+specialized frames. A pending `new.target` belongs to its callee, so reentrant
+ordinary callbacks cannot inherit a constructor entry. Receiver type names use
+the shared safe constructor-name operation; constructor/global receivers report
+null, and Proxy receivers do not invoke traps.
+
+Public function names and inferred debug names remain distinct. Variable
+initializer inference follows result-producing sequence, conditional and logical
+expressions without changing the public `.name`. A slotless shape transition
+records when the native name-property state is reconfigured; reading the name
+or inspecting its descriptor does not materialize it. Shape compaction preserves
+both creation names and that transition. The added metadata opcode requires
+bytecode format 90; opcodes outside the dense fast table use general dispatch.
+This covers those inference contexts, not every V8 debug-name inference rule.
+
 This describes the implemented subset; complete Node stack APIs and eval frames
 still require conformance work.
+
+Function factory origins derive from the existing function kind and creation
+realm. The realm owns its original constructors and intrinsic prototypes, so
+changing public globals or prototype `constructor` properties cannot redirect
+later factory allocations. Constructor debug names observe data properties and
+preserve original names when accessors would otherwise execute. Native and bound
+functions retain their distinct constructor-name behavior.
 
 The optional retained host stack-policy callback receives the realm global,
 original error and genuine captured CallSites. The Node host uses the configured
@@ -34,6 +56,16 @@ are cached after success; a thrown formatter leaves the capture available for a
 later attempt. Native coded errors share the library's private Node error symbol.
 UDP buffer-size errors construct the original `ERR_SOCKET_BUFFER_SIZE` class,
 which owns its context getters and custom inspection behavior.
+
+## Boxed primitive identity
+
+Primitive wrappers carry their actual value in an object-internal payload.
+Builtin brands, primitive methods, constructor display, structured cloning and
+JSON unboxing derive from that payload. Public properties cannot manufacture or
+replace wrapper data, and Proxy wrappers do not inherit the target's brand.
+The payload follows the shared object-extras GC root visitor and releases when
+the wrapper dies. Intrinsic Boolean, Number and String prototypes have their
+specified primitive data; Symbol and BigInt prototypes do not.
 
 ## Event listeners
 
@@ -707,8 +739,11 @@ semantics or complete Node API parity.
 
 The configured Node `internal/util/inspect.js` owns public `inspect`, `format`
 and `formatWithOptions` identities and internal formatting. Its initialization
-runs before guest code because it captures private state using intrinsic
-methods; nonconfigurable guest replacements remain intact afterward. Native
+captures private state using intrinsic methods, so it runs on first use inside
+the startup intrinsics (`node_library_module`), which put back the original
+methods however guest code has replaced or frozen them, nonconfigurable
+replacements included, and restore the guest's afterward. A script that never
+formats loads none of it. Native
 key, type and symbol bindings have independent cache ownership, so they do not
 recursively require public formatter construction. The partial duplicate
 renderers and their color-table copies are removed.

@@ -808,14 +808,7 @@ fn build_key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         ("markPromiseAsHandled", "utilMarkPromiseHandled"),
     ] {
         let operation = crate::host::shared_vm::operation(operation);
-        let function = if name == "getConstructorName" {
-            let global = context.global_root()?;
-            let symbol = context.startup_data_property_rooted(global, "Symbol")
-                .ok_or_else(|| RootedError::host("original Symbol constructor missing"))?;
-            let tag = context.startup_data_property_rooted(symbol, "toStringTag")
-                .ok_or_else(|| RootedError::host("original toStringTag symbol missing"))?;
-            context.host_function_named_with_data(operation, name, tag)?
-        } else { context.host_function_named(operation, name)? };
+        let function = context.host_function_named(operation, name)?;
         let key = context.string_rooted(name);
         context.define_data_property_rooted(binding, key, function, true, true, true)?;
     }
@@ -942,102 +935,15 @@ pub(crate) fn preview_entries(
     }
 }
 
-/// Read an own data property without inheriting descriptor-object getters.
-fn inspection_data_property(
-    context: &mut NativeContext<'_, NodeHost>, object: RootId, key: RootId,
-) -> Result<Option<RootId>, RootedError> {
-    let descriptor = context.own_property_descriptor_rooted(object, key)?;
-    if context.is_object_rooted(descriptor)? {
-        for key in context.own_keys_rooted(descriptor)? {
-            if context.string_text(key)?.as_deref() == Some("value") {
-                return context.get_property_rooted(descriptor, key).map(Some);
-            }
-        }
-    }
-    Ok(None)
-}
-
-/// Native class fallback for inspection, without public constructor/tag getters.
-/// User base-constructor provenance is captured by Core at actual allocation.
+/// Core owns creation identity, safe prototype lookup and intrinsic class display.
 pub(crate) fn constructor_name(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let absent = context.undefined();
-    let value = args.first().copied().unwrap_or(absent);
-    if let Some(name) = context.constructed_name_rooted(value)? {
-        if context
-            .string_text(name)?
-            .is_some_and(|name| !name.is_empty() && name != "Object")
-        {
-            return Ok(name);
-        }
-    }
-    if context.proxy_target_rooted(value)?.is_some() {
-        return Ok(context.string_rooted("Object"));
-    }
-    let mut fallback = if context.is_array_rooted(value)? {
-        "Array"
-    } else {
-        "Object"
-    };
-    for &(name, brand) in TYPE_PREDICATES {
-        use BuiltinBrand as B;
-        if matches!(
-            brand,
-            B::Proxy
-                | B::AnyArrayBuffer
-                | B::BoxedPrimitive
-                | B::NativeError
-                | B::GeneratorObject
-                | B::MapIterator
-                | B::SetIterator
-                | B::ModuleNamespaceObject
-        ) {
-            continue;
-        }
-        if context.has_builtin_brand_rooted(value, brand)? {
-            let name = name.strip_prefix("is").expect("type predicate prefix");
-            let name = name.strip_suffix("Object").unwrap_or(name);
-            fallback = name;
-            break;
-        }
-    }
-    if fallback == "Object" && context.is_callable_rooted(value)? {
-        fallback = "Function";
-    }
-    if fallback == "Object" && context.has_builtin_brand_rooted(value, BuiltinBrand::NativeError)? {
-        fallback = "Error";
-    }
-    let tag = context.host_function_data()?;
-    let constructor_key = context.string_rooted("constructor");
-    let mut current = value;
-    while context.is_object_rooted(current)? {
-        if context.proxy_target_rooted(current)?.is_some() {
-            break;
-        }
-        if let Some(data) = inspection_data_property(context, current, tag)? {
-            if context.string_text(data)?.is_some() {
-                return Ok(data);
-            }
-        }
-        if !context.strict_equal_rooted(current, value)? {
-            if let Some(constructor) = inspection_data_property(context, current, constructor_key)?
-            {
-                if let Some(name) = context.original_function_name_rooted(constructor)? {
-                    if context
-                        .string_text(name)?
-                        .is_some_and(|name| !name.is_empty() && name != "Object")
-                    {
-                        return Ok(name);
-                    }
-                }
-            }
-        }
-        current = context.prototype_rooted(current)?;
-    }
-    Ok(context.string_rooted(fallback))
+    let value = args.first().copied().unwrap_or_else(|| context.undefined());
+    Ok(context.constructor_name_rooted(value)?
+        .unwrap_or_else(|| context.string_rooted("Object")))
 }
 
 /// External wrappers expose the stored address, without touching native memory.

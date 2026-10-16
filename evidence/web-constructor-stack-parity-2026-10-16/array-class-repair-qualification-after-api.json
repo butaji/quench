@@ -1,0 +1,26 @@
+{
+  "candidate_source": "df33c1767aa08898b338d4ea42d6a9215b5072fe",
+  "binaries": {
+    "cli": {
+      "path": "work/quench-array-class-qualified",
+      "sha256": "8266131eeaf5c88d72e0fa4f6fe0cb0e57fcc9dd5f972e45e8c6e7a465fa12e0",
+      "sha256_after": "8266131eeaf5c88d72e0fa4f6fe0cb0e57fcc9dd5f972e45e8c6e7a465fa12e0"
+    },
+    "runner": {
+      "path": "work/host-build/iteration/run-parallel",
+      "sha256": "fa7ed9c5d0f0bd7121b6936c718041a1a2bc4a5e74f8c820436bffd43d2ef143",
+      "sha256_after": "fa7ed9c5d0f0bd7121b6936c718041a1a2bc4a5e74f8c820436bffd43d2ef143"
+    },
+    "api_tests": {
+      "path": "work/host-build/iteration/deps/child_entry-a67896ab5b9c716a",
+      "sha256": "0507f527c8ca8289f9a020a553928536f3d3e66d6724b7c347dfb582bad0066f",
+      "sha256_after": "0507f527c8ca8289f9a020a553928536f3d3e66d6724b7c347dfb582bad0066f"
+    }
+  },
+  "identity_checks": {
+    "cli": true,
+    "runner": true,
+    "api_tests": true
+  },
+  "api_exit_code": 0
+}

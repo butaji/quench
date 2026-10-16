@@ -1,0 +1,13 @@
+{
+  "merge_source": "2131dd1b3",
+  "shared_source": "bf0219ca9",
+  "workspace_check_exit": 0,
+  "parent_qualification_source": "df33c1767",
+  "parent_proof_is_not_merge_proof": true,
+  "later_boxed_primitive_work_excluded": true,
+  "publication_source_parent": "7c55e854b",
+  "additional_shared_source": "591bdac42",
+  "additional_shared_change": "b42654a48 generator return closes pattern iterator",
+  "publication_parent_workspace_check_exit": 0,
+  "broader_merged_verification": "pending; parent df33 qualification stays separate"
+}

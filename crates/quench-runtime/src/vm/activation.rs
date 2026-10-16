@@ -37,9 +37,28 @@ pub(crate) enum CallContext {
     DirectEval(Value),
     IndirectEval(Value),
     Internal,
+    Constructor(Value),
+}
+
+/// A pending constructor entry belongs only to its actual callee.
+#[derive(Clone, Copy)]
+pub(super) struct ConstructionTarget {
+    pub(super) callee: Value,
+    pub(super) new_target: Value,
 }
 
 impl CallContext {
+    pub(super) fn constructed(self) -> Self {
+        match self {
+            Self::Function(value) | Self::Constructor(value) => Self::Constructor(value),
+            other => other,
+        }
+    }
+
+    pub(super) fn is_constructor(self) -> bool {
+        matches!(self, Self::Constructor(_))
+    }
+
     pub(super) fn user_function(id: u32, callable: Value) -> Self {
         if id == super::ROOT_FUNCTION_ID {
             Self::Internal
@@ -50,7 +69,7 @@ impl CallContext {
 
     pub(super) fn callee(self) -> Option<Value> {
         match self {
-            Self::Function(value) | Self::DirectEval(value) | Self::IndirectEval(value) => {
+            Self::Function(value) | Self::Constructor(value) | Self::DirectEval(value) | Self::IndirectEval(value) => {
                 Some(value)
             }
             Self::Internal => None,
@@ -59,7 +78,7 @@ impl CallContext {
 
     pub(super) fn callable(self) -> Option<Value> {
         match self {
-            Self::Function(value) => Some(value),
+            Self::Function(value) | Self::Constructor(value) => Some(value),
             Self::DirectEval(_) | Self::IndirectEval(_) | Self::Internal => None,
         }
     }
