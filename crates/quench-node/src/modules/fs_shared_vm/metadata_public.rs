@@ -5,13 +5,15 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 type Context<'a> = NativeContext<'a, NodeHost>;
 
 #[derive(Clone, Copy)]
-enum Method { Stat, Lstat, Fstat, Close, Fchmod }
+enum Method { Stat, Lstat, Fstat, Close, Fchmod, RawVoid(usize) }
 impl Method {
     fn parse(name: &str) -> Self {
         match name {
             "statSync" => Self::Stat, "lstatSync" => Self::Lstat,
             "fstatSync" => Self::Fstat, "closeSync" => Self::Close,
             "fchmodSync" => Self::Fchmod,
+            "accessSync" | "renameSync" | "linkSync" => Self::RawVoid(2),
+            "copyFileSync" => Self::RawVoid(3),
             _ => unreachable!("metadata boundary is installed only for its named SDK methods"),
         }
     }
@@ -20,7 +22,7 @@ impl Method {
     fn required_arguments(self) -> usize {
         // SDK stat/lstat/fstat have a defaulted second parameter; close has
         // only fd, whereas fchmod requires both fd and mode.
-        match self { Self::Fchmod => 2, _ => 1 }
+        match self { Self::Fchmod => 2, Self::RawVoid(arity) => arity, _ => 1 }
     }
 }
 
@@ -68,6 +70,16 @@ pub(crate) fn dispatch(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Re
     let name = c.to_string(name_root)?;
     let method = Method::parse(&name);
     let undefined = c.undefined();
+    // The SDK reads the unvalidated arguments in these four boundaries and
+    // treats any defined handler result as a presence envelope for void.
+    if let Method::RawVoid(arity) = method {
+        let mut forwarded = [undefined; 3];
+        for (slot, value) in forwarded.iter_mut().zip(args) { *slot = *value; }
+        if crate::modules::fs_policy_shared_vm::vfs_read(c, &name, &forwarded[..arity])?.is_some() {
+            return Ok(undefined);
+        }
+        return c.call_rooted(original, this, &forwarded[..arity]);
+    }
     let path_or_fd = args.first().copied().unwrap_or(undefined);
     let mut second = args.get(1).copied().unwrap_or(undefined);
     if method.catches_missing() { second = stat_options(c, second)?; }
