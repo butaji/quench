@@ -4,37 +4,65 @@ const BOOLEAN_OPTIONS: &[(&str, bool)] = &[
     ("--experimental-stream-iter", false),
     ("--expose-internals", false),
     ("--warnings", true),
+    ("--report-compact", false),
+    ("--report-exclude-env", false),
+    ("--report-exclude-network", false),
+    ("--report-on-fatalerror", false),
+    ("--report-on-signal", false),
+    ("--report-uncaught-exception", false),
 ];
+const STRING_OPTIONS: &[(&str, &str)] = &[
+    ("--report-dir", ""),
+    ("--report-filename", ""),
+    ("--report-signal", "SIGUSR2"),
+];
+fn canonical_option(option: &str) -> &str { if option == "--report-directory" { "--report-dir" } else { option } }
+pub(crate) fn takes_string_value(option: &str) -> bool { STRING_OPTIONS.iter().any(|(name, _)| *name == canonical_option(option)) }
 #[derive(Clone, Debug)]
-pub(crate) struct CliOptions(std::collections::BTreeMap<&'static str, bool>);
+pub(crate) struct CliOptions {
+    booleans: std::collections::BTreeMap<&'static str, bool>,
+    strings: std::collections::BTreeMap<&'static str, String>,
+}
 impl Default for CliOptions {
-    fn default() -> Self { Self(BOOLEAN_OPTIONS.iter().copied().collect()) }
+    fn default() -> Self { Self {
+        booleans: BOOLEAN_OPTIONS.iter().copied().collect(),
+        strings: STRING_OPTIONS.iter().map(|(name, value)| (*name, (*value).to_owned())).collect(),
+    } }
 }
 impl CliOptions {
     pub(crate) fn parse(environment: Option<&str>, invocation: &[String]) -> Result<Self, String> {
         let mut options=Self::default();
-        if let Some(environment)=environment { options.apply(&parse_node_options(environment).map_err(str::to_owned)?); }
-        options.apply(invocation);Ok(options)
+        if let Some(environment)=environment { options.apply(&parse_node_options(environment).map_err(str::to_owned)?)?; }
+        options.apply(invocation)?;Ok(options)
     }
-    pub(crate) fn enabled(&self,name: &str) -> bool { self.0.get(name).copied().unwrap_or(false) }
-    pub(crate) fn values(&self) -> impl Iterator<Item=(&'static str,bool)> + '_ { self.0.iter().map(|(name,value)|(*name,*value)) }
-    fn apply(&mut self, arguments: &[String]) {
+    pub(crate) fn enabled(&self,name: &str) -> bool { self.booleans.get(name).copied().unwrap_or(false) }
+    pub(crate) fn values(&self) -> impl Iterator<Item=(&'static str,bool)> + '_ { self.booleans.iter().map(|(name,value)|(*name,*value)) }
+    pub(crate) fn string_value(&self, name: &str) -> Option<&str> { self.strings.get(canonical_option(name)).map(String::as_str) }
+    pub(crate) fn strings(&self) -> impl Iterator<Item=(&'static str,&str)> + '_ { self.strings.iter().map(|(name,value)|(*name,value.as_str())) }
+    fn apply(&mut self, arguments: &[String]) -> Result<(), String> {
         let mut arguments=arguments.iter().peekable();
         while let Some(argument)=arguments.next() {
-            let flag=argument.split_once('=').map_or(argument.as_str(),|(flag,_)|flag);
+            let flag=canonical_option(argument.split_once('=').map_or(argument.as_str(),|(flag,_)|flag));
+            if let Some(value) = self.strings.get_mut(flag) {
+                *value = argument.split_once('=').map(|(_, value)| value.to_owned())
+                    .or_else(|| arguments.next().cloned()).ok_or_else(|| format!("{flag} requires an argument"))?;
+                if flag == "--report-signal" { self.booleans.insert("--report-on-signal", true); }
+                continue;
+            }
             match flag {
                 "--trace-event-categories"|"--trace-event-file-pattern"|"-r"|"--require" if !argument.contains('=') => { arguments.next(); }
                 "-e"|"--eval"|"-pe"|"-ep" if !argument.contains('=') => { arguments.next(); }
                 "-p"|"--print" if !argument.contains('=') && arguments.peek().is_some_and(|next|!next.starts_with('-')) => { arguments.next(); }
                 _ => {
-                    if let Some(value)=self.0.get_mut(flag) { *value=true; }
+                    if let Some(value)=self.booleans.get_mut(flag) { *value=true; }
                     else if let Some(positive)=flag.strip_prefix("--no-") {
                         let positive=format!("--{positive}");
-                        if let Some(value)=self.0.get_mut(positive.as_str()) { *value=false; }
+                        if let Some(value)=self.booleans.get_mut(positive.as_str()) { *value=false; }
                     }
                 }
             }
         }
+        Ok(())
     }
 }
 

@@ -293,6 +293,12 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
             "--experimental-vfs" | "--no-experimental-vfs" => {
                 exec_argv.push(args[index].clone());
             }
+            option if crate::modules::cli_options::takes_string_value(option) => {
+                let option = args[index].clone();
+                index += 1;
+                let value = args.get(index).cloned().ok_or_else(|| format!("{option} requires an argument"))?;
+                exec_argv.extend([option, value]);
+            }
             "--trace-event-categories" | "--trace-event-file-pattern" | "-r" | "--require" => {
                 let option = args[index].clone();
                 index += 1;
