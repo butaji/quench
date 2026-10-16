@@ -9367,3 +9367,34 @@ console.log(JSON.stringify(out));
 fn abort_listener_errors_are_reported_on_ticks_without_replacing_source_errors() {
     compare_node_source_with_args(include_str!("../node-tests/test-abort-listener-errors.js"), &["--no-warnings", "--experimental-stream-iter"]);
 }
+
+#[test]
+fn function_factory_constructor_names_follow_original_realms_and_ignore_public_links() {
+    compare_node_source_with_args(r#"
+const get=require('internal/test/binding').internalBinding('util').getConstructorName,out=[];
+const factories=[()=>function(){},()=>()=>{},()=>async function(){},()=>function*(){},()=>async function*(){}];
+for(const factory of factories){
+ const first=factory(),prototype=Object.getPrototypeOf(first),C=prototype.constructor;
+ const name=Object.getOwnPropertyDescriptor(C,'name'),descriptor=Object.getOwnPropertyDescriptor(prototype,'constructor');
+ Object.defineProperty(C,'name',{value:'Changed'+name.value});Object.defineProperty(prototype,'constructor',{value:null});
+ const second=factory();out.push(Object.getPrototypeOf(second)===prototype);
+ for(const value of [first,second]){Object.setPrototypeOf(value,null);out.push(get(value))}
+ Object.defineProperty(C,'name',{value:''});out.push(get(first));
+ let calls=0;Object.defineProperty(C,'name',{get(){calls++;throw Error('constructor name')}});out.push(get(first),calls);
+ Object.defineProperty(prototype,'constructor',descriptor);Object.defineProperty(C,'name',name);
+}
+const prototypes=factories.map(factory=>Object.getPrototypeOf(factory()));
+for(const name of ['AsyncFunction','GeneratorFunction','AsyncGeneratorFunction'])globalThis[name]={prototype:{fake:true}};
+out.push(factories.map((factory,index)=>Object.getPrototypeOf(factory())===prototypes[index]));
+for(const expression of ['function(){}','()=>{}','async function(){}','function*(){}','async function*(){}']){
+ const values=require('vm').runInNewContext(`const make=()=>(${expression}),first=make(),p=Object.getPrototypeOf(first),C=p.constructor;Object.defineProperty(C,'name',{value:'Foreign'+C.name});Object.defineProperty(p,'constructor',{value:null});const second=make(),same=Object.getPrototypeOf(second)===p;Object.setPrototypeOf(first,null);Object.setPrototypeOf(second,null);[first,second,same]`);
+ out.push(get(values[0]),get(values[1]),values[2]);
+}
+for(const value of [Array.prototype.map,Math.max,(()=>{}).bind(null),(async()=>{}).bind(null),(function*(){}).bind(null)]){
+ const prototype=Object.getPrototypeOf(value),C=prototype.constructor,name=Object.getOwnPropertyDescriptor(C,'name');
+ Object.setPrototypeOf(value,null);Object.defineProperty(C,'name',{value:'Changed'+name.value});
+ try{out.push(get(value))}finally{Object.defineProperty(C,'name',name);Object.setPrototypeOf(value,prototype)}
+}
+console.log(JSON.stringify(out));
+"#, &["--expose-internals","--no-warnings"]);
+}

@@ -18,6 +18,13 @@ ambiguous enumerable aliases. CallSites share a realm-owned native prototype.
 This describes the implemented subset; complete Node stack APIs and eval frames
 still require conformance work.
 
+Function factory origins derive from the existing function kind and creation
+realm. The realm owns its original constructors and intrinsic prototypes, so
+changing public globals or prototype `constructor` properties cannot redirect
+later factory allocations. Constructor debug names observe data properties and
+preserve original names when accessors would otherwise execute. Native and bound
+functions retain their distinct constructor-name behavior.
+
 ## Event listeners
 
 EventEmitter dispatch and listener inspection use the same `_events` records.

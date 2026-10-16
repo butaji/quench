@@ -281,27 +281,13 @@ impl<H: Host> Vm<H> {
         }
         let has_instance_prototype = function_plan.constructible || function_plan.is_generator;
         let prototype = if has_instance_prototype {
-            let generator_prototype_parent = if function_plan.is_async && function_plan.is_generator
-            {
-                let constructor_atom = self.intern_atom("AsyncGeneratorFunction");
-                let prototype_atom = self.prototype_atom();
-                self.own_property(realm, constructor_atom)
-                    .and_then(|constructor| self.own_property(constructor, prototype_atom))
-                    .and_then(|function_prototype| {
-                        self.own_property(function_prototype, prototype_atom)
-                    })
-                    .filter(|prototype| self.object_data(*prototype).is_some())
-                    .unwrap_or(self.async_generator_proto)
-            } else if function_plan.is_generator {
-                let constructor_atom = self.intern_atom("GeneratorFunction");
-                let prototype_atom = self.prototype_atom();
-                self.own_property(realm, constructor_atom)
-                    .and_then(|constructor| self.own_property(constructor, prototype_atom))
-                    .and_then(|function_prototype| {
-                        self.own_property(function_prototype, prototype_atom)
-                    })
-                    .filter(|prototype| self.object_data(*prototype).is_some())
-                    .unwrap_or(self.generator_proto)
+            let generator_prototype_parent = if function_plan.is_generator {
+                let prototypes = &self.realm.intrinsics.iterator_prototypes[&realm];
+                if function_plan.is_async {
+                    prototypes.async_generator
+                } else {
+                    prototypes.generator
+                }
             } else {
                 self.realm_object_prototype(realm)
             };
@@ -312,31 +298,13 @@ impl<H: Host> Vm<H> {
         } else {
             None
         };
-        let function_prototype_atom = self.prototype_atom();
         let intrinsic = match (function_plan.is_async, function_plan.is_generator) {
-            (true, true) => Some(Native::AsyncGeneratorFunction),
-            (false, true) => Some(Native::GeneratorFunction),
-            (true, false) => Some(Native::AsyncFunction),
-            (false, false) => None,
+            (true, true) => Native::AsyncGeneratorFunction,
+            (false, true) => Native::GeneratorFunction,
+            (true, false) => Native::AsyncFunction,
+            (false, false) => Native::Function,
         };
-        let function_object_prototype = if let Some(intrinsic) = intrinsic {
-            let name = match intrinsic {
-                Native::AsyncFunction => "AsyncFunction",
-                Native::GeneratorFunction => "GeneratorFunction",
-                Native::AsyncGeneratorFunction => "AsyncGeneratorFunction",
-                _ => unreachable!(),
-            };
-            let name = self.intern_atom(name);
-            self.own_property(realm, name)
-                .and_then(|constructor| self.own_property(constructor, function_prototype_atom))
-                .filter(|prototype| self.object_data(*prototype).is_some())
-                .or_else(|| {
-                    self.own_property(self.native_value(intrinsic), function_prototype_atom)
-                })
-                .unwrap_or(self.function_proto)
-        } else {
-            self.realm_function_prototype(realm)
-        };
+        let function_object_prototype = self.realm.intrinsics.builtin_prototypes[&(realm, intrinsic)];
         let function = self.heap.alloc(Cell::Function {
             object: Box::new(crate::heap::FunctionObject {
                 object: Self::empty_object(function_object_prototype),
@@ -433,22 +401,10 @@ impl<H: Host> Vm<H> {
                 },
             )?;
         }
-        let constructor = match (function_plan.is_async, function_plan.is_generator) {
-            (true, true) => self
-                .realm_constructor(realm, "AsyncGeneratorFunction")
-                .unwrap_or_else(|| self.native_value(Native::AsyncGeneratorFunction)),
-            (true, false) => self
-                .realm_constructor(realm, "AsyncFunction")
-                .unwrap_or_else(|| self.native_value(Native::AsyncFunction)),
-            (false, true) => self
-                .realm_constructor(realm, "GeneratorFunction")
-                .unwrap_or_else(|| self.native_value(Native::GeneratorFunction)),
-            (false, false) => function,
-        };
         if !function_plan.is_generator
             && let Some(prototype) = prototype
         {
-            self.set_builtin_value_named(prototype, "constructor", constructor)?;
+            self.set_builtin_value_named(prototype, "constructor", function)?;
             recorded.prototype =
                 Some((self.closure_shape(function), self.closure_shape(prototype)));
         }
@@ -472,11 +428,6 @@ impl<H: Host> Vm<H> {
         self.object_data(object)
             .expect("a new closure or prototype is an object")
             .shape()
-    }
-
-    fn realm_constructor(&mut self, realm: Value, name: &str) -> Option<Value> {
-        let atom = self.intern_atom(name);
-        self.own_property(realm, atom)
     }
 
     pub(super) fn realm_object_prototype(&self, realm: Value) -> Value {
