@@ -66,14 +66,13 @@ impl Digest {
     /// ncrypto::Digest::FromName accepts known legacy descriptors even when
     /// their provider is unavailable; the actual operation then owns failure.
     pub(crate) fn from_sdk_name(name: &str) -> Result<Self, DigestError> {
-        if let Some(digest) = Self::fetch_preserving_errors(name) { return Ok(digest); }
         let name = name.split('\0').next().unwrap_or("");
         let legacy = if matches!(name, "dss1" | "DSS1") { Some(MessageDigest::sha1()) }
                      else { MessageDigest::from_name(name) };
         match legacy {
             Some(md) if md.as_ptr() != unsafe { openssl_sys::EVP_md_null() } =>
                 Ok(Self { md: NativeDigest::Legacy(md) }),
-            _ => Err(DigestError::Unsupported),
+            _ => Self::fetch(name),
         }
     }
 
