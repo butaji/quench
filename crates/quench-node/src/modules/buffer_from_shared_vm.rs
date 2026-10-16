@@ -76,6 +76,7 @@ pub(crate) fn install(
     }
     let set = get(c, typed, "set")?;
     put(c, data, "set", set)?;
+    super::buffer_pool_shared_vm::install(c, data, public)?;
     let global = c.global_root()?;
     let symbol = get(c, global, "Symbol")?;
     let primitive = get(c, symbol, "toPrimitive")?;
@@ -123,13 +124,19 @@ fn from_string(
     let units = c
         .string_code_units(value)?
         .ok_or_else(|| RootedError::host("Buffer string conversion lost its string"))?;
+    if units.is_empty() {
+        return allocate(c, data, &[]);
+    }
     let bytes = super::buffer_codec::encode_units(&units, encoding);
     let source = c.uint8_array_rooted(&bytes)?;
     let length = c.number(bytes.len() as f64);
-    let result = allocate(c, data, &[length])?;
+    let (result, pooled) = super::buffer_pool_shared_vm::string(c, data, units.len(), bytes.len())?;
     let set = get(c, data, "set")?;
     let zero = c.number(0.0);
     c.call_rooted(set, result, &[source, zero])?;
+    if pooled {
+        super::buffer_pool_shared_vm::commit(c, data, length)?;
+    }
     Ok(result)
 }
 fn copy_array_like(
@@ -142,9 +149,12 @@ fn copy_array_like(
     if c.greater_equal_rooted(zero, length)? {
         return allocate(c, data, &[]);
     }
-    let result = allocate(c, data, &[length])?;
+    let (result, pooled) = super::buffer_pool_shared_vm::array(c, data, length)?;
     let set = get(c, data, "set")?;
     c.call_rooted(set, result, &[source, zero])?;
+    if pooled {
+        super::buffer_pool_shared_vm::commit(c, data, length)?;
+    }
     Ok(result)
 }
 fn from_array_buffer(
