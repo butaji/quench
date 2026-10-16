@@ -57,7 +57,7 @@ impl<H: Host> Vm<H> {
     ) -> Option<Result<StepResult, JsError>> {
         // A sloppy call that falls into a return of its result is pushed like any other; its
         // caller then returns the callee's completion (see `PendingGeneralCall::returns`).
-        // Strict ones keep the proper tail call `step` performs. Wasm programs also run in
+        // Hosts permitting proper tail calls leave strict terminal calls to `step`. Wasm programs run in
         // the loop (as in-loop Wasm frames), and their calls keep Wasm's own activation and
         // exhaustion accounting, so they are never inlined as user calls.
         if i.op() != Op::Call
@@ -66,7 +66,9 @@ impl<H: Host> Vm<H> {
             || p.kind == crate::bytecode::ProgramKind::Wasm
             || f + 1 != self.frames.len()
             || self.frames[f].function == super::ROOT_FUNCTION_ID
-            || (i.returns_from_frame() && p.functions[self.frames[f].function as usize].strict)
+            || (self.host.proper_tail_calls()
+                && i.returns_from_frame()
+                && p.functions[self.frames[f].function as usize].strict)
         {
             return None;
         }
@@ -1234,6 +1236,7 @@ impl<H: Host> Vm<H> {
                     return Ok(StepResult::TailCall);
                 }
                 if terminal
+                    && self.host.proper_tail_calls()
                     && p.kind != crate::bytecode::ProgramKind::Wasm
                     && p.functions[self.frames[f].function as usize]
                         .permits_js_tail_call_at(pc.saturating_sub(1) as u32)
@@ -1357,6 +1360,7 @@ impl<H: Host> Vm<H> {
                 let terminal = i.returns_from_frame();
                 if ((p.kind == crate::bytecode::ProgramKind::Wasm && i.returns_from_frame())
                     || (p.kind != crate::bytecode::ProgramKind::Wasm
+                        && self.host.proper_tail_calls()
                         && terminal
                         && p.functions[self.frames[f].function as usize]
                             .permits_js_tail_call_at(pc.saturating_sub(1) as u32)))
