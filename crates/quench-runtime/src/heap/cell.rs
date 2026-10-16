@@ -700,6 +700,18 @@ impl TypedArrayKind {
     }
 }
 impl Native {
+    /// The `get [Symbol.species]` accessors, each of which returns its receiver.
+    pub(crate) fn is_intrinsic_species_getter(self) -> bool {
+        matches!(
+            self,
+            Self::ArraySpecies
+                | Self::ArrayBufferSpecies
+                | Self::PromiseSpeciesGetter
+                | Self::RegExpSpecies
+                | Self::SetSpeciesGetter
+        )
+    }
+
     pub(crate) fn is_function_native(self) -> bool {
         matches!(
             self,
