@@ -161,6 +161,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "ipcDecode" (2) => crate::modules::child_process_ipc_shared_vm::decode,
         method "ipcEmit" (3) => crate::modules::child_process_ipc_shared_vm::emit,
         method "childProcessSpawn" (3) => crate::modules::child_process_shared_vm::spawn_child,
+        method "childProcessConstruct" (3) => crate::modules::child_process_shared_vm::construct_child,
+        method "childProcessPrototypeSpawn" (1) => crate::modules::child_process_shared_vm::prototype_spawn,
         method "childProcessFlushStdio" (1) => crate::modules::child_process_shared_vm::queue_stdio_flush,
         method "childProcessFlushStdioRun" (1) => crate::modules::child_process_shared_vm::flush_stdio,
         method "childProcessRead" (2) => crate::modules::child_process_shared_vm::request_read,
