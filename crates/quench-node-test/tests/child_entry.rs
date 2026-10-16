@@ -9141,3 +9141,18 @@ out.push(calls);console.log(JSON.stringify(out));
 fn file_handle_read_parameters_preserve_defaults_options_getter_order_and_result_prototype() {
     compare_node_stream_source(include_str!("../node-tests/test-file-handle-read-parameters.js"));
 }
+
+#[test]
+fn stack_function_names_follow_mutation_after_capture_and_preserve_utf16_without_getters() {
+    compare_node_source_with_args(r#"
+let calls=0;Error.prepareStackTrace=(_,frames)=>frames.slice(0,2);
+function Original(){return new Error};const error=Original();Object.defineProperty(Original,'name',{value:'Changed'});
+const sites=error.stack,out=[sites[0].getFunctionName()];
+Object.defineProperty(Original,'name',{value:'Later'});out.push(sites[0].getFunctionName(),sites[0].toString());
+Object.defineProperty(Original,'name',{value:'\ud800'});out.push(sites[0].getFunctionName());
+Object.defineProperty(Original,'name',{get(){calls++;throw Error('name getter')}});out.push(sites[0].getFunctionName(),sites[1].getFunctionName()===null,calls);
+Object.defineProperty(Original,'name',{value:'\0Public'});out.push(sites[0].getFunctionName());
+Object.defineProperty(Original,'name',{value:''});out.push(sites[0].getFunctionName()===null);
+console.log(JSON.stringify(out));
+"#, &[]);
+}
