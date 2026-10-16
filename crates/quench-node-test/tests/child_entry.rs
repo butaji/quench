@@ -9716,3 +9716,8 @@ fn process_auxiliary_capture_preserves_length_coercion_fractional_keys_and_repla
 fn process_capture_methods_have_public_names_and_ordinary_constructor_shapes() {
     compare_node_source_with_args(include_str!("../node-tests/test-process-capture-method-shape.js"), &[]);
 }
+
+#[test]
+fn process_fatal_handler_exits_preserve_sdk_status_event_suppression_and_explicit_requests() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-fatal-handler-exit.js"), &[]);
+}
