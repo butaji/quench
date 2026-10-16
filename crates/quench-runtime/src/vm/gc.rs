@@ -186,8 +186,7 @@ fn rebuild_shape(
         if let Some((_, attributes)) = entry
             && attributes != DEFAULT_SHAPE_ATTRIBUTES
         {
-            let attributes =
-                ShapeAttributes::record(attributes.attributes(old_accessors), accessors);
+            let attributes = ShapeAttributes::record(attributes.attributes(old_accessors), accessors);
             parent = append_compacted_shape(
                 shapes,
                 transitions,
@@ -962,7 +961,8 @@ mod tests {
     use crate::value::Value;
     use crate::vm::{
         DEFAULT_PROPERTY_ATTRIBUTES, DictionaryTrigger, PropertyAttributes, Shape, ShapeAttributes,
-        ShapeTransition, property_key::PropertyKey,
+        ShapeTransition,
+        property_key::PropertyKey,
     };
 
     #[test]
