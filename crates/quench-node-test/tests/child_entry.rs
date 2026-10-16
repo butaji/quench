@@ -9926,3 +9926,107 @@ fn sdk_vfs_mkdir_realpath_preserve_handler_protocol_and_result_projection() {
 fn sdk_vfs_open_preserves_flag_mode_validation_and_raw_path_dispatch() {
     compare_node_file_source_with_args(include_str!("../node-tests/test-sdk-vfs-open-protocol.js"), &["--experimental-vfs", "--expose-internals", "--no-warnings"]);
 }
+
+#[test]
+fn sdk_vfs_write_options_preserve_getter_order_identity_and_void_results() {
+    compare_node_file_source_with_args(include_str!("../node-tests/test-sdk-vfs-write-options-protocol.js"), &["--experimental-vfs", "--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn sdk_vfs_write_continuations_preserve_append_copying_loop_and_finally() {
+    compare_node_file_source_with_args(include_str!("../node-tests/test-sdk-vfs-write-continuation.js"), &["--experimental-vfs", "--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn sdk_vfs_write_native_effects_preserve_flags_bytes_and_descriptor_ownership() {
+    compare_node_file_source_with_args(include_str!("../node-tests/test-sdk-vfs-write-native-effects.js"), &["--experimental-vfs", "--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn sdk_vfs_write_fd_domains_and_append_delegation_match_source_policy() {
+    compare_node_file_source_with_args(include_str!("../node-tests/test-sdk-write-fd-domains.js"), &["--experimental-vfs", "--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn native_dns_lookup_policy_shares_promise_identity_defaults_and_numeric_bypass() {
+    let source = include_str!("../node-tests/test-native-dns-public-policy.js");
+    compare_node_source_with_args(source, &["--no-warnings"]);
+    compare_node_source_with_args(source, &["--no-warnings", "--dns-result-order=ipv4first"]);
+}
+
+#[test]
+fn native_dns_binding_dispatch_preserves_request_identity_and_async_submission_errors() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-dns-binding-dispatch.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn native_dns_requests_preserve_async_resource_storage_and_gc_lifetime() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-dns-request-lifetime.js"), &["--expose-gc", "--no-warnings"]);
+}
+
+#[test]
+fn native_dns_lowlevel_completion_reads_current_callback_and_retains_request_receiver() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-dns-lowlevel-completion.js"), &["--expose-internals", "--expose-gc", "--no-warnings"]);
+}
+
+#[test]
+fn native_dns_promise_requests_own_mutable_resolvers_and_preserve_binding_address_values() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-dns-promise-request-contract.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn native_tcp_constructor_bind_and_inherited_stream_prototypes_match_node() {
+    compare_node_file_source_with_args(include_str!("../node-tests/test-native-tcp-constructor.js"), &["--no-warnings", "--expose-internals"]);
+}
+
+#[test]
+fn native_tcp_accept_preserves_handle_identity_and_real_close_completion() {
+    compare_node_file_source_with_args(include_str!("../node-tests/test-native-tcp-accept.js"), &["--no-warnings", "--expose-internals"]);
+}
+
+#[test]
+fn native_stream_reads_and_synchronous_writes_project_real_buffers_and_state() {
+    compare_node_file_source_with_args(include_str!("../node-tests/test-native-tcp-stream.js"), &["--no-warnings", "--expose-internals"]);
+}
+
+#[test]
+fn native_stream_pressure_completes_actual_write_request_once() {
+    compare_node_file_source_with_args(include_str!("../node-tests/test-native-tcp-async.js"), &["--no-warnings", "--expose-internals"]);
+}
+
+#[test]
+fn native_stream_close_cancels_pending_write_before_handle_close() {
+    compare_node_file_source_with_args(include_str!("../node-tests/test-native-tcp-cancel.js"), &["--no-warnings", "--expose-internals"]);
+}
+
+#[test]
+fn native_sdk_webcrypto_owns_public_namespace_and_real_import_generate_key_lifecycle() {
+    compare_node_file_source_with_args(
+        include_str!("../node-tests/test-crypto-native-sdk-public-key-lifecycle.js"),
+        &["--no-warnings", "--expose-internals"],
+    );
+}
+
+#[test]
+fn native_sdk_webcrypto_initializes_cold_global_and_preserves_random_policy() {
+    compare_node_file_source_with_args(
+        include_str!("../node-tests/test-crypto-native-sdk-cold-global-random.js"),
+        &["--no-warnings", "--expose-internals"],
+    );
+}
+
+#[test]
+fn native_sdk_dom_exception_and_quota_preserve_private_reflection_and_cause() {
+    compare_node_file_source_with_args(
+        include_str!("../node-tests/test-crypto-native-sdk-dom-reflection.js"),
+        &["--no-warnings", "--expose-internals"],
+    );
+}
+
+#[test]
+fn native_secret_key_job_preserves_hook_order_and_async_local_context() {
+    compare_node_file_source_with_args(
+        include_str!("../node-tests/test-crypto-native-keygen-hooks-context.js"),
+        &["--no-warnings", "--expose-internals"],
+    );
+}

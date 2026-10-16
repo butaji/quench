@@ -215,15 +215,40 @@ mod tests {
         assert!(names(Kind::Mac).contains(&"hmac".into()));
         assert!(!key_available("SHA-256"));
         assert!(key_available("Ed25519"));
-        let before = fips_enabled();
-        let generation = fips_generation();
-        assert!(set_fips(before));
-        assert_eq!(fips_generation(), generation);
-        if set_fips(!before) {
-            assert_eq!(fips_generation(), generation + 1);
-            assert_eq!(fips_enabled(), !before);
+        // OpenSSL default properties are process-global; mutating them here
+        // races every concurrently running crypto/TLS test. Re-enter only this
+        // exact test in a dedicated process, preserving the real transition test.
+        const CHILD: &str = "QUENCH_PROVIDER_FACTS_FIPS_TEST_CHILD";
+        const COMPLETED: &str = "quench-provider-fips-child-transitions-complete";
+        if std::env::var(CHILD).ok().as_deref() == Some("1") {
+            let before = fips_enabled();
+            let generation = fips_generation();
             assert!(set_fips(before));
+            assert_eq!(fips_generation(), generation);
+            assert!(set_fips(!before));
+            assert_eq!(fips_enabled(), !before);
+            assert_eq!(fips_generation(), generation + 1);
+            assert!(set_fips(!before));
+            assert_eq!(fips_generation(), generation + 1);
+            assert!(set_fips(before));
+            assert_eq!(fips_enabled(), before);
             assert_eq!(fips_generation(), generation + 2);
+            eprintln!("{COMPLETED}");
+        } else {
+            let before = fips_enabled();
+            let generation = fips_generation();
+            let (_, module) = module_path!().split_once("::").unwrap();
+            let name = format!("{module}::live_provider_and_generation");
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", &name, "--nocapture", "--test-threads=1"])
+                .env(CHILD, "1")
+                .output()
+                .expect("launch isolated OpenSSL provider transition test");
+            assert!(output.status.success(), "child failed: {output:?}");
+            assert!(String::from_utf8_lossy(&output.stderr).contains(COMPLETED),
+                "child did not execute the actual transitions: {output:?}");
+            assert_eq!(fips_enabled(), before);
+            assert_eq!(fips_generation(), generation);
         }
     }
 }
