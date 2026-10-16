@@ -9136,3 +9136,8 @@ out.push(calls);console.log(JSON.stringify(out));
         &["--expose-internals", "--no-warnings"],
     );
 }
+
+#[test]
+fn file_handle_read_parameters_preserve_defaults_options_getter_order_and_result_prototype() {
+    compare_node_stream_source(include_str!("../node-tests/test-file-handle-read-parameters.js"));
+}
