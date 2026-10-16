@@ -9721,3 +9721,8 @@ fn process_capture_methods_have_public_names_and_ordinary_constructor_shapes() {
 fn process_fatal_handler_exits_preserve_sdk_status_event_suppression_and_explicit_requests() {
     compare_node_source_with_args(include_str!("../node-tests/test-process-fatal-handler-exit.js"), &[]);
 }
+
+#[test]
+fn cli_version_aliases_use_the_configured_sdk_and_short_circuit_before_guest_execution() {
+    compare_node_source_with_args(include_str!("../node-tests/test-cli-version-order.js"), &[]);
+}
