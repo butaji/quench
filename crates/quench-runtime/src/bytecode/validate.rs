@@ -880,7 +880,8 @@ impl ResidualProgram {
             }
         }
         for site in &self.field_sites {
-            if !field_base_in_bounds(site.base.0, REGISTER_MASK)
+            if site.sources.iter().flatten().any(|(line, column)| *line == 0 || *column == 0)
+                || !field_base_in_bounds(site.base.0, REGISTER_MASK)
                 || !atom_in_bounds(site.first.0, self.atoms.len())
                 || !cache_in_bounds(site.first.1, self.cache_sites)
                 || site.second.is_some_and(|(atom, cache)| {

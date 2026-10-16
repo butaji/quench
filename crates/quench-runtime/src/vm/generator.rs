@@ -113,6 +113,7 @@ impl<H: Host> Vm<H> {
         frame.function = id;
         frame.program = self.active_program;
         frame.pc = 0;
+        frame.pc_is_resume = true;
         frame.binding_site_pc = None;
         frame.env = parent;
         frame.this = self.call_this_value(this, function.strict)?;
