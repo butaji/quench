@@ -705,18 +705,18 @@ pub(crate) fn read_dir_sync(
     let path = super::resolve_shared_path(context, path);
     let entries = match std::fs::read_dir(&path) {
         Ok(entries) => entries,
-        Err(error) => return Err(stat_error(context, error, &path)?),
+        Err(error) => return Err(path_error(context, error, &path, "scandir")?),
     };
     let mut entries = match entries.collect::<Result<Vec<_>, _>>() {
         Ok(entries) => entries,
-        Err(error) => return Err(stat_error(context, error, &path)?),
+        Err(error) => return Err(path_error(context, error, &path, "scandir")?),
     };
     entries.sort_by_key(|entry| entry.file_name());
     let mut names = Vec::new();
     for entry in entries {
         let file_type = match entry.file_type() {
             Ok(file_type) => file_type,
-            Err(error) => return Err(stat_error(context, error, &path)?),
+            Err(error) => return Err(path_error(context, error, &path, "scandir")?),
         };
         let dirent = context.object_rooted()?;
         let null = context.null();
