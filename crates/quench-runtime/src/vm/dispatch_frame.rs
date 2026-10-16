@@ -245,6 +245,7 @@ impl<H: Host> Vm<H> {
         frame.function = id;
         frame.program = program;
         frame.pc = 0;
+        frame.pc_is_resume = true;
         frame.binding_site_pc = None;
         frame.env = caller.env;
         frame.this = Value::UNDEFINED;
@@ -279,6 +280,7 @@ impl<H: Host> Vm<H> {
         frame.function = id;
         frame.program = program;
         frame.pc = 0;
+        frame.pc_is_resume = true;
         frame.binding_site_pc = None;
         frame.env = self.frames[caller].env;
         frame.this = Value::UNDEFINED;
@@ -426,6 +428,7 @@ impl<H: Host> Vm<H> {
         frame.function = id;
         frame.program = self.active_program;
         frame.pc = 0;
+        frame.pc_is_resume = true;
         frame.binding_site_pc = None;
         frame.env = parent;
         frame.this = this;
@@ -496,6 +499,7 @@ impl<H: Host> Vm<H> {
         frame.function = id;
         frame.program = self.active_program;
         frame.pc = 0;
+        frame.pc_is_resume = true;
         frame.binding_site_pc = None;
         frame.env = parent;
         let arrow = function.is_arrow;
@@ -581,6 +585,7 @@ impl<H: Host> Vm<H> {
         frame.program = self.active_program;
         frame.function = id;
         frame.pc = 0;
+        frame.pc_is_resume = true;
         frame.binding_site_pc = None;
         frame.env = parent;
         let arrow = function.is_arrow;
@@ -1246,6 +1251,7 @@ impl<H: Host> Vm<H> {
             }
             if STOPS && stop_pc == Some(pc) {
                 self.frames[frame].pc = pc;
+                self.frames[frame].pc_is_resume = true;
                 return Ok(FrameOutcome::ParameterInitializationComplete);
             }
             debug_assert_eq!(cursor.program, self.frames[frame].program);
@@ -1507,6 +1513,7 @@ impl<H: Host> Vm<H> {
             // for every iteration that dispatches it.
             debug_assert!(std::ptr::eq(published_pc, &self.frames[frame].pc));
             unsafe { *published_pc = instruction_pc };
+            self.frames[frame].pc_is_resume = false;
             // Returns and inline calls produce their step result here rather than through the
             // general `step` dispatch.
             let step = match ins.op() {
@@ -1564,6 +1571,7 @@ impl<H: Host> Vm<H> {
                         break;
                     }
                     self.frames[frame].pc = pc;
+                    self.frames[frame].pc_is_resume = true;
                     return Ok(FrameOutcome::Complete(value));
                 },
                 Ok(StepResult::Continue) => {}
@@ -1620,6 +1628,7 @@ impl<H: Host> Vm<H> {
                 Ok(StepResult::Await { value, destination }) => {
                     debug_assert!(pending_calls.is_empty());
                     self.frames[frame].pc = pc;
+                    self.frames[frame].pc_is_resume = true;
                     return Ok(FrameOutcome::Await {
                         value,
                         destination,
@@ -1633,6 +1642,7 @@ impl<H: Host> Vm<H> {
                 }) => {
                     debug_assert!(pending_calls.is_empty());
                     self.frames[frame].pc = pc;
+                    self.frames[frame].pc_is_resume = true;
                     return Ok(FrameOutcome::Yield {
                         value,
                         destination,
@@ -1682,6 +1692,7 @@ impl<H: Host> Vm<H> {
                 Ok(target) => return Ok((frame, target)),
                 Err(unhandled) => {
                     self.frames[frame].pc = pc;
+                    self.frames[frame].pc_is_resume = true;
                     let Some(pending) = pending_calls.pop() else {
                         return Err(unhandled);
                     };
