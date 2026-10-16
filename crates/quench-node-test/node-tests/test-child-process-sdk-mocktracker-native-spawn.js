@@ -29,7 +29,9 @@ const patched = mock.method(ChildProcess.prototype, 'spawn', function(options) {
   this.stderr = null;
   return result;
 });
-const child = cp.exec('printf child-output', (error, stdout, stderr) => {
+// Stream destruction races OS writes under both runtimes. Keep the real child
+// successful independently of when the intentionally closed pipes are retired.
+const child = cp.exec('printf child-output >/dev/null', (error, stdout, stderr) => {
   assert.equal(error, null);
   assert.equal(stdout, '');
   assert.equal(stderr, '');
