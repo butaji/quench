@@ -1,37 +1,56 @@
-//! Opaque SDK IDs index retained, fetched native Md owners, never synthetic keys.
+//! Generation-owned native digest registry and independent raw native inventory.
 use super::crypto_digest::{Digest, DigestError, supported_names};
 use std::{collections::BTreeMap, sync::Arc};
 #[derive(Default)]
 pub(crate) struct Registry {
     generation: Option<u64>,
+    first_id: u32,
+    next_id: u32,
     entries: Vec<Arc<Digest>>,
-    aliases: BTreeMap<String, i32>,
+    aliases: BTreeMap<String, (String, i32)>,
+    inventory: Vec<String>,
 }
 impl Registry {
     fn insert(&mut self, name: &str) -> Result<Arc<Digest>, DigestError> {
-        if let Some(id) = self.aliases.get(name) {
+        let name = name.split('\0').next().unwrap_or("");
+        let fetched = Digest::fetch(name)?;
+        if let Some((_, id)) = self.aliases.get(&name.to_ascii_lowercase()) {
             return self
                 .get(*id, self.generation.ok_or(DigestError::Unsupported)?)
                 .ok_or(DigestError::Unsupported);
         }
-        let fetched = Digest::fetch(name)?;
         self.insert_owner(name, fetched)
     }
+    fn alias(&mut self, name: &str, id: i32) {
+        // Case-insensitive native map retains the spelling of its first key.
+        self.aliases
+            .entry(name.to_ascii_lowercase())
+            .or_insert_with(|| (name.into(), id))
+            .1 = id;
+    }
     fn insert_owner(&mut self, name: &str, fetched: Digest) -> Result<Arc<Digest>, DigestError> {
-        let id = if let Some(id) = self
+        let index = if let Some(index) = self
             .entries
             .iter()
             .position(|digest| digest.identity() == fetched.identity())
         {
-            id
+            index
         } else {
-            let id = self.entries.len();
+            if self.next_id == u32::MAX {
+                return Err(DigestError::Allocation);
+            }
+            let index = self.entries.len();
+            let id = self.next_id as i32;
+            self.next_id += 1;
+            for alias in fetched.aliases() {
+                self.alias(&alias, id);
+            }
             self.entries.push(Arc::new(fetched));
-            id
+            index
         };
-        let id = i32::try_from(id).map_err(|_| DigestError::Allocation)?;
-        self.aliases.insert(name.into(), id);
-        Ok(self.entries[id as usize].clone())
+        let id = (self.first_id + index as u32) as i32;
+        self.alias(name, id);
+        Ok(self.entries[index].clone())
     }
     pub(crate) fn synchronize(
         &mut self,
@@ -44,17 +63,19 @@ impl Registry {
             }
             let mut next = Self {
                 generation: Some(before),
+                first_id: self.next_id,
+                next_id: self.next_id,
                 ..Self::default()
             };
             for name in supported_names() {
                 if let Some(digest) = Digest::fetch_preserving_errors(&name) {
                     next.insert_owner(&name, digest)?;
+                    next.inventory.push(name);
                 }
             }
             if before != read_generation() {
                 continue;
             }
-            next.generation = Some(before);
             *self = next;
             return Ok(());
         }
@@ -74,20 +95,18 @@ impl Registry {
         }
     }
     pub(crate) fn names(&self) -> impl Iterator<Item = &str> {
-        self.aliases.keys().map(String::as_str)
+        self.inventory.iter().map(String::as_str)
     }
     pub(crate) fn aliases(&self) -> impl Iterator<Item = (&str, i32)> {
-        self.aliases.iter().map(|(name, id)| (name.as_str(), *id))
+        self.aliases.values().map(|(name, id)| (name.as_str(), *id))
     }
-    /// IDs are usable only in this generation. Cached jobs retain Arc<Md> directly
-    /// so a later registry refresh cannot invalidate an in-flight digest operation.
     pub(crate) fn get(&self, id: i32, generation: u64) -> Option<Arc<Digest>> {
-        (self.generation == Some(generation))
-            .then(|| {
-                usize::try_from(id)
-                    .ok()
-                    .and_then(|id| self.entries.get(id).cloned())
-            })
-            .flatten()
+        if self.generation != Some(generation) {
+            return None;
+        }
+        (id as u32)
+            .checked_sub(self.first_id)
+            .and_then(|index| self.entries.get(index as usize))
+            .cloned()
     }
 }
