@@ -49,29 +49,13 @@ const TYPE_PREDICATES: &[(&str, BuiltinBrand)] = &[
     ("isFloat64Array", BuiltinBrand::Float64Array),
 ];
 
+// Node src/node_util.cc validates the native stack-frame request against this limit.
+const NODE_CALL_SITE_FRAME_LIMIT: usize = 200;
+
 pub(crate) const MAX_SAFE_INTEGER: f64 = ((1_u64 << f64::MANTISSA_DIGITS) - 1) as f64;
 
 const UTIL: &str = quench_js_check::checked_js!(
-    r#"((inspect, format, formatWithOptions, warnedCodes) => {
-  const getCallSites = (frameCount = 10, options) => {
-    if (frameCount !== null && typeof frameCount === "object") {
-      options = frameCount;
-      frameCount = 10;
-    }
-    if (options !== undefined && (options === null || typeof options !== "object")) {
-      throw new TypeError("The options argument must be an object");
-    }
-    if (!Number.isInteger(frameCount) || frameCount < 1 || frameCount > 200) {
-      throw new RangeError("The frame count must be an integer between 1 and 200");
-    }
-    const scriptName = globalThis.process?.argv?.[1] || "";
-    return Array.from({ length: frameCount }, () => ({
-      scriptName,
-      scriptId: scriptName,
-      lineNumber: 0,
-      columnNumber: 0,
-    }));
-  };
+    r#"((inspect, format, formatWithOptions, warnedCodes, getCallSites) => {
   const inherits = (ctor, superCtor) => {
     const invalidType = (kind, name, expected, received) => {
       const error = new TypeError(
@@ -260,13 +244,16 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let inspect = crate::host::shared_vm::commonjs::node_library_export(context, "util.js", "internal/util/inspect.js", "inspect")?;
     let format = crate::host::shared_vm::commonjs::node_library_export(context, "util.js", "internal/util/inspect.js", "format")?;
     let format_with_options = crate::host::shared_vm::commonjs::node_library_export(context, "util.js", "internal/util/inspect.js", "formatWithOptions")?;
+    let get_call_sites = crate::host::shared_vm::commonjs::node_library_export(
+        context, "util.js", "util.js", "getCallSites",
+    )?;
     let factory = context.evaluate_script_rooted(UTIL, "node:util/shared.js")?;
     let undefined = context.undefined();
     let global = context.global_root()?;
     let set_key = context.string_rooted("Set");
     let set = context.get_property_rooted(global, set_key)?;
     let warned_codes = context.construct_rooted(set, set, &[])?;
-    let module = context.call_rooted(factory, undefined, &[inspect, format, format_with_options, warned_codes])?;
+    let module = context.call_rooted(factory, undefined, &[inspect, format, format_with_options, warned_codes, get_call_sites])?;
     super::util_style_shared_vm::install(context, module, inspect)?;
     super::util_extend_shared_vm::install(context, module, warned_codes)?;
     let compare = context.host_function(crate::host::shared_vm::operation("isDeepStrictEqual"))?;
@@ -800,6 +787,7 @@ fn build_key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let binding = context.object_rooted()?;
     for (name, operation) in [
         ("getConstructorName", "utilConstructorName"),
+        ("getCallSites", "utilGetCallSites"),
         ("getOwnNonIndexProperties", "utilOwnNonIndexProperties"),
         ("getPromiseDetails", "utilPromiseDetails"),
         ("getProxyDetails", "utilProxyDetails"),
@@ -953,4 +941,33 @@ pub(crate) fn external_value(context: &mut NativeContext<'_, NodeHost>, _: RootI
         Some(address) => Ok(context.bigint_rooted(address as i128)),
         None => { let error = context.type_error_rooted("Value is not an external")?; Err(context.throw(error)) }
     }
+}
+
+/// The configured util.js validates the public API and owns source-map policy.
+pub(crate) fn get_call_sites(
+    context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let count = args.first().and_then(|root| context.rooted_value(*root)).and_then(quench_runtime::Value::as_number);
+    // Match the native binding's validated frame-count domain without guest coercion.
+    let Some(count) = count.filter(|n| n.is_finite() && n.fract() == 0.0 && (1.0..=NODE_CALL_SITE_FRAME_LIMIT as f64).contains(n)) else {
+        let error = context.range_error_rooted("Invalid stack frame count")?;
+        return Err(context.throw(error));
+    };
+    // Node's native operation drops the util.js caller frame, even when borrowed directly.
+    let frames = context.source_stack_frames(count as usize + 1);
+    let mut sites = Vec::with_capacity(frames.len().saturating_sub(1));
+    for frame in frames.into_iter().skip(1) {
+        let site = context.null_object_rooted()?;
+        let function = context.string_units_rooted(&frame.function_name);
+        let id = context.string_rooted(&frame.script_id.to_string());
+        let script = context.string_rooted(&frame.script_name);
+        let line = context.number(f64::from(frame.line_number));
+        let column = context.number(f64::from(frame.column_number));
+        for (name, value) in [("functionName", function), ("scriptId", id), ("scriptName", script), ("lineNumber", line), ("columnNumber", column), ("column", column)] {
+            let key = context.string_rooted(name);
+            context.define_data_property_rooted(site, key, value, true, true, true)?;
+        }
+        sites.push(site);
+    }
+    context.array_rooted(&sites)
 }

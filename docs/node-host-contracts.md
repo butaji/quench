@@ -57,6 +57,22 @@ later attempt. Native coded errors share the library's private Node error symbol
 UDP buffer-size errors construct the original `ERR_SOCKET_BUFFER_SIZE` class,
 which owns its context getters and custom inspection behavior.
 
+## Detailed source stack capture
+
+The public `util.getCallSites` function comes from the unmodified configured
+Node `util.js`; its native binding captures actual VM source activations,
+independently of `Error.prepareStackTrace` and `Error.stackTraceLimit`. Results
+are null-prototype records with copied UTF-16 function names, compiled-source
+identities, mapped filenames, positions and the column alias. Native helper
+frames are excluded. Error CallSites and detailed capture share the source-frame
+projection; host filename mapping stays an explicit mutable host boundary.
+
+Call positions cover static member names and computed/parenthesized invocation
+parentheses as well as existing identifier and constructor positions. Complete
+optional-chain, eval/sourceURL, source-map and Node host-stack conformance remains
+open. Source IDs denote actual compiled units; missing host frames are not
+fabricated.
+
 ## Boxed primitive identity
 
 Primitive wrappers carry their actual value in an object-internal payload.
