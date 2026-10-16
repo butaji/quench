@@ -3,9 +3,9 @@ use super::*;
 const MAP_ENTRY_KEY_INDEX: usize = 0;
 const MAP_ENTRY_VALUE_INDEX: usize = 1;
 #[derive(Clone, Copy)]
-enum WeakCollectionKind {
-    Map,
-    Set,
+enum CollectionEntries {
+    Pairs,
+    Values,
 }
 include!("collections_set_relations.rs");
 impl<H: Host> Vm<H> {
@@ -154,82 +154,93 @@ impl<H: Host> Vm<H> {
             _ => return Err(JsError("invalid weak collection constructor".into())),
         };
         let collection = self.heap.alloc(cell);
-        let Some(iterable) = args
-            .first()
-            .copied()
-            .filter(|value| !value.is_null() && !value.is_undefined())
-        else {
-            return Ok(collection);
-        };
-        let (kind, adder_name, adder_error) = match native {
-            Native::WeakMap => (
-                WeakCollectionKind::Map,
-                "set",
-                "WeakMap.prototype.set is not callable",
-            ),
-            Native::WeakSet => (
-                WeakCollectionKind::Set,
-                "add",
-                "WeakSet.prototype.add is not callable",
-            ),
-            _ => unreachable!("weak collection constructor dispatch is exhaustive"),
-        };
-        let setter_atom = self.intern_atom(adder_name);
-        let setter = self.get_property(p, collection, setter_atom)?;
-        if !self.is_function(setter) {
-            return Err(self.type_error(p, adder_error.into()));
-        }
-        let iterator = self.get_iterator(p, iterable)?;
-        self.consume_weak_collection_iterable(p, collection, setter, iterator, kind)?;
-        Ok(collection)
+        self.initialize_collection_iterable(p, native, collection, args)
     }
 
-    fn consume_weak_collection_iterable(
+    /// AddEntriesFromIterable invokes arbitrary getters, iterators and adders.
+    /// Every value retained across those callbacks belongs to a bounded root
+    /// scope, including an abrupt completion while IteratorClose runs.
+    fn initialize_collection_iterable(
         &mut self,
         p: &ResidualProgram,
+        native: Native,
         collection: Value,
-        adder: Value,
-        iterator: Value,
-        kind: WeakCollectionKind,
-    ) -> Result<(), JsError> {
-        loop {
-            let Some(entry) = self.iterator_step_value(p, iterator)? else {
-                return Ok(());
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        self.with_call_roots([collection], |vm| {
+            let Some(iterable) = args
+                .first()
+                .copied()
+                .filter(|value| !value.is_null() && !value.is_undefined())
+            else {
+                return Ok(collection);
             };
-            if matches!(kind, WeakCollectionKind::Map) && !self.is_object_like(entry) {
-                let error = self.type_error(p, "Iterator value is not an entry object".into());
-                let _ = self.iterator_close(p, iterator);
-                return Err(error);
-            }
-            let arguments = match kind {
-                WeakCollectionKind::Map => {
-                    let key =
-                        match self.get_index(p, entry, Value::number(MAP_ENTRY_KEY_INDEX as f64)) {
-                            Ok(key) => key,
-                            Err(error) => {
-                                let _ = self.iterator_close(p, iterator);
-                                return Err(error);
-                            }
-                        };
-                    let value =
-                        match self.get_index(p, entry, Value::number(MAP_ENTRY_VALUE_INDEX as f64))
-                        {
-                            Ok(value) => value,
-                            Err(error) => {
-                                let _ = self.iterator_close(p, iterator);
-                                return Err(error);
-                            }
-                        };
-                    vec![key, value]
-                }
-                WeakCollectionKind::Set => vec![entry],
+            let (entries, name, error) = match native {
+                Native::Map => (
+                    CollectionEntries::Pairs,
+                    "set",
+                    "Map.prototype.set is not callable",
+                ),
+                Native::WeakMap => (
+                    CollectionEntries::Pairs,
+                    "set",
+                    "WeakMap.prototype.set is not callable",
+                ),
+                Native::Set => (
+                    CollectionEntries::Values,
+                    "add",
+                    "Set.prototype.add is not callable",
+                ),
+                Native::WeakSet => (
+                    CollectionEntries::Values,
+                    "add",
+                    "WeakSet.prototype.add is not callable",
+                ),
+                _ => unreachable!("collection initialization requires a keyed collection"),
             };
-            if let Err(error) = self.call_value(p, adder, collection, &arguments) {
-                let _ = self.iterator_close(p, iterator);
-                return Err(error);
+            let atom = vm.intern_atom(name);
+            let adder = vm.get_property(p, collection, atom)?;
+            if !vm.is_function(adder) {
+                return Err(vm.type_error(p, error.into()));
             }
-        }
+            vm.with_call_roots([adder], |vm| {
+                let iterator = vm.get_iterator(p, iterable)?;
+                vm.with_call_roots([iterator], |vm| loop {
+                    let Some(entry) = vm.iterator_step_value(p, iterator)? else {
+                        return Ok(collection);
+                    };
+                    let result = vm.with_call_roots([entry], |vm| match entries {
+                        CollectionEntries::Pairs => {
+                            if !vm.is_object_like(entry) {
+                                return Err(vm.type_error(
+                                    p,
+                                    "Iterator value is not an entry object".into(),
+                                ));
+                            }
+                            let key =
+                                vm.get_index(p, entry, Value::number(MAP_ENTRY_KEY_INDEX as f64))?;
+                            vm.with_call_roots([key], |vm| {
+                                let value = vm.get_index(
+                                    p,
+                                    entry,
+                                    Value::number(MAP_ENTRY_VALUE_INDEX as f64),
+                                )?;
+                                vm.call_value(p, adder, collection, &[key, value])
+                            })
+                        }
+                        CollectionEntries::Values => vm.call_value(p, adder, collection, &[entry]),
+                    });
+                    if let Err(error) = result {
+                        vm.with_call_roots(error.thrown_value(), |vm| {
+                            let _ = vm.iterator_close(p, iterator);
+                        });
+                        return Err(error);
+                    }
+                })
+            })
+        })
     }
+
     pub(super) fn construct_weak_ref_native(
         &mut self,
         p: &ResidualProgram,
@@ -664,88 +675,19 @@ impl<H: Host> Vm<H> {
                 self.set_proto
             }
         };
-        match native {
-            Native::Map => {
-                let map = self.heap.alloc(Cell::Map {
-                    object: Box::new(Self::empty_object(prototype)),
-                    entries: Box::default(),
-                });
-                let Some(iterable) = args
-                    .first()
-                    .copied()
-                    .filter(|v| !v.is_null() && !v.is_undefined())
-                else {
-                    return Ok(map);
-                };
-                let setter_atom = self.intern_atom("set");
-                let setter = self.get_property(p, map, setter_atom)?;
-                if !self.is_function(setter) {
-                    return Err(self.type_error(p, "Map.prototype.set is not callable".into()));
-                }
-                let iterator = self.get_iterator(p, iterable)?;
-                loop {
-                    let Some(entry) = self.iterator_step_value(p, iterator)? else {
-                        return Ok(map);
-                    };
-                    if !self.is_object_like(entry) {
-                        let error =
-                            self.type_error(p, "Iterator value is not an entry object".into());
-                        let _ = self.iterator_close(p, iterator);
-                        return Err(error);
-                    }
-                    let key =
-                        match self.get_index(p, entry, Value::number(MAP_ENTRY_KEY_INDEX as f64)) {
-                            Ok(key) => key,
-                            Err(error) => {
-                                let _ = self.iterator_close(p, iterator);
-                                return Err(error);
-                            }
-                        };
-                    let value =
-                        match self.get_index(p, entry, Value::number(MAP_ENTRY_VALUE_INDEX as f64))
-                        {
-                            Ok(value) => value,
-                            Err(error) => {
-                                let _ = self.iterator_close(p, iterator);
-                                return Err(error);
-                            }
-                        };
-                    if let Err(error) = self.call_value(p, setter, map, &[key, value]) {
-                        let _ = self.iterator_close(p, iterator);
-                        return Err(error);
-                    }
-                }
-            }
-            Native::Set => {
-                let set = self.heap.alloc(Cell::Set {
-                    object: Box::new(Self::empty_object(prototype)),
-                    entries: Box::default(),
-                });
-                let Some(iterable) = args
-                    .first()
-                    .copied()
-                    .filter(|value| !value.is_null() && !value.is_undefined())
-                else {
-                    return Ok(set);
-                };
-                let add_atom = self.intern_atom("add");
-                let adder = self.get_property(p, set, add_atom)?;
-                if !self.is_function(adder) {
-                    return Err(self.type_error(p, "Set.prototype.add is not callable".into()));
-                }
-                let iterator = self.get_iterator(p, iterable)?;
-                loop {
-                    let Some(value) = self.iterator_step_value(p, iterator)? else {
-                        return Ok(set);
-                    };
-                    if let Err(error) = self.call_value(p, adder, set, &[value]) {
-                        let _ = self.iterator_close(p, iterator);
-                        return Err(error);
-                    }
-                }
-            }
+        let cell = match native {
+            Native::Map => Cell::Map {
+                object: Box::new(Self::empty_object(prototype)),
+                entries: Box::default(),
+            },
+            Native::Set => Cell::Set {
+                object: Box::new(Self::empty_object(prototype)),
+                entries: Box::default(),
+            },
             _ => return Err(JsError("invalid collection constructor".into())),
-        }
+        };
+        let collection = self.heap.alloc(cell);
+        self.initialize_collection_iterable(p, native, collection, args)
     }
     pub(super) fn call_collection_native(
         &mut self,

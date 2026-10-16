@@ -1115,7 +1115,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn insert_dynamic_atom(&mut self, name: JsString, hash: u64) -> Atom {
         let atom = (self.atom_text.len() + self.dynamic_atoms.len()) as Atom;
         self.record_array_index_atom(name.host_string(), atom);
-        self.atom_sequence.append(name.host_name());
+        self.atom_sequence.append(name.clone());
         self.dynamic_atoms.push(name);
         self.atom_classes.push(Default::default());
         self.index_atom_hash(hash, atom);
@@ -1284,6 +1284,7 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
+        self.capture_function_name(function, value);
         if matches!(
             self.heap.get(function),
             Some(Cell::Function { kind: FunctionKind::Native(native), .. })

@@ -5,6 +5,14 @@ use crate::{Host, JsError, RootId, RootedError, Value, vm::Vm};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HostFunctionId(pub u32);
 
+/// A host's synchronous module request never starts an async graph or re-enters
+/// a currently evaluating module. Namespace roots use the native call's scope.
+pub enum SynchronousModule<T> {
+    Namespace(T),
+    AsyncGraph,
+    Evaluating,
+}
+
 /// Arithmetic operations at native boundaries use the same guest coercions as code.
 #[derive(Clone, Copy)]
 pub enum NativeArithmetic {
@@ -28,6 +36,7 @@ pub struct RootedIterator {
 /// Builtin internal-slot brands, independent of prototypes and guest property hooks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BuiltinBrand {
+    External,
     Date,
     RegExp,
     NativeError,
@@ -76,6 +85,13 @@ pub enum PromiseSnapshot<T = RootId> {
     Pending,
     Fulfilled(T),
     Rejected(T),
+}
+
+/// Flat native collection entries, preserving the current iterator position.
+#[derive(Debug)]
+pub struct CollectionPreview<T = RootId> {
+    pub entries: Vec<T>,
+    pub is_key_value: bool,
 }
 
 /// Intrinsic payload snapshot. Value roots remain scoped to the native callback.
@@ -246,7 +262,49 @@ impl<'a, H: Host> NativeContext<'a, H> {
         Ok(value.map(|value| self.scoped_value(value)))
     }
 
+    /// Snapshot original target and handler without traps, including revoked nulls.
+    pub fn proxy_details_rooted(&mut self, root: RootId) -> Result<Option<(RootId, RootId)>, RootedError> {
+        let result = self.vm.embedding_proxy_details(root);
+        let details = result.map_err(|error| self.error(error))?;
+        Ok(details.map(|(target, handler)| (self.scoped_value(target), self.scoped_value(handler))))
+    }
+
+    /// The immutable display name of an ordinary function, without public getters.
+    pub fn original_function_name_rooted(&mut self, root: RootId) -> Result<Option<RootId>, RootedError> {
+        let result = self.vm.embedding_original_function_name(root);
+        let name = result.map_err(|error| self.error(error))?;
+        Ok(name.map(|name| self.string_units_rooted(&name.units().to_vec())))
+    }
+
+    /// Original base-constructor name, independent of mutable public properties.
+    pub fn constructed_name_rooted(&mut self, root: RootId) -> Result<Option<RootId>, RootedError> {
+        let result = self.vm.embedding_constructed_name(root);
+        let name = result.map_err(|error| self.error(error))?;
+        Ok(name.map(|name| self.string_units_rooted(&name.units().to_vec())))
+    }
+
+    /// Snapshot collection entries without advancing iterators or invoking hooks.
+    pub fn collection_preview_rooted(&mut self, root: RootId) -> Result<Option<CollectionPreview>, RootedError> {
+        let result = self.vm.embedding_collection_preview(root);
+        let preview = result.map_err(|error| self.error(error))?;
+        Ok(preview.map(|preview| CollectionPreview {
+            entries: preview.entries.into_iter().map(|value| self.scoped_value(value)).collect(),
+            is_key_value: preview.is_key_value,
+        }))
+    }
+
     /// Test an internal-slot brand without invoking guest getters or proxy traps.
+    /// Create an opaque, non-owning native address wrapper. Core never dereferences
+    /// the address; the embedding retains ownership of its native allocation.
+    pub fn external_rooted(&mut self, address: usize) -> Result<RootId, RootedError> {
+        let result = self.vm.create_embedding_external(address);
+        self.completion(result)
+    }
+
+    pub fn external_address_rooted(&self, value: RootId) -> Option<usize> {
+        self.vm.embedding_external_address(value)
+    }
+
     pub fn has_builtin_brand_rooted(
         &mut self,
         root: RootId,
@@ -841,6 +899,18 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.completion(result)
     }
 
+    /// Create a named callback with private traced environment data.
+    pub fn host_function_named_with_data(
+        &mut self,
+        id: HostFunctionId,
+        name: &str,
+        data: RootId,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.embedding_value(data)
+            .and_then(|value| self.vm.create_named_host_function_with_data(id, name, value));
+        self.completion(result)
+    }
+
     /// Create a native-backed ordinary constructor. Primitive completions return
     /// the allocated receiver; object completions replace it, like JavaScript functions.
     pub fn host_constructor(&mut self, id: HostFunctionId) -> Result<RootId, RootedError> {
@@ -855,6 +925,29 @@ impl<'a, H: Host> NativeContext<'a, H> {
     ) -> Result<RootId, RootedError> {
         let result = self.vm.embedding_value(data)
             .and_then(|value| self.vm.create_host_constructor_with_data(id, value));
+        self.completion(result)
+    }
+
+    pub fn evaluate_module_sync_rooted(
+        &mut self,
+        module: &crate::ModuleSource,
+    ) -> Result<SynchronousModule<RootId>, RootedError> {
+        let outcome = self.vm.evaluate_module_sync(module).map_err(|error| self.error(error))?;
+        Ok(match outcome {
+            SynchronousModule::Namespace(value) => SynchronousModule::Namespace(self.scoped_value(value)),
+            SynchronousModule::AsyncGraph => SynchronousModule::AsyncGraph,
+            SynchronousModule::Evaluating => SynchronousModule::Evaluating,
+        })
+    }
+
+    /// Add a constant export while retaining a namespace's original live bindings.
+    pub fn module_namespace_with_export_rooted(
+        &mut self,
+        namespace: RootId,
+        name: &str,
+        value: RootId,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.module_namespace_with_export_rooted(namespace, name, value);
         self.completion(result)
     }
 
