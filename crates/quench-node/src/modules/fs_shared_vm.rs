@@ -2116,6 +2116,12 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     )?;
     let exists = get(context, exists_api, "exists")?;
     let exists_sync = get(context, exists_api, "existsSync")?;
+    let exists_sync = context.host_function_with_data(
+        crate::host::shared_vm::operation("fsVfsExistsSync"), exists_sync,
+    )?;
+    let name_key = context.string_rooted("name");
+    let name_value = context.string_rooted("existsSync");
+    context.define_data_property_rooted(exists_sync, name_key, name_value, false, false, true)?;
     let access = get(context, exists_api, "access")?;
     let access_sync = get(context, exists_api, "accessSync")?;
     let chmod = get(context, exists_api, "chmod")?;
@@ -2721,6 +2727,9 @@ pub(crate) fn read_file_sync(
     let input = args.first().copied().unwrap_or_else(|| context.undefined());
     let undefined = context.undefined();
     let provided_options = args.get(1).copied().unwrap_or(undefined);
+    if let Some(result) = super::fs_policy_shared_vm::vfs_read(context, "readFileSync", &[input, provided_options])? {
+        return Ok(result);
+    }
     let defaults = context.object_rooted()?;
     let key = context.string_rooted("flag");
     let read_flag = context.string_rooted("r");
