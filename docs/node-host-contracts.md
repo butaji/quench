@@ -63,6 +63,18 @@ later attempt. Native coded errors share the library's private Node error symbol
 UDP buffer-size errors construct the original `ERR_SOCKET_BUFFER_SIZE` class,
 which owns its context getters and custom inspection behavior.
 
+## Parsed eval execution
+
+Direct and indirect eval execute the existing OXC-compiled Eval goal, retaining
+the original source and statement completion values. Host Script evaluation
+uses the Script goal, including single expressions. Neither path interprets
+source substrings or inserts an expression-return wrapper. Binding scopes,
+strictness, early errors and captured environments share the compiler and VM
+operations used by other code. A lone regexp expression uses OXC's literal span
+and flags with the original UTF-16 pattern units, preserving lone surrogates.
+Eval-origin descriptions, synthetic filenames and Function-constructor wrapper
+positions still need separate conformance work.
+
 ## Detailed source stack capture
 
 The public `util.getCallSites` function comes from the unmodified configured

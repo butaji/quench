@@ -65,6 +65,11 @@ impl AtomTable {
         }
     }
 
+    /// Shared names identify one runtime state; resetting a runtime replaces it.
+    pub(crate) fn belongs_to(&self, owner: &Rc<AtomSequence>) -> bool {
+        matches!(&self.names, AtomNames::Shared { sequence, .. } if Rc::ptr_eq(sequence, owner))
+    }
+
     /// `prefix`, then `added` under the ids that follow it.
     pub(crate) fn extended(prefix: AtomTable, added: &[Rc<str>]) -> Self {
         let added = Self::from_rcs(added);

@@ -42,9 +42,6 @@ enum ProgramScope {
     /// An eval program evaluated in the global environment (indirect eval or a
     /// host script), whose names resolve as script code's do.
     Global,
-    /// A body compiled as Script code but evaluated in a direct eval caller's
-    /// environment, whose bindings its names may denote.
-    Caller,
 }
 
 #[derive(Clone, Copy)]
@@ -101,8 +98,8 @@ impl ProgramStore {
     }
 
     /// Inserts dynamic code that `reclaim_unreferenced` may later drop.
-    pub(crate) fn insert_reclaimable(&mut self, program: ResidualProgram) -> Option<ProgramId> {
-        let id = self.insert(program)?;
+    pub(crate) fn insert_reclaimable_shared(&mut self, program: Rc<ResidualProgram>) -> Option<ProgramId> {
+        let id = self.insert_shared(program)?;
         if let Some(entry) = self.entry_mut(id) {
             entry.reclaimable = true;
         }
@@ -168,10 +165,6 @@ impl ProgramStore {
         self.set_scope(id, ProgramScope::Global);
     }
 
-    pub(crate) fn mark_caller_scope(&mut self, id: ProgramId) {
-        self.set_scope(id, ProgramScope::Caller);
-    }
-
     fn set_scope(&mut self, id: ProgramId, scope: ProgramScope) {
         if let Some(entry) = self.entry_mut(id) {
             entry.scope = scope;
@@ -183,7 +176,6 @@ impl ProgramStore {
         self.entry(id).is_some_and(|entry| match entry.scope {
             ProgramScope::Own => entry.residual.kind == crate::bytecode::ProgramKind::Script,
             ProgramScope::Global => true,
-            ProgramScope::Caller => false,
         })
     }
 
