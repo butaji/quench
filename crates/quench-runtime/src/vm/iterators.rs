@@ -3058,36 +3058,36 @@ impl<H: Host> Vm<H> {
                             selected
                         }
                     }
-                    (IteratorKind::MapKeys, Some(Cell::Map { entries, .. })) => entries
-                        .next_live(index)
-                        .map(|(slot, (key, _))| {
+                    (IteratorKind::MapKeys, Some(Cell::Map { entries, .. })) => {
+                        entries.next_live(index).map(|(slot, (key, _))| {
                             next_position = slot + 1;
                             (key, None)
-                        }),
-                    (IteratorKind::MapValues, Some(Cell::Map { entries, .. })) => entries
-                        .next_live(index)
-                        .map(|(slot, (_, value))| {
+                        })
+                    }
+                    (IteratorKind::MapValues, Some(Cell::Map { entries, .. })) => {
+                        entries.next_live(index).map(|(slot, (_, value))| {
                             next_position = slot + 1;
                             (value, None)
-                        }),
-                    (IteratorKind::MapEntries, Some(Cell::Map { entries, .. })) => entries
-                        .next_live(index)
-                        .map(|(slot, (key, value))| {
+                        })
+                    }
+                    (IteratorKind::MapEntries, Some(Cell::Map { entries, .. })) => {
+                        entries.next_live(index).map(|(slot, (key, value))| {
                             next_position = slot + 1;
                             (key, Some(value))
-                        }),
-                    (IteratorKind::SetValues, Some(Cell::Set { entries, .. })) => entries
-                        .next_live(index)
-                        .map(|(slot, value)| {
+                        })
+                    }
+                    (IteratorKind::SetValues, Some(Cell::Set { entries, .. })) => {
+                        entries.next_live(index).map(|(slot, value)| {
                             next_position = slot + 1;
                             (value, None)
-                        }),
-                    (IteratorKind::SetEntries, Some(Cell::Set { entries, .. })) => entries
-                        .next_live(index)
-                        .map(|(slot, value)| {
+                        })
+                    }
+                    (IteratorKind::SetEntries, Some(Cell::Set { entries, .. })) => {
+                        entries.next_live(index).map(|(slot, value)| {
                             next_position = slot + 1;
                             (value, Some(value))
-                        }),
+                        })
+                    }
                     _ => None,
                 },
             };

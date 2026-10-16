@@ -937,9 +937,7 @@ impl<H: Host> Vm<H> {
             | Some(Cell::WasmObject { .. })
             | Some(Cell::WasmGlobal { .. })
             | Some(Cell::WasmMemory { .. })
-            | Some(Cell::WasmTable { .. }) => {
-                self.json_serialize_object(p, value, state).map(Some)
-            }
+            | Some(Cell::WasmTable { .. }) => self.json_serialize_object(p, value, state).map(Some),
             Some(Cell::Environment { .. })
             | Some(Cell::Iterator { .. })
             | Some(Cell::ArrayFromAsyncState(_))
