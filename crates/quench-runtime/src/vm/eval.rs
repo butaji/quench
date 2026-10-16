@@ -179,10 +179,7 @@ impl<H: Host> Vm<H> {
         } else {
             Vec::new()
         };
-        let caller_has_global_variables = self
-            .frames
-            .last()
-            .is_none_or(|frame| frame.function == super::ROOT_FUNCTION_ID);
+        let caller_has_global_variables = self.frames.is_empty() || self.running_global_code();
         let annex_b_forbidden_names = if self.direct_eval {
             (0..crate::compile::AtomPrefix::len(self) as Atom)
                 .filter(|atom| {
@@ -228,6 +225,9 @@ impl<H: Host> Vm<H> {
         };
         let origin = self.capture_eval_origin(p)?;
         self.programs.set_origin(program_id, super::program_store::CompilationOrigin::Eval { caller: Some(origin) });
+        // Eval code belongs to its caller's Script or Module (PerformEval).
+        let script_or_module = self.active_script_or_module(p);
+        self.programs.set_script_or_module(program_id, script_or_module);
         if let Some(source) = cache_source { self.programs.cache_global_eval(source, program_id); }
         self.run_global_eval_program(p, program_id)
     }
@@ -345,6 +345,17 @@ impl<H: Host> Vm<H> {
         result
     }
 
+    /// Whether the running frame is the root of code whose variables are the
+    /// realm's global bindings: a Script, an indirect eval or host script, or a
+    /// sloppy direct eval called from such code. The root of a direct eval
+    /// running in a function's or module's scope is not.
+    fn running_global_code(&self) -> bool {
+        self.frames.last().is_some_and(|frame| {
+            frame.function == super::ROOT_FUNCTION_ID
+                && self.programs.declares_global_variables(frame.program)
+        })
+    }
+
     fn run_global_eval_program(
         &mut self,
         p: &ResidualProgram,
@@ -361,11 +372,17 @@ impl<H: Host> Vm<H> {
             self.programs.mark_global_scope(program_id);
         }
         let root_function = residual.functions[super::ROOT_FUNCTION_ID as usize].clone();
-        let root_scope = self
-            .frames
-            .last()
-            .is_some_and(|frame| frame.function == super::ROOT_FUNCTION_ID);
+        let root_scope = self.running_global_code();
         let caller_scope = direct_eval && !root_scope && !root_function.strict;
+        if direct_eval && !root_function.strict {
+            // A sloppy direct eval declares its variables where its caller does,
+            // so direct evals nested in it do too.
+            if root_scope {
+                self.programs.mark_global_variables(program_id);
+            } else {
+                self.programs.mark_caller_scope(program_id);
+            }
+        }
         let previous_eval_var_program = std::mem::replace(
             &mut self.direct_eval_var_program,
             caller_scope.then_some(program_id),
@@ -472,10 +489,6 @@ impl<H: Host> Vm<H> {
             if caller_scope {
                 self.prepare_direct_eval_var_bindings(&root_function.global_var_atoms);
             }
-            let root_scope = self
-                .frames
-                .last()
-                .is_some_and(|frame| frame.function == super::ROOT_FUNCTION_ID);
             let parent = if direct_eval {
                 if let Some(frame) = self.frames.len().checked_sub(1) {
                     self.capture_binding_environment(frame)?
@@ -802,7 +815,12 @@ impl<H: Host> Vm<H> {
     }
 
     fn prepare_direct_eval_var_bindings(&mut self, atoms: &[Atom]) {
-        let Some(frame_index) = self.frames.len().checked_sub(1) else {
+        let Some(frame_index) = self
+            .frames
+            .len()
+            .checked_sub(1)
+            .map(|frame| self.variable_environment_frame(frame))
+        else {
             return;
         };
         let Some(bindings) = self.own_dynamic_bindings(frame_index) else {

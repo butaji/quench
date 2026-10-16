@@ -9681,3 +9681,83 @@ fn http_listening_derives_from_the_handle_and_close_cancels_pending_notification
 fn filesystem_readdir_sync_uses_sdk_policy_with_raw_names_and_recursive_native_layout() {
     compare_node_source_with_args(include_str!("../node-tests/test-fs-readdir-sdk-policy.js"), &["--expose-internals", "--no-warnings"]);
 }
+
+#[test]
+fn process_capture_state_is_canonical_receiver_independent_and_survives_collection() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-canonical-state.js"), &["--expose-gc"]);
+}
+
+#[test]
+fn process_uncaught_monitor_precedes_capture_and_can_replace_the_pending_handler() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-monitor-capture-transition.js"), &[]);
+}
+
+#[test]
+fn process_uncaught_events_ignore_monitor_results_and_use_emit_truthiness() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-uncaught-emit-truthiness.js"), &[]);
+}
+
+#[test]
+fn process_capture_delivery_reloads_the_callback_after_the_null_check() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-getter-order.js"), &[]);
+}
+
+#[test]
+fn process_auxiliary_capture_runs_in_reverse_order_with_exact_true_handling() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-auxiliary.js"), &[]);
+}
+
+#[test]
+fn process_auxiliary_capture_preserves_length_coercion_fractional_keys_and_replacement() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-auxiliary-coercion.js"), &["--expose-gc"]);
+}
+
+#[test]
+fn process_capture_methods_have_public_names_and_ordinary_constructor_shapes() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-method-shape.js"), &[]);
+}
+
+#[test]
+fn process_fatal_handler_exits_preserve_sdk_status_event_suppression_and_explicit_requests() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-fatal-handler-exit.js"), &[]);
+}
+
+#[test]
+fn cli_version_aliases_use_the_configured_sdk_and_short_circuit_before_guest_execution() {
+    compare_node_source_with_args(include_str!("../node-tests/test-cli-version-order.js"), &[]);
+}
+
+#[test]
+fn process_report_configuration_uses_sdk_descriptors_validation_and_shared_native_state() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-report-configuration.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn process_capture_preserves_report_flag_snapshot_restoration_and_accessor_order() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-report-flags.js"), &[]);
+}
+
+#[test]
+fn process_report_startup_flags_preserve_environment_precedence_aliases_and_signal_registration() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-report-startup.js"), &[]);
+}
+
+#[test]
+fn process_events_share_emitter_storage_inspection_borrowed_methods_and_once_wrappers() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-shared-event-store.js"), &[]);
+}
+
+#[test]
+fn process_warning_policy_preserves_default_listener_removal_suppression_and_startup_descriptors() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-warning-policy.js"), &[]);
+}
+
+#[test]
+fn process_warning_uses_sdk_identity_and_only_public_option_getters() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-warning-sdk-authority.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn process_rejection_warnings_pass_public_arguments_and_preserve_original_stack() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-rejection-warning-arguments.js"), &["--unhandled-rejections=warn", "--no-warnings"]);
+}
