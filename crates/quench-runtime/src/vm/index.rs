@@ -484,8 +484,11 @@ impl<H: Host> Vm<H> {
             self.profile
                 .array_write_ownership(Rc::strong_count(elements) != 1);
             let elements = mutable_array_elements(elements);
+            let capacity = elements.capacity();
             elements.resize(index + 1, Value::DELETED);
             elements[index] = value;
+            let grown = elements.capacity() - capacity;
+            self.heap.charge_payload_growth(grown * size_of::<Value>());
         }
         self.sync_mapped_argument(object, index, value);
         true
