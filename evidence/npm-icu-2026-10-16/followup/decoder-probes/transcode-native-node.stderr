@@ -1,0 +1,24 @@
+
+  #  /workspace/shared/node-v26.12.0-linux-x64/bin/node[492362]: T &node::MaybeStackBuffer<char>::operator[](size_t) [T = char, kStackStorageSize = 1024] at ../src/util.h:429
+  #  Assertion failed: (index) < (length())
+
+----- Native stack trace -----
+
+ 1: 0x841e50  [/workspace/shared/node-v26.12.0-linux-x64/bin/node]
+ 2: 0x841da9 node::Assert(node::AssertionInfo const&) [/workspace/shared/node-v26.12.0-linux-x64/bin/node]
+ 3: 0xa48b96  [/workspace/shared/node-v26.12.0-linux-x64/bin/node]
+ 4: 0xa4866f  [/workspace/shared/node-v26.12.0-linux-x64/bin/node]
+ 5: 0x7fe23258fae9 
+
+----- JavaScript stack trace -----
+
+1: /workspace/scratch/npm-decoder-production-draft/native-oracle.cjs:6:19
+2: node:internal/modules/cjs/loader:1968:14
+3: node:internal/modules/cjs/loader:2108:10
+4: node:internal/modules/cjs/loader:1690:32
+5: node:internal/modules/cjs/loader:1480:12
+6: wrapModuleLoad (node:internal/modules/cjs/loader:261:19)
+7: executeUserEntryPoint (node:internal/modules/run_main:173:5)
+8: node:internal/main/run_main_module:33:47
+
+

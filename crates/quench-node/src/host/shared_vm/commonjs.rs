@@ -2274,6 +2274,8 @@ const getLinkedBinding = () => ({});
   switch (String(name)) {
     case "os":
     case "credentials":
+    case "config":
+    case "icu":
     case "encoding_binding":
     case "symbols":
     case "http2":
