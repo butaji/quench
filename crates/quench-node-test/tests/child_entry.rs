@@ -10163,3 +10163,12 @@ fn abort_timeouts_use_original_sdk_weak_owners_and_listener_persistence() {
         &["--no-warnings", "--expose-gc"],
     );
 }
+
+
+#[test]
+fn crypto_native_jobs_resolve_legacy_provider_at_execution() {
+    compare_node_file_source_with_args(
+        include_str!("../node-tests/test-crypto-native-digest-provider-transitions.js"),
+        &["--no-warnings", "--expose-internals"],
+    );
+}
