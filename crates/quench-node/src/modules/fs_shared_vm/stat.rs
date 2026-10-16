@@ -662,7 +662,7 @@ fn symlink_loop(path: &Path) -> bool {
     false
 }
 
-fn directory_entry_type(kind: std::fs::FileType) -> i32 {
+pub(crate) fn directory_entry_type(kind: std::fs::FileType) -> i32 {
     if kind.is_file() {
         return super::UV_DIRENT_FILE;
     }
@@ -689,44 +689,6 @@ fn directory_entry_type(kind: std::fs::FileType) -> i32 {
         }
     }
     super::UV_DIRENT_UNKNOWN
-}
-
-pub(crate) fn read_dir_sync(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let path = args
-        .first()
-        .copied()
-        .map(|path| context.to_string(path))
-        .transpose()?
-        .unwrap_or_else(|| "undefined".to_owned());
-    let path = super::resolve_shared_path(context, path);
-    let entries = match std::fs::read_dir(&path) {
-        Ok(entries) => entries,
-        Err(error) => return Err(path_error(context, error, &path, "scandir")?),
-    };
-    let mut entries = match entries.collect::<Result<Vec<_>, _>>() {
-        Ok(entries) => entries,
-        Err(error) => return Err(path_error(context, error, &path, "scandir")?),
-    };
-    entries.sort_by_key(|entry| entry.file_name());
-    let mut names = Vec::new();
-    for entry in entries {
-        let file_type = match entry.file_type() {
-            Ok(file_type) => file_type,
-            Err(error) => return Err(path_error(context, error, &path, "scandir")?),
-        };
-        let dirent = context.object_rooted()?;
-        let null = context.null();
-        context.set_prototype_rooted(dirent, null)?;
-        set_string(context, dirent, "name", &entry.file_name().to_string_lossy())?;
-        let kind = context.number(f64::from(directory_entry_type(file_type)));
-        set(context, dirent, "type", kind)?;
-        names.push(dirent);
-    }
-    context.array_rooted(&names)
 }
 
 pub(crate) fn fstat_sync(
