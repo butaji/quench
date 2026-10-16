@@ -3114,6 +3114,54 @@ impl<H: Host> Vm<H> {
         })
     }
 
+    /// One %ArrayIteratorPrototype%.next step without its result object: the next value, or
+    /// `None` once the iterator is (or becomes) done.
+    pub(super) fn array_iterator_step(
+        &mut self,
+        p: &ResidualProgram,
+        iterator: Value,
+    ) -> Result<Option<Value>, JsError> {
+        self.with_call_roots([iterator], |vm| {
+            let (source, kind, index) = match vm.heap.get(iterator) {
+                Some(Cell::Iterator {
+                    source,
+                    kind,
+                    index,
+                    done: false,
+                    ext,
+                    ..
+                }) if kind.is_array_iterator() => (*source, *kind, ext.position(*index)),
+                _ => return Ok(None),
+            };
+            match vm.array_iterator_item(p, iterator, source, kind, index)? {
+                Some((value, _)) => Ok(Some(value)),
+                None => {
+                    if let Some(Cell::Iterator { done, source, .. }) = vm.heap.get_mut(iterator) {
+                        *done = true;
+                        *source = Value::UNDEFINED;
+                    }
+                    Ok(None)
+                }
+            }
+        })
+    }
+
+    /// Whether `method` is this realm's %ArrayIteratorPrototype%.next and `iterator` one of
+    /// its array iterators, so a step may run without the call and its result object.
+    pub(super) fn steps_as_array_iterator(&self, iterator: Value, method: Value) -> bool {
+        matches!(
+            self.heap.get(method),
+            Some(Cell::Function {
+                kind: FunctionKind::Native(Native::ArrayIteratorNext),
+                object,
+                ..
+            }) if object.realm == self.realm.globals
+        ) && matches!(
+            self.heap.get(iterator),
+            Some(Cell::Iterator { kind, .. }) if kind.is_array_iterator()
+        )
+    }
+
     fn array_iterator_item(
         &mut self,
         p: &ResidualProgram,
