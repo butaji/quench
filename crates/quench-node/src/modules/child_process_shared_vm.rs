@@ -2231,6 +2231,33 @@ pub(crate) fn spawn_failed_run(
     let tail = property(context, data, "tail")?;
     set(context, error, "spawnargs", tail)?;
     emit_failure_event(context, child, "error", &[error])?;
+    // Native failed-pipe completion belongs after the current tick/microtask
+    // drain, like other owned native close completions in the host scheduler.
+    let callback = context.host_function_with_data(
+        crate::host::shared_vm::operation("childProcessSpawnFailedFlush"), data,
+    )?;
+    let shared = context.host_mut().shared_state();
+    let id = shared.borrow_mut().scheduler.reserve_shared_immediate_id()
+        .ok_or_else(|| RootedError::host("Child close completion IDs exhausted"))?;
+    let callback = context.retain(callback)?;
+    let undefined = context.undefined();
+    let receiver = match context.retain(undefined) {
+        Ok(root) => root,
+        Err(error) => { context.release_root(callback); return Err(error); }
+    };
+    shared.borrow_mut().scheduler.queue_shared_immediate(id,
+        super::shared_event_loop::SharedImmediateOwner::Host,
+        super::shared_event_loop::SharedCallback {
+            execution: None, callback, receiver, args: Vec::new(),
+        });
+    Ok(undefined)
+}
+
+pub(crate) fn spawn_failed_flush(
+    context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let data = context.host_function_data()?;
+    let null = context.null();
     for name in ["stdout", "stderr"] {
         let stream = property(context, data, name)?;
         if context.is_object_rooted(stream)? {
