@@ -1,97 +1,95 @@
-//! Minimal shared-VM callback surface for `node:test`.
-
+//! Original SDK test scheduling, contexts, hooks and mock policy.
+use super::event_constructor_shared_vm::get;
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
+type Context<'a> = NativeContext<'a, NodeHost>;
 
-const TEST_FACTORY: &str = quench_js_check::checked_js!(
-    r#"(nativeTest, assert) => {
-  const mock = {
-    fn(implementation = () => {}) {
-      const calls = [];
-      const wrapped = function(...args) {
-        const call = { arguments: args, this: this, result: undefined };
-        calls.push(call);
-        try {
-          call.result = { type: "return", value: implementation.apply(this, args) };
-          return call.result.value;
-        } catch (error) {
-          call.result = { type: "throw", value: error };
-          throw error;
-        }
-      };
-      wrapped.mock = {
-        calls,
-        get callCount() { return calls.length; },
-        resetCalls() { calls.length = 0; },
-      };
-      return wrapped;
-    },
-    method(object, name, implementation) {
-      const original = object[name];
-      const wrapped = this.fn(implementation || original);
-      object[name] = wrapped;
-      wrapped.mock.restore = () => { object[name] = original; };
-      return wrapped;
-    },
-    reset() {},
-    restoreAll() {},
-  };
-
-  const context = () => ({ assert, mock });
-  const invoke = (args) => {
-    const callback = [...args].reverse().find((arg) => typeof arg === "function");
-    if (!callback) return undefined;
-    const done = (error) => {
-      if (error !== undefined) throw error;
-    };
-    return callback.length >= 2 ? callback(context(), done) : callback(context());
-  };
-  const run = (...args) => {
-    if (args.some((arg) => typeof arg === "function")) return invoke(args);
-    return nativeTest(...args);
-  };
-  run.test = run;
-  run.describe = run.suite = (...args) => invoke(args);
-  run.it = run;
-  run.before = run.after = run.beforeEach = run.afterEach = (...args) => invoke(args);
-  run.skip = run.todo = () => undefined;
-  run.mock = mock;
-  return run;
-}"#
-);
-
-pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    let factory = context.evaluate_script_rooted(TEST_FACTORY, "node:test/shared.js")?;
-    let test = context.host_function(crate::host::shared_vm::operation("nodeTest"))?;
-    let util = crate::modules::util_shared_vm::module(context)?;
-    let assert = crate::modules::assert_shared_vm::module(context, util)?;
-    let undefined = context.undefined();
-    context.call_rooted(factory, undefined, &[test, assert])
-}
-
-pub(crate) fn run(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let mut callback = None;
-    for argument in args {
-        if context.is_callable_rooted(*argument)? {
-            callback = Some(*argument);
-            break;
-        }
+pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    let harness = crate::host::shared_vm::commonjs::node_library_module(
+        context, "test.js", "internal/test_runner/harness.js",
+    )?;
+    let test = get(context, harness, "test")?;
+    // The original harness owns every function and its lifecycle. File-runner
+    // exports still need a genuine native V8 serializer and are not fabricated.
+    for (name, original) in [
+        ("after", "after"), ("afterEach", "afterEach"), ("before", "before"),
+        ("beforeEach", "beforeEach"), ("describe", "suite"),
+        ("getTestContext", "getTestContext"), ("it", "test"),
+        ("suite", "suite"), ("test", "test"),
+    ] {
+        let value = get(context, harness, original)?;
+        let key = context.string_rooted(name);
+        context.define_data_property_rooted(test, key, value, true, true, true)?;
     }
-    let Some(callback) = callback else {
-        return missing_callback(context);
-    };
-    let receiver = context.undefined();
-    context.call_rooted(callback, receiver, &[])
+    accessor(context, test, "mock", "nodeTestMock", None)?;
+    accessor(context, test, "snapshot", "nodeTestNamespace", Some((
+        "internal/test_runner/snapshot.js", &["setDefaultSnapshotSerializers", "setResolveSnapshotPath"],
+    )))?;
+    accessor(context, test, "assert", "nodeTestNamespace", Some((
+        "internal/test_runner/assert.js", &["register"],
+    )))?;
+    Ok(test)
 }
 
-fn missing_callback(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    let error = context.type_error_rooted("The \"fn\" argument must be of type function")?;
-    let code_key = context.string_rooted("code");
-    let code = context.string_rooted("ERR_INVALID_ARG_TYPE");
-    let _ = context.set_property_rooted(error, code_key, code, error)?;
-    Err(context.throw(error))
+fn accessor(
+    context: &mut Context<'_>, target: RootId, name: &str, operation: &str,
+    namespace: Option<(&str, &[&str])>,
+) -> Result<(), RootedError> {
+    let cache = context.object_rooted()?;
+    if let Some((path, names)) = namespace {
+        let path = context.string_rooted(path);
+        let key = context.string_rooted("path");
+        context.define_data_property_rooted(cache, key, path, true, true, true)?;
+        let names = names.iter().map(|name| context.string_rooted(name)).collect::<Vec<_>>();
+        let names = context.array_rooted(&names)?;
+        let key = context.string_rooted("names");
+        context.define_data_property_rooted(cache, key, names, true, true, true)?;
+    }
+    let getter = context.host_function_named_with_data(
+        crate::host::shared_vm::operation(operation), "get", cache,
+    )?;
+    let descriptor = context.null_object_rooted()?;
+    for (name, value) in [
+        ("get", getter), ("enumerable", context.boolean(true)), ("configurable", context.boolean(true)),
+    ] {
+        let key = context.string_rooted(name);
+        context.define_data_property_rooted(descriptor, key, value, true, true, true)?;
+    }
+    let key = context.string_rooted(name);
+    context.define_property_descriptor_rooted(target, key, descriptor)?;
+    Ok(())
+}
+
+pub(crate) fn mock(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let cache = context.host_function_data()?;
+    let current = get(context, cache, "value")?;
+    if context.is_object_rooted(current)? { return Ok(current); }
+    let constructor = crate::host::shared_vm::commonjs::node_library_export(
+        context, "test.js", "internal/test_runner/mock/mock.js", "MockTracker",
+    )?;
+    let value = context.construct_rooted(constructor, constructor, &[])?;
+    let key = context.string_rooted("value");
+    context.define_data_property_rooted(cache, key, value, true, true, true)?;
+    Ok(value)
+}
+
+pub(crate) fn namespace(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let cache = context.host_function_data()?;
+    let current = get(context, cache, "value")?;
+    if context.is_object_rooted(current)? { return Ok(current); }
+    let path = get(context, cache, "path")?;
+    let path = context.to_string(path)?;
+    let library = crate::host::shared_vm::commonjs::node_library_module(context, "test.js", &path)?;
+    let names = get(context, cache, "names")?;
+    let length = get(context, names, "length")?;
+    let length = context.to_number(length)? as usize;
+    let value = context.null_object_rooted()?;
+    for index in 0..length {
+        let key = get(context, names, &index.to_string())?;
+        let method = context.get_property_rooted(library, key)?;
+        context.define_data_property_rooted(value, key, method, true, true, true)?;
+    }
+    let key = context.string_rooted("value");
+    context.define_data_property_rooted(cache, key, value, true, true, true)?;
+    Ok(value)
 }
