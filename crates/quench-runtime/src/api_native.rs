@@ -205,6 +205,11 @@ pub struct NativeContext<'a, H: Host> {
 }
 
 impl<'a, H: Host> NativeContext<'a, H> {
+    /// Count actual heap record/arena capacities and unique live payloads without guest effects.
+    pub fn heap_memory_composition(&self) -> crate::HeapMemoryComposition {
+        self.vm.embedding_heap_memory_composition()
+    }
+
     /// The core string representation's maximum UTF-16 code-unit count.
     pub const MAX_STRING_CODE_UNITS: usize = crate::vm::wtf16::MAX_STRING_UNITS;
 

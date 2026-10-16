@@ -687,7 +687,7 @@ pub(crate) fn poll(
                     let callback = runtime.host_function(crate::host::shared_vm::operation("netHandleCloseComplete"))
                         .map_err(|error| error.to_string())?;
                     shared_state.borrow_mut().scheduler.queue_shared_next_tick(
-                        crate::modules::shared_event_loop::SharedCallback { callback, receiver: handle, args: Vec::new() },
+                        crate::modules::shared_event_loop::SharedCallback { execution: None, callback, receiver: handle, args: Vec::new() },
                     );
                     progressed = true;
                 }
@@ -701,7 +701,7 @@ pub(crate) fn poll(
                     let receiver = runtime.root(Value::UNDEFINED);
                     // Transfer the retained socket root into the scheduled callback.
                     shared_state.borrow_mut().scheduler.queue_shared_next_tick(
-                        crate::modules::shared_event_loop::SharedCallback {
+                        crate::modules::shared_event_loop::SharedCallback { execution: None,
                             callback,
                             receiver,
                             args: vec![root, runtime.root(Value::TRUE)],
@@ -735,7 +735,7 @@ pub(crate) fn poll(
                         let callback=runtime.host_function(crate::host::shared_vm::operation("tlsSocketTransportError")).map_err(|error|error.to_string())?;
                         let receiver=runtime.root(runtime.rooted_value(net_root).ok_or("TLS error socket unavailable")?);
                         let id=runtime.root(Value::number(socket as f64));
-                        shared_state.borrow_mut().scheduler.queue_shared_next_tick(crate::modules::shared_event_loop::SharedCallback{callback,receiver,args:vec![id]});
+                        shared_state.borrow_mut().scheduler.queue_shared_next_tick(crate::modules::shared_event_loop::SharedCallback{execution: None,callback,receiver,args:vec![id]});
                         progressed=true;continue;
                     }
                     let error = net_socket_error_with_code(runtime, &message, &code)?;
@@ -1111,7 +1111,7 @@ fn queue_write_callback(
         .map(|error| runtime.root(runtime.rooted_value(error).expect("live write error")))
         .collect();
     state.borrow_mut().scheduler.queue_shared_next_tick(
-        crate::modules::shared_event_loop::SharedCallback {
+        crate::modules::shared_event_loop::SharedCallback { execution: None,
             callback,
             receiver,
             args,
@@ -1376,7 +1376,7 @@ fn queue_net_method_completion(
         );
     }
     shared_state.borrow_mut().scheduler.queue_shared_next_tick(
-        crate::modules::shared_event_loop::SharedCallback {
+        crate::modules::shared_event_loop::SharedCallback { execution: None,
             callback,
             receiver,
             args: retained_args,

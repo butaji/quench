@@ -492,7 +492,7 @@ fn queue_poll(c: &mut Context<'_>, data: RootId) -> Result<(), RootedError> {
     shared.borrow_mut().scheduler.queue_shared_immediate(
         id,
         super::shared_event_loop::SharedImmediateOwner::Host,
-        super::shared_event_loop::SharedCallback {
+        super::shared_event_loop::SharedCallback { execution: None,
             callback,
             receiver,
             args: Vec::new(),

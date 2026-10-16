@@ -356,22 +356,22 @@ impl<H: Host> Vm<H> {
 
     #[inline(always)]
     pub(super) fn truthy(&self, v: Value) -> bool {
-        if let Some(n) = v.as_number() {
-            return !(n == 0.0 || n.is_nan());
+        v.truthiness().unwrap_or_else(|| self.heap_cell_truthy(v))
+    }
+
+    /// ToBoolean of a heap value `Value::truthiness` leaves to its cell: one cell read
+    /// decides every falsy heap value, "", 0n and the IsHTMLDDA object.
+    #[inline(never)]
+    pub(super) fn heap_cell_truthy(&self, v: Value) -> bool {
+        match self.heap.get(v) {
+            Some(Cell::String(text)) => !text.units().is_empty(),
+            Some(Cell::BigInt(value)) => value != "0",
+            Some(Cell::Function {
+                kind: FunctionKind::Native(Native::IsHTMLDDA),
+                ..
+            }) => false,
+            _ => true,
         }
-        if v.is_heap() {
-            // One cell read decides every falsy heap value: "", 0n and the IsHTMLDDA object.
-            return match self.heap.get(v) {
-                Some(Cell::String(text)) => !text.units().is_empty(),
-                Some(Cell::BigInt(value)) => value != "0",
-                Some(Cell::Function {
-                    kind: FunctionKind::Native(Native::IsHTMLDDA),
-                    ..
-                }) => false,
-                _ => true,
-            };
-        }
-        !(v.is_null() || v.is_undefined() || v.is_deleted() || v == Value::FALSE)
     }
 
     pub(super) fn is_html_dda(&self, value: Value) -> bool {

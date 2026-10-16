@@ -20,7 +20,7 @@ impl HookKind {
         Self::Destroy,
         Self::PromiseResolve,
     ];
-    fn index(self) -> usize {
+    pub(super) fn index(self) -> usize {
         match self {
             Self::Init => 0,
             Self::Before => 1,
@@ -233,6 +233,30 @@ fn transition(
         };
     }
     Ok(hook)
+}
+
+pub(super) fn runtime_has_hooks(runtime: &mut quench_runtime::Runtime<NodeHost>, kind: HookKind) -> bool {
+    runtime.host_mut().shared_state().borrow().async_hooks.registry.visible_counts()[kind.index()] != 0
+}
+
+pub(super) fn emit_runtime(
+    runtime: &mut quench_runtime::Runtime<NodeHost>, kind: HookKind, id: u64,
+) -> Result<(), RootedError> {
+    if !runtime_has_hooks(runtime, kind) { return Ok(()); }
+    let function = runtime.host_function(crate::host::shared_vm::operation("asyncHookDispatch"))?;
+    let kind = runtime.root(quench_runtime::Value::number(kind.index() as f64));
+    let id = runtime.root(quench_runtime::Value::number(id as f64));
+    let result = runtime.call_rooted(function, function, &[kind, id]);
+    for root in [function, kind, id] { runtime.release_root(root); }
+    result.map(|root| { runtime.release_root(root); })
+}
+
+pub(crate) fn dispatch(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let index = args.first().and_then(|root| context.rooted_value(*root)).and_then(|v| v.as_number())
+        .ok_or_else(|| RootedError::host("missing async hook kind"))? as usize;
+    let kind = HookKind::ALL.get(index).copied().ok_or_else(|| RootedError::host("invalid async hook kind"))?;
+    emit(context, kind, &args[1..])?;
+    Ok(context.undefined())
 }
 
 pub(super) fn has_hooks(context: &mut NativeContext<'_, NodeHost>, kind: HookKind) -> bool {

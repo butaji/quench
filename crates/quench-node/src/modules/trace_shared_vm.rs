@@ -358,8 +358,23 @@ pub(crate) fn internal_binding(
 ) -> Result<RootId, RootedError> {
     let absent = context.undefined();
     let name = context.to_string(args.first().copied().unwrap_or(absent))?;
-    let binding = context.object_rooted()?;
-    match name.as_str() {
+    let key = format!("\0binding:{name}");
+    let shared = context.host_mut().shared_state();
+    if let Some(value) = shared.borrow().builtin_cache.get(&key).copied() {
+        return Ok(value);
+    }
+    let binding = build_internal_binding(context, &name)?;
+    if !shared.borrow().builtin_cache.contains_key(&key) {
+        let retained = context.retain(binding)?;
+        shared.borrow_mut().builtin_cache.insert(key, retained);
+    }
+    Ok(binding)
+}
+
+fn build_internal_binding(
+    context: &mut NativeContext<'_, NodeHost>, name: &str,
+) -> Result<RootId, RootedError> {
+    match name {
         #[cfg(target_os = "linux")]
         "os" => return super::os_binding_shared_vm::os_binding(context),
         #[cfg(target_os = "linux")]
@@ -367,9 +382,12 @@ pub(crate) fn internal_binding(
         "fs" => return super::fs_directory_shared_vm::binding(context),
         "errors" => return super::node_errors_shared_vm::binding(context),
         "report" => return super::report_configuration_shared_vm::binding(context),
+        #[cfg(target_os = "linux")]
+        "process_methods" => return super::process_metrics_shared_vm::binding(context),
         "modules" => return crate::host::shared_vm::commonjs::cached_native_binding(
             context, "\0binding:modules", module_protocol_binding,
         ),
+        "contextify" => return super::contextify_shared_vm::binding(context),
         "types" => return super::util_shared_vm::types_binding(context),
         "crypto_keys" => return super::crypto_key_shared_vm::binding(context),
         "util" => return super::util_shared_vm::key_binding(context),
@@ -380,8 +398,10 @@ pub(crate) fn internal_binding(
         #[cfg(quench_icu)]
         "icu" => return super::icu_binding_shared_vm::binding(context),
         "config" => {
+            let binding = context.object_rooted()?;
             let has_intl = context.boolean(cfg!(quench_icu));
             put(context, binding, "hasIntl", has_intl)?;
+            Ok(binding)
         }
         "symbols" => return super::util_shared_vm::symbols_binding(context),
         "http2" => return crate::host::shared_vm::commonjs::http2_binding(context),
@@ -391,6 +411,7 @@ pub(crate) fn internal_binding(
         "uv" => return super::util_system_error_shared_vm::uv_binding(context),
         "fs_event_wrap" => return super::fs_watch_shared_vm::event_binding(context),
         "trace_events" => {
+            let binding = context.object_rooted()?;
             for (name, operation) in [
                 ("getCategoryEnabledBuffer", "traceCategoryBuffer"),
                 ("trace", "traceRecord"),
@@ -403,8 +424,10 @@ pub(crate) fn internal_binding(
             }
             let perfetto = context.boolean(false);
             put(context, binding, "usePerfetto", perfetto)?;
+            Ok(binding)
         }
         "constants" => {
+            let binding = context.object_rooted()?;
             let fs = super::fs_shared_vm::fs_constants(context)?;
             put(context, binding, "fs", fs)?;
             #[cfg(target_os = "linux")]
@@ -428,10 +451,15 @@ pub(crate) fn internal_binding(
                 put(context, trace, name, code)?;
             }
             put(context, binding, "trace", trace)?;
+            Ok(binding)
         }
-        _ => return Ok(absent),
+        _ => {
+            let error = context.error_rooted(&format!("No such binding: {name}"))?;
+            let code = context.string_rooted("ERR_INVALID_MODULE");
+            put(context, error, "code", code)?;
+            return Err(context.throw(error));
+        }
     }
-    Ok(binding)
 }
 
 fn required_string(
@@ -527,7 +555,7 @@ pub(crate) fn record(
     context.host_mut().shared_state().borrow_mut().trace.record(
         &category,
         &name,
-        Phase::Raw(phase),
+        Phase::from_code(phase),
         id,
         data,
     );
@@ -591,5 +619,11 @@ fn module_protocol_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<
         .map(|status| context.string_rooted(status)).collect::<Vec<_>>();
     let statuses = context.array_rooted(&statuses)?;
     put(context, binding, "compileCacheStatus", statuses)?;
+    let types = context.null_object_rooted()?;
+    for &(name, value) in super::node_protocol_constants::CACHED_CODE_TYPES {
+        let value = context.number(f64::from(value));
+        put(context, types, name, value)?;
+    }
+    put(context, binding, "cachedCodeTypes", types)?;
     Ok(binding)
 }

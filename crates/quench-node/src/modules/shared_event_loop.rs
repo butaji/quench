@@ -9,8 +9,15 @@ pub struct SharedEventLoop {
     shared: SharedCallbacks,
 }
 
-/// Guest callbacks retained by the shared Node host between execution phases.
+/// Async identity and retained resource owned by one queued operation.
+pub struct CallbackExecution {
+    pub id: u64,
+    pub resource: RootId,
+}
+
+/// Retained invocation view; resource-owned mutable slots remain canonical.
 pub struct SharedCallback {
+    pub execution: Option<CallbackExecution>,
     pub callback: quench_runtime::RootId,
     pub receiver: quench_runtime::RootId,
     pub args: Vec<quench_runtime::RootId>,
@@ -23,23 +30,53 @@ pub(crate) fn queue_next_tick(
     receiver: RootId,
     args: &[RootId],
 ) -> Result<(), RootedError> {
-    let callback = context.retain(callback)?;
-    let receiver = context.retain(receiver)?;
-    let args = args
-        .iter()
-        .map(|root| context.retain(*root))
-        .collect::<Result<Vec<_>, _>>()?;
+    let resource = context.object_rooted()?;
+    let key = context.string_rooted("callback");
+    context.define_data_property_rooted(resource, key, callback, true, true, true)?;
+    let values = if args.is_empty() { context.undefined() } else { context.array_rooted(args)? };
+    let key = context.string_rooted("args");
+    context.define_data_property_rooted(resource, key, values, true, true, true)?;
+    let id = super::async_hooks_shared_vm::create_context(&context.host_mut().shared_state());
+    super::async_hooks_shared_vm::emit_init(context, resource, "TickObject", id)?;
+    let execution = Some(CallbackExecution { id, resource: context.retain(resource)? });
+    // The job object owns the mutable callback/argument slots. The retained
+    // callable is only an invocation view, as for Timeout handles.
+    let invocation = context.host_function_with_data(crate::host::shared_vm::operation("asyncTickInvoke"), receiver)?;
+    let callback = context.retain(invocation)?;
+    let receiver = context.retain(resource)?;
+    let args = Vec::new();
     context
         .host_mut()
         .shared_state()
         .borrow_mut()
         .scheduler
-        .queue_shared_next_tick(SharedCallback {
+        .queue_shared_next_tick(SharedCallback { execution,
             callback,
             receiver,
             args,
         });
     Ok(())
+}
+
+pub(crate) fn invoke_tick(context: &mut NativeContext<'_, NodeHost>, resource: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let receiver = context.host_function_data()?;
+    let key = context.string_rooted("callback");
+    let callback = context.get_property_rooted(resource, key)?;
+    let key = context.string_rooted("args");
+    let args = context.get_property_rooted(resource, key)?;
+    if context.rooted_value(args).is_some_and(|value| value.is_undefined()) {
+        context.call_rooted(callback, receiver, &[])
+    } else {
+        let apply = context.with_startup_intrinsics(|context| {
+            let global = context.global_root()?;
+            let key = context.string_rooted("Reflect");
+            let reflect = context.get_property_rooted(global, key)?;
+            let key = context.string_rooted("apply");
+            context.get_property_rooted(reflect, key)
+        })?;
+        let undefined = context.undefined();
+        context.call_rooted(apply, undefined, &[callback, receiver, args])
+    }
 }
 
 struct SharedCallbacks {
