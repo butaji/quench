@@ -13,6 +13,7 @@ previous=events(receipt['memory_before']);current=events(receipt['memory_after']
 def raw(p):
  content=p.read_bytes();return {'path':str(p),'bytes':len(content),'sha256':hashlib.sha256(content).hexdigest()}
 paths=[base/n for n in ['results.json','runner.log','receipt-before.json','receipt.json','summary.json','comparison.json']]
+paths += sorted(p for p in base.iterdir()if p.is_file()and('control'in p.name))
 output={'scope':'Complete unchanged '+release+' parallel inventory after modern Buffer and realm-local original Node error policy','source_commit':receipt['source_commit'],'release':receipt['release'],'fixture_commit':receipt['fixture_commit'],'counts':counts,'total':len(b),'inventory_hash':data['inventory_hash'],'baseline':baseline,**comparison,'memory_events_delta':delta,'elapsed_seconds':receipt['elapsed_seconds'],'raw':[raw(p)for p in paths],'limitations':['Goal remains open; all nonpass outcomes retained. No selected-case sums, skips/deadline/budget changes or speed claim.','This frozen c4f run excludes incoming operation-position/eval-origin work and the newer glob/Dirent candidate.','Native compilation and the independent official Node baseline overlapped part of this run; resource deltas retained. Lost-case controls do not replace raw full outcomes.']}
 Path('evidence/task20-node-'+release+'-shadow-stack-modern-buffer-full-2026-10-16.json').write_text(json.dumps(output,indent=2)+'\n')
 print(json.dumps({'counts':counts,**comparison,'memory_events_delta':delta}))
