@@ -1,0 +1,10 @@
+[v2-web 8e3dd5276] Preserve executing source operations and OXC syntax positions
+ 23 files changed, 244 insertions(+), 33 deletions(-)
+ create mode 100644 crates/quench-node-test/node-tests/test-assignment-access-columns.js
+ create mode 100644 crates/quench-node-test/node-tests/test-call-column-trivia.js
+ create mode 100644 crates/quench-node-test/node-tests/test-complex-call-columns.js
+ create mode 100644 crates/quench-node-test/node-tests/test-getter-call-columns.js
+ create mode 100644 crates/quench-node-test/node-tests/test-optional-private-call-columns.js
+ create mode 100644 crates/quench-node-test/node-tests/test-property-access-columns.js
+ create mode 100644 crates/quench-node-test/node-tests/test-source-line-terminators.js
+ create mode 100644 crates/quench-node-test/node-tests/test-special-call-columns.js
