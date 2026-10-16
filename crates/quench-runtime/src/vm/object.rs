@@ -1372,6 +1372,7 @@ impl<H: Host> Vm<H> {
         let _stack = self.enter_stack()?;
         if self.is_private_name(atom) {
             self.check_private_brand(p, target, atom)?;
+            if self.set_private_field_value(p, target, atom, value) { return Ok(true); }
         }
         let typed_array_index = if matches!(self.heap.get(target), Some(Cell::TypedArray { .. })) {
             match Self::typed_array_index_key(self.atom_name(atom)) {
@@ -1851,6 +1852,7 @@ impl<H: Host> Vm<H> {
             let key = self.atom_name(atom).to_owned();
             return Err(self.nullish_assignment_error(p, object, &key));
         }
+        if self.is_private_name(atom) && self.set_private_field_value(p, object, atom, value) { return Ok(()); }
         if let Some((target, handler)) = self.proxy_parts(object) {
             if self.is_private_name(atom) {
                 if self.own_property(object, atom).is_none() {

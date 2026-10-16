@@ -10178,3 +10178,62 @@ if(!threw)throw Error('strict synthetic self binding');
         Vm::new(SilentHost).execute(&program).unwrap();
     }
 }
+
+#[test]
+fn private_data_fields_keep_distinct_homes_and_duplicate_values_in_both_modes() {
+    let source = r#"
+class Base {constructor(object){return object}}
+function make(){return class extends Base {#x;constructor(object,value){super(object);this.#x=value}read(){return this.#x}write(value){this.#x=value}evaluate(){return eval('this.#x')}}}
+const A=make(),B=make();
+for(const object of [{},[],function(){},Object.create(null),Object.freeze({}),Object.seal({}),Object.preventExtensions({})]) {
+ new A(object,1);new B(object,2);
+ if(A.prototype.read.call(object)!==1||B.prototype.read.call(object)!==2)throw Error('aliased class home');
+ A.prototype.write.call(object,3);let duplicate;
+ try{new A(object,4)}catch(error){duplicate=error.message}
+ if(duplicate!=='Cannot initialize #x twice on the same object')throw Error('duplicate error');
+ if(A.prototype.read.call(object)!==3||B.prototype.read.call(object)!==2)throw Error('duplicate overwrote data');
+ if(A.prototype.evaluate.call(object)!==3||B.prototype.evaluate.call(object)!==2)throw Error('private eval home');
+}
+"#;
+    for program in [Engine::compile(crate::ExecutionRequest { source, name: "private-field-identity.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "private-field-identity.js").unwrap()] {
+        Vm::new(SilentHost).execute(&program).unwrap();
+        let path = std::env::temp_dir().join(format!("quench-private-data-{}-{}", std::process::id(), program.specialized));
+        program.write_binary(&path).unwrap();
+        let decoded = crate::ResidualProgram::read_binary(&path).unwrap();
+        Vm::new(SilentHost).execute(&decoded).unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[test]
+fn private_data_values_survive_collection_and_release_without_their_receiver() {
+    let source = r#"
+class Base {constructor(object){return object}}
+function make(){return class extends Base {#x;constructor(object,value){super(object);this.#x=value}read(){return this.#x}}}
+globalThis.A=make();globalThis.B=make();globalThis.first={value:1};globalThis.second={value:2};globalThis.instance={};
+new A(instance,first);new B(instance,second);
+"#;
+    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
+        let program = compile(source, "private-data-roots.js").unwrap();
+        let mut vm = Vm::new(SilentHost);
+        vm.execute(&program).unwrap();
+        let mut weak = Vec::new();
+        for name in ["first", "second"] {
+            let atom = vm.intern_atom(name);
+            let value = vm.own_property(vm.realm.globals, atom).unwrap();
+            let strong = vm.heap.root(value);
+            weak.push(vm.embedding_host_weak_root(strong).unwrap());
+            vm.heap.release_root(strong);
+            vm.set_property(vm.realm.globals, atom, Value::UNDEFINED).unwrap();
+        }
+        vm.collect_now(&program);
+        for root in &weak { assert!(vm.embedding_host_weak_value(*root).is_some()); }
+        let instance = vm.intern_atom("instance");
+        vm.set_property(vm.realm.globals, instance, Value::UNDEFINED).unwrap();
+        vm.collect_now(&program);
+        for root in weak {
+            assert!(vm.embedding_host_weak_value(root).is_none());
+            vm.heap.release_root(root);
+        }
+    }
+}

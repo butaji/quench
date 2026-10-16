@@ -792,7 +792,7 @@ impl<H: Host> Vm<H> {
     }
 }
 
-fn private_identity_label(identity: &str) -> Option<String> {
+pub(super) fn private_identity_label(identity: &str) -> Option<String> {
     let identity = identity.strip_prefix("\0quench:private:")?;
     let (_, label) = identity.rsplit_once(':')?;
     (!label.is_empty()).then(|| label.to_owned())
