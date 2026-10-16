@@ -9726,3 +9726,23 @@ fn process_fatal_handler_exits_preserve_sdk_status_event_suppression_and_explici
 fn cli_version_aliases_use_the_configured_sdk_and_short_circuit_before_guest_execution() {
     compare_node_source_with_args(include_str!("../node-tests/test-cli-version-order.js"), &[]);
 }
+
+#[test]
+fn process_report_configuration_uses_sdk_descriptors_validation_and_shared_native_state() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-report-configuration.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn process_capture_preserves_report_flag_snapshot_restoration_and_accessor_order() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-report-flags.js"), &[]);
+}
+
+#[test]
+fn process_report_startup_flags_preserve_environment_precedence_aliases_and_signal_registration() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-report-startup.js"), &[]);
+}
+
+#[test]
+fn process_events_share_emitter_storage_inspection_borrowed_methods_and_once_wrappers() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-shared-event-store.js"), &[]);
+}
