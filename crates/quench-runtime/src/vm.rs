@@ -1238,10 +1238,6 @@ pub(crate) struct Vm<H> {
     invalidated_methods: FxHashMap<MethodCacheKey, InvalidatedMethod>,
     object_shapes: Vec<u32>,
     descriptors: FxHashMap<(Value, property_key::PropertyKey), PropertyAttributes>,
-    /// Whether any object has held an accessor keyed by an array-index name. Accessors are
-    /// recorded only through `set_property_attributes` and `insert_descriptor`; until one
-    /// is, no index store or append can reach an inherited setter.
-    array_index_accessor_defined: bool,
     // Weak identities; captured environments remain authoritative in function cells.
     function_values: FxHashMap<(ProgramId, u32), Vec<WeakHandle>>,
     /// The JavaScript wrapper of each exported Wasm closure, so every export of one
