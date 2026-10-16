@@ -609,7 +609,7 @@ pub(crate) fn require_for_module(
     // Bare builtins participate in Module._cache just like resolved filenames.
     if !specifier.starts_with("node:")
         && !specifier.starts_with("internal/")
-        && BuiltinModule::from_specifier(&specifier).is_some()
+        && requested_builtin(context,&specifier).is_some()
     {
         let cache = commonjs_cache(context)?;
         let cached = get(context, cache, &specifier)?;
@@ -622,6 +622,11 @@ pub(crate) fn require_for_module(
         let error = context.error_rooted("Cannot find module 'vfs'")?;
         let code = context.string_rooted("MODULE_NOT_FOUND");
         set(context, error, "code", code)?;
+        return Err(context.throw(error));
+    }
+    if specifier == "node:stream/iter" && !context.host_mut().shared_state().borrow().cli_options.enabled("--experimental-stream-iter") {
+        let error=context.error_rooted("No such built-in module: node:stream/iter")?;
+        let code=context.string_rooted("ERR_UNKNOWN_BUILTIN_MODULE");set(context,error,"code",code)?;
         return Err(context.throw(error));
     }
     if specifier == "node:vfs" && !context.host_mut().vfs_enabled() {
@@ -868,6 +873,7 @@ pub(crate) fn require_for_module(
             | BuiltinModule::Buffer
             | BuiltinModule::Stream
             | BuiltinModule::StreamPromises
+            | BuiltinModule::StreamIter
             | BuiltinModule::Timers
             | BuiltinModule::InternalTimers
             | BuiltinModule::TimersPromises
@@ -970,6 +976,7 @@ enum BuiltinModule {
     Buffer,
     Stream,
     StreamPromises,
+    StreamIter,
     WebStreams,
     StringDecoder,
     WorkerThreads,
@@ -1037,6 +1044,7 @@ impl BuiltinModule {
             Self::Buffer => Some("buffer"),
             Self::Stream => Some("stream"),
             Self::StreamPromises => Some("stream/promises"),
+            Self::StreamIter => Some("stream/iter"),
             Self::WebStreams => Some("stream/web"),
             Self::StringDecoder => Some("string_decoder"),
             Self::WorkerThreads => Some("worker_threads"),
@@ -1093,12 +1101,12 @@ impl BuiltinModule {
 }
 
 fn internal_timers_exposed(context: &mut Context<'_>) -> bool {
-    context.host_mut().shared_state().borrow().exec_argv.iter()
-        .any(|argument| argument == "--expose-internals")
+    context.host_mut().shared_state().borrow().cli_options.enabled("--expose-internals")
 }
 
 fn requested_builtin(context: &mut Context<'_>, specifier: &str) -> Option<BuiltinModule> {
     let builtin = BuiltinModule::from_specifier(specifier)?;
+    if matches!(builtin,BuiltinModule::StreamIter) && !context.host_mut().shared_state().borrow().cli_options.enabled("--experimental-stream-iter") { return None; }
     if matches!(builtin, BuiltinModule::InternalTimers) && !internal_timers_exposed(context) {
         None
     } else { Some(builtin) }
@@ -1229,6 +1237,8 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("node:buffer", BuiltinModule::Buffer),
     ("stream", BuiltinModule::Stream),
     ("node:stream", BuiltinModule::Stream),
+    ("stream/iter", BuiltinModule::StreamIter),
+    ("node:stream/iter", BuiltinModule::StreamIter),
     ("stream/promises", BuiltinModule::StreamPromises),
     ("node:stream/promises", BuiltinModule::StreamPromises),
     ("stream/web", BuiltinModule::WebStreams),
@@ -1538,6 +1548,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         }
         BuiltinModule::Stream => node_library_module(context, "stream.js", "stream.js"),
         BuiltinModule::StreamPromises => node_library_module(context, "stream.js", "stream/promises.js"),
+        BuiltinModule::StreamIter => node_library_module(context, "stream/iter.js", "stream/iter.js"),
         BuiltinModule::WebStreams => node_library_module(context, "stream/web.js", "stream/web.js"),
         BuiltinModule::StringDecoder => node_library_module(context, "string_decoder.js", "string_decoder.js"),
         BuiltinModule::Timers => {
@@ -2286,6 +2297,7 @@ const getLinkedBinding = () => ({});
       os: __nativeInternalBinding("constants").os || { signals: (require("os").constants || {}).signals || {}, errno: { EISDIR: -21 } },
       crypto: { ENGINE_METHOD_ALL: 0xffff },
     };
+    case "options": return __nativeInternalBinding("options");
     case "string_decoder": return __nativeInternalBinding("string_decoder");
     case "buffer": return Object.assign({}, require("buffer"), __nativeInternalBinding("buffer"));
     case "fs": return require("fs");
@@ -2416,6 +2428,9 @@ const getLinkedBinding = () => ({});
                 roots.borrow_mut().crypto_handle_symbol = Some(context.retain(symbol)?);
             }
         }
+    }
+    if library_relative == Some(Path::new("lib/internal/webidl.js")) {
+        if let Ok(exports)=&result { crate::modules::events_shared_vm::adopt_abort_converter(context,*exports)?; }
     }
     let is_fs_utilities = library_relative == Some(Path::new("lib/internal/fs/utils.js"));
     if is_fs_utilities {
