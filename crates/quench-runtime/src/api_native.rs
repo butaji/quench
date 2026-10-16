@@ -806,6 +806,13 @@ impl<'a, H: Host> NativeContext<'a, H> {
 
     /// Copy native bytes into an intrinsic Uint8Array with its own fixed backing.
     /// No guest constructor, iterator, or indexed property hook is invoked.
+    /// Compute the real byte offset needed to align an ArrayBuffer's backing
+    /// address. Fixed buffers retain their physical address across snapshots
+    /// and writes; resizable buffers retain it only until they resize.
+    pub fn array_buffer_aligned_offset_rooted(&mut self, root: RootId, alignment: usize) -> Result<usize, RootedError> {
+        self.vm.embedding_array_buffer_aligned_offset(root, alignment).map_err(|error| self.error(error))
+    }
+
     pub fn uint8_array_rooted(&mut self, bytes: &[u8]) -> Result<RootId, RootedError> {
         let result = self.vm.embedding_uint8_array(bytes);
         self.completion(result)
