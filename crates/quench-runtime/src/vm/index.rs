@@ -297,6 +297,14 @@ impl<H: Host> Vm<H> {
         self.try_replace_element_of::<true>(object, key, value, crate::heap::Heap::array_mut)
     }
 
+    /// `object[key] = value` that appends to a dense array at its length
+    /// (`append_dense_element`); `false` leaves the store, unobserved, to the general path.
+    pub(super) fn try_append_dense_element(&mut self, object: Value, key: Value, value: Value) -> bool {
+        key.as_int()
+            .and_then(|index| usize::try_from(index).ok())
+            .is_some_and(|index| self.append_dense_element(object, index, value))
+    }
+
     /// `try_replace_dense_element` of an array whose object is a record and whose elements no
     /// other array shares; `false` for any other object, so the write calls nothing.
     #[inline(always)]
