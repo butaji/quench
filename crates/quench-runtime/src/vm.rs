@@ -23,7 +23,7 @@ use crate::heap::{
 use crate::host::{CapabilityId, Host, HostContext};
 use crate::profile::Profile;
 use crate::value::number_to_u32;
-use activation::CallContext;
+use activation::{CallContext, ConstructionTarget};
 use atomics::Test262AgentState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::OnceCell;
@@ -698,6 +698,7 @@ struct StringConcatCache {
 enum ShapeTransition {
     Root,
     FunctionName { name: Atom },
+    FunctionNameReconfigured,
     Constructed { constructor: Value, new_target_is_base: bool },
     Add {
         key: property_key::PropertyKey,
@@ -720,6 +721,7 @@ enum ShapeTransition {
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum ShapeTransitionKey {
     FunctionName(Atom),
+    FunctionNameReconfigured,
     Constructed(Value, bool),
     AddString(Atom, DataAttributes),
     /// A descriptor without accessor functions (`ShapeAttributes::accessors` is
@@ -829,13 +831,14 @@ impl ShapeTransition {
         match self {
             Self::Add { key, .. } => key.symbol_value().is_some(),
             Self::Descriptor { attributes, .. } => attributes.accessors != NO_SHAPE_ACCESSORS,
-            Self::Root | Self::FunctionName { .. } | Self::Constructed { .. } | Self::Delete { .. } | Self::Vacant | Self::Dictionary { .. } => false,
+            Self::Root | Self::FunctionName { .. } | Self::FunctionNameReconfigured | Self::Constructed { .. } | Self::Delete { .. } | Self::Vacant | Self::Dictionary { .. } => false,
         }
     }
 
     fn cache_key(self) -> Option<ShapeTransitionKey> {
         match self {
             Self::FunctionName { name } => Some(ShapeTransitionKey::FunctionName(name)),
+            Self::FunctionNameReconfigured => Some(ShapeTransitionKey::FunctionNameReconfigured),
             Self::Constructed { constructor, new_target_is_base } => Some(ShapeTransitionKey::Constructed(constructor, new_target_is_base)),
             Self::Add {
                 key: PropertyKey::String(atom),
@@ -1236,7 +1239,7 @@ pub(crate) struct Vm<H> {
     parameter_eval: bool,
     eval_script_context: bool,
     deferred_dependency_batch: bool,
-    construct_target: Option<Value>,
+    construct_target: Option<ConstructionTarget>,
     random_state: u64,
 }
 
@@ -2210,7 +2213,7 @@ impl<H: Host> Vm<H> {
                     .functions
                     .get(id as usize)
                     .is_some_and(|function| function.is_class_constructor)
-                    && self.construct_target.is_none()
+                    && !self.construct_target.is_some_and(|target| target.callee == callee)
                 {
                     Err(self.type_error(p, "class constructor cannot be called without new".into()))
                 } else {

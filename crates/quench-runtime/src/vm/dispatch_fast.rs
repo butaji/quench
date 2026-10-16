@@ -3148,7 +3148,11 @@ impl<H: Host> Vm<H> {
                         activation.function,
                         script.env,
                         script.this,
-                        script.callee,
+                        if script.constructs {
+                            CallContext::user_function(activation.function, script.callee).constructed()
+                        } else {
+                            CallContext::user_function(activation.function, script.callee)
+                        },
                         passed,
                         window,
                     );
@@ -3450,6 +3454,9 @@ lane_handler! {
 #[inline(always)]
 fn lane_script_target<H: Host>(cx: *mut LaneContext<H>, callee: Value) -> Option<ScriptCallTarget> {
     let vm = unsafe { vm(cx) };
+    if vm.construct_target.is_some_and(|target| target.callee == callee) {
+        return None;
+    }
     vm.script_call_target(callee)
         .or_else(|| vm.resolve_script_call_target(unsafe { &*(*cx).code }, callee))
 }
@@ -3500,8 +3507,6 @@ fn lane_activate<H: Host>(
     let Ok(guard) = crate::stack::GuestCallGuard::enter() else {
         return Err(exit(ip));
     };
-    // A `new.target` set for this activation has no observable binding to land in.
-    vm.construct_target = None;
     let stack = &mut vm.lane_stack;
     let window = stack.values.len();
     // SAFETY: capacity holds the window; each slot is written before the length covers
@@ -3611,8 +3616,6 @@ fn lane_activate_keeping<H: Host>(
     let Ok(guard) = crate::stack::GuestCallGuard::enter() else {
         return Err(exit(ip));
     };
-    // A `new.target` set for this activation has no observable binding to land in.
-    vm.construct_target = None;
     let stack = &mut vm.lane_stack;
     let window = stack.values.len();
     // SAFETY: capacity holds the window; each slot is written before the length covers
@@ -4129,9 +4132,8 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
     }
 }
 
-/// The handler table covers one opcode byte; the opcode set must fit in it.
+/// Dense fast handlers cover the first opcode byte; later opcodes use general dispatch.
 const TABLE_SLOTS: usize = 1 << u8::BITS;
-const _: () = assert!(Op::COUNT <= TABLE_SLOTS);
 
 /// Opcodes per generated table row.
 const TABLE_ROW: u16 = 16;
@@ -4462,7 +4464,7 @@ fn derive_lane_view<H: Host>(
                 && F64UnaryOperator::from_tag(instruction.imm())
                     == Some(F64UnaryOperator::SquareRoot)
             {
-                tables[usize::from(backward_jump)][usize::from(acc)][op as usize].and_then(|_| {
+                tables[usize::from(backward_jump)][usize::from(acc)].get(op as usize).copied().flatten().and_then(|_| {
                     LaneHandler::producer(match acc {
                         ACC_NONE => lane_f64_sqrt::<H, ACC_NONE> as Handler,
                         ACC_A => lane_f64_sqrt::<H, ACC_A> as Handler,
@@ -4472,7 +4474,7 @@ fn derive_lane_view<H: Host>(
                     })
                 })
             } else if let Some(arith) = float_arithmetic(op, instruction.imm()) {
-                tables[usize::from(backward_jump)][usize::from(acc)][op as usize].and_then(|_| {
+                tables[usize::from(backward_jump)][usize::from(acc)].get(op as usize).copied().flatten().and_then(|_| {
                     LaneHandler::producer(
                         FloatArithmetic::<H>::HANDLERS[usize::from(op == Op::WasmF64Binary)]
                             [usize::from(arith)][usize::from(acc)],
@@ -4505,7 +4507,7 @@ fn derive_lane_view<H: Host>(
                     produces: false,
                 })
             } else {
-                tables[usize::from(backward_jump)][usize::from(acc)][op as usize]
+                tables[usize::from(backward_jump)][usize::from(acc)].get(op as usize).copied().flatten()
             });
             producer = selected
                 .filter(|selected| selected.produces)
@@ -4528,7 +4530,7 @@ fn derive_lane_view<H: Host>(
     let selected: Vec<*const ()> = records.iter().map(|record| record.handler).collect();
     // Whether a record's handler serves `op` with accumulator field `acc`.
     let serves = |handler: *const (), op: Op, acc: u8| {
-        tables[0][usize::from(acc)][op as usize]
+        tables[0][usize::from(acc)].get(op as usize).copied().flatten()
             .is_some_and(|served| handler == served.handler as *const ())
     };
     // A table follows its selected entry's jump, so every entry must run in

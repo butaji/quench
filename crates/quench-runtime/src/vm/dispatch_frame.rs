@@ -109,6 +109,15 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    fn take_construction_target(&mut self, context: CallContext) -> Option<Value> {
+        let target = self.construct_target?;
+        if context.callee() != Some(target.callee) {
+            return None;
+        }
+        self.construct_target = None;
+        Some(target.new_target)
+    }
+
     #[inline(always)]
     pub(super) fn initialize_activation_bindings(
         &mut self,
@@ -117,6 +126,9 @@ impl<H: Host> Vm<H> {
         new_target: Value,
         observable: bool,
     ) {
+        if !arrow && !new_target.is_undefined() {
+            frame.context = frame.context.constructed();
+        }
         if !observable {
             // Nothing reads the implicit bindings, and the frame's own `this` is authoritative.
             frame.fixed_this = !arrow && !frame.this.is_deleted();
@@ -425,7 +437,9 @@ impl<H: Host> Vm<H> {
                 .extend(self.captured_with_objects_for_function(parent, function, p.kind));
         }
         // A `new.target` set for this activation has no observable binding to land in.
-        self.construct_target = None;
+        if self.take_construction_target(context).is_some() {
+            frame.context = frame.context.constructed();
+        }
         frame.prepare_registers_for(function);
         frame.place_plain_parameters(function, args);
         self.frames.push(frame);
@@ -442,13 +456,13 @@ impl<H: Host> Vm<H> {
         id: u32,
         env: Value,
         this: Value,
-        callee: Value,
+        context: CallContext,
         passed: &[Value],
         registers: &[Value],
     ) {
         // The receiver is already coerced and the body binds no `arguments` object, so
         // activation cannot fail; the registers below replace what it placed in them.
-        self.activate_user_frame(p, id, env, this, passed, CallContext::user_function(id, callee))
+        self.activate_user_frame(p, id, env, this, passed, context)
             .expect("a frameless activation's frame activates without error");
         let frame = self.frames.last_mut().expect("the activation pushed a frame");
         frame.registers.copy_from_slice(registers);
@@ -514,7 +528,7 @@ impl<H: Host> Vm<H> {
         if id == super::ROOT_FUNCTION_ID {
             self.bind_module_imports(&mut frame)?;
         }
-        let new_target = self.construct_target.take().unwrap_or(Value::UNDEFINED);
+        let new_target = self.take_construction_target(context).unwrap_or(Value::UNDEFINED);
         self.initialize_activation_bindings(
             &mut frame,
             arrow,
@@ -589,7 +603,7 @@ impl<H: Host> Vm<H> {
         frame.with_base = self.with_stack.len();
         self.with_stack
             .extend(self.captured_with_objects_for_function(parent, function, p.kind));
-        let new_target = self.construct_target.take().unwrap_or(Value::UNDEFINED);
+        let new_target = self.take_construction_target(context).unwrap_or(Value::UNDEFINED);
         self.initialize_activation_bindings(
             &mut frame,
             arrow,

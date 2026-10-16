@@ -9403,3 +9403,13 @@ console.log(JSON.stringify(out));
 fn constructor_class_names_preserve_iterator_origins_proxy_kinds_and_prototype_roles() {
     compare_node_source_with_args(include_str!("../node-tests/test-constructor-class-data.js"), &["--expose-internals", "--no-warnings"]);
 }
+
+#[test]
+fn callsite_type_names_and_constructor_flags_follow_actual_activation_and_receiver_identity() {
+    compare_node_source_with_args(include_str!("../node-tests/test-callsite-type-construction.js"), &[]);
+}
+
+#[test]
+fn inferred_debug_names_preserve_empty_public_names_and_native_name_property_state() {
+    compare_node_source_with_args(include_str!("../node-tests/test-inferred-function-debug-names.js"), &[]);
+}

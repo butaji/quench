@@ -483,6 +483,34 @@ impl<H: Host> Vm<H> {
         Ok(found.map(|name| self.atom_value(name)))
     }
 
+    fn call_site_type_name(&mut self, record: &CallSiteRecord) -> Result<Option<JsString>, JsError> {
+        let receiver = record.this_value;
+        if record.is_constructor
+            || receiver.is_null()
+            || receiver.is_undefined()
+            || self
+                .realm
+                .intrinsics
+                .function_constructors
+                .contains_key(&(receiver, Native::Function))
+        {
+            return Ok(None);
+        }
+        let receiver = self.box_object(receiver)?;
+        if self.proxy_parts(receiver).is_some() {
+            return Ok(Some(JsString::from_str("Proxy")));
+        }
+        if matches!(self.heap.get(receiver), Some(Cell::Function { kind, .. }) if !matches!(kind, FunctionKind::Native(Native::FunctionBoundCall)))
+        {
+            if let Some(name) = self.debug_function_name(receiver) {
+                if !name.units().is_empty() {
+                    return Ok(Some(name));
+                }
+            }
+        }
+        Ok(self.constructor_name(receiver))
+    }
+
     pub(super) fn error_capture_stack_trace(
         &mut self,
         program: &ResidualProgram,
@@ -514,6 +542,7 @@ impl<H: Host> Vm<H> {
                         name: CallSiteName::Static(JsString::from_str(name)),
                         this_value: Value::UNDEFINED,
                         hide_identity: true,
+                        is_constructor: false,
                     });
                 }
             }
@@ -557,6 +586,7 @@ impl<H: Host> Vm<H> {
                 },
                 name,
                 hide_identity,
+                is_constructor: frame.context.is_constructor(),
                 this_value: if frame.this == Value::DELETED {
                     Value::UNDEFINED
                 } else {
@@ -572,6 +602,7 @@ impl<H: Host> Vm<H> {
                     name: CallSiteName::Static(JsString::from_str(name)),
                     this_value: Value::UNDEFINED,
                     hide_identity: true,
+                    is_constructor: false,
                 });
             }
         }
@@ -668,8 +699,12 @@ impl<H: Host> Vm<H> {
             CallSiteLocation::Native => "native".to_owned(),
         };
         let location = JsString::from_str(&location);
-        let Some(name) = self.call_site_name(record) else { return Ok(location); };
+        let name = self.call_site_name(record).or_else(|| {
+            record.is_constructor.then(|| JsString::from_str("<anonymous>"))
+        });
+        let Some(name) = name else { return Ok(location); };
         let mut text = super::wtf16::JsStringBuilder::default();
+        if record.is_constructor { text.append(&JsString::from_str("new ")); }
         text.append(&name);
         text.append(&JsString::from_str(" ("));
         text.append(&location);
@@ -731,7 +766,7 @@ impl<H: Host> Vm<H> {
                 CallSiteLocation::Native => Value::NULL,
             }),
             Native::CallSiteIsEval => Ok(Value::FALSE),
-            Native::CallSiteIsConstructor => Ok(Value::FALSE),
+            Native::CallSiteIsConstructor => Ok(if record.is_constructor { Value::TRUE } else { Value::FALSE }),
             Native::CallSiteIsNative => {
                 Ok(if matches!(record.location, CallSiteLocation::Native) {
                     Value::TRUE
@@ -739,7 +774,10 @@ impl<H: Host> Vm<H> {
                     Value::FALSE
                 })
             }
-            Native::CallSiteGetTypeName | Native::CallSiteGetEvalOrigin => Ok(Value::UNDEFINED),
+            Native::CallSiteGetTypeName => Ok(self.call_site_type_name(&record)?
+                .map(|name| self.heap.alloc(Cell::String(name)))
+                .unwrap_or(Value::NULL)),
+            Native::CallSiteGetEvalOrigin => Ok(Value::UNDEFINED),
             Native::CallSiteToString => {
                 let text = self.format_call_site(program, &record)?;
                 Ok(self.heap.alloc(Cell::String(text)))
