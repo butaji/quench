@@ -30,3 +30,15 @@ Object.defineProperty(Error,'stackTraceLimit',saved);console.log(JSON.stringify(
  }
  console.log(JSON.stringify(out));
 }
+
+{
+'use strict';
+const original=AggregateError,iterator=Array.prototype[Symbol.iterator];
+const snapshot=error=>[error instanceof original,error.name,error.message,Object.getOwnPropertyNames(error),error.errors];
+const a=Promise.any([]),b=Promise.any([Promise.reject('a'),Promise.reject('b')]);
+globalThis.AggregateError=function(){throw Error('public constructor must not run');};
+const done=Promise.all([a.catch(snapshot),b.catch(snapshot)]);
+Array.prototype[Symbol.iterator]=function(){throw Error('internal error creation must not iterate');};
+done.then(out=>{Array.prototype[Symbol.iterator]=iterator;console.log(JSON.stringify(out));});
+
+}

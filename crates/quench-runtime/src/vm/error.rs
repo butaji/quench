@@ -2479,6 +2479,7 @@ impl<H: Host> Vm<H> {
             let value = self.heap.alloc(Cell::Object(Object::error(prototype)));
             let root = self.heap.root(value);
             object = Some(root);
+            self.define_error_stack_property(program, value)?;
             if let Some(message) = message {
                 let message = self.heap.root_value(message).unwrap();
                 let message = self.coerce_js_string(program, message)?;
