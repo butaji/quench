@@ -5,14 +5,6 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let console =
         crate::host::shared_vm::commonjs::node_library_module(context, "console.js", "console.js")?;
-    let initialize = crate::host::shared_vm::commonjs::node_library_export(
-        context,
-        "internal/process/pre_execution.js",
-        "internal/console/constructor.js",
-        "initializeGlobalConsole",
-    )?;
-    let undefined = context.undefined();
-    context.call_rooted(initialize, undefined, &[console])?;
     let constructor_key = context.string_rooted("Console");
     let constructor = context.get_property_rooted(console, constructor_key)?;
     let prototype_key = context.string_rooted("prototype");
