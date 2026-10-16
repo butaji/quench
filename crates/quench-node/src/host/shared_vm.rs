@@ -945,9 +945,6 @@ impl quench_runtime::Host for NodeHost {
         context.scoped(install_gc_global)?;
         context.scoped(crate::modules::timers_shared_vm::install_promisify_globals)?;
         commonjs::initialize(context)?;
-        // The original inspector initializes private state using intrinsic
-        // methods. Capture it before guests can freeze replacement methods.
-        commonjs::node_library_export(context, "util.js", "internal/util/inspect.js", "inspect")?;
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_commonjs");
         Ok(())

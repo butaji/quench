@@ -739,8 +739,11 @@ semantics or complete Node API parity.
 
 The configured Node `internal/util/inspect.js` owns public `inspect`, `format`
 and `formatWithOptions` identities and internal formatting. Its initialization
-runs before guest code because it captures private state using intrinsic
-methods; nonconfigurable guest replacements remain intact afterward. Native
+captures private state using intrinsic methods, so it runs on first use inside
+the startup intrinsics (`node_library_module`), which put back the original
+methods however guest code has replaced or frozen them, nonconfigurable
+replacements included, and restore the guest's afterward. A script that never
+formats loads none of it. Native
 key, type and symbol bindings have independent cache ownership, so they do not
 recursively require public formatter construction. The partial duplicate
 renderers and their color-table copies are removed.
