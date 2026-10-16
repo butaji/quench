@@ -895,6 +895,43 @@ impl<H: Host> Vm<H> {
         Some(value)
     }
 
+    /// The store `cached_field_store_hit` makes to an own data field of a direct object that
+    /// the site's primary entry names, without its other tiers.
+    #[inline(always)]
+    pub(super) fn primary_own_field_store_hit(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        atom: Atom,
+        value: Value,
+        site: u16,
+    ) -> bool {
+        if !(self.specialized && p.specialized) || self.method_caches_may_name(atom) {
+            return false;
+        }
+        let Some(record_id) = object.direct_object_index() else {
+            return false;
+        };
+        let receiver = self.heap.object_record_by_id(record_id);
+        if receiver.is_module_namespace() || receiver.is_arguments_object() {
+            return false;
+        }
+        // SAFETY: the active program's layout reserves every compiler-emitted site.
+        let cache = unsafe { *self.field_caches.get_unchecked(self.field_cache_index(site)) };
+        if cache.receiver != receiver.shape() || cache.holder != NO_FIELD_HOLDER {
+            return false;
+        }
+        // SAFETY: a matching immutable shape proves the cached slot layout.
+        unsafe { self.heap.record_property_set(record_id, cache.slot as usize, value) };
+        self.profile.field_cache_hit(0, 0);
+        true
+    }
+
+    /// Whether the site has recorded a cached property add (`try_cached_field_add`).
+    pub(super) fn field_site_adds(&self, site: u16) -> bool {
+        self.field_add_indices[self.field_cache_index(site)] != NO_FIELD_ADD_SET
+    }
+
     /// The data field a direct object's immediate prototype holds at the site's primary
     /// holder entry: `cached_field_hit`'s holder tier for a site whose primary entry names a
     /// prototype (`field_site_holder`).

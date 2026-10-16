@@ -3386,20 +3386,7 @@ pub(crate) fn initialize_warning_policy(context: &mut NativeContext<'_, NodeHost
     let env = get(context, process, "env")?;
     let disabled = get(context, env, "NODE_NO_WARNINGS")?;
     if options.enabled("--warnings") && context.string_text(disabled)?.as_deref() != Some("1") {
-        // Node's listener, or, unless a script can reach Node's own to compare, a listener of
-        // the same name and length that sets up the console and Node's listener on its first
-        // warning: both cost more than the rest of the bootstrap, and most runs never warn.
-        let callback = if exposed {
-            warning_listener(context, process, &[])?
-        } else {
-            let factory = context.evaluate_script_rooted(
-                "(load) => function onWarning(warning) { return load()(warning); }",
-                "node:internal/process/warning-listener.js",
-            )?;
-            let load = context.host_function(crate::host::shared_vm::operation("processWarningListener"))?;
-            let undefined = context.undefined();
-            context.call_rooted(factory, undefined, &[load])?
-        };
+        let callback = warning_listener(context)?;
         let on = get(context, process, "on")?;
         let event = context.string_rooted("warning");
         context.call_rooted(on, process, &[event, callback])?;
@@ -3420,20 +3407,11 @@ pub(crate) fn initialize_emit_warning(context: &mut NativeContext<'_, NodeHost>,
     Ok(context.undefined())
 }
 
-/// Node's `onWarning`, once its global console is initialized.
-pub(crate) fn warning_listener(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
-    let state = context.host_mut().shared_state();
-    if let Some(listener) = state.borrow().builtin_cache.get(WARNING_LISTENER).copied() {
-        return Ok(listener);
-    }
+/// Initialize the SDK console and register its actual public warning callback.
+fn warning_listener(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let console = crate::host::shared_vm::commonjs::node_library_module(context, "internal/process/pre_execution.js", "internal/console/global.js")?;
     let initialize = crate::host::shared_vm::commonjs::node_library_export(context, "internal/process/pre_execution.js", "internal/console/constructor.js", "initializeGlobalConsole")?;
     let undefined = context.undefined();
     context.call_rooted(initialize, undefined, &[console])?;
-    let listener = warning_export(context, "onWarning")?;
-    let listener = context.retain(listener)?;
-    state.borrow_mut().builtin_cache.insert(WARNING_LISTENER.into(), listener);
-    Ok(listener)
+    warning_export(context, "onWarning")
 }
-
-const WARNING_LISTENER: &str = "\0node/process/warningListener";
