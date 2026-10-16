@@ -1,0 +1,6 @@
+
+running 1 test
+test optional_private_and_complex_call_columns_follow_actual_syntax_tokens ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 356 filtered out; finished in 0.93s
+

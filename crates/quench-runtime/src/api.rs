@@ -8,7 +8,7 @@ pub use embedding::RootedError;
 mod native;
 pub use native::{
     BuiltinBrand, BuiltinData, CollectionPreview, PromiseSnapshot, HostFunction, HostFunctionId, HostWeakRoot, NativeArithmetic,
-    NativeContext, RootedIterator, SynchronousModule,
+    NativeContext, RootedIterator, SourceStackFrame, SynchronousModule,
 };
 
 /// The syntax context used when compiling source. Script and Module use

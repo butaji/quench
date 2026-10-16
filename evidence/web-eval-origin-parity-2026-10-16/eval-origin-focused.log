@@ -1,0 +1,8 @@
+    Finished `iteration` profile [optimized] target(s) in 0.11s
+     Running tests/child_entry.rs (work/host-build/iteration/deps/child_entry-70660f0a4dee9e77)
+
+running 1 test
+test callsite_eval_classification_follows_compilation_origin_and_survives_escaped_closures ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 363 filtered out; finished in 0.28s
+

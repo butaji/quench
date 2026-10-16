@@ -1,0 +1,396 @@
+diff --git a/crates/quench-node-test/node-tests/test-fused-field-source-positions.js b/crates/quench-node-test/node-tests/test-fused-field-source-positions.js
+new file mode 100644
+index 000000000..9d1cfa67e
+--- /dev/null
++++ b/crates/quench-node-test/node-tests/test-fused-field-source-positions.js
+@@ -0,0 +1,17 @@
++const out=[];Error.prepareStackTrace=(_,frames)=>frames.filter(f=>f.getFileName()===__filename).map(f=>[f.getLineNumber(),f.getColumnNumber()]);function Capture(){return new Error().stack}
++const leaf={get b(){out.push(['b',Capture()]);return 1}};
++class Holder{get a(){out.push(['a',Capture()]);return leaf}read(){return this.a.b}}
++new Holder().read();
++console.log(JSON.stringify(out));
++
++class Writer extends Holder { set c(value){out.push(['c',value,Capture()])} write(){this.c=this.a.b} }
++new Writer().write();
++class ThrowFirst { get a(){out.push(['throw-a',Capture()]);throw new Error('first')} read(){return this.a.b} }
++const throwingLeaf={get b(){out.push(['throw-b',Capture()]);throw new Error('second')}};
++class ThrowSecond { get a(){return throwingLeaf} read(){return this.a.b} }
++for(const holder of [new ThrowFirst(),new ThrowSecond()]) {
++  try { holder.read() } catch(error) { out.push([error.message,error.stack]) }
++  out.push(['after-throw',Capture()]);
++  new Holder().read();
++}
++console.log(JSON.stringify(out));
+diff --git a/crates/quench-node-test/tests/child_entry.rs b/crates/quench-node-test/tests/child_entry.rs
+index fc01063f6..4627e8b89 100644
+--- a/crates/quench-node-test/tests/child_entry.rs
++++ b/crates/quench-node-test/tests/child_entry.rs
+@@ -9493,3 +9493,8 @@ fn property_reads_and_writes_capture_their_own_operation_positions() {
+ fn source_positions_use_javascript_line_terminators_and_utf16_columns() {
+     compare_node_source_with_args(include_str!("../node-tests/test-source-line-terminators.js"), &[]);
+ }
++
++#[test]
++fn fused_field_reads_preserve_each_getter_operation_source() {
++    compare_node_source_with_args(include_str!("../node-tests/test-fused-field-source-positions.js"), &[]);
++}
+diff --git a/crates/quench-runtime/src/bytecode.rs b/crates/quench-runtime/src/bytecode.rs
+index af7409995..edaab1f9b 100644
+--- a/crates/quench-runtime/src/bytecode.rs
++++ b/crates/quench-runtime/src/bytecode.rs
+@@ -1739,12 +1739,21 @@ impl FieldBase {
+     }
+ }
+ 
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub(crate) enum FieldPart { First, Second, Sink }
++
+ #[derive(Clone, Copy, Debug)]
+ pub(crate) struct FieldSite {
+     pub base: FieldBase,
+     pub first: (Atom, u16),
+     pub second: Option<(Atom, u16)>,
+     pub sink: Option<(Atom, u16)>,
++    pub sources: [Option<(u32, u32)>; 3],
++}
++impl FieldSite {
++    pub(crate) fn source(self, part: FieldPart) -> Option<(u32, u32)> {
++        self.sources[match part { FieldPart::First => 0, FieldPart::Second => 1, FieldPart::Sink => 2 }]
++    }
+ }
+ 
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+@@ -2069,11 +2078,15 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16)
+ impl ResidualProgram {
+     pub(crate) fn source_position(&self, function: u32, pc: u32) -> Option<SourcePosition> {
+         let positions = &self.functions.get(function as usize)?.source_positions;
+-        let mut position = *positions.get(
++        let position = *positions.get(
+             positions
+                 .partition_point(|position| position.pc <= pc)
+                 .checked_sub(1)?,
+         )?;
++        self.adjust_source_position(position)
++    }
++
++    pub(crate) fn adjust_source_position(&self, mut position: SourcePosition) -> Option<SourcePosition> {
+         if let Some(source) = &self.source {
+             position.line = position
+                 .line
+@@ -2089,7 +2102,7 @@ impl ResidualProgram {
+         Some(position)
+     }
+ 
+-    pub const FORMAT_VERSION: u8 = 90;
++    pub const FORMAT_VERSION: u8 = 91;
+     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
+         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
+         const FORMAT_VERSION_SHIFT: u32 = 16;
+diff --git a/crates/quench-runtime/src/bytecode/binary.rs b/crates/quench-runtime/src/bytecode/binary.rs
+index b0727683b..90f8959e6 100644
+--- a/crates/quench-runtime/src/bytecode/binary.rs
++++ b/crates/quench-runtime/src/bytecode/binary.rs
+@@ -333,6 +333,10 @@ pub(super) fn write_program(
+         out.pair(site.first);
+         out.optional_pair(site.second);
+         out.optional_pair(site.sink);
++        for source in site.sources {
++            out.u8(source.is_some() as u8);
++            if let Some((line, column)) = source { out.u32(line); out.u32(column); }
++        }
+     }
+     out.u32(program.object_sites.len() as u32);
+     for site in &program.object_sites {
+@@ -727,6 +731,11 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
+             first: input.pair()?,
+             second: input.optional_pair()?,
+             sink: input.optional_pair()?,
++            sources: [
++                input.optional_source_location()?,
++                input.optional_source_location()?,
++                input.optional_source_location()?,
++            ],
+         })
+     })?;
+     let object_sites = input.list(|input| {
+@@ -850,6 +859,13 @@ impl<'a> BinaryReader<'a> {
+         Ok((value != u32::MAX).then_some(value))
+     }
+     pub(super) fn pair(&mut self) -> Result<(u32, u16), String> { Ok((self.u32()?, self.u16()?)) }
++    pub(super) fn optional_source_location(&mut self) -> Result<Option<(u32, u32)>, String> {
++        match self.u8()? {
++            0 => Ok(None),
++            1 => Ok(Some((self.u32()?, self.u32()?))),
++            _ => Err("invalid residual source option".into()),
++        }
++    }
+     pub(super) fn optional_pair(&mut self) -> Result<Option<(u32, u16)>, String> {
+         match self.u8()? { 0 => Ok(None), 1 => Ok(Some(self.pair()?)), _ => Err("invalid residual option".into()) }
+     }
+diff --git a/crates/quench-runtime/src/bytecode/tests.rs b/crates/quench-runtime/src/bytecode/tests.rs
+index e7ee0cd76..05cefe319 100644
+--- a/crates/quench-runtime/src/bytecode/tests.rs
++++ b/crates/quench-runtime/src/bytecode/tests.rs
+@@ -448,3 +448,28 @@ fn decoder_rejects_invalid_binding_site_metadata() {
+     }
+     std::fs::remove_file(path).unwrap();
+ }
++
++#[test]
++fn fused_field_source_locations_survive_binary_round_trip_and_validate_coordinates() {
++    // The stable Node oracle reports columns 87 and 89 for these two distinct gets.
++    let source = "const positions=[];Error.prepareStackTrace=(_,frames)=>frames.find(site=>site.getFunctionName()==='read').getColumnNumber();\nconst leaf={get b(){positions.push(new Error().stack);return 1}};\nclass Holder{get a(){positions.push(new Error().stack);return leaf}read(){return this.a.b}}\nnew Holder().read();if(JSON.stringify(positions)!=='[87,89]')throw Error('lost field source locations');";
++    for generic in [false, true] {
++        let program = if generic {
++            crate::Engine::specialize_unspecialized(source, "fused-field-binary.js")
++        } else {
++            crate::Engine::specialize(source, "fused-field-binary.js")
++        }.unwrap();
++        let path = std::env::temp_dir().join(format!("quench-fused-source-{}-{generic}", std::process::id()));
++        program.write_binary(&path).unwrap();
++        let decoded = ResidualProgram::read_binary(&path).unwrap();
++        crate::Runtime::new(crate::SystemHost).execute(&decoded).unwrap();
++        let site = program.field_sites.iter().position(|site| site.second.is_some()).expect("nested field site");
++        for coordinate in [(0, 1), (1, 0)] {
++            let mut invalid = program.clone();
++            invalid.field_sites[site].sources[0] = Some(coordinate);
++            invalid.write_binary(&path).unwrap();
++            assert!(ResidualProgram::read_binary(&path).unwrap_err().contains("invalid field site"));
++        }
++        std::fs::remove_file(path).unwrap();
++    }
++}
+diff --git a/crates/quench-runtime/src/bytecode/validate.rs b/crates/quench-runtime/src/bytecode/validate.rs
+index bc651a054..5466994ab 100644
+--- a/crates/quench-runtime/src/bytecode/validate.rs
++++ b/crates/quench-runtime/src/bytecode/validate.rs
+@@ -880,7 +880,8 @@ impl ResidualProgram {
+             }
+         }
+         for site in &self.field_sites {
+-            if !field_base_in_bounds(site.base.0, REGISTER_MASK)
++            if site.sources.iter().flatten().any(|(line, column)| *line == 0 || *column == 0)
++                || !field_base_in_bounds(site.base.0, REGISTER_MASK)
+                 || !atom_in_bounds(site.first.0, self.atoms.len())
+                 || !cache_in_bounds(site.first.1, self.cache_sites)
+                 || site.second.is_some_and(|(atom, cache)| {
+diff --git a/crates/quench-runtime/src/compile/ast/expression.rs b/crates/quench-runtime/src/compile/ast/expression.rs
+index cf9c3a2f3..7c295e8f6 100644
+--- a/crates/quench-runtime/src/compile/ast/expression.rs
++++ b/crates/quench-runtime/src/compile/ast/expression.rs
+@@ -558,8 +558,9 @@ impl FunctionCompiler<'_, '_> {
+             let second = self.owner.atom(key);
+             let site = self.owner.cache_site();
+             let second_site = self.owner.cache_site();
+-            let access =
+-                self.field_site(FieldBase::THIS, (first, site), Some((second, second_site)));
++            let access = self.field_site(FieldBase::THIS, (first, site), Some((second, second_site)));
++            let first_position = self.owner.source_position(inner.property.span.start);
++            self.owner.field_sites[access as usize].sources[0] = Some((first_position.line, first_position.column));
+             self.emit(Op::GetField, dst, FieldBase::NESTED, 0, access);
+             return dst;
+         }
+@@ -588,6 +589,7 @@ impl FunctionCompiler<'_, '_> {
+             first,
+             second,
+             sink: None,
++            sources: [self.current_source_position, second.and(self.current_source_position), None],
+         });
+         site
+     }
+diff --git a/crates/quench-runtime/src/compile/rewrite.rs b/crates/quench-runtime/src/compile/rewrite.rs
+index 8225697bb..c59ac6ce8 100644
+--- a/crates/quench-runtime/src/compile/rewrite.rs
++++ b/crates/quench-runtime/src/compile/rewrite.rs
+@@ -105,6 +105,7 @@ fusion_recipes! {
+                         first: (atom, cache_site),
+                         second: None,
+                         sink: Some(sink),
++                        sources: [None; 3],
+                     });
+                     first.set_field_lookup_site(fields.len() - 1);
+                 }
+@@ -677,7 +678,7 @@ fn rewrite_once(
+                     .iter()
+                     .filter(|rule| rule.pattern == [first.op(), second.op()])
+                     .find_map(|rule| {
+-                        let replacement = apply_rule(*rule, first, *second, field_sites)?;
++                        let replacement = apply_rule(*rule, first, *second, field_sites, &function.source_positions, index)?;
+                         let removed_definitions = original_definitions
+                             & !liveness::definitions(replacement.as_wide(), superinstructions);
+                         (live_out & removed_definitions == 0).then_some(replacement)
+@@ -713,9 +714,21 @@ fn apply_rule(
+     first: Instr,
+     second: Instr,
+     field_sites: &mut Vec<FieldSite>,
++    positions: &[crate::bytecode::SourcePosition],
++    pc: usize,
+ ) -> Option<Instr> {
+     let replacement = apply_recipe(rule.recipe, first, second, field_sites)?;
+-    sound_replacement(first, second, replacement)
++    let replacement = sound_replacement(first, second, replacement)?;
++    if matches!(rule.recipe, Recipe::GetSetThis) {
++        if let Some(crate::bytecode::FieldLookup::Site(index)) = replacement.field_lookup() {
++            let at = |pc: usize| positions.partition_point(|p| p.pc as usize <= pc)
++                .checked_sub(1).map(|index| (positions[index].line, positions[index].column));
++            let site = &mut field_sites[index];
++            if site.sources[0].is_none() { site.sources[0] = at(pc); }
++            site.sources[2] = at(pc + 1);
++        }
++    }
++    Some(replacement)
+ }
+ 
+ fn sound_replacement(first: Instr, second: Instr, replacement: Instr) -> Option<Instr> {
+diff --git a/crates/quench-runtime/src/vm.rs b/crates/quench-runtime/src/vm.rs
+index a719c0966..853a59bbe 100644
+--- a/crates/quench-runtime/src/vm.rs
++++ b/crates/quench-runtime/src/vm.rs
+@@ -193,6 +193,7 @@ pub(super) struct Frame {
+     pc: usize,
+     /// Whether pc is a saved continuation after a call rather than the executing operation.
+     pc_is_resume: bool,
++    source_field: Option<(usize, crate::bytecode::FieldPart)>,
+     // The current operation's lexical projection, independent of the PC
+     // published for GC roots or saved as the continuation after a call.
+     binding_site_pc: Option<u32>,
+@@ -256,6 +257,7 @@ impl Frame {
+             function: 0,
+             pc: 0,
+             pc_is_resume: true,
++            source_field: None,
+             binding_site_pc: None,
+             env: Value::NULL,
+             this: Value::UNDEFINED,
+diff --git a/crates/quench-runtime/src/vm/activation.rs b/crates/quench-runtime/src/vm/activation.rs
+index 259524163..31d739761 100644
+--- a/crates/quench-runtime/src/vm/activation.rs
++++ b/crates/quench-runtime/src/vm/activation.rs
+@@ -192,6 +192,7 @@ impl Continuation {
+             function: self.function,
+             pc: self.pc,
+             pc_is_resume: true,
++            source_field: None,
+             binding_site_pc: None,
+             env: self.env,
+             this: self.this,
+diff --git a/crates/quench-runtime/src/vm/dispatch.rs b/crates/quench-runtime/src/vm/dispatch.rs
+index a5fc6dfdc..8f766cf7c 100644
+--- a/crates/quench-runtime/src/vm/dispatch.rs
++++ b/crates/quench-runtime/src/vm/dispatch.rs
+@@ -668,14 +668,10 @@ impl<H: Host> Vm<H> {
+                         unreachable!("field sink is only attached to nested field lookup")
+                     };
+                     let sink = p.field_sites[site].sink.expect("fused field sink");
+-                    self.set_field_cached(
+-                        p,
+-                        self.frames[f].this,
+-                        sink.0,
+-                        v,
+-                        sink.1,
+-                        p.functions[self.frames[f].function as usize].strict,
+-                    )?;
++                    self.with_field_source(f, site, crate::bytecode::FieldPart::Sink, |vm| vm.set_field_cached(
++                        p, vm.frames[f].this, sink.0, v, sink.1,
++                        p.functions[vm.frames[f].function as usize].strict,
++                    ))?;
+                 }
+                 if i.returns_from_frame() {
+                     return Ok(StepResult::Return(v));
+@@ -1537,17 +1533,28 @@ impl<H: Host> Vm<H> {
+         }
+     }
+     #[inline(always)]
++    fn with_field_source<T>(&mut self, frame: usize, site: usize, part: crate::bytecode::FieldPart,
++        run: impl FnOnce(&mut Self) -> Result<T, JsError>) -> Result<T, JsError> {
++        let previous = self.frames[frame].source_field.replace((site, part));
++        let result = run(self);
++        self.frames[frame].source_field = previous;
++        result
++    }
++
+     pub(super) fn resolve_field(
+         &mut self,
+         p: &ResidualProgram,
+         frame: usize,
+         site: usize,
+     ) -> Result<Value, JsError> {
+-        let site = p.field_sites[site];
++        let site_id = site;
++        let site = p.field_sites[site_id];
+         let base = self.resolve_field_base(p, frame, site.base)?;
+-        let value = self.get_field_cached(p, base, site.first.0, site.first.1)?;
++        let value = self.with_field_source(frame, site_id, crate::bytecode::FieldPart::First,
++            |vm| vm.get_field_cached(p, base, site.first.0, site.first.1))?;
+         match site.second {
+-            Some((atom, cache)) => self.get_field_cached(p, value, atom, cache),
++            Some((atom, cache)) => self.with_field_source(frame, site_id, crate::bytecode::FieldPart::Second,
++                |vm| vm.get_field_cached(p, value, atom, cache)),
+             None => Ok(value),
+         }
+     }
+diff --git a/crates/quench-runtime/src/vm/error.rs b/crates/quench-runtime/src/vm/error.rs
+index 340fb5add..a381236c7 100644
+--- a/crates/quench-runtime/src/vm/error.rs
++++ b/crates/quench-runtime/src/vm/error.rs
+@@ -546,7 +546,11 @@ impl<H: Host> Vm<H> {
+         let residual = self.programs.get(frame.program)?;
+         let function = residual.functions.get(frame.function as usize)?;
+         let pc = u32::try_from(frame.source_instruction_pc()).unwrap_or(u32::MAX);
+-        let position = residual.source_position(frame.function, pc)?;
++        let position = if let Some((site, part)) = frame.source_field {
++            if let Some((line, column)) = residual.field_sites.get(site).and_then(|site| site.source(part)) {
++                residual.adjust_source_position(crate::bytecode::SourcePosition { pc, line, column })?
++            } else { residual.source_position(frame.function, pc)? }
++        } else { residual.source_position(frame.function, pc)? };
+         let name = frame.context.callable().map_or_else(
+             || function.name.map_or(CallSiteName::Anonymous, |name| CallSiteName::Static(self.atom_value(name))),
+             CallSiteName::Callable,
+diff --git a/crates/quench-runtime/src/vm/tests.rs b/crates/quench-runtime/src/vm/tests.rs
+index 12d9d0347..65117aeba 100644
+--- a/crates/quench-runtime/src/vm/tests.rs
++++ b/crates/quench-runtime/src/vm/tests.rs
+@@ -1496,6 +1496,7 @@ fn unrepresentable_register_maps_keep_the_conservative_frame_roots() {
+         function: 0,
+         pc: 0,
+         pc_is_resume: true,
++        source_field: None,
+         binding_site_pc: None,
+         env: Value::NULL,
+         this: Value::UNDEFINED,
+@@ -4562,6 +4563,7 @@ fn pooled_frame_registers_are_reset_when_their_length_is_reused() {
+         function: 0,
+         pc: 0,
+         pc_is_resume: true,
++        source_field: None,
+         binding_site_pc: None,
+         env: Value::NULL,
+         this: Value::UNDEFINED,
+@@ -6827,6 +6829,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
+                 function: 0,
+                 pc: 0,
+                 pc_is_resume: true,
++                source_field: None,
+                 binding_site_pc: None,
+                 env,
+                 this: receiver,
+diff --git a/docs/node-host-contracts.md b/docs/node-host-contracts.md
+index 2357cddbb..184d8e4cd 100644
+--- a/docs/node-host-contracts.md
++++ b/docs/node-host-contracts.md
+@@ -76,9 +76,12 @@ Call positions use OXC expression/comment spans to identify method names and
+ actual argument parentheses, including optional/private calls, returned
+ functions, comments and line breaks. Property reads and writes have distinct
+ operation positions, including assignments and updates. Source lines recognize
+-all JavaScript line terminators and columns count UTF-16 units. Full fused
+-sub-operation, eval/sourceURL, source-map and Node host-stack conformance remains
+-open. Source IDs denote actual compiled units; missing host frames are not
++all JavaScript line terminators and columns count UTF-16 units. Fused
++field sites retain separate read/read/write source coordinates. A scoped active
++component selects the correct location while executing a getter or setter and
++restores the previous source context after success or failure. Bytecode format 91
++serializes these locations and rejects invalid coordinates. Complete eval/sourceURL,
++source-map and Node host-stack conformance remains open. Source IDs denote actual compiled units; missing host frames are not
+ fabricated.
+ 
+ ## Boxed primitive identity

@@ -1,0 +1,2 @@
+const {broadcast}=require('stream/iter');
+(async()=>{const {broadcast:shared}=broadcast();for(const count of [10,100,1000]){const start=Date.now();for(let i=0;i<count;i++){const iterator=shared.push()[Symbol.asyncIterator]();const pending=iterator.next();await iterator.return();await pending;}console.log(count,Date.now()-start,shared.consumerCount);}shared.cancel();})().catch(e=>{console.error(e);process.exitCode=1});

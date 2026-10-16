@@ -1739,12 +1739,21 @@ impl FieldBase {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FieldPart { First, Second, Sink }
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct FieldSite {
     pub base: FieldBase,
     pub first: (Atom, u16),
     pub second: Option<(Atom, u16)>,
     pub sink: Option<(Atom, u16)>,
+    pub sources: [Option<(u32, u32)>; 3],
+}
+impl FieldSite {
+    pub(crate) fn source(self, part: FieldPart) -> Option<(u32, u32)> {
+        self.sources[match part { FieldPart::First => 0, FieldPart::Second => 1, FieldPart::Sink => 2 }]
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2069,11 +2078,15 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
 impl ResidualProgram {
     pub(crate) fn source_position(&self, function: u32, pc: u32) -> Option<SourcePosition> {
         let positions = &self.functions.get(function as usize)?.source_positions;
-        let mut position = *positions.get(
+        let position = *positions.get(
             positions
                 .partition_point(|position| position.pc <= pc)
                 .checked_sub(1)?,
         )?;
+        self.adjust_source_position(position)
+    }
+
+    pub(crate) fn adjust_source_position(&self, mut position: SourcePosition) -> Option<SourcePosition> {
         if let Some(source) = &self.source {
             position.line = position
                 .line
@@ -2089,7 +2102,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 90;
+    pub const FORMAT_VERSION: u8 = 91;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;
