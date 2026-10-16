@@ -2023,21 +2023,7 @@ impl<H: Host> Vm<H> {
             .insert((self.realm.globals, native), prototype);
         self.set_named_constant(program, constructor, "prototype", prototype)?;
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
-        let constructor_name = self.heap.alloc(Cell::String(JsString::from_str(name)));
-        self.set_named(program, constructor, "name", constructor_name)?;
-        let name_atom = self.intern_atom("name");
-        self.set_property_attributes(
-            constructor,
-            PropertyKey::string(name_atom),
-            PropertyAttributes {
-                writable: false,
-                enumerable: false,
-                configurable: true,
-                accessor: false,
-                getter: None,
-                setter: None,
-            },
-        );
+        self.set_builtin_function_name(constructor, name)?;
         let name_value = self.heap.alloc(Cell::String(JsString::from_str(name)));
         self.set_builtin_value_named(prototype, "name", name_value)?;
         let empty_message = self.heap.alloc(Cell::String(JsString::from_str("")));

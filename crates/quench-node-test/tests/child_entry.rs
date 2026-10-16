@@ -9156,3 +9156,36 @@ Object.defineProperty(Original,'name',{value:''});out.push(sites[0].getFunctionN
 console.log(JSON.stringify(out));
 "#, &[]);
 }
+
+#[test]
+fn native_constructed_names_preserve_base_identity_and_use_prototype_fallback_for_subclasses() {
+    compare_node_source_with_args(
+        r#"
+const get=require('internal/test/binding').internalBinding('util').getConstructorName,out=[];
+for(const [C,args] of [[Array,[]],[Map,[]],[Date,[]],[Uint8Array,[0]],[Error,[]],[TypeError,[]],[RangeError,[]],[URIError,[]],[EvalError,[]],[ReferenceError,[]],[SyntaxError,[]],[ArrayBuffer,[0]],[Number,[1]],[String,['x']],[Boolean,[true]],[Object,[]]]){
+ const value=new C(...args),saved=Object.getOwnPropertyDescriptor(C,'name');Object.setPrototypeOf(value,null);
+ try{Object.defineProperty(C,'name',{value:'Changed'});out.push(get(value))}finally{Object.defineProperty(C,'name',saved)}
+}
+function Original(){};const original=new Original;Object.setPrototypeOf(original,null);out.push(new Object(original)===original,get(new Object(original)));
+class CustomArray extends Array{};const array=new CustomArray;out.push(get(array));CustomArray.prototype.constructor=null;out.push(get(array));
+class CustomMap extends Map{};const map=new CustomMap;out.push(get(map));CustomMap.prototype.constructor=null;out.push(get(map));
+const tagged=new CustomArray;Object.defineProperty(tagged,Symbol.toStringTag,{value:'TaggedArray'});out.push(get(tagged));
+const foreign=require('vm').runInNewContext("const value=new Array;Object.setPrototypeOf(value,null);Object.defineProperty(Array,'name',{value:'ForeignArray'});value");out.push(get(foreign));
+console.log(JSON.stringify(out));
+"#,
+        &["--expose-internals", "--no-warnings"],
+    );
+}
+
+#[test]
+fn canonical_util_types_preserve_native_sources_javascript_sources_export_order_and_identity() {
+    compare_node_source_with_args(
+        r#"
+const types=require('util/types'),internal=require('internal/util/types'),raw=require('internal/test/binding').internalBinding('types');
+const out=[types===internal,types===require('util').types,Object.keys(raw),Object.entries(types).map(([key,value])=>[key,value.name,value.length,Function.prototype.toString.call(value),Object.hasOwn(value,'prototype'),Object.getOwnPropertyDescriptor(types,key)])];
+out.push(Object.keys(raw).every(key=>raw[key]===types[key]),types.isArrayBufferView===ArrayBuffer.isView);
+console.log(JSON.stringify(out));
+"#,
+        &["--expose-internals", "--no-warnings"],
+    );
+}

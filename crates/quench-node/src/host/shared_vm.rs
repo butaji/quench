@@ -22,7 +22,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "parseEnv" (1) => crate::modules::util_shared_vm::parse_env,
         method "parseArgs" (0) => crate::modules::util_parse_args_shared_vm::parse,
         method "utilParseArgsPositional" (1) => crate::modules::util_parse_args_shared_vm::positional_map,
-        method "utilTypeCheck" (1) => crate::modules::util_shared_vm::type_check,
+        method "utilTypeCheck" (0) => crate::modules::util_shared_vm::type_check,
         method "utilProxyDetails" (0) => crate::modules::util_shared_vm::proxy_details,
         method "utilConstructorName" (0) => crate::modules::util_shared_vm::constructor_name,
         method "utilPreviewEntries" (0) => crate::modules::util_shared_vm::preview_entries,
