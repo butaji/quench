@@ -1978,6 +1978,9 @@ impl<'a> Compiler<'a> {
         // grown the reservation.
         functions.shrink_to_fit();
         capture_layout::apply(&mut functions, &self.atoms);
+        for function in &mut functions {
+            Self::elide_unobservable_tdz(function, &self.atoms);
+        }
         if self.mode == SpecializationMode::Enabled {
             Self::apply_rewrites(
                 &mut functions,
@@ -2665,6 +2668,22 @@ impl<'a> Compiler<'a> {
             DispatchClass::Numeric
         } else {
             DispatchClass::General
+        }
+    }
+
+    /// Drops the TDZ resets of slots whose uninitialized state no access can observe
+    /// (`unobservable_tdz_slots`), so their loads and stores need no TDZ check.
+    fn elide_unobservable_tdz(function: &mut BcFunction, atoms: &CompilerAtoms<'_>) {
+        let slots = function.unobservable_tdz_slots(|atom| atoms.get(atom as usize));
+        if !slots.contains(&true) {
+            return;
+        }
+        for instruction in &mut function.code {
+            if instruction.op() == Op::InitializeTdz
+                && slots.get(instruction.local_slot()) == Some(&true)
+            {
+                *instruction = Instr::new(Op::Nop, 0, 0, 0, 0);
+            }
         }
     }
 
