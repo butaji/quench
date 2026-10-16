@@ -955,7 +955,9 @@ loads its original SDK module on observation, and becomes a writable data
 property. Assignment and descriptor reflection use the same Core operation as
 other lazy host properties. No duplicate JavaScript utility policy is installed.
 The already qualified callbackify, argument parsing, styling and environment
-adapters remain native. Abort transfer/weak-event and signal-tracing exports
+adapters remain native. Public terminal escape stripping uses the original SDK
+inspect policy, including terminated OSC hyperlinks and colon-delimited CSI
+parameters; its UTF-16 and argument validation behavior share that owner. Abort transfer/weak-event and signal-tracing exports
 remain unavailable until their genuine host dependencies exist.
 
 The libuv utility binding derives its complete error inventory, ordering and
