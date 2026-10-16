@@ -3,6 +3,8 @@ use std::fmt;
 use std::ops::Index;
 use std::rc::Rc;
 
+use crate::vm::wtf16::JsString;
+
 /// A program's atom names, indexed by atom id.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct AtomTable {
@@ -123,8 +125,8 @@ impl Index<usize> for AtomTable {
 pub(crate) struct AtomSequence {
     base: AtomTable,
     /// Names after `base`. Only `append` mutates it, and no reference into the vector
-    /// itself escapes: `name` returns text owned by an element's `Rc`.
-    appended: UnsafeCell<Vec<Rc<str>>>,
+    /// itself escapes: `name` returns text owned by an element's shared allocation.
+    appended: UnsafeCell<Vec<JsString>>,
 }
 
 impl AtomSequence {
@@ -141,7 +143,7 @@ impl AtomSequence {
         self.base.len() + unsafe { (*self.appended.get()).len() }
     }
 
-    pub(crate) fn append(&self, name: Rc<str>) {
+    pub(crate) fn append(&self, name: JsString) {
         // SAFETY: as in `len`; the vector may reallocate, but names handed out point into
         // the elements' `Rc` allocations, which never move.
         unsafe { (*self.appended.get()).push(name) };
@@ -153,9 +155,8 @@ impl AtomSequence {
         };
         // SAFETY: as in `len`. The element is never removed, so its allocation, and the text
         // returned from it, lives as long as `self`.
-        let appended_names: &Vec<Rc<str>> = unsafe { &*self.appended.get() };
-        let element = &appended_names[appended];
-        let name: *const str = &**element;
+        let appended_names: &Vec<JsString> = unsafe { &*self.appended.get() };
+        let name: *const str = appended_names[appended].host_string();
         unsafe { &*name }
     }
 }
@@ -185,11 +186,11 @@ mod tests {
     #[test]
     fn shared_prefixes_keep_names_across_appends() {
         let sequence = Rc::new(AtomSequence::new(AtomTable::from_rcs(&[Rc::from("base")])));
-        sequence.append(Rc::from("first"));
+        sequence.append(JsString::from_str("first"));
         let prefix = AtomTable::shared(sequence.clone(), 2);
         let first = &prefix[1];
         for index in 0..64 {
-            sequence.append(Rc::from(format!("later{index}")));
+            sequence.append(JsString::from_str(&format!("later{index}")));
         }
         assert_eq!(first, "first");
         assert_eq!(prefix.iter().collect::<Vec<_>>(), ["base", "first"]);
