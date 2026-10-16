@@ -185,7 +185,6 @@ impl<H: Host> Vm<H> {
                 return self.set_property_with_program(p, object, atom, value);
             }
             if self.heap.array(object).is_some()
-                && !self.has_own_array_index(object, index)
                 && self.set_inherited_index_accessor(p, object, index, value, strict)?
             {
                 return Ok(());
@@ -428,8 +427,7 @@ impl<H: Host> Vm<H> {
                     Ok(())
                 };
             }
-            if !self.has_own_array_index(object, index as usize)
-                && self.set_inherited_index_accessor(p, object, index as usize, value, strict)?
+            if self.set_inherited_index_accessor(p, object, index as usize, value, strict)?
             {
                 return Ok(());
             }
@@ -449,10 +447,7 @@ impl<H: Host> Vm<H> {
         value: Value,
         strict: bool,
     ) -> Result<bool, JsError> {
-        let Some(atom) = self.lookup_array_index_atom(index) else {
-            return Ok(false);
-        };
-        let Some(attributes) = self.property_accessor(object, atom) else {
+        let Some(attributes) = self.inherited_index_accessor(object, index) else {
             return Ok(false);
         };
         if let Some(setter) = attributes.setter {

@@ -1060,6 +1060,27 @@ fn spread_accumulates_without_user_methods_or_prototype_setters() {
 }
 
 #[test]
+fn push_and_splice_growth_reaches_inherited_setters_and_proxy_traps() {
+    // Indices that `push` and `splice` grow into are [[Set]] on the receiver: a proxy or an
+    // index setter on the prototype chain answers them however the setter was defined, and a
+    // setter later replaced by data no longer does.
+    let source = "var seen = [];\n\
+         var proxy = new Proxy(Object.create(Array.prototype), { set: function (t, k, v) { seen.push('trap' + k + v); return true; } });\n\
+         var literal = Object.setPrototypeOf({ set 2(v) { seen.push('literal' + v); } }, Array.prototype);\n\
+         var legacy = Object.create(Array.prototype); legacy.__defineSetter__('1', function (v) { seen.push('legacy' + v); });\n\
+         var replaced = Object.create(Array.prototype, { 1: { set: function () { seen.push('never'); }, configurable: true } });\n\
+         Object.defineProperty(replaced, 1, { value: 0, writable: true, configurable: true });\n\
+         function on(proto) { var a = [0]; Object.setPrototypeOf(a, proto); return a; }\n\
+         var a = on(proxy), b = on(proxy), c = on(literal), d = on(legacy), e = on(replaced);\n\
+         a.push('p'); b.splice(1, 0, 's'); c.push('x', 'y'); d.splice(0, 1, 'u', 'v'); e.push('w');\n\
+         var result = [seen.join(), Object.keys(a).join(), Object.keys(b).join(), Object.keys(c).join(), Object.keys(d).join(), e.join()].join('|');";
+    assert_eq!(
+        global_text(source, "result"),
+        "trap1p,trap1s,literaly,legacyv|0|0|0,1|0|0,w"
+    );
+}
+
+#[test]
 fn typed_array_index_stores_convert_and_ignore_out_of_range_indices() {
     // Integer-indexed stores go straight to TypedArraySetElement: values convert by kind,
     // out-of-range indices and prototype setters are never reached, and a non-typed
