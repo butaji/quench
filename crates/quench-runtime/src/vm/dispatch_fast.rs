@@ -1424,17 +1424,106 @@ lane_handler! {
     /// `lane_get_field`.
     #[inline(never)]
     fn lane_get_field_miss<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        if i.b == crate::bytecode::FieldBase::NESTED {
-            requicken(ip, lane_get_field::<H>);
-        } else if vm.field_site_polymorphic(i.c) {
-            requicken(ip, lane_get_field_polymorphic::<H>);
-        } else if vm.field_site_holder(i.c) {
-            requicken(ip, lane_get_field_holder::<H>);
-        } else if vm.field_site_inherited(i.c) {
-            requicken(ip, lane_get_field_inherited::<H>);
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let handler: Option<Handler> = match lane_field_site_tier(unsafe { vm(cx) }, code, i) {
+            FieldSiteTier::Nested => Some(lane_get_field_nested::<H>),
+            FieldSiteTier::General => Some(lane_get_field::<H>),
+            FieldSiteTier::Polymorphic => Some(lane_get_field_polymorphic::<H>),
+            FieldSiteTier::Holder => Some(lane_get_field_holder::<H>),
+            FieldSiteTier::Inherited => Some(lane_get_field_inherited::<H>),
+            FieldSiteTier::Own => None,
+        };
+        if let Some(handler) = handler {
+            requicken(ip, handler);
         }
         sibling!(lane_get_field::<H>, r, ip, Carried::SCRIPT)
+    }
+}
+
+/// The cache tier a single-read `GetField` site's entries call for, to which a miss of its
+/// single-entry handler moves the record (`lane_get_field_miss`, `lane_returning_field_miss`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FieldSiteTier {
+    /// A nested read whose steps hit primary own entries, or an array's own `length`
+    /// (`lane_nested_own_value`).
+    Nested,
+    /// A nested read with another step, which only the general cached read makes.
+    General,
+    /// Past one shape (`Vm::field_site_polymorphic`).
+    Polymorphic,
+    /// A primary entry naming a prototype holder (`Vm::field_site_holder`).
+    Holder,
+    /// An entry beyond the immediate prototype (`Vm::field_site_inherited`).
+    Inherited,
+    /// The primary own entry, which the record already reads.
+    Own,
+}
+
+fn lane_field_site_tier<H: Host>(
+    vm: &Vm<H>,
+    code: &ResidualProgram,
+    i: &LaneInstruction,
+) -> FieldSiteTier {
+    if i.b == crate::bytecode::FieldBase::NESTED {
+        // A step that reads `name` or `length` may prepare prototype lookup
+        // (`Vm::reads_function_info`); only an array's own `length` needs no preparing.
+        let nested_own = code.field_sites.get(i.imm() as usize).is_some_and(|site| {
+            !vm.reads_function_info(site.first.0)
+                && site.second.is_none_or(|(atom, _)| {
+                    atom == vm.length_atom || !vm.reads_function_info(atom)
+                })
+        });
+        if nested_own { FieldSiteTier::Nested } else { FieldSiteTier::General }
+    } else if vm.field_site_polymorphic(i.c) {
+        FieldSiteTier::Polymorphic
+    } else if vm.field_site_holder(i.c) {
+        FieldSiteTier::Holder
+    } else if vm.field_site_inherited(i.c) {
+        FieldSiteTier::Inherited
+    } else {
+        FieldSiteTier::Own
+    }
+}
+
+/// A nested `GetField`'s value (`this.a.b`, `r.a.b`) where each step hits its site's primary
+/// own entry (`Vm::primary_own_field_hit`), or the second is an array's own `length`
+/// (`Vm::array_length_field`); `None` leaves the read to the general cached read. The site
+/// reads neither `name` nor another `length` (`lane_field_site_tier`).
+///
+/// # Safety
+/// `cx` is the running lane's context and `i` a nested record of it.
+#[inline(always)]
+unsafe fn lane_nested_own_value<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    i: &LaneInstruction,
+) -> Option<Value> {
+    // SAFETY: the context's program outlives the lane run; a nested record names its site.
+    let code = unsafe { &*(*cx).code };
+    let site = unsafe { code.field_sites.get_unchecked(i.imm() as usize) };
+    let vm = unsafe { vm(cx) };
+    let base = match site.base.register_index() {
+        Some(register) => r.get(register),
+        None => unsafe { lane_fixed_this(cx) }?,
+    };
+    let first = vm.primary_own_field_hit(code, base, site.first.1)?;
+    match site.second {
+        None => Some(first),
+        Some((atom, _)) if atom == vm.length_atom => vm.array_length_field(first, atom),
+        Some((_, cache)) => vm.primary_own_field_hit(code, first, cache),
+    }
+}
+
+lane_handler! {
+    /// A nested `GetField` whose steps hit primary own entries (`lane_nested_own_value`);
+    /// any other read takes `lane_get_field`.
+    fn lane_get_field_nested<>(cx, r, ip, i, view) {
+        let Some(value) = (unsafe { lane_nested_own_value(cx, r, i) }) else {
+            sibling!(lane_get_field::<H>, r, ip, Carried::SCRIPT)
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::SCRIPT)
     }
 }
 
@@ -1676,17 +1765,58 @@ lane_handler! {
     #[inline(never)]
     fn lane_set_field_miss<THIS: bool>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
-        let general = vm.field_site_adds(i.c) || vm.field_site_polymorphic(i.c);
+        let polymorphic = vm.field_site_polymorphic(i.c);
+        let adds = vm.field_site_adds(i.c);
+        let handler: Option<Handler> = if adds && !polymorphic && vm.field_cache_atom_eligible(i.imm()) {
+            Some(if THIS { lane_set_this_field_add::<H> } else { lane_set_object_field_add::<H> })
+        } else if adds || polymorphic {
+            Some(if THIS { lane_set_this_field::<H> } else { lane_set_object_field::<H> })
+        } else {
+            None
+        };
+        if let Some(handler) = handler {
+            requicken(ip, handler);
+        }
         if THIS {
-            if general {
-                requicken(ip, lane_set_this_field::<H>);
-            }
             sibling!(lane_set_this_field::<H>, r, ip, Carried::SCRIPT)
         }
-        if general {
-            requicken(ip, lane_set_object_field::<H>);
-        }
         sibling!(lane_set_object_field::<H>, r, ip, Carried::SCRIPT)
+    }
+}
+
+lane_handler! {
+    /// `SetField` or `SetFieldStrict` at a site that adds a property to records of one shape
+    /// (`lane_set_field_miss`): the cached add alone (`Vm::primary_field_add_hit`). Any other
+    /// write moves the record to the general cached write, which makes it.
+    fn lane_set_object_field_add<>(cx, r, ip, i, view) {
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let vm = unsafe { vm(cx) };
+        if !vm.primary_field_add_hit(code, r.get(i.b), i.imm(), r.get(i.a), i.c) {
+            requicken(ip, lane_set_object_field::<H>);
+            sibling!(lane_set_object_field::<H>, r, ip, Carried::SCRIPT)
+        }
+        // Adding a property can allocate.
+        note_allocation(vm);
+        next!(cx, r, following(ip), Carried::SCRIPT)
+    }
+}
+
+lane_handler! {
+    /// `lane_set_object_field_add` for `SetThisField` and `SetThisFieldStrict`.
+    fn lane_set_this_field_add<>(cx, r, ip, i, view) {
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let vm = unsafe { vm(cx) };
+        let added = unsafe { lane_fixed_this(cx) }
+            .is_some_and(|this| vm.primary_field_add_hit(code, this, i.imm(), r.get(i.a), i.c));
+        if !added {
+            requicken(ip, lane_set_this_field::<H>);
+            sibling!(lane_set_this_field::<H>, r, ip, Carried::SCRIPT)
+        }
+        // Adding a property can allocate.
+        note_allocation(vm);
+        next!(cx, r, following(ip), Carried::SCRIPT)
     }
 }
 
@@ -4407,6 +4537,16 @@ const RETURNING_LITERAL: u8 = 4;
 /// `length`: the site's primary own entry (`Vm::primary_own_field_hit`), installed by
 /// `lane_returning_field_first`.
 const RETURNING_FIELD_OWN: u8 = 5;
+/// `RETURNING_FIELD_OWN` at a site past one shape (`Vm::polymorphic_field_hit`).
+const RETURNING_FIELD_POLYMORPHIC: u8 = 6;
+/// `RETURNING_FIELD_OWN` at a site whose primary entry names a prototype holder
+/// (`Vm::primary_holder_field_hit`).
+const RETURNING_FIELD_HOLDER: u8 = 7;
+/// `RETURNING_FIELD_OWN` at a site with an inherited entry (`Vm::inherited_field_hit`).
+const RETURNING_FIELD_INHERITED: u8 = 8;
+/// `RETURNING_FIELD` of a nested site whose steps hit primary own entries
+/// (`lane_nested_own_value`).
+const RETURNING_FIELD_NESTED: u8 = 9;
 
 /// The `lane_returning` kind of a value record that returns its result from the frame.
 fn returning_kind(instruction: WideInstruction) -> Option<u8> {
@@ -4430,11 +4570,28 @@ lane_handler! {
     fn lane_returning<KIND: u8>(cx, r, ip, i, view) {
         let value = unsafe {
             match KIND {
-                RETURNING_FIELD_OWN => {
+                RETURNING_FIELD_OWN
+                | RETURNING_FIELD_POLYMORPHIC
+                | RETURNING_FIELD_HOLDER
+                | RETURNING_FIELD_INHERITED => {
                     let code = &*(*cx).code;
-                    let Some(value) = lane_single_field_base(cx, r, i.b)
-                        .and_then(|object| vm(cx).primary_own_field_hit(code, object, i.c))
-                    else {
+                    let vm = vm(cx);
+                    let value = lane_single_field_base(cx, r, i.b).and_then(|object| match KIND {
+                        RETURNING_FIELD_OWN => vm.primary_own_field_hit(code, object, i.c),
+                        RETURNING_FIELD_POLYMORPHIC => vm.polymorphic_field_hit(code, object, i.c),
+                        RETURNING_FIELD_HOLDER => vm.primary_holder_field_hit(code, object, i.c),
+                        _ => vm.inherited_field_hit(code, object, i.c),
+                    });
+                    let Some(value) = value else {
+                        if KIND == RETURNING_FIELD_POLYMORPHIC {
+                            sibling!(lane_returning::<H, RETURNING_FIELD>, r, ip, Carried::SCRIPT)
+                        }
+                        sibling!(lane_returning_field_miss::<H>, r, ip, Carried::SCRIPT)
+                    };
+                    Some(value)
+                }
+                RETURNING_FIELD_NESTED => {
+                    let Some(value) = lane_nested_own_value(cx, r, i) else {
                         sibling!(lane_returning::<H, RETURNING_FIELD>, r, ip, Carried::SCRIPT)
                     };
                     Some(value)
@@ -4462,11 +4619,41 @@ lane_handler! {
     /// `RETURNING_FIELD`, whose cached read prepares them.
     #[inline(never)]
     fn lane_returning_field_first<>(cx, r, ip, i, view) {
-        if i.b != crate::bytecode::FieldBase::NESTED && !unsafe { vm(cx) }.reads_function_info(i.imm()) {
+        let vm = unsafe { vm(cx) };
+        if i.b != crate::bytecode::FieldBase::NESTED && !vm.reads_function_info(i.imm()) {
             requicken(ip, lane_returning::<H, RETURNING_FIELD_OWN>);
             sibling!(lane_returning::<H, RETURNING_FIELD_OWN>, r, ip, Carried::SCRIPT)
         }
+        // SAFETY: the context's program outlives the lane run.
+        if lane_field_site_tier(vm, unsafe { &*(*cx).code }, i) == FieldSiteTier::Nested {
+            requicken(ip, lane_returning::<H, RETURNING_FIELD_NESTED>);
+            sibling!(lane_returning::<H, RETURNING_FIELD_NESTED>, r, ip, Carried::SCRIPT)
+        }
         requicken(ip, lane_returning::<H, RETURNING_FIELD>);
+        sibling!(lane_returning::<H, RETURNING_FIELD>, r, ip, Carried::SCRIPT)
+    }
+}
+
+lane_handler! {
+    /// A miss of a single-entry returning read (`RETURNING_FIELD_OWN`, `_HOLDER`,
+    /// `_INHERITED`): the record moves to the kind its site's tier calls for
+    /// (`lane_field_site_tier`), as `lane_get_field_miss` moves a plain read; the read itself
+    /// takes `RETURNING_FIELD`.
+    #[inline(never)]
+    fn lane_returning_field_miss<>(cx, r, ip, i, view) {
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let handler: Option<Handler> = match lane_field_site_tier(unsafe { vm(cx) }, code, i) {
+            FieldSiteTier::Nested => Some(lane_returning::<H, RETURNING_FIELD_NESTED>),
+            FieldSiteTier::General => Some(lane_returning::<H, RETURNING_FIELD>),
+            FieldSiteTier::Polymorphic => Some(lane_returning::<H, RETURNING_FIELD_POLYMORPHIC>),
+            FieldSiteTier::Holder => Some(lane_returning::<H, RETURNING_FIELD_HOLDER>),
+            FieldSiteTier::Inherited => Some(lane_returning::<H, RETURNING_FIELD_INHERITED>),
+            FieldSiteTier::Own => None,
+        };
+        if let Some(handler) = handler {
+            requicken(ip, handler);
+        }
         sibling!(lane_returning::<H, RETURNING_FIELD>, r, ip, Carried::SCRIPT)
     }
 }

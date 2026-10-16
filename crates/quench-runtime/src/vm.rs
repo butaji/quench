@@ -554,6 +554,8 @@ struct InheritedFieldCache {
     slot: u16,
 }
 const NO_FIELD_RECEIVER: u32 = u32::MAX;
+/// A cache site without an inherited entry (`Vm::inherited_field_indices`).
+const NO_INHERITED_FIELD: u32 = u32::MAX;
 // DeltaBlue's measured inherited writes reach three prototypes; keep the
 // residual cache bounded while covering that common constructor shape.
 const FIELD_ADD_CACHE_MAX_PROTO_DEPTH: usize = 4;
@@ -1239,7 +1241,10 @@ pub(crate) struct Vm<H> {
     field_caches: Vec<FieldCache>,
     /// Field load sites whose data property was found beyond the immediate prototype, by
     /// global site index; cleared with the field caches.
-    inherited_field_caches: FxHashMap<usize, InheritedFieldCache>,
+    /// Per cache site, the index of its `inherited_field_caches` entry, or
+    /// `NO_INHERITED_FIELD`.
+    inherited_field_indices: Vec<u32>,
+    inherited_field_caches: Vec<InheritedFieldCache>,
     field_add_indices: Vec<u32>,
     field_add_sets: Vec<FieldAddCacheSet>,
     megamorphic_field_indices: Vec<u32>,
@@ -1969,6 +1974,7 @@ impl<H: Host> Vm<H> {
         self.field_caches = vec![EMPTY_CACHE; program.cache_sites as usize];
         Self::prime_loop_decoding(program);
         self.inherited_field_caches.clear();
+        self.inherited_field_indices = vec![NO_INHERITED_FIELD; program.cache_sites as usize];
         self.field_add_indices = vec![NO_FIELD_ADD_SET; program.cache_sites as usize];
         self.field_add_sets.clear();
         self.megamorphic_field_indices = vec![NO_MEGAMORPHIC_FIELD; program.cache_sites as usize];
@@ -2095,6 +2101,10 @@ impl<H: Host> Vm<H> {
         self.field_add_indices.resize(
             self.field_add_indices.len() + usize::from(program.cache_sites),
             NO_FIELD_ADD_SET,
+        );
+        self.inherited_field_indices.resize(
+            self.inherited_field_indices.len() + usize::from(program.cache_sites),
+            NO_INHERITED_FIELD,
         );
         self.method_caches.resize(
             self.method_caches.len() + program.method_sites.len(),
