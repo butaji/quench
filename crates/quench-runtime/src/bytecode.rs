@@ -623,7 +623,8 @@ opcodes!(
     ToPropertyKey => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
     ToNumeric => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
     CopyDataProperties => CALL_EFFECT; layout Scalar; meaning Unused, @ Register, @ fields(Register, Register, Register),
-    MarkPrivateName => Effect::WRITES_HEAP; layout Scalar; meaning AtomIndex, @ Register, @ fields(Unused, Register, Register),
+    MarkPrivateName => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Unused, Register, Register),
+    DefinePrivateField => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Register, Register),
     SetField => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Register, CacheSiteIndex),
     DefineComputedField => WRITE_THROW; layout Scalar; meaning Unused, @ Register, @ fields(Register, Register, Register),
     SetThisField => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Unused, CacheSiteIndex),
@@ -1020,7 +1021,7 @@ pub struct Function {
     /// Lexical HomeObject captured by methods and arrows containing `super`.
     pub super_home_atom: Option<Atom>,
     pub constructible: bool,
-    pub class_field_initializer: bool,
+    pub class_initializer: bool,
     pub parameter_eval_arguments_error: bool,
     pub arguments_slot: Option<u16>,
     pub simple_parameters: bool,
@@ -1129,7 +1130,7 @@ pub(crate) enum PlainLocalContextIneligibility {
     AsyncFunction,
     GeneratorFunction,
     ClassConstructor,
-    ClassFieldInitializer,
+    ClassInitializer,
     NonSimpleParameters,
     LegacyCaptureLayout,
     DynamicNameResolution,
@@ -1152,7 +1153,7 @@ impl Function {
     /// A terminal return may skip its following Return instruction without being a
     /// proper tail call: the caller must still catch the callee's abrupt completion.
     pub(crate) fn permits_js_tail_call_at(&self, pc: u32) -> bool {
-        self.strict && !self.class_field_initializer && self.handler_at(pc).is_none()
+        self.strict && !self.class_initializer && self.handler_at(pc).is_none()
     }
 
     pub(crate) fn handler_at(&self, pc: u32) -> Option<Handler> {
@@ -1207,8 +1208,8 @@ impl Function {
         if self.is_class_constructor {
             return Some(PlainLocalContextIneligibility::ClassConstructor);
         }
-        if self.class_field_initializer {
-            return Some(PlainLocalContextIneligibility::ClassFieldInitializer);
+        if self.class_initializer {
+            return Some(PlainLocalContextIneligibility::ClassInitializer);
         }
         if !self.simple_parameters {
             return Some(PlainLocalContextIneligibility::NonSimpleParameters);
@@ -1285,7 +1286,7 @@ impl Function {
                 || self.is_generator
                 || self.is_class_constructor
                 || self.derived_constructor
-                || self.class_field_initializer
+                || self.class_initializer
                 || self.instance_initializer.is_some()
                 || self.inherited_with_scope
                 || !self.binding_sites.is_empty()
@@ -1406,7 +1407,7 @@ impl Function {
                 && !self.is_generator
                 && !self.is_class_constructor
                 && !self.derived_constructor
-                && !self.class_field_initializer
+                && !self.class_initializer
                 && !self.parameter_eval_arguments_error;
             let legacy_reflection = !self.has_restricted_legacy_caller_access();
             let live_parameters = self.reflects_live_parameters(atoms);
@@ -1666,16 +1667,18 @@ pub(crate) enum LexicalBindingKind {
     Mutable = 0,
     Immutable = 1,
     FunctionName = 2,
+    PrivateName = 3,
 }
 
 impl LexicalBindingKind {
-    pub(crate) const ALL: [Self; 3] = [Self::Mutable, Self::Immutable, Self::FunctionName];
+    pub(crate) const ALL: [Self; 4] = [Self::Mutable, Self::Immutable, Self::FunctionName, Self::PrivateName];
 
     pub(crate) fn capture_prefix(self) -> &'static str {
         match self {
             Self::Mutable => "\0quench:lexical-capture:",
             Self::Immutable => "\0quench:immutable-capture:",
             Self::FunctionName => "\0quench:function-name-capture:",
+            Self::PrivateName => "\0quench:private-name-capture:",
         }
     }
 
@@ -1685,6 +1688,12 @@ impl LexicalBindingKind {
             .find(|kind| *kind as u8 == tag)
             .ok_or_else(|| "invalid lexical binding kind".into())
     }
+}
+
+pub(crate) fn private_identity_label(identity: &str) -> Option<String> {
+    let identity = identity.strip_prefix("\0quench:private:")?;
+    let (_, label) = identity.rsplit_once(':')?;
+    (!label.is_empty()).then(|| label.to_owned())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2135,7 +2144,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 91;
+    pub const FORMAT_VERSION: u8 = 93;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

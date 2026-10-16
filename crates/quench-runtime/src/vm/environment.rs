@@ -406,7 +406,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<bool, JsError> {
         match kind {
             crate::bytecode::LexicalBindingKind::Mutable => Ok(true),
-            crate::bytecode::LexicalBindingKind::Immutable => {
+            crate::bytecode::LexicalBindingKind::Immutable | crate::bytecode::LexicalBindingKind::PrivateName => {
                 Err(self.type_error(p, "assignment to immutable binding".into()))
             }
             crate::bytecode::LexicalBindingKind::FunctionName if strict => {

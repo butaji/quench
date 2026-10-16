@@ -81,11 +81,19 @@ cache rules. Parser-owned syntax includes nested template sites. Entries use the
 program store's existing reclamation lifecycle, validate the program identity
 on lookup and disappear when their program is reclaimed or the store resets.
 Complete V8 cache ageing, contextual direct-eval identity, sourceURL/source-map
-metadata, complete prototype-cache transitions and Function-constructor body
-positions remain open. Function-constructor public names are initialized as
+metadata, complete prototype-cache transitions, raw UTF16 Function-constructor
+source and compatibility-normalized parameter positions remain open. Function-constructor public names are initialized as
 creation data: public anonymous is distinct from the empty default source/debug
 name. Stack names and native constructor display share this distinction across
 all four constructor kinds without invoking public name getters.
+
+Function-constructor compilation and public source text share a kind-owned
+canonical renderer. Public source preserves parameter/body whitespace, and
+compiled source retains the expression wrapper that Node includes in first-line
+parameter columns. Body lines begin after the canonical header newline. OXC
+validates the generated identifier and parameter boundary; only the synthetic
+outer identifier is removed before semantic binding, so anonymous is not a
+self binding. Nested names and real parameter bindings remain intact.
 
 ## Parsed eval execution
 
@@ -825,3 +833,37 @@ native reentry and collection. Node policy derives display strings from them.
 The native class fallback reads builtin slots and data tags without public
 constructor or tag getters. Original user-constructor provenance after mutation
 and exact Node stack rendering remain separate compatibility gaps.
+
+## Private data fields
+
+Private data lives with its receiver, keyed by the actual declaring home and
+logical name. A private element retains both that home and its data through
+collection. Different creations of one class expression can stamp the same
+object without sharing values. Initialization checks duplicates before changing
+the stored value; private data and method brands do not consult public
+extensibility or Proxy traps, including revoked Proxy receivers.
+
+The atomic private-data definition operation is serialized in bytecode format
+92. Round-trip execution and generic/specialized collection tests cover the
+representation. Eval-capable methods retain their synthetic class-home capture
+in dynamic-name metadata, even when private syntax appears only inside eval's
+string. Bytecode format 93 adds lexical private-name bindings that retain each
+name's actual declaring home independently of the method's super home. Static
+and instance names, escaped ordinary closures, and outer/shadowed class names
+use that binding metadata. Ordinary-function eval uses OXC's ordinary-function
+grammar inside a private-name parsing context, and the extracted body must match
+the generated source boundaries. Complete private-environment contexts and the
+ordinary NUL string-key namespace remain separate conformance work.
+
+Private membership follows initialization: prototypes acquire no brand merely
+from a declaration, static data fields remain absent until initialization, and
+static private methods/accessors precede static fields. Auto-accessor backing
+identities retain their own lexical declaring-home binding, including public
+instance auto-accessors whose backing name is not visible to eval.
+
+Static blocks retain the actual class home for `super` and execute in strict
+mode. The compiler's class-initializer context is shared by field initializers,
+static blocks and their arrows: eval forbids lexical `arguments`, preserves
+`this`, and supplies undefined `new.target`. Ordinary nested functions introduce
+their own context. The existing serialized initializer flag represents this
+shared context; static blocks keep distinct variable scopes.
