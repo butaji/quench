@@ -277,7 +277,12 @@ pub(crate) fn operation(
                 },
                 true,
             )?;
-            c.call_rooted(arg, missing, &[base])
+            let classes = c.call_rooted(arg, missing, &[base])?;
+            if op == "cryptoClass" {
+                let internal = get(c, classes, "1")?;
+                set(c, state, "internalCryptoKeyConstructor", internal)?;
+            }
+            Ok(classes)
         }
         "handle" => {
             let value = c.null_object_rooted()?;
@@ -469,4 +474,28 @@ fn public_material(
                 PKey::private_key_from_der(bytes).or_else(|_| PKey::private_key_from_pem(bytes))?;
             PKey::public_key_from_der(&private.public_key_to_der()?)
         })
+}
+
+/// Build actual generated-key handles using the same secret ownership/slot path.
+/// No new brand map, global key IDs, or duplicated key material representation.
+pub(crate) fn generated_secret(
+    c: &mut Context<'_>, bytes: &[u8],
+    crypto: Option<(RootId, RootId, RootId)>,
+) -> Result<RootId, RootedError> {
+    let binding = binding(c)?;
+    let constructor = get(c, binding, "KeyObjectHandle")?;
+    let handle = c.construct_rooted(constructor, constructor, &[])?;
+    let state = state(c)?;
+    let record = lookup(c, state, "handles", handle)?;
+    let bytes = c.uint8_array_rooted(bytes)?;
+    let kind = c.number(KEY_TYPE_SECRET);
+    set(c, record, "bytes", bytes)?;
+    set(c, record, "type", kind)?;
+    if let Some((algorithm, usages, extractable)) = crypto {
+        let constructor = get(c, state, "internalCryptoKeyConstructor")?;
+        if !c.is_callable_rooted(constructor)? {
+            return Err(RootedError::host("SDK InternalCryptoKey not initialized"));
+        }
+        c.construct_rooted(constructor, constructor, &[handle, algorithm, usages, extractable])
+    } else { Ok(handle) }
 }
