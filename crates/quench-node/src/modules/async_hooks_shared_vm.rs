@@ -141,12 +141,82 @@ pub(crate) fn create_context(shared_state: &Rc<RefCell<crate::host::SharedNodeSt
     let parent = identity.current_async_id();
     let id = identity.allocate_async_id();
     let mut shared = shared_state.borrow_mut();
-    shared
-        .async_hooks
-        .context_triggers
-        .insert(id, parent as i64);
+    let trigger = visible_async_id(&shared.async_hooks);
+    shared.async_hooks.context_triggers.insert(id, trigger as i64);
     inherit_stores(&mut shared.async_hooks, parent, id);
     id
+}
+
+fn visible_async_id(state: &super::async_hooks_state::SharedAsyncHooksState) -> u64 {
+    let current = state.identity.current_async_id();
+    state.job_resources.get(&current).copied().unwrap_or(current)
+}
+
+pub(crate) fn create_promise_context(
+    shared: &Rc<RefCell<crate::host::SharedNodeState>>,
+    parent: Option<quench_runtime::HostExecutionContext>,
+) -> quench_runtime::HostExecutionContext {
+    let mut state = shared.borrow_mut();
+    let trigger = parent.map_or_else(|| visible_async_id(&state.async_hooks), |id| id.0);
+    let id = state.async_hooks.identity.allocate_async_id();
+    state.async_hooks.context_triggers.insert(id, trigger as i64);
+    quench_runtime::HostExecutionContext(id)
+}
+
+pub(crate) fn initialize_promise(
+    context: &mut NativeContext<'_, NodeHost>,
+    promise: RootId,
+    resource: quench_runtime::HostExecutionContext,
+) -> Result<(), RootedError> {
+    let weak = context.host_weak_root(promise)?;
+    context.host_mut().shared_state().borrow_mut().async_hooks.promise_resources.insert(resource.0, weak);
+    emit_init(context, promise, "PROMISE", resource.0)
+}
+
+pub(crate) fn prune_promises(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let shared = context.host_mut().shared_state();
+    let entries = std::mem::take(&mut shared.borrow_mut().async_hooks.promise_resources);
+    for (id, weak) in entries {
+        if context.resolve_host_weak_root(weak).is_some() {
+            shared.borrow_mut().async_hooks.promise_resources.insert(id, weak);
+        } else {
+            context.release_host_weak_root(weak);
+            shared.borrow_mut().async_hooks.context_triggers.remove(&id);
+            queue_destroy(context, id)?;
+        }
+    }
+    Ok(context.undefined())
+}
+
+pub(crate) fn promise_job_boundary(
+    context: &mut NativeContext<'_, NodeHost>,
+    snapshot: quench_runtime::HostExecutionContext,
+    before: bool,
+) -> Result<(), RootedError> {
+    let shared = context.host_mut().shared_state();
+    let resource = shared.borrow().async_hooks.job_resources.get(&snapshot.0).copied();
+    let Some(resource) = resource else { return Ok(()); };
+    let id = context.number(resource as f64);
+    let kind = if before {
+        super::async_hook_registry_shared_vm::HookKind::Before
+    } else {
+        super::async_hook_registry_shared_vm::HookKind::After
+    };
+    super::async_hook_registry_shared_vm::emit(context, kind, &[id])
+}
+
+pub(crate) fn promise_settled(
+    context: &mut NativeContext<'_, NodeHost>,
+    resource: quench_runtime::HostExecutionContext,
+) -> Result<(), RootedError> {
+    let id = context.number(resource.0 as f64);
+    super::async_hook_registry_shared_vm::emit(
+        context, super::async_hook_registry_shared_vm::HookKind::PromiseResolve, &[id],
+    )
 }
 
 /// Snapshot the currently visible stores under a fresh identity for one
@@ -154,10 +224,14 @@ pub(crate) fn create_context(shared_state: &Rc<RefCell<crate::host::SharedNodeSt
 /// `enterWith` cannot mutate the context of the job that registered it.
 pub(crate) fn capture_job_context(
     shared_state: &Rc<RefCell<crate::host::SharedNodeState>>,
+    resource: Option<quench_runtime::HostExecutionContext>,
 ) -> Option<u64> {
     let identity = shared_state.borrow().async_hooks.identity.clone();
     let parent_id = identity.current_async_id();
     let context_id = identity.allocate_async_id();
+    if let Some(resource) = resource {
+        shared_state.borrow_mut().async_hooks.job_resources.insert(context_id, resource.0);
+    }
     shared_state
         .borrow_mut()
         .async_hooks
@@ -218,6 +292,7 @@ pub(crate) fn release_job_context(
     shared_state: &Rc<RefCell<crate::host::SharedNodeState>>,
     context_id: u64,
 ) -> Vec<RootId> {
+    shared_state.borrow_mut().async_hooks.job_resources.remove(&context_id);
     take_context_stores(shared_state, context_id)
 }
 
@@ -391,13 +466,8 @@ pub(crate) fn execution_id(
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let id = context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .async_hooks
-        .identity
-        .current_async_id();
+    let shared = context.host_mut().shared_state();
+    let id = visible_async_id(&shared.borrow().async_hooks);
     Ok(context.number(id as f64))
 }
 pub(crate) fn trigger_id(
@@ -405,14 +475,12 @@ pub(crate) fn trigger_id(
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let id = context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .async_hooks
-        .identity
-        .current_trigger_id();
-    Ok(context.number(id as f64))
+    let shared = context.host_mut().shared_state();
+    let state = shared.borrow();
+    let id = visible_async_id(&state.async_hooks);
+    let trigger = state.async_hooks.context_triggers.get(&id).copied()
+        .unwrap_or_else(|| state.async_hooks.identity.current_trigger_id());
+    Ok(context.number(trigger as f64))
 }
 pub(crate) fn execution_resource(
     context: &mut NativeContext<'_, NodeHost>,
@@ -430,6 +498,14 @@ pub(crate) fn execution_resource(
         )
     };
     if let Some((_, resource)) = scoped {
+        return Ok(resource);
+    }
+    let promise = {
+        let shared = context.host_mut().shared_state();
+        let state = shared.borrow();
+        state.async_hooks.promise_resources.get(&visible_async_id(&state.async_hooks)).copied()
+    };
+    if let Some(resource) = promise.and_then(|weak| context.resolve_host_weak_root(weak)) {
         return Ok(resource);
     }
     let api = api.ok_or_else(|| RootedError::host("async resource API missing"))?;
@@ -477,6 +553,7 @@ pub(crate) fn initialize_resource(
     let state = context.host_mut().shared_state();
     let identity = state.borrow().async_hooks.identity.clone();
     let parent = identity.current_async_id();
+    let trigger_parent = visible_async_id(&state.borrow().async_hooks);
     let trigger = if context
         .rooted_value(options)
         .and_then(|v| v.as_number())
@@ -487,14 +564,14 @@ pub(crate) fn initialize_resource(
         .rooted_value(options)
         .is_some_and(|v| v.is_undefined())
     {
-        context.number(parent as f64)
+        context.number(trigger_parent as f64)
     } else {
         let trigger = get(context, options, "triggerAsyncId")?;
         let trigger = if context
             .rooted_value(trigger)
             .is_some_and(|v| v.is_undefined())
         {
-            context.number(parent as f64)
+            context.number(trigger_parent as f64)
         } else {
             get(context, options, "triggerAsyncId")?
         };

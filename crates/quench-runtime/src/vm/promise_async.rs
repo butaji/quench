@@ -18,7 +18,12 @@ impl<H: Host> Vm<H> {
         if !p.functions[id as usize].is_async {
             return self.call_user(p, id, env, this, args, context);
         }
-        let promise = self.promise_object();
+        // Init observers run before the async frame exists. Keep its incoming
+        // closure environment, receiver and arguments alive across that callback.
+        let promise = self.with_call_roots(
+            [env, this].into_iter().chain(args.iter().copied()).chain(context.callee()),
+            |vm| vm.promise_object(),
+        )?;
         self.with_call_roots([promise], |vm| {
             let outcome = match vm.call_user_frame(p, id, env, this, args, context) {
                 Ok(outcome) => outcome,
@@ -74,6 +79,16 @@ impl<H: Host> Vm<H> {
         source: Value,
         yielded: bool,
     ) -> Result<(), JsError> {
+        let source = if H::OBSERVE_PROMISE_LIFECYCLE
+            && !self.realm.promise.records.contains_key(&source)
+            && !self.is_object_like(source)
+        {
+            self.with_call_roots([Some(source), Some(promise), generator].into_iter().flatten(), |vm| {
+                vm.promise_for_value(p, source)
+            })?
+        } else {
+            source
+        };
         let fulfilled = self.native_with_env(Native::PromiseAsyncResumeJob, Value::NULL);
         let rejected = self.native_with_env(Native::PromiseAsyncResumeJob, Value::NULL);
         self.realm.promise.async_resume_jobs.insert(
@@ -98,6 +113,19 @@ impl<H: Host> Vm<H> {
                 sibling: fulfilled,
             },
         );
+        // Materialize the await reaction's Promise resource for host lifecycle
+        // observation, even though the continuation consumes no result value.
+        let next = if H::OBSERVE_PROMISE_LIFECYCLE {
+            self.with_call_roots([fulfilled, rejected, source, promise], |vm| {
+                vm.promise_object_with_parent(
+                    vm.realm.promise.records.get(&source).and_then(|record| record.host_context),
+                )
+            })?
+        } else {
+            Value::UNDEFINED
+        };
+        // Init observers can settle the source reentrantly; read its state only
+        // after creating the reaction's observable resource.
         // `source` is a Promise, or a primitive standing for the fulfilled one an `await`
         // never materializes.
         let (state, result) = match self.realm.promise.records.get(&source) {
@@ -106,12 +134,11 @@ impl<H: Host> Vm<H> {
             None => return Err(JsError("await source is not a Promise".into())),
         };
         self.observe_promise_rejection(source);
-        // Await performs PerformPromiseThen without a result capability.
         let reaction = PromiseReaction {
             on_fulfilled: fulfilled,
             on_rejected: rejected,
-            next: Value::UNDEFINED,
-            execution_context: self.host.capture_job_context(),
+            next,
+            execution_context: self.host.capture_job_context(self.realm.promise.records.get(&next).and_then(|record| record.host_context)),
         };
         if state == PromiseState::Pending {
             self.realm

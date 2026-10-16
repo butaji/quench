@@ -960,6 +960,7 @@ pub(super) struct PromiseRecord {
     pub(super) reactions: Vec<PromiseReaction>,
     pub(super) rejection: PromiseRejectionState,
     pub(super) rejection_id: Option<u64>,
+    pub(super) host_context: Option<HostExecutionContext>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1344,7 +1345,14 @@ impl<H: Host> Vm<H> {
         self.set_builtin_value_named(global, "Promise", promise)
     }
 
-    pub(super) fn promise_object(&mut self) -> Value {
+    pub(super) fn promise_object(&mut self) -> Result<Value, JsError> {
+        self.promise_object_with_parent(None)
+    }
+
+    pub(super) fn promise_object_with_parent(
+        &mut self,
+        parent: Option<HostExecutionContext>,
+    ) -> Result<Value, JsError> {
         let prototype = self
             .realm
             .intrinsics
@@ -1353,6 +1361,11 @@ impl<H: Host> Vm<H> {
             .copied()
             .unwrap_or(Value::NULL);
         let promise = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+        let host_context = if H::OBSERVE_PROMISE_LIFECYCLE {
+            self.host.create_promise_context(parent)
+        } else {
+            None
+        };
         self.realm.promise.records.insert(
             promise,
             PromiseRecord {
@@ -1361,9 +1374,16 @@ impl<H: Host> Vm<H> {
                 reactions: vec![],
                 rejection: PromiseRejectionState::Unobserved,
                 rejection_id: None,
+                host_context,
             },
         );
-        promise
+        if let Some(identity) = host_context {
+            let mut context = crate::NativeContext::new(self);
+            let resource = context.scoped_value(promise);
+            H::initialize_promise(&mut context, resource, identity)
+                .map_err(|error| context.finish_error(error))?;
+        }
+        Ok(promise)
     }
 
     pub(super) fn construct_promise(
@@ -1375,7 +1395,7 @@ impl<H: Host> Vm<H> {
         if !self.is_function(executor) {
             return Err(self.type_error(p, "Promise resolver is not a function".into()));
         }
-        let promise = self.promise_object();
+        let promise = self.promise_object()?;
         let (resolve, reject) = self.promise_resolving_functions(promise);
         if let Err(error) = self.call_value(p, executor, Value::UNDEFINED, &[resolve, reject]) {
             let reason = error.thrown_value().unwrap_or(Value::UNDEFINED);
@@ -1616,7 +1636,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn dynamic_import(&mut self, p: &ResidualProgram, args: &[Value]) -> Result<Value, JsError> {
-        let promise = self.promise_object();
+        let promise = self.promise_object()?;
         let specifier = args.first().copied().unwrap_or(Value::UNDEFINED);
         let options = args.get(1).copied().unwrap_or(Value::UNDEFINED);
         let phase = args
@@ -5074,7 +5094,7 @@ impl<H: Host> Vm<H> {
                 then,
                 thenable: value,
                 promise,
-                execution_context: self.host.capture_job_context(),
+                execution_context: self.host.capture_job_context(self.realm.promise.records.get(&promise).and_then(|record| record.host_context)),
             },
         );
         self.enqueue_job(job, vec![]);
@@ -5103,10 +5123,10 @@ impl<H: Host> Vm<H> {
                 );
             }
             let constructor = vm.promise_species_constructor(p, promise)?;
-            // A %Promise% capability is unobservable (see `promise_resolve_for_constructor`):
+            // A %Promise% capability has no guest executor (see `promise_resolve_for_constructor`):
             // its promise is settled directly when the reaction runs.
             let next = if constructor == vm.intrinsic_promise_constructor() {
-                vm.promise_object()
+                vm.promise_object_with_parent(vm.realm.promise.records[&promise].host_context)?
             } else {
                 let (next, resolve, reject) = vm.new_promise_capability(p, constructor)?;
                 vm.realm
@@ -5130,7 +5150,9 @@ impl<H: Host> Vm<H> {
         if !self.realm.promise.records.contains_key(&promise) {
             return Err(self.type_error(p, "Promise.prototype method called on non-Promise".into()));
         }
-        let next = self.promise_object();
+        let next = self.with_call_roots([promise, on_fulfilled, on_rejected], |vm| {
+            vm.promise_object_with_parent(vm.realm.promise.records[&promise].host_context)
+        })?;
         let (resolve, reject) = self.promise_resolving_functions(next);
         self.realm
             .promise
@@ -5161,7 +5183,7 @@ impl<H: Host> Vm<H> {
                 Value::UNDEFINED
             },
             next,
-            execution_context: self.host.capture_job_context(),
+            execution_context: self.host.capture_job_context(self.realm.promise.records.get(&next).and_then(|record| record.host_context)),
         };
         // Species selection and capability construction may settle the source.
         // Read its authoritative state only when installing this reaction.
@@ -5223,7 +5245,7 @@ impl<H: Host> Vm<H> {
                 // NewPromiseCapability(%Promise%) observes nothing: the executor is internal
                 // and %Promise%.prototype is fixed, so resolve a fresh promise directly
                 // instead of through resolving functions no code can reach.
-                let promise = self.promise_object();
+                let promise = self.promise_object()?;
                 let value = self.heap.root_value(value).unwrap();
                 self.with_call_roots([promise], |vm| vm.promise_resolve_value(p, promise, value))?;
                 return Ok(promise);
