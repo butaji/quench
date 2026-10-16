@@ -9666,3 +9666,23 @@ fn tcp_option_listen_backlog_matches_node_truthiness_and_int32_when_tracing_is_a
 fn utility_sdk_projection_preserves_mime_diff_timing_promise_state_and_uv_protocol_metadata() {
     compare_node_source_with_args(include_str!("../node-tests/test-util-sdk-projection.js"), &["--expose-internals", "--no-warnings"]);
 }
+
+#[test]
+fn net_listen_lifecycle_retains_dns_generations_callbacks_and_public_method_shapes() {
+    compare_node_source_with_args(include_str!("../node-tests/test-net-listen-lifecycle.js"), &["--expose-gc"]);
+}
+
+#[test]
+fn net_dns_iterator_errors_close_once_preserve_original_abrupt_values_and_survive_gc() {
+    compare_node_source_with_args(include_str!("../node-tests/test-net-dns-iterator-errors.js"), &["--expose-gc"]);
+}
+
+#[test]
+fn process_capture_callback_reset_prioritizes_null_and_original_type_validation() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-callback-reset.js"), &[]);
+}
+
+#[test]
+fn http_listening_derives_from_the_handle_and_close_cancels_pending_notification() {
+    compare_node_source_with_args(include_str!("../node-tests/test-http-listening-handle.js"), &[]);
+}
