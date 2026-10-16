@@ -836,3 +836,8 @@ The utility caller-location binding projects genuine compiler-owned activations,
 skipping its immediate JavaScript caller. Error hooks, public function-name
 getters and stack limits do not participate. Missing callers and unnamed eval
 Scripts produce undefined rather than fabricated bootstrap frames.
+
+The original promises glob policy materializes as a lazy data property, keeping
+its real function descriptor and identity. Merely loading native fs no longer
+imports the promises implementation's readline/history/OS dependencies. This
+preserves Node's binding-capture order and avoids loading unrelated modules.
