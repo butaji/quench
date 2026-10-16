@@ -15,7 +15,7 @@ pub(crate) struct State {
     #[cfg(quench_openssl_provider)]
     hashes: Vec<ConfiguredHash>,
     #[cfg(quench_openssl_provider)]
-    digests: super::crypto_digest_cache::Registry,
+    pub(crate) digests: super::crypto_digest_cache::Registry,
 }
 struct Resource {
     identity: HostWeakRoot,
