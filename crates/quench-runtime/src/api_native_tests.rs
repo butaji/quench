@@ -1722,7 +1722,7 @@ impl Host for CompiledScriptHost {
             context.define_data_property_rooted(global, key, function, true, true, true)?;
         }
         let script = context.compile_script_in_realm_with_origin(first,
-            "({identity:scriptIdentity(), array:[], error:new Error('owned'), template:((x)=>x)`site`})",
+            "({identity:scriptIdentity(), array:[], error:new Error('owned'), template:((x)=>x)`site`, Class:class { #value=1; read(){return this.#value} }})",
             "owned-host-script.js", 0, 0)?;
         context.collect()?;
         context.collect()?;
@@ -1750,6 +1750,15 @@ impl Host for CompiledScriptHost {
             let c = context.prototype_rooted(c)?;
             assert!(!context.strict_equal_rooted(a, c)?);
         }
+        let first_class = get(context, left, "Class")?;
+        let second_class = get(context, again, "Class")?;
+        assert!(!context.strict_equal_rooted(first_class, second_class)?);
+        let first_instance = context.construct_rooted(first_class, first_class, &[])?;
+        let second_instance = context.construct_rooted(second_class, second_class, &[])?;
+        let read = get(context, first_instance, "read")?;
+        let one = context.call_rooted(read, first_instance, &[])?;
+        assert_eq!(context.rooted_value(one), Some(Value::number(1.0)));
+        assert!(context.call_rooted(read, second_instance, &[]).is_err());
         let after = context.evaluate_compiled_script_in_realm_rooted(first, &script)?;
         let old = get(context, left, "identity")?;
         let fresh = get(context, after, "identity")?;
