@@ -1,0 +1,50 @@
+error: extern blocks must be unsafe
+  --> /workspace/scratch/npm-decoder-production-draft/text_decoder_icu.rs:12:1
+   |
+12 |   extern "C" {
+   |   ^
+   |   |
+   |  _help: needs `unsafe` before the extern keyword: `unsafe`
+   | |
+13 | |     #[link_name = concat!("ucnv_open_", env!("QUENCH_ICU_MAJOR"))]
+14 | |     fn open(name: *const c_char, status: *mut i32) -> *mut c_void;
+15 | |     #[link_name = concat!("ucnv_close_", env!("QUENCH_ICU_MAJOR"))]
+...  |
+55 | |     );
+56 | | }
+   | |_^
+
+error: extern blocks must be unsafe
+   --> /workspace/scratch/npm-decoder-production-draft/text_decoder_icu.rs:192:1
+    |
+192 |   extern "C" {
+    |   ^
+    |   |
+    |  _help: needs `unsafe` before the extern keyword: `unsafe`
+    | |
+193 | |     #[link_name = concat!("u_getIntPropertyValue_", env!("QUENCH_ICU_MAJOR"))]
+194 | |     fn property(codepoint: i32, property: i32) -> i32;
+195 | |     #[link_name = concat!("u_hasBinaryProperty_", env!("QUENCH_ICU_MAJOR"))]
+...   |
+198 | |     fn category(codepoint: i32) -> i8;
+199 | | }
+    | |_^
+
+error: extern blocks must be unsafe
+   --> /workspace/scratch/npm-decoder-production-draft/text_decoder_icu.rs:240:1
+    |
+240 |   extern "C" {
+    |   ^
+    |   |
+    |  _help: needs `unsafe` before the extern keyword: `unsafe`
+    | |
+241 | |     #[link_name = concat!("ucnv_getMaxCharSize_", env!("QUENCH_ICU_MAJOR"))]
+242 | |     fn max_char_size(converter: *const c_void) -> i8;
+243 | |     #[link_name = concat!("ucnv_convertEx_", env!("QUENCH_ICU_MAJOR"))]
+...   |
+269 | |     fn error_name(status: i32) -> *const c_char;
+270 | | }
+    | |_^
+
+error: aborting due to 3 previous errors
+
