@@ -323,7 +323,7 @@ pub(crate) struct Transport {
     listeners: HashMap<u64, Listener>,
     sockets: HashMap<u64, SharedSocket>,
     connecting: HashMap<u64, ConnectingSocket>,
-    closing_sockets: HashMap<u64, ClosingSocket>,
+    closing_sockets: VecDeque<(u64, ClosingSocket)>,
 }
 
 pub(crate) enum RawStream {
@@ -605,7 +605,7 @@ impl Transport {
             listeners: HashMap::new(),
             sockets: HashMap::new(),
             connecting: HashMap::new(),
-            closing_sockets: HashMap::new(),
+            closing_sockets: VecDeque::new(),
         }
     }
 
@@ -906,13 +906,7 @@ pub(crate) fn close_socket(transport: &mut Transport, id: u64) {
                 .map(|socket| socket.referenced)
         });
     if let Some(referenced) = referenced {
-        transport.closing_sockets.insert(
-            id,
-            ClosingSocket {
-                referenced,
-                phase: SocketClosePhase::Requested,
-            },
-        );
+        request_socket_close(transport, id, referenced);
     }
 }
 
@@ -930,7 +924,7 @@ pub(crate) fn poll(transport: &mut Transport) -> Vec<TransportEvent> {
     let mut events = Vec::new();
     transport
         .closing_sockets
-        .retain(|id, socket| match socket.phase {
+        .retain_mut(|(id, socket)| match socket.phase {
             SocketClosePhase::Closing => {
                 events.push(TransportEvent::CloseCompleted { socket: *id });
                 false
@@ -1018,13 +1012,7 @@ fn poll_connects(transport: &mut Transport) -> Vec<TransportEvent> {
                 events.push(TransportEvent::Connected { socket: id });
             }
             Err(ConnectFailure::Tcp(failure)) => {
-                transport.closing_sockets.insert(
-                    id,
-                    ClosingSocket {
-                        referenced,
-                        phase: SocketClosePhase::Requested,
-                    },
-                );
+                request_socket_close(transport, id, referenced);
                 events.push(TransportEvent::ConnectError {
                     socket: id,
                     failure,
@@ -1032,13 +1020,7 @@ fn poll_connects(transport: &mut Transport) -> Vec<TransportEvent> {
             }
             #[cfg(unix)]
             Err(ConnectFailure::Local { error, path }) => {
-                transport.closing_sockets.insert(
-                    id,
-                    ClosingSocket {
-                        referenced,
-                        phase: SocketClosePhase::Requested,
-                    },
-                );
+                request_socket_close(transport, id, referenced);
                 events.push(TransportEvent::LocalConnectError {
                     socket: id,
                     error,
@@ -2181,7 +2163,7 @@ pub(crate) fn socket_reference(transport: &mut Transport, id: u64, referenced: b
         socket.referenced = referenced;
     } else if let Some(socket) = transport.sockets.get_mut(&id) {
         socket.referenced = referenced;
-    } else if let Some(socket) = transport.closing_sockets.get_mut(&id) {
+    } else if let Some(socket) = transport.closing_sockets.iter_mut().find_map(|(existing, socket)| (*existing == id).then_some(socket)) {
         socket.referenced = referenced;
     }
 }
@@ -2194,8 +2176,8 @@ pub(crate) fn socket_has_ref(transport: &Transport, id: u64) -> Option<bool> {
         .or_else(|| {
             transport
                 .closing_sockets
-                .get(&id)
-                .map(|socket| socket.referenced)
+                .iter()
+                .find_map(|(existing, socket)| (*existing == id).then_some(socket.referenced))
         })
 }
 
@@ -2249,13 +2231,7 @@ pub(crate) fn encrypt(
             Ok(())
         }
         Err(error) => {
-            transport.closing_sockets.insert(
-                id,
-                ClosingSocket {
-                    referenced,
-                    phase: SocketClosePhase::Requested,
-                },
-            );
+            request_socket_close(transport, id, referenced);
             Err(EncryptError::OpenSsl(error))
         }
     }
@@ -2624,13 +2600,7 @@ pub(crate) fn native_tcp_close(transport: &mut Transport, id: u64) {
                 .map(|listener| listener.referenced)
         });
     if let Some(referenced) = referenced {
-        transport.closing_sockets.insert(
-            id,
-            ClosingSocket {
-                referenced,
-                phase: SocketClosePhase::Requested,
-            },
-        );
+        request_socket_close(transport, id, referenced);
     } else {
         close_socket(transport, id);
     }
@@ -2791,4 +2761,13 @@ pub(crate) fn native_shutdown_request(
     socket.shutdown_request = Some(request);
     socket.end_after_write = true;
     Ok(())
+}
+
+/// libuv prepends genuine close requests to its closing-handle list. Keep
+/// lifecycle metadata in that same authoritative order until completion.
+fn request_socket_close(transport: &mut Transport, id: u64, referenced: bool) {
+    transport.closing_sockets.push_front((id, ClosingSocket {
+        referenced,
+        phase: SocketClosePhase::Requested,
+    }));
 }
