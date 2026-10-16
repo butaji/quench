@@ -365,6 +365,7 @@ impl<H: Host> Vm<H> {
         key: PropertyKey,
         attributes: PropertyAttributes,
     ) {
+        self.note_array_index_accessor(key, attributes);
         if let PropertyKey::String(atom) = key
             && self.atom_class(atom).contains(AtomClass::ARRAY_INDEX)
             && let Some(data) = self.object_data_mut(object)
@@ -372,6 +373,41 @@ impl<H: Host> Vm<H> {
             data.mark_indexed_descriptors();
         }
         self.descriptors.insert((object, key), attributes);
+    }
+
+    fn note_array_index_accessor(&mut self, key: PropertyKey, attributes: PropertyAttributes) {
+        if attributes.accessor
+            && let PropertyKey::String(atom) = key
+            && self.atom_class(atom).contains(AtomClass::ARRAY_INDEX)
+        {
+            self.array_index_accessor_defined = true;
+        }
+    }
+
+    /// The accessor an index store or append at `index` would meet on `object` or its
+    /// prototypes, when it holds no own element there. An index no atom names keys no named
+    /// property.
+    pub(super) fn inherited_index_accessor(
+        &self,
+        object: Value,
+        index: usize,
+    ) -> Option<PropertyAttributes> {
+        if !self.array_index_accessor_defined || self.has_own_array_index(object, index) {
+            return None;
+        }
+        self.property_accessor(object, self.lookup_array_index_atom(index)?)
+    }
+
+    /// Whether storing each index of `indices` on `array` is CreateDataProperty: no proxy or
+    /// typed array on the prototype chain answers the [[Set]], and no inherited accessor does.
+    pub(super) fn array_indices_store_plainly(
+        &self,
+        array: Value,
+        mut indices: std::ops::Range<usize>,
+    ) -> bool {
+        indices.is_empty()
+            || (!self.prototype_chain_has_indexed_set_exotic(array)
+                && !indices.any(|index| self.inherited_index_accessor(array, index).is_some()))
     }
 
     pub(super) fn set_property_attributes(
@@ -384,6 +420,7 @@ impl<H: Host> Vm<H> {
             if self.shape_attribute(shape, slot) == Some(attributes) {
                 return;
             }
+            self.note_array_index_accessor(key, attributes);
             let attributes = ShapeAttributes::record(attributes, &mut self.shape_accessors);
             let next_id = self.append_cached_shape_transition(
                 shape,

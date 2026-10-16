@@ -9,6 +9,35 @@ pub(super) enum DiagnosticProperty {
 }
 
 impl<H: Host> Vm<H> {
+    /// `constructor[@@species]`. Every intrinsic `get [Symbol.species]` returns its receiver
+    /// and observes nothing, so an own accessor that still holds one answers without a call.
+    pub(super) fn species_of(
+        &mut self,
+        p: &ResidualProgram,
+        constructor: Value,
+    ) -> Result<Value, JsError> {
+        let Some(species) = self.well_known_symbols.get("species").copied() else {
+            return Ok(Value::UNDEFINED);
+        };
+        let intrinsic_getter = self
+            .property_attributes(constructor, PropertyKey::symbol(species))
+            .and_then(|attributes| attributes.getter.filter(|_| attributes.accessor))
+            .is_some_and(|getter| {
+                matches!(
+                    self.heap.get(getter),
+                    Some(Cell::Function {
+                        kind: FunctionKind::Native(native),
+                        ..
+                    }) if native.is_intrinsic_species_getter()
+                )
+            });
+        if intrinsic_getter {
+            Ok(constructor)
+        } else {
+            self.get_index(p, constructor, species)
+        }
+    }
+
     pub(super) fn diagnostic_own_property(&self, object: Value, key: PropertyKey) -> DiagnosticProperty {
         if self.default_function_name_info(object, key)
             || self.proxy_parts(object).is_some()
