@@ -1083,6 +1083,15 @@ Native warning construction retains its explicit internal rejection metadata;
 public emitWarning metadata has Node's name, length and ordinary constructor
 shape and accesses the canonical process independently of global replacement.
 
+Queued next ticks, Timeouts and Immediates retain their actual async identity
+and resource with the pending invocation. Dispatch enters that resource's scope,
+emits before/after hooks, and restores the previous scope. Uncaught handlers run
+before after/pop so they observe the failing resource. Completion and cancellation
+release inherited local stores and queue destruction notifications. Refreshing a
+completed timer creates its new identity before retaining a new invocation.
+TickObject callback and argument fields remain canonical mutable slots; the
+scheduler retains an invocation view rather than a second callback policy.
+
 ### Public warning construction
 
 `process.emitWarning` is the configured Node SDK function, including argument
@@ -1110,12 +1119,3 @@ These facts do not provide heap accounting: the existing full `memoryUsage()`
 heap fields and diagnostic report generation still need a Runtime memory owner.
 The native CPU/resource/RSS implementation currently applies on Linux; other
 platform paths retain their existing behavior.
-
-Queued next ticks, Timeouts and Immediates retain their actual async identity
-and resource with the pending invocation. Dispatch enters that resource's scope,
-emits before/after hooks, and restores the previous scope. Uncaught handlers run
-before after/pop so they observe the failing resource. Completion and cancellation
-release inherited local stores and queue destruction notifications. Refreshing a
-completed timer creates its new identity before retaining a new invocation.
-TickObject callback and argument fields remain canonical mutable slots; the
-scheduler retains an invocation view rather than a second callback policy.
