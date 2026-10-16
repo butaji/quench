@@ -1,0 +1,4 @@
+   Compiling quench-node v0.1.0 (/workspace/quench/crates/quench-node)
+   Compiling quench-node-test v0.1.0 (/workspace/quench/crates/quench-node-test)
+    Finished `iteration` profile [optimized] target(s) in 1m 10s
+  Executable tests/child_entry.rs (work/host-build/iteration/deps/child_entry-975462884ca0676a)

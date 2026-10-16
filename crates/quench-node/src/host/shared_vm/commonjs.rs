@@ -231,6 +231,7 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
         }
         context.seal_startup_intrinsics();
     }
+    context.scoped(crate::modules::process_shared_vm::initialize_warning_policy)?;
     context.scoped(crate::modules::report_configuration_shared_vm::initialize_signal)?;
     context.scoped(preload_modules)?;
     #[cfg(feature = "profile-memory")]

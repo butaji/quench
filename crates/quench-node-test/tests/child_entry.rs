@@ -9799,3 +9799,8 @@ fn process_events_share_emitter_storage_inspection_borrowed_methods_and_once_wra
 fn module_cache_protocol_types_come_from_configured_sdk_and_preserve_native_descriptors() {
     compare_node_source_with_args(include_str!("../node-tests/test-module-cache-protocol.js"), &["--expose-internals", "--no-warnings"]);
 }
+
+#[test]
+fn process_warning_policy_preserves_default_listener_removal_suppression_and_startup_descriptors() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-warning-policy.js"), &[]);
+}

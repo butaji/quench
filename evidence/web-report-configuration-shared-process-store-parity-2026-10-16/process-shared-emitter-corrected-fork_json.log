@@ -1,0 +1,6 @@
+
+running 1 test
+test fork_json_ipc_matches_node_frames_callbacks_and_disconnect_lifecycle ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 404 filtered out; finished in 0.54s
+
