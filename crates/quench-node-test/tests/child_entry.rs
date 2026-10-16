@@ -9830,3 +9830,8 @@ fn process_native_cpu_resource_and_rss_facts_use_sdk_validation_and_live_os_data
 fn process_default_warning_listener_preserves_sdk_source_without_internal_exposure() {
     compare_node_source_with_args(include_str!("../node-tests/test-process-warning-listener-source.js"), &[]);
 }
+
+#[test]
+fn console_global_and_constructor_use_sdk_identity_namespace_and_output_policy() {
+    compare_node_source_with_args(include_str!("../node-tests/test-console-sdk-authority.js"), &["--expose-internals", "--no-warnings"]);
+}

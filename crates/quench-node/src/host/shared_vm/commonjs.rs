@@ -179,11 +179,7 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     crate::host::resident_pages::release_read_only_pages();
     context.scoped(install_shared_web_globals)?;
     context.scoped(crate::modules::base64_shared_vm::install)?;
-    let console = cached_builtin(context, BuiltinModule::Console)?;
     let global = context.global_root()?;
-    set(context, global, "console", console)?;
-    #[cfg(feature = "profile-memory")]
-    context.profile_memory_checkpoint("node_console_global");
     // The process.getBuiltinModule bootstrap needs access to the host's
     // builtin loader in both Script and Module goals. Keep it under a private
     // global key so ESM does not acquire a user-visible global `require`.
@@ -213,6 +209,13 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     // Builtins built after this point see the intrinsics as they are now, whatever a
     // preload or the entry script does to them (`cached_builtin`).
     context.seal_startup_intrinsics();
+    // The SDK console reads its primordial snapshot, so initialize it after the
+    // well-known symbols and original globals above, before any guest preloads.
+    let console = cached_builtin(context, BuiltinModule::Console)?;
+    set(context, global, "console", console)?;
+    context.seal_startup_intrinsics();
+    #[cfg(feature = "profile-memory")]
+    context.profile_memory_checkpoint("node_console_global");
     if context.host_mut().vfs_enabled() {
         // Feature bootstrap loads real builtins that capture these originals.
         // Seal its added globals only after the guarded initialization leaves.
@@ -2577,6 +2580,7 @@ pub(crate) fn node_internal_binding_source() -> &'static str {
     case "modules":
     case "report": return __nativeInternalBinding(name);
     case "process_methods": return __nativeInternalBinding(name);
+    case "trace_events": return __nativeInternalBinding(name);
     case "util": return Object.assign({}, {
       privateSymbols: __nativeInternalBinding("util").privateSymbols,
       constants: __nativeInternalBinding("util").constants,

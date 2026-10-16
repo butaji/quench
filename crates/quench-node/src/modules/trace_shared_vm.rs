@@ -530,7 +530,7 @@ pub(crate) fn record(
     context.host_mut().shared_state().borrow_mut().trace.record(
         &category,
         &name,
-        Phase::Raw(phase),
+        Phase::from_code(phase),
         id,
         data,
     );

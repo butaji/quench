@@ -3407,11 +3407,7 @@ pub(crate) fn initialize_emit_warning(context: &mut NativeContext<'_, NodeHost>,
     Ok(context.undefined())
 }
 
-/// Initialize the SDK console and register its actual public warning callback.
+/// The Console module owns initialization; the SDK owns this public callback.
 fn warning_listener(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    let console = crate::host::shared_vm::commonjs::node_library_module(context, "internal/process/pre_execution.js", "internal/console/global.js")?;
-    let initialize = crate::host::shared_vm::commonjs::node_library_export(context, "internal/process/pre_execution.js", "internal/console/constructor.js", "initializeGlobalConsole")?;
-    let undefined = context.undefined();
-    context.call_rooted(initialize, undefined, &[console])?;
     warning_export(context, "onWarning")
 }
