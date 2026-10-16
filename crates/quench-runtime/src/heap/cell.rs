@@ -603,6 +603,7 @@ pub(crate) enum Native {
     WasmExportedFunction,
     HostFunction,
     CallSiteConstructor,
+    CallSiteGetFunction,
 }
 
 /// A global's cold facts, boxed with its object part so the cell stays compact.
@@ -1235,6 +1236,7 @@ pub(crate) struct CallSiteRecord {
     pub(crate) location: CallSiteLocation,
     pub(crate) name: CallSiteName,
     pub(crate) this_value: Value,
+    pub(crate) hide_identity: bool,
 }
 
 impl CallSiteRecord {

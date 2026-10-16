@@ -9321,3 +9321,22 @@ fn generator_loop_return_preserves_cleanup_order_rejections_and_finally() {
 fn async_delegated_return_unwinds_original_generator_finally() {
     compare_node_stream_source(include_str!("../node-tests/test-async-delegate-return.js"));
 }
+
+#[test]
+fn callsite_function_identity_obeys_strict_frame_visibility_and_ignores_name_getters() {
+    compare_node_source_with_args(r#"
+Error.prepareStackTrace=(_,frames)=>frames;
+function Loose(){return new Error}
+function Strict(){'use strict';return Loose()}
+function StrictLeaf(){'use strict';return new Error}
+function Outer(){return StrictLeaf()}
+const out=[];
+for(const [invoke,expected] of [[Loose,[Loose]],[Strict,[Loose,Strict]],[Outer,[StrictLeaf,Outer]]]){
+ const sites=invoke().stack;out.push(sites.slice(0,expected.length).map((site,index)=>[site.getFunction()===expected[index],site.getFunction()===undefined,site.getThis()===undefined]));
+}
+const site=Loose().stack[0];Object.defineProperty(Loose,'name',{get(){throw Error('name getter')}});out.push(site.getFunction()===Loose);
+const method=Object.getPrototypeOf(site).getFunction;out.push(method.name,method.length,Function.prototype.toString.call(method),Object.getOwnPropertyDescriptor(Object.getPrototypeOf(site),'getFunction'));
+for(const receiver of [{},undefined])try{method.call(receiver)}catch(e){out.push([e.name,e.message])}
+console.log(JSON.stringify(out));
+"#, &[]);
+}
