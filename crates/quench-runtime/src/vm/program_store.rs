@@ -53,6 +53,9 @@ enum ProgramScope {
     /// An eval program evaluated in the global environment (indirect eval or a
     /// host script), whose names resolve as script code's do.
     Global,
+    /// A sloppy direct eval of global code: it declares global variables but
+    /// still sees its caller's lexical scope.
+    GlobalVariables,
     /// A sloppy direct eval in a function's or module's scope: its variables
     /// belong to its caller's variable environment.
     Caller,
@@ -225,6 +228,19 @@ impl ProgramStore {
         self.set_scope(id, ProgramScope::Global);
     }
 
+    pub(crate) fn mark_global_variables(&mut self, id: ProgramId) {
+        self.set_scope(id, ProgramScope::GlobalVariables);
+    }
+
+    /// Whether the program's root declares the realm's global variables.
+    pub(crate) fn declares_global_variables(&self, id: ProgramId) -> bool {
+        self.entry(id).is_some_and(|entry| match entry.scope {
+            ProgramScope::Own => entry.residual.kind == crate::bytecode::ProgramKind::Script,
+            ProgramScope::Global | ProgramScope::GlobalVariables => true,
+            ProgramScope::Caller => false,
+        })
+    }
+
     pub(crate) fn mark_caller_scope(&mut self, id: ProgramId) {
         self.set_scope(id, ProgramScope::Caller);
     }
@@ -246,7 +262,7 @@ impl ProgramStore {
         self.entry(id).is_some_and(|entry| match entry.scope {
             ProgramScope::Own => entry.residual.kind == crate::bytecode::ProgramKind::Script,
             ProgramScope::Global => true,
-            ProgramScope::Caller => false,
+            ProgramScope::GlobalVariables | ProgramScope::Caller => false,
         })
     }
 
