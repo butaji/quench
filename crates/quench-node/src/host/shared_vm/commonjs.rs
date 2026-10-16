@@ -1464,9 +1464,32 @@ pub(crate) fn node_library_export(
 pub(crate) fn node_library_module(context: &mut Context<'_>, owner: &str, relative: &str) -> Result<RootId, RootedError> {
     let root = context.host_mut().node_library_root.clone();
     let parent = module_record(context, &root.join("lib").join(owner), None, false)?;
-    context.with_startup_intrinsics(|context| {
+    LIBRARY_LOADS.with(|loads| loads.depth.set(loads.depth.get() + 1));
+    let module = context.with_startup_intrinsics(|context| {
         load(context, &root.join("lib").join(relative), Some(parent), EntryGoal::CommonJs)
-    })
+    });
+    // A library loaded on first use compiles after the entry's compilation released the
+    // pages compiling touches: release them again once the outermost load has compiled.
+    let compiled = LIBRARY_LOADS.with(|loads| {
+        loads.depth.set(loads.depth.get() - 1);
+        loads.depth.get() == 0 && loads.compiled.replace(false)
+    });
+    if compiled {
+        crate::host::resident_pages::release_read_only_pages();
+    }
+    module
+}
+
+/// Host library loads in progress, and whether one compiled a module since the last release.
+struct LibraryLoads {
+    depth: std::cell::Cell<u32>,
+    compiled: std::cell::Cell<bool>,
+}
+
+thread_local! {
+    static LIBRARY_LOADS: LibraryLoads = const {
+        LibraryLoads { depth: std::cell::Cell::new(0), compiled: std::cell::Cell::new(false) }
+    };
 }
 
 pub(crate) fn module_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
@@ -2285,6 +2308,9 @@ fn load_with_resolution(
         transition_child(context, parent, module, ChildTransition::Attach)?;
     }
     cache.insert(context, &key, module)?;
+    if library_relative.is_some() {
+        LIBRARY_LOADS.with(|loads| loads.compiled.set(true));
+    }
     if let Some((directory, specifier)) = resolution {
         let name = context.string_rooted(&key);
         set(context, directory, specifier, name)?;
