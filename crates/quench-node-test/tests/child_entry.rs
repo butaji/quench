@@ -9247,3 +9247,8 @@ fn async_delegated_return_unwinds_original_generator_finally() {
 fn abort_listener_errors_are_reported_on_ticks_without_replacing_source_errors() {
     compare_node_source_with_args(include_str!("../node-tests/test-abort-listener-errors.js"), &["--no-warnings", "--experimental-stream-iter"]);
 }
+
+#[test]
+fn native_zlib_streaming_counts_bytes_pending_close_and_iterable_pipelines_match_node() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-zlib-streaming.js"), &["--no-warnings", "--expose-internals", "--experimental-stream-iter"]);
+}

@@ -15,19 +15,21 @@ const DEFAULT_BROTLI_QUALITY: u32 = 11;
 const DEFAULT_BROTLI_WINDOW_BITS: u32 = 22;
 const DEFAULT_ZSTD_LEVEL: i32 = 3;
 
+// Node's native node_zlib_mode ABI; public wrappers derive from this codec owner.
 #[derive(Clone, Copy)]
+#[repr(i32)]
 pub(super) enum Codec {
-    Gzip,
-    Gunzip,
-    Deflate,
-    Inflate,
-    DeflateRaw,
-    InflateRaw,
-    Unzip,
-    BrotliCompress,
-    BrotliDecompress,
-    ZstdCompress,
-    ZstdDecompress,
+    Gzip = 3,
+    Gunzip = 4,
+    Deflate = 1,
+    Inflate = 2,
+    DeflateRaw = 5,
+    InflateRaw = 6,
+    Unzip = 7,
+    BrotliCompress = 9,
+    BrotliDecompress = 8,
+    ZstdCompress = 10,
+    ZstdDecompress = 11,
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Family {
