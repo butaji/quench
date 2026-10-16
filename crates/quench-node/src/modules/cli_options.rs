@@ -4,6 +4,10 @@ const BOOLEAN_OPTIONS: &[(&str, bool)] = &[
     ("--experimental-stream-iter", false),
     ("--expose-internals", false),
     ("--warnings", true),
+    ("--deprecation", true),
+    ("--trace-warnings", false),
+    ("--trace-deprecation", false),
+    ("--throw-deprecation", false),
     ("--report-compact", false),
     ("--report-exclude-env", false),
     ("--report-exclude-network", false),
@@ -15,18 +19,23 @@ const STRING_OPTIONS: &[(&str, &str)] = &[
     ("--report-dir", ""),
     ("--report-filename", ""),
     ("--report-signal", "SIGUSR2"),
+    ("--redirect-warnings", ""),
+    ("--diagnostic-dir", ""),
 ];
+const LIST_OPTIONS: &[&str] = &["--disable-warning"];
 fn canonical_option(option: &str) -> &str { if option == "--report-directory" { "--report-dir" } else { option } }
-pub(crate) fn takes_string_value(option: &str) -> bool { STRING_OPTIONS.iter().any(|(name, _)| *name == canonical_option(option)) }
+pub(crate) fn takes_string_value(option: &str) -> bool { STRING_OPTIONS.iter().any(|(name, _)| *name == canonical_option(option)) || LIST_OPTIONS.contains(&canonical_option(option)) }
 #[derive(Clone, Debug)]
 pub(crate) struct CliOptions {
     booleans: std::collections::BTreeMap<&'static str, bool>,
     strings: std::collections::BTreeMap<&'static str, String>,
+    lists: std::collections::BTreeMap<&'static str, Vec<String>>,
 }
 impl Default for CliOptions {
     fn default() -> Self { Self {
         booleans: BOOLEAN_OPTIONS.iter().copied().collect(),
         strings: STRING_OPTIONS.iter().map(|(name, value)| (*name, (*value).to_owned())).collect(),
+        lists: LIST_OPTIONS.iter().map(|name| (*name, Vec::new())).collect(),
     } }
 }
 impl CliOptions {
@@ -39,10 +48,17 @@ impl CliOptions {
     pub(crate) fn values(&self) -> impl Iterator<Item=(&'static str,bool)> + '_ { self.booleans.iter().map(|(name,value)|(*name,*value)) }
     pub(crate) fn string_value(&self, name: &str) -> Option<&str> { self.strings.get(canonical_option(name)).map(String::as_str) }
     pub(crate) fn strings(&self) -> impl Iterator<Item=(&'static str,&str)> + '_ { self.strings.iter().map(|(name,value)|(*name,value.as_str())) }
+    pub(crate) fn lists(&self) -> impl Iterator<Item=(&'static str,&[String])> + '_ { self.lists.iter().map(|(name,value)|(*name,value.as_slice())) }
     fn apply(&mut self, arguments: &[String]) -> Result<(), String> {
         let mut arguments=arguments.iter().peekable();
         while let Some(argument)=arguments.next() {
             let flag=canonical_option(argument.split_once('=').map_or(argument.as_str(),|(flag,_)|flag));
+            if let Some(values) = self.lists.get_mut(flag) {
+                let value = argument.split_once('=').map(|(_, value)| value.to_owned())
+                    .or_else(|| arguments.next().cloned()).ok_or_else(|| format!("{flag} requires an argument"))?;
+                values.push(value);
+                continue;
+            }
             if let Some(value) = self.strings.get_mut(flag) {
                 *value = argument.split_once('=').map(|(_, value)| value.to_owned())
                     .or_else(|| arguments.next().cloned()).ok_or_else(|| format!("{flag} requires an argument"))?;
