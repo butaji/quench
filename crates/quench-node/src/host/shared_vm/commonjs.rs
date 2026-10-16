@@ -179,11 +179,7 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     crate::host::resident_pages::release_read_only_pages();
     context.scoped(install_shared_web_globals)?;
     context.scoped(crate::modules::base64_shared_vm::install)?;
-    let console = cached_builtin(context, BuiltinModule::Console)?;
     let global = context.global_root()?;
-    set(context, global, "console", console)?;
-    #[cfg(feature = "profile-memory")]
-    context.profile_memory_checkpoint("node_console_global");
     // The process.getBuiltinModule bootstrap needs access to the host's
     // builtin loader in both Script and Module goals. Keep it under a private
     // global key so ESM does not acquire a user-visible global `require`.
@@ -213,6 +209,13 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     // Builtins built after this point see the intrinsics as they are now, whatever a
     // preload or the entry script does to them (`cached_builtin`).
     context.seal_startup_intrinsics();
+    // The SDK console reads its primordial snapshot, so initialize it after the
+    // well-known symbols and original globals above, before any guest preloads.
+    let console = cached_builtin(context, BuiltinModule::Console)?;
+    set(context, global, "console", console)?;
+    context.seal_startup_intrinsics();
+    #[cfg(feature = "profile-memory")]
+    context.profile_memory_checkpoint("node_console_global");
     if context.host_mut().vfs_enabled() {
         // Feature bootstrap loads real builtins that capture these originals.
         // Seal its added globals only after the guarded initialization leaves.
@@ -761,39 +764,11 @@ pub(crate) fn require_for_module(
             );
         }
         Some(BuiltinModule::InternalTestBinding) => {
-            let shared = context.host_mut().shared_state();
-            let process = shared
-                .borrow()
-                .process_module
-                .ok_or_else(|| RootedError::host("Process warning owner is not initialized"))?;
-            let warning = get(context, process, "emitWarning")?;
-            let message =
-                context.string_rooted("These APIs are for internal testing only. Do not use them.");
-            let kind = context.string_rooted("internal/test/binding");
-            context.call_rooted(warning, process, &[message, kind])?;
-            let dgram = cached_builtin(context, BuiltinModule::Dgram)?;
-            context.release_root(dgram);
-            let binding =
-                context.host_function(crate::host::shared_vm::operation("traceInternal"))?;
-            let factory = context.evaluate_script_rooted(
-                r#"((nativeBinding) => {
-  const internals = globalThis[Symbol.for("quench.dgram.internals")];
-  return { internalBinding(name) {
-    const native = nativeBinding(name);
-    if (native !== undefined) return native;
-    if (name === "udp_wrap") return { UDP: internals.UDP };
-    if (name === "tcp_wrap") return { TCP: internals.TCP, constants: { SOCKET: 0 } };
-    if (name === "uv") return {
-      UV_UDP_REUSEADDR: 4, UV_UNKNOWN: -4094, UV_EBADF: -9,
-      UV_EINVAL: -22, UV_ENOTSOCK: -88,
-    };
-    return {};
-  } };
-})"#,
-                "internal/test/binding.js",
-            )?;
-            let undefined = context.undefined();
-            return context.call_rooted(factory, undefined, &[binding]);
+            // Unlike internal policy initialization, this guest-facing SDK bridge
+            // must observe the current process.emitWarning and warning options.
+            // Its intrinsic operations already come from the SDK primordials.
+            let root = context.host_mut().node_library_root.clone();
+            return load(context, &root.join("lib/internal/test/binding.js"), Some(parent), EntryGoal::CommonJs);
         }
         Some(BuiltinModule::InternalBlockList) => {
             return context.evaluate_script_rooted(
@@ -2383,6 +2358,10 @@ fn load_with_resolution(
 };
 const getLinkedBinding = () => ({});
 "#
+                } else if library_relative == Some(Path::new("lib/internal/test/binding.js")) {
+                    // This configured SDK entry exposes the engine's raw binding
+                    // objects; it must not expose per-module library adapters.
+                    "const internalBinding = __nativeInternalBinding;"
                 } else if in_node_internal {
                     node_internal_binding_source()
                 } else {
@@ -2577,6 +2556,7 @@ pub(crate) fn node_internal_binding_source() -> &'static str {
     case "modules":
     case "report": return __nativeInternalBinding(name);
     case "process_methods": return __nativeInternalBinding(name);
+    case "trace_events": return __nativeInternalBinding(name);
     case "util": return Object.assign({}, {
       privateSymbols: __nativeInternalBinding("util").privateSymbols,
       constants: __nativeInternalBinding("util").constants,

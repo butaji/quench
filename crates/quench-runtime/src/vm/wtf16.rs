@@ -378,7 +378,6 @@ impl JsStringInner {
     }
 
     /// A flat `Wide` string's host text, if made.
-    #[cfg(any(test, feature = "profile-aggregate", feature = "profile-memory"))]
     fn existing_host(&self) -> Option<&Rc<str>> {
         // SAFETY: as `host`: a made `Host` is never replaced.
         match unsafe { (*self.aside.get()).as_deref() } {
@@ -591,7 +590,6 @@ impl JsString {
         self.inner.length as usize
     }
 
-    #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
     pub(crate) fn capacity(&self) -> usize {
         match self.flat() {
             FlatUnits::Short(_) => 0,
@@ -603,7 +601,6 @@ impl JsString {
         }
     }
 
-    #[cfg(feature = "profile-memory")]
     pub(crate) fn memory_parts(&self) -> ((usize, usize), Option<(usize, usize)>) {
         const RC_HEADER_BYTES: usize = 2 * std::mem::size_of::<usize>();
         let unit_storage = match self.flat() {

@@ -9871,3 +9871,8 @@ fn awaited_primitives_use_enclosing_async_promise_parent_for_real_hook_resources
 fn missing_internal_bindings_throw_native_module_errors_with_original_descriptors() {
     compare_node_source_with_args(include_str!("../node-tests/test-internal-binding-missing-error.js"), &["--no-warnings", "--expose-internals"]);
 }
+
+#[test]
+fn console_global_and_constructor_use_sdk_identity_namespace_and_output_policy() {
+    compare_node_source_with_args(include_str!("../node-tests/test-console-sdk-authority.js"), &["--expose-internals", "--no-warnings"]);
+}

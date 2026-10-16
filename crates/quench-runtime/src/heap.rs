@@ -12,6 +12,8 @@ mod cell_access;
 mod buffer_bytes;
 mod collection_entries;
 mod external;
+mod memory_stats;
+pub use memory_stats::HeapMemoryComposition;
 #[cfg(feature = "profile-memory")]
 mod memory_profile;
 mod records;
@@ -156,7 +158,6 @@ pub(super) struct Slot {
 }
 
 impl Slot {
-    #[cfg(feature = "profile-memory")]
     fn is_live(&self) -> bool {
         self.cell.is_some()
     }
@@ -598,7 +599,6 @@ impl Default for GcProfile {
     }
 }
 
-#[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
 #[repr(usize)]
 #[derive(Clone, Copy)]
 pub(crate) enum CellKind {
@@ -638,10 +638,8 @@ pub(crate) enum CellKind {
     WasmTag,
     WasmException,
 }
-#[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
 impl CellKind {
     pub(crate) const COUNT: usize = Self::WasmException as usize + 1;
-    #[cfg(feature = "profile-memory")]
     pub(crate) const NAMES: [&'static str; Self::COUNT] = [
         "object",
         "array",
@@ -2506,7 +2504,6 @@ impl Heap {
                 .filter(|value| value.is_heap()),
         );
     }
-    #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
     pub(super) fn cell_kind(cell: &Cell) -> CellKind {
         match cell {
             Cell::Object(_)
@@ -2553,7 +2550,6 @@ impl Heap {
             Cell::TemporalInstant { .. } => CellKind::TemporalInstant,
         }
     }
-    #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
     pub(super) fn cell_payload_bytes(cell: &Cell) -> usize {
         let object_extra_bytes = cell
             .object()
