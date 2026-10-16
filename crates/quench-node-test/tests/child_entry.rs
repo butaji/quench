@@ -9547,5 +9547,10 @@ fn callsite_eval_classification_follows_compilation_origin_and_survives_escaped_
 #[test]
 fn fs_glob_uses_original_policy_and_real_dirent_types_across_all_three_apis() {
     compare_node_source_with_args(include_str!("../node-tests/test-fs-original-glob-policy.js"), &[]);
+}
+
+#[test]
+fn eval_uses_parsed_program_completion_grammar_and_original_source_positions() {
+    compare_node_source_with_args(include_str!("../node-tests/test-compiled-eval-source.js"), &[]);
 
 }

@@ -1,0 +1,14 @@
+Fail /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-readdir-recursive-permission.js
+Skip /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-readdir-pipe.js
+Pass /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-readdir-promise-recursive-with-buffer.js
+Skip /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-readdir-buffer.js
+Fail /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-readdir-recursive-tree.js
+Pass /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-readdir-recursive.js
+Pass /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-readdir-recursive-with-buffer.js
+Pass /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-readdir-sync-recursive-with-buffer.js
+Pass /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-readdir-types-symlinks.js
+Fail /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-readdir-types.js
+Fail /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-readdir-ucs2.js
+Pass /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-readdir.js
+Pass /workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-readdir-stack-overflow.js
+all: pass=7 skip=2 fail=4 timeout=0 crash=0 unclassified=0 total=13 inventory_hash=d0c87534792835dc
