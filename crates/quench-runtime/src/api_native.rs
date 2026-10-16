@@ -36,6 +36,7 @@ pub struct RootedIterator {
 /// Builtin internal-slot brands, independent of prototypes and guest property hooks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BuiltinBrand {
+    External,
     Date,
     RegExp,
     NativeError,
@@ -134,8 +135,8 @@ pub struct HostFunction<H: Host> {
 /// Declare global and module-owned native descriptors from one binding table.
 #[macro_export]
 macro_rules! host_functions {
-    ($( $scope:ident $name:literal ($length:literal) => $callback:path ),* $(,)?) => {
-        &[$($crate::HostFunction {
+    ($( $(#[$attribute:meta])* $scope:ident $name:literal ($length:literal) => $callback:path ),* $(,)?) => {
+        &[$($(#[$attribute])* $crate::HostFunction {
             name: $name,
             length: $length,
             global: $crate::host_functions!(@global $scope $name),
@@ -255,6 +256,17 @@ impl<'a, H: Host> NativeContext<'a, H> {
     }
 
     /// Test an internal-slot brand without invoking guest getters or proxy traps.
+    /// Create an opaque, non-owning native address wrapper. Core never dereferences
+    /// the address; the embedding retains ownership of its native allocation.
+    pub fn external_rooted(&mut self, address: usize) -> Result<RootId, RootedError> {
+        let result = self.vm.create_embedding_external(address);
+        self.completion(result)
+    }
+
+    pub fn external_address_rooted(&self, value: RootId) -> Option<usize> {
+        self.vm.embedding_external_address(value)
+    }
+
     pub fn has_builtin_brand_rooted(
         &mut self,
         root: RootId,
@@ -835,6 +847,17 @@ impl<'a, H: Host> NativeContext<'a, H> {
 
     pub fn host_function(&mut self, id: HostFunctionId) -> Result<RootId, RootedError> {
         let result = self.vm.create_host_function(id);
+        self.completion(result)
+    }
+
+    /// Create a callback with an intrinsic JavaScript name independent of its
+    /// private dispatch-table key, including unnamed native bindings.
+    pub fn host_function_named(
+        &mut self,
+        id: HostFunctionId,
+        name: &str,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.create_named_host_function(id, name);
         self.completion(result)
     }
 

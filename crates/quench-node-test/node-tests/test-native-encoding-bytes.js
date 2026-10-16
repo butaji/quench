@@ -13,3 +13,11 @@ const bytes=new Uint8Array([0,1,2,3,4,5,6,7,8,9]);
 Uint8Array.prototype.set=function(){throw Error('public set consulted')};
 copy(bytes.buffer,2,bytes.buffer,0,6);console.log('overlap',JSON.stringify([...bytes]));
 const target=new Uint8Array(10);copy(target.buffer,3,bytes.buffer,2,4);console.log('offset',JSON.stringify([...target]));
+const rawCompare=require('internal/test/binding').internalBinding('buffer').compare;
+for(const [a,b] of [
+ [new Uint16Array([1,2]),new Uint16Array([1,2])],
+ [new Uint16Array([1,2]),new Uint16Array([1,3])],
+ [new DataView(new Uint8Array([9,1,2,9]).buffer,1,2),new Uint8Array([1,2])],
+ [new Float32Array([1,2]),new Float32Array([1,3])],
+ [new Uint8Array(0),new DataView(new ArrayBuffer(0))],
+])console.log('raw-compare',rawCompare(a,b));
