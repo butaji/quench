@@ -1,6 +1,8 @@
 use crate::Value;
+use super::wtf16::JsString;
 use crate::bytecode::ResidualProgram;
 use std::rc::Rc;
+use rustc_hash::FxHashMap;
 
 struct ProgramEntry {
     residual: Rc<ResidualProgram>,
@@ -29,8 +31,14 @@ struct ProgramEntry {
     pass: u64,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum CompilationOrigin { Source, Eval }
+pub(super) const ANONYMOUS_EVAL_ORIGIN: &str = "eval at <anonymous>";
+
+#[derive(Clone)]
+pub(super) enum CompilationOrigin {
+    Source,
+    Eval { caller: Option<JsString> },
+    FunctionConstructor { caller: JsString },
+}
 
 /// Where a stored program's root body evaluates, which decides whether its
 /// by-name loads can only reach the global environment.
@@ -78,6 +86,8 @@ pub(crate) struct ProgramStore {
     /// Indexed by `ProgramId`; a reclaimed program leaves an empty slot, so an
     /// id never names another program.
     programs: Vec<Option<ProgramEntry>>,
+    /// Weak compiled-script identities for global eval; contexts are supplied per call.
+    global_eval_programs: FxHashMap<JsString, ProgramId>,
     /// Completed reclamation passes; see `reclaim_unreferenced`.
     reclaim_passes: u64,
     /// Reclaimable programs inserted since the last reclamation pass.
@@ -85,6 +95,15 @@ pub(crate) struct ProgramStore {
 }
 
 impl ProgramStore {
+    pub(super) fn cached_global_eval(&self, source: &JsString) -> Option<ProgramId> {
+        let program = *self.global_eval_programs.get(source)?;
+        self.entry(program).map(|_| program)
+    }
+
+    pub(super) fn cache_global_eval(&mut self, source: JsString, program: ProgramId) {
+        self.global_eval_programs.insert(source, program);
+    }
+
     pub(crate) fn len(&self) -> usize {
         self.programs.len()
     }
@@ -139,10 +158,15 @@ impl ProgramStore {
             reclaimed.extend(ProgramId::from_index(index));
         }
         self.unchecked_reclaimable = pending;
+        if !reclaimed.is_empty() {
+            let programs = &self.programs;
+            self.global_eval_programs.retain(|_, id| programs.get(id.index()).is_some_and(Option::is_some));
+        }
         reclaimed
     }
 
     pub(crate) fn reset(&mut self, main: Rc<ResidualProgram>) -> ProgramId {
+        self.global_eval_programs.clear();
         self.programs.clear();
         self.unchecked_reclaimable = 0;
         let module = main.is_module();
@@ -157,8 +181,17 @@ impl ProgramStore {
         if let Some(entry) = self.entry_mut(id) { entry.origin = origin; }
     }
 
-    pub(super) fn is_eval(&self, id: ProgramId) -> bool {
-        self.entry(id).is_some_and(|entry| entry.origin == CompilationOrigin::Eval)
+    pub(super) fn eval_origin(&self, id: ProgramId) -> Option<JsString> {
+        match &self.entry(id)?.origin {
+            CompilationOrigin::Source => None,
+            CompilationOrigin::Eval { caller } => Some(caller.clone()
+                .unwrap_or_else(|| JsString::from_str(ANONYMOUS_EVAL_ORIGIN))),
+            CompilationOrigin::FunctionConstructor { caller } => Some(caller.clone()),
+        }
+    }
+
+    pub(super) fn is_function_constructor(&self, id: ProgramId) -> bool {
+        self.entry(id).is_some_and(|entry| matches!(entry.origin, CompilationOrigin::FunctionConstructor { .. }))
     }
 
     pub(crate) fn mark_global_scope(&mut self, id: ProgramId) {
@@ -203,7 +236,7 @@ impl ProgramStore {
             .iter()
             .map(|_| std::cell::OnceCell::new())
             .collect();
-        let origin = if program.kind == crate::bytecode::ProgramKind::Eval { CompilationOrigin::Eval } else { CompilationOrigin::Source };
+        let origin = if program.kind == crate::bytecode::ProgramKind::Eval { CompilationOrigin::Eval { caller: None } } else { CompilationOrigin::Source };
         self.programs.push(Some(ProgramEntry {
             residual: program,
             wasm_signatures: None,

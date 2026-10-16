@@ -9535,3 +9535,13 @@ fn fatal_source_excerpts_follow_javascript_line_terminators_and_original_file_li
         assert_eq!(excerpts[0], excerpts[1]);
     }
 }
+
+#[test]
+fn eval_call_sites_capture_original_compiling_callers_and_hide_absent_script_names() {
+    compare_node_source_with_args(include_str!("../node-tests/test-callsite-eval-origins.js"), &["--expose-gc"]);
+}
+
+#[test]
+fn indirect_eval_script_identity_preserves_origins_fresh_values_templates_and_realm_isolation() {
+    compare_node_source_with_args(include_str!("../node-tests/test-indirect-eval-script-identity.js"), &[]);
+}

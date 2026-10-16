@@ -190,6 +190,24 @@ pub(crate) struct StaticModulePlan {
 }
 pub(crate) use crate::bytecode::ModuleReexport as StaticModuleReexport;
 impl Engine {
+    /// V8 excludes tagged templates from eval's compilation cache because each
+    /// evaluation owns distinct template objects, including nested function sites.
+    pub(crate) fn eval_has_tagged_template(source: &str) -> bool {
+        use oxc_ast_visit::Visit;
+        struct TaggedTemplate(bool);
+        impl<'a> Visit<'a> for TaggedTemplate {
+            fn visit_tagged_template_expression(&mut self, _: &TaggedTemplateExpression<'a>) {
+                self.0 = true;
+            }
+        }
+        let allocator = Allocator::with_capacity(source.len());
+        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
+        if stack::validate_parsed(&parsed).is_err() || !parsed.diagnostics.is_empty() { return true; }
+        let mut visitor = TaggedTemplate(false);
+        visitor.visit_program(&parsed.program);
+        visitor.0
+    }
+
     pub(crate) fn eval_single_regexp_literal(source: &str) -> Option<EvalRegExpLiteral> {
         let allocator = Allocator::with_capacity(source.len());
         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
