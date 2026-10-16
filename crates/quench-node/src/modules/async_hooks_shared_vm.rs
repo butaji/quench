@@ -298,6 +298,41 @@ pub(crate) fn release_job_context(
 
 /// Enter a named async identity and restore the previous identity on every
 /// return path, including a thrown guest callback.
+pub(crate) struct ResourceScope {
+    _identity: ContextScope,
+    shared: Rc<RefCell<crate::host::SharedNodeState>>,
+    previous: Option<(u64, RootId)>,
+}
+impl Drop for ResourceScope {
+    fn drop(&mut self) { self.shared.borrow_mut().async_hooks.scoped_resource = self.previous; }
+}
+pub(crate) fn enter_resource_context(
+    shared: &Rc<RefCell<crate::host::SharedNodeState>>, id: u64, resource: RootId,
+) -> ResourceScope {
+    let identity = enter_context(shared, id);
+    let previous = shared.borrow_mut().async_hooks.scoped_resource.replace((id, resource));
+    ResourceScope { _identity: identity, shared: shared.clone(), previous }
+}
+
+pub(crate) fn complete_callback_context(context: &mut NativeContext<'_, NodeHost>, id: u64) -> Result<(), RootedError> {
+    for root in take_context_stores(&context.host_mut().shared_state(), id) { context.release_root(root); }
+    queue_destroy(context, id)
+}
+
+pub(crate) fn complete_runtime_context(runtime: &mut Runtime<NodeHost>, id: u64) {
+    let shared = runtime.host_mut().shared_state();
+    clear_context(runtime, &shared, id);
+    if !super::async_hook_registry_shared_vm::runtime_has_hooks(runtime, super::async_hook_registry_shared_vm::HookKind::Destroy) { return; }
+    let callback = runtime.host_function(crate::host::shared_vm::operation("asyncDestroyDispatch"))
+        .expect("registered async destruction callback");
+    let receiver = runtime.root(quench_runtime::Value::UNDEFINED);
+    let id = runtime.root(quench_runtime::Value::number(id as f64));
+    let mut state = shared.borrow_mut();
+    let queue_id = state.scheduler.reserve_shared_immediate_id().expect("async destruction identifier space");
+    state.scheduler.queue_shared_immediate(queue_id, super::shared_event_loop::SharedImmediateOwner::Host,
+        super::shared_event_loop::SharedCallback { execution: None, callback, receiver, args: vec![id] });
+}
+
 pub(crate) fn enter_context(
     shared_state: &Rc<RefCell<crate::host::SharedNodeState>>,
     async_id: u64,
@@ -443,7 +478,7 @@ pub(crate) fn emit_init(
     let state = context.host_mut().shared_state();
     {
         let mut state = state.borrow_mut();
-        let parent = state.async_hooks.identity.current_async_id();
+        let parent = visible_async_id(&state.async_hooks);
         state
             .async_hooks
             .context_triggers
@@ -685,10 +720,7 @@ fn queue_destroy(context: &mut NativeContext<'_, NodeHost>, id: u64) -> Result<(
         return Ok(());
     }
     let data = context.number(id as f64);
-    let callback = context.host_function_with_data(
-        crate::host::shared_vm::operation("asyncDestroyDispatch"),
-        data,
-    )?;
+    let callback = context.host_function(crate::host::shared_vm::operation("asyncDestroyDispatch"))?;
     let callback = context.retain(callback)?;
     let undefined = context.undefined();
     let receiver = context.retain(undefined)?;
@@ -701,10 +733,10 @@ fn queue_destroy(context: &mut NativeContext<'_, NodeHost>, id: u64) -> Result<(
     state.scheduler.queue_shared_immediate(
         queue_id,
         super::shared_event_loop::SharedImmediateOwner::Host,
-        super::shared_event_loop::SharedCallback {
+        super::shared_event_loop::SharedCallback { execution: None,
             callback,
             receiver,
-            args: Vec::new(),
+            args: vec![context.retain(data)?],
         },
     );
     Ok(())
@@ -712,9 +744,9 @@ fn queue_destroy(context: &mut NativeContext<'_, NodeHost>, id: u64) -> Result<(
 pub(crate) fn destroy_dispatch(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
-    _: &[RootId],
+    args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let id = context.host_function_data()?;
+    let id = args.first().copied().ok_or_else(|| RootedError::host("async destruction identity missing"))?;
     super::async_hook_registry_shared_vm::emit(
         context,
         super::async_hook_registry_shared_vm::HookKind::Destroy,
