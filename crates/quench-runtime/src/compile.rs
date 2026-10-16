@@ -156,6 +156,23 @@ pub(crate) enum DynamicFunctionKind {
     AsyncGenerator,
 }
 
+pub(crate) const DYNAMIC_FUNCTION_PUBLIC_NAME: &str = "anonymous";
+
+impl DynamicFunctionKind {
+    fn source_prefix(self) -> &'static str {
+        match self {
+            Self::Ordinary => "function",
+            Self::Async => "async function",
+            Self::Generator => "function*",
+            Self::AsyncGenerator => "async function*",
+        }
+    }
+
+    pub(crate) fn source(self, parameters: &str, body: &str) -> String {
+        format!("{} {DYNAMIC_FUNCTION_PUBLIC_NAME}({parameters}\n) {{\n{body}\n}}", self.source_prefix())
+    }
+}
+
 #[derive(Clone, Copy, Default)]
 pub(crate) struct EvalContext {
     pub in_function: bool,
@@ -610,17 +627,11 @@ impl Engine {
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let body = early::normalize_dynamic_function_body(body);
         let parameters = early::normalize_dynamic_function_parameters(parameters);
-        let prefix = match kind {
-            DynamicFunctionKind::Ordinary => "function",
-            DynamicFunctionKind::Async => "async function",
-            DynamicFunctionKind::Generator => "function*",
-            DynamicFunctionKind::AsyncGenerator => "async function*",
-        };
-        let function_prefix = format!("{prefix}(");
         let expression_wrapper = "(";
-        let parameter_list_end =
-            expression_wrapper.len() + function_prefix.len() + parameters.len() + ")".len();
-        let source = format!("{expression_wrapper}{function_prefix}{parameters}) {{{body}\n}})");
+        let function_prefix = format!("{} {DYNAMIC_FUNCTION_PUBLIC_NAME}(", kind.source_prefix());
+        let parameter_list_end = expression_wrapper.len() + function_prefix.len()
+            + parameters.len() + "\n)".len();
+        let source = format!("{expression_wrapper}{})", kind.source(&parameters, &body));
         let expected_shape = ParsedProgramShape::DynamicFunction { parameter_list_end };
         Self::specialize_with_program_shape(
             &source,
@@ -770,14 +781,18 @@ impl Engine {
                 context.home_atom.is_none() || eval_method_body(&mut parsed.program).is_some()
             }
             ParsedProgramShape::DynamicFunction { parameter_list_end } => {
-                match parsed.program.body.as_slice() {
-                    [Statement::ExpressionStatement(statement)] => match &statement.expression {
+                match parsed.program.body.as_mut_slice() {
+                    [Statement::ExpressionStatement(statement)] => match &mut statement.expression {
                         Expression::ParenthesizedExpression(expression) => {
-                            match &expression.expression {
+                            match &mut expression.expression {
                                 Expression::FunctionExpression(function) => {
-                                    function.id.is_none()
+                                    let valid = function.id.as_ref().is_some_and(|identifier| identifier.name == DYNAMIC_FUNCTION_PUBLIC_NAME)
                                         && function.body.is_some()
-                                        && function.params.span.end as usize == parameter_list_end
+                                        && function.params.span.end as usize == parameter_list_end;
+                                    // The generated public source name is not a dynamic
+                                    // Function self binding. OXC still owns the grammar.
+                                    if valid { function.id = None; }
+                                    valid
                                 }
                                 _ => false,
                             }
