@@ -10,6 +10,11 @@ pub(super) enum PropertyCopyKind {
 }
 
 impl<H: Host> Vm<H> {
+    pub(super) fn is_host_private_symbol(&self, key: Value) -> bool {
+        matches!(self.heap.get(key), Some(Cell::Symbol(data))
+            if data.kind == crate::heap::SymbolKind::HostPrivate)
+    }
+
     pub(super) fn own_keys_array(&mut self, keys: Vec<Value>) -> Value {
         let roots = keys
             .iter()
@@ -96,7 +101,7 @@ impl<H: Host> Vm<H> {
             .shape_keys(shape)
             .iter()
             .filter_map(|key| key.symbol_value())
-            .filter(|symbol| self.symbol_property(object, *symbol).is_some())
+            .filter(|symbol| !self.is_host_private_symbol(*symbol) && self.symbol_property(object, *symbol).is_some())
             .collect::<Vec<_>>();
         values.extend(
             strings
@@ -201,6 +206,7 @@ impl<H: Host> Vm<H> {
             Ok(keys
                 .iter()
                 .map(|key| self.heap.root_value(*key).unwrap())
+                .filter(|key| !self.is_host_private_symbol(*key))
                 .collect())
         })();
         for root in keys
@@ -350,6 +356,29 @@ impl<H: Host> Vm<H> {
         value: Value,
         receiver: Value,
     ) -> Result<bool, JsError> {
+        if self.is_host_private_symbol(key) {
+            if matches!(self.heap.get(target), Some(Cell::Proxy { .. })) { return Ok(false); }
+            let own = self.ordinary_own_property(p, target, key)?;
+            if let Some((_, attributes)) = own {
+                if attributes.accessor {
+                    if let Some(setter) = attributes.setter.filter(|value| !value.is_undefined()) {
+                        self.call_value(p, setter, receiver, &[value])?;
+                        return Ok(true);
+                    }
+                    return Ok(false);
+                }
+                if !attributes.writable { return Ok(false); }
+            }
+            if !self.is_object_like(receiver) || matches!(self.heap.get(receiver), Some(Cell::Proxy { .. })) { return Ok(false); }
+            let descriptor = if self.symbol_property(receiver, key).is_some() {
+                super::object_descriptors::PropertyDescriptorRecord::value(value)
+            } else {
+                let mut descriptor = super::object_descriptors::PropertyDescriptorRecord::data(value);
+                descriptor.enumerable = Some(false);
+                descriptor
+            };
+            return self.define_own_property_record(p, receiver, key, descriptor);
+        }
         let target_root = self.heap.root(target);
         let key_root = self.heap.root(key);
         let value_root = self.heap.root(value);

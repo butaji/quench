@@ -1905,6 +1905,7 @@ pub(crate) fn finish_requested_exit(
     cleanup_environment(runtime, &shared_state);
     if process_control.exit_without_event() {
         super::tls_shared_vm::contexts::cleanup(runtime);
+        cleanup_native_work(runtime);
         super::zlib_native_shared_vm::cleanup(runtime);
         #[cfg(quench_icu)]
         super::icu_binding_shared_vm::cleanup(runtime);
@@ -2060,6 +2061,9 @@ fn drain_checkpoint(
             continue;
         }
         if crate::modules::child_process_shared_vm::poll(runtime, program, &shared_state)? {
+            continue;
+        }
+        if crate::modules::cares_binding::poll(runtime, program)? {
             continue;
         }
         if crate::modules::fetch_shared_vm::poll(runtime, program, &shared_state)? {
@@ -2249,7 +2253,8 @@ fn run_and_clear_native_immediates(
 }
 
 fn has_referenced_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeState>>) -> bool {
-    crate::modules::child_process_ipc_shared_vm::has_work(&shared_state.borrow())
+    shared_state.borrow().dns.has_work()
+        || crate::modules::child_process_ipc_shared_vm::has_work(&shared_state.borrow())
         || crate::modules::process_stdin_shared_vm::has_work(&shared_state.borrow().stdin)
         || crate::modules::fetch_shared_vm::has_pending(shared_state)
         || crate::modules::child_process_shared_vm::has_pending(shared_state)
@@ -2348,7 +2353,7 @@ fn invoke_timer_callback(
     call_shared_callback(runtime, program, callback)
 }
 
-fn invoke_async_callback(
+pub(super) fn invoke_async_callback(
     runtime: &mut quench_runtime::Runtime<NodeHost>,
     program: &quench_runtime::ResidualProgram,
     callback: crate::modules::shared_event_loop::SharedCallback,
@@ -2526,6 +2531,9 @@ fn drain_shared_jobs(
         if unhandled.is_empty() {
             runtime.clear_kept_objects();
             crate::modules::zlib_stream_shared_vm::prune(runtime);
+            super::crypto_secret_job_shared_vm::prune(runtime);
+            #[cfg(quench_openssl_provider)]
+            super::crypto_hash_shared_vm::prune(runtime);
             super::zlib_native_shared_vm::prune(runtime);
             super::fs_watch_shared_vm::prune(runtime);
             super::tls_shared_vm::contexts::prune(runtime);
@@ -3005,6 +3013,27 @@ fn cleanup_environment(
     super::fs_stat_watch_shared_vm::cleanup(runtime);
 }
 
+// Exit listeners may submit native work. Accept it, then abandon it without
+// executing guest callbacks. Teardown also runs when an exit listener throws.
+fn cleanup_native_work(runtime: &mut quench_runtime::Runtime<NodeHost>) {
+    let shared = runtime.host_mut().shared_state();
+    shared.borrow_mut().native_tasks.shutdown();
+    super::crypto_secret_job_shared_vm::cleanup(runtime);
+    #[cfg(quench_openssl_provider)]
+    super::crypto_hash_shared_vm::cleanup(runtime);
+    super::cares_binding::cleanup(runtime);
+    let callbacks = shared.borrow_mut().scheduler.take_all_shared_immediates();
+    for immediate in callbacks {
+        let callback = immediate.callback;
+        if let Some(execution) = callback.execution {
+            // No destroy dispatch is scheduled during final cancellation.
+            super::async_hooks_shared_vm::clear_context(runtime, &shared, execution.id);
+            runtime.release_root(execution.resource);
+        }
+        release_callback_roots(runtime, callback.callback, callback.receiver, callback.args);
+    }
+}
+
 // Builtin native objects remain usable throughout synchronous exit listeners.
 fn emit_exit(
     runtime: &mut quench_runtime::Runtime<NodeHost>,
@@ -3013,6 +3042,7 @@ fn emit_exit(
 ) -> Result<(), String> {
     let result = emit_exit_inner(runtime, program, code);
     super::tls_shared_vm::contexts::cleanup(runtime);
+        cleanup_native_work(runtime);
         super::zlib_native_shared_vm::cleanup(runtime);
     #[cfg(quench_icu)]
     super::icu_binding_shared_vm::cleanup(runtime);

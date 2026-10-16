@@ -327,7 +327,7 @@ fn shape_roots_keep_symbols_and_active_accessors_alive() {
 
     let program = Engine::specialize("", "shape-roots.js").unwrap();
     let mut vm = Vm::new(SilentHost);
-    let symbol = vm.heap.alloc(Cell::Symbol(None));
+    let symbol = vm.heap.alloc(Cell::Symbol(crate::heap::SymbolData::public(None)));
     let symbol_weak = vm.heap.weak_handle(symbol).unwrap();
     let symbol_shape = vm.transition_property_shape(0, PropertyKey::symbol(symbol));
     let first =
@@ -5605,7 +5605,7 @@ fn proxy_reads_root_operands_and_results_through_nested_callbacks() {
                 let atom = vm.intern_atom("entry");
                 let property = if symbol {
                     super::property_key::PropertyKey::symbol(
-                        vm.heap.alloc(super::Cell::Symbol(Some("entry".into()))),
+                        vm.heap.alloc(super::Cell::Symbol(crate::heap::SymbolData::public(Some("entry".into())))),
                     )
                 } else {
                     super::property_key::PropertyKey::string(atom)
@@ -5675,7 +5675,7 @@ fn proxy_reads_root_operands_and_results_through_nested_callbacks() {
                         if symbol {
                             assert_eq!(returned_key, key);
                             assert!(
-                                matches!(vm.heap.get(returned_key), Some(super::Cell::Symbol(Some(name))) if name == "entry")
+                                matches!(vm.heap.get(returned_key), Some(super::Cell::Symbol(crate::heap::SymbolData { description: Some(name), .. })) if name.as_ref() == "entry")
                             );
                         } else {
                             assert_eq!(vm.to_string(&program, returned_key).unwrap(), "entry");
@@ -5684,7 +5684,7 @@ fn proxy_reads_root_operands_and_results_through_nested_callbacks() {
                     }
                     Ok(result) if phase == "result-symbol" => {
                         assert!(
-                            matches!(vm.heap.get(result),Some(super::Cell::Symbol(Some(name))) if name=="answer")
+                            matches!(vm.heap.get(result),Some(super::Cell::Symbol(crate::heap::SymbolData { description: Some(name), .. })) if name.as_ref()=="answer")
                         );
                         Some(vm.heap.weak_handle(result).unwrap())
                     }
@@ -6068,7 +6068,7 @@ fn proxy_presence_and_delete_root_fresh_operands_and_restore_scopes() {
                         .map(|elements| (elements[0], elements[1]))
                         .expect("operands");
                     let key = if symbol {
-                        vm.heap.alloc(super::Cell::Symbol(Some("entry".into())))
+                        vm.heap.alloc(super::Cell::Symbol(crate::heap::SymbolData::public(Some("entry".into()))))
                     } else if phase == "coercion" {
                         let atom = vm.intern_atom("keyOperand");
                         let factory = vm.own_property(vm.realm.globals, atom).unwrap();
@@ -6135,7 +6135,7 @@ fn proxy_presence_and_delete_root_fresh_operands_and_restore_scopes() {
                             );
                             assert_eq!(vm.heap.weak_value(handles[1]), Some(key));
                             assert!(if symbol {
-                                matches!(vm.heap.get(key),Some(super::Cell::Symbol(Some(name))) if name=="entry")
+                                matches!(vm.heap.get(key),Some(super::Cell::Symbol(crate::heap::SymbolData { description: Some(name), .. })) if name.as_ref()=="entry")
                             } else {
                                 matches!(vm.heap.get(key),Some(super::Cell::String(name)) if name.host_string()=="entry")
                             });
@@ -6360,7 +6360,7 @@ fn proxy_own_keys_keeps_captured_target_after_revoking_getter() {
                         assert_eq!(keys.len(), 2);
                         assert_eq!(vm.to_string(&program, keys[0]).unwrap(), "first");
                         assert!(
-                            matches!(vm.heap.get(keys[1]),Some(super::Cell::Symbol(Some(name))) if name=="entry")
+                            matches!(vm.heap.get(keys[1]),Some(super::Cell::Symbol(crate::heap::SymbolData { description: Some(name), .. })) if name.as_ref()=="entry")
                         );
                         for (handle, value) in handles.iter().zip([proxy, target, handler]) {
                             assert_eq!(
