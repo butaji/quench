@@ -9443,3 +9443,13 @@ fn node_compatibility_version_follows_bundled_library_target() {
 fn boxed_primitive_brands_use_internal_values_and_reject_forged_properties_and_proxies() {
     compare_node_source_with_args(include_str!("../node-tests/test-boxed-primitive-slots.js"), &[]);
 }
+
+#[test]
+fn callsite_columns_follow_member_parenthesized_and_constructor_call_syntax() {
+    compare_node_source_with_args(include_str!("../node-tests/test-callsite-call-columns.js"), &[]);
+}
+
+#[test]
+fn util_call_sites_capture_actual_metadata_without_error_hooks_and_use_node_validation() {
+    compare_node_source_with_args(include_str!("../node-tests/test-util-real-call-sites.js"), &[]);
+}
