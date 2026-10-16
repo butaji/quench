@@ -36,29 +36,7 @@ const __quenchDgramTypeDetail = (value) => {
 };
 const __quenchDgramBufferError = (type, code, message) => {
   const syscall = `uv_${type}_buffer_size`;
-  const error = new Error(
-    `Could not get or set buffer size: ${syscall} returned ${code} (${message})`
-  );
-  error.name = "SystemError";
-  error.code = "ERR_SOCKET_BUFFER_SIZE";
   const errno = code === "EBADF" ? -9 : code === "EINVAL" ? -22 : undefined;
-  error.info = { errno, code, message, syscall };
-  let errorErrno = errno;
-  Object.defineProperty(error, "errno", {
-    enumerable: true,
-    get: () => errorErrno,
-    set: (value) => {
-      errorErrno = value;
-    }
-  });
-  let errorSyscall = syscall;
-  Object.defineProperty(error, "syscall", {
-    enumerable: true,
-    get: () => errorSyscall,
-    set: (value) => {
-      errorSyscall = value;
-    }
-  });
-  return error;
+  return new __quenchDgramBufferSystemError({ errno, code, message, syscall });
 };
 "#);

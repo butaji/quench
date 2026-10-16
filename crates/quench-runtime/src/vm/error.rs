@@ -323,6 +323,33 @@ impl<H: Host> Vm<H> {
         let receiver_root = self.heap.root(receiver);
         let mut roots = Vec::with_capacity(2);
         let outcome = (|| {
+            if let Some(formatter) = self.host.error_stack_formatter() {
+                let formatter = self.heap.root_value(formatter).ok_or_else(|| {
+                    self.type_error(program, "Host stack formatter root expired".into())
+                })?;
+                let formatter_root = self.heap.root(formatter);
+                let global_root = self.heap.root(self.realm.globals);
+                let result = (|| {
+                    let sites = self.error_call_site_array(&records)?;
+                    let sites_root = self.heap.root(sites);
+                    let formatter = self.heap.root_value(formatter_root).unwrap();
+                    let global = self.heap.root_value(global_root).unwrap();
+                    let target = self.heap.root_value(receiver_root).unwrap();
+                    let sites = self.heap.root_value(sites_root).unwrap();
+                    let result = self.call_value(
+                        program,
+                        formatter,
+                        Value::UNDEFINED,
+                        &[global, target, sites],
+                    );
+                    self.heap.release_root(sites_root);
+                    result
+                })();
+                self.heap.release_root(global_root);
+                self.heap.release_root(formatter_root);
+                return result;
+            }
+
             let constructor =
                 self.realm.intrinsics.error_intrinsics[&self.realm.globals].constructor;
             roots.push(self.heap.root(constructor));

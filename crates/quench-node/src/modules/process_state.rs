@@ -3,7 +3,8 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-pub(crate) const NODE_VERSION: &str = "22.0.0";
+/// Compatibility target of the actual bundled Node standard library.
+pub(crate) const NODE_VERSION: &str = env!("QUENCH_NODE_COMPAT_VERSION");
 
 #[derive(Clone, Copy)]
 pub(crate) enum ProcessFact {
