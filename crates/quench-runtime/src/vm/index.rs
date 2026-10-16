@@ -184,11 +184,14 @@ impl<H: Host> Vm<H> {
                 }
                 return self.set_property_with_program(p, object, atom, value);
             }
+            // An index the array does not hold is OrdinarySet's to answer whenever a prototype
+            // claims it.
             if self.heap.array(object).is_some()
                 && !self.has_own_array_index(object, index)
-                && self.set_inherited_index_accessor(p, object, index, value, strict)?
+                && !self.inherited_index_unclaimed(object, index)
             {
-                return Ok(());
+                let atom = self.intern_atom(&index.to_string());
+                return self.set_property_with_program_mode(p, object, atom, value, strict);
             }
             if self
                 .array_descriptor(object, index)
@@ -236,8 +239,6 @@ impl<H: Host> Vm<H> {
             }
             if self.heap.array(object).is_some()
                 && !self.has_own_array_index(object, index)
-                && self.lookup_array_index_atom(index).is_none()
-                && !self.prototype_chain_has_indexed_set_exotic(object)
                 && self.set_array_element(object, index, value)
             {
                 return Ok(());
@@ -396,7 +397,7 @@ impl<H: Host> Vm<H> {
         if let Some(index) = super::object_static::array_index(key.host_string())
             && self.heap.array(object).is_some()
             && !self.has_own_array_index(object, index as usize)
-            && self.prototype_chain_has_typed_array(object)
+            && !self.inherited_index_unclaimed(object, index as usize)
         {
             let atom = self.intern_js_atom(&key);
             return self.set_property_with_program_mode(p, object, atom, value, strict);
@@ -428,39 +429,12 @@ impl<H: Host> Vm<H> {
                     Ok(())
                 };
             }
-            if !self.has_own_array_index(object, index as usize)
-                && self.set_inherited_index_accessor(p, object, index as usize, value, strict)?
-            {
-                return Ok(());
-            }
             if self.set_array_element(object, index as usize, value) {
                 return Ok(());
             }
         }
         let atom = self.intern_js_atom(&key);
         self.set_property_with_program_mode(p, object, atom, value, strict)
-    }
-
-    fn set_inherited_index_accessor(
-        &mut self,
-        p: &ResidualProgram,
-        object: Value,
-        index: usize,
-        value: Value,
-        strict: bool,
-    ) -> Result<bool, JsError> {
-        let Some(atom) = self.lookup_array_index_atom(index) else {
-            return Ok(false);
-        };
-        let Some(attributes) = self.property_accessor(object, atom) else {
-            return Ok(false);
-        };
-        if let Some(setter) = attributes.setter {
-            self.call_value(p, setter, object, &[value])?;
-        } else if strict {
-            return Err(self.type_error(p, "property has no setter".into()));
-        }
-        Ok(true)
     }
 
     pub(super) fn array_index_key(&self, key: Value) -> Option<u32> {

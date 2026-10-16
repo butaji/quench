@@ -201,7 +201,7 @@ pub(super) fn write_program(
         out.option_u32(function.instance_initializer);
         out.u32(function.super_home_atom.unwrap_or(u32::MAX));
         out.u8(u8::from(function.constructible));
-        out.u8(u8::from(function.class_field_initializer));
+        out.u8(u8::from(function.class_initializer));
         out.u8(u8::from(function.parameter_eval_arguments_error));
         out.u8(u8::from(function.simple_parameters));
         out.u8(u8::from(function.strict));
@@ -522,7 +522,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             1 => true,
             _ => return Err("invalid constructible function flag".into()),
         };
-        let class_field_initializer = match input.u8()? {
+        let class_initializer = match input.u8()? {
             0 => false,
             1 => true,
             _ => return Err("invalid class field initializer flag".into()),
@@ -676,7 +676,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             instance_initializer,
             super_home_atom,
             constructible,
-            class_field_initializer,
+            class_initializer,
             parameter_eval_arguments_error,
             arguments_slot,
             simple_parameters,
