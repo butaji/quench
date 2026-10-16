@@ -35,13 +35,17 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn has_own_array_index(&self, target: Value, index: usize) -> bool {
         self.array_descriptor(target, index).is_some()
-            || self.heap.array_elements(target).is_some_and(|elements| {
-                elements.get(index).is_some_and(|value| !value.is_deleted())
-                    || self
-                        .heap
-                        .sparse_get(target, index)
-                        .is_some_and(|value| !value.is_deleted())
-            })
+            || self.heap.array_elements(target).is_some() && self.own_element_present(target, index)
+    }
+
+    /// Whether `holder` stores an element at `index`, densely or sparsely.
+    pub(super) fn own_element_present(&self, holder: Value, index: usize) -> bool {
+        self.heap.array_elements(holder).is_some_and(|elements| {
+            elements.get(index).is_some_and(|value| !value.is_deleted())
+        }) || self
+            .heap
+            .sparse_get(holder, index)
+            .is_some_and(|value| !value.is_deleted())
     }
 
     pub(super) fn define_array_length(
@@ -229,6 +233,13 @@ impl<H: Host> Vm<H> {
         target: Value,
         index: usize,
     ) -> Option<(Atom, PropertyAttributes)> {
+        // `insert_descriptor` marks every object it records an index-keyed entry for.
+        if !self
+            .object_data(target)
+            .is_some_and(Object::has_indexed_descriptors)
+        {
+            return None;
+        }
         let atom = self.lookup_array_index_atom(index)?;
         let attributes = self
             .descriptors
