@@ -316,11 +316,12 @@ impl<H: Host> Vm<H> {
         records.into_iter().map(|(program, mut record, module)| {
             Self::map_call_site_source(&mut self.host, &mut record, module);
             let name = self.call_site_name(&record).map_or_else(Vec::new, |name| name.units().to_vec());
+            let unnamed_script = record.eval_origin.is_some();
             let CallSiteLocation::Source { file_name, line, column } = record.location else { unreachable!("source projection"); };
             crate::SourceStackFrame {
                 function_name: name,
                 script_id: u64::from(program.raw()) + 1,
-                script_name: file_name,
+                script_name: if unnamed_script { String::new() } else { file_name },
                 line_number: line,
                 column_number: column,
             }
@@ -1231,6 +1232,17 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         )
+    }
+
+    pub(crate) fn materialize_lazy_data_property_rooted(
+        &mut self,
+        holder: RootId,
+        name: &str,
+    ) -> Result<(), JsError> {
+        let holder = self.embedding_value(holder)?;
+        let program = self.embedding_program()?;
+        let key = PropertyKey::string(self.intern_atom(name));
+        self.materialize_lazy_data_property(&program, holder, key)
     }
 
     pub(crate) fn define_lazy_data_properties_rooted(

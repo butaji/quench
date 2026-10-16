@@ -1066,6 +1066,18 @@ impl<'a, H: Host> NativeContext<'a, H> {
             .map_err(|error| self.error(error))
     }
 
+    /// Runs the initializer of `name`'s lazy group on `holder` if it is still lazy; otherwise
+    /// does nothing, and runs no guest code.
+    pub fn materialize_lazy_data_property_rooted(
+        &mut self,
+        holder: RootId,
+        name: &str,
+    ) -> Result<(), RootedError> {
+        self.vm
+            .materialize_lazy_data_property_rooted(holder, name)
+            .map_err(|error| self.error(error))
+    }
+
     /// Defines `names` on `holder` as one group of writable, configurable lazy data
     /// properties: the first time script observes any of them, `initializer` runs once, with
     /// the startup intrinsics in place, and defines them all.
