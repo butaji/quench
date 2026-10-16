@@ -1,0 +1,47 @@
+{
+  "base_source": "b7723be8e04b1a1fd4ba8db8fdab85c5b281f735",
+  "source_files": {
+    "crates/quench-node-test/node-tests/test-function-constructor-source-layout.js": "002bd5cb60cfa0025a860c61e3c4fcc839822908f9f21d10c09ac41e09d8b452",
+    "crates/quench-node-test/tests/child_entry.rs": "6fb475a00e3ba07e03aa767f6957fd77bb48588a4e441124bb933d51b1f8f571",
+    "crates/quench-runtime/src/compile.rs": "f97d565fde1c2a62928f9660622c74a47136889736998cc62e272bec6b076d2b",
+    "crates/quench-runtime/src/vm/error.rs": "1a011b8cc91000bee5559234455ec05fe67c168ce98a6b23d2e16c04c019833c",
+    "crates/quench-runtime/src/vm/tests.rs": "09d98d8331773871c46826e605fbdc76951514fe5b693c9fc542e0b18fc81c08",
+    "docs/node-host-contracts.md": "c3917c50a1cb80de5785d6f80691b528ab90c5b81c233afc6fb2ece11215058d"
+  },
+  "patch": "work/function-constructor-source-layout-source.patch",
+  "patch_sha256": "375b95f1f061d27496aa553ab06daec53436311cb9168dcff7ab8e3e9f9ad0d7",
+  "binaries": {
+    "cli": {
+      "path": "work/quench-function-source-layout-qualified",
+      "sha256": "25e00777be00d2de4e56e90ad255aac63d69ce1671edf42cc17013f5a55a0af0"
+    },
+    "host_cli": {
+      "path": "work/host-build/iteration/quench-node",
+      "sha256": "25e00777be00d2de4e56e90ad255aac63d69ce1671edf42cc17013f5a55a0af0"
+    },
+    "runner": {
+      "path": "work/host-build/iteration/run-parallel",
+      "sha256": "140c7062667c4f4fcdd2f34723f6d9d9700fbe1317cdd4d3beb6c204764aceff"
+    },
+    "api_tests": {
+      "path": "work/host-build/iteration/deps/child_entry-70660f0a4dee9e77",
+      "sha256": "aa2c169fc73456ed48561bda39fea62eeb4589920b7373643ce8f877e7af3fbf"
+    }
+  },
+  "oracle": {
+    "path": "work/node-v26.12.0-linux-x64/bin/node",
+    "version": "v26.12.0",
+    "sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943"
+  },
+  "runtime_tests": 661,
+  "runtime_exit": 0,
+  "workspace_exit": 0,
+  "no_authored_optimization": true,
+  "identity_checks": {
+    "binaries": true,
+    "source_files": true,
+    "oracle": true
+  },
+  "api_exit": 0,
+  "reconciled_candidate_source": "5acfdf424147f0f965fc76353d2894029beb896f"
+}

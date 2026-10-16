@@ -9602,3 +9602,8 @@ fn function_constructor_default_debug_names_remain_distinct_from_public_names_an
 fn function_prototype_info_lookups_preserve_native_accessor_layout_and_descriptor_transitions() {
     compare_node_source_with_args(include_str!("../node-tests/test-function-prototype-info-lookups.js"), &["--expose-internals", "--no-warnings"]);
 }
+
+#[test]
+fn function_constructor_sources_preserve_whitespace_parameter_positions_and_synthetic_name_scope() {
+    compare_node_source_with_args(include_str!("../node-tests/test-function-constructor-source-layout.js"), &[]);
+}
