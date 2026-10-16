@@ -1480,21 +1480,20 @@ pub(crate) fn set_uncaught_exception_capture_callback(
     let Some(callback) = args.first().copied() else {
         return Err(uncaught_capture_type_error(context, None)?);
     };
-    let current_key = context.string_rooted(HOST_CAPTURE_CALLBACK_PROPERTY);
-    let current = context.get_property_rooted(process, current_key)?;
-    if context.is_callable_rooted(current)? {
-        let error = context.error_rooted(
-            "setupUncaughtExceptionCapture() called while a capture callback is already set",
-        )?;
-        return Err(throw_with_code(
-            context,
-            error,
-            "ERR_UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET",
-        ));
-    }
     let is_null = context.rooted_value(callback).is_some_and(Value::is_null);
     if !is_null && !context.is_callable_rooted(callback)? {
         return Err(uncaught_capture_type_error(context, Some(callback))?);
+    }
+    let current_key = context.string_rooted(HOST_CAPTURE_CALLBACK_PROPERTY);
+    if !is_null {
+        let current = context.get_property_rooted(process, current_key)?;
+        if context.is_callable_rooted(current)? {
+            let error = context.error_rooted(
+                "`process.setupUncaughtExceptionCapture()` was called while a capture callback was already active",
+            )?;
+            super::node_errors_shared_vm::decorate_error(context, error, "ERR_UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET")?;
+            return Err(context.throw(error));
+        }
     }
     let value = if is_null {
         context.undefined()
@@ -1580,16 +1579,8 @@ fn uncaught_capture_type_error(
     context: &mut NativeContext<'_, NodeHost>,
     value: Option<RootId>,
 ) -> Result<RootedError, RootedError> {
-    let received = value.map_or_else(
-        || Ok("undefined".to_owned()),
-        |value| received_type(context, value),
-    )?;
-    throw_process_error(
-        context,
-        &format!("The \"fn\" argument must be of type function or null. Received {received}"),
-        "ERR_INVALID_ARG_TYPE",
-        true,
-    )
+    let value = value.unwrap_or_else(|| context.undefined());
+    super::util_shared_vm::argument_type_error(context, value, "fn", "function or null")
 }
 
 pub(crate) fn set_env(

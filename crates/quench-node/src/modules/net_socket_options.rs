@@ -152,6 +152,8 @@ pub(crate) fn keep_alive(context: &mut NativeContext<'_, NodeHost>, _: RootId, a
 
 pub(crate) fn initialize_server(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let server = args[0];
+    let generation = context.number(1.0);
+    context.assign_named_property_rooted(server, "_listeningId", generation)?;
     let original = args[1];
     let options = context.object_rooted()?;
     if !context.rooted_value(original).is_some_and(|value| value.is_null() || value.is_undefined()) && !context.is_callable_rooted(original)? {
