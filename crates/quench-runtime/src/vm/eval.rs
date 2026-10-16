@@ -1160,7 +1160,7 @@ impl<H: Host> Vm<H> {
         }
         if let Some(frame) = self.frames.iter().find(|frame| frame.function == 0)
             && let Some(function) = p.functions.first()
-            && function.global_lexical_atoms.contains(&atom)
+            && function.declares_global_lexical(atom)
             && let Some(slot) = function
                 .local_atoms
                 .iter()
