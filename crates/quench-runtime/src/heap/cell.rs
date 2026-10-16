@@ -1544,8 +1544,10 @@ impl Object {
     }
 
     fn inline_property_values_mut(&mut self) -> &mut [Value; INLINE_PROPERTY_COUNT] {
-        if self.extras_pointer().is_some() {
-            &mut self.extras_mut().inline_properties.0
+        if let Some(extras) = self.extras_pointer() {
+            // SAFETY: a tagged payload owns a live `ObjectExtras` for the object's lifetime,
+            // and `&mut self` makes this its only borrow.
+            unsafe { &mut (*extras).inline_properties.0 }
         } else {
             // SAFETY: an untagged payload holds the inline values.
             unsafe { &mut self.payload.inline }
@@ -1575,7 +1577,10 @@ impl Object {
     pub(crate) fn set_inline_property(&mut self, slot: usize, value: Value) {
         debug_assert!(self.properties().has_inline_property_storage());
         debug_assert!(slot < INLINE_PROPERTY_COUNT);
-        self.inline_property_values_mut()[slot] = value;
+        // A cached slot past the inline values is a caller bug, not a reason to panic here.
+        if let Some(entry) = self.inline_property_values_mut().get_mut(slot) {
+            *entry = value;
+        }
     }
 
     pub(crate) fn replace_property_storage(
