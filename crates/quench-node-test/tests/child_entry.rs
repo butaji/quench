@@ -9602,3 +9602,28 @@ fn function_constructor_default_debug_names_remain_distinct_from_public_names_an
 fn function_prototype_info_lookups_preserve_native_accessor_layout_and_descriptor_transitions() {
     compare_node_source_with_args(include_str!("../node-tests/test-function-prototype-info-lookups.js"), &["--expose-internals", "--no-warnings"]);
 }
+
+#[test]
+fn function_constructor_sources_preserve_whitespace_parameter_positions_and_synthetic_name_scope() {
+    compare_node_source_with_args(include_str!("../node-tests/test-function-constructor-source-layout.js"), &[]);
+}
+
+#[test]
+fn private_fields_keep_class_creation_identity_and_atomic_internal_initialization() {
+    compare_node_source_with_args(include_str!("../node-tests/test-private-field-identity.js"), &[]);
+}
+
+#[test]
+fn private_eval_environments_cross_static_instance_and_ordinary_function_boundaries() {
+    compare_node_source_with_args(include_str!("../node-tests/test-private-eval-environments.js"), &[]);
+}
+
+#[test]
+fn private_brands_follow_initialization_without_branding_the_declaring_prototype() {
+    compare_node_source_with_args(include_str!("../node-tests/test-private-brand-initialization.js"), &[]);
+}
+
+#[test]
+fn static_blocks_retain_strict_eval_super_receiver_and_separate_var_contexts() {
+    compare_node_source_with_args(include_str!("../node-tests/test-static-block-context.js"), &[]);
+}

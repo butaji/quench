@@ -611,13 +611,7 @@ impl<H: Host> Vm<H> {
             if constructor.is_null() || self.object_data(constructor).is_none() {
                 return Err(self.type_error(p, "ArrayBuffer constructor must be an object".into()));
             }
-            let species = self
-                .well_known_symbols
-                .get("species")
-                .copied()
-                .map(|key| self.get_index(p, constructor, key))
-                .transpose()?
-                .unwrap_or(Value::UNDEFINED);
+            let species = self.species_of(p, constructor)?;
             if species.is_null() || species.is_undefined() {
                 None
             } else {
