@@ -1514,6 +1514,56 @@ fn lane_set_field<H: Host>(
 }
 
 lane_handler! {
+    /// `SetField` or `SetFieldStrict` at a site whose primary entry names an own data field
+    /// (`Vm::primary_own_field_store_hit`): that store inline; any other takes
+    /// `lane_set_field_miss`.
+    fn lane_set_object_field_own<>(cx, r, ip, i, view) {
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        if !unsafe { vm(cx) }.primary_own_field_store_hit(code, r.get(i.b), i.imm(), r.get(i.a), i.c) {
+            sibling!(lane_set_field_miss::<H, false>, r, ip, Carried::SCRIPT)
+        }
+        next!(cx, r, following(ip), Carried::SCRIPT)
+    }
+}
+
+lane_handler! {
+    /// `lane_set_object_field_own` for `SetThisField` and `SetThisFieldStrict`.
+    fn lane_set_this_field_own<>(cx, r, ip, i, view) {
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let stored = unsafe { lane_this(cx) }.is_some_and(|this| {
+            unsafe { vm(cx) }.primary_own_field_store_hit(code, this, i.imm(), r.get(i.a), i.c)
+        });
+        if !stored {
+            sibling!(lane_set_field_miss::<H, true>, r, ip, Carried::SCRIPT)
+        }
+        next!(cx, r, following(ip), Carried::SCRIPT)
+    }
+}
+
+lane_handler! {
+    /// A miss of an own-field store (`lane_set_object_field_own`, `lane_set_this_field_own`):
+    /// a site that adds properties or went polymorphic moves to the general cached write
+    /// (`lane_set_object_field`, `lane_set_this_field`), which the store itself takes.
+    #[inline(never)]
+    fn lane_set_field_miss<THIS: bool>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let general = vm.field_site_adds(i.c) || vm.field_site_polymorphic(i.c);
+        if THIS {
+            if general {
+                requicken(ip, lane_set_this_field::<H>);
+            }
+            sibling!(lane_set_this_field::<H>, r, ip, Carried::SCRIPT)
+        }
+        if general {
+            requicken(ip, lane_set_object_field::<H>);
+        }
+        sibling!(lane_set_object_field::<H>, r, ip, Carried::SCRIPT)
+    }
+}
+
+lane_handler! {
     /// `SetField` and `SetFieldStrict`.
     fn lane_set_object_field<>(cx, r, ip, i, view) {
         lane_set_field(cx, r, ip, r.get(i.b), i)
@@ -4164,8 +4214,8 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::StoreLocal | Op::StoreEnvLocal => Some(lane_store_local::<H>),
         Op::LoadThis => Some(lane_load_this::<H>),
         Op::GetField => Some(lane_get_field_first::<H>),
-        Op::SetField | Op::SetFieldStrict => Some(lane_set_object_field::<H>),
-        Op::SetThisField | Op::SetThisFieldStrict => Some(lane_set_this_field::<H>),
+        Op::SetField | Op::SetFieldStrict => Some(lane_set_object_field_own::<H>),
+        Op::SetThisField | Op::SetThisFieldStrict => Some(lane_set_this_field_own::<H>),
         Op::ToNumeric => Some(lane_to_numeric::<H>),
         Op::IncDec => Some(lane_inc_dec::<H, false>),
         Op::Binary | Op::NumericAdd | Op::NumericMultiply => Some(lane_binary::<H>),
