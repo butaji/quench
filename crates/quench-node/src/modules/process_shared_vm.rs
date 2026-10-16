@@ -57,17 +57,20 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     install(context, process, "stderr", stderr)?;
     let event_count = context.number(0.0);
     install(context, process, "_eventsCount", event_count)?;
-    for (name, operation) in [
-        ("nextTick", "nextTick"),
-        ("cwd", "processCwd"),
-        ("chdir", "processChdir"),
-        ("getuid", "processGetuid"),
-        ("geteuid", "processGeteuid"),
-        ("getgid", "processGetgid"),
-        ("getegid", "processGetegid"),
-        ("umask", "processUmask"),
+    // Property, native operation and the function name Node reports.
+    for (name, operation, function_name) in [
+        ("nextTick", "nextTick", "nextTick"),
+        ("cwd", "processCwd", "wrappedCwd"),
+        ("chdir", "processChdir", "wrappedChdir"),
+        ("getuid", "processGetuid", "getuid"),
+        ("geteuid", "processGeteuid", "geteuid"),
+        ("getgid", "processGetgid", "getgid"),
+        ("getegid", "processGetegid", "getegid"),
+        ("umask", "processUmask", "wrappedUmask"),
+        ("dlopen", "processDlopen", "dlopen"),
     ] {
-        let function = context.host_function(crate::host::shared_vm::operation(operation))?;
+        let operation = crate::host::shared_vm::operation(operation);
+        let function = context.host_function_named(operation, function_name)?;
         install(context, process, name, function)?;
     }
     #[cfg(unix)]
@@ -2065,6 +2068,9 @@ fn drain_checkpoint(
         if crate::modules::http_shared_vm::poll(runtime, program, &shared_state)? {
             continue;
         }
+        if crate::modules::napi::poll(runtime, program)? {
+            continue;
+        }
 
         if has_referenced_shared_work(&shared_state)
             && super::fs_watch_shared_vm::poll(runtime, program)?
@@ -2248,6 +2254,7 @@ fn has_referenced_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeS
         || crate::modules::fetch_shared_vm::has_pending(shared_state)
         || crate::modules::child_process_shared_vm::has_pending(shared_state)
         || crate::modules::http_shared_vm::has_work(shared_state)
+        || crate::modules::napi::has_work()
         || super::fs_watch_shared_vm::has_work(&shared_state.borrow().fs_watch)
         || super::fs_stat_watch_shared_vm::has_work(&shared_state.borrow().fs_stat_watch)
         || shared_state.borrow().scheduler.has_refed_shared_timers()
