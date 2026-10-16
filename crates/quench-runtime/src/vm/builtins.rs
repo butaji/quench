@@ -1138,11 +1138,15 @@ impl<H: Host> Vm<H> {
     }
 
     fn index_atom_hash(&mut self, hash: u64, atom: Atom) {
-        if let std::collections::hash_map::Entry::Vacant(entry) = self.atoms.entry(hash) {
-            entry.insert(atom);
-        } else {
-            self.atom_collisions.entry(hash).or_default().push(atom);
-        }
+        let (text, dynamic) = (&self.atom_text, &self.dynamic_atoms);
+        self.atoms.insert_unique(hash, atom, |&atom| {
+            let index = atom as usize;
+            if index < text.len() {
+                Self::atom_hash_str(&text[index])
+            } else {
+                Self::atom_hash_units(dynamic[index - text.len()].units())
+            }
+        });
     }
     pub(super) fn atom_name(&self, atom: Atom) -> &str {
         let index = atom as usize;
