@@ -1,0 +1,25 @@
+{
+  "source_commit": "4aa47e844c463a9f6ef48a536c07e89d0cead53d",
+  "archive_sha256": "ce59f9038dda0e637656fb1c36cf52c07c637922fd81d419dbba2ec129afbd35",
+  "fixture_root": "/workspace/quench/work/node_modules/node-stable-conformance/test/parallel",
+  "oracle_version": "Node v26.12.0",
+  "jobs": 2,
+  "timeout_seconds": 30,
+  "diagnostic_only": true,
+  "total_node_parity": false,
+  "concurrent_load": "Two paired Callgrind workers; fixed instruction counts are not wall timing. Suite deadlines remain diagnostic.",
+  "literal_node_children_use_frozen_quench": true,
+  "binaries": {
+    "quench-node": {
+      "path": "/workspace/quench/work/process-memory-stable-audit/bin/quench-node",
+      "sha256": "cd16589aa0985eacba7adf0f85b899c4368dd26881571cc1923cff38518b2241"
+    },
+    "run-parallel": {
+      "path": "/workspace/quench/work/process-memory-stable-audit/bin/run-parallel",
+      "sha256": "3fb807242350d2803a26e87f036952da2d87ad9ba900fc0f60d958d12e25e831"
+    }
+  },
+  "cpu_max": "400000 100000\n",
+  "memory_max": "17179869184\n",
+  "memory_events_before": "low 0\nhigh 0\nmax 721673\noom 0\noom_kill 0\noom_group_kill 0\n"
+}
