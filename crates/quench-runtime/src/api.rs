@@ -84,6 +84,11 @@ impl<H: Host> Runtime<H> {
         self.vm.set_execution_mode(mode);
     }
 
+    /// Construct the Vm on this thread with an owned cancellation authority.
+    pub fn new_with_execution_interrupt(host:H,interrupt:crate::ExecutionInterrupt)->Self { Self { vm:Vm::new_with_execution_interrupt(host,interrupt) } }
+
+    pub fn execution_interrupt_handle(&self)->crate::ExecutionInterrupt { self.vm.execution_interrupt_handle() }
+
     pub fn execution_mode(&self) -> crate::ExecutionMode {
         self.vm.execution_mode()
     }
