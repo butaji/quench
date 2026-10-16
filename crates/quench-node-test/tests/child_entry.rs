@@ -9611,3 +9611,13 @@ fn native_caller_location_uses_original_activations_independently_of_error_hooks
 fn filesystem_glob_policy_defers_promises_dependencies_and_preserves_data_descriptors() {
     compare_node_source_with_args(include_str!("../node-tests/test-fs-promises-glob-lazy-policy.js"), &["--expose-internals", "--no-warnings"]);
 }
+
+#[test]
+fn function_constructor_default_debug_names_remain_distinct_from_public_names_and_descriptors() {
+    compare_node_source_with_args(include_str!("../node-tests/test-function-constructor-debug-names.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn function_prototype_info_lookups_preserve_native_accessor_layout_and_descriptor_transitions() {
+    compare_node_source_with_args(include_str!("../node-tests/test-function-prototype-info-lookups.js"), &["--expose-internals", "--no-warnings"]);
+}

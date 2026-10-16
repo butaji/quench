@@ -10177,3 +10177,22 @@ fn owned_host_script_code_reclaims_after_owners_and_escaped_functions_drop() {
     vm.collect_now(&program);
     assert_eq!(vm.programs.live_count(), before);
 }
+
+#[test]
+fn function_native_info_lookup_transitions_match_in_both_execution_modes() {
+    let source = r#"
+Error.prepareStackTrace=(_,frames)=>frames;
+const changes={name:f=>f.name,length:f=>f.length,reflect:f=>Reflect.get(f,'name'),computed:(f,k)=>f[k]};
+for(const [kind,read] of Object.entries(changes)) {
+ const fn=Function('return new Error().stack[0]');Object.setPrototypeOf({},fn);
+ if(fn().getFunctionName()!=='anonymous')throw Error('setup '+kind);
+ read(fn,'name');const expected=kind==='name'||kind==='length'?'eval':'anonymous';
+ if(fn().getFunctionName()!==expected)throw Error('lookup '+kind);
+}
+const fn=Function('return new Error().stack[0]');delete fn.length;Object.setPrototypeOf({},fn);void fn.name;
+if(fn().getFunctionName()!=='anonymous')throw Error('deleted length layout');
+"#;
+    for program in [Engine::compile(crate::ExecutionRequest { source, name: "function-info-lookup.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "function-info-lookup.js").unwrap()] {
+        Vm::new(SilentHost).execute(&program).unwrap();
+    }
+}
