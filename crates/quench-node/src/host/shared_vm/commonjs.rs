@@ -2152,6 +2152,11 @@ fn require_es_module(context: &mut Context<'_>, filename: &Path, parent: Option<
 
 }
 
+/// Whether the pinned Node library is available (its primordials module stands for it).
+pub(crate) fn node_library_present(context: &mut Context<'_>) -> bool {
+    node_primordials_source(context).is_some()
+}
+
 /// The pinned Node library's primordials module, when the library is present.
 fn node_primordials_source(context: &mut Context<'_>) -> Option<PathBuf> {
     let root = context.host_mut().node_library_root.clone();
@@ -2170,6 +2175,12 @@ pub(crate) fn node_primordials(context: &mut Context<'_>) -> Result<Option<RootI
     let Some(path) = node_primordials_source(context) else {
         return Ok(None);
     };
+    // Node builds its primordials before `Error.prepareStackTrace` exists; materializing
+    // that lazy property first builds them from inside its initializer, where it reads unset.
+    crate::modules::node_errors_shared_vm::materialize_prepare_stack_trace(context)?;
+    if let Some(primordials) = state.borrow().primordials_module {
+        return Ok(Some(primordials));
+    }
     let exports = context
         .with_startup_intrinsics(|context| load(context, &path, None, EntryGoal::CommonJs))?;
     let retained = context.retain(exports)?;
@@ -2208,6 +2219,17 @@ fn load_with_resolution(
     }
     let library_root = context.host_mut().node_library_root.clone();
     let library_relative = filename.strip_prefix(&library_root).ok();
+    let is_primordials =
+        library_relative == Some(Path::new("lib/internal/per_context/primordials.js"));
+    let in_node_internal = library_relative.is_some_and(|path| path.starts_with("lib"));
+    // A library module sees Node's bootstrap done before it starts, as in Node: building
+    // the primordials first may itself load this module (`Error.prepareStackTrace` loads
+    // `internal/errors`), which the cache then returns instead of a partial copy.
+    let primordials = if in_node_internal && !is_primordials {
+        node_primordials(context)?
+    } else {
+        None
+    };
     let cache = if crate::node_sources::source(filename, &context.host_mut().node_library_root).is_some() {
         ModuleCache::NodeLibrary
     } else { ModuleCache::CommonJs };
@@ -2262,8 +2284,6 @@ fn load_with_resolution(
                 ));
             }
             _ => {
-                let is_primordials = library_relative
-                    == Some(Path::new("lib/internal/per_context/primordials.js"));
                 let text = if text.starts_with("#!") {
                     text.find('\n').map_or("", |end| &text[end..])
                 } else {
@@ -2289,12 +2309,8 @@ fn load_with_resolution(
                         .unwrap_or(Path::new("."))
                         .to_string_lossy(),
                 );
-                let in_node_internal = library_relative.is_some_and(|path| path.starts_with("lib"));
-                let primordials = match primordial_seed {
+                let primordials = match primordial_seed.or(primordials) {
                     Some(root) => root,
-                    None if in_node_internal => {
-                        node_primordials(context)?.unwrap_or_else(|| context.undefined())
-                    }
                     None => context.undefined(),
                 };
                 let is_realm_bootstrap = library_relative
