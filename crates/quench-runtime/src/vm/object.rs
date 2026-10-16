@@ -1897,7 +1897,7 @@ impl<H: Host> Vm<H> {
         self.create_shape_data_property(object, key, value, DEFAULT_DATA_ATTRIBUTES)
     }
 
-    fn create_shape_data_property(
+    pub(super) fn create_shape_data_property(
         &mut self,
         object: Value,
         key: PropertyKey,
