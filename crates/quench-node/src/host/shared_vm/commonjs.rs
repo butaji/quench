@@ -1581,10 +1581,9 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             let fs = cached_builtin(context, BuiltinModule::Fs)?;
             get(context, fs, "promises")
         }
-        BuiltinModule::Vfs => {
-            let global = context.global_root()?;
-            get(context, global, "__nodeVfs")
-        }
+        // The pinned SDK owns VFS layer identity, reserved mount roots and lifecycle.
+        // Native descriptor and fs handler operations remain registered below.
+        BuiltinModule::Vfs => node_library_module(context, "vfs.js", "vfs.js"),
         BuiltinModule::Net => crate::modules::net_shared_vm::module(context),
         BuiltinModule::Http => crate::modules::http_shared_vm::module(context),
         #[cfg(target_os = "linux")]
