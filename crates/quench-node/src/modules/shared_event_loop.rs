@@ -10,7 +10,11 @@ pub struct SharedEventLoop {
 }
 
 /// Async identity and retained resource owned by one queued operation.
+#[derive(Clone,Copy,PartialEq,Eq)]
+pub enum CallbackLifetime { Operation, Resource }
 pub struct CallbackExecution {
+    pub lifetime: CallbackLifetime,
+    pub optional_callback: Option<RootId>,
     pub id: u64,
     pub resource: RootId,
 }
@@ -38,7 +42,7 @@ pub(crate) fn queue_next_tick(
     context.define_data_property_rooted(resource, key, values, true, true, true)?;
     let id = super::async_hooks_shared_vm::create_context(&context.host_mut().shared_state());
     super::async_hooks_shared_vm::emit_init(context, resource, "TickObject", id)?;
-    let execution = Some(CallbackExecution { id, resource: context.retain(resource)? });
+    let execution = Some(CallbackExecution { lifetime: crate::modules::shared_event_loop::CallbackLifetime::Operation, optional_callback: None, id, resource: context.retain(resource)? });
     // The job object owns the mutable callback/argument slots. The retained
     // callable is only an invocation view, as for Timeout handles.
     let invocation = context.host_function_with_data(crate::host::shared_vm::operation("asyncTickInvoke"), receiver)?;
@@ -423,4 +427,10 @@ impl SharedEventLoop {
     pub fn reset_shared(&mut self) {
         self.shared = SharedCallbacks::default();
     }
+}
+
+/// Resolve a native mutable callback slot without inventing a guest wrapper.
+pub(crate) fn optional_callback(context:&mut NativeContext<'_,NodeHost>,receiver:RootId,args:&[RootId])->Result<RootId,RootedError>{
+ let callback=context.get_property_rooted(receiver,args[0])?;
+ if context.is_callable_rooted(callback)? {Ok(callback)} else {Ok(context.undefined())}
 }

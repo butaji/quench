@@ -36,6 +36,8 @@ pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         ("DNS_ORDER_VERBATIM", DNS_ORDER_VERBATIM), ("DNS_ORDER_IPV4_FIRST", DNS_ORDER_IPV4_FIRST),
         ("DNS_ORDER_IPV6_FIRST", DNS_ORDER_IPV6_FIRST),
     ] { let value = c.number(number as f64); put(c, object, name, value)?; }
+    #[cfg(quench_node_cares)]
+    super::cares_channel_shared_vm::install(c, object)?;
     Ok(object)
 }
 pub(crate) fn address_array(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
@@ -143,7 +145,7 @@ pub(crate) fn poll(runtime: &mut quench_runtime::Runtime<NodeHost>, program: &qu
             // Retain a separate resource root because receiver and execution own roots independently.
             let resource = runtime.root(runtime.rooted_value(pending.request).expect("retained DNS request"));
             let callback = super::shared_event_loop::SharedCallback {
-                execution: Some(super::shared_event_loop::CallbackExecution { id: pending.async_id, resource }),
+                execution: Some(super::shared_event_loop::CallbackExecution { lifetime: crate::modules::shared_event_loop::CallbackLifetime::Operation, optional_callback: None, id: pending.async_id, resource }),
                 callback, receiver: pending.request, args,
             };
             for root in temporaries { runtime.release_root(root); }

@@ -1,14 +1,12 @@
 //! Native Node HKDF: one-shot HMAC extraction followed by provider HKDF expand.
 //! The fetched digest and every native context have an explicit owning lifetime.
 use super::crypto_digest::Digest;
+use super::crypto_kdf::Context;
 use super::crypto_secret_material::Material;
 use foreign_types::ForeignTypeRef;
 use openssl::error::ErrorStack;
-use openssl_sys::{EVP_KDF, EVP_KDF_CTX, EVP_MD, OSSL_PARAM};
-use std::{
-    ffi::{c_char, c_int, c_void},
-    ptr::{self, NonNull},
-};
+use openssl_sys::{EVP_MD, OSSL_PARAM};
+use std::ffi::{c_char, c_int, c_void};
 const HKDF_COUNTER_VALUES: usize = u8::MAX as usize;
 // OpenSSL kdf.h's EVP_KDF_HKDF_MODE_EXPAND_ONLY, not the EVP_PKEY mode ABI.
 const HKDF_EXPAND_ONLY: c_int = 2;
@@ -29,18 +27,6 @@ unsafe extern "C" {
         value: *mut c_char,
         len: usize,
     ) -> OSSL_PARAM;
-}
-struct Kdf(NonNull<EVP_KDF>);
-impl Drop for Kdf {
-    fn drop(&mut self) {
-        unsafe { openssl_sys::EVP_KDF_free(self.0.as_ptr()) }
-    }
-}
-struct Context(NonNull<EVP_KDF_CTX>);
-impl Drop for Context {
-    fn drop(&mut self) {
-        unsafe { openssl_sys::EVP_KDF_CTX_free(self.0.as_ptr()) }
-    }
 }
 pub(crate) fn maximum(digest: &Digest) -> usize {
     digest.size() * HKDF_COUNTER_VALUES
@@ -90,14 +76,7 @@ pub(crate) fn derive(
     if length == 0 {
         return Err(ErrorStack::get());
     }
-    let kdf = Kdf(NonNull::new(unsafe {
-        openssl_sys::EVP_KDF_fetch(ptr::null_mut(), c"HKDF".as_ptr(), ptr::null())
-    })
-    .ok_or_else(ErrorStack::get)?);
-    let context = Context(
-        NonNull::new(unsafe { openssl_sys::EVP_KDF_CTX_new(kdf.0.as_ptr()) })
-            .ok_or_else(ErrorStack::get)?,
-    );
+    let context = Context::fetch(c"HKDF")?;
     let name = unsafe { EVP_MD_get0_name(md.as_ptr()) };
     if name.is_null() {
         return Err(ErrorStack::get());
@@ -128,7 +107,7 @@ pub(crate) fn derive(
     let mut output = Material::new(vec![0; length]);
     if unsafe {
         openssl_sys::EVP_KDF_derive(
-            context.0.as_ptr(),
+            context.as_ptr(),
             output.as_mut_ptr(),
             length,
             params.as_ptr(),
