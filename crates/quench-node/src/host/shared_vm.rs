@@ -703,6 +703,16 @@ impl quench_runtime::Host for NodeHost {
         false
     }
 
+    /// Node agents (the main thread and workers) may block in `Atomics.wait`.
+    fn can_block(&self) -> bool {
+        true
+    }
+
+    /// SharedArrayBuffers cross to worker threads.
+    fn shares_memory_across_threads(&self) -> bool {
+        true
+    }
+
     fn initialize_shadow_realm(
         context: &mut quench_runtime::NativeContext<'_, Self>,
         global: quench_runtime::RootId,

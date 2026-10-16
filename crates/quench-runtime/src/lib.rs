@@ -36,7 +36,13 @@ pub use host::{
 pub use memory_edge::report_allocator_memory;
 pub use stack::{STACK_BUDGET_BYTES, STACK_HEADROOM_BYTES, WORKER_STACK_SIZE};
 pub use value::Value;
-pub use vm::{ExecutionMode, JsError};
+pub use vm::{ExecutionMode, JsError, SerializedValue};
+
+/// Serialized values cross to other agents' threads.
+const _: fn() = || {
+    fn sendable<T: Send>() {}
+    sendable::<SerializedValue>();
+};
 
 mod api;
 pub use api::{
