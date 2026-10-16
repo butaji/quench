@@ -241,7 +241,11 @@ impl<H: Host> Vm<H> {
             let atom = self.intern_js_atom(&name);
             if self.is_private_name(atom)
                 || !self
-                    .ordinary_own_property(program, self.heap.root_value(source).unwrap(), key)?
+                    .ordinary_own_property(
+                        program,
+                        self.heap.root_value(source).unwrap(),
+                        key,
+                    )?
                     .is_some_and(|(_, attributes)| attributes.enumerable)
             {
                 continue;
