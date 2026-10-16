@@ -798,8 +798,7 @@ pub(crate) fn mark_promise_handled(
     Ok(context.undefined())
 }
 
-/// The native binding can initialize while internal/errors is still evaluating.
-/// Keep its identity independent of the public util module and its decoder exports.
+/// Cache the genuine internal key binding in Core-owned private formatter data.
 pub(crate) fn key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     crate::host::shared_vm::commonjs::cached_native_binding(context, "\0binding:util", build_key_binding)
 }

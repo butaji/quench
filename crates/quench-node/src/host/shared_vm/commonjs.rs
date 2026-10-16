@@ -2291,7 +2291,7 @@ const getLinkedBinding = () => ({});
     case "symbols":
     case "http2":
     case "fs_event_wrap": return __nativeInternalBinding(name);
-    case "util": return Object.assign({}, __nativeInternalBinding("util"), {
+    case "util": return Object.assign({}, {
       privateSymbols: __nativeInternalBinding("util").privateSymbols,
       constants: __nativeInternalBinding("util").constants,
       getOwnNonIndexProperties: __nativeInternalBinding("util").getOwnNonIndexProperties,
