@@ -1,0 +1,63 @@
+{
+  "schema_version": 2,
+  "inventory_hash": "a1cc5539923e9a17",
+  "timeout_secs": 30,
+  "jobs": 4,
+  "node_version": "v26.12.0",
+  "runtime_commit": "9dec2d57951a865ead5fb94615967461cb7d9ac8",
+  "tests_node_commit": "unknown",
+  "platform": "linux-x86_64",
+  "results": [
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-glob-no-follow-symlink-globstar.mjs",
+      "status": "fail",
+      "observation": {
+        "Ok": {
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "fail",
+            "reason": "TypeError: value is not callable\n    at file:///workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-glob-no-follow-symlink-globstar.mjs:35:24\n\nNode.js v26.12.0"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-glob-throw.mjs",
+      "status": "fail",
+      "observation": {
+        "Ok": {
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "fail",
+            "reason": "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n+ actual - expected\n\n+ 'value is not callable'\n- 'blep'\n"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-glob.mjs",
+      "status": "fail",
+      "observation": {
+        "Ok": {
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "fail",
+            "reason": "TypeError: The \"original\" argument must be of type function. Received type undefined (undefined)\n    at promisify (node:util/shared.js:92:9)\n    at file:///workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-glob.mjs:342:23\n    at invoke (node:test/shared.js:41:63)\n    at node:test/shared.js:48:43\n    at file:///workspace/work/node-stable-release/node-v26.12.0/test/parallel/test-fs-glob.mjs:341:1\n\nNode.js v26.12.0"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    }
+  ]
+}
