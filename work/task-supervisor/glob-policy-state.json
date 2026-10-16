@@ -1,0 +1,12 @@
+{
+  "status": "failed",
+  "index": 0,
+  "command": [
+    "bash",
+    "/workspace/quench/work/glob-policy/qualify-core.sh"
+  ],
+  "exit": 101,
+  "supervisor_pid": 3038775,
+  "session_id": 3038772,
+  "utc": "2026-10-16T08:37:56.220328+00:00"
+}
