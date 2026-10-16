@@ -591,7 +591,7 @@ const READV_API: &str = quench_js_check::checked_js!(
 );
 
 const READDIR_FACTORY: &str = quench_js_check::checked_js!(
-    r#"(readDir) => (path, options) => {
+    r#"(readDir, Dirent) => (path, options) => {
   if (typeof path !== "string" && !Buffer.isBuffer(path) && !(path instanceof URL)) {
     const received = path === null ? "null" : path === undefined ? "undefined" : `type ${typeof path}`;
     const error = new TypeError(`The "path" argument must be of type string, Buffer, or URL. Received ${received}`);
@@ -602,14 +602,7 @@ const READDIR_FACTORY: &str = quench_js_check::checked_js!(
   else if (path instanceof URL) path = path.pathname;
   const entries = readDir(path);
   if (!options || options.withFileTypes !== true) return entries.map((entry) => entry.name);
-  return entries.map((entry) => {
-    const dirent = { name: entry.name };
-    for (const name of ["isFile", "isDirectory", "isSymbolicLink", "isBlockDevice", "isCharacterDevice", "isFIFO", "isSocket"]) {
-      const result = entry[name];
-      Object.defineProperty(dirent, name, { value: () => result });
-    }
-    return dirent;
-  });
+  return entries.map((entry) => new Dirent(entry.name, entry.type, path));
 }"#
 );
 
@@ -646,24 +639,8 @@ const ASYNC_READDIR_FACTORY: &str = quench_js_check::checked_js!(
 );
 
 const OPENDIR_API: &str = quench_js_check::checked_js!(
-    r#"(readdirSync) => {
+    r#"(readdirSync, Dirent) => {
   const states = new WeakMap();
-  class Dirent {
-    constructor(entry, parentPath) {
-      this.name = entry.name;
-      this.parentPath = parentPath;
-      for (const name of ['isFile', 'isDirectory', 'isSymbolicLink', 'isBlockDevice', 'isCharacterDevice', 'isFIFO', 'isSocket']) {
-        Object.defineProperty(this, name, { value: () => entry[name]() });
-      }
-    }
-    isFile() { return false; }
-    isDirectory() { return false; }
-    isSymbolicLink() { return false; }
-    isBlockDevice() { return false; }
-    isCharacterDevice() { return false; }
-    isFIFO() { return false; }
-    isSocket() { return false; }
-  }
   const invalidThis = () => {
     const error = new TypeError('Receiver must be an instance of class Dir');
     error.code = 'ERR_INVALID_THIS';
@@ -745,7 +722,7 @@ const OPENDIR_API: &str = quench_js_check::checked_js!(
     const bufferSize = options && Object.prototype.hasOwnProperty.call(options, 'bufferSize') ? options.bufferSize : 32;
     if (typeof bufferSize !== 'number') throw Object.assign(new TypeError('The "bufferSize" argument must be of type number.'), { code: 'ERR_INVALID_ARG_TYPE' });
     if (!Number.isInteger(bufferSize) || bufferSize < 1) throw Object.assign(new RangeError('The value of "bufferSize" is out of range. It must be >= 1'), { code: 'ERR_OUT_OF_RANGE' });
-    const entries = readdirSync(path, { withFileTypes: true }).map((entry) => new Dirent(entry, path));
+    const entries = readdirSync(path, { withFileTypes: true });
     return new Dir(path, entries);
   };
   function opendirSync(path, options) { return makeDir(path, options); }
@@ -2083,7 +2060,10 @@ fn make_readdir_sync(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         context.host_function(crate::host::shared_vm::operation("fsReaddirSync"))?;
     let factory = context.evaluate_script_rooted(READDIR_FACTORY, "node:fs/shared-readdir.js")?;
     let undefined = context.undefined();
-    context.call_rooted(factory, undefined, &[read_directory])
+    let dirent = crate::host::shared_vm::commonjs::node_library_export(
+        context, "fs.js", "internal/fs/utils.js", "Dirent",
+    )?;
+    context.call_rooted(factory, undefined, &[read_directory, dirent])
 }
 
 fn make_readdir_async(
@@ -2179,7 +2159,10 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     set(context, module, "readdir", readdir)?;
     let opendir_factory =
         context.evaluate_script_rooted(OPENDIR_API, "node:fs/shared-opendir.js")?;
-    let opendir_api = context.call_rooted(opendir_factory, undefined, &[readdir_sync])?;
+    let dirent = crate::host::shared_vm::commonjs::node_library_export(
+        context, "fs.js", "internal/fs/utils.js", "Dirent",
+    )?;
+    let opendir_api = context.call_rooted(opendir_factory, undefined, &[readdir_sync, dirent])?;
     let dir_constructor = get(context, opendir_api, "Dir")?;
     let dirent_constructor = get(context, opendir_api, "Dirent")?;
     let opendir = get(context, opendir_api, "opendir")?;
@@ -2962,4 +2945,28 @@ pub(super) fn stream_io_error(
         set(context, exception, "errno", errno_value)?;
     }
     Ok(context.throw(exception))
+}
+
+/// Capture unchanged Node glob policy before guest code can replace its imports.
+/// Traversal uses the public filesystem primitives backed by this host.
+pub(crate) fn initialize_glob_policy(
+    context: &mut NativeContext<'_, NodeHost>,
+) -> Result<(), RootedError> {
+    let module = crate::host::shared_vm::commonjs::fs_module(context)?;
+    crate::host::shared_vm::commonjs::node_library_module(
+        context, "fs.js", "internal/fs/glob.js",
+    )?;
+    let policy = crate::host::shared_vm::commonjs::node_library_module(context, "fs.js", "fs.js")?;
+    for name in ["glob", "globSync"] {
+        let function = get(context, policy, name)?;
+        set(context, module, name, function)?;
+    }
+    let policy = crate::host::shared_vm::commonjs::node_library_module(
+        context, "fs.js", "internal/fs/promises.js",
+    )?;
+    let exports = get(context, policy, "exports")?;
+    let glob = get(context, exports, "glob")?;
+    let promises = get(context, module, "promises")?;
+    set(context, promises, "glob", glob)?;
+    Ok(())
 }
