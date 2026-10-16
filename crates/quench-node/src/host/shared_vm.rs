@@ -9,6 +9,11 @@ pub(crate) use commonjs::source_kind;
 
 pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
     quench_runtime::host_functions![
+        method "nodeLibraryRequire" (1) => commonjs::require_node_library,
+        method "nodeTestCreateMock" (0) => crate::modules::test_shared_vm::create_mock,
+        method "contextifyScript" (0) => crate::modules::contextify_shared_vm::script,
+        method "contextifyRunInContext" (0) => crate::modules::contextify_shared_vm::run_in_context,
+        method "contextifyCompileFunction" (0) => crate::modules::contextify_shared_vm::compile_function,
         method "nodePrintEvalScript" (1) => crate::shared_run::print_eval_script,
         method "callbackify" (1) => crate::modules::util_callbackify_shared_vm::callbackify,
         method "gc" (0) => crate::modules::process_shared_vm::collect_garbage,
