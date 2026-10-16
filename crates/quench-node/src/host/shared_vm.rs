@@ -400,6 +400,12 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "cryptoSecretJobExecutor" (2) => crate::modules::crypto_secret_job_shared_vm::executor,
         method "cryptoSecretJobPoll" (0) => crate::modules::crypto_secret_job_shared_vm::poll,
         method "cryptoSecretJobComplete" (0) => crate::modules::crypto_secret_job_shared_vm::complete,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoProviderFacts" (1) => crate::modules::crypto_provider_shared_vm::operation,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoWebNamespace" (0) => crate::modules::crypto_provider_shared_vm::webcrypto,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoWebClasses" (0) => crate::modules::crypto_provider_shared_vm::install_classes,
         method "cryptoKeySlots" (0) => crate::modules::crypto_key_shared_vm::operation,
         method "bufferCompareRaw" (0) => crate::modules::buffer_compare_shared_vm::raw_compare,
         method "bufferCompare" (2) => crate::modules::buffer_compare_shared_vm::compare,

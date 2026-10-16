@@ -167,3 +167,6 @@ pub(crate) mod crypto_secret_job_shared_vm;
 
 pub(crate) mod tcp_owned;
 pub(crate) mod tcp_binding;
+
+#[cfg(quench_openssl_provider)]
+pub(crate) mod crypto_provider_shared_vm;

@@ -48,6 +48,8 @@ pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>) -> Result<RootI
     let text = context.string_rooted("SecureContext");
     context.define_data_property_rooted(native, name, text, false, false, true)?;
     let binding = context.object_rooted()?;
+    #[cfg(quench_openssl_provider)]
+    super::super::crypto_provider_shared_vm::install(context, binding)?;
     let key = context.string_rooted("SecureContext");
     context.define_data_property_rooted(binding, key, native, true, true, true)?;
     if super::super::crypto_engine_shared_vm::SUPPORTED {

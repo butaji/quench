@@ -373,7 +373,6 @@ pub(crate) fn run(c: &mut Context<'_>, job: RootId, _: &[RootId]) -> Result<Root
 pub(crate) fn poll(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     let data = c.host_function_data()?;
     let job = get(c, data, "0")?;
-    let record = get(c, data, "1")?;
     let shared = c.host_mut().shared_state();
     let identities = shared
         .borrow()

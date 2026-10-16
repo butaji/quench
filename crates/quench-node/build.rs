@@ -34,6 +34,12 @@ fn on_path(program: &str) -> bool {
 }
 
 fn main() {
+
+    println!("cargo:rustc-check-cfg=cfg(quench_openssl_provider)");
+    println!("cargo:rerun-if-env-changed=DEP_OPENSSL_VERSION_NUMBER");
+    let provider = std::env::var("DEP_OPENSSL_VERSION_NUMBER").ok()
+        .and_then(|v| u64::from_str_radix(&v,16).ok()).is_some_and(|v|v>=0x3000_0000);
+    if provider { println!("cargo:rustc-cfg=quench_openssl_provider"); }
     embed_node_sources();
     configure_icu();
     configure_native_zlib();
