@@ -1495,6 +1495,18 @@ pub(crate) fn dns_module(context: &mut Context<'_>) -> Result<RootId, RootedErro
     cached_builtin(context, BuiltinModule::Dns)
 }
 
+pub(crate) fn events_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    cached_builtin(context, BuiltinModule::Events)
+}
+
+pub(crate) fn path_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    crate::modules::path_shared_vm::module(context)
+}
+
+pub(crate) fn url_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    cached_builtin(context, BuiltinModule::Url)
+}
+
 /// Private namespaces project the same original objects as the public globals.
 fn native_global_namespace(context: &mut Context<'_>, names: &[&str]) -> Result<RootId, RootedError> {
     context.with_startup_intrinsics(|context| {
@@ -1610,10 +1622,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::NodeTest => crate::modules::test_shared_vm::module(context),
         BuiltinModule::Vm => crate::modules::vm_shared_vm::module(context),
         BuiltinModule::WorkerThreads => {
-            let module = context.evaluate_script_rooted(
-                "({ isMainThread: true, MessageChannel: globalThis.MessageChannel, MessagePort: globalThis.MessagePort, Worker: class Worker { constructor() { throw Object.assign(new Error('Worker threads are unavailable in this runtime'), { code: 'ERR_WORKER_UNSUPPORTED_OPERATION' }); } } })",
-                "node:worker_threads.js",
-            )?;
+            let mut markers = Vec::new();
             for name in ["markAsUncloneable", "markAsUntransferable", "isMarkedAsUntransferable"] {
                 let operation = context.host_function(super::operation(name))?;
                 let factory = context.evaluate_script_rooted(
@@ -1621,10 +1630,9 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
                     "node:worker_threads/marker.js",
                 )?;
                 let undefined = context.undefined();
-                let method = context.call_rooted(factory, undefined, &[operation])?;
-                set(context, module, name, method)?;
+                markers.push((name, context.call_rooted(factory, undefined, &[operation])?));
             }
-            Ok(module)
+            crate::modules::worker_shared_vm::module(context, &markers)
         }
         BuiltinModule::Url => crate::modules::url_shared_vm::module(context),
         BuiltinModule::Querystring => crate::modules::querystring_shared_vm::module(context),

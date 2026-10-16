@@ -1287,7 +1287,7 @@ struct ObjectExtras {
     module_namespace: bool,
     external_address: Option<usize>,
     boxed_primitive: Option<Value>,
-    structured_clone_forbidden: bool,
+    structured_serialization: StructuredSerialization,
     structured_transfer_forbidden: bool,
     module_bindings: Vec<(Atom, ProgramId, u16)>,
     deferred_module: Option<crate::ModuleSource>,
@@ -1296,6 +1296,19 @@ struct ObjectExtras {
     /// An index-keyed property descriptor has been recorded for this object; never cleared.
     indexed_descriptors: bool,
 }
+/// How structured serialization treats an object (HTML [[Serializable]] and
+/// [[Transferable]] host objects).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum StructuredSerialization {
+    /// Serialized by its own properties or builtin data.
+    #[default]
+    Ordinary,
+    /// Never serializable (host-marked uncloneable, or an external).
+    Forbidden,
+    /// Serializable only when listed for transfer (a MessagePort).
+    TransferRequired,
+}
+
 impl ObjectExtras {
     fn allocated_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
@@ -1611,12 +1624,13 @@ impl Object {
         object
     }
 
-    pub(crate) fn forbid_structured_clone(&mut self) {
-        self.extras_mut().structured_clone_forbidden = true;
+    /// How structured serialization treats this object.
+    pub(crate) fn set_structured_serialization(&mut self, policy: StructuredSerialization) {
+        self.extras_mut().structured_serialization = policy;
     }
 
-    pub(crate) fn is_structured_clone_forbidden(&self) -> bool {
-        self.extras().is_some_and(|extras| extras.structured_clone_forbidden)
+    pub(crate) fn structured_serialization(&self) -> StructuredSerialization {
+        self.extras().map_or(StructuredSerialization::Ordinary, |extras| extras.structured_serialization)
     }
 
     pub(crate) fn forbid_structured_transfer(&mut self) {
@@ -1755,7 +1769,7 @@ impl Object {
     pub(crate) fn set_external_address(&mut self, address: usize) {
         let extras = self.extras_mut();
         extras.external_address = Some(address);
-        extras.structured_clone_forbidden = true;
+        extras.structured_serialization = StructuredSerialization::Forbidden;
     }
 
     pub(crate) fn is_module_namespace(&self) -> bool {
