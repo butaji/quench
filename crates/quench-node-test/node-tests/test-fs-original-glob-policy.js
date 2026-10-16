@@ -41,6 +41,9 @@ const normalize = entries => entries.map(entry => typeof entry === 'string' ? en
     assert(dirents.every(entry => entry instanceof fs.Dirent && entry.parentPath === root));
     const link = fs.readdirSync(path.join(root,'nested'), {withFileTypes:true}).find(entry=>entry.name==='link');
     assert(link.isSymbolicLink()); assert(!link.isDirectory());
+    Object.defineProperty(Object.prototype, 'type', {configurable:true,set(){throw new Error('private entry type leaked')}});
+    try {assert(fs.readdirSync(root, {withFileTypes:true}).every(entry=>entry instanceof fs.Dirent));}
+    finally {delete Object.prototype.type;}
     const dir = fs.opendirSync(root);
     try {let entry; while((entry=dir.readSync())!==null) assert(entry instanceof fs.Dirent && entry.parentPath === root);} finally {dir.closeSync();}
     for(const args of [[null],[42],[{}],[[1]],['*',{exclude:42}],['*',{followSymlinks:1}]]) {

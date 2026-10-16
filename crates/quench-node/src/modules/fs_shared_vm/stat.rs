@@ -719,6 +719,8 @@ pub(crate) fn read_dir_sync(
             Err(error) => return Err(stat_error(context, error, &path)?),
         };
         let dirent = context.object_rooted()?;
+        let null = context.null();
+        context.set_prototype_rooted(dirent, null)?;
         set_string(context, dirent, "name", &entry.file_name().to_string_lossy())?;
         let kind = context.number(f64::from(directory_entry_type(file_type)));
         set(context, dirent, "type", kind)?;
