@@ -280,7 +280,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<crate::CompiledScript, JsError> {
         let prepared = self.prepare_embedding_specialized_script(source, name, Some(origin))?;
         let context = self.embedding_program()?;
-        let Some(source) = self.programs.insert_reclaimable_shared(prepared.program.clone()) else {
+        let Some(source) = self.store_dynamic_program_shared(prepared.program.clone()) else {
             return Err(self.type_error(&context, "dynamic program store is full".into()));
         };
         let state = Rc::new(crate::api::CompiledScriptState { program: prepared.program, source });
