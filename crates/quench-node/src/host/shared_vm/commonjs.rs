@@ -764,39 +764,7 @@ pub(crate) fn require_for_module(
             );
         }
         Some(BuiltinModule::InternalTestBinding) => {
-            let shared = context.host_mut().shared_state();
-            let process = shared
-                .borrow()
-                .process_module
-                .ok_or_else(|| RootedError::host("Process warning owner is not initialized"))?;
-            let warning = get(context, process, "emitWarning")?;
-            let message =
-                context.string_rooted("These APIs are for internal testing only. Do not use them.");
-            let kind = context.string_rooted("internal/test/binding");
-            context.call_rooted(warning, process, &[message, kind])?;
-            let dgram = cached_builtin(context, BuiltinModule::Dgram)?;
-            context.release_root(dgram);
-            let binding =
-                context.host_function(crate::host::shared_vm::operation("traceInternal"))?;
-            let factory = context.evaluate_script_rooted(
-                r#"((nativeBinding) => {
-  const internals = globalThis[Symbol.for("quench.dgram.internals")];
-  return { internalBinding(name) {
-    const native = nativeBinding(name);
-    if (native !== undefined) return native;
-    if (name === "udp_wrap") return { UDP: internals.UDP };
-    if (name === "tcp_wrap") return { TCP: internals.TCP, constants: { SOCKET: 0 } };
-    if (name === "uv") return {
-      UV_UDP_REUSEADDR: 4, UV_UNKNOWN: -4094, UV_EBADF: -9,
-      UV_EINVAL: -22, UV_ENOTSOCK: -88,
-    };
-    return {};
-  } };
-})"#,
-                "internal/test/binding.js",
-            )?;
-            let undefined = context.undefined();
-            return context.call_rooted(factory, undefined, &[binding]);
+            return node_library_module(context, "internal/test/binding.js", "internal/test/binding.js");
         }
         Some(BuiltinModule::InternalBlockList) => {
             return context.evaluate_script_rooted(
