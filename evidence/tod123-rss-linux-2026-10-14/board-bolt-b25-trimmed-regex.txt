@@ -1,0 +1,9 @@
+# fixture engine maxrss KiB x3 (evicted), qn-b25b = v2-cloud-c2 with quench-node regex features trimmed + retrained orders, static BOLT (QuickJS columns: board-bolt-vs-qjs-b24.txt)
+crypto qn-b25b 4032 4008 4032
+deltablue qn-b25b 3632 3632 3760
+earley-boyer qn-b25b 9912 9876 9904
+navier-stokes qn-b25b 4560 4688 4560
+raytrace qn-b25b 3468 3472 3472
+regexp qn-b25b 11664 11676 11676
+richards qn-b25b 3248 3248 3248
+splay qn-b25b 48020 48020 48008
