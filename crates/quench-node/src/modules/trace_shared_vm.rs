@@ -364,6 +364,7 @@ pub(crate) fn internal_binding(
         "os" => return super::os_binding_shared_vm::os_binding(context),
         #[cfg(target_os = "linux")]
         "credentials" => return super::os_binding_shared_vm::credentials_binding(context),
+        "errors" => return super::node_errors_shared_vm::binding(context),
         "types" => return super::util_shared_vm::types_binding(context),
         "crypto_keys" => return super::crypto_key_shared_vm::binding(context),
         "util" => return super::util_shared_vm::key_binding(context),

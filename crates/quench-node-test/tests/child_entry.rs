@@ -9591,3 +9591,8 @@ fn eval_call_sites_capture_original_compiling_callers_and_hide_absent_script_nam
 fn indirect_eval_script_identity_preserves_origins_fresh_values_templates_and_realm_isolation() {
     compare_node_source_with_args(include_str!("../node-tests/test-indirect-eval-script-identity.js"), &[]);
 }
+
+#[test]
+fn error_source_positions_preserve_captured_compiler_metadata_without_guest_hooks() {
+    compare_node_source_with_args(include_str!("../node-tests/test-error-source-positions.js"), &["--expose-gc", "--expose-internals", "--no-warnings"]);
+}
