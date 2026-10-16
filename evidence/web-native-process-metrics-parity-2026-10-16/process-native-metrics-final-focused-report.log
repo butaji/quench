@@ -1,0 +1,8 @@
+
+running 3 tests
+test process_report_configuration_uses_sdk_descriptors_validation_and_shared_native_state ... ok
+test process_report_native_compact_uses_truthiness_without_coercion_hooks ... ok
+test process_report_startup_flags_preserve_environment_precedence_aliases_and_signal_registration ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 407 filtered out; finished in 2.92s
+
