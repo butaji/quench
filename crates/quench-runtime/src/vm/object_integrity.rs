@@ -670,7 +670,7 @@ impl<H: Host> Vm<H> {
                 .map(|data| self.shape_keys(data.shape()))
                 .unwrap_or_default()
                 .into_iter()
-                .filter(|key| matches!(key, PropertyKey::Symbol(_))),
+                .filter(|key| key.symbol_value().is_some_and(|symbol| !self.is_host_private_symbol(symbol))),
         );
         self.update_property_attributes(target, &keys, |attributes| PropertyAttributes {
             configurable: false,
@@ -714,7 +714,7 @@ impl<H: Host> Vm<H> {
         let shape_keys = self.shape_keys(data.shape());
         let symbols_ok = shape_keys
             .iter()
-            .filter(|key| matches!(key, PropertyKey::Symbol(_)))
+            .filter(|key| key.symbol_value().is_some_and(|symbol| !self.is_host_private_symbol(symbol)))
             .all(|symbol| {
                 let attributes = self
                     .property_attributes(target, *symbol)
