@@ -257,6 +257,7 @@ fn embed_node_protocol_constants(root: &Path) {
     }
     let codes = entries(root, "node_exit_code.h", "EXIT_CODE_LIST");
     let statuses = entries(root, "compile_cache.h", "COMPILE_CACHE_STATUS");
+    let cached_types = entries(root, "compile_cache.h", "CACHED_CODE_TYPES");
     let codes = codes.iter().map(|code| {
         let (name, value) = code.split_once(',').expect("Node exit code pair");
         let value: i32 = value.trim().parse().expect("numeric Node exit code");
@@ -270,6 +271,12 @@ fn embed_node_protocol_constants(root: &Path) {
     }
     output.push_str("];\npub(crate) const COMPILE_CACHE_STATUS: &[&str] = &[\n");
     for status in statuses { output.push_str(&format!("    {status:?},\n")); }
+    output.push_str("];\npub(crate) const CACHED_CODE_TYPES: &[(&str, u32)] = &[\n");
+    for entry in cached_types {
+        let (name, value) = entry.split_once(',').expect("Node cached code type pair");
+        let value: u32 = value.trim().parse().expect("numeric Node cached code type");
+        output.push_str(&format!("    ({:?}, {value}),\n", name.trim()));
+    }
     output.push_str("];\n");
     let path = std::path::PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("node_protocol_constants.rs");
     if std::fs::read_to_string(&path).ok().as_deref() != Some(&output) {

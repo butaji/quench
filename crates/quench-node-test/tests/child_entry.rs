@@ -9794,3 +9794,8 @@ fn process_report_startup_flags_preserve_environment_precedence_aliases_and_sign
 fn process_events_share_emitter_storage_inspection_borrowed_methods_and_once_wrappers() {
     compare_node_source_with_args(include_str!("../node-tests/test-process-shared-event-store.js"), &[]);
 }
+
+#[test]
+fn module_cache_protocol_types_come_from_configured_sdk_and_preserve_native_descriptors() {
+    compare_node_source_with_args(include_str!("../node-tests/test-module-cache-protocol.js"), &["--expose-internals", "--no-warnings"]);
+}
