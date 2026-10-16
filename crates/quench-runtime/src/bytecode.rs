@@ -1667,16 +1667,18 @@ pub(crate) enum LexicalBindingKind {
     Mutable = 0,
     Immutable = 1,
     FunctionName = 2,
+    PrivateName = 3,
 }
 
 impl LexicalBindingKind {
-    pub(crate) const ALL: [Self; 3] = [Self::Mutable, Self::Immutable, Self::FunctionName];
+    pub(crate) const ALL: [Self; 4] = [Self::Mutable, Self::Immutable, Self::FunctionName, Self::PrivateName];
 
     pub(crate) fn capture_prefix(self) -> &'static str {
         match self {
             Self::Mutable => "\0quench:lexical-capture:",
             Self::Immutable => "\0quench:immutable-capture:",
             Self::FunctionName => "\0quench:function-name-capture:",
+            Self::PrivateName => "\0quench:private-name-capture:",
         }
     }
 
@@ -1686,6 +1688,12 @@ impl LexicalBindingKind {
             .find(|kind| *kind as u8 == tag)
             .ok_or_else(|| "invalid lexical binding kind".into())
     }
+}
+
+pub(crate) fn private_identity_label(identity: &str) -> Option<String> {
+    let identity = identity.strip_prefix("\0quench:private:")?;
+    let (_, label) = identity.rsplit_once(':')?;
+    (!label.is_empty()).then(|| label.to_owned())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2136,7 +2144,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 92;
+    pub const FORMAT_VERSION: u8 = 93;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

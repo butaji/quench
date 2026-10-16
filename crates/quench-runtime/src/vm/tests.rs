@@ -10258,3 +10258,30 @@ new A(instance,first);new B(instance,second);
         }
     }
 }
+
+#[test]
+fn private_lexical_bindings_survive_ordinary_closures_and_binary_round_trips() {
+    let source = r#"
+class Mixed {
+ #instance=1;static #static=2;
+ read(){const object=this;return function(){return [eval('object.#instance'),eval('Mixed.#static')]}}
+ static read(object){return eval('#instance in object')}
+}
+const object=new Mixed(), read=object.read();
+if(read().join(',')!=='1,2'||!Mixed.read(object))throw Error('mixed private environment');
+class Outer {#outer=3; create(){const outer=this;return class {#inner=4;read(){const inner=this;return function(){return [eval('outer.#outer'),eval('inner.#inner')]}}}}}
+const Inner=new Outer().create();
+if(new Inner().read()().join(',')!=='3,4')throw Error('outer private environment');
+class Negative {#x;read(){return function(){for(const source of ['super.x','super()','return 1','#missing in {}']){let name;try{eval(source)}catch(error){name=error.name}if(name!=='SyntaxError')throw Error('accepted '+source)}}}}
+new Negative().read()();
+"#;
+    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
+        let program = compile(source, "private-lexical-bindings.js").unwrap();
+        Vm::new(SilentHost).execute(&program).unwrap();
+        let path = std::env::temp_dir().join(format!("quench-private-lexical-{}-{}", std::process::id(), program.specialized));
+        program.write_binary(&path).unwrap();
+        let decoded = crate::ResidualProgram::read_binary(&path).unwrap();
+        Vm::new(SilentHost).execute(&decoded).unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+}
