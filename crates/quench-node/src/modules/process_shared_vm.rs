@@ -2525,6 +2525,8 @@ fn drain_shared_jobs(
             runtime.clear_kept_objects();
             crate::modules::zlib_stream_shared_vm::prune(runtime);
             super::crypto_secret_job_shared_vm::prune(runtime);
+            #[cfg(quench_openssl_provider)]
+            super::crypto_hash_shared_vm::prune(runtime);
             super::zlib_native_shared_vm::prune(runtime);
             super::fs_watch_shared_vm::prune(runtime);
             super::tls_shared_vm::contexts::prune(runtime);
@@ -3010,6 +3012,8 @@ fn cleanup_native_work(runtime: &mut quench_runtime::Runtime<NodeHost>) {
     let shared = runtime.host_mut().shared_state();
     shared.borrow_mut().native_tasks.shutdown();
     super::crypto_secret_job_shared_vm::cleanup(runtime);
+    #[cfg(quench_openssl_provider)]
+    super::crypto_hash_shared_vm::cleanup(runtime);
     super::cares_binding::cleanup(runtime);
     let callbacks = shared.borrow_mut().scheduler.take_all_shared_immediates();
     for immediate in callbacks {

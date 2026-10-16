@@ -133,6 +133,7 @@ impl Digest {
         };
         names
     }
+    pub(crate) fn native_md(&self) -> &openssl::md::MdRef { &self.md }
     pub(crate) fn identity(&self) -> usize {
         self.md.as_ptr() as usize
     }
