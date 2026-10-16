@@ -1571,3 +1571,81 @@ function dropWrapper(){wrapper=null}
         }
     }
 }
+
+#[derive(Default)]
+struct PreparedScriptState {
+    script: Option<PreparedScript>,
+    invalidations: usize,
+}
+struct PreparedScriptHost(Rc<RefCell<PreparedScriptState>>);
+impl Host for PreparedScriptHost {
+    fn write_line(&mut self, _: &str) {}
+    fn clock_millis(&mut self) -> f64 { 0.0 }
+    fn functions(&self) -> &[HostFunction<Self>] { &[] }
+    fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
+        let state = context.host_mut().0.clone();
+        let first = context.create_realm_rooted()?;
+        let second = context.create_realm_rooted()?;
+        let old = state.borrow_mut().script.take();
+        if let Some(old) = old {
+            assert!(!context.prepared_script_is_current(&old));
+            assert!(context.evaluate_prepared_script_in_realm_rooted(first, &old).is_err());
+            state.borrow_mut().invalidations += 1;
+        }
+        let prepared = context.prepare_specialized_script_in_realm_with_origin(
+            first,
+            "(() => { const secret = {}; return function(value) { return { value, secret, array: [], error: new Error('prepared') }; }; })()",
+            "prepared-host.js", 0, 0,
+        )?;
+        assert!(context.prepared_script_is_current(&prepared));
+        context.collect()?;
+        let left_factory = context.evaluate_prepared_script_in_realm_rooted(first, &prepared)?;
+        let right_factory = context.evaluate_prepared_script_in_realm_rooted(second, &prepared)?;
+        context.collect()?;
+        let undefined = context.undefined();
+        let one = context.number(1.0);
+        let two = context.number(2.0);
+        let left = context.call_rooted(left_factory, undefined, &[one])?;
+        let again = context.call_rooted(left_factory, undefined, &[two])?;
+        let right = context.call_rooted(right_factory, undefined, &[two])?;
+        context.collect()?;
+        let property = |context: &mut NativeContext<'_, Self>, object, name| {
+            let key = context.string_rooted(name);
+            context.get_property_rooted(object, key)
+        };
+        let left_secret = property(context, left, "secret")?;
+        let same_secret = property(context, again, "secret")?;
+        let right_secret = property(context, right, "secret")?;
+        assert_eq!(context.rooted_value(left_secret), context.rooted_value(same_secret));
+        assert_ne!(context.rooted_value(left_secret), context.rooted_value(right_secret));
+        for name in ["array", "error"] {
+            let left = property(context, left, name)?;
+            let right = property(context, right, name)?;
+            let left = context.prototype_rooted(left)?;
+            let right = context.prototype_rooted(right)?;
+            assert_ne!(context.rooted_value(left), context.rooted_value(right));
+        }
+        for object in [left, right] {
+            let error = property(context, object, "error")?;
+            let stack = property(context, error, "stack")?;
+            assert!(context.to_string(stack)?.contains("prepared-host.js"));
+        }
+        state.borrow_mut().script = Some(prepared);
+        Ok(())
+    }
+}
+#[test]
+fn prepared_host_scripts_share_code_but_own_realm_state_and_reject_runtime_reset_handles() {
+    for program in [
+        Engine::specialize_unspecialized("void 0", "prepared-entry.js").unwrap(),
+        Engine::specialize("void 0", "prepared-entry.js").unwrap(),
+    ] {
+        let state = Rc::new(RefCell::new(PreparedScriptState::default()));
+        let mut runtime = Runtime::new(PreparedScriptHost(state.clone()));
+        runtime.execute(&program).unwrap();
+        runtime.execute(&program).unwrap();
+        let mut other = Runtime::new(PreparedScriptHost(state.clone()));
+        other.execute(&program).unwrap();
+        assert_eq!(state.borrow().invalidations, 2);
+    }
+}
