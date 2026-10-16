@@ -3386,7 +3386,19 @@ pub(crate) fn initialize_warning_policy(context: &mut NativeContext<'_, NodeHost
     let env = get(context, process, "env")?;
     let disabled = get(context, env, "NODE_NO_WARNINGS")?;
     if options.enabled("--warnings") && context.string_text(disabled)?.as_deref() != Some("1") {
-        let callback = warning_listener(context)?;
+        // Node's listener, or, unless a script can reach Node's own to compare, a listener of
+        // its name and length that loads Node's on the first warning: most runs never warn.
+        let callback = if options.enabled("--expose-internals") {
+            warning_listener(context, process, &[])?
+        } else {
+            let factory = context.evaluate_script_rooted(
+                "(load) => function onWarning(warning) { return load()(warning); }",
+                "node:internal/process/warning-listener.js",
+            )?;
+            let load = context.host_function(crate::host::shared_vm::operation("processWarningListener"))?;
+            let undefined = context.undefined();
+            context.call_rooted(factory, undefined, &[load])?
+        };
         let on = get(context, process, "on")?;
         let event = context.string_rooted("warning");
         context.call_rooted(on, process, &[event, callback])?;
@@ -3419,6 +3431,7 @@ pub(crate) fn initialize_emit_warning(context: &mut NativeContext<'_, NodeHost>,
 }
 
 /// The Console module owns initialization; the SDK owns this public callback.
-fn warning_listener(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+/// Node's `onWarning`.
+pub(crate) fn warning_listener(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     warning_export(context, "onWarning")
 }
