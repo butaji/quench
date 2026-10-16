@@ -54,4 +54,8 @@ for (const value of [0, undefined]) {
   assert.strictEqual(fallback(factory()).sourceLine, fallbackSource);
 }
 Error.stackTraceLimit = limit;
+let assertion;
+try { assert.ok(false); } catch (error) { assertion = error; }
+assert.strictEqual(assertion.code, 'ERR_ASSERTION');
+assert.strictEqual(assertion.message, 'The expression evaluated to a falsy value:\n\n  assert.ok(false)\n');
 console.log('error-source-positions: ok');
