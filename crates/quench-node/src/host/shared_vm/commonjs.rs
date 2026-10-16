@@ -2529,7 +2529,8 @@ pub(crate) fn node_internal_binding_source() -> &'static str {
     case "symbols":
     case "http2":
     case "fs_event_wrap":
-    case "errors": return __nativeInternalBinding(name);
+    case "errors":
+    case "modules": return __nativeInternalBinding(name);
     case "util": return Object.assign({}, {
       privateSymbols: __nativeInternalBinding("util").privateSymbols,
       constants: __nativeInternalBinding("util").constants,
