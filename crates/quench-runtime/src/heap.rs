@@ -2070,22 +2070,33 @@ impl Heap {
         // SAFETY: the caller proves that the property slot exists.
         unsafe { self.properties.set_unchecked(vector, slot, value) };
     }
-    /// `property_set_unchecked` for the direct object `record_id` names, decoded once.
+    /// `property_set_unchecked` for the direct object `record_id` names, decoded once, where
+    /// its values are inline or a flat arena run. `false` leaves a dictionary's store, which
+    /// makes a call, to the caller.
     ///
     /// # Safety
     /// `record_id` names a live object record holding a property at `slot`.
     #[inline(always)]
-    pub(crate) unsafe fn record_property_set(&mut self, record_id: u32, slot: usize, value: Value) {
+    pub(crate) unsafe fn record_property_set_flat(
+        &mut self,
+        record_id: u32,
+        slot: usize,
+        value: Value,
+    ) -> bool {
         // SAFETY: the caller proves the record live; `&mut self` is exclusive.
         let data = unsafe { self.object_records.get_live_mut(record_id) };
         if data.inline_properties().is_some() {
             debug_assert!(slot < INLINE_PROPERTY_COUNT);
             data.set_inline_property(slot, value);
-            return;
+            return true;
         }
         let vector = data.properties();
-        // SAFETY: the caller proves that the property slot exists.
-        unsafe { self.properties.set_unchecked(vector, slot, value) };
+        if vector.is_dictionary() {
+            return false;
+        }
+        // SAFETY: the caller proves that the property slot exists; the vector is flat.
+        unsafe { self.properties.set_flat_unchecked(vector, slot, value) };
+        true
     }
     /// One cached property add: appends `value` at `slot`, the object's current storage
     /// length, and moves the object to `shape`, whose storage length is `slot + 1`.
