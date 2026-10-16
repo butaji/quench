@@ -16,7 +16,7 @@ use std::{
 static NEXT_CHILD_PROCESS_ID: AtomicU64 = AtomicU64::new(1);
 
 const FACTORY: &str = quench_js_check::checked_js!(
-    r#"(spawnSync, spawnNative, register, write, end, Buffer, warnShellArgs, forkPlan, requestRead, flushStdio, prepareOptions, validateFile, syncOptions, disposeNative, disposeKey, referenceNative, destroyInput, prepareExit) => {
+    r#"(spawnSync, spawnNative, register, write, end, Buffer, warnShellArgs, forkPlan, requestRead, flushStdio, prepareOptions, validateFile, syncOptions, disposeNative, disposeKey, referenceNative, destroyInput, prepareExit, spawnFailed, spawnSucceeded) => {
     const { EventEmitter } = globalThis.process.getBuiltinModule("events");
     class ChildProcess extends EventEmitter {
       constructor() {
@@ -44,12 +44,6 @@ const FACTORY: &str = quench_js_check::checked_js!(
   function initialize(file, args, started, options) {
         const { Readable, Writable } = globalThis.process.getBuiltinModule("stream");
       this.pid = started.pid ?? undefined;
-      this.spawnfile = file;
-      this.spawnargs = [file, ...args];
-      this.exitCode = null;
-      this.signalCode = null;
-      this.killed = false;
-      this.connected = false;
       this.stdout = started.piped[1] ? new Readable({read(){requestRead(started.id,true);}}) : null;
       this.stderr = started.piped[2] ? new Readable({read(){requestRead(started.id,false);}}) : null;
         for (const stream of [this.stdout, this.stderr]) {
@@ -90,21 +84,10 @@ const FACTORY: &str = quench_js_check::checked_js!(
         }
       };
       if (started.errorCode) {
-        queueMicrotask(() => {
-          const error = new Error(started.errorMessage);
-          error.code = started.errorCode;
-          error.errno = started.errorNumber;
-          error.syscall = `spawn ${file}`;
-          error.path = file;
-          error.spawnargs = args;
-          this.emit("error", error);
-          this.stdout?.push(null);
-          this.stderr?.push(null);
-          this.emit("close", null, null);
-        });
+        spawnFailed(this, started, args);
       } else {
         register(id, this, this.stdout, this.stderr, this.stdin);
-        queueMicrotask(() => this.emit("spawn"));
+        spawnSucceeded(this);
       }
       const signal = options?.signal;
       if (signal) {
@@ -307,6 +290,12 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         context.host_function(crate::host::shared_vm::operation("childProcessReference"))?;
     let destroy_input = context.host_function(crate::host::shared_vm::operation("childProcessDestroyInput"))?;
     let prepare_exit = context.host_function(crate::host::shared_vm::operation("childProcessPrepareExit"))?;
+    let spawn_failed = context.host_function(
+        crate::host::shared_vm::operation("childProcessSpawnFailed"),
+    )?;
+    let spawn_succeeded = context.host_function(
+        crate::host::shared_vm::operation("childProcessSpawnSucceeded"),
+    )?;
     let factory = context.evaluate_script_rooted(FACTORY, "node:child_process/shared.js")?;
     let undefined = context.undefined();
     let factory_result = context.call_rooted(
@@ -331,6 +320,8 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
             reference,
             destroy_input,
             prepare_exit,
+            spawn_failed,
+            spawn_succeeded,
         ],
     )?;
     let module = property(context, factory_result, "0")?;
@@ -363,11 +354,20 @@ pub(crate) fn spawn_child(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
+    spawn_child_with_stdio(context, args, None)
+}
+
+fn spawn_child_with_stdio(
+    context: &mut NativeContext<'_, NodeHost>, args: &[RootId],
+    stdio: Option<Vec<super::child_process_stdio_shared_vm::Specification>>,
+) -> Result<RootId, RootedError> {
     let Some(command_arg) = args.first().copied() else {
         let error = context.type_error_rooted("The \"file\" argument must be of type string")?;
         return Err(context.throw(error));
     };
-    let file = super::child_process_options_shared_vm::file_text(context, command_arg)?;
+    let file = if stdio.is_some() {
+        context.string_text(command_arg)?.ok_or_else(|| RootedError::host("validated child file missing"))?
+    } else { super::child_process_options_shared_vm::file_text(context, command_arg)? };
     let arguments = args
         .get(1)
         .copied()
@@ -392,7 +392,10 @@ pub(crate) fn spawn_child(
     let mut command = Command::new(&file);
     set_command_arg0(&mut command, argv0.as_deref());
     command.args(&arguments);
-    let stdio = super::child_process_stdio_shared_vm::normalize(context, options)?;
+    let stdio = match stdio {
+        Some(stdio) => stdio,
+        None => super::child_process_stdio_shared_vm::normalize(context, options)?,
+    };
     let cwd = options
         .map(|root| property_cwd(context, root))
         .transpose()?
@@ -1971,31 +1974,44 @@ pub(crate) fn prototype_spawn(
 ) -> Result<RootId, RootedError> {
     let undefined = context.undefined();
     let options = args.first().copied().unwrap_or(undefined);
-    if !context.is_object_rooted(options)? || context.is_array_rooted(options)? {
+    if !context.is_object_rooted(options)? || context.is_array_rooted(options)? || context.is_callable_rooted(options)? {
         return Err(super::util_shared_vm::argument_type_error(
             context, options, "options", "object",
         )?);
     }
+    let backend = context.object_rooted()?;
+    let stdio_value = property(context, options, "stdio")?;
+    set(context, backend, "stdio", stdio_value)?;
+    let stdio = super::child_process_stdio_shared_vm::normalize(context, Some(backend))?;
+    let serialization = property(context, options, "serialization")?;
+    super::child_process_options_shared_vm::validate_serialization(context, serialization)?;
+    set(context, backend, "serialization", serialization)?;
     let file = property(context, options, "file")?;
-    let _ = super::child_process_options_shared_vm::file_text(context, file)?;
+    if context.string_text(file)?.is_none() {
+        return Err(super::util_shared_vm::argument_type_error(
+            context, file, "options.file", "string",
+        )?);
+    }
+    set(context, receiver, "spawnfile", file)?;
     let argv = property(context, options, "args")?;
-    let values = if context.rooted_value(argv).is_some_and(|v| v.is_undefined()) {
-        Vec::new()
+    let spawnargs = if context.rooted_value(argv).is_some_and(|v| v.is_undefined()) {
+        context.array_rooted(&[])?
     } else {
         if !context.is_array_rooted(argv)? {
-            return Err(super::util_shared_vm::argument_type_error(
-                context, argv, "options.args", "Array",
+            return Err(super::util_shared_vm::argument_type_error_with_expected(
+                context, argv, "options.args", "an instance of Array",
             )?);
         }
-        string_array(context, argv)?
+        argv
     };
+    set(context, receiver, "spawnargs", spawnargs)?;
+    let values = string_array(context, spawnargs)?;
     // Command's executable is options.file; SDK options.args includes argv[0].
     // Preserve the original argv array identity on the child.
     let tail = values.iter().skip(1).map(|s| context.string_rooted(s)).collect::<Vec<_>>();
     let tail = context.array_rooted(&tail)?;
     // Snapshot normalized data so backend adaptation cannot mutate SDK options.
-    let backend = context.object_rooted()?;
-    for name in ["cwd", "stdio", "uid", "gid", "detached", "serialization",
+    for name in ["cwd", "uid", "gid", "detached",
                  "windowsHide", "windowsVerbatimArguments", "signal", "timeout", "killSignal", "env"] {
         let value = property(context, options, name)?;
         set(context, backend, name, value)?;
@@ -2021,21 +2037,18 @@ pub(crate) fn prototype_spawn(
         }
         set(context, backend, "env", env)?;
     }
-    let started = spawn_child(context, undefined, &[file, tail, backend])?;
+    let started = spawn_child_with_stdio(context, &[file, tail, backend], Some(stdio))?;
     let errno = property(context, started, "errorNumber")?;
     let failed = context.rooted_value(errno).is_some_and(|v| !v.is_null());
     let lifecycle = context.host_function_data()?;
     // Existing initializer owns real Readable/Writable construction, register_child,
     // output/exit/close dispatch, timeout/abort hooks, and stream-close accounting.
-    if let Err(error) = context.call_rooted(lifecycle, receiver, &[file, tail, started, backend]) {
-        cleanup_failed_initialization(context, started);
-        return Err(error);
-    }
-    let spawnargs = if context.rooted_value(argv).is_some_and(|v| v.is_undefined()) {
-        context.array_rooted(&[])?
-    } else { argv };
-    set(context, receiver, "spawnargs", spawnargs)?;
-    Ok(if failed { errno } else { context.number(0.0) })
+    let completion = (|| {
+        context.call_rooted(lifecycle, receiver, &[file, tail, started, backend])?;
+        Ok(if failed { errno } else { context.number(0.0) })
+    })();
+    if completion.is_err() { cleanup_failed_initialization(context, started); }
+    completion
 }
 
 /// The backend waiter owns the actual Child; cancellation cannot target a reused pid.
@@ -2136,4 +2149,144 @@ impl Cancellation {
             }),
         }
     }
+}
+
+/// Failure still owns genuine guest pipe streams, but never an OS child.
+/// SDK onErrorNT ordering: set exitCode, destroy stdin, emit error, drain outputs;
+/// close follows all counted output close events and never emits spawn/exit.
+pub(crate) fn spawn_failed(
+    context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let child = args[0];
+    let started = args[1];
+    let tail = args[2];
+    let data = context.object_rooted()?;
+    set(context, data, "child", child)?;
+    set(context, data, "started", started)?;
+    set(context, data, "tail", tail)?;
+    let mut remaining = 1;
+    for name in ["stdout", "stderr"] {
+        let stream = property(context, child, name)?;
+        set(context, data, name, stream)?;
+        if context.is_object_rooted(stream)? {
+            remaining += 1;
+            let closed = context.host_function_with_data(
+                crate::host::shared_vm::operation("childProcessSpawnFailedClosed"), data,
+            )?;
+            let once = property(context, stream, "once")?;
+            let event = context.string_rooted("close");
+            context.call_rooted(once, stream, &[event, closed])?;
+        }
+    }
+    let remaining = context.number(remaining as f64);
+    set(context, data, "remaining", remaining)?;
+    let callback = context.host_function_with_data(
+        crate::host::shared_vm::operation("childProcessSpawnFailedRun"), data,
+    )?;
+    let global = context.global_root()?;
+    let process = property(context, global, "process")?;
+    let next_tick = property(context, process, "nextTick")?;
+    context.call_rooted(next_tick, process, &[callback])?;
+    Ok(context.undefined())
+}
+
+fn emit_failure_event(
+    context: &mut NativeContext<'_, NodeHost>, child: RootId, event: &str,
+    arguments: &[RootId],
+) -> Result<(), RootedError> {
+    let emit = property(context, child, "emit")?;
+    let event = context.string_rooted(event);
+    let mut args = vec![event];
+    args.extend_from_slice(arguments);
+    context.call_rooted(emit, child, &args)?;
+    Ok(())
+}
+
+pub(crate) fn spawn_failed_run(
+    context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let data = context.host_function_data()?;
+    let child = property(context, data, "child")?;
+    let started = property(context, data, "started")?;
+    let errno = property(context, started, "errorNumber")?;
+    set(context, child, "exitCode", errno)?;
+    let null = context.null();
+    set(context, child, "_handle", null)?;
+    let stdin = property(context, child, "stdin")?;
+    if context.is_object_rooted(stdin)? {
+        let destroy = property(context, stdin, "destroy")?;
+        context.call_rooted(destroy, stdin, &[])?;
+    }
+    let file = property(context, child, "spawnfile")?;
+    let file_text = context.to_string(file)?;
+    let syscall = if file_text.is_empty() { "spawn".to_owned() }
+                  else { format!("spawn {file_text}") };
+    let code = property(context, started, "errorCode")?;
+    let code_text = context.to_string(code)?;
+    let error = context.error_rooted(&format!("{syscall} {code_text}"))?;
+    set(context, error, "code", code)?;
+    set(context, error, "errno", errno)?;
+    set_string(context, error, "syscall", &syscall)?;
+    if !file_text.is_empty() { set(context, error, "path", file)?; }
+    let tail = property(context, data, "tail")?;
+    set(context, error, "spawnargs", tail)?;
+    emit_failure_event(context, child, "error", &[error])?;
+    for name in ["stdout", "stderr"] {
+        let stream = property(context, data, name)?;
+        if context.is_object_rooted(stream)? {
+            let push = property(context, stream, "push")?;
+            context.call_rooted(push, stream, &[null])?;
+            let resume = property(context, stream, "resume")?;
+            context.call_rooted(resume, stream, &[])?;
+        }
+    }
+    failed_close_progress(context, data)?;
+    Ok(context.undefined())
+}
+
+fn failed_close_progress(
+    context: &mut NativeContext<'_, NodeHost>, data: RootId,
+) -> Result<(), RootedError> {
+    let remaining = property(context, data, "remaining")?;
+    let remaining = context.rooted_value(remaining).and_then(|v| v.as_number())
+        .ok_or_else(|| RootedError::host("spawn failure close count missing"))? - 1.0;
+    let value = context.number(remaining);
+    set(context, data, "remaining", value)?;
+    if remaining == 0.0 {
+        let child = property(context, data, "child")?;
+        let code = property(context, child, "exitCode")?;
+        let signal = property(context, child, "signalCode")?;
+        emit_failure_event(context, child, "close", &[code, signal])?;
+    }
+    Ok(())
+}
+
+pub(crate) fn spawn_failed_closed(
+    context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let data = context.host_function_data()?;
+    failed_close_progress(context, data)?;
+    Ok(context.undefined())
+}
+
+pub(crate) fn spawn_succeeded(
+    context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let child = args[0];
+    let callback = context.host_function_with_data(
+        crate::host::shared_vm::operation("childProcessSpawnSucceededRun"), child,
+    )?;
+    let global = context.global_root()?;
+    let process = property(context, global, "process")?;
+    let next_tick = property(context, process, "nextTick")?;
+    context.call_rooted(next_tick, process, &[callback])?;
+    Ok(context.undefined())
+}
+
+pub(crate) fn spawn_succeeded_run(
+    context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let child = context.host_function_data()?;
+    emit_failure_event(context, child, "spawn", &[])?;
+    Ok(context.undefined())
 }
