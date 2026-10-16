@@ -1227,10 +1227,10 @@ impl<H: Host> Vm<H> {
             .or_else(|| native_length(kind));
         if let Some(length) = length {
             let atom = self.intern_atom("length");
-            let _ = self.set_property(function, atom, Value::number(length));
-            self.set_property_attributes(
+            let _ = self.set_property_with_attributes(
                 function,
-                property_key::PropertyKey::string(atom),
+                atom,
+                Value::number(length),
                 PropertyAttributes {
                     writable: false,
                     enumerable: false,
@@ -1244,10 +1244,10 @@ impl<H: Host> Vm<H> {
         if promise_resolver || anonymous_capability_executor || anonymous_proxy_revoke {
             let atom = self.intern_atom("name");
             let empty_name = self.heap.alloc(Cell::String("".into()));
-            let _ = self.set_property(function, atom, empty_name);
-            self.set_property_attributes(
+            let _ = self.set_property_with_attributes(
                 function,
-                property_key::PropertyKey::string(atom),
+                atom,
+                empty_name,
                 PropertyAttributes {
                     writable: false,
                     enumerable: false,
@@ -2265,6 +2265,15 @@ impl<H: Host> Vm<H> {
         if !seen.insert(identity) {
             return Ok(());
         }
+        let key = module_cache_key(&module.name, "javascript");
+        if self.realm.promise.modules.get(&key).is_some_and(|record| {
+            !matches!(
+                record.phase(),
+                ModulePhase::Loading | ModulePhase::Linking | ModulePhase::Deferred
+            )
+        }) {
+            return Ok(());
+        }
         let Some(plan) = crate::Engine::static_module_plan(&module.source, &module.name) else {
             return Err(self.type_error(p, "deferred module metadata is unavailable".into()));
         };
@@ -3106,126 +3115,82 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// Link a deferred request: allocate its deferred namespace without
+    /// evaluating the requested module or any of its dependencies.
+    fn link_deferred_module_request(
+        &mut self,
+        p: &ResidualProgram,
+        module: &ModuleSource,
+        module_type: &str,
+    ) -> Result<(), JsError> {
+        if module_type != "javascript" {
+            self.deferred_synthetic_module_namespace(p, module, module_type)?;
+            return Ok(());
+        }
+        let key = module_cache_key(&module.name, "javascript");
+        let record = self.realm.promise.modules.get(&key);
+        if record.and_then(ModuleRecord::deferred_namespace).is_some() {
+            return Ok(());
+        }
+        if record.is_none() && crate::Engine::static_module_has_early_error(&module.source) {
+            return self
+                .syntax_error_result(p, "module source has an early error")
+                .map(|_| ());
+        }
+        let namespace = self.deferred_module_namespace(p, module)?;
+        self.realm
+            .promise
+            .modules
+            .entry(key)
+            .or_insert_with(ModuleRecord::loading_static)
+            .cache_deferred_namespace(namespace);
+        Ok(())
+    }
+
+    /// InnerModuleEvaluation's deferred-request step: link the request, then
+    /// evaluate the asynchronous transitive dependencies it gathers, in order
+    /// with the referrer's other requests.
     fn prepare_deferred_module_request(
         &mut self,
         p: &ResidualProgram,
         module: ModuleSource,
         module_type: &str,
     ) -> Result<(), JsError> {
+        self.link_deferred_module_request(p, &module, module_type)?;
         if module_type != "javascript" {
-            self.deferred_synthetic_module_namespace(p, &module, module_type)?;
             return Ok(());
         }
         let key = module_cache_key(&module.name, "javascript");
-        match self
-            .realm
-            .promise
-            .modules
-            .get(&key)
-            .map(|record| record.outcome)
-        {
-            Some(ModuleOutcome::Evaluated(_)) => {
-                if self
-                    .realm
-                    .promise
-                    .modules
-                    .get(&key)
-                    .and_then(ModuleRecord::deferred_namespace)
-                    .is_none()
-                {
-                    let namespace = self.deferred_module_namespace(p, &module)?;
-                    self.realm
-                        .promise
-                        .modules
-                        .get_mut(&key)
-                        .expect("module record checked above")
-                        .cache_deferred_namespace(namespace);
-                }
-                return Ok(());
-            }
-            Some(ModuleOutcome::Deferred(_)) => return Ok(()),
-            Some(ModuleOutcome::Pending(_)) => {
-                if self
-                    .realm
-                    .promise
-                    .modules
-                    .get(&key)
-                    .and_then(ModuleRecord::deferred_namespace)
-                    .is_none()
-                {
-                    let namespace = self.deferred_module_namespace(p, &module)?;
-                    self.realm
-                        .promise
-                        .modules
-                        .get_mut(&key)
-                        .expect("module record checked above")
-                        .cache_deferred_namespace(namespace);
-                }
-                return Ok(());
-            }
-            Some(ModuleOutcome::Errored(_)) => {
-                if self
-                    .realm
-                    .promise
-                    .modules
-                    .get(&key)
-                    .and_then(ModuleRecord::deferred_namespace)
-                    .is_none()
-                {
-                    let namespace = self.deferred_module_namespace(p, &module)?;
-                    self.realm
-                        .promise
-                        .modules
-                        .get_mut(&key)
-                        .expect("module record checked above")
-                        .cache_deferred_namespace(namespace);
-                }
-                return Ok(());
-            }
-            None => {}
-        }
-        if crate::Engine::static_module_has_early_error(&module.source) {
-            return self
-                .syntax_error_result(p, "module source has an early error")
-                .map(|_| ());
-        }
         let mut seen = FxHashSet::default();
         let mut asynchronous = Vec::new();
         self.gather_async_transitive_dependencies(p, &module, &mut seen, &mut asynchronous)?;
         if !asynchronous.is_empty() {
-            let mut active = ModuleEvaluationStack::default();
-            let outer_batch = std::mem::replace(&mut self.deferred_dependency_batch, true);
-            let launched = (|| {
-                for dependency in asynchronous {
-                    self.evaluate_static_module_source(p, dependency, &mut active)?;
-                }
-                Ok::<(), JsError>(())
-            })();
-            self.deferred_dependency_batch = outer_batch;
-            launched?;
-            if !outer_batch {
-                self.drain_jobs(p)?;
-                self.settle_pending_async_modules(p)?;
-            }
-            let entry_has_tla = crate::Engine::static_module_plan(&module.source, &module.name)
-                .is_some_and(|plan| plan.has_top_level_await);
-            if entry_has_tla {
-                let namespace = self.deferred_module_namespace(p, &module)?;
-                if let Some(record) = self.realm.promise.modules.get_mut(&key) {
-                    record.cache_deferred_namespace(namespace);
-                }
-                return Ok(());
-            }
+            self.evaluate_deferred_async_dependencies(p, asynchronous)?;
         }
-        let namespace = self.deferred_module_namespace(p, &module)?;
-        match self.realm.promise.modules.get_mut(&key) {
-            Some(record) => record.cache_deferred_namespace(namespace),
-            None => {
-                self.realm
-                    .promise
-                    .modules
-                    .insert(key, ModuleRecord::deferred(namespace));
+        if let Some(record) = self.realm.promise.modules.get_mut(&key) {
+            record.defer_evaluation();
+        }
+        Ok(())
+    }
+
+    fn evaluate_deferred_async_dependencies(
+        &mut self,
+        p: &ResidualProgram,
+        asynchronous: Vec<ModuleSource>,
+    ) -> Result<(), JsError> {
+        let mut active = ModuleEvaluationStack::default();
+        let outer_batch = std::mem::replace(&mut self.deferred_dependency_batch, true);
+        let launched = (|| {
+            for dependency in asynchronous {
+                self.evaluate_static_module_source(p, dependency, &mut active)?;
             }
+            Ok::<(), JsError>(())
+        })();
+        self.deferred_dependency_batch = outer_batch;
+        launched?;
+        if !outer_batch {
+            self.drain_jobs(p)?;
+            self.settle_pending_async_modules(p)?;
         }
         Ok(())
     }
@@ -3405,7 +3370,7 @@ impl<H: Host> Vm<H> {
                         self.module_source_value(p, &dependency)?;
                     }
                     crate::bytecode::ModuleRequestPhase::Defer => {
-                        self.prepare_deferred_module_request(p, dependency, module_type)?;
+                        self.link_deferred_module_request(p, &dependency, module_type)?;
                     }
                     crate::bytecode::ModuleRequestPhase::Evaluation => {
                         self.evaluate_static_synthetic_module(p, &dependency, module_type)?;
@@ -3500,11 +3465,12 @@ impl<H: Host> Vm<H> {
             Some(namespace) => namespace,
             None => self.module_namespace(Vec::new())?,
         };
-        let record = self.realm.promise.modules.entry(key).or_insert_with(|| {
-            let mut record = ModuleRecord::evaluating_static();
-            record.outcome = ModuleOutcome::Pending(ModulePhase::Loading);
-            record
-        });
+        let record = self
+            .realm
+            .promise
+            .modules
+            .entry(key)
+            .or_insert_with(ModuleRecord::loading_static);
         record.program = Some(program);
         record.cache_pending_namespace(namespace);
         // Graph instantiation can allocate many environments before the first
@@ -3564,11 +3530,7 @@ impl<H: Host> Vm<H> {
                 .promise
                 .modules
                 .entry(cache_key.clone())
-                .or_insert_with(|| {
-                    let mut record = ModuleRecord::evaluating_static();
-                    record.outcome = ModuleOutcome::Pending(ModulePhase::Loading);
-                    record
-                });
+                .or_insert_with(ModuleRecord::loading_static);
             if let Err(error) = self.instantiate_static_module_graph(p, &module, None) {
                 return self.reject_module_instantiation(p, &cache_key, error);
             }
@@ -4236,9 +4198,23 @@ impl<H: Host> Vm<H> {
             let Some(plan) = &residual.module_link_plan else {
                 return Ok(false);
             };
-            let locals = self
+            let mut locals = self
                 .module_local_exports(program, plan.locals.clone())
                 .ok_or_else(|| self.type_error(p, "module export binding is unavailable".into()))?;
+            // A re-exported source-phase import resolves to the requested
+            // module's source object, not to the re-exporting module's slot.
+            for ((local, _), (_, value)) in plan.locals.iter().zip(&mut locals) {
+                let Some(import) = residual.module_imports.iter().find(|import| {
+                    import.phase == crate::bytecode::ModuleRequestPhase::Source
+                        && &import.local == local
+                }) else {
+                    continue;
+                };
+                let dependency = self
+                    .static_module_dependency(p, &module.name, &import.source)?
+                    .ok_or_else(|| self.type_error(p, "module import was not resolved".into()))?;
+                *value = StaticModuleValue::ModuleSource(self.module_source_value(p, &dependency)?);
+            }
             nodes.insert(
                 identity,
                 StaticModuleNode::Planned {
@@ -5212,7 +5188,25 @@ impl<H: Host> Vm<H> {
         let Some(species) = self.well_known_symbols.get("species").copied() else {
             return Ok(self.intrinsic_promise_constructor());
         };
-        let species = self.get_index(p, constructor, species)?;
+        // The intrinsic `get [Symbol.species]` returns its receiver and observes nothing, so
+        // an own accessor that still holds it answers without a call.
+        let intrinsic_getter = self
+            .property_attributes(constructor, property_key::PropertyKey::symbol(species))
+            .and_then(|attributes| attributes.getter.filter(|_| attributes.accessor))
+            .is_some_and(|getter| {
+                matches!(
+                    self.heap.get(getter),
+                    Some(Cell::Function {
+                        kind: FunctionKind::Native(Native::PromiseSpeciesGetter),
+                        ..
+                    })
+                )
+            });
+        let species = if intrinsic_getter {
+            constructor
+        } else {
+            self.get_index(p, constructor, species)?
+        };
         if species.is_undefined() || species.is_null() {
             Ok(self.intrinsic_promise_constructor())
         } else if self.is_constructable(p, species) {

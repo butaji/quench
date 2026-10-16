@@ -1112,7 +1112,7 @@ impl<H: Host> Vm<H> {
         let hash = Self::atom_hash_units(name.units());
         self.insert_dynamic_atom(name.clone(), hash)
     }
-    fn insert_dynamic_atom(&mut self, name: JsString, hash: u64) -> Atom {
+    pub(super) fn insert_dynamic_atom(&mut self, name: JsString, hash: u64) -> Atom {
         let atom = (self.atom_text.len() + self.dynamic_atoms.len()) as Atom;
         self.record_array_index_atom(name.host_string(), atom);
         self.atom_sequence.append(name.host_name());
@@ -1158,10 +1158,10 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<(), JsError> {
         let atom = self.intern_atom(name);
-        self.set_property(self.realm.globals, atom, value)?;
-        self.set_property_attributes(
+        self.set_property_with_attributes(
             self.realm.globals,
-            PropertyKey::string(atom),
+            atom,
+            value,
             PropertyAttributes {
                 writable: true,
                 enumerable: false,
@@ -1170,7 +1170,7 @@ impl<H: Host> Vm<H> {
                 getter: None,
                 setter: None,
             },
-        );
+        )?;
         Ok(())
     }
     pub(super) fn set_named(
@@ -1318,10 +1318,10 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<(), JsError> {
         let atom = self.intern_atom(name);
-        self.set_property(object, atom, value)?;
-        self.set_property_attributes(
+        self.set_property_with_attributes(
             object,
-            property_key::PropertyKey::string(atom),
+            atom,
+            value,
             PropertyAttributes {
                 writable: true,
                 enumerable: false,
@@ -1330,7 +1330,7 @@ impl<H: Host> Vm<H> {
                 getter: None,
                 setter: None,
             },
-        );
+        )?;
         Ok(())
     }
 }
