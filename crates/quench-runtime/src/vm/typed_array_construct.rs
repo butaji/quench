@@ -363,8 +363,7 @@ impl<H: Host> Vm<H> {
         let constructor_atom = self.intern_atom("constructor");
         let mut constructor = self.get_property(p, source, constructor_atom)?;
         if self.is_object_like(constructor) {
-            let species = self.well_known_symbols.get("species").copied().unwrap();
-            constructor = self.get_index(p, constructor, species)?;
+            constructor = self.species_of(p, constructor)?;
             if constructor.is_null() {
                 constructor = Value::UNDEFINED;
             }
