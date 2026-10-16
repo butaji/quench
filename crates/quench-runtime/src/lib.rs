@@ -27,7 +27,7 @@ pub use wasm::{
 
 pub use bytecode::ResidualProgram;
 pub use compile::{Diagnostic, Engine};
-pub use heap::RootId;
+pub use heap::{RootId, HeapMemoryComposition};
 pub use host::{
     CapabilityId, Host, HostContext, HostExecutionContext, HostGlobal, ModuleSource, SystemHost,
     WasmHostFunctionId, WasmHostValue,

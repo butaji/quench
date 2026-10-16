@@ -409,7 +409,6 @@ impl ValueArena {
         }
     }
 
-    #[cfg(feature = "profile-memory")]
     pub(crate) fn memory_bytes(&self) -> usize {
         self.values.capacity() * size_of::<Value>()
             + self
@@ -426,13 +425,11 @@ impl ValueArena {
             + self.free_dictionaries.capacity() * size_of::<u32>()
     }
 
-    #[cfg(feature = "profile-memory")]
     pub(crate) fn memory_breakdown(&self) -> (usize, usize) {
         let values = self.values.capacity() * size_of::<Value>();
         (values, self.memory_bytes() - values)
     }
 
-    #[cfg(feature = "profile-memory")]
     pub(crate) fn stats(&self) -> (usize, usize, usize) {
         (
             self.values.len(),
@@ -475,7 +472,6 @@ impl ValueArena {
         self.grow(vector, 0);
     }
 
-    #[cfg(any(test, feature = "profile-memory"))]
     pub(crate) fn vector_stats(&self, vector: ValueVec) -> (usize, usize) {
         (self.len(vector), self.capacity(vector))
     }

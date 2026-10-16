@@ -345,7 +345,6 @@ impl<T> RecordSpace<T> {
         (live_count, freed_count)
     }
 
-    #[cfg(feature = "profile-memory")]
     pub(super) fn for_each_live(&self, mut visit: impl FnMut(RecordId, &T)) {
         for (block_index, block) in self.blocks.iter().enumerate() {
             for (word_index, word) in block.occupied.iter().copied().enumerate() {
@@ -425,18 +424,15 @@ impl<T> RecordSpace<T> {
         None
     }
 
-    #[cfg(feature = "profile-memory")]
     pub(super) fn allocated_bytes(&self) -> usize {
         self.blocks.len() * RECORDS_PER_BLOCK * size_of::<T>()
             + self.blocks.capacity() * size_of::<RecordBlock>()
     }
 
-    #[cfg(feature = "profile-memory")]
     pub(super) fn reusable_ids(&self) -> usize {
         self.next_id as usize - self.live
     }
 
-    #[cfg(feature = "profile-memory")]
     pub(super) fn allocation_scan_cursor(&self) -> usize {
         self.free_cursor as usize
     }

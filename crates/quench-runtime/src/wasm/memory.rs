@@ -333,7 +333,6 @@ impl MemoryStorage {
         }
     }
 
-    #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
     pub(crate) fn capacity(&self) -> usize {
         let mut guard = self.lock();
         let state = guard.state();
