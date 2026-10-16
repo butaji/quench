@@ -62,24 +62,36 @@ pub(crate) fn structured_clone(
     } else {
         Vec::new()
     };
-    match context.structured_clone_with_transfers_rooted(value, &transfers) {
-        Err(error) if error.error.data_clone_failure_message().is_some() => {
-            let message = error.error.data_clone_failure_message().unwrap().to_owned();
-            if let Some(exception) = error.exception {
-                context.release_root(exception);
-            }
-            let constructor = context.with_startup_intrinsics(|context| {
-                let global = context.global_root()?;
-                let key = context.string_rooted("DOMException");
-                context.get_property_rooted(global, key)
-            })?;
-            let message = context.string_rooted(&message);
-            let name = context.string_rooted("DataCloneError");
-            let error = context.construct_rooted(constructor, constructor, &[message, name])?;
-            Err(context.throw(error))
-        }
-        result => result,
+    context
+        .structured_clone_with_transfers_rooted(value, &transfers)
+        .map_err(|error| as_dom_exception(context, error))
+}
+
+/// A `DataCloneError` DOMException, as Node's serializer throws.
+pub(crate) fn data_clone_exception(context: &mut NativeContext<'_, NodeHost>, message: &str) -> RootedError {
+    let built = context.with_startup_intrinsics(|context| {
+        let global = context.global_root()?;
+        let key = context.string_rooted("DOMException");
+        let constructor = context.get_property_rooted(global, key)?;
+        let message = context.string_rooted(message);
+        let name = context.string_rooted("DataCloneError");
+        context.construct_rooted(constructor, constructor, &[message, name])
+    });
+    match built {
+        Ok(error) => context.throw(error),
+        Err(error) => error,
     }
+}
+
+/// Report the runtime's structured-serialization failures as Node's DOMException.
+pub(crate) fn as_dom_exception(context: &mut NativeContext<'_, NodeHost>, error: RootedError) -> RootedError {
+    let Some(message) = error.error.data_clone_failure_message().map(str::to_owned) else {
+        return error;
+    };
+    if let Some(exception) = error.exception {
+        context.release_root(exception);
+    }
+    data_clone_exception(context, &message)
 }
 
 /// Node's host marker is not a property and does not keep its object alive.

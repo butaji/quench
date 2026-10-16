@@ -864,6 +864,11 @@ impl<'a, H: Host> NativeContext<'a, H> {
 
     /// Clone with an already-converted transfer sequence. Host Web IDL conversion
     /// owns iteration; the VM must not consult the public iterator a second time.
+    /// Mark a host object serializable only when listed for transfer, as a MessagePort.
+    pub fn require_transfer_rooted(&mut self, value: RootId) -> Result<(), RootedError> {
+        self.vm.embedding_require_transfer(value).map_err(|error| self.error(error))
+    }
+
     /// Serialize `value` for another agent: `transfers` (ArrayBuffers) move into the
     /// result, and each of `host_objects` becomes a reference the receiver supplies.
     pub fn serialize_rooted(

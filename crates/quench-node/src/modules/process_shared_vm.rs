@@ -171,7 +171,8 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     }
     super::child_process_ipc_shared_vm::initialize(context)?;
     let env = context.object_rooted()?;
-    for (name, value) in std::env::vars() {
+    let worker_env = context.host_mut().shared_state().borrow().messaging.context.as_ref().map(|worker| worker.env.clone());
+    for (name, value) in worker_env.unwrap_or_else(|| std::env::vars().collect()) {
         if context
             .host_mut()
             .shared_state()
@@ -692,6 +693,12 @@ pub(crate) fn stream_write(
             "of type string or an instance of Buffer, TypedArray, or DataView",
         )?);
     };
+    let worker = context.host_mut().shared_state().borrow().messaging.context.as_ref().map(|worker| worker.control.clone());
+    if let Some(control) = worker {
+        // A worker's stdio reaches its parent's `worker.stdout`/`worker.stderr`.
+        control.write_output(fd == STDERR_FD, bytes);
+        return Ok(context.boolean(true));
+    }
     if fd == STDERR_FD {
         std::io::stderr()
             .lock()
@@ -2071,6 +2078,9 @@ fn drain_checkpoint(
         if crate::modules::napi::poll(runtime, program)? {
             continue;
         }
+        if crate::modules::worker_shared_vm::poll(runtime, program, &shared_state)? {
+            continue;
+        }
 
         if has_referenced_shared_work(&shared_state)
             && super::fs_watch_shared_vm::poll(runtime, program)?
@@ -2255,6 +2265,7 @@ fn has_referenced_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeS
         || crate::modules::child_process_shared_vm::has_pending(shared_state)
         || crate::modules::http_shared_vm::has_work(shared_state)
         || crate::modules::napi::has_work()
+        || crate::modules::worker_shared_vm::has_work(shared_state)
         || super::fs_watch_shared_vm::has_work(&shared_state.borrow().fs_watch)
         || super::fs_stat_watch_shared_vm::has_work(&shared_state.borrow().fs_stat_watch)
         || shared_state.borrow().scheduler.has_refed_shared_timers()
@@ -2431,6 +2442,8 @@ pub(crate) fn format_uncaught_error(
     program: &quench_runtime::ResidualProgram,
     error: &mut RootedError,
 ) -> String {
+    // A worker hands its fatal exception to the parent's 'error' event.
+    crate::modules::worker_shared_vm::capture_fatal(runtime, error.exception);
     let stack = error.exception.and_then(|exception| {
         if !runtime.is_error_rooted(exception).ok()? {
             return None;
