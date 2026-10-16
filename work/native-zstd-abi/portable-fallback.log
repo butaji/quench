@@ -1,0 +1,5 @@
+    Checking zstd-sys v2.1.0+zstd.1.5.7
+   Compiling quench-node v0.1.0 (/workspace/quench/crates/quench-node)
+    Checking zstd-safe v7.3.0
+    Checking zstd v0.13.3
+    Finished `iteration` profile [optimized] target(s) in 5.09s

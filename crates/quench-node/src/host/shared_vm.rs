@@ -288,6 +288,18 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "abortDispatchListeners" (4) => crate::modules::events_abort_shared_vm::abort_dispatch_listeners,
         method "eventTargetQueueError" (1) => crate::modules::events_abort_shared_vm::queue_listener_error,
         method "eventTargetRethrow" (0) => crate::modules::events_abort_shared_vm::rethrow_listener_error,
+        #[cfg(quench_node_brotli)]
+        method "BrotliEncoder" (0) => crate::modules::zlib_native_shared_vm::create_brotli_encoder,
+        #[cfg(quench_node_brotli)]
+        method "BrotliDecoder" (0) => crate::modules::zlib_native_shared_vm::create_brotli_decoder,
+        method "ZstdCompress" (0) => crate::modules::zlib_native_shared_vm::create_zstd_compress,
+        method "ZstdDecompress" (0) => crate::modules::zlib_native_shared_vm::create_zstd_decompress,
+        method "Zlib" (0) => crate::modules::zlib_native_shared_vm::create,
+        method "zlibNativeInit" (0) => crate::modules::zlib_native_shared_vm::initialize,
+        method "zlibNativeWrite" (0) => crate::modules::zlib_native_shared_vm::write,
+        method "zlibNativeWriteSync" (0) => crate::modules::zlib_native_shared_vm::write_sync,
+        method "zlibNativeClose" (0) => crate::modules::zlib_native_shared_vm::close,
+        method "zlibNativePoll" (0) => crate::modules::zlib_native_shared_vm::poll,
         method "eventsAddAbortListener" (2) => crate::modules::events_abort_shared_vm::add_abort_listener,
         method "abortListenerDispose" (0) => crate::modules::events_abort_shared_vm::abort_listener_dispose,
         method "abortedListenerJob" (0) => crate::modules::events_abort_shared_vm::aborted_listener_job,
@@ -653,6 +665,10 @@ pub(crate) fn operation(name: &str) -> HostFunctionId {
 impl quench_runtime::Host for NodeHost {
     fn proper_tail_calls(&self) -> bool {
         false
+    }
+
+    fn error_stack_formatter(&self) -> Option<quench_runtime::RootId> {
+        self.shared_state().borrow().builtin_cache.get(crate::modules::node_errors_shared_vm::DEFAULT_STACK_FORMATTER).copied()
     }
 
     fn write_line(&mut self, text: &str) {

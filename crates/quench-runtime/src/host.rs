@@ -61,6 +61,13 @@ pub trait Host {
         true
     }
 
+    /// Optional retained callback owning the host's Error stack policy,
+    /// including dispatch of user prepareStackTrace hooks. Called as
+    /// (global, error, callSites). The host owns the callback root's lifetime.
+    fn error_stack_formatter(&self) -> Option<crate::RootId> {
+        None
+    }
+
     /// Stable native-operation table for this host's lifetime. Mutable host
     /// state belongs in `Self`; operation indices must never be reassigned.
     fn functions(&self) -> &[crate::HostFunction<Self>]
