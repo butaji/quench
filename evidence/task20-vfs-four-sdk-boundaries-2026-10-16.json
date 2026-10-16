@@ -2,7 +2,7 @@
   "schema_version": 1,
   "task": "TOD-20",
   "goal_complete": false,
-  "recorded_utc": "2026-10-16T23:17:34.584617+00:00",
+  "recorded_utc": "2026-10-16T23:25:44.152982+00:00",
   "baseline_source_commit": "66e8ad1c2a023f49038097e05bb824cda2d54626",
   "review": {
     "patch_sha256": "cbb609b1fdfae3d7c98bdf3a57cd204b3e8239a1f5b461ee932763ed4ec5291d",
@@ -129,6 +129,29 @@
       "original_fixture_sha256": "65ce9ae3e09e2ec7234d701fb8847b34049000e8893cf1026db623a4b73c7765"
     }
   ],
-  "full_api_gate": "matching pair rebuild and full471 gate queued; not yet claimed",
+  "full_api_gate": {
+    "result": "471/471 PASS with unchanged original deadlines",
+    "receipt": {
+      "source_commit": "66efb8ca236bc0bd4338a5b4a1cc6a523ffb62e8",
+      "test_count": 471,
+      "exit": 0,
+      "seconds": 293.0367695490131,
+      "binaries_before": {
+        "quench-node": "c42796cdecd597e674282df0e28dfed00623351271961f71912653cd84b69b1a",
+        "run-parallel": "7959ad84bc7009ab3aedc2b8886bc8497a0cc254317b6400439bd316bbdb498c",
+        "child-entry-api": "3a3155401e15999f969ec189233e6bcd8bffe9dac57e379cd9e92cf8260a06e2",
+        "libquench_node_workers.rlib": "cd20d0bcda7086a61ca2455bc045e3c8afbdd4e518a1813e208fd7b5b9b6717a"
+      },
+      "binaries_after": {
+        "quench-node": "c42796cdecd597e674282df0e28dfed00623351271961f71912653cd84b69b1a",
+        "run-parallel": "7959ad84bc7009ab3aedc2b8886bc8497a0cc254317b6400439bd316bbdb498c",
+        "child-entry-api": "3a3155401e15999f969ec189233e6bcd8bffe9dac57e379cd9e92cf8260a06e2",
+        "libquench_node_workers.rlib": "cd20d0bcda7086a61ca2455bc045e3c8afbdd4e518a1813e208fd7b5b9b6717a"
+      },
+      "memory_before": "low 0\nhigh 0\nmax 1269299\noom 2\noom_kill 1\noom_group_kill 0\n",
+      "memory_after": "low 0\nhigh 0\nmax 1269299\noom 2\noom_kill 1\noom_group_kill 0\n",
+      "finished_utc": "2026-10-16T23:24:38.132333+00:00"
+    }
+  },
   "full_parallel_counts": "earlier e5 stable1938/5015; no count extrapolation"
 }
