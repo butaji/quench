@@ -1607,6 +1607,14 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// The name of the running code's Script or Module, the referrer of its
+    /// `import()` calls.
+    pub(super) fn active_script_or_module(&self, p: &ResidualProgram) -> std::rc::Rc<str> {
+        self.programs
+            .script_or_module(self.active_program)
+            .unwrap_or_else(|| std::rc::Rc::from(p.source_name.as_str()))
+    }
+
     fn dynamic_import(&mut self, p: &ResidualProgram, args: &[Value]) -> Result<Value, JsError> {
         let promise = self.promise_object();
         let specifier = args.first().copied().unwrap_or(Value::UNDEFINED);
@@ -1619,7 +1627,8 @@ impl<H: Host> Vm<H> {
         let operation = self.with_call_roots([promise], |vm| {
             let specifier = vm.to_string(p, specifier)?;
             let module_type = vm.validate_dynamic_import_options(p, options)?;
-            let resolution = vm.host.resolve_dynamic_import(&p.source_name, &specifier);
+            let referrer = vm.active_script_or_module(p);
+            let resolution = vm.host.resolve_dynamic_import(&referrer, &specifier);
             match resolution {
                 Err(message) => return Err(vm.type_error(p, message)),
                 Ok(Some(module)) => {
