@@ -97,6 +97,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         parents,
     )?;
     name_function(context, module, "Module")?;
+    crate::host::shared_vm::commonjs::attach_module_cache(context, module)?;
     set(context, module, "Module", module)?;
     let prototype = get(context, module, "prototype")?;
     let constructor = context.host_function_with_data(
@@ -121,10 +122,11 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         name_function(context, method, name)?;
         set(context, prototype, name, method)?;
     }
-    let mut names = BUILTIN_MODULES
-        .iter()
-        .map(|name| context.string_rooted(name))
-        .collect::<Vec<_>>();
+    let stream_iter=context.host_mut().shared_state().borrow().cli_options.enabled("--experimental-stream-iter");
+    let mut names = BUILTIN_MODULES.iter().copied().filter(|name|!name.starts_with("node:"))
+        .chain(stream_iter.then_some("stream/iter"))
+        .chain(BUILTIN_MODULES.iter().copied().filter(|name|name.starts_with("node:")))
+        .map(|name|context.string_rooted(name)).collect::<Vec<_>>();
     if context.host_mut().vfs_enabled() {
         names.push(context.string_rooted("node:vfs"));
     }
@@ -662,6 +664,7 @@ pub(crate) fn is_builtin(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let vfs_enabled = context.host_mut().vfs_enabled();
+    let stream_iter=context.host_mut().shared_state().borrow().cli_options.enabled("--experimental-stream-iter");
     let result = args
         .first()
         .and_then(|argument| context.string_text(*argument).ok().flatten())
@@ -669,6 +672,7 @@ pub(crate) fn is_builtin(
             if specifier == "node:vfs" {
                 return vfs_enabled;
             }
+            if specifier=="stream/iter" || specifier=="node:stream/iter" { return stream_iter; }
             if let Some(name) = specifier.strip_prefix("node:") {
                 BUILTIN_MODULES.contains(&name) || NODE_ONLY_BUILTINS.contains(&name)
             } else {

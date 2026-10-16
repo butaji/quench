@@ -1,154 +1,157 @@
-//! VM-independent streaming decoder shared by both Node adapters.
-
+//! Native StringDecoder byte state shared with configured Node algorithms.
 use crate::modules::buffer_codec;
 
+pub(crate) struct Layout;
+impl Layout {
+    pub(crate) const INCOMPLETE_START: usize = 0;
+    pub(crate) const INCOMPLETE_END: usize = Self::INCOMPLETE_START + 4;
+    pub(crate) const MISSING: usize = Self::INCOMPLETE_END;
+    pub(crate) const BUFFERED: usize = Self::MISSING + 1;
+    pub(crate) const ENCODING: usize = Self::BUFFERED + 1;
+    pub(crate) const SIZE: usize = Self::ENCODING + 1;
+}
+// Indices are the stable native encoding ABI, also used by internal/util.
+pub(crate) const ENCODINGS: &[&str] = &[
+    "ascii",
+    "utf8",
+    "base64",
+    "utf16le",
+    "latin1",
+    "hex",
+    "buffer",
+    "base64url",
+];
+
 pub(crate) const MAX_STRING_BYTES: usize = 0x1fff_ffe8;
-
-#[derive(Clone, Copy)]
-pub(crate) enum DecodeMode {
-    Streaming,
-    Final,
+#[derive(Debug)]
+pub(crate) struct StringTooLong;
+fn make_string(bytes: &[u8], encoding: &str) -> Result<Vec<u16>, StringTooLong> {
+    if encoding == "utf8" && bytes.len() > MAX_STRING_BYTES {
+        return Err(StringTooLong);
+    }
+    buffer_codec::decode_units_limited(bytes, encoding, MAX_STRING_BYTES).ok_or(StringTooLong)
 }
 
-pub(crate) struct DecodedChunk {
-    pub(crate) units: Vec<u16>,
-    pub(crate) pending: Vec<u8>,
-    pub(crate) last_total: usize,
-}
-
-pub(crate) fn decode_chunk_units(
-    prior_pending: &[u8],
-    input: &[u8],
-    encoding: &str,
-    mode: DecodeMode,
-) -> DecodedChunk {
-    let streaming = matches!(mode, DecodeMode::Streaming);
-    let mut bytes = Vec::with_capacity(prior_pending.len().saturating_add(input.len()));
-    bytes.extend_from_slice(prior_pending);
-    bytes.extend_from_slice(input);
-    let had_pending = !prior_pending.is_empty();
-    let (mut units, mut pending) = match encoding {
-        "base64" | "base64url" => {
-            let complete = if streaming {
-                bytes.len() / 3 * 3
-            } else {
-                bytes.len()
-            };
-            (
-                buffer_codec::decode_units(&bytes[..complete], encoding),
-                bytes[complete..].to_vec(),
-            )
+pub(crate) struct DecoderState(pub(crate) [u8; Layout::SIZE]);
+impl DecoderState {
+    fn encoding(&self) -> &'static str {
+        ENCODINGS[self.0[Layout::ENCODING] as usize]
+    }
+    fn buffered(&self) -> usize {
+        self.0[Layout::BUFFERED] as usize
+    }
+    fn missing(&self) -> usize {
+        self.0[Layout::MISSING] as usize
+    }
+    pub(crate) fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        let state = Self(bytes.try_into().ok()?);
+        ((state.0[Layout::ENCODING] as usize) < ENCODINGS.len()
+            && ENCODINGS[state.0[Layout::ENCODING] as usize] != "buffer"
+            && (state.buffered() == 0) == (state.missing() == 0)
+            && state.buffered() + state.missing() <= Layout::INCOMPLETE_END)
+            .then_some(state)
+    }
+    pub(crate) fn decode(&mut self, mut input: &[u8]) -> Result<Vec<u16>, StringTooLong> {
+        let encoding = self.encoding();
+        if matches!(encoding, "ascii" | "latin1" | "hex") {
+            return make_string(input, encoding);
         }
-        "hex" => {
-            let complete = if streaming {
-                bytes.len() / 2 * 2
-            } else {
-                bytes.len()
-            };
-            (
-                buffer_codec::decode_units(&bytes[..complete], encoding),
-                bytes[complete..].to_vec(),
-            )
-        }
-        "latin1" => (
-            bytes.iter().map(|byte| u16::from(*byte)).collect(),
-            Vec::new(),
-        ),
-        "ascii" => (
-            bytes.iter().map(|byte| u16::from(byte & 0x7f)).collect(),
-            Vec::new(),
-        ),
-        "utf16le" => decode_utf16le(&bytes, had_pending),
-        _ => {
-            let (text, pending) = decode_utf8(&bytes, had_pending, streaming);
-            (text.encode_utf16().collect(), pending)
-        }
-    };
-    if !streaming {
-        match encoding {
-            "utf8" if !pending.is_empty() => units.push(0xfffd),
-            "utf16le" if pending.len() >= 2 => {
-                units.push(u16::from_le_bytes([pending[0], pending[1]]));
+        let mut result = Vec::new();
+        if self.missing() > 0 {
+            if encoding == "utf8" {
+                let unexpected = input
+                    .iter()
+                    .take(self.missing())
+                    .position(|byte| byte & 0xc0 != 0x80);
+                if let Some(count) = unexpected {
+                    let buffered = self.buffered();
+                    self.0[buffered..buffered + count].copy_from_slice(&input[..count]);
+                    self.0[Layout::BUFFERED] += count as u8;
+                    self.0[Layout::MISSING] = 0;
+                    input = &input[count..];
+                }
             }
-            _ => {}
-        }
-        pending.clear();
-    }
-    DecodedChunk {
-        last_total: pending_sequence_length(&pending, encoding),
-        units,
-        pending,
-    }
-}
-
-fn decode_utf16le(bytes: &[u8], had_pending: bool) -> (Vec<u16>, Vec<u8>) {
-    let mut complete = bytes.len() / 2 * 2;
-    if complete >= 2 {
-        let last = u16::from_le_bytes([bytes[complete - 2], bytes[complete - 1]]);
-        if (0xd800..=0xdbff).contains(&last) && (had_pending || bytes.len() == complete) {
-            complete -= 2;
-        }
-    }
-    (
-        bytes[..complete]
-            .chunks_exact(2)
-            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-            .collect(),
-        bytes[complete..].to_vec(),
-    )
-}
-
-fn pending_sequence_length(pending: &[u8], encoding: &str) -> usize {
-    match encoding {
-        "utf8" => pending.first().map_or(0, |byte| match byte {
-            0xc0..=0xdf => 2,
-            0xe0..=0xef => 3,
-            0xf0..=0xf7 => 4,
-            _ => 0,
-        }),
-        "utf16le" if pending.len() >= 2 => {
-            let unit = u16::from_le_bytes([pending[0], pending[1]]);
-            if (0xd800..=0xdbff).contains(&unit) {
-                4
-            } else {
-                2
+            let found = input.len().min(self.missing());
+            let buffered = self.buffered();
+            self.0[buffered..buffered + found].copy_from_slice(&input[..found]);
+            input = &input[found..];
+            self.0[Layout::MISSING] -= found as u8;
+            self.0[Layout::BUFFERED] += found as u8;
+            if self.missing() == 0 {
+                result.extend(make_string(&self.0[..self.buffered()], encoding)?);
+                self.0[Layout::BUFFERED] = 0;
             }
         }
-        "utf16le" if !pending.is_empty() => 2,
-        _ => 0,
-    }
-}
-
-fn decode_utf8(bytes: &[u8], had_pending: bool, streaming: bool) -> (String, Vec<u8>) {
-    if streaming
-        && !had_pending
-        && bytes.len() < 3
-        && bytes
-            .first()
-            .is_some_and(|byte| (0xF5..=0xFF).contains(byte))
-    {
-        return (String::new(), bytes.to_vec());
-    }
-    let mut rest = bytes;
-    let mut text = String::new();
-    loop {
-        match std::str::from_utf8(rest) {
-            Ok(value) => {
-                text.push_str(value);
-                return (text, Vec::new());
+        if input.is_empty() {
+            return Ok(result);
+        }
+        debug_assert_eq!(self.missing(), 0);
+        debug_assert_eq!(self.buffered(), 0);
+        let mut buffered = 0;
+        let mut missing = 0;
+        if encoding == "utf8" && input[input.len() - 1] & 0x80 != 0 {
+            for &byte in input.iter().rev() {
+                buffered += 1;
+                if byte & 0xc0 == 0x80 {
+                    if buffered >= Layout::INCOMPLETE_END || buffered == input.len() {
+                        buffered = 0;
+                        break;
+                    }
+                } else {
+                    let total = if byte & 0xe0 == 0xc0 {
+                        2
+                    } else if byte & 0xf0 == 0xe0 {
+                        3
+                    } else if byte & 0xf8 == 0xf0 {
+                        4
+                    } else {
+                        0
+                    };
+                    if buffered >= total {
+                        buffered = 0;
+                    }
+                    missing = if buffered == 0 { 0 } else { total - buffered };
+                    break;
+                }
             }
-            Err(error) if error.error_len().is_none() => {
-                let valid = error.valid_up_to();
-                text.push_str(&String::from_utf8_lossy(&rest[..valid]));
-                return (text, rest[valid..].to_vec());
+        } else if encoding == "utf16le" {
+            if input.len() % 2 == 1 {
+                buffered = 1;
+                missing = 1;
+            } else if input[input.len() - 1] & 0xfc == 0xd8 {
+                buffered = 2;
+                missing = 2;
             }
-            Err(error) => {
-                let valid = error.valid_up_to();
-                text.push_str(&String::from_utf8_lossy(&rest[..valid]));
-                text.push('�');
-                let skip = valid + error.error_len().unwrap_or(1);
-                rest = &rest[skip.min(rest.len())..];
+        } else if matches!(encoding, "base64" | "base64url") {
+            buffered = input.len() % 3;
+            if buffered > 0 {
+                missing = 3 - buffered;
             }
         }
+        self.0[Layout::BUFFERED] = buffered as u8;
+        self.0[Layout::MISSING] = missing as u8;
+        let complete = input.len() - buffered;
+        if buffered > 0 {
+            self.0[..buffered].copy_from_slice(&input[complete..]);
+        }
+        let body = make_string(&input[..complete], encoding)?;
+        if result.len() > MAX_STRING_BYTES - body.len() {
+            return Err(StringTooLong);
+        }
+        result.extend(body);
+        Ok(result)
+    }
+    pub(crate) fn flush(&mut self) -> Result<Vec<u16>, StringTooLong> {
+        if self.encoding() == "utf16le" && self.buffered() % 2 == 1 {
+            self.0[Layout::MISSING] -= 1;
+            self.0[Layout::BUFFERED] -= 1;
+        }
+        if self.buffered() == 0 {
+            return Ok(Vec::new());
+        }
+        let result = make_string(&self.0[..self.buffered()], self.encoding())?;
+        self.0[Layout::MISSING] = 0;
+        self.0[Layout::BUFFERED] = 0;
+        Ok(result)
     }
 }

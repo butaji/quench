@@ -108,6 +108,12 @@ extern "C" fn fault_only_touched_pages() {
 static FAULT_ONLY_TOUCHED_PAGES: extern "C" fn() = fault_only_touched_pages;
 
 fn main() -> std::process::ExitCode {
+    #[cfg(target_os = "linux")]
+    if let Err(error) = quench_node::shared_run::initialize_cli_process_signals() {
+        eprintln!("initialize CLI process signals: {error}");
+        return std::process::ExitCode::FAILURE;
+    }
+
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     if std::env::var_os(MMAP_THRESHOLD_VARIABLE).is_none() {
         // SAFETY: mallopt only adjusts allocator parameters; no allocation is in flight.

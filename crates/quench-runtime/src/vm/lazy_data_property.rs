@@ -116,6 +116,33 @@ impl<H: Host> Vm<H> {
         self.heap.environment_slot(*env, MemberSlot::Group as usize)
     }
 
+    fn lazy_data_properties(
+        &self,
+        holder: Value,
+    ) -> impl Iterator<Item = (PropertyKey, Value)> + '_ {
+        let object = self.object_data(holder);
+        let named = object
+            .map(|object| self.shape_entries(object.shape()))
+            .unwrap_or(&[])
+            .iter()
+            .map(|(key, _)| *key);
+        let indexed = object
+            .filter(|object| object.has_indexed_descriptors())
+            .into_iter()
+            .flat_map(move |_| {
+                self.descriptors
+                    .keys()
+                    .filter_map(move |(owner, key)| (*owner == holder).then_some(*key))
+            });
+        named
+            .chain(indexed)
+            .filter_map(move |key| self.lazy_data_group(holder, key).map(|group| (key, group)))
+    }
+
+    pub(super) fn has_lazy_data_properties(&self, holder: Value) -> bool {
+        self.lazy_data_properties(holder).next().is_some()
+    }
+
     /// Materializes `holder`'s own property `key` when it is a lazy data property, so a
     /// reflective operation observes its data descriptor.
     pub(super) fn materialize_lazy_data_property(
@@ -146,11 +173,12 @@ impl<H: Host> Vm<H> {
             vm.enter_startup_intrinsics(p)?;
             let initialized = (|| {
                 // Entering the startup intrinsics put back any member script had replaced.
-                let object = vm.object_data(holder).map(|object| object.shape());
-                for key in object.map(|shape| vm.shape_keys(shape)).unwrap_or_default() {
-                    if vm.lazy_data_group(holder, key) == Some(group) {
-                        vm.replace_lazy_data_property(holder, key, Value::UNDEFINED)?;
-                    }
+                let keys = vm
+                    .lazy_data_properties(holder)
+                    .filter_map(|(key, candidate)| (candidate == group).then_some(key))
+                    .collect::<Vec<_>>();
+                for key in keys {
+                    vm.replace_lazy_data_property(holder, key, Value::UNDEFINED)?;
                 }
                 vm.call_value(p, initializer, Value::UNDEFINED, &[])
                     .map(|_| ())
@@ -185,6 +213,12 @@ impl<H: Host> Vm<H> {
             getter: None,
             setter: None,
         };
+        if self.heap.array(holder).is_some()
+            && let PropertyKey::String(atom) = key
+            && let Some(index) = super::object_static::array_index(self.atom_name(atom))
+        {
+            return self.define_array_property(holder, index as usize, record);
+        }
         self.define_ordinary_property_key(holder, key, record)
     }
 

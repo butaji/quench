@@ -60,6 +60,9 @@ pub(crate) struct Progress {
 }
 
 impl Input {
+    pub(crate) fn close(&mut self) {
+        self.phase = Phase::Closed;
+    }
     pub(crate) fn new(pipe: Option<Pipe>) -> Self {
         let phase = if let Some(pipe) = pipe {
             Phase::Open(pipe)

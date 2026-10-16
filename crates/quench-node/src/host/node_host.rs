@@ -50,6 +50,14 @@ pub(crate) struct CommonJsEntry {
     pub(crate) goal: EntryGoal,
 }
 
+/// Before node:module is built the loader owns its cache directly. Thereafter
+/// Module._cache is authoritative, including guest replacement of that property.
+#[derive(Clone, Copy)]
+pub(crate) enum CommonJsCache {
+    Bootstrap(quench_runtime::RootId),
+    Module(quench_runtime::RootId),
+}
+
 /// Host-owned state and lifecycle data for the shared VM path.
 pub(crate) struct SharedNodeState {
     pub(crate) async_hooks: crate::modules::async_hooks_state::SharedAsyncHooksState,
@@ -57,12 +65,17 @@ pub(crate) struct SharedNodeState {
     pub(crate) fs: crate::modules::fs_state::FsState,
     pub(crate) fs_watch: crate::modules::fs_watch_shared_vm::State,
     pub(crate) tls_contexts: crate::modules::tls_shared_vm::contexts::State,
+    #[cfg(quench_icu)]
+    pub(crate) icu_converters: crate::modules::icu_binding_shared_vm::State,
     pub(crate) fs_stats: crate::modules::fs_shared_vm::stat::types::State,
     pub(crate) fs_policy: crate::modules::fs_policy_shared_vm::State,
     pub(crate) fs_stat_watch: crate::modules::fs_stat_watch_shared_vm::State,
     pub(crate) cwd: crate::modules::process_state::ProcessCwd,
     pub(crate) buffer_prototype: Option<quench_runtime::RootId>,
-    pub(crate) module_cache: std::collections::HashMap<String, quench_runtime::RootId>,
+    pub(crate) module_parent_api: Option<quench_runtime::RootId>,
+    pub(crate) active_esm_requires: std::collections::HashMap<String, quench_runtime::RootId>,
+    pub(crate) builtin_cache: std::collections::HashMap<String, quench_runtime::RootId>,
+    pub(crate) commonjs_cache: Option<CommonJsCache>,
     /// Node's internal primordial snapshot used when loading `lib/internal/*`.
     pub(crate) primordials_module: Option<quench_runtime::RootId>,
     pub(crate) crypto_handle_symbol: Option<quench_runtime::RootId>,
@@ -82,7 +95,6 @@ pub(crate) struct SharedNodeState {
     pub(crate) net_auto_select_family_attempt_timeout: u64,
     pub(crate) net_auto_select_family: bool,
     pub(crate) process_module: Option<quench_runtime::RootId>,
-    pub(crate) assert_module: Option<quench_runtime::RootId>,
     pub(crate) path_module: Option<quench_runtime::RootId>,
     pub(crate) url_constructor: Option<quench_runtime::RootId>,
     pub(crate) url_state: Option<quench_runtime::RootId>,
@@ -91,6 +103,8 @@ pub(crate) struct SharedNodeState {
     pub(crate) timer_duration_warnings: crate::modules::timers_shared_vm::TimerDurationWarnings,
     /// Invocation flags supplied by the embedder for this logical process.
     pub(crate) exec_argv: Vec<String>,
+    pub(crate) cli_options: crate::modules::cli_options::CliOptions,
+    initial_node_options: Option<String>,
     pub(crate) fetch: crate::modules::fetch_shared_vm::FetchState,
     pub(crate) diagnostics: crate::modules::diagnostics_channel_shared_vm::SharedDiagnosticsState,
     pub(crate) http: crate::modules::http_shared_vm::State,
@@ -163,13 +177,15 @@ pub(crate) enum ChildProcessEvent {
 impl SharedNodeState {
     /// Forget cached guest handles before bootstrapping a replacement VM heap.
     pub(crate) fn reset_cached_vm_roots(&mut self) {
-        self.module_cache.clear();
+        self.builtin_cache.clear();
+        self.commonjs_cache = None;
+        self.module_parent_api = None;
+        self.active_esm_requires.clear();
         self.buffer_prototype = None;
         self.primordials_module = None;
         self.crypto_handle_symbol = None;
         self.event_targets_api = None;
         self.process_module = None;
-        self.assert_module = None;
         self.path_module = None;
         self.url_constructor = None;
         self.url_state = None;
@@ -185,6 +201,8 @@ impl SharedNodeState {
         self.net_handle_close_callbacks.clear();
         self.fs_watch = crate::modules::fs_watch_shared_vm::State::default();
         self.tls_contexts = crate::modules::tls_shared_vm::contexts::State::default();
+        #[cfg(quench_icu)]
+        { self.icu_converters = crate::modules::icu_binding_shared_vm::State::default(); }
         self.fs_stats = crate::modules::fs_shared_vm::stat::types::State::default();
         self.fs_policy = crate::modules::fs_policy_shared_vm::State::default();
         self.fs_stat_watch = crate::modules::fs_stat_watch_shared_vm::State::default();
@@ -205,12 +223,17 @@ impl SharedNodeState {
             fs,
             fs_watch: crate::modules::fs_watch_shared_vm::State::default(),
             tls_contexts: crate::modules::tls_shared_vm::contexts::State::default(),
+            #[cfg(quench_icu)]
+            icu_converters: crate::modules::icu_binding_shared_vm::State::default(),
             fs_stats: crate::modules::fs_shared_vm::stat::types::State::default(),
             fs_policy: crate::modules::fs_policy_shared_vm::State::default(),
             fs_stat_watch: crate::modules::fs_stat_watch_shared_vm::State::default(),
             cwd,
             buffer_prototype: None,
-            module_cache: std::collections::HashMap::new(),
+            builtin_cache: std::collections::HashMap::new(),
+            commonjs_cache: None,
+            module_parent_api: None,
+            active_esm_requires: std::collections::HashMap::new(),
             primordials_module: None,
             crypto_handle_symbol: None,
             event_targets_api: None,
@@ -229,7 +252,6 @@ impl SharedNodeState {
             net_auto_select_family_attempt_timeout:
                 crate::modules::net_config::DEFAULT_AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT,
             process_module: None,
-            assert_module: None,
             path_module: None,
             url_constructor: None,
             url_state: None,
@@ -237,6 +259,8 @@ impl SharedNodeState {
             timer_handle_api: None,
             timer_duration_warnings: Default::default(),
             exec_argv: Vec::new(),
+            cli_options: Default::default(),
+            initial_node_options: std::env::var("NODE_OPTIONS").ok(),
             fetch: crate::modules::fetch_shared_vm::FetchState::new(),
             diagnostics:
                 crate::modules::diagnostics_channel_shared_vm::SharedDiagnosticsState::default(),
@@ -317,23 +341,7 @@ impl NodeHost {
 
     /// The last VFS CLI switch owns feature availability for this logical process.
     pub(crate) fn vfs_enabled(&self) -> bool {
-        let state = self.shared_state.borrow();
-        let mut arguments = state.exec_argv.iter();
-        let mut enabled = false;
-        while let Some(argument) = arguments.next() {
-            match argument.as_str() {
-                "--experimental-vfs" => enabled = true,
-                "--no-experimental-vfs" => enabled = false,
-                // The shared CLI retains option values and eval source in execArgv.
-                // They are input, even when their text matches a VFS switch.
-                "--trace-event-categories" | "--trace-event-file-pattern" | "-r" | "--require" => {
-                    let _ = arguments.next();
-                }
-                "-e" | "--eval" | "-p" | "--print" | "-pe" | "-ep" => break,
-                _ => {}
-            }
-        }
-        enabled
+        self.shared_state.borrow().cli_options.enabled("--experimental-vfs")
     }
 
     /// Execute a file through the CommonJS loader during shared-VM initialization.
@@ -360,6 +368,7 @@ impl NodeHost {
             );
         let net_family = crate::modules::net_config::auto_select_family_from_exec_argv(&exec_argv);
         let mut shared = self.shared_state.borrow_mut();
+        shared.cli_options=crate::modules::cli_options::CliOptions::parse(shared.initial_node_options.as_deref(),&exec_argv)?;
         shared.trace.configure(&exec_argv);
         shared.exec_argv = exec_argv;
         shared.unhandled_rejection_mode = mode;

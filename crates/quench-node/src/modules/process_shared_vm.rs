@@ -1904,6 +1904,8 @@ pub(crate) fn finish_requested_exit(
     cleanup_environment(runtime, &shared_state);
     if process_control.exit_without_event() {
         super::tls_shared_vm::contexts::cleanup(runtime);
+        #[cfg(quench_icu)]
+        super::icu_binding_shared_vm::cleanup(runtime);
         super::buffer_shared_vm::cleanup(runtime);
         return Ok(());
     }
@@ -2480,6 +2482,8 @@ fn drain_shared_jobs(
             crate::modules::zlib_stream_shared_vm::prune(runtime);
             super::fs_watch_shared_vm::prune(runtime);
             super::tls_shared_vm::contexts::prune(runtime);
+            #[cfg(quench_icu)]
+            super::icu_binding_shared_vm::prune(runtime);
             super::net_reference_shared_vm::prune(runtime);
             super::fs_stat_watch_shared_vm::prune(runtime);
             return Ok(());
@@ -2991,6 +2995,8 @@ fn emit_exit(
 ) -> Result<(), String> {
     let result = emit_exit_inner(runtime, program, code);
     super::tls_shared_vm::contexts::cleanup(runtime);
+    #[cfg(quench_icu)]
+    super::icu_binding_shared_vm::cleanup(runtime);
     super::buffer_shared_vm::cleanup(runtime);
     result
 }
@@ -3640,13 +3646,7 @@ pub(crate) fn dispatch_warning(
     let code = string_property(context, warning, "code")?;
     let detail = string_property(context, warning, "detail")?;
 
-    let suppress_stderr = context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .exec_argv
-        .iter()
-        .any(|argument| argument == "--no-warnings");
+    let suppress_stderr = !context.host_mut().shared_state().borrow().cli_options.enabled("--warnings");
     if !suppress_stderr {
         let code = code.map_or_else(String::new, |code| format!(" [{code}]"));
         let mut output = format!("(node:{}){code} {name}: {message}\n", std::process::id());
