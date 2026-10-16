@@ -1,0 +1,5368 @@
+{
+  "schema": 5,
+  "measurement_mode": "fixed_work_diagnostic",
+  "created_unix_ns": 1792150531897625645,
+  "rounds_requested": 1,
+  "timeout_ms": 300000,
+  "source_revision": "7f8660459256f3552691074c219a14eb031132ba",
+  "source_dirty": true,
+  "corpus": {
+    "pinned_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+    "checkout_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+    "checkout_clean": true,
+    "fixture_set_matches": true
+  },
+  "host": {
+    "uname": "Linux 5262f01dfbf2 6.18.44 #1 SMP Sat Sep 26 20:02:31 UTC 2026 x86_64 GNU/Linux",
+    "rustc": "",
+    "model": null,
+    "memory_bytes": 18882699264,
+    "memory_limit_bytes": 17179869184,
+    "cpu_quota": "400000 100000",
+    "logical_cpus": 4,
+    "process_metrics_backend": "Linux wait4 rusage"
+  },
+  "contention_policy": {
+    "rate_reference_percentile": 75,
+    "min_rate_reference_samples": 5,
+    "min_ipc_reference_ratio": 0.9,
+    "min_cycle_rate_reference_ratio": 0.9,
+    "involuntary_switch_reference_percentile": 25,
+    "min_involuntary_switch_reference_samples": 5,
+    "max_involuntary_switch_rate_ratio": 4.0,
+    "max_load_per_logical_cpu": 1.0,
+    "max_retries": 2
+  },
+  "measurement_runner": {
+    "path": "/workspace/quench/work/bench-tool-target/iteration/quench-bench",
+    "size_bytes": 1240096,
+    "modified_unix_ns": 1791841020156336365,
+    "sha256": "43428306df00f4a54abee1ad9405d4ded5f0ceb1241ff4a52e3029b1f3749bae"
+  },
+  "engines": [
+    {
+      "name": "quench_baseline",
+      "executable": "/workspace/quench/work/function-info-before-bin/quench-node",
+      "executable_sha256": "0bdc9e9bc0af2e1f6df9eafacd7e6c2139cdf9f7b9dd2a341d68ae020e228b6c",
+      "version": "Quench shared-VM interpreter build; package 0.1.0",
+      "argv": [],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/workspace/quench/work/node-v26.12.0-linux-x64/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "interpreter",
+      "jit_proof_command": [
+        "/workspace/quench/work/function-info-before-bin/quench-node"
+      ],
+      "jit_proof": "the measured shared VM executes interpreter bytecode; no guest JIT path is enabled"
+    },
+    {
+      "name": "quench_candidate",
+      "executable": "/workspace/quench/work/owned-script-bin/quench-node",
+      "executable_sha256": "c46f4110bbaaa0fe53f956a981cefa8e0f38fab3bb3b3d034ea3a295cbf023be",
+      "version": "Quench shared-VM interpreter build; package 0.1.0",
+      "argv": [],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/workspace/quench/work/node-v26.12.0-linux-x64/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "interpreter",
+      "jit_proof_command": [
+        "/workspace/quench/work/owned-script-bin/quench-node"
+      ],
+      "jit_proof": "the measured shared VM executes interpreter bytecode; no guest JIT path is enabled"
+    }
+  ],
+  "suite_inputs": [
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/base.js",
+      "size_bytes": 9351,
+      "modified_unix_ns": 1791771725665179219,
+      "sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/crypto.js",
+      "size_bytes": 48043,
+      "modified_unix_ns": 1791771725665505711,
+      "sha256": "5321d2ada9b61e01d5f281609513467cbaa7c0effb12c577ed08088d812453af"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/deltablue.js",
+      "size_bytes": 25653,
+      "modified_unix_ns": 1791771725665505711,
+      "sha256": "74b5a95f4877701073c6efef08e4ae306562747067e292925b69cbd629a511b9"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/earley-boyer.js",
+      "size_bytes": 195205,
+      "modified_unix_ns": 1791771725665505711,
+      "sha256": "dbf3aeb6b3d056e8ea35b5f19aa8c8a4fb1053e41d07f096c22483b2c1c6ee01"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/navier-stokes.js",
+      "size_bytes": 12690,
+      "modified_unix_ns": 1791771725665505711,
+      "sha256": "ce241465ffeee77b5c4f7119f522aa971fe1fe92c3aed76f7514ea43e07fec84"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/raytrace.js",
+      "size_bytes": 27996,
+      "modified_unix_ns": 1791771725665505711,
+      "sha256": "d52183ca324cdb88d9ee3e78326433fe2ca28d6436f0a6c3ec013ab67cb798eb"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/regexp.js",
+      "size_bytes": 111299,
+      "modified_unix_ns": 1791771725665505711,
+      "sha256": "5268b0d15931fda4e331de35fc58e5beded9a250b60764e1cc7cfc898ab53602"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/richards.js",
+      "size_bytes": 15776,
+      "modified_unix_ns": 1791771725665505711,
+      "sha256": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/splay.js",
+      "size_bytes": 10746,
+      "modified_unix_ns": 1791771725665505711,
+      "sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d"
+    }
+  ],
+  "fixtures": {
+    "quench-bench/js-engine-benchmark/v8-v7/crypto.js": {
+      "source": {
+        "path": "quench-bench/js-engine-benchmark/v8-v7/crypto.js",
+        "size_bytes": 48043,
+        "modified_unix_ns": 1791771725665505711,
+        "sha256": "5321d2ada9b61e01d5f281609513467cbaa7c0effb12c577ed08088d812453af"
+      },
+      "materialized_source": {
+        "path": "/tmp/quench-v8-v7-3306787-1792150500511607809-crypto.js",
+        "size_bytes": 58388,
+        "modified_unix_ns": 1792150500509101858,
+        "sha256": "f85d959f36a863547fb47bdcf692bcc56bdb5b64e941992e0b25307f554d7987"
+      },
+      "setup_only_source": {
+        "path": "/tmp/quench-v8-v7-3306787-1792150500511690043-crypto.js",
+        "size_bytes": 58388,
+        "modified_unix_ns": 1792150500509101858,
+        "sha256": "25954eb15e0454af2903571cb7cc3e0295e448b02f6d06300d14e11b2df7a5fd"
+      },
+      "plan": {
+        "fixture": "crypto.js",
+        "suite": "Crypto",
+        "benchmark_count": 2,
+        "iterations_per_benchmark": 4
+      },
+      "valid": true,
+      "output_equal": true,
+      "clean_rounds": 0,
+      "summaries": {
+        "quench_baseline": {
+          "work": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "median_max_rss_bytes": 29433856,
+            "valid_samples": 1,
+            "clean_samples": 0
+          },
+          "setup_only": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "median_max_rss_bytes": 29429760,
+            "valid_samples": 1,
+            "clean_samples": 0
+          },
+          "marginal_per_run": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "paired_samples": 1,
+            "clean_paired_samples": 0
+          }
+        },
+        "quench_candidate": {
+          "work": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "median_max_rss_bytes": 29593600,
+            "valid_samples": 1,
+            "clean_samples": 0
+          },
+          "setup_only": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "median_max_rss_bytes": 29605888,
+            "valid_samples": 1,
+            "clean_samples": 0
+          },
+          "marginal_per_run": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "paired_samples": 1,
+            "clean_paired_samples": 0
+          }
+        }
+      },
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            {
+              "engine": "quench_baseline",
+              "sample": "work"
+            },
+            {
+              "engine": "quench_baseline",
+              "sample": "setup_only"
+            },
+            {
+              "engine": "quench_candidate",
+              "sample": "work"
+            },
+            {
+              "engine": "quench_candidate",
+              "sample": "setup_only"
+            }
+          ],
+          "rejected_attempts": [
+            {
+              "attempt": 1,
+              "execution_order": [
+                {
+                  "engine": "quench_candidate",
+                  "sample": "setup_only"
+                },
+                {
+                  "engine": "quench_candidate",
+                  "sample": "work"
+                },
+                {
+                  "engine": "quench_baseline",
+                  "sample": "setup_only"
+                },
+                {
+                  "engine": "quench_baseline",
+                  "sample": "work"
+                }
+              ],
+              "samples": {
+                "quench_baseline": {
+                  "status": 0,
+                  "timed_out": false,
+                  "wall_ns": 935707974,
+                  "peak_rss_bytes": 29429760,
+                  "score": null,
+                  "instructions": null,
+                  "cycles": null,
+                  "page_faults": 5980,
+                  "page_reclaims": 5980,
+                  "involuntary_context_switches": 13,
+                  "host_before": {
+                    "captured_unix_ns": 1792150504693010392,
+                    "load_average": {
+                      "one_minute": 4.24,
+                      "five_minutes": 4.32,
+                      "fifteen_minutes": 3.83
+                    },
+                    "load_average_error": null,
+                    "top_cpu_consumers": [
+                      {
+                        "pid": 3306777,
+                        "cpu_percent": 13.0,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306707,
+                        "cpu_percent": 7.0,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306207,
+                        "cpu_percent": 5.4,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306620,
+                        "cpu_percent": 5.3,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306787,
+                        "cpu_percent": 0.9,
+                        "command": "quench-bench"
+                      }
+                    ],
+                    "process_list_error": null
+                  },
+                  "host_after": {
+                    "captured_unix_ns": 1792150505657691191,
+                    "load_average": {
+                      "one_minute": 4.24,
+                      "five_minutes": 4.32,
+                      "fifteen_minutes": 3.83
+                    },
+                    "load_average_error": null,
+                    "top_cpu_consumers": [
+                      {
+                        "pid": 3306886,
+                        "cpu_percent": 200.0,
+                        "command": "ps"
+                      },
+                      {
+                        "pid": 3306777,
+                        "cpu_percent": 11.5,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306707,
+                        "cpu_percent": 6.5,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306207,
+                        "cpu_percent": 5.3,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306620,
+                        "cpu_percent": 5.1,
+                        "command": "run-parallel"
+                      }
+                    ],
+                    "process_list_error": null
+                  },
+                  "contention": {
+                    "clean": false,
+                    "checks_complete": false,
+                    "ipc_checked": false,
+                    "involuntary_switch_rate_checked": false,
+                    "load_checked": true,
+                    "ipc": null,
+                    "reference_ipc": null,
+                    "ipc_reference_samples": null,
+                    "effective_cycle_rate_hz": null,
+                    "reference_effective_cycle_rate_hz": null,
+                    "cycle_rate_reference_samples": null,
+                    "involuntary_switches_per_second": 13.893223485557257,
+                    "reference_involuntary_switches_per_second": null,
+                    "involuntary_switch_reference_samples": null,
+                    "load_per_logical_cpu": 1.06,
+                    "reasons": [
+                      {
+                        "kind": "load_at_capacity",
+                        "load_per_logical_cpu": 1.06
+                      }
+                    ]
+                  },
+                  "stdout": "__quenchFixedWork:Crypto:2:4\n",
+                  "stderr": ""
+                },
+                "quench_candidate": {
+                  "status": 0,
+                  "timed_out": false,
+                  "wall_ns": 895843248,
+                  "peak_rss_bytes": 29577216,
+                  "score": null,
+                  "instructions": null,
+                  "cycles": null,
+                  "page_faults": 5991,
+                  "page_reclaims": 5991,
+                  "involuntary_context_switches": 12,
+                  "host_before": {
+                    "captured_unix_ns": 1792150503432825869,
+                    "load_average": {
+                      "one_minute": 4.24,
+                      "five_minutes": 4.32,
+                      "fifteen_minutes": 3.83
+                    },
+                    "load_average_error": null,
+                    "top_cpu_consumers": [
+                      {
+                        "pid": 3306777,
+                        "cpu_percent": 16.0,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306707,
+                        "cpu_percent": 7.7,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306620,
+                        "cpu_percent": 5.7,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306207,
+                        "cpu_percent": 5.6,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3303595,
+                        "cpu_percent": 0.8,
+                        "command": "run-parallel"
+                      }
+                    ],
+                    "process_list_error": null
+                  },
+                  "host_after": {
+                    "captured_unix_ns": 1792150504357778212,
+                    "load_average": {
+                      "one_minute": 4.24,
+                      "five_minutes": 4.32,
+                      "fifteen_minutes": 3.83
+                    },
+                    "load_average_error": null,
+                    "top_cpu_consumers": [
+                      {
+                        "pid": 3306874,
+                        "cpu_percent": 100.0,
+                        "command": "ps"
+                      },
+                      {
+                        "pid": 3306777,
+                        "cpu_percent": 13.6,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306707,
+                        "cpu_percent": 7.1,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306207,
+                        "cpu_percent": 5.5,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306620,
+                        "cpu_percent": 5.4,
+                        "command": "run-parallel"
+                      }
+                    ],
+                    "process_list_error": null
+                  },
+                  "contention": {
+                    "clean": false,
+                    "checks_complete": false,
+                    "ipc_checked": false,
+                    "involuntary_switch_rate_checked": false,
+                    "load_checked": true,
+                    "ipc": null,
+                    "reference_ipc": null,
+                    "ipc_reference_samples": null,
+                    "effective_cycle_rate_hz": null,
+                    "reference_effective_cycle_rate_hz": null,
+                    "cycle_rate_reference_samples": null,
+                    "involuntary_switches_per_second": 13.39520058535955,
+                    "reference_involuntary_switches_per_second": null,
+                    "involuntary_switch_reference_samples": null,
+                    "load_per_logical_cpu": 1.06,
+                    "reasons": [
+                      {
+                        "kind": "load_at_capacity",
+                        "load_per_logical_cpu": 1.06
+                      }
+                    ]
+                  },
+                  "stdout": "__quenchFixedWork:Crypto:2:4\n",
+                  "stderr": ""
+                }
+              },
+              "setup_only_samples": {
+                "quench_baseline": {
+                  "status": 0,
+                  "timed_out": false,
+                  "wall_ns": 249764709,
+                  "peak_rss_bytes": 29433856,
+                  "score": null,
+                  "instructions": null,
+                  "cycles": null,
+                  "page_faults": 5829,
+                  "page_reclaims": 5829,
+                  "involuntary_context_switches": 5,
+                  "host_before": {
+                    "captured_unix_ns": 1792150504388830047,
+                    "load_average": {
+                      "one_minute": 4.24,
+                      "five_minutes": 4.32,
+                      "fifteen_minutes": 3.83
+                    },
+                    "load_average_error": null,
+                    "top_cpu_consumers": [
+                      {
+                        "pid": 3306777,
+                        "cpu_percent": 13.5,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306707,
+                        "cpu_percent": 7.1,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306207,
+                        "cpu_percent": 5.5,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306620,
+                        "cpu_percent": 5.4,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3303595,
+                        "cpu_percent": 0.8,
+                        "command": "run-parallel"
+                      }
+                    ],
+                    "process_list_error": null
+                  },
+                  "host_after": {
+                    "captured_unix_ns": 1792150504666496108,
+                    "load_average": {
+                      "one_minute": 4.24,
+                      "five_minutes": 4.32,
+                      "fifteen_minutes": 3.83
+                    },
+                    "load_average_error": null,
+                    "top_cpu_consumers": [
+                      {
+                        "pid": 3306880,
+                        "cpu_percent": 200.0,
+                        "command": "ps"
+                      },
+                      {
+                        "pid": 3306777,
+                        "cpu_percent": 12.9,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306707,
+                        "cpu_percent": 7.0,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306207,
+                        "cpu_percent": 5.4,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306620,
+                        "cpu_percent": 5.3,
+                        "command": "run-parallel"
+                      }
+                    ],
+                    "process_list_error": null
+                  },
+                  "contention": {
+                    "clean": false,
+                    "checks_complete": false,
+                    "ipc_checked": false,
+                    "involuntary_switch_rate_checked": false,
+                    "load_checked": true,
+                    "ipc": null,
+                    "reference_ipc": null,
+                    "ipc_reference_samples": null,
+                    "effective_cycle_rate_hz": null,
+                    "reference_effective_cycle_rate_hz": null,
+                    "cycle_rate_reference_samples": null,
+                    "involuntary_switches_per_second": 20.01884101248267,
+                    "reference_involuntary_switches_per_second": null,
+                    "involuntary_switch_reference_samples": null,
+                    "load_per_logical_cpu": 1.06,
+                    "reasons": [
+                      {
+                        "kind": "load_at_capacity",
+                        "load_per_logical_cpu": 1.06
+                      }
+                    ]
+                  },
+                  "stdout": "__quenchFixedWork:Crypto:2:0\n",
+                  "stderr": ""
+                },
+                "quench_candidate": {
+                  "status": 0,
+                  "timed_out": false,
+                  "wall_ns": 230740716,
+                  "peak_rss_bytes": 29577216,
+                  "score": null,
+                  "instructions": null,
+                  "cycles": null,
+                  "page_faults": 5883,
+                  "page_reclaims": 5883,
+                  "involuntary_context_switches": 3,
+                  "host_before": {
+                    "captured_unix_ns": 1792150503144432084,
+                    "load_average": {
+                      "one_minute": 4.24,
+                      "five_minutes": 4.32,
+                      "fifteen_minutes": 3.83
+                    },
+                    "load_average_error": null,
+                    "top_cpu_consumers": [
+                      {
+                        "pid": 3306777,
+                        "cpu_percent": 16.8,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306707,
+                        "cpu_percent": 7.8,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306620,
+                        "cpu_percent": 5.7,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306207,
+                        "cpu_percent": 5.6,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3303595,
+                        "cpu_percent": 0.8,
+                        "command": "run-parallel"
+                      }
+                    ],
+                    "process_list_error": null
+                  },
+                  "host_after": {
+                    "captured_unix_ns": 1792150503405227754,
+                    "load_average": {
+                      "one_minute": 4.24,
+                      "five_minutes": 4.32,
+                      "fifteen_minutes": 3.83
+                    },
+                    "load_average_error": null,
+                    "top_cpu_consumers": [
+                      {
+                        "pid": 3306777,
+                        "cpu_percent": 16.1,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306707,
+                        "cpu_percent": 7.7,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306620,
+                        "cpu_percent": 5.7,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306207,
+                        "cpu_percent": 5.6,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3303595,
+                        "cpu_percent": 0.8,
+                        "command": "run-parallel"
+                      }
+                    ],
+                    "process_list_error": null
+                  },
+                  "contention": {
+                    "clean": false,
+                    "checks_complete": false,
+                    "ipc_checked": false,
+                    "involuntary_switch_rate_checked": false,
+                    "load_checked": true,
+                    "ipc": null,
+                    "reference_ipc": null,
+                    "ipc_reference_samples": null,
+                    "effective_cycle_rate_hz": null,
+                    "reference_effective_cycle_rate_hz": null,
+                    "cycle_rate_reference_samples": null,
+                    "involuntary_switches_per_second": 13.001606530509337,
+                    "reference_involuntary_switches_per_second": null,
+                    "involuntary_switch_reference_samples": null,
+                    "load_per_logical_cpu": 1.06,
+                    "reasons": [
+                      {
+                        "kind": "load_at_capacity",
+                        "load_per_logical_cpu": 1.06
+                      }
+                    ]
+                  },
+                  "stdout": "__quenchFixedWork:Crypto:2:0\n",
+                  "stderr": ""
+                }
+              }
+            },
+            {
+              "attempt": 2,
+              "execution_order": [
+                {
+                  "engine": "quench_baseline",
+                  "sample": "work"
+                },
+                {
+                  "engine": "quench_baseline",
+                  "sample": "setup_only"
+                },
+                {
+                  "engine": "quench_candidate",
+                  "sample": "work"
+                },
+                {
+                  "engine": "quench_candidate",
+                  "sample": "setup_only"
+                }
+              ],
+              "samples": {
+                "quench_baseline": {
+                  "status": 0,
+                  "timed_out": false,
+                  "wall_ns": 976065103,
+                  "peak_rss_bytes": 29409280,
+                  "score": null,
+                  "instructions": null,
+                  "cycles": null,
+                  "page_faults": 6026,
+                  "page_reclaims": 6026,
+                  "involuntary_context_switches": 264,
+                  "host_before": {
+                    "captured_unix_ns": 1792150505686442993,
+                    "load_average": {
+                      "one_minute": 4.24,
+                      "five_minutes": 4.32,
+                      "fifteen_minutes": 3.83
+                    },
+                    "load_average_error": null,
+                    "top_cpu_consumers": [
+                      {
+                        "pid": 3306777,
+                        "cpu_percent": 11.5,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306707,
+                        "cpu_percent": 6.5,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306207,
+                        "cpu_percent": 5.3,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306620,
+                        "cpu_percent": 5.1,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3303595,
+                        "cpu_percent": 0.8,
+                        "command": "run-parallel"
+                      }
+                    ],
+                    "process_list_error": null
+                  },
+                  "host_after": {
+                    "captured_unix_ns": 1792150506698882403,
+                    "load_average": {
+                      "one_minute": 4.24,
+                      "five_minutes": 4.32,
+                      "fifteen_minutes": 3.83
+                    },
+                    "load_average_error": null,
+                    "top_cpu_consumers": [
+                      {
+                        "pid": 3306777,
+                        "cpu_percent": 10.3,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306707,
+                        "cpu_percent": 6.2,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306207,
+                        "cpu_percent": 5.3,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306620,
+                        "cpu_percent": 4.9,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306787,
+                        "cpu_percent": 0.9,
+                        "command": "quench-bench"
+                      }
+                    ],
+                    "process_list_error": null
+                  },
+                  "contention": {
+                    "clean": false,
+                    "checks_complete": false,
+                    "ipc_checked": false,
+                    "involuntary_switch_rate_checked": false,
+                    "load_checked": true,
+                    "ipc": null,
+                    "reference_ipc": null,
+                    "ipc_reference_samples": null,
+                    "effective_cycle_rate_hz": null,
+                    "reference_effective_cycle_rate_hz": null,
+                    "cycle_rate_reference_samples": null,
+                    "involuntary_switches_per_second": 270.473761625714,
+                    "reference_involuntary_switches_per_second": null,
+                    "involuntary_switch_reference_samples": null,
+                    "load_per_logical_cpu": 1.06,
+                    "reasons": [
+                      {
+                        "kind": "load_at_capacity",
+                        "load_per_logical_cpu": 1.06
+                      }
+                    ]
+                  },
+                  "stdout": "__quenchFixedWork:Crypto:2:4\n",
+                  "stderr": ""
+                },
+                "quench_candidate": {
+                  "status": 0,
+                  "timed_out": false,
+                  "wall_ns": 946474821,
+                  "peak_rss_bytes": 29589504,
+                  "score": null,
+                  "instructions": null,
+                  "cycles": null,
+                  "page_faults": 5975,
+                  "page_reclaims": 5975,
+                  "involuntary_context_switches": 34,
+                  "host_before": {
+                    "captured_unix_ns": 1792150507026817132,
+                    "load_average": {
+                      "one_minute": 4.24,
+                      "five_minutes": 4.32,
+                      "fifteen_minutes": 3.83
+                    },
+                    "load_average_error": null,
+                    "top_cpu_consumers": [
+                      {
+                        "pid": 3306899,
+                        "cpu_percent": 200.0,
+                        "command": "ps"
+                      },
+                      {
+                        "pid": 3306777,
+                        "cpu_percent": 9.8,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306707,
+                        "cpu_percent": 6.0,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306207,
+                        "cpu_percent": 5.2,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306620,
+                        "cpu_percent": 4.9,
+                        "command": "run-parallel"
+                      }
+                    ],
+                    "process_list_error": null
+                  },
+                  "host_after": {
+                    "captured_unix_ns": 1792150508003229010,
+                    "load_average": {
+                      "one_minute": 3.98,
+                      "five_minutes": 4.26,
+                      "fifteen_minutes": 3.82
+                    },
+                    "load_average_error": null,
+                    "top_cpu_consumers": [
+                      {
+                        "pid": 3306777,
+                        "cpu_percent": 9.0,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306707,
+                        "cpu_percent": 5.8,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306207,
+                        "cpu_percent": 5.2,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306620,
+                        "cpu_percent": 4.7,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306787,
+                        "cpu_percent": 0.9,
+                        "command": "quench-bench"
+                      }
+                    ],
+                    "process_list_error": null
+                  },
+                  "contention": {
+                    "clean": false,
+                    "checks_complete": false,
+                    "ipc_checked": false,
+                    "involuntary_switch_rate_checked": false,
+                    "load_checked": true,
+                    "ipc": null,
+                    "reference_ipc": null,
+                    "ipc_reference_samples": null,
+                    "effective_cycle_rate_hz": null,
+                    "reference_effective_cycle_rate_hz": null,
+                    "cycle_rate_reference_samples": null,
+                    "involuntary_switches_per_second": 35.92277284680139,
+                    "reference_involuntary_switches_per_second": null,
+                    "involuntary_switch_reference_samples": null,
+                    "load_per_logical_cpu": 1.06,
+                    "reasons": [
+                      {
+                        "kind": "load_at_capacity",
+                        "load_per_logical_cpu": 1.06
+                      }
+                    ]
+                  },
+                  "stdout": "__quenchFixedWork:Crypto:2:4\n",
+                  "stderr": ""
+                }
+              },
+              "setup_only_samples": {
+                "quench_baseline": {
+                  "status": 0,
+                  "timed_out": false,
+                  "wall_ns": 240455505,
+                  "peak_rss_bytes": 29413376,
+                  "score": null,
+                  "instructions": null,
+                  "cycles": null,
+                  "page_faults": 5882,
+                  "page_reclaims": 5882,
+                  "involuntary_context_switches": 1,
+                  "host_before": {
+                    "captured_unix_ns": 1792150506729379692,
+                    "load_average": {
+                      "one_minute": 4.24,
+                      "five_minutes": 4.32,
+                      "fifteen_minutes": 3.83
+                    },
+                    "load_average_error": null,
+                    "top_cpu_consumers": [
+                      {
+                        "pid": 3306893,
+                        "cpu_percent": 200.0,
+                        "command": "ps"
+                      },
+                      {
+                        "pid": 3306777,
+                        "cpu_percent": 10.2,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306707,
+                        "cpu_percent": 6.1,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306207,
+                        "cpu_percent": 5.2,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306620,
+                        "cpu_percent": 4.9,
+                        "command": "run-parallel"
+                      }
+                    ],
+                    "process_list_error": null
+                  },
+                  "host_after": {
+                    "captured_unix_ns": 1792150506999784973,
+                    "load_average": {
+                      "one_minute": 4.24,
+                      "five_minutes": 4.32,
+                      "fifteen_minutes": 3.83
+                    },
+                    "load_average_error": null,
+                    "top_cpu_consumers": [
+                      {
+                        "pid": 3306898,
+                        "cpu_percent": 200.0,
+                        "command": "ps"
+                      },
+                      {
+                        "pid": 3306777,
+                        "cpu_percent": 9.9,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306707,
+                        "cpu_percent": 6.0,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306207,
+                        "cpu_percent": 5.2,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306620,
+                        "cpu_percent": 4.9,
+                        "command": "run-parallel"
+                      }
+                    ],
+                    "process_list_error": null
+                  },
+                  "contention": {
+                    "clean": false,
+                    "checks_complete": false,
+                    "ipc_checked": false,
+                    "involuntary_switch_rate_checked": false,
+                    "load_checked": true,
+                    "ipc": null,
+                    "reference_ipc": null,
+                    "ipc_reference_samples": null,
+                    "effective_cycle_rate_hz": null,
+                    "reference_effective_cycle_rate_hz": null,
+                    "cycle_rate_reference_samples": null,
+                    "involuntary_switches_per_second": 4.158773574345907,
+                    "reference_involuntary_switches_per_second": null,
+                    "involuntary_switch_reference_samples": null,
+                    "load_per_logical_cpu": 1.06,
+                    "reasons": [
+                      {
+                        "kind": "load_at_capacity",
+                        "load_per_logical_cpu": 1.06
+                      }
+                    ]
+                  },
+                  "stdout": "__quenchFixedWork:Crypto:2:0\n",
+                  "stderr": ""
+                },
+                "quench_candidate": {
+                  "status": 0,
+                  "timed_out": false,
+                  "wall_ns": 298081348,
+                  "peak_rss_bytes": 29388800,
+                  "score": null,
+                  "instructions": null,
+                  "cycles": null,
+                  "page_faults": 5838,
+                  "page_reclaims": 5838,
+                  "involuntary_context_switches": 30,
+                  "host_before": {
+                    "captured_unix_ns": 1792150508031976281,
+                    "load_average": {
+                      "one_minute": 3.98,
+                      "five_minutes": 4.26,
+                      "fifteen_minutes": 3.82
+                    },
+                    "load_average_error": null,
+                    "top_cpu_consumers": [
+                      {
+                        "pid": 3306777,
+                        "cpu_percent": 9.0,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306707,
+                        "cpu_percent": 5.8,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306207,
+                        "cpu_percent": 5.2,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306620,
+                        "cpu_percent": 4.7,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306787,
+                        "cpu_percent": 0.9,
+                        "command": "quench-bench"
+                      }
+                    ],
+                    "process_list_error": null
+                  },
+                  "host_after": {
+                    "captured_unix_ns": 1792150508361164256,
+                    "load_average": {
+                      "one_minute": 3.98,
+                      "five_minutes": 4.26,
+                      "fifteen_minutes": 3.82
+                    },
+                    "load_average_error": null,
+                    "top_cpu_consumers": [
+                      {
+                        "pid": 3306912,
+                        "cpu_percent": 200.0,
+                        "command": "ps"
+                      },
+                      {
+                        "pid": 3306910,
+                        "cpu_percent": 103.0,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306777,
+                        "cpu_percent": 8.9,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306707,
+                        "cpu_percent": 5.7,
+                        "command": "run-parallel"
+                      },
+                      {
+                        "pid": 3306620,
+                        "cpu_percent": 4.7,
+                        "command": "run-parallel"
+                      }
+                    ],
+                    "process_list_error": null
+                  },
+                  "contention": {
+                    "clean": true,
+                    "checks_complete": false,
+                    "ipc_checked": false,
+                    "involuntary_switch_rate_checked": false,
+                    "load_checked": true,
+                    "ipc": null,
+                    "reference_ipc": null,
+                    "ipc_reference_samples": null,
+                    "effective_cycle_rate_hz": null,
+                    "reference_effective_cycle_rate_hz": null,
+                    "cycle_rate_reference_samples": null,
+                    "involuntary_switches_per_second": 100.64366724482204,
+                    "reference_involuntary_switches_per_second": null,
+                    "involuntary_switch_reference_samples": null,
+                    "load_per_logical_cpu": 0.995,
+                    "reasons": []
+                  },
+                  "stdout": "__quenchFixedWork:Crypto:2:0\n",
+                  "stderr": ""
+                }
+              }
+            }
+          ],
+          "selected_attempt": 0,
+          "samples": {
+            "quench_baseline": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 948877605,
+              "peak_rss_bytes": 29433856,
+              "score": null,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 6014,
+              "page_reclaims": 6014,
+              "involuntary_context_switches": 3,
+              "host_before": {
+                "captured_unix_ns": 1792150500589892332,
+                "load_average": {
+                  "one_minute": 4.53,
+                  "five_minutes": 4.37,
+                  "fifteen_minutes": 3.85
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 36.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 10.1,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306620,
+                    "cpu_percent": 6.5,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306207,
+                    "cpu_percent": 5.9,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3303595,
+                    "cpu_percent": 0.8,
+                    "command": "run-parallel"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792150501569617916,
+                "load_average": {
+                  "one_minute": 4.53,
+                  "five_minutes": 4.37,
+                  "fifteen_minutes": 3.85
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306844,
+                    "cpu_percent": 200.0,
+                    "command": "ps"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 24.5,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 9.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306620,
+                    "cpu_percent": 6.2,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306207,
+                    "cpu_percent": 5.8,
+                    "command": "run-parallel"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "contention": {
+                "clean": false,
+                "checks_complete": false,
+                "ipc_checked": false,
+                "involuntary_switch_rate_checked": false,
+                "load_checked": true,
+                "ipc": null,
+                "reference_ipc": null,
+                "ipc_reference_samples": null,
+                "effective_cycle_rate_hz": null,
+                "reference_effective_cycle_rate_hz": null,
+                "cycle_rate_reference_samples": null,
+                "involuntary_switches_per_second": 3.1616301029678113,
+                "reference_involuntary_switches_per_second": null,
+                "involuntary_switch_reference_samples": null,
+                "load_per_logical_cpu": 1.1325,
+                "reasons": [
+                  {
+                    "kind": "load_at_capacity",
+                    "load_per_logical_cpu": 1.1325
+                  }
+                ]
+              },
+              "stdout": "__quenchFixedWork:Crypto:2:4\n",
+              "stderr": ""
+            },
+            "quench_candidate": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 894771069,
+              "peak_rss_bytes": 29593600,
+              "score": null,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 6037,
+              "page_reclaims": 6037,
+              "involuntary_context_switches": 7,
+              "host_before": {
+                "captured_unix_ns": 1792150501912509255,
+                "load_average": {
+                  "one_minute": 4.53,
+                  "five_minutes": 4.37,
+                  "fifteen_minutes": 3.85
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 22.3,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 8.8,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306620,
+                    "cpu_percent": 6.1,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306207,
+                    "cpu_percent": 5.8,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3303595,
+                    "cpu_percent": 0.8,
+                    "command": "run-parallel"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792150502838205067,
+                "load_average": {
+                  "one_minute": 4.24,
+                  "five_minutes": 4.32,
+                  "fifteen_minutes": 3.83
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 17.8,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 8.1,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306620,
+                    "cpu_percent": 5.8,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306207,
+                    "cpu_percent": 5.6,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3303595,
+                    "cpu_percent": 0.8,
+                    "command": "run-parallel"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "contention": {
+                "clean": false,
+                "checks_complete": false,
+                "ipc_checked": false,
+                "involuntary_switch_rate_checked": false,
+                "load_checked": true,
+                "ipc": null,
+                "reference_ipc": null,
+                "ipc_reference_samples": null,
+                "effective_cycle_rate_hz": null,
+                "reference_effective_cycle_rate_hz": null,
+                "cycle_rate_reference_samples": null,
+                "involuntary_switches_per_second": 7.823230145140064,
+                "reference_involuntary_switches_per_second": null,
+                "involuntary_switch_reference_samples": null,
+                "load_per_logical_cpu": 1.1325,
+                "reasons": [
+                  {
+                    "kind": "load_at_capacity",
+                    "load_per_logical_cpu": 1.1325
+                  }
+                ]
+              },
+              "stdout": "__quenchFixedWork:Crypto:2:4\n",
+              "stderr": ""
+            }
+          },
+          "setup_only_samples": {
+            "quench_baseline": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 252103165,
+              "peak_rss_bytes": 29429760,
+              "score": null,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 5844,
+              "page_reclaims": 5844,
+              "involuntary_context_switches": 223,
+              "host_before": {
+                "captured_unix_ns": 1792150501598097418,
+                "load_average": {
+                  "one_minute": 4.53,
+                  "five_minutes": 4.37,
+                  "fifteen_minutes": 3.85
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306845,
+                    "cpu_percent": 200.0,
+                    "command": "ps"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 24.3,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 9.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306620,
+                    "cpu_percent": 6.2,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306207,
+                    "cpu_percent": 5.8,
+                    "command": "run-parallel"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792150501884077489,
+                "load_average": {
+                  "one_minute": 4.53,
+                  "five_minutes": 4.37,
+                  "fifteen_minutes": 3.85
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 22.5,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 8.8,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306620,
+                    "cpu_percent": 6.1,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306207,
+                    "cpu_percent": 5.8,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 0.9,
+                    "command": "quench-bench"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "contention": {
+                "clean": false,
+                "checks_complete": false,
+                "ipc_checked": false,
+                "involuntary_switch_rate_checked": false,
+                "load_checked": true,
+                "ipc": null,
+                "reference_ipc": null,
+                "ipc_reference_samples": null,
+                "effective_cycle_rate_hz": null,
+                "reference_effective_cycle_rate_hz": null,
+                "cycle_rate_reference_samples": null,
+                "involuntary_switches_per_second": 884.5585100052195,
+                "reference_involuntary_switches_per_second": null,
+                "involuntary_switch_reference_samples": null,
+                "load_per_logical_cpu": 1.1325,
+                "reasons": [
+                  {
+                    "kind": "load_at_capacity",
+                    "load_per_logical_cpu": 1.1325
+                  }
+                ]
+              },
+              "stdout": "__quenchFixedWork:Crypto:2:0\n",
+              "stderr": ""
+            },
+            "quench_candidate": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 222257601,
+              "peak_rss_bytes": 29605888,
+              "score": null,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 5840,
+              "page_reclaims": 5840,
+              "involuntary_context_switches": 1,
+              "host_before": {
+                "captured_unix_ns": 1792150502865896664,
+                "load_average": {
+                  "one_minute": 4.24,
+                  "five_minutes": 4.32,
+                  "fifteen_minutes": 3.83
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 17.7,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 8.1,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306620,
+                    "cpu_percent": 5.7,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306207,
+                    "cpu_percent": 5.6,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3303595,
+                    "cpu_percent": 0.8,
+                    "command": "run-parallel"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792150503117390746,
+                "load_average": {
+                  "one_minute": 4.24,
+                  "five_minutes": 4.32,
+                  "fifteen_minutes": 3.83
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 17.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 7.8,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306620,
+                    "cpu_percent": 5.7,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306207,
+                    "cpu_percent": 5.6,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3303595,
+                    "cpu_percent": 0.8,
+                    "command": "run-parallel"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "contention": {
+                "clean": false,
+                "checks_complete": false,
+                "ipc_checked": false,
+                "involuntary_switch_rate_checked": false,
+                "load_checked": true,
+                "ipc": null,
+                "reference_ipc": null,
+                "ipc_reference_samples": null,
+                "effective_cycle_rate_hz": null,
+                "reference_effective_cycle_rate_hz": null,
+                "cycle_rate_reference_samples": null,
+                "involuntary_switches_per_second": 4.499283693789172,
+                "reference_involuntary_switches_per_second": null,
+                "involuntary_switch_reference_samples": null,
+                "load_per_logical_cpu": 1.06,
+                "reasons": [
+                  {
+                    "kind": "load_at_capacity",
+                    "load_per_logical_cpu": 1.06
+                  }
+                ]
+              },
+              "stdout": "__quenchFixedWork:Crypto:2:0\n",
+              "stderr": ""
+            }
+          }
+        }
+      ]
+    },
+    "quench-bench/js-engine-benchmark/v8-v7/deltablue.js": {
+      "source": {
+        "path": "quench-bench/js-engine-benchmark/v8-v7/deltablue.js",
+        "size_bytes": 25653,
+        "modified_unix_ns": 1791771725665505711,
+        "sha256": "74b5a95f4877701073c6efef08e4ae306562747067e292925b69cbd629a511b9"
+      },
+      "materialized_source": {
+        "path": "/tmp/quench-v8-v7-3306787-1792150508380912064-deltablue.js",
+        "size_bytes": 36006,
+        "modified_unix_ns": 1792150508377248001,
+        "sha256": "424f334c2a5dbf3756f62aceb70aad932976d4d012ab8fdb87e4ea14fe857582"
+      },
+      "setup_only_source": {
+        "path": "/tmp/quench-v8-v7-3306787-1792150508381008680-deltablue.js",
+        "size_bytes": 36004,
+        "modified_unix_ns": 1792150508377248001,
+        "sha256": "0db3e2fc7e3303c6ae8a44985401debb8466501b355cb398051a5237c749c6a8"
+      },
+      "plan": {
+        "fixture": "deltablue.js",
+        "suite": "DeltaBlue",
+        "benchmark_count": 1,
+        "iterations_per_benchmark": 40
+      },
+      "valid": true,
+      "output_equal": true,
+      "clean_rounds": 0,
+      "summaries": {
+        "quench_baseline": {
+          "work": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "median_max_rss_bytes": 28745728,
+            "valid_samples": 1,
+            "clean_samples": 0
+          },
+          "setup_only": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "median_max_rss_bytes": 28798976,
+            "valid_samples": 1,
+            "clean_samples": 0
+          },
+          "marginal_per_run": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "paired_samples": 1,
+            "clean_paired_samples": 0
+          }
+        },
+        "quench_candidate": {
+          "work": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "median_max_rss_bytes": 28893184,
+            "valid_samples": 1,
+            "clean_samples": 0
+          },
+          "setup_only": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "median_max_rss_bytes": 28884992,
+            "valid_samples": 1,
+            "clean_samples": 0
+          },
+          "marginal_per_run": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "paired_samples": 1,
+            "clean_paired_samples": 0
+          }
+        }
+      },
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            {
+              "engine": "quench_baseline",
+              "sample": "work"
+            },
+            {
+              "engine": "quench_baseline",
+              "sample": "setup_only"
+            },
+            {
+              "engine": "quench_candidate",
+              "sample": "work"
+            },
+            {
+              "engine": "quench_candidate",
+              "sample": "setup_only"
+            }
+          ],
+          "rejected_attempts": [],
+          "selected_attempt": 0,
+          "samples": {
+            "quench_baseline": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1261288660,
+              "peak_rss_bytes": 28745728,
+              "score": null,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 5915,
+              "page_reclaims": 5915,
+              "involuntary_context_switches": 675,
+              "host_before": {
+                "captured_unix_ns": 1792150508444796103,
+                "load_average": {
+                  "one_minute": 3.98,
+                  "five_minutes": 4.26,
+                  "fifteen_minutes": 3.82
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306910,
+                    "cpu_percent": 102.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 8.8,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 5.7,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306620,
+                    "cpu_percent": 4.7,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 0.9,
+                    "command": "quench-bench"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792150509736844138,
+                "load_average": {
+                  "one_minute": 3.98,
+                  "five_minutes": 4.26,
+                  "fifteen_minutes": 3.82
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306923,
+                    "cpu_percent": 104.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 8.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 5.3,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306620,
+                    "cpu_percent": 4.5,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 0.9,
+                    "command": "quench-bench"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "contention": {
+                "clean": true,
+                "checks_complete": false,
+                "ipc_checked": false,
+                "involuntary_switch_rate_checked": false,
+                "load_checked": true,
+                "ipc": null,
+                "reference_ipc": null,
+                "ipc_reference_samples": null,
+                "effective_cycle_rate_hz": null,
+                "reference_effective_cycle_rate_hz": null,
+                "cycle_rate_reference_samples": null,
+                "involuntary_switches_per_second": 535.166945844102,
+                "reference_involuntary_switches_per_second": null,
+                "involuntary_switch_reference_samples": null,
+                "load_per_logical_cpu": 0.995,
+                "reasons": []
+              },
+              "stdout": "__quenchFixedWork:DeltaBlue:1:40\n",
+              "stderr": ""
+            },
+            "quench_candidate": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 883765653,
+              "peak_rss_bytes": 28893184,
+              "score": null,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 5952,
+              "page_reclaims": 5952,
+              "involuntary_context_switches": 240,
+              "host_before": {
+                "captured_unix_ns": 1792150510062467072,
+                "load_average": {
+                  "one_minute": 3.98,
+                  "five_minutes": 4.26,
+                  "fifteen_minutes": 3.82
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306935,
+                    "cpu_percent": 300.0,
+                    "command": "ps"
+                  },
+                  {
+                    "pid": 3306930,
+                    "cpu_percent": 107.0,
+                    "command": "quench-node"
+                  },
+                  {
+                    "pid": 3306923,
+                    "cpu_percent": 67.5,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 7.8,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 5.3,
+                    "command": "run-parallel"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792150510974403473,
+                "load_average": {
+                  "one_minute": 3.98,
+                  "five_minutes": 4.26,
+                  "fifteen_minutes": 3.82
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306942,
+                    "cpu_percent": 150.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 7.3,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 5.1,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306620,
+                    "cpu_percent": 4.3,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 1.0,
+                    "command": "quench-bench"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "contention": {
+                "clean": true,
+                "checks_complete": false,
+                "ipc_checked": false,
+                "involuntary_switch_rate_checked": false,
+                "load_checked": true,
+                "ipc": null,
+                "reference_ipc": null,
+                "ipc_reference_samples": null,
+                "effective_cycle_rate_hz": null,
+                "reference_effective_cycle_rate_hz": null,
+                "cycle_rate_reference_samples": null,
+                "involuntary_switches_per_second": 271.5652041752295,
+                "reference_involuntary_switches_per_second": null,
+                "involuntary_switch_reference_samples": null,
+                "load_per_logical_cpu": 0.995,
+                "reasons": []
+              },
+              "stdout": "__quenchFixedWork:DeltaBlue:1:40\n",
+              "stderr": ""
+            }
+          },
+          "setup_only_samples": {
+            "quench_baseline": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 224464784,
+              "peak_rss_bytes": 28798976,
+              "score": null,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 5421,
+              "page_reclaims": 5421,
+              "involuntary_context_switches": 2,
+              "host_before": {
+                "captured_unix_ns": 1792150509767186865,
+                "load_average": {
+                  "one_minute": 3.98,
+                  "five_minutes": 4.26,
+                  "fifteen_minutes": 3.82
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306923,
+                    "cpu_percent": 101.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 8.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 5.3,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306620,
+                    "cpu_percent": 4.5,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 0.9,
+                    "command": "quench-bench"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792150510019751160,
+                "load_average": {
+                  "one_minute": 3.98,
+                  "five_minutes": 4.26,
+                  "fifteen_minutes": 3.82
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306930,
+                    "cpu_percent": 104.0,
+                    "command": "quench-node"
+                  },
+                  {
+                    "pid": 3306923,
+                    "cpu_percent": 70.1,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 7.9,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 5.3,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306620,
+                    "cpu_percent": 4.5,
+                    "command": "run-parallel"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "contention": {
+                "clean": true,
+                "checks_complete": false,
+                "ipc_checked": false,
+                "involuntary_switch_rate_checked": false,
+                "load_checked": true,
+                "ipc": null,
+                "reference_ipc": null,
+                "ipc_reference_samples": null,
+                "effective_cycle_rate_hz": null,
+                "reference_effective_cycle_rate_hz": null,
+                "cycle_rate_reference_samples": null,
+                "involuntary_switches_per_second": 8.910083641449965,
+                "reference_involuntary_switches_per_second": null,
+                "involuntary_switch_reference_samples": null,
+                "load_per_logical_cpu": 0.995,
+                "reasons": []
+              },
+              "stdout": "__quenchFixedWork:DeltaBlue:1:0\n",
+              "stderr": ""
+            },
+            "quench_candidate": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 225183105,
+              "peak_rss_bytes": 28884992,
+              "score": null,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 5448,
+              "page_reclaims": 5448,
+              "involuntary_context_switches": 203,
+              "host_before": {
+                "captured_unix_ns": 1792150511003244499,
+                "load_average": {
+                  "one_minute": 3.98,
+                  "five_minutes": 4.26,
+                  "fifteen_minutes": 3.82
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306942,
+                    "cpu_percent": 120.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 7.3,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 5.1,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306620,
+                    "cpu_percent": 4.3,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 1.0,
+                    "command": "quench-bench"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792150511258810651,
+                "load_average": {
+                  "one_minute": 3.98,
+                  "five_minutes": 4.26,
+                  "fifteen_minutes": 3.82
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306950,
+                    "cpu_percent": 200.0,
+                    "command": "ps"
+                  },
+                  {
+                    "pid": 3306942,
+                    "cpu_percent": 100.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 7.2,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 5.1,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306620,
+                    "cpu_percent": 4.3,
+                    "command": "run-parallel"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "contention": {
+                "clean": true,
+                "checks_complete": false,
+                "ipc_checked": false,
+                "involuntary_switch_rate_checked": false,
+                "load_checked": true,
+                "ipc": null,
+                "reference_ipc": null,
+                "ipc_reference_samples": null,
+                "effective_cycle_rate_hz": null,
+                "reference_effective_cycle_rate_hz": null,
+                "cycle_rate_reference_samples": null,
+                "involuntary_switches_per_second": 901.4885908070235,
+                "reference_involuntary_switches_per_second": null,
+                "involuntary_switch_reference_samples": null,
+                "load_per_logical_cpu": 0.995,
+                "reasons": []
+              },
+              "stdout": "__quenchFixedWork:DeltaBlue:1:0\n",
+              "stderr": ""
+            }
+          }
+        }
+      ]
+    },
+    "quench-bench/js-engine-benchmark/v8-v7/earley-boyer.js": {
+      "source": {
+        "path": "quench-bench/js-engine-benchmark/v8-v7/earley-boyer.js",
+        "size_bytes": 195205,
+        "modified_unix_ns": 1791771725665505711,
+        "sha256": "dbf3aeb6b3d056e8ea35b5f19aa8c8a4fb1053e41d07f096c22483b2c1c6ee01"
+      },
+      "materialized_source": {
+        "path": "/tmp/quench-v8-v7-3306787-1792150511277179442-earley-boyer.js",
+        "size_bytes": 205560,
+        "modified_unix_ns": 1792150511273301761,
+        "sha256": "9f2d1470a529e875195bd91ecae5e77c6d1584ac782da2cb8cd38dfef9720cf9"
+      },
+      "setup_only_source": {
+        "path": "/tmp/quench-v8-v7-3306787-1792150511277467406-earley-boyer.js",
+        "size_bytes": 205560,
+        "modified_unix_ns": 1792150511273301761,
+        "sha256": "f9f1fba71c5a7044f9334c1690fe83c5ba0f9c6c9f2f0c4419882074a9602d1e"
+      },
+      "plan": {
+        "fixture": "earley-boyer.js",
+        "suite": "EarleyBoyer",
+        "benchmark_count": 2,
+        "iterations_per_benchmark": 3
+      },
+      "valid": true,
+      "output_equal": true,
+      "clean_rounds": 0,
+      "summaries": {
+        "quench_baseline": {
+          "work": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "median_max_rss_bytes": 32194560,
+            "valid_samples": 1,
+            "clean_samples": 0
+          },
+          "setup_only": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "median_max_rss_bytes": 32202752,
+            "valid_samples": 1,
+            "clean_samples": 0
+          },
+          "marginal_per_run": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "paired_samples": 1,
+            "clean_paired_samples": 0
+          }
+        },
+        "quench_candidate": {
+          "work": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "median_max_rss_bytes": 32391168,
+            "valid_samples": 1,
+            "clean_samples": 0
+          },
+          "setup_only": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "median_max_rss_bytes": 32382976,
+            "valid_samples": 1,
+            "clean_samples": 0
+          },
+          "marginal_per_run": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "paired_samples": 1,
+            "clean_paired_samples": 0
+          }
+        }
+      },
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            {
+              "engine": "quench_baseline",
+              "sample": "work"
+            },
+            {
+              "engine": "quench_baseline",
+              "sample": "setup_only"
+            },
+            {
+              "engine": "quench_candidate",
+              "sample": "work"
+            },
+            {
+              "engine": "quench_candidate",
+              "sample": "setup_only"
+            }
+          ],
+          "rejected_attempts": [],
+          "selected_attempt": 0,
+          "samples": {
+            "quench_baseline": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1046683277,
+              "peak_rss_bytes": 32194560,
+              "score": null,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 12030,
+              "page_reclaims": 12030,
+              "involuntary_context_switches": 175,
+              "host_before": {
+                "captured_unix_ns": 1792150511346623510,
+                "load_average": {
+                  "one_minute": 3.98,
+                  "five_minutes": 4.26,
+                  "fifteen_minutes": 3.82
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306942,
+                    "cpu_percent": 102.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 7.2,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 5.1,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306620,
+                    "cpu_percent": 4.3,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 1.0,
+                    "command": "quench-bench"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792150512421572958,
+                "load_average": {
+                  "one_minute": 3.83,
+                  "five_minutes": 4.22,
+                  "fifteen_minutes": 3.81
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306961,
+                    "cpu_percent": 103.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 6.8,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 4.8,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306620,
+                    "cpu_percent": 4.1,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 1.0,
+                    "command": "quench-bench"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "contention": {
+                "clean": true,
+                "checks_complete": false,
+                "ipc_checked": false,
+                "involuntary_switch_rate_checked": false,
+                "load_checked": true,
+                "ipc": null,
+                "reference_ipc": null,
+                "ipc_reference_samples": null,
+                "effective_cycle_rate_hz": null,
+                "reference_effective_cycle_rate_hz": null,
+                "cycle_rate_reference_samples": null,
+                "involuntary_switches_per_second": 167.19479889043836,
+                "reference_involuntary_switches_per_second": null,
+                "involuntary_switch_reference_samples": null,
+                "load_per_logical_cpu": 0.995,
+                "reasons": []
+              },
+              "stdout": "__quenchFixedWork:EarleyBoyer:2:3\n",
+              "stderr": ""
+            },
+            "quench_candidate": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1286669637,
+              "peak_rss_bytes": 32391168,
+              "score": null,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 11982,
+              "page_reclaims": 11982,
+              "involuntary_context_switches": 434,
+              "host_before": {
+                "captured_unix_ns": 1792150512768584808,
+                "load_average": {
+                  "one_minute": 3.83,
+                  "five_minutes": 4.22,
+                  "fifteen_minutes": 3.81
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 133.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 6.7,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 4.8,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306620,
+                    "cpu_percent": 4.1,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 0.9,
+                    "command": "quench-bench"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792150514096378520,
+                "load_average": {
+                  "one_minute": 3.83,
+                  "five_minutes": 4.22,
+                  "fifteen_minutes": 3.81
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 102.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 6.4,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 4.6,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306620,
+                    "cpu_percent": 4.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 1.0,
+                    "command": "quench-bench"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "contention": {
+                "clean": true,
+                "checks_complete": false,
+                "ipc_checked": false,
+                "involuntary_switch_rate_checked": false,
+                "load_checked": true,
+                "ipc": null,
+                "reference_ipc": null,
+                "ipc_reference_samples": null,
+                "effective_cycle_rate_hz": null,
+                "reference_effective_cycle_rate_hz": null,
+                "cycle_rate_reference_samples": null,
+                "involuntary_switches_per_second": 337.3049207968525,
+                "reference_involuntary_switches_per_second": null,
+                "involuntary_switch_reference_samples": null,
+                "load_per_logical_cpu": 0.9575,
+                "reasons": []
+              },
+              "stdout": "__quenchFixedWork:EarleyBoyer:2:3\n",
+              "stderr": ""
+            }
+          },
+          "setup_only_samples": {
+            "quench_baseline": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 265136598,
+              "peak_rss_bytes": 32202752,
+              "score": null,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 7879,
+              "page_reclaims": 7879,
+              "involuntary_context_switches": 4,
+              "host_before": {
+                "captured_unix_ns": 1792150512450069025,
+                "load_average": {
+                  "one_minute": 3.83,
+                  "five_minutes": 4.22,
+                  "fifteen_minutes": 3.81
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306961,
+                    "cpu_percent": 103.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 6.8,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 4.8,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306620,
+                    "cpu_percent": 4.1,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 1.0,
+                    "command": "quench-bench"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792150512742855922,
+                "load_average": {
+                  "one_minute": 3.83,
+                  "five_minutes": 4.22,
+                  "fifteen_minutes": 3.81
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 6.7,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 4.8,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306620,
+                    "cpu_percent": 4.1,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 0.9,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 3303595,
+                    "cpu_percent": 0.7,
+                    "command": "run-parallel"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "contention": {
+                "clean": true,
+                "checks_complete": false,
+                "ipc_checked": false,
+                "involuntary_switch_rate_checked": false,
+                "load_checked": true,
+                "ipc": null,
+                "reference_ipc": null,
+                "ipc_reference_samples": null,
+                "effective_cycle_rate_hz": null,
+                "reference_effective_cycle_rate_hz": null,
+                "cycle_rate_reference_samples": null,
+                "involuntary_switches_per_second": 15.086563040233322,
+                "reference_involuntary_switches_per_second": null,
+                "involuntary_switch_reference_samples": null,
+                "load_per_logical_cpu": 0.9575,
+                "reasons": []
+              },
+              "stdout": "__quenchFixedWork:EarleyBoyer:2:0\n",
+              "stderr": ""
+            },
+            "quench_candidate": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 331838494,
+              "peak_rss_bytes": 32382976,
+              "score": null,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 7856,
+              "page_reclaims": 7856,
+              "involuntary_context_switches": 252,
+              "host_before": {
+                "captured_unix_ns": 1792150514129850678,
+                "load_average": {
+                  "one_minute": 3.83,
+                  "five_minutes": 4.22,
+                  "fifteen_minutes": 3.81
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 101.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 6.3,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 4.6,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306620,
+                    "cpu_percent": 4.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 1.0,
+                    "command": "quench-bench"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792150514499995857,
+                "load_average": {
+                  "one_minute": 3.83,
+                  "five_minutes": 4.22,
+                  "fifteen_minutes": 3.81
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 101.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 6.3,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 4.6,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306620,
+                    "cpu_percent": 3.9,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 1.0,
+                    "command": "quench-bench"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "contention": {
+                "clean": true,
+                "checks_complete": false,
+                "ipc_checked": false,
+                "involuntary_switch_rate_checked": false,
+                "load_checked": true,
+                "ipc": null,
+                "reference_ipc": null,
+                "ipc_reference_samples": null,
+                "effective_cycle_rate_hz": null,
+                "reference_effective_cycle_rate_hz": null,
+                "cycle_rate_reference_samples": null,
+                "involuntary_switches_per_second": 759.4055679387214,
+                "reference_involuntary_switches_per_second": null,
+                "involuntary_switch_reference_samples": null,
+                "load_per_logical_cpu": 0.9575,
+                "reasons": []
+              },
+              "stdout": "__quenchFixedWork:EarleyBoyer:2:0\n",
+              "stderr": ""
+            }
+          }
+        }
+      ]
+    },
+    "quench-bench/js-engine-benchmark/v8-v7/navier-stokes.js": {
+      "source": {
+        "path": "quench-bench/js-engine-benchmark/v8-v7/navier-stokes.js",
+        "size_bytes": 12690,
+        "modified_unix_ns": 1791771725665505711,
+        "sha256": "ce241465ffeee77b5c4f7119f522aa971fe1fe92c3aed76f7514ea43e07fec84"
+      },
+      "materialized_source": {
+        "path": "/tmp/quench-v8-v7-3306787-1792150514522896631-navier-stokes.js",
+        "size_bytes": 23047,
+        "modified_unix_ns": 1792150514521362023,
+        "sha256": "ced36dcb2e6984a5cc586163eef0bf8e059c2d5c509169efc9622ce10af2de33"
+      },
+      "setup_only_source": {
+        "path": "/tmp/quench-v8-v7-3306787-1792150514522956681-navier-stokes.js",
+        "size_bytes": 23047,
+        "modified_unix_ns": 1792150514521362023,
+        "sha256": "e3e931e307293943dab3d50d3e32acd052683eff0b595fa46601637ebf27943b"
+      },
+      "plan": {
+        "fixture": "navier-stokes.js",
+        "suite": "NavierStokes",
+        "benchmark_count": 1,
+        "iterations_per_benchmark": 5
+      },
+      "valid": true,
+      "output_equal": true,
+      "clean_rounds": 0,
+      "summaries": {
+        "quench_baseline": {
+          "work": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "median_max_rss_bytes": 28635136,
+            "valid_samples": 1,
+            "clean_samples": 0
+          },
+          "setup_only": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "median_max_rss_bytes": 28622848,
+            "valid_samples": 1,
+            "clean_samples": 0
+          },
+          "marginal_per_run": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "paired_samples": 1,
+            "clean_paired_samples": 0
+          }
+        },
+        "quench_candidate": {
+          "work": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "median_max_rss_bytes": 28745728,
+            "valid_samples": 1,
+            "clean_samples": 0
+          },
+          "setup_only": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "median_max_rss_bytes": 28766208,
+            "valid_samples": 1,
+            "clean_samples": 0
+          },
+          "marginal_per_run": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "paired_samples": 1,
+            "clean_paired_samples": 0
+          }
+        }
+      },
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            {
+              "engine": "quench_baseline",
+              "sample": "work"
+            },
+            {
+              "engine": "quench_baseline",
+              "sample": "setup_only"
+            },
+            {
+              "engine": "quench_candidate",
+              "sample": "work"
+            },
+            {
+              "engine": "quench_candidate",
+              "sample": "setup_only"
+            }
+          ],
+          "rejected_attempts": [],
+          "selected_attempt": 0,
+          "samples": {
+            "quench_baseline": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1265772684,
+              "peak_rss_bytes": 28635136,
+              "score": null,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 5859,
+              "page_reclaims": 5859,
+              "involuntary_context_switches": 151,
+              "host_before": {
+                "captured_unix_ns": 1792150514595523871,
+                "load_average": {
+                  "one_minute": 3.83,
+                  "five_minutes": 4.22,
+                  "fifteen_minutes": 3.81
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306987,
+                    "cpu_percent": 300.0,
+                    "command": "ps"
+                  },
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 101.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 6.3,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 4.6,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306620,
+                    "cpu_percent": 3.9,
+                    "command": "run-parallel"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792150515891353561,
+                "load_average": {
+                  "one_minute": 3.83,
+                  "five_minutes": 4.22,
+                  "fifteen_minutes": 3.81
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 100.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 6.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 4.4,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306620,
+                    "cpu_percent": 3.8,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 1.0,
+                    "command": "quench-bench"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "contention": {
+                "clean": true,
+                "checks_complete": false,
+                "ipc_checked": false,
+                "involuntary_switch_rate_checked": false,
+                "load_checked": true,
+                "ipc": null,
+                "reference_ipc": null,
+                "ipc_reference_samples": null,
+                "effective_cycle_rate_hz": null,
+                "reference_effective_cycle_rate_hz": null,
+                "cycle_rate_reference_samples": null,
+                "involuntary_switches_per_second": 119.2947216421365,
+                "reference_involuntary_switches_per_second": null,
+                "involuntary_switch_reference_samples": null,
+                "load_per_logical_cpu": 0.9575,
+                "reasons": []
+              },
+              "stdout": "__quenchFixedWork:NavierStokes:1:5\n",
+              "stderr": ""
+            },
+            "quench_candidate": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 944011148,
+              "peak_rss_bytes": 28745728,
+              "score": null,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 5861,
+              "page_reclaims": 5861,
+              "involuntary_context_switches": 318,
+              "host_before": {
+                "captured_unix_ns": 1792150516245634626,
+                "load_average": {
+                  "one_minute": 3.83,
+                  "five_minutes": 4.22,
+                  "fifteen_minutes": 3.81
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 100.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 5.9,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 4.4,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306620,
+                    "cpu_percent": 3.8,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 1.0,
+                    "command": "quench-bench"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792150517216902325,
+                "load_average": {
+                  "one_minute": 3.83,
+                  "five_minutes": 4.22,
+                  "fifteen_minutes": 3.81
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 100.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307004,
+                    "cpu_percent": 100.0,
+                    "command": "ps"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 5.6,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 4.3,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306620,
+                    "cpu_percent": 3.7,
+                    "command": "run-parallel"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "contention": {
+                "clean": true,
+                "checks_complete": false,
+                "ipc_checked": false,
+                "involuntary_switch_rate_checked": false,
+                "load_checked": true,
+                "ipc": null,
+                "reference_ipc": null,
+                "ipc_reference_samples": null,
+                "effective_cycle_rate_hz": null,
+                "reference_effective_cycle_rate_hz": null,
+                "cycle_rate_reference_samples": null,
+                "involuntary_switches_per_second": 336.86042868637816,
+                "reference_involuntary_switches_per_second": null,
+                "involuntary_switch_reference_samples": null,
+                "load_per_logical_cpu": 0.9575,
+                "reasons": []
+              },
+              "stdout": "__quenchFixedWork:NavierStokes:1:5\n",
+              "stderr": ""
+            }
+          },
+          "setup_only_samples": {
+            "quench_baseline": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 265190685,
+              "peak_rss_bytes": 28622848,
+              "score": null,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 5869,
+              "page_reclaims": 5869,
+              "involuntary_context_switches": 164,
+              "host_before": {
+                "captured_unix_ns": 1792150515922359868,
+                "load_average": {
+                  "one_minute": 3.83,
+                  "five_minutes": 4.22,
+                  "fifteen_minutes": 3.81
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 100.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 6.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 4.5,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306620,
+                    "cpu_percent": 3.8,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 1.0,
+                    "command": "quench-bench"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792150516218563254,
+                "load_average": {
+                  "one_minute": 3.83,
+                  "five_minutes": 4.22,
+                  "fifteen_minutes": 3.81
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306998,
+                    "cpu_percent": 200.0,
+                    "command": "ps"
+                  },
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 100.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 5.9,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 4.4,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306620,
+                    "cpu_percent": 3.8,
+                    "command": "run-parallel"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "contention": {
+                "clean": true,
+                "checks_complete": false,
+                "ipc_checked": false,
+                "involuntary_switch_rate_checked": false,
+                "load_checked": true,
+                "ipc": null,
+                "reference_ipc": null,
+                "ipc_reference_samples": null,
+                "effective_cycle_rate_hz": null,
+                "reference_effective_cycle_rate_hz": null,
+                "cycle_rate_reference_samples": null,
+                "involuntary_switches_per_second": 618.4229283920738,
+                "reference_involuntary_switches_per_second": null,
+                "involuntary_switch_reference_samples": null,
+                "load_per_logical_cpu": 0.9575,
+                "reasons": []
+              },
+              "stdout": "__quenchFixedWork:NavierStokes:1:0\n",
+              "stderr": ""
+            },
+            "quench_candidate": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 274476654,
+              "peak_rss_bytes": 28766208,
+              "score": null,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 5864,
+              "page_reclaims": 5864,
+              "involuntary_context_switches": 5,
+              "host_before": {
+                "captured_unix_ns": 1792150517244260720,
+                "load_average": {
+                  "one_minute": 3.83,
+                  "five_minutes": 4.22,
+                  "fifteen_minutes": 3.81
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 100.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 5.6,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 4.3,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306620,
+                    "cpu_percent": 3.7,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 1.0,
+                    "command": "quench-bench"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792150517546723664,
+                "load_average": {
+                  "one_minute": 3.68,
+                  "five_minutes": 4.19,
+                  "fifteen_minutes": 3.8
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3307010,
+                    "cpu_percent": 200.0,
+                    "command": "ps"
+                  },
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 100.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 5.6,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 4.3,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306620,
+                    "cpu_percent": 3.7,
+                    "command": "run-parallel"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "contention": {
+                "clean": true,
+                "checks_complete": false,
+                "ipc_checked": false,
+                "involuntary_switch_rate_checked": false,
+                "load_checked": true,
+                "ipc": null,
+                "reference_ipc": null,
+                "ipc_reference_samples": null,
+                "effective_cycle_rate_hz": null,
+                "reference_effective_cycle_rate_hz": null,
+                "cycle_rate_reference_samples": null,
+                "involuntary_switches_per_second": 18.21648554488718,
+                "reference_involuntary_switches_per_second": null,
+                "involuntary_switch_reference_samples": null,
+                "load_per_logical_cpu": 0.9575,
+                "reasons": []
+              },
+              "stdout": "__quenchFixedWork:NavierStokes:1:0\n",
+              "stderr": ""
+            }
+          }
+        }
+      ]
+    },
+    "quench-bench/js-engine-benchmark/v8-v7/raytrace.js": {
+      "source": {
+        "path": "quench-bench/js-engine-benchmark/v8-v7/raytrace.js",
+        "size_bytes": 27996,
+        "modified_unix_ns": 1791771725665505711,
+        "sha256": "d52183ca324cdb88d9ee3e78326433fe2ca28d6436f0a6c3ec013ab67cb798eb"
+      },
+      "materialized_source": {
+        "path": "/tmp/quench-v8-v7-3306787-1792150517563929826-raytrace.js",
+        "size_bytes": 38347,
+        "modified_unix_ns": 1792150517561418464,
+        "sha256": "488437ac9928487beee4b8fedde1b32c879373a1245a56ded993750ece537f78"
+      },
+      "setup_only_source": {
+        "path": "/tmp/quench-v8-v7-3306787-1792150517563996376-raytrace.js",
+        "size_bytes": 38345,
+        "modified_unix_ns": 1792150517561418464,
+        "sha256": "18551e62111c779c39f164c31106e4372f20a72c81c7742b1d7d44aff4581d26"
+      },
+      "plan": {
+        "fixture": "raytrace.js",
+        "suite": "RayTrace",
+        "benchmark_count": 1,
+        "iterations_per_benchmark": 10
+      },
+      "valid": true,
+      "output_equal": true,
+      "clean_rounds": 0,
+      "summaries": {
+        "quench_baseline": {
+          "work": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "median_max_rss_bytes": 28868608,
+            "valid_samples": 1,
+            "clean_samples": 0
+          },
+          "setup_only": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "median_max_rss_bytes": 28856320,
+            "valid_samples": 1,
+            "clean_samples": 0
+          },
+          "marginal_per_run": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "paired_samples": 1,
+            "clean_paired_samples": 0
+          }
+        },
+        "quench_candidate": {
+          "work": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "median_max_rss_bytes": 29032448,
+            "valid_samples": 1,
+            "clean_samples": 0
+          },
+          "setup_only": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "median_max_rss_bytes": 29011968,
+            "valid_samples": 1,
+            "clean_samples": 0
+          },
+          "marginal_per_run": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "paired_samples": 1,
+            "clean_paired_samples": 0
+          }
+        }
+      },
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            {
+              "engine": "quench_baseline",
+              "sample": "work"
+            },
+            {
+              "engine": "quench_baseline",
+              "sample": "setup_only"
+            },
+            {
+              "engine": "quench_candidate",
+              "sample": "work"
+            },
+            {
+              "engine": "quench_candidate",
+              "sample": "setup_only"
+            }
+          ],
+          "rejected_attempts": [],
+          "selected_attempt": 0,
+          "samples": {
+            "quench_baseline": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1421113527,
+              "peak_rss_bytes": 28868608,
+              "score": null,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 10672,
+              "page_reclaims": 10672,
+              "involuntary_context_switches": 168,
+              "host_before": {
+                "captured_unix_ns": 1792150517624152453,
+                "load_average": {
+                  "one_minute": 3.68,
+                  "five_minutes": 4.19,
+                  "fifteen_minutes": 3.8
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 100.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 5.5,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 4.3,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306620,
+                    "cpu_percent": 3.7,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 1.0,
+                    "command": "quench-bench"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792150519076451932,
+                "load_average": {
+                  "one_minute": 3.68,
+                  "five_minutes": 4.19,
+                  "fifteen_minutes": 3.8
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3307019,
+                    "cpu_percent": 102.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 100.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 5.3,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 4.1,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 1.0,
+                    "command": "quench-bench"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "contention": {
+                "clean": true,
+                "checks_complete": false,
+                "ipc_checked": false,
+                "involuntary_switch_rate_checked": false,
+                "load_checked": true,
+                "ipc": null,
+                "reference_ipc": null,
+                "ipc_reference_samples": null,
+                "effective_cycle_rate_hz": null,
+                "reference_effective_cycle_rate_hz": null,
+                "cycle_rate_reference_samples": null,
+                "involuntary_switches_per_second": 118.21715634123296,
+                "reference_involuntary_switches_per_second": null,
+                "involuntary_switch_reference_samples": null,
+                "load_per_logical_cpu": 0.92,
+                "reasons": []
+              },
+              "stdout": "__quenchFixedWork:RayTrace:1:10\n",
+              "stderr": ""
+            },
+            "quench_candidate": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1318321330,
+              "peak_rss_bytes": 29032448,
+              "score": null,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 6749,
+              "page_reclaims": 6749,
+              "involuntary_context_switches": 155,
+              "host_before": {
+                "captured_unix_ns": 1792150519395104969,
+                "load_average": {
+                  "one_minute": 3.68,
+                  "five_minutes": 4.19,
+                  "fifteen_minutes": 3.8
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3307027,
+                    "cpu_percent": 120.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 100.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 5.3,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 4.1,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 1.0,
+                    "command": "quench-bench"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792150520743097420,
+                "load_average": {
+                  "one_minute": 3.68,
+                  "five_minutes": 4.19,
+                  "fifteen_minutes": 3.8
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 100.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307027,
+                    "cpu_percent": 48.5,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 5.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 4.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 1.0,
+                    "command": "quench-bench"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "contention": {
+                "clean": true,
+                "checks_complete": false,
+                "ipc_checked": false,
+                "involuntary_switch_rate_checked": false,
+                "load_checked": true,
+                "ipc": null,
+                "reference_ipc": null,
+                "ipc_reference_samples": null,
+                "effective_cycle_rate_hz": null,
+                "reference_effective_cycle_rate_hz": null,
+                "cycle_rate_reference_samples": null,
+                "involuntary_switches_per_second": 117.57376329487137,
+                "reference_involuntary_switches_per_second": null,
+                "involuntary_switch_reference_samples": null,
+                "load_per_logical_cpu": 0.92,
+                "reasons": []
+              },
+              "stdout": "__quenchFixedWork:RayTrace:1:10\n",
+              "stderr": ""
+            }
+          },
+          "setup_only_samples": {
+            "quench_baseline": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 228292342,
+              "peak_rss_bytes": 28856320,
+              "score": null,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 5500,
+              "page_reclaims": 5500,
+              "involuntary_context_switches": 2,
+              "host_before": {
+                "captured_unix_ns": 1792150519107359569,
+                "load_average": {
+                  "one_minute": 3.68,
+                  "five_minutes": 4.19,
+                  "fifteen_minutes": 3.8
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3307019,
+                    "cpu_percent": 102.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 100.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 5.3,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 4.1,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 1.0,
+                    "command": "quench-bench"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792150519363330757,
+                "load_average": {
+                  "one_minute": 3.68,
+                  "five_minutes": 4.19,
+                  "fifteen_minutes": 3.8
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3307027,
+                    "cpu_percent": 150.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 100.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 5.3,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 4.1,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 1.0,
+                    "command": "quench-bench"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "contention": {
+                "clean": true,
+                "checks_complete": false,
+                "ipc_checked": false,
+                "involuntary_switch_rate_checked": false,
+                "load_checked": true,
+                "ipc": null,
+                "reference_ipc": null,
+                "ipc_reference_samples": null,
+                "effective_cycle_rate_hz": null,
+                "reference_effective_cycle_rate_hz": null,
+                "cycle_rate_reference_samples": null,
+                "involuntary_switches_per_second": 8.760696843698769,
+                "reference_involuntary_switches_per_second": null,
+                "involuntary_switch_reference_samples": null,
+                "load_per_logical_cpu": 0.92,
+                "reasons": []
+              },
+              "stdout": "__quenchFixedWork:RayTrace:1:0\n",
+              "stderr": ""
+            },
+            "quench_candidate": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 275045608,
+              "peak_rss_bytes": 29011968,
+              "score": null,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 5533,
+              "page_reclaims": 5533,
+              "involuntary_context_switches": 298,
+              "host_before": {
+                "captured_unix_ns": 1792150520782918850,
+                "load_average": {
+                  "one_minute": 3.68,
+                  "five_minutes": 4.19,
+                  "fifteen_minutes": 3.8
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 100.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307027,
+                    "cpu_percent": 47.5,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 5.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 4.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 1.0,
+                    "command": "quench-bench"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792150521092233665,
+                "load_average": {
+                  "one_minute": 3.68,
+                  "five_minutes": 4.19,
+                  "fifteen_minutes": 3.8
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3307041,
+                    "cpu_percent": 200.0,
+                    "command": "ps"
+                  },
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 100.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307027,
+                    "cpu_percent": 40.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 5.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 4.0,
+                    "command": "run-parallel"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "contention": {
+                "clean": true,
+                "checks_complete": false,
+                "ipc_checked": false,
+                "involuntary_switch_rate_checked": false,
+                "load_checked": true,
+                "ipc": null,
+                "reference_ipc": null,
+                "ipc_reference_samples": null,
+                "effective_cycle_rate_hz": null,
+                "reference_effective_cycle_rate_hz": null,
+                "cycle_rate_reference_samples": null,
+                "involuntary_switches_per_second": 1083.4566753016468,
+                "reference_involuntary_switches_per_second": null,
+                "involuntary_switch_reference_samples": null,
+                "load_per_logical_cpu": 0.92,
+                "reasons": []
+              },
+              "stdout": "__quenchFixedWork:RayTrace:1:0\n",
+              "stderr": ""
+            }
+          }
+        }
+      ]
+    },
+    "quench-bench/js-engine-benchmark/v8-v7/regexp.js": {
+      "source": {
+        "path": "quench-bench/js-engine-benchmark/v8-v7/regexp.js",
+        "size_bytes": 111299,
+        "modified_unix_ns": 1791771725665505711,
+        "sha256": "5268b0d15931fda4e331de35fc58e5beded9a250b60764e1cc7cfc898ab53602"
+      },
+      "materialized_source": {
+        "path": "/tmp/quench-v8-v7-3306787-1792150521117266454-regexp.js",
+        "size_bytes": 121644,
+        "modified_unix_ns": 1792150521113484389,
+        "sha256": "1dec3e0cb9aa508220dc8babbc5ecdd25cb4be0e60e1b5c6e98aff0d0794e405"
+      },
+      "setup_only_source": {
+        "path": "/tmp/quench-v8-v7-3306787-1792150521117430481-regexp.js",
+        "size_bytes": 121644,
+        "modified_unix_ns": 1792150521113484389,
+        "sha256": "df093fc7af55b37a97bae6587757f01d79ebb3353860249a56fdada78ad893ed"
+      },
+      "plan": {
+        "fixture": "regexp.js",
+        "suite": "RegExp",
+        "benchmark_count": 1,
+        "iterations_per_benchmark": 1
+      },
+      "valid": true,
+      "output_equal": true,
+      "clean_rounds": 0,
+      "summaries": {
+        "quench_baseline": {
+          "work": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "median_max_rss_bytes": 33685504,
+            "valid_samples": 1,
+            "clean_samples": 0
+          },
+          "setup_only": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "median_max_rss_bytes": 33677312,
+            "valid_samples": 1,
+            "clean_samples": 0
+          },
+          "marginal_per_run": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "paired_samples": 1,
+            "clean_paired_samples": 0
+          }
+        },
+        "quench_candidate": {
+          "work": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "median_max_rss_bytes": 33980416,
+            "valid_samples": 1,
+            "clean_samples": 0
+          },
+          "setup_only": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "median_max_rss_bytes": 33972224,
+            "valid_samples": 1,
+            "clean_samples": 0
+          },
+          "marginal_per_run": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "paired_samples": 1,
+            "clean_paired_samples": 0
+          }
+        }
+      },
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            {
+              "engine": "quench_baseline",
+              "sample": "work"
+            },
+            {
+              "engine": "quench_baseline",
+              "sample": "setup_only"
+            },
+            {
+              "engine": "quench_candidate",
+              "sample": "work"
+            },
+            {
+              "engine": "quench_candidate",
+              "sample": "setup_only"
+            }
+          ],
+          "rejected_attempts": [],
+          "selected_attempt": 0,
+          "samples": {
+            "quench_baseline": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1052195756,
+              "peak_rss_bytes": 33685504,
+              "score": null,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 10211,
+              "page_reclaims": 10211,
+              "involuntary_context_switches": 223,
+              "host_before": {
+                "captured_unix_ns": 1792150521191816243,
+                "load_average": {
+                  "one_minute": 3.68,
+                  "five_minutes": 4.19,
+                  "fifteen_minutes": 3.8
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 100.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307027,
+                    "cpu_percent": 37.8,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 5.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 4.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 1.0,
+                    "command": "quench-bench"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792150522274453259,
+                "load_average": {
+                  "one_minute": 3.68,
+                  "five_minutes": 4.19,
+                  "fifteen_minutes": 3.8
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 100.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307027,
+                    "cpu_percent": 24.9,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 4.9,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 3.9,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 1.0,
+                    "command": "quench-bench"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "contention": {
+                "clean": true,
+                "checks_complete": false,
+                "ipc_checked": false,
+                "involuntary_switch_rate_checked": false,
+                "load_checked": true,
+                "ipc": null,
+                "reference_ipc": null,
+                "ipc_reference_samples": null,
+                "effective_cycle_rate_hz": null,
+                "reference_effective_cycle_rate_hz": null,
+                "cycle_rate_reference_samples": null,
+                "involuntary_switches_per_second": 211.93774896769304,
+                "reference_involuntary_switches_per_second": null,
+                "involuntary_switch_reference_samples": null,
+                "load_per_logical_cpu": 0.92,
+                "reasons": []
+              },
+              "stdout": "__quenchFixedWork:RegExp:1:1\n",
+              "stderr": ""
+            },
+            "quench_candidate": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 991589497,
+              "peak_rss_bytes": 33980416,
+              "score": null,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 9935,
+              "page_reclaims": 9935,
+              "involuntary_context_switches": 695,
+              "host_before": {
+                "captured_unix_ns": 1792150522973926812,
+                "load_average": {
+                  "one_minute": 3.7,
+                  "five_minutes": 4.18,
+                  "fifteen_minutes": 3.8
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 100.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307057,
+                    "cpu_percent": 100.0,
+                    "command": "ps"
+                  },
+                  {
+                    "pid": 3307027,
+                    "cpu_percent": 20.3,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 4.8,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 3.9,
+                    "command": "run-parallel"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792150524000144657,
+                "load_average": {
+                  "one_minute": 3.7,
+                  "five_minutes": 4.18,
+                  "fifteen_minutes": 3.8
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 100.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307027,
+                    "cpu_percent": 16.1,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 4.7,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 1.0,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 3303595,
+                    "cpu_percent": 0.7,
+                    "command": "run-parallel"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "contention": {
+                "clean": true,
+                "checks_complete": false,
+                "ipc_checked": false,
+                "involuntary_switch_rate_checked": false,
+                "load_checked": true,
+                "ipc": null,
+                "reference_ipc": null,
+                "ipc_reference_samples": null,
+                "effective_cycle_rate_hz": null,
+                "reference_effective_cycle_rate_hz": null,
+                "cycle_rate_reference_samples": null,
+                "involuntary_switches_per_second": 700.894878478125,
+                "reference_involuntary_switches_per_second": null,
+                "involuntary_switch_reference_samples": null,
+                "load_per_logical_cpu": 0.925,
+                "reasons": []
+              },
+              "stdout": "__quenchFixedWork:RegExp:1:1\n",
+              "stderr": ""
+            }
+          },
+          "setup_only_samples": {
+            "quench_baseline": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 618774346,
+              "peak_rss_bytes": 33677312,
+              "score": null,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 9421,
+              "page_reclaims": 9421,
+              "involuntary_context_switches": 151,
+              "host_before": {
+                "captured_unix_ns": 1792150522303274345,
+                "load_average": {
+                  "one_minute": 3.68,
+                  "five_minutes": 4.19,
+                  "fifteen_minutes": 3.8
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 100.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307027,
+                    "cpu_percent": 24.6,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 4.9,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 3.9,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 1.0,
+                    "command": "quench-bench"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792150522948563927,
+                "load_average": {
+                  "one_minute": 3.7,
+                  "five_minutes": 4.18,
+                  "fifteen_minutes": 3.8
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 100.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307027,
+                    "cpu_percent": 20.4,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 4.8,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306707,
+                    "cpu_percent": 3.9,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 1.0,
+                    "command": "quench-bench"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "contention": {
+                "clean": true,
+                "checks_complete": false,
+                "ipc_checked": false,
+                "involuntary_switch_rate_checked": false,
+                "load_checked": true,
+                "ipc": null,
+                "reference_ipc": null,
+                "ipc_reference_samples": null,
+                "effective_cycle_rate_hz": null,
+                "reference_effective_cycle_rate_hz": null,
+                "cycle_rate_reference_samples": null,
+                "involuntary_switches_per_second": 244.0308021431774,
+                "reference_involuntary_switches_per_second": null,
+                "involuntary_switch_reference_samples": null,
+                "load_per_logical_cpu": 0.925,
+                "reasons": []
+              },
+              "stdout": "__quenchFixedWork:RegExp:1:0\n",
+              "stderr": ""
+            },
+            "quench_candidate": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 798406262,
+              "peak_rss_bytes": 33972224,
+              "score": null,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 9264,
+              "page_reclaims": 9264,
+              "involuntary_context_switches": 406,
+              "host_before": {
+                "captured_unix_ns": 1792150524038014446,
+                "load_average": {
+                  "one_minute": 3.7,
+                  "five_minutes": 4.18,
+                  "fifteen_minutes": 3.8
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3307062,
+                    "cpu_percent": 150.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 100.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307027,
+                    "cpu_percent": 15.9,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 4.7,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 1.0,
+                    "command": "quench-bench"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792150524870231024,
+                "load_average": {
+                  "one_minute": 3.7,
+                  "five_minutes": 4.18,
+                  "fifteen_minutes": 3.8
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3307070,
+                    "cpu_percent": 105.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 100.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307027,
+                    "cpu_percent": 14.1,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 4.6,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 1.0,
+                    "command": "quench-bench"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "contention": {
+                "clean": true,
+                "checks_complete": false,
+                "ipc_checked": false,
+                "involuntary_switch_rate_checked": false,
+                "load_checked": true,
+                "ipc": null,
+                "reference_ipc": null,
+                "ipc_reference_samples": null,
+                "effective_cycle_rate_hz": null,
+                "reference_effective_cycle_rate_hz": null,
+                "cycle_rate_reference_samples": null,
+                "involuntary_switches_per_second": 508.51304570554584,
+                "reference_involuntary_switches_per_second": null,
+                "involuntary_switch_reference_samples": null,
+                "load_per_logical_cpu": 0.925,
+                "reasons": []
+              },
+              "stdout": "__quenchFixedWork:RegExp:1:0\n",
+              "stderr": ""
+            }
+          }
+        }
+      ]
+    },
+    "quench-bench/js-engine-benchmark/v8-v7/richards.js": {
+      "source": {
+        "path": "quench-bench/js-engine-benchmark/v8-v7/richards.js",
+        "size_bytes": 15776,
+        "modified_unix_ns": 1791771725665505711,
+        "sha256": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11"
+      },
+      "materialized_source": {
+        "path": "/tmp/quench-v8-v7-3306787-1792150524888593727-richards.js",
+        "size_bytes": 26129,
+        "modified_unix_ns": 1792150524885554394,
+        "sha256": "750972307e96e804b6c74073e9f76f2d3b9fbfa86c5b970f27e768bf614eb1ec"
+      },
+      "setup_only_source": {
+        "path": "/tmp/quench-v8-v7-3306787-1792150524888654839-richards.js",
+        "size_bytes": 26125,
+        "modified_unix_ns": 1792150524885554394,
+        "sha256": "0ebaa93c2030cd29c75dc4876a5dc2846b6d725ff7ae76ae95e6380303235094"
+      },
+      "plan": {
+        "fixture": "richards.js",
+        "suite": "Richards",
+        "benchmark_count": 1,
+        "iterations_per_benchmark": 100
+      },
+      "valid": true,
+      "output_equal": true,
+      "clean_rounds": 0,
+      "summaries": {
+        "quench_baseline": {
+          "work": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "median_max_rss_bytes": 28581888,
+            "valid_samples": 1,
+            "clean_samples": 0
+          },
+          "setup_only": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "median_max_rss_bytes": 28594176,
+            "valid_samples": 1,
+            "clean_samples": 0
+          },
+          "marginal_per_run": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "paired_samples": 1,
+            "clean_paired_samples": 0
+          }
+        },
+        "quench_candidate": {
+          "work": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "median_max_rss_bytes": 28733440,
+            "valid_samples": 1,
+            "clean_samples": 0
+          },
+          "setup_only": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "median_max_rss_bytes": 28741632,
+            "valid_samples": 1,
+            "clean_samples": 0
+          },
+          "marginal_per_run": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "paired_samples": 1,
+            "clean_paired_samples": 0
+          }
+        }
+      },
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            {
+              "engine": "quench_baseline",
+              "sample": "work"
+            },
+            {
+              "engine": "quench_baseline",
+              "sample": "setup_only"
+            },
+            {
+              "engine": "quench_candidate",
+              "sample": "work"
+            },
+            {
+              "engine": "quench_candidate",
+              "sample": "setup_only"
+            }
+          ],
+          "rejected_attempts": [],
+          "selected_attempt": 0,
+          "samples": {
+            "quench_baseline": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1352377372,
+              "peak_rss_bytes": 28581888,
+              "score": null,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 5440,
+              "page_reclaims": 5440,
+              "involuntary_context_switches": 378,
+              "host_before": {
+                "captured_unix_ns": 1792150524955911369,
+                "load_average": {
+                  "one_minute": 3.7,
+                  "five_minutes": 4.18,
+                  "fifteen_minutes": 3.8
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3307070,
+                    "cpu_percent": 110.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 100.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307027,
+                    "cpu_percent": 13.9,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 4.6,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 1.0,
+                    "command": "quench-bench"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792150526339796096,
+                "load_average": {
+                  "one_minute": 3.7,
+                  "five_minutes": 4.18,
+                  "fifteen_minutes": 3.8
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3307083,
+                    "cpu_percent": 200.0,
+                    "command": "ps"
+                  },
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 100.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307081,
+                    "cpu_percent": 78.1,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307027,
+                    "cpu_percent": 11.5,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 4.5,
+                    "command": "run-parallel"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "contention": {
+                "clean": true,
+                "checks_complete": false,
+                "ipc_checked": false,
+                "involuntary_switch_rate_checked": false,
+                "load_checked": true,
+                "ipc": null,
+                "reference_ipc": null,
+                "ipc_reference_samples": null,
+                "effective_cycle_rate_hz": null,
+                "reference_effective_cycle_rate_hz": null,
+                "cycle_rate_reference_samples": null,
+                "involuntary_switches_per_second": 279.5077822405328,
+                "reference_involuntary_switches_per_second": null,
+                "involuntary_switch_reference_samples": null,
+                "load_per_logical_cpu": 0.925,
+                "reasons": []
+              },
+              "stdout": "__quenchFixedWork:Richards:1:100\n",
+              "stderr": ""
+            },
+            "quench_candidate": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 921051830,
+              "peak_rss_bytes": 28733440,
+              "score": null,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 5427,
+              "page_reclaims": 5427,
+              "involuntary_context_switches": 129,
+              "host_before": {
+                "captured_unix_ns": 1792150526678269602,
+                "load_average": {
+                  "one_minute": 3.7,
+                  "five_minutes": 4.18,
+                  "fifteen_minutes": 3.8
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 100.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307081,
+                    "cpu_percent": 57.8,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307027,
+                    "cpu_percent": 11.3,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 4.5,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 1.1,
+                    "command": "quench-bench"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792150527628254317,
+                "load_average": {
+                  "one_minute": 3.65,
+                  "five_minutes": 4.16,
+                  "fifteen_minutes": 3.79
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3307095,
+                    "cpu_percent": 200.0,
+                    "command": "ps"
+                  },
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 100.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307081,
+                    "cpu_percent": 33.3,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307027,
+                    "cpu_percent": 10.2,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 4.4,
+                    "command": "run-parallel"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "contention": {
+                "clean": true,
+                "checks_complete": false,
+                "ipc_checked": false,
+                "involuntary_switch_rate_checked": false,
+                "load_checked": true,
+                "ipc": null,
+                "reference_ipc": null,
+                "ipc_reference_samples": null,
+                "effective_cycle_rate_hz": null,
+                "reference_effective_cycle_rate_hz": null,
+                "cycle_rate_reference_samples": null,
+                "involuntary_switches_per_second": 140.05726474697954,
+                "reference_involuntary_switches_per_second": null,
+                "involuntary_switch_reference_samples": null,
+                "load_per_logical_cpu": 0.925,
+                "reasons": []
+              },
+              "stdout": "__quenchFixedWork:Richards:1:100\n",
+              "stderr": ""
+            }
+          },
+          "setup_only_samples": {
+            "quench_baseline": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 250607571,
+              "peak_rss_bytes": 28594176,
+              "score": null,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 5408,
+              "page_reclaims": 5408,
+              "involuntary_context_switches": 252,
+              "host_before": {
+                "captured_unix_ns": 1792150526372282755,
+                "load_average": {
+                  "one_minute": 3.7,
+                  "five_minutes": 4.18,
+                  "fifteen_minutes": 3.8
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3307084,
+                    "cpu_percent": 200.0,
+                    "command": "ps"
+                  },
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 100.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307081,
+                    "cpu_percent": 76.6,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307027,
+                    "cpu_percent": 11.5,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 4.5,
+                    "command": "run-parallel"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792150526651453024,
+                "load_average": {
+                  "one_minute": 3.7,
+                  "five_minutes": 4.18,
+                  "fifteen_minutes": 3.8
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 100.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307081,
+                    "cpu_percent": 59.3,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307027,
+                    "cpu_percent": 11.3,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 4.4,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 1.1,
+                    "command": "quench-bench"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "contention": {
+                "clean": true,
+                "checks_complete": false,
+                "ipc_checked": false,
+                "involuntary_switch_rate_checked": false,
+                "load_checked": true,
+                "ipc": null,
+                "reference_ipc": null,
+                "ipc_reference_samples": null,
+                "effective_cycle_rate_hz": null,
+                "reference_effective_cycle_rate_hz": null,
+                "cycle_rate_reference_samples": null,
+                "involuntary_switches_per_second": 1005.5562128248711,
+                "reference_involuntary_switches_per_second": null,
+                "involuntary_switch_reference_samples": null,
+                "load_per_logical_cpu": 0.925,
+                "reasons": []
+              },
+              "stdout": "__quenchFixedWork:Richards:1:0\n",
+              "stderr": ""
+            },
+            "quench_candidate": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 243397156,
+              "peak_rss_bytes": 28741632,
+              "score": null,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 5422,
+              "page_reclaims": 5422,
+              "involuntary_context_switches": 244,
+              "host_before": {
+                "captured_unix_ns": 1792150527653948127,
+                "load_average": {
+                  "one_minute": 3.65,
+                  "five_minutes": 4.16,
+                  "fifteen_minutes": 3.79
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 100.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307081,
+                    "cpu_percent": 33.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307027,
+                    "cpu_percent": 10.2,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 4.4,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 1.1,
+                    "command": "quench-bench"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792150527934112771,
+                "load_average": {
+                  "one_minute": 3.65,
+                  "five_minutes": 4.16,
+                  "fifteen_minutes": 3.79
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 100.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307081,
+                    "cpu_percent": 29.7,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307027,
+                    "cpu_percent": 9.9,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 4.4,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 1.0,
+                    "command": "quench-bench"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "contention": {
+                "clean": true,
+                "checks_complete": false,
+                "ipc_checked": false,
+                "involuntary_switch_rate_checked": false,
+                "load_checked": true,
+                "ipc": null,
+                "reference_ipc": null,
+                "ipc_reference_samples": null,
+                "effective_cycle_rate_hz": null,
+                "reference_effective_cycle_rate_hz": null,
+                "cycle_rate_reference_samples": null,
+                "involuntary_switches_per_second": 1002.4767914708092,
+                "reference_involuntary_switches_per_second": null,
+                "involuntary_switch_reference_samples": null,
+                "load_per_logical_cpu": 0.9125,
+                "reasons": []
+              },
+              "stdout": "__quenchFixedWork:Richards:1:0\n",
+              "stderr": ""
+            }
+          }
+        }
+      ]
+    },
+    "quench-bench/js-engine-benchmark/v8-v7/splay.js": {
+      "source": {
+        "path": "quench-bench/js-engine-benchmark/v8-v7/splay.js",
+        "size_bytes": 10746,
+        "modified_unix_ns": 1791771725665505711,
+        "sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d"
+      },
+      "materialized_source": {
+        "path": "/tmp/quench-v8-v7-3306787-1792150527951683241-splay.js",
+        "size_bytes": 21093,
+        "modified_unix_ns": 1792150527949611278,
+        "sha256": "ac9c33765fb2968c78c1f116563913f575451d84826ea8a7bdf79a791bb3f345"
+      },
+      "setup_only_source": {
+        "path": "/tmp/quench-v8-v7-3306787-1792150527951733247-splay.js",
+        "size_bytes": 21089,
+        "modified_unix_ns": 1792150527949611278,
+        "sha256": "79c7f56c9424f930adaa8dedbef1e2e4568458efcf812cfa625968244ff926a8"
+      },
+      "plan": {
+        "fixture": "splay.js",
+        "suite": "Splay",
+        "benchmark_count": 1,
+        "iterations_per_benchmark": 300
+      },
+      "valid": true,
+      "output_equal": true,
+      "clean_rounds": 0,
+      "summaries": {
+        "quench_baseline": {
+          "work": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "median_max_rss_bytes": 67313664,
+            "valid_samples": 1,
+            "clean_samples": 0
+          },
+          "setup_only": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "median_max_rss_bytes": 43356160,
+            "valid_samples": 1,
+            "clean_samples": 0
+          },
+          "marginal_per_run": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "paired_samples": 1,
+            "clean_paired_samples": 0
+          }
+        },
+        "quench_candidate": {
+          "work": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "median_max_rss_bytes": 67674112,
+            "valid_samples": 1,
+            "clean_samples": 0
+          },
+          "setup_only": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "median_max_rss_bytes": 43724800,
+            "valid_samples": 1,
+            "clean_samples": 0
+          },
+          "marginal_per_run": {
+            "median_wall_ns": null,
+            "median_cycles": null,
+            "median_instructions": null,
+            "paired_samples": 1,
+            "clean_paired_samples": 0
+          }
+        }
+      },
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            {
+              "engine": "quench_baseline",
+              "sample": "work"
+            },
+            {
+              "engine": "quench_baseline",
+              "sample": "setup_only"
+            },
+            {
+              "engine": "quench_candidate",
+              "sample": "work"
+            },
+            {
+              "engine": "quench_candidate",
+              "sample": "setup_only"
+            }
+          ],
+          "rejected_attempts": [],
+          "selected_attempt": 0,
+          "samples": {
+            "quench_baseline": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1420906656,
+              "peak_rss_bytes": 67313664,
+              "score": null,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 18298,
+              "page_reclaims": 18298,
+              "involuntary_context_switches": 226,
+              "host_before": {
+                "captured_unix_ns": 1792150528010957105,
+                "load_average": {
+                  "one_minute": 3.65,
+                  "five_minutes": 4.16,
+                  "fifteen_minutes": 3.79
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 100.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307081,
+                    "cpu_percent": 28.7,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307027,
+                    "cpu_percent": 9.8,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306777,
+                    "cpu_percent": 4.3,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 1.0,
+                    "command": "quench-bench"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792150529461219973,
+                "load_average": {
+                  "one_minute": 3.65,
+                  "five_minutes": 4.16,
+                  "fifteen_minutes": 3.79
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3307112,
+                    "cpu_percent": 105.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 100.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307081,
+                    "cpu_percent": 19.2,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307027,
+                    "cpu_percent": 8.7,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 1.1,
+                    "command": "quench-bench"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "contention": {
+                "clean": true,
+                "checks_complete": false,
+                "ipc_checked": false,
+                "involuntary_switch_rate_checked": false,
+                "load_checked": true,
+                "ipc": null,
+                "reference_ipc": null,
+                "ipc_reference_samples": null,
+                "effective_cycle_rate_hz": null,
+                "reference_effective_cycle_rate_hz": null,
+                "cycle_rate_reference_samples": null,
+                "involuntary_switches_per_second": 159.0533755652982,
+                "reference_involuntary_switches_per_second": null,
+                "involuntary_switch_reference_samples": null,
+                "load_per_logical_cpu": 0.9125,
+                "reasons": []
+              },
+              "stdout": "__quenchFixedWork:Splay:1:300\n",
+              "stderr": ""
+            },
+            "quench_candidate": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1286040813,
+              "peak_rss_bytes": 67674112,
+              "score": null,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 18291,
+              "page_reclaims": 18291,
+              "involuntary_context_switches": 12,
+              "host_before": {
+                "captured_unix_ns": 1792150530032166090,
+                "load_average": {
+                  "one_minute": 3.65,
+                  "five_minutes": 4.16,
+                  "fifteen_minutes": 3.79
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3307120,
+                    "cpu_percent": 110.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 100.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307081,
+                    "cpu_percent": 16.9,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307027,
+                    "cpu_percent": 8.3,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 1.1,
+                    "command": "quench-bench"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792150531346111925,
+                "load_average": {
+                  "one_minute": 3.65,
+                  "five_minutes": 4.16,
+                  "fifteen_minutes": 3.79
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3307130,
+                    "cpu_percent": 102.0,
+                    "command": "quench-node"
+                  },
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 100.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307128,
+                    "cpu_percent": 62.6,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307081,
+                    "cpu_percent": 13.6,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307027,
+                    "cpu_percent": 7.5,
+                    "command": "run-parallel"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "contention": {
+                "clean": true,
+                "checks_complete": false,
+                "ipc_checked": false,
+                "involuntary_switch_rate_checked": false,
+                "load_checked": true,
+                "ipc": null,
+                "reference_ipc": null,
+                "ipc_reference_samples": null,
+                "effective_cycle_rate_hz": null,
+                "reference_effective_cycle_rate_hz": null,
+                "cycle_rate_reference_samples": null,
+                "involuntary_switches_per_second": 9.330963588944824,
+                "reference_involuntary_switches_per_second": null,
+                "involuntary_switch_reference_samples": null,
+                "load_per_logical_cpu": 0.9125,
+                "reasons": []
+              },
+              "stdout": "__quenchFixedWork:Splay:1:300\n",
+              "stderr": ""
+            }
+          },
+          "setup_only_samples": {
+            "quench_baseline": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 488196599,
+              "peak_rss_bytes": 43356160,
+              "score": null,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 10991,
+              "page_reclaims": 10991,
+              "involuntary_context_switches": 98,
+              "host_before": {
+                "captured_unix_ns": 1792150529491060633,
+                "load_average": {
+                  "one_minute": 3.65,
+                  "five_minutes": 4.16,
+                  "fifteen_minutes": 3.79
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3307112,
+                    "cpu_percent": 104.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 100.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307081,
+                    "cpu_percent": 19.2,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307027,
+                    "cpu_percent": 8.6,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 1.1,
+                    "command": "quench-bench"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792150530006036545,
+                "load_average": {
+                  "one_minute": 3.65,
+                  "five_minutes": 4.16,
+                  "fifteen_minutes": 3.79
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3307120,
+                    "cpu_percent": 105.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 100.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307122,
+                    "cpu_percent": 100.0,
+                    "command": "ps"
+                  },
+                  {
+                    "pid": 3307081,
+                    "cpu_percent": 16.9,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307027,
+                    "cpu_percent": 8.3,
+                    "command": "run-parallel"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "contention": {
+                "clean": true,
+                "checks_complete": false,
+                "ipc_checked": false,
+                "involuntary_switch_rate_checked": false,
+                "load_checked": true,
+                "ipc": null,
+                "reference_ipc": null,
+                "ipc_reference_samples": null,
+                "effective_cycle_rate_hz": null,
+                "reference_effective_cycle_rate_hz": null,
+                "cycle_rate_reference_samples": null,
+                "involuntary_switches_per_second": 200.7388011320415,
+                "reference_involuntary_switches_per_second": null,
+                "involuntary_switch_reference_samples": null,
+                "load_per_logical_cpu": 0.9125,
+                "reasons": []
+              },
+              "stdout": "__quenchFixedWork:Splay:1:0\n",
+              "stderr": ""
+            },
+            "quench_candidate": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 480204233,
+              "peak_rss_bytes": 43724800,
+              "score": null,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 10858,
+              "page_reclaims": 10858,
+              "involuntary_context_switches": 5,
+              "host_before": {
+                "captured_unix_ns": 1792150531374751979,
+                "load_average": {
+                  "one_minute": 3.65,
+                  "five_minutes": 4.16,
+                  "fifteen_minutes": 3.79
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3307130,
+                    "cpu_percent": 102.0,
+                    "command": "quench-node"
+                  },
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 100.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307128,
+                    "cpu_percent": 60.6,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307081,
+                    "cpu_percent": 13.5,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307027,
+                    "cpu_percent": 7.5,
+                    "command": "run-parallel"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1792150531882202352,
+                "load_average": {
+                  "one_minute": 3.65,
+                  "five_minutes": 4.16,
+                  "fifteen_minutes": 3.79
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 3307140,
+                    "cpu_percent": 103.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306969,
+                    "cpu_percent": 100.0,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307081,
+                    "cpu_percent": 12.4,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3307027,
+                    "cpu_percent": 7.3,
+                    "command": "run-parallel"
+                  },
+                  {
+                    "pid": 3306787,
+                    "cpu_percent": 1.1,
+                    "command": "quench-bench"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "contention": {
+                "clean": true,
+                "checks_complete": false,
+                "ipc_checked": false,
+                "involuntary_switch_rate_checked": false,
+                "load_checked": true,
+                "ipc": null,
+                "reference_ipc": null,
+                "ipc_reference_samples": null,
+                "effective_cycle_rate_hz": null,
+                "reference_effective_cycle_rate_hz": null,
+                "cycle_rate_reference_samples": null,
+                "involuntary_switches_per_second": 10.41223641191851,
+                "reference_involuntary_switches_per_second": null,
+                "involuntary_switch_reference_samples": null,
+                "load_per_logical_cpu": 0.9125,
+                "reasons": []
+              },
+              "stdout": "__quenchFixedWork:Splay:1:0\n",
+              "stderr": ""
+            }
+          }
+        }
+      ]
+    }
+  },
+  "complete": true,
+  "qualification_ready": false
+}

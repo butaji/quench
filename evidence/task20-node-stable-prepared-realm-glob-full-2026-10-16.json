@@ -1,0 +1,79 @@
+{
+  "scope": "Complete unchanged stable parallel inventory after original glob/Dirent policy and prepared realm-local SDK code",
+  "source_commit": "e9ec2e9c1372e8640ef1ab027bbe5f9a5f5e3e33",
+  "release": "v26.12.0",
+  "fixture_commit": "26e72d85a611e222e3f06025de8a3c496923bacd",
+  "counts": {
+    "timeout": 97,
+    "fail": 2490,
+    "pass": 1791,
+    "skip": 637
+  },
+  "total": 5015,
+  "inventory_hash": "a3820c977f97ed07",
+  "baseline": {
+    "counts": {
+      "timeout": 97,
+      "fail": 2492,
+      "pass": 1789,
+      "skip": 637
+    },
+    "total": 5015,
+    "inventory_hash": "a3820c977f97ed07"
+  },
+  "gained": [
+    "test-fs-glob-throw.mjs",
+    "test-icu-env.js",
+    "test-shadow-realm-gc-module.js"
+  ],
+  "lost": [
+    "test-os-checked-function.js"
+  ],
+  "skip_changes": {},
+  "memory_events_delta": {
+    "low": 0,
+    "high": 0,
+    "max": 214,
+    "oom": 0,
+    "oom_kill": 0,
+    "oom_group_kill": 0
+  },
+  "elapsed_seconds": 1826.0006475050468,
+  "raw": [
+    {
+      "path": "work/full-prepared-realm-glob-stable/results.json",
+      "bytes": 14650810,
+      "sha256": "0b11de6ddb14ca78273d7c39d977196bafcf4428b310591f02e5f5bd641e4602"
+    },
+    {
+      "path": "work/full-prepared-realm-glob-stable/runner.log",
+      "bytes": 516191,
+      "sha256": "6230386e0bf9970f59b2fa77f222cc4effd5b4d172b4937f2fd021c499252efa"
+    },
+    {
+      "path": "work/full-prepared-realm-glob-stable/receipt-before.json",
+      "bytes": 1115,
+      "sha256": "b9fd290d648cc6e4c04951b0a900206874f0942d2d59b401af1e9ed1bce864d3"
+    },
+    {
+      "path": "work/full-prepared-realm-glob-stable/receipt.json",
+      "bytes": 1759,
+      "sha256": "d433c2a61f83f7c1ce2bff4eecf722eac5014f27eaea51837d70d332c26ac3be"
+    },
+    {
+      "path": "work/full-prepared-realm-glob-stable/summary.json",
+      "bytes": 150,
+      "sha256": "a69dc2b79ce67ce5853661f6c96f0c86f7029d2734cf635700e116b543ef723b"
+    },
+    {
+      "path": "work/full-prepared-realm-glob-stable/comparison.json",
+      "bytes": 185,
+      "sha256": "bf2dca93f630fc94c384f453b6b30088ea4b1dd5766b3bbf18e9fada945976e9"
+    }
+  ],
+  "limitations": [
+    "Goal remains open; all nonpass outcomes retained. No selected-case sums, skips/deadline/budget changes or speed claim.",
+    "This frozen e9 run includes glob and prepared realm-local SDK code but excludes later shared eval/array/lazy-policy repairs and the unqualified error-source primitive.",
+    "Native compilation overlapped part of this run. Actual memory.events deltas are retained below; concurrent resource pressure is not subtracted from outcomes. All full outcomes retained, no speed claim or adjusted totals."
+  ]
+}

@@ -364,6 +364,10 @@ pub(crate) fn internal_binding(
         "os" => return super::os_binding_shared_vm::os_binding(context),
         #[cfg(target_os = "linux")]
         "credentials" => return super::os_binding_shared_vm::credentials_binding(context),
+        "errors" => return super::node_errors_shared_vm::binding(context),
+        "modules" => return crate::host::shared_vm::commonjs::cached_native_binding(
+            context, "\0binding:modules", module_protocol_binding,
+        ),
         "types" => return super::util_shared_vm::types_binding(context),
         "crypto_keys" => return super::crypto_key_shared_vm::binding(context),
         "util" => return super::util_shared_vm::key_binding(context),
@@ -577,4 +581,13 @@ fn refresh_category_buffers(context: &mut NativeContext<'_, NodeHost>) -> Result
     });
     shared.borrow_mut().trace.category_buffers = buffers;
     result
+}
+
+fn module_protocol_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    let binding = context.object_rooted()?;
+    let statuses = super::node_protocol_constants::COMPILE_CACHE_STATUS.iter()
+        .map(|status| context.string_rooted(status)).collect::<Vec<_>>();
+    let statuses = context.array_rooted(&statuses)?;
+    put(context, binding, "compileCacheStatus", statuses)?;
+    Ok(binding)
 }

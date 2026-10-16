@@ -2534,7 +2534,9 @@ pub(crate) fn node_internal_binding_source() -> &'static str {
     case "zlib":
     case "symbols":
     case "http2":
-    case "fs_event_wrap": return __nativeInternalBinding(name);
+    case "fs_event_wrap":
+    case "errors":
+    case "modules": return __nativeInternalBinding(name);
     case "util": return Object.assign({}, {
       privateSymbols: __nativeInternalBinding("util").privateSymbols,
       constants: __nativeInternalBinding("util").constants,
@@ -2545,6 +2547,7 @@ pub(crate) fn node_internal_binding_source() -> &'static str {
       previewEntries: __nativeInternalBinding("util").previewEntries,
       getConstructorName: __nativeInternalBinding("util").getConstructorName,
       getCallSites: __nativeInternalBinding("util").getCallSites,
+      getCallerLocation: __nativeInternalBinding("util").getCallerLocation,
       getExternalValue: __nativeInternalBinding("util").getExternalValue,
       constructSharedArrayBuffer: (length) => new SharedArrayBuffer(length),
       guessHandleType: () => "UNKNOWN",

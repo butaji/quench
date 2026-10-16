@@ -1,0 +1,17 @@
+MODULE_NOT_FOUND Cannot find module 'internal/deps/acorn/acorn/dist/acorn'
+Require stack:
+- /workspace/quench/target/iteration/node/lib/internal/errors/error_source.js
+- /workspace/quench/target/iteration/node/lib/internal/assert/utils.js
+- /workspace/quench/target/iteration/node/lib/assert.js
+- /workspace/quench/target/iteration/node/lib/assert.js Error: Cannot find module 'internal/deps/acorn/acorn/dist/acorn'
+Require stack:
+- /workspace/quench/target/iteration/node/lib/internal/errors/error_source.js
+- /workspace/quench/target/iteration/node/lib/internal/assert/utils.js
+- /workspace/quench/target/iteration/node/lib/assert.js
+- /workspace/quench/target/iteration/node/lib/assert.js
+    at getFirstExpression (node:internal/errors/error_source:80:20)
+    at getErrorSourceExpression (node:internal/errors/error_source:166:10)
+    at getErrMessage (node:internal/assert/utils:91:16)
+    at innerOk (node:internal/assert/utils:164:22)
+    at ok (node:assert:197:3)
+    at [eval]:1:33

@@ -1,0 +1,110 @@
+{
+  "runs": [
+    {
+      "label": "before",
+      "group": "test-assert",
+      "command": [
+        "/workspace/quench/work/function-info-before-bin/run-parallel",
+        "--all",
+        "--parallel-dir",
+        "/workspace/work/node-stable-release/node-v26.12.0/test/parallel",
+        "--filter",
+        "test-assert",
+        "--jobs",
+        "4",
+        "--timeout-secs",
+        "30",
+        "--results",
+        "/workspace/quench/work/owned-script-policy/family-before-test-assert.json"
+      ],
+      "exit": 1,
+      "counts": {
+        "fail": 4,
+        "pass": 10
+      },
+      "inventory_hash": "f938c688fba61da2"
+    },
+    {
+      "label": "before",
+      "group": "test-os-checked-function",
+      "command": [
+        "/workspace/quench/work/function-info-before-bin/run-parallel",
+        "--all",
+        "--parallel-dir",
+        "/workspace/work/node-stable-release/node-v26.12.0/test/parallel",
+        "--filter",
+        "test-os-checked-function",
+        "--jobs",
+        "4",
+        "--timeout-secs",
+        "30",
+        "--results",
+        "/workspace/quench/work/owned-script-policy/family-before-test-os-checked-function.json"
+      ],
+      "exit": 0,
+      "counts": {
+        "pass": 1
+      },
+      "inventory_hash": "6154fe7396063f58"
+    },
+    {
+      "label": "candidate",
+      "group": "test-assert",
+      "command": [
+        "/workspace/quench/work/owned-script-bin/run-parallel",
+        "--all",
+        "--parallel-dir",
+        "/workspace/work/node-stable-release/node-v26.12.0/test/parallel",
+        "--filter",
+        "test-assert",
+        "--jobs",
+        "4",
+        "--timeout-secs",
+        "30",
+        "--results",
+        "/workspace/quench/work/owned-script-policy/family-candidate-test-assert.json"
+      ],
+      "exit": 1,
+      "counts": {
+        "fail": 4,
+        "pass": 10
+      },
+      "inventory_hash": "f938c688fba61da2"
+    },
+    {
+      "label": "candidate",
+      "group": "test-os-checked-function",
+      "command": [
+        "/workspace/quench/work/owned-script-bin/run-parallel",
+        "--all",
+        "--parallel-dir",
+        "/workspace/work/node-stable-release/node-v26.12.0/test/parallel",
+        "--filter",
+        "test-os-checked-function",
+        "--jobs",
+        "4",
+        "--timeout-secs",
+        "30",
+        "--results",
+        "/workspace/quench/work/owned-script-policy/family-candidate-test-os-checked-function.json"
+      ],
+      "exit": 0,
+      "counts": {
+        "pass": 1
+      },
+      "inventory_hash": "6154fe7396063f58"
+    }
+  ],
+  "before": {
+    "fail": 4,
+    "pass": 11
+  },
+  "candidate": {
+    "fail": 4,
+    "pass": 11
+  },
+  "total": 15,
+  "gained": [],
+  "lost": [],
+  "skip_changes": {}
+}
