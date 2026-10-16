@@ -113,7 +113,9 @@ failure the local Node oracle reproduces, with that exact failure. The runners
 compile the manifest in. A waived case keeps its raw outcome in every report,
 tagged with its `waiver` group and counted in `waived`; the runners accept it
 only while it fails with exactly the recorded failure. A waived case that
-passes or fails differently fails the run until the manifest is updated.
+passes or fails differently fails the run until the manifest is updated. A
+case the oracle cannot run (a module case) is waived only by its group's
+Node-arbitrated rule and is marked `"node": "unverifiable"`.
 Re-adjudicate the manifest, or triage other cases, against the installed Node:
 
 ```sh
