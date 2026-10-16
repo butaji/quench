@@ -85,9 +85,8 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         "((Error) => value => value instanceof Error)(Error)",
         "node:process/warning-instance.js",
     )?;
-    let emit_warning = context.host_function_with_data(
-        crate::host::shared_vm::operation("processEmitWarning"),
-        error_instance,
+    let emit_warning = context.host_constructor_named_with_data(
+        crate::host::shared_vm::operation("processEmitWarning"), "emitWarning", error_instance,
     )?;
     install(context, process, "emitWarning", emit_warning)?;
     #[cfg(unix)]
@@ -3167,9 +3166,8 @@ pub(crate) fn emit_warning(
     let mut detail = None;
     let mut host_stack = None;
     let mut rejection_id = None;
-    let global = context.global_root()?;
-    let process_key = context.string_rooted("process");
-    let process = context.get_property_rooted(global, process_key)?;
+    let process = context.host_mut().shared_state().borrow().process_module
+        .ok_or_else(|| RootedError::host("process is not initialized"))?;
     let no_deprecation_key = context.string_rooted("noDeprecation");
     let no_deprecation = context.get_property_rooted(process, no_deprecation_key)?;
     if context.truthy_rooted(no_deprecation)?
@@ -3309,39 +3307,14 @@ pub(crate) fn dispatch_warning(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let Some(warning) = args.first().copied() else {
-        return Ok(context.undefined());
-    };
-    let name = string_property(context, warning, "name")?.unwrap_or_else(|| "Warning".into());
-    let message = string_property(context, warning, "message")?.unwrap_or_default();
-    let code = string_property(context, warning, "code")?;
-    let detail = string_property(context, warning, "detail")?;
-
-    let suppress_stderr = !context.host_mut().shared_state().borrow().cli_options.enabled("--warnings");
-    if !suppress_stderr {
-        let code = code.map_or_else(String::new, |code| format!(" [{code}]"));
-        let mut output = format!("(node:{}){code} {name}: {message}\n", std::process::id());
-        if let Some(detail) = detail {
-            output.push_str(&detail);
-            output.push('\n');
-        }
-        std::io::stderr()
-            .lock()
-            .write_all(output.as_bytes())
-            .map_err(|error| RootedError::host(error.to_string()))?;
-    }
-    let global = context.global_root()?;
-    let process_key = context.string_rooted("process");
-    let process = context.get_property_rooted(global, process_key);
-    context.release_root(global);
-    context.release_root(process_key);
-    let process = process?;
+    let Some(warning) = args.first().copied() else { return Ok(context.undefined()); };
+    let process = context.host_mut().shared_state().borrow().process_module
+        .ok_or_else(|| RootedError::host("process is not initialized"))?;
     let event = context.string_rooted("warning");
     let emit_key = context.string_rooted("emit");
     let operation = context.get_property_rooted(process, emit_key)?;
     let emitted = context.call_rooted(operation, process, &[event, warning]);
     context.release_root(event);
-    context.release_root(process);
     let emitted = emitted?;
     context.release_root(emitted);
     Ok(context.undefined())
@@ -3616,4 +3589,40 @@ pub(crate) fn stop_listening_signal(context: &mut NativeContext<'_, NodeHost>, _
         }
     }
     Ok(context.undefined())
+}
+
+/// Native startup state and the configured SDK own the warning listener together.
+pub(crate) fn initialize_warning_policy(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
+    use super::event_constructor_shared_vm::get;
+    let state = context.host_mut().shared_state();
+    let (process, options) = {
+        let state = state.borrow();
+        (state.process_module.ok_or_else(|| RootedError::host("process is not initialized"))?, state.cli_options.clone())
+    };
+    for (name, value) in [
+        ("noDeprecation", !options.enabled("--deprecation")),
+        ("noProcessWarnings", !options.enabled("--warnings")),
+        ("traceProcessWarnings", options.enabled("--trace-warnings")),
+        ("traceDeprecation", options.enabled("--trace-deprecation")),
+        ("throwDeprecation", options.enabled("--throw-deprecation")),
+    ] {
+        if value {
+            let key = context.string_rooted(name);
+            let yes = context.boolean(true);
+            context.define_data_property_rooted(process, key, yes, false, true, true)?;
+        }
+    }
+    let env = get(context, process, "env")?;
+    let disabled = get(context, env, "NODE_NO_WARNINGS")?;
+    if options.enabled("--warnings") && context.string_text(disabled)?.as_deref() != Some("1") {
+        let console = crate::host::shared_vm::commonjs::node_library_module(context, "internal/process/pre_execution.js", "internal/console/global.js")?;
+        let initialize = crate::host::shared_vm::commonjs::node_library_export(context, "internal/process/pre_execution.js", "internal/console/constructor.js", "initializeGlobalConsole")?;
+        let undefined = context.undefined();
+        context.call_rooted(initialize, undefined, &[console])?;
+        let callback = crate::host::shared_vm::commonjs::node_library_export(context, "internal/process/pre_execution.js", "internal/process/warning.js", "onWarning")?;
+        let on = get(context, process, "on")?;
+        let event = context.string_rooted("warning");
+        context.call_rooted(on, process, &[event, callback])?;
+    }
+    Ok(())
 }
