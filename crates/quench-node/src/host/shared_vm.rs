@@ -22,7 +22,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "parseEnv" (1) => crate::modules::util_shared_vm::parse_env,
         method "parseArgs" (0) => crate::modules::util_parse_args_shared_vm::parse,
         method "utilParseArgsPositional" (1) => crate::modules::util_parse_args_shared_vm::positional_map,
-        method "utilTypeCheck" (1) => crate::modules::util_shared_vm::type_check,
+        method "utilTypeCheck" (0) => crate::modules::util_shared_vm::type_check,
         method "utilProxyDetails" (0) => crate::modules::util_shared_vm::proxy_details,
         method "utilConstructorName" (0) => crate::modules::util_shared_vm::constructor_name,
         method "utilPreviewEntries" (0) => crate::modules::util_shared_vm::preview_entries,
@@ -657,6 +657,10 @@ pub(crate) fn operation(name: &str) -> HostFunctionId {
 }
 
 impl quench_runtime::Host for NodeHost {
+    fn proper_tail_calls(&self) -> bool {
+        false
+    }
+
     fn write_line(&mut self, text: &str) {
         let output = self.shared_state().borrow().output.clone();
         match output {
