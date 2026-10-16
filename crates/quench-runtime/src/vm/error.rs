@@ -469,10 +469,11 @@ impl<H: Host> Vm<H> {
             let Some(position) = residual.source_position(frame.function, pc) else {
                 continue;
             };
-            let function_name = function
-                .name
-                .map(|atom| self.atom_name(atom).to_owned())
-                .filter(|name| !name.starts_with('\0'));
+            let function_name = frame.context.callable()
+                .and_then(|callee| self.debug_function_name(callee))
+                .or_else(|| function.name.map(|name| self.atom_value(name)))
+                .map(|name| name.to_string())
+                .filter(|name| !name.is_empty() && !name.starts_with('\0'));
             records.push(CallSiteRecord {
                 location: CallSiteLocation::Source {
                     file_name: self.host.stack_source_name(
@@ -1418,10 +1419,10 @@ impl<H: Host> Vm<H> {
             .alloc(Cell::Object(Self::empty_object(realm_iterator_proto)));
         let realm_async_iterator_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(realm_iterator_proto)));
+            .alloc(Cell::Object(Self::empty_object(object_prototype)));
         self.install_async_iterator_prototype(
             realm_async_iterator_proto,
-            realm_iterator_proto,
+            object_prototype,
             Some(global),
         )?;
         let realm_async_generator_proto = self

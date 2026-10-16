@@ -350,7 +350,7 @@ pub(crate) enum Native {
     DisposableStackDisposeAsyncWithCompletion,
     DisposableStackAsyncDisposalFulfilled,
     DisposableStackAsyncDisposalRejected,
-    FunctionCall, FunctionApply, FunctionBind, FunctionBoundCall, FunctionToString, AsyncFunction, GeneratorFunction, AsyncGeneratorFunction, AsyncGeneratorReturnResult, AsyncGeneratorDelegateReturnStart,
+    FunctionCall, FunctionApply, FunctionBind, FunctionBoundCall, FunctionToString, AsyncFunction, GeneratorFunction, AsyncGeneratorFunction, AsyncGeneratorDelegateReturnStart,
     Date,
     DateNow,
     DateGetTime, DateValueOf, DateGetTimezoneOffset, DateGetFullYear, DateGetMonth, DateGetDate, DateGetDay,
@@ -1237,6 +1237,7 @@ pub(crate) enum StackData {
 
 #[derive(Clone, Debug, Default)]
 struct ObjectExtras {
+    used_as_prototype: bool,
     /// The object's inline property values, displaced from its payload by the extras pointer.
     inline_properties: DisplacedInline,
     /// An array's storage position, displaced from its first payload word.
@@ -1246,6 +1247,7 @@ struct ObjectExtras {
     raw_json: bool,
     error_data: bool,
     module_namespace: bool,
+    external_address: Option<usize>,
     structured_clone_forbidden: bool,
     structured_transfer_forbidden: bool,
     module_bindings: Vec<(Atom, ProgramId, u16)>,
@@ -1365,7 +1367,8 @@ impl Object {
         self.meta = (self.meta & !PROTO_INDEX_BITS) | Self::encode_proto(proto);
     }
 
-    fn is_array(&self) -> bool {
+    /// Whether this object is an array's, whose payload holds the element backing.
+    pub(crate) fn is_array(&self) -> bool {
         self.meta & OBJECT_ARRAY != 0
     }
 
@@ -1607,6 +1610,14 @@ impl Object {
         }
     }
 
+    pub(crate) fn was_used_as_prototype(&self) -> bool {
+        self.extras().is_some_and(|extras| extras.used_as_prototype)
+    }
+
+    pub(crate) fn mark_as_prototype(&mut self) {
+        if !self.was_used_as_prototype() { self.extras_mut().used_as_prototype = true; }
+    }
+
     pub(crate) fn shape(&self) -> u32 {
         ValueVec::from_parts(0, self.auxiliary).auxiliary()
     }
@@ -1665,6 +1676,15 @@ impl Object {
     }
     pub(crate) fn set_raw_json(&mut self) {
         self.extras_mut().raw_json = true;
+    }
+
+    pub(crate) fn external_address(&self) -> Option<usize> {
+        self.extras()?.external_address
+    }
+    pub(crate) fn set_external_address(&mut self, address: usize) {
+        let extras = self.extras_mut();
+        extras.external_address = Some(address);
+        extras.structured_clone_forbidden = true;
     }
 
     pub(crate) fn is_module_namespace(&self) -> bool {

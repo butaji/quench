@@ -1,0 +1,8 @@
+prefix=/workspace/shared/icu78-node-repro
+libdir=${prefix}/lib
+includedir=${prefix}/include
+Name: icu-uc
+Description: Pinned Node ICU common and converter data
+Version: 78.3
+Libs: -L${libdir} -licuuc -licudata -lstdc++ -lpthread -lm -ldl
+Cflags: -I${includedir}

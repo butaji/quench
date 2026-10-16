@@ -3,6 +3,7 @@
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
+#[cfg(not(quench_icu))]
 const FACTORY: &str = quench_js_check::checked_js!(
     r#"(canonicalEncoding, decodeBytes) => {
   const decoders = new WeakMap();
@@ -47,10 +48,7 @@ const FACTORY: &str = quench_js_check::checked_js!(
           'The "input" argument must be an instance of ArrayBuffer or ArrayBufferView.'
         );
       }
-      const decoded = decodeBytes(Array.from(view), state.encoding, state.fatal);
-      return !state.ignoreBOM && decoded.startsWith("\uFEFF")
-        ? decoded.slice(1)
-        : decoded;
+      return decodeBytes(Array.from(view), state.encoding, state.fatal, state.ignoreBOM);
     }
   }
 
@@ -103,13 +101,22 @@ pub(crate) fn initialize(
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let canonical = context.host_function(crate::host::shared_vm::operation(
-        "textDecoderCanonicalEncoding",
-    ))?;
-    let decode = context.host_function(crate::host::shared_vm::operation("textDecoderDecode"))?;
-    let factory = context.evaluate_script_rooted(FACTORY, "node:text-decoder/shared-vm.js")?;
+    #[cfg(quench_icu)]
+    let constructors = crate::host::shared_vm::commonjs::node_library_module(
+        context, "util.js", "internal/encoding.js"
+    )?;
+    #[cfg(not(quench_icu))]
+    let constructors = {
+        let canonical = context.host_function(crate::host::shared_vm::operation(
+            "textDecoderCanonicalEncoding",
+        ))?;
+        let decode = context.host_function(crate::host::shared_vm::operation("textDecoderDecode"))?;
+        let factory = context.evaluate_script_rooted(FACTORY, "node:text-decoder/shared-vm.js")?;
+        let undefined = context.undefined();
+        let constructors = context.call_rooted(factory, undefined, &[canonical, decode])?;
+        constructors
+    };
     let undefined = context.undefined();
-    let constructors = context.call_rooted(factory, undefined, &[canonical, decode])?;
     let decoder_key = context.string_rooted("TextDecoder");
     let constructor = context.get_property_rooted(constructors, decoder_key)?;
     let encoder_key = context.string_rooted("TextEncoder");
@@ -133,12 +140,28 @@ pub(crate) fn canonical_encoding(
     let Some(label) = context.string_text(root)? else {
         return Ok(context.undefined());
     };
-    Ok(
-        match crate::modules::text_decoder_codec::canonical_encoding(&label) {
-            Some(encoding) => context.string_rooted(encoding),
-            None => context.undefined(),
-        },
-    )
+    match crate::modules::text_decoder_codec::canonical_encoding(&label) {
+        Some(encoding) if encoding != "replacement" => Ok(context.string_rooted(&encoding)),
+        encoding => {
+            let label = if encoding.is_some() {
+                "replacement".encode_utf16().collect()
+            } else {
+                context.to_string_code_units(root)?
+            };
+            let mut units = "The \"".encode_utf16().collect::<Vec<_>>();
+            units.extend(label);
+            units.extend("\" encoding is not supported".encode_utf16());
+            let message = context.string_units_rooted(&units);
+            let error = context.range_error_rooted("")?;
+            context.assign_named_property_rooted(error, "message", message)?;
+            super::node_errors_shared_vm::decorate_range_error(
+                context,
+                error,
+                "ERR_ENCODING_NOT_SUPPORTED",
+            )?;
+            Err(context.throw(error))
+        }
+    }
 }
 
 pub(crate) fn decode(
@@ -161,10 +184,34 @@ pub(crate) fn decode(
     let Some(text) =
         crate::modules::text_decoder_codec::decode_bytes(&encoding, &bytes, fatal).ok()
     else {
-        let error = context.type_error_rooted("The encoded data was not valid UTF-8")?;
+        // Node shares the ISO-8859-8 decoder with its logical-order alias,
+        // including that decoder's canonical name in fatal diagnostics.
+        let failure_encoding = if encoding == "iso-8859-8-i" {
+            "iso-8859-8"
+        } else {
+            &encoding
+        };
+        let error = context.type_error_rooted(&format!(
+            "The encoded data was not valid for encoding {failure_encoding}"
+        ))?;
+        super::node_errors_shared_vm::decorate_type_error(
+            context,
+            error,
+            "ERR_ENCODING_INVALID_ENCODED_DATA",
+        )?;
         return Err(context.throw(error));
     };
-    Ok(context.string_rooted(&text))
+    let ignore_bom = args
+        .get(3)
+        .and_then(|root| context.rooted_value(*root))
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let text = if !ignore_bom && matches!(encoding.as_str(), "utf-8" | "utf-16le" | "utf-16be") {
+        text.strip_prefix('\u{feff}').unwrap_or(&text)
+    } else {
+        &text
+    };
+    Ok(context.string_rooted(text))
 }
 
 fn byte_array(

@@ -1,0 +1,12 @@
+{
+  "source": "f279a4e0a0ba2ffbee10501bac268afae0483d74",
+  "qualified_npm_source": "383fcec1750a9eca4673853b2137d3b746c246d3",
+  "incoming_integration": "318ac0b29c19e22b5c8e1b6bd8c41ff410a0f4a8",
+  "cli_sha256": "75b4c48ba52db6898e88cc273dbd6ec310d28eb2076fc2f9c0e66b22b2b4669d",
+  "workspace_check": true,
+  "fast_core_passed": 643,
+  "cli_build": true,
+  "combined_full_qualification": false,
+  "total_node_parity": false,
+  "package_performance_phase_started": false
+}

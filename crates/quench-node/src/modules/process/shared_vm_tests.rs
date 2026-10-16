@@ -7,7 +7,7 @@ fn shared_module_cache_roots_survive_collection_and_expire_on_fresh_execution() 
         std::env::temp_dir().join(format!("quench-module-root-test-{}", std::process::id()));
     std::fs::create_dir_all(&directory).unwrap();
     let filename = directory.join("main.cjs");
-    std::fs::write(&filename, "module.exports = { answer: 42 };").unwrap();
+    std::fs::write(&filename, "require('node:module'); module.exports = { answer: 42 };").unwrap();
     let filename = std::fs::canonicalize(filename).unwrap();
     let module_key = filename.to_string_lossy().into_owned();
     let host = NodeHost::new(vec!["quench-node".into()]).with_commonjs_entry(filename);
@@ -20,7 +20,15 @@ fn shared_module_cache_roots_survive_collection_and_expire_on_fresh_execution() 
         if let Some(previous) = previous {
             assert!(!runtime.root_is_live(previous));
         }
-        let cached = *roots.borrow().module_cache.get(&module_key).unwrap();
+        let cache = match roots.borrow().commonjs_cache.unwrap() {
+            crate::host::node_host::CommonJsCache::Bootstrap(cache) => cache,
+            crate::host::node_host::CommonJsCache::Module(module) => {
+                let key = runtime.string_rooted("_cache");
+                runtime.get_property_rooted(module, key).unwrap()
+            }
+        };
+        let key = runtime.string_rooted(&module_key);
+        let cached = runtime.get_property_rooted(cache, key).unwrap();
         runtime.collect(&program).unwrap();
         let key = runtime.string_rooted("exports");
         let exports = runtime.get_property_rooted(cached, key).unwrap();

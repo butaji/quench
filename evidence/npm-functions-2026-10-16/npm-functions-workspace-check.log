@@ -1,0 +1,7 @@
+    Checking quench-runtime v0.1.0 (/workspace/scratch/quench-npm-file-url/crates/quench-runtime)
+   Compiling quench-node v0.1.0 (/workspace/scratch/quench-npm-file-url/crates/quench-node)
+    Checking quench-wasm v0.1.0 (/workspace/scratch/quench-npm-file-url/crates/quench-wasm)
+    Checking quench-test262 v0.1.0 (/workspace/scratch/quench-npm-file-url/crates/quench-test262)
+    Checking quench-wasm-test v0.1.0 (/workspace/scratch/quench-npm-file-url/crates/quench-wasm-test)
+    Checking quench-node-test v0.1.0 (/workspace/scratch/quench-npm-file-url/crates/quench-node-test)
+    Finished `dev` profile [unoptimized] target(s) in 18.96s

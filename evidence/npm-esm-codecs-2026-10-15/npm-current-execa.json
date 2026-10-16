@@ -1,0 +1,44 @@
+{
+  "mode": "scenario",
+  "source_commit": "eefbda82eb476d3955c6bb3430cc742b3023aea5",
+  "source_dirty": false,
+  "host": "x86_64-linux",
+  "node_executable": "/workspace/shared/node-v26.12.0-linux-x64/bin/node",
+  "node_version": "v26.12.0",
+  "quench_executable": "/workspace/scratch/npm-current-sync-candidate",
+  "quench_sha256": "dcfa4e361acbf4fd1afe253321207336be00b233ca67586da3d4fb68832d1617",
+  "node_sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943",
+  "timeout_seconds": 30,
+  "inventory_sha256": "d75fd451e8fe84c11eb1e1c0522745ae99a3deed4e03841a3567e147a933e303",
+  "lock_sha256": "62e8fa517a95fd709da2c1ed7bca2ff63cb7b9133d8444ec590f08b680634d4d",
+  "scenario_sha256": "ca62f4453a69c8441683b13dd75821c88e076898c99fb814ac9c41e4d2228979",
+  "records": [
+    {
+      "package": {
+        "name": "execa",
+        "version": "10.1.1",
+        "types_only": false,
+        "installation": null
+      },
+      "verdict": "behavior-pass",
+      "node": {
+        "exit_code": 0,
+        "signal": null,
+        "timed_out": false,
+        "worker": null,
+        "stdout": "npm-behavior-ok:execa\n",
+        "stderr": ""
+      },
+      "quench": {
+        "exit_code": 0,
+        "signal": null,
+        "timed_out": false,
+        "worker": null,
+        "stdout": "npm-behavior-ok:execa\n",
+        "stderr": ""
+      },
+      "node_function_checks": null,
+      "quench_function_checks": null
+    }
+  ]
+}

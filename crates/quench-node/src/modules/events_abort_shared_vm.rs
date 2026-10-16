@@ -74,16 +74,61 @@ fn invoke_abort_listener(
     listener: RootId,
     signal: RootId,
     event: RootId,
-) -> Result<(), RootedError> {
+) -> Result<RootId, RootedError> {
     if context.is_callable_rooted(listener)? {
-        context.call_rooted(listener, signal, &[event])?;
+        return context.call_rooted(listener, signal, &[event]);
     } else {
         let method = get(context, listener, "handleEvent")?;
         if context.is_callable_rooted(method)? {
-            context.call_rooted(method, listener, &[event])?;
+            return context.call_rooted(method, listener, &[event]);
         }
     }
+    Ok(context.undefined())
+}
+
+fn capture_abort_listener_rejection(
+    context: &mut NativeContext<'_, NodeHost>,
+    result: RootId,
+) -> Result<(), RootedError> {
+    if context.rooted_value(result).is_some_and(|value| value.is_null() || value.is_undefined()) {
+        return Ok(());
+    }
+    let then = get(context, result, "then")?;
+    if context.is_callable_rooted(then)? {
+        let report = context.host_function(crate::host::shared_vm::operation("eventTargetQueueError"))?;
+        let data = context.host_mut().shared_state().borrow().event_targets_api
+            .ok_or_else(|| RootedError::host("EventTarget API missing"))?;
+        let factory = get(context, data, "abortRejectionFactory")?;
+        let undefined = context.undefined();
+        let rejected = context.call_rooted(factory, undefined, &[report])?;
+        context.call_rooted(then, result, &[undefined, rejected])?;
+    }
     Ok(())
+}
+
+/// EventTarget listener failures belong to the real next-tick error path,
+/// independently of the event's original completion and subsequent listeners.
+pub(crate) fn queue_listener_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let undefined = context.undefined();
+    let reason = args.first().copied().unwrap_or(undefined);
+    let callback = context.host_function_named_with_data(
+        crate::host::shared_vm::operation("eventTargetRethrow"), "", reason,
+    )?;
+    super::shared_event_loop::queue_next_tick(context, callback, undefined, &[])?;
+    Ok(undefined)
+}
+
+pub(crate) fn rethrow_listener_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let reason = context.host_function_data()?;
+    Err(context.throw(reason))
 }
 
 pub(crate) fn abort_dispatch_listeners(
@@ -119,7 +164,12 @@ pub(crate) fn abort_dispatch_listeners(
         if context.truthy_rooted(once)? {
             context.call_rooted(remove, undefined, &[signal, state, listener])?;
         }
-        invoke_abort_listener(context, listener, signal, event)?;
+        let delivery = invoke_abort_listener(context, listener, signal, event)
+            .and_then(|result| capture_abort_listener_rejection(context, result));
+        if let Err(error) = delivery {
+            let Some(reason) = error.exception else { return Err(error); };
+            queue_listener_error(context, undefined, &[reason])?;
+        }
     }
     Ok(undefined)
 }

@@ -43,7 +43,7 @@ pub(super) fn active_shape_attributes(
                 }
             }
             ShapeTransition::Vacant => entries.push(None),
-            ShapeTransition::Root | ShapeTransition::Dictionary { .. } => {}
+            ShapeTransition::Root | ShapeTransition::FunctionName { .. } | ShapeTransition::Constructed { .. } | ShapeTransition::Dictionary { .. } => {}
         }
     }
     entries
@@ -76,6 +76,8 @@ struct ParallelShapeTrace<'a> {
     shape_count: usize,
     accessors: &'a [ShapeAccessors],
     marked_shapes: &'a [AtomicU64],
+    marked_constructor_shapes: &'a [AtomicU64],
+    constructors: &'a [Value],
     owned_roots: &'a FxHashMap<Value, Vec<Value>>,
     _shape_borrow: std::marker::PhantomData<&'a [Shape]>,
 }
@@ -107,7 +109,7 @@ impl ParallelShapeTrace<'_> {
 
     // Called once per marked object, so its frame setup would rival its body.
     #[inline(always)]
-    fn append(&self, trace_kind: GcTraceKind, owner: Value, shape: u32, roots: &mut Vec<Value>) {
+    fn append(&self, trace_kind: GcTraceKind, owner: Value, shape: u32, prototype: bool, roots: &mut Vec<Value>) {
         let shape_index = shape as usize;
         debug_assert!(shape_index < self.shape_count);
         // SAFETY: construction holds an immutable borrow of the shape table;
@@ -124,6 +126,13 @@ impl ParallelShapeTrace<'_> {
             && shapes[shape_index].may_have_gc_roots
         {
             append_shape_roots(shapes, self.accessors, shape, roots);
+        }
+        // A prototype no longer owns its original base constructor. Keep this
+        // trace bit separate: a prototype may be the first holder of a shape.
+        let constructor = self.constructors[shape_index];
+        if !prototype && !constructor.is_undefined() &&
+            (trace_kind == GcTraceKind::VerifyFull || self.marked_constructor_shapes[word].fetch_or(mask, Ordering::Relaxed) & mask == 0) {
+            roots.push(constructor);
         }
         if let Some(edges) = self.owned_roots.get(&owner) {
             roots.extend(edges.iter().copied());
@@ -174,6 +183,13 @@ fn rebuild_shape(
     transitions: &mut super::shape_transitions::ShapeTransitionIndex,
 ) -> u32 {
     let mut parent = 0;
+    let (function_name, constructed_name) = provenance::shape_names(old_shapes, old_shape);
+    for transition in [
+        function_name.map(|name| ShapeTransition::FunctionName { name }),
+        constructed_name.map(|(constructor, new_target_is_base)| ShapeTransition::Constructed { constructor, new_target_is_base }),
+    ].into_iter().flatten() {
+        parent = append_compacted_shape(shapes, transitions, parent, transition, 0);
+    }
     for (slot, entry) in active_shape_attributes(old_shapes, old_shape)
         .into_iter()
         .enumerate()
@@ -680,22 +696,33 @@ impl<H: Host> Vm<H> {
         let marked_shape_bits = (0..shape_word_count)
             .map(|_| AtomicU64::new(0))
             .collect::<Vec<_>>();
+        let marked_constructor_shape_bits = (0..shape_word_count).map(|_| AtomicU64::new(0)).collect::<Vec<_>>();
+        let mut constructors = Vec::with_capacity(shape_count);
+        for shape in &self.shapes {
+            let constructor = match shape.transition {
+                ShapeTransition::Constructed { constructor, .. } => constructor,
+                _ => shape.parent().map(|parent| constructors[parent as usize]).unwrap_or(Value::UNDEFINED),
+            };
+            constructors.push(constructor);
+        }
         let shape_trace = ParallelShapeTrace {
             shapes: self.shapes.as_ptr(),
             shape_count,
             accessors: &self.shape_accessors,
             marked_shapes: &marked_shape_bits,
+            marked_constructor_shapes: &marked_constructor_shape_bits,
+            constructors: &constructors,
             owned_roots: &owned_roots,
             _shape_borrow: std::marker::PhantomData,
         };
         let parallel_object_roots =
-            |trace_kind: GcTraceKind, owner: Value, shape: u32, roots: &mut Vec<Value>| {
-                shape_trace.append(trace_kind, owner, shape, roots);
+            |trace_kind: GcTraceKind, owner: Value, shape: u32, prototype: bool, roots: &mut Vec<Value>| {
+                shape_trace.append(trace_kind, owner, shape, prototype, roots);
             };
         let finalization_jobs = self.heap.collect_with_object_roots(
             roots,
-            |trace_kind, owner, shape, roots| {
-                shape_trace.append(trace_kind, owner, shape, roots);
+            |trace_kind, owner, shape, prototype, roots| {
+                shape_trace.append(trace_kind, owner, shape, prototype, roots);
             },
             Some(&parallel_object_roots),
             full,
@@ -967,6 +994,25 @@ mod tests {
         DEFAULT_DATA_ATTRIBUTES, DEFAULT_PROPERTY_ATTRIBUTES, DictionaryTrigger,
         PropertyAttributes, Shape, ShapeAttributes, ShapeTransition, property_key::PropertyKey,
     };
+
+    #[test]
+    fn shape_compaction_preserves_creation_metadata_without_property_slots() {
+        use super::{append_compacted_shape, rebuild_shape, provenance};
+        let mut shapes = vec![Shape::root()];
+        let mut transitions = rustc_hash::FxHashMap::default();
+        let named = append_compacted_shape(&mut shapes, &mut transitions, 0,
+            ShapeTransition::FunctionName { name: 7 }, 0);
+        let created = append_compacted_shape(&mut shapes, &mut transitions, named,
+            ShapeTransition::Constructed { constructor: Value::heap(17), new_target_is_base: false }, 0);
+        let with_field = append_compacted_shape(&mut shapes, &mut transitions, created,
+            ShapeTransition::Add { key: PropertyKey::string(9), slot: 0, attributes: DEFAULT_DATA_ATTRIBUTES }, 1);
+        let mut rebuilt = vec![Shape::root()];
+        let shape = rebuild_shape(&shapes, &[], with_field, &mut rebuilt,
+            &mut Vec::new(), &mut rustc_hash::FxHashMap::default());
+        assert_eq!(provenance::shape_names(&rebuilt, shape), (Some(7), Some((Value::heap(17), false))));
+        assert_eq!(rebuilt[shape as usize].storage_len(), 1);
+        assert_eq!(super::active_shape_attributes(&rebuilt, shape).len(), 1);
+    }
 
     #[test]
     fn shape_compaction_waits_until_reclaim_is_material() {
