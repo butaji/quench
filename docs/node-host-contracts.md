@@ -841,3 +841,18 @@ The original promises glob policy materializes as a lazy data property, keeping
 its real function descriptor and identity. Merely loading native fs no longer
 imports the promises implementation's readline/history/OS dependencies. This
 preserves Node's binding-capture order and avoids loading unrelated modules.
+
+## Owned host Script code
+
+Core's `CompiledScript` handle owns one logical source record, while each realm
+uses a separate execution instance and caches. Detailed captures project the
+actual source record identity across those instances. Repeated runs in one realm
+reuse its template sites while producing fresh objects and functions.
+
+The opaque owner retains compiler code only. Realm associations are weak and
+pruned immediately after collection, before heap slot reuse. Reclamation retains
+live owners and the source records of escaped functions; dropping owners allows
+unused code and execution caches to be collected. Runtime reset or a foreign
+runtime rejects the handle through the existing atom-sequence ownership guard.
+This Core primitive does not by itself implement native `ContextifyScript`, VM
+timeouts, cached bytecode or code-generation restrictions.
