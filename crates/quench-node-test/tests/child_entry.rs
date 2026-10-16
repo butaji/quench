@@ -8991,3 +8991,29 @@ fn native_collection_previews_keep_iterator_positions_live_slots_and_return_conv
         &["--no-warnings", "--expose-internals"],
     );
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn cli_signal_defaults_reset_inherited_ignores_before_vm_workers_start() {
+    use std::os::unix::process::CommandExt;
+    let runner=std::path::PathBuf::from(env!("CARGO_BIN_EXE_run-parallel"));
+    let cli=runner.with_file_name("quench-node");
+    for (name,signal) in [("SIGINT",libc::SIGINT),("SIGQUIT",libc::SIGQUIT),("SIGTERM",libc::SIGTERM)] {
+        for executable in [std::path::PathBuf::from("node"),runner.clone(),cli.clone()] {
+            let mut command=Command::new(&executable);
+            command.args(["-e","process.kill(process.pid,process.argv[1]);console.log('survived')",name]);
+            if executable!=std::path::Path::new("node") { command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1"); }
+            unsafe { command.pre_exec(move || {
+                if libc::signal(signal,libc::SIG_IGN)==libc::SIG_ERR { return Err(std::io::Error::last_os_error()); }
+                let limit=libc::rlimit{rlim_cur:0,rlim_max:0};
+                if libc::setrlimit(libc::RLIMIT_CORE,&limit)!=0 { return Err(std::io::Error::last_os_error()); }
+                Ok(())
+            }); }
+            let observation=quench_node_test::case_process::observe_command(command,Duration::from_secs(10)).unwrap();
+            assert!(!observation.timed_out,"{executable:?} {name}");
+            assert_eq!(observation.signal,Some(signal),"{executable:?} {name}: exit {:?}, stderr {}",observation.exit_code,String::from_utf8_lossy(&observation.stderr));
+            assert_eq!(observation.exit_code,None);
+            assert!(observation.stdout.is_empty());assert!(observation.stderr.is_empty());
+        }
+    }
+}
