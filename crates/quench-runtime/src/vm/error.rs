@@ -411,6 +411,78 @@ impl<H: Host> Vm<H> {
         result
     }
 
+    /// Inspect descriptor identity without invoking accessors or Proxy traps.
+    fn call_site_property_matches(&self, receiver: Value, key: Atom, function: Value) -> Option<bool> {
+        let attributes = self.property_attributes(receiver, PropertyKey::string(key));
+        if let Some(attributes) = attributes.filter(|attributes| attributes.accessor) {
+            return Some(attributes.getter == Some(function) || attributes.setter == Some(function));
+        }
+        self.own_property(receiver, key)
+            .map(|value| value == function)
+    }
+
+    fn call_site_method_name(&mut self, record: &CallSiteRecord) -> Result<Option<JsString>, JsError> {
+        let CallSiteName::Callable(function) = record.name else {
+            return Ok(None);
+        };
+        if record.this_value.is_null() || record.this_value.is_undefined() {
+            return Ok(None);
+        }
+        let receiver = self.box_object(record.this_value)?;
+        if let Some(original) = self.original_function_name(function) {
+            let name = self.atom_value(original);
+            let units = name.units();
+            let accessor_prefix = ["get ", "set "].into_iter().find(|prefix| {
+                units.iter().take(prefix.len()).eq(prefix.encode_utf16())
+            });
+            let name = if let Some(prefix) = accessor_prefix {
+                JsString::from_unit_run(units.slice(prefix.len()..units.len()))
+            } else {
+                name
+            };
+            if let Some(key) = self.lookup_js_atom(&name) {
+                let mut current = receiver;
+                while let Some(object) = self.object_data(current) {
+                    if self.proxy_parts(current).is_some() {
+                        break;
+                    }
+                    if let Some(matches) = self.call_site_property_matches(current, key, function) {
+                        if matches {
+                            return Ok(Some(name));
+                        }
+                        break;
+                    }
+                    current = object.proto();
+                }
+            }
+        }
+        let mut found = None;
+        let mut current = receiver;
+        while let Some(object) = self.object_data(current) {
+            if self.proxy_parts(current).is_some() {
+                break;
+            }
+            let prototype = object.proto();
+            for key in self.own_named_keys(current) {
+                if self.atom_class(key).contains(AtomClass::ARRAY_INDEX)
+                    || self
+                        .property_attributes(current, PropertyKey::string(key))
+                        .is_some_and(|attributes| !attributes.enumerable)
+                {
+                    continue;
+                }
+                if self.call_site_property_matches(current, key, function) == Some(true) {
+                    if found.is_some_and(|previous| previous != key) {
+                        return Ok(None);
+                    }
+                    found = Some(key);
+                }
+            }
+            current = prototype;
+        }
+        Ok(found.map(|name| self.atom_value(name)))
+    }
+
     pub(super) fn error_capture_stack_trace(
         &mut self,
         program: &ResidualProgram,
@@ -644,7 +716,10 @@ impl<H: Host> Vm<H> {
                 CallSiteName::Callable(function) if !record.hide_identity => function,
                 _ => Value::UNDEFINED,
             }),
-            Native::CallSiteGetFunctionName | Native::CallSiteGetMethodName => Ok(self.call_site_name(&record)
+            Native::CallSiteGetMethodName => Ok(self.call_site_method_name(&record)?
+                .map(|name| self.heap.alloc(Cell::String(name)))
+                .unwrap_or(Value::NULL)),
+            Native::CallSiteGetFunctionName => Ok(self.call_site_name(&record)
                 .map(|name| self.heap.alloc(Cell::String(name)))
                 .unwrap_or(Value::NULL)),
             Native::CallSiteGetLineNumber => Ok(match record.location {
