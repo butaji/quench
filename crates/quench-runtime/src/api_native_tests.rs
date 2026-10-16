@@ -1649,3 +1649,38 @@ fn prepared_host_scripts_share_code_but_own_realm_state_and_reject_runtime_reset
         assert_eq!(state.borrow().invalidations, 2);
     }
 }
+
+struct ErrorSourceHost;
+impl Host for ErrorSourceHost {
+    fn write_line(&mut self, _: &str) {}
+    fn clock_millis(&mut self) -> f64 { 0.0 }
+    fn functions(&self) -> &[HostFunction<Self>] { &[] }
+    fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
+        let first_source = "new Error('first')";
+        let second_source = "\nnew Error('second')";
+        let first = context.evaluate_script_rooted(first_source, "same-source-name.js")?;
+        let second = context.evaluate_script_rooted(second_source, "same-source-name.js")?;
+        // The metadata owns immutable source text, not a lookup by a reusable filename
+        // or a borrowed Script slot. Collection and later compilation must preserve it.
+        context.collect()?;
+        for (error, source, line) in [(first, first_source, 1), (second, second_source.trim_start(), 2)] {
+            let position = context.error_source_position_rooted(error)?.expect("captured source");
+            assert_eq!(position.source_line.as_deref(), Some(source));
+            assert_eq!(position.script_name.as_deref(), Some("same-source-name.js"));
+            assert_eq!(position.line_number, line);
+            assert_eq!(position.column_number, 1);
+        }
+        Ok(())
+    }
+}
+
+#[test]
+fn error_source_metadata_owns_original_text_across_same_named_scripts_and_collection() {
+    for program in [
+        Engine::specialize_unspecialized("void 0", "error-source-entry.js").unwrap(),
+        Engine::specialize("void 0", "error-source-entry.js").unwrap(),
+    ] {
+        let mut runtime = Runtime::new(ErrorSourceHost);
+        runtime.execute(&program).unwrap();
+    }
+}
