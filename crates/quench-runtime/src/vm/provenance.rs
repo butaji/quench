@@ -51,25 +51,11 @@ impl<H: Host> Vm<H> {
             self.atom_units_equal_str(atom, "name")
         });
         if let Some(name_key) = name_key {
-            let mut current = function;
-            while let Some(object) = self.object_data(current) {
-                if matches!(self.heap.get(current), Some(Cell::Proxy { .. })) {
-                    break;
-                }
-                if let Some(attributes) =
-                    self.property_attributes(current, PropertyKey::string(name_key))
-                {
-                    if !attributes.accessor {
-                        if let Some(Cell::String(name)) = self
-                            .own_property(current, name_key)
-                            .and_then(|value| self.heap.get(value))
-                        {
-                            return Some(name.clone());
-                        }
-                    }
-                    break;
-                }
-                current = object.proto();
+            if let Some(Cell::String(name)) = self
+                .diagnostic_data_property(function, PropertyKey::string(name_key))
+                .and_then(|value| self.heap.get(value))
+            {
+                return Some(name.clone());
             }
         }
         self.original_function_name(function)
@@ -165,20 +151,40 @@ impl<H: Host> Vm<H> {
         &self,
         root: RootId,
     ) -> Result<Option<JsString>, JsError> {
-        let value = self.embedding_value(root)?;
-        let Some(object) = self.object_data(value) else {
-            return Ok(None);
-        };
-        if object.was_used_as_prototype() {
-            return Ok(None);
-        }
-        Ok(shape_names(&self.shapes, object.shape())
-            .1
-            .or_else(|| {
-                self.function_factory_constructor(value)
-                    .map(|constructor| (constructor, true))
-            })
-            .filter(|(_, new_target_is_base)| *new_target_is_base)
-            .and_then(|(constructor, _)| self.debug_function_name(constructor)))
+        Ok(self.constructed_name(self.embedding_value(root)?))
     }
+
+    pub(super) fn constructed_name(&self, value: Value) -> Option<JsString> {
+        let object = self.object_data(value)?;
+        if object.was_used_as_prototype() {
+            return None;
+        }
+        if let Some((constructor, new_target_is_base)) = shape_names(&self.shapes, object.shape()).1 {
+            return new_target_is_base
+                .then(|| self.debug_function_name(constructor))
+                .flatten();
+        }
+        if let Some(constructor) = self.function_factory_constructor(value) {
+            return self.debug_function_name(constructor);
+        }
+        // These iterator maps have inaccessible intrinsic constructors. Their
+        // immutable names derive from the existing iterator kind.
+        let name = match self.heap.get(value) {
+            Some(Cell::Iterator {
+                kind: IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::MapEntries,
+                ..
+            }) => "MapIterator",
+            Some(Cell::Iterator {
+                kind: IteratorKind::SetValues | IteratorKind::SetEntries,
+                ..
+            }) => "SetIterator",
+            Some(Cell::Iterator {
+                kind: IteratorKind::String,
+                ..
+            }) => "StringIterator",
+            _ => return None,
+        };
+        Some(JsString::from_str(name))
+    }
+
 }

@@ -9398,3 +9398,8 @@ for(const value of [Array.prototype.map,Math.max,(()=>{}).bind(null),(async()=>{
 console.log(JSON.stringify(out));
 "#, &["--expose-internals","--no-warnings"]);
 }
+
+#[test]
+fn constructor_class_names_preserve_iterator_origins_proxy_kinds_and_prototype_roles() {
+    compare_node_source_with_args(include_str!("../node-tests/test-constructor-class-data.js"), &["--expose-internals", "--no-warnings"]);
+}
