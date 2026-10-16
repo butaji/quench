@@ -159,6 +159,12 @@ impl<H: Host> Runtime<H> {
         result.map_err(|error| self.retain_error(error))
     }
 
+    /// Apply shared subtraction, retaining guest coercion results and exceptions.
+    pub fn subtract_rooted(&mut self, left: RootId, right: RootId) -> Result<RootId, RootedError> {
+        let result = self.vm.embedding_subtract(left, right);
+        self.retain_completion(result)
+    }
+
     /// Invoke an existing callable with a rooted receiver and arguments.
     /// The VM owns program/realm selection and uses its ordinary call path.
     /// Release the result or error's exception root when finished with it.
