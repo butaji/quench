@@ -592,5 +592,11 @@ fn module_protocol_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<
         .map(|status| context.string_rooted(status)).collect::<Vec<_>>();
     let statuses = context.array_rooted(&statuses)?;
     put(context, binding, "compileCacheStatus", statuses)?;
+    let types = context.null_object_rooted()?;
+    for &(name, value) in super::node_protocol_constants::CACHED_CODE_TYPES {
+        let value = context.number(f64::from(value));
+        put(context, types, name, value)?;
+    }
+    put(context, binding, "cachedCodeTypes", types)?;
     Ok(binding)
 }
