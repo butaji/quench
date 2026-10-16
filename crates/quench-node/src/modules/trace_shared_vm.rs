@@ -358,8 +358,27 @@ pub(crate) fn internal_binding(
 ) -> Result<RootId, RootedError> {
     let absent = context.undefined();
     let name = context.to_string(args.first().copied().unwrap_or(absent))?;
+    let key = format!("\0binding:{name}");
+    let shared = context.host_mut().shared_state();
+    if let Some(value) = shared.borrow().builtin_cache.get(&key).copied() {
+        return Ok(value);
+    }
+    let binding = build_internal_binding(context, &name)?;
+    if !context.rooted_value(binding).is_some_and(|value| value.is_undefined())
+        && !shared.borrow().builtin_cache.contains_key(&key)
+    {
+        let retained = context.retain(binding)?;
+        shared.borrow_mut().builtin_cache.insert(key, retained);
+    }
+    Ok(binding)
+}
+
+fn build_internal_binding(
+    context: &mut NativeContext<'_, NodeHost>, name: &str,
+) -> Result<RootId, RootedError> {
+    let absent = context.undefined();
     let binding = context.object_rooted()?;
-    match name.as_str() {
+    match name {
         #[cfg(target_os = "linux")]
         "os" => return super::os_binding_shared_vm::os_binding(context),
         #[cfg(target_os = "linux")]
