@@ -899,6 +899,18 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.completion(result)
     }
 
+    /// Create a named callback with private traced environment data.
+    pub fn host_function_named_with_data(
+        &mut self,
+        id: HostFunctionId,
+        name: &str,
+        data: RootId,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.embedding_value(data)
+            .and_then(|value| self.vm.create_named_host_function_with_data(id, name, value));
+        self.completion(result)
+    }
+
     /// Create a native-backed ordinary constructor. Primitive completions return
     /// the allocated receiver; object completions replace it, like JavaScript functions.
     pub fn host_constructor(&mut self, id: HostFunctionId) -> Result<RootId, RootedError> {
