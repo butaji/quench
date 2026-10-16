@@ -22,8 +22,6 @@ const STDOUT_FD: i32 = 1;
 const STDERR_FD: i32 = 2;
 static HRTIME_ORIGIN: OnceLock<Instant> = OnceLock::new();
 const MAX_SAFE_EXIT_CODE: f64 = 9_007_199_254_740_991.0;
-const HOST_WARNING_STACK_OPTION: &str = "\0quench:process-warning-stack";
-const HOST_WARNING_ID_OPTION: &str = "\0quench:process-warning-id";
 const UNHANDLED_REJECTION_CLI_GUIDANCE: &str = "To terminate the node process on unhandled promise rejection, use the CLI flag `--unhandled-rejections=strict` (see https://nodejs.org/api/cli.html#cli_unhandled_rejections_mode).";
 
 pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
@@ -81,14 +79,6 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         context.define_data_property_rooted(function, key, name, false, false, true)?;
         install(context, process, "getgroups", function)?;
     }
-    let error_instance = context.evaluate_script_rooted(
-        "((Error) => value => value instanceof Error)(Error)",
-        "node:process/warning-instance.js",
-    )?;
-    let emit_warning = context.host_constructor_named_with_data(
-        crate::host::shared_vm::operation("processEmitWarning"), "emitWarning", error_instance,
-    )?;
-    install(context, process, "emitWarning", emit_warning)?;
     #[cfg(unix)]
     for (name, operation) in [
         ("setuid", "processSetuid"),
@@ -2641,8 +2631,7 @@ fn dispatch_promise_rejection(
                     program,
                     "PromiseRejectionHandledWarning",
                     &message,
-                    None,
-                    Some(id),
+                    WarningPayload::Error { stack: None, id: Some(id) },
                 )?;
             }
             Ok(())
@@ -2927,8 +2916,7 @@ fn schedule_unhandled_rejection_warnings_with_message(
         program,
         "UnhandledPromiseRejectionWarning",
         message,
-        stack,
-        None,
+        WarningPayload::Message,
     )?;
     schedule_unhandled_rejection_note(runtime, program, id, stack)
 }
@@ -2947,9 +2935,13 @@ fn schedule_unhandled_rejection_note(
         program,
         "UnhandledPromiseRejectionWarning",
         &message,
-        stack,
-        None,
+        WarningPayload::Error { stack, id: None },
     )
+}
+
+enum WarningPayload<'a> {
+    Message,
+    Error { stack: Option<&'a str>, id: Option<u64> },
 }
 
 fn schedule_rejection_warning(
@@ -2957,89 +2949,42 @@ fn schedule_rejection_warning(
     program: &quench_runtime::ResidualProgram,
     name: &str,
     message: &str,
-    stack: Option<&str>,
-    warning_id: Option<u64>,
+    payload_kind: WarningPayload<'_>,
 ) -> Result<(), String> {
-    let Some(process) = shared_process_root(runtime) else {
-        return Ok(());
-    };
+    let Some(process) = shared_process_root(runtime) else { return Ok(()); };
     let emit_warning = get_rooted_property(runtime, program, process, "emitWarning")?;
-    let message = runtime.string_rooted(message);
-    let options = match runtime.object_rooted() {
-        Ok(options) => options,
-        Err(error) => {
-            runtime.release_root(emit_warning);
-            runtime.release_root(message);
-            return Err(rooted_error_message(runtime, program, error));
-        }
-    };
-    let type_key = runtime.string_rooted("type");
-    let type_value = runtime.string_rooted(name);
-    let stack_key = runtime.string_rooted(HOST_WARNING_STACK_OPTION);
-    let stack_value = stack.map(|stack| runtime.string_rooted(stack));
-    let id_key = runtime.string_rooted(HOST_WARNING_ID_OPTION);
-    let id_value = warning_id.map(|id| runtime.root(Value::number(id as f64)));
-    let set_type = runtime.set_property_rooted(options, type_key, type_value, options);
-    runtime.release_root(type_key);
-    runtime.release_root(type_value);
-    let set_stack = stack_value.map(|stack| {
-        let result = runtime.set_property_rooted(options, stack_key, stack, options);
-        runtime.release_root(stack);
-        result
-    });
-    runtime.release_root(stack_key);
-    let set_id = id_value.map(|id| {
-        let result = runtime.set_property_rooted(options, id_key, id, options);
-        runtime.release_root(id);
-        result
-    });
-    runtime.release_root(id_key);
-    if let Some(set_stack) = set_stack {
-        match set_stack {
-            Ok(true) => {}
-            Ok(false) => {
-                runtime.release_root(emit_warning);
-                runtime.release_root(message);
-                runtime.release_root(options);
-                return Err("cannot set process.emitWarning stack".into());
+    let mut roots = vec![emit_warning];
+    let result = (|| {
+        let object_warning = matches!(payload_kind, WarningPayload::Error { .. });
+        let payload = if let WarningPayload::Error { stack, id } = payload_kind {
+            let warning = runtime.error_rooted(message)
+                .map_err(|error| rooted_error_message(runtime, program, error))?;
+            roots.push(warning);
+            set_rooted_text_property(runtime, program, warning, "name", name)?;
+            if let Some(stack) = stack {
+                set_rooted_text_property(runtime, program, warning, "stack", stack)?;
             }
-            Err(error) => {
-                runtime.release_root(emit_warning);
-                runtime.release_root(message);
-                runtime.release_root(options);
-                return Err(rooted_error_message(runtime, program, error));
+            if let Some(id) = id {
+                set_shared_property(runtime, program, warning, "id", Value::number(id as f64))?;
             }
-        }
-    }
-    if !matches!(set_type, Ok(true)) {
-        runtime.release_root(emit_warning);
-        runtime.release_root(message);
-        runtime.release_root(options);
-        return match set_type {
-            Ok(false) => Err("cannot set process.emitWarning type".into()),
-            Err(error) => Err(rooted_error_message(runtime, program, error)),
-            Ok(true) => unreachable!(),
+            warning
+        } else {
+            let message = runtime.string_rooted(message);
+            roots.push(message);
+            message
         };
-    }
-    if !matches!(set_id, None | Some(Ok(true))) {
-        runtime.release_root(emit_warning);
-        runtime.release_root(message);
-        runtime.release_root(options);
-        return match set_id.expect("checked present") {
-            Ok(false) => Err("cannot set process.emitWarning id".into()),
-            Err(error) => Err(rooted_error_message(runtime, program, error)),
-            Ok(true) => unreachable!(),
+        let args = if object_warning { vec![payload] } else {
+            let name = runtime.string_rooted(name);
+            roots.push(name);
+            vec![payload, name]
         };
-    }
-    let result = runtime.call_rooted(emit_warning, process, &[message, options]);
-    runtime.release_root(emit_warning);
-    runtime.release_root(message);
-    runtime.release_root(options);
+        let result = runtime.call_rooted(emit_warning, process, &args)
+            .map_err(|error| rooted_error_message(runtime, program, error))?;
+        runtime.release_root(result);
+        Ok(())
+    })();
+    for root in roots { runtime.release_root(root); }
     result
-        .map(|result| {
-            runtime.release_root(result);
-        })
-        .map_err(|error| rooted_error_message(runtime, program, error))
 }
 
 fn cleanup_environment(
@@ -3159,198 +3104,6 @@ pub(crate) fn next_tick(
     let undefined = context.undefined();
     super::shared_event_loop::queue_next_tick(context, callback, undefined, &args[1..])?;
     Ok(context.undefined())
-}
-
-pub(crate) fn emit_warning(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let undefined = context.undefined();
-    let payload = args.first().copied().unwrap_or(undefined);
-    let options = args.get(1).copied().unwrap_or(undefined);
-    let mut kind = options;
-    let mut code = args.get(2).copied().unwrap_or(undefined);
-    let mut detail = None;
-    let mut host_stack = None;
-    let mut rejection_id = None;
-    let process = context.host_mut().shared_state().borrow().process_module
-        .ok_or_else(|| RootedError::host("process is not initialized"))?;
-    let no_deprecation_key = context.string_rooted("noDeprecation");
-    let no_deprecation = context.get_property_rooted(process, no_deprecation_key)?;
-    if context.truthy_rooted(no_deprecation)?
-        && context.string_text(kind)?.as_deref() == Some("DeprecationWarning")
-    {
-        return Ok(undefined);
-    }
-    if context.is_object_rooted(options)?
-        && !context.is_array_rooted(options)?
-        && !context.is_callable_rooted(options)?
-    {
-        // Keep the upstream property access order, including the ignored stack
-        // constructor option. Host stack/id options are private rejection plumbing.
-        let ctor_key = context.string_rooted("ctor");
-        context.get_property_rooted(options, ctor_key)?;
-        let code_key = context.string_rooted("code");
-        code = context.get_property_rooted(options, code_key)?;
-        let detail_key = context.string_rooted("detail");
-        let detail_value = context.get_property_rooted(options, detail_key)?;
-        if context.string_text(detail_value)?.is_some() {
-            // Upstream reads the detail getter again after checking its type.
-            let detail_value = context.get_property_rooted(options, detail_key)?;
-            detail = Some(detail_value);
-        }
-        let kind_key = context.string_rooted("type");
-        kind = context.get_property_rooted(options, kind_key)?;
-        if !context.truthy_rooted(kind)? {
-            kind = context.string_rooted("Warning");
-        }
-        host_stack = string_property(context, options, HOST_WARNING_STACK_OPTION)?;
-        rejection_id = number_property(context, options, HOST_WARNING_ID_OPTION)?
-            .filter(|id| id.is_finite() && *id >= 1.0 && id.fract() == 0.0);
-    } else if context.is_callable_rooted(options)? {
-        kind = context.string_rooted("Warning");
-        code = undefined;
-    }
-    if !context
-        .rooted_value(kind)
-        .is_some_and(|value| value.is_undefined())
-        && context.string_text(kind)?.is_none()
-    {
-        return Err(super::util_shared_vm::argument_type_error(
-            context, kind, "type", "string",
-        )?);
-    }
-    if context.is_callable_rooted(code)? {
-        code = undefined;
-    } else if !context
-        .rooted_value(code)
-        .is_some_and(|value| value.is_undefined())
-        && context.string_text(code)?.is_none()
-    {
-        return Err(super::util_shared_vm::argument_type_error(
-            context, code, "code", "string",
-        )?);
-    }
-    let warning = if let Some(message) = context.string_text(payload)? {
-        let warning = context.error_rooted(&message)?;
-        let name = context
-            .string_text(kind)?
-            .filter(|name| !name.is_empty())
-            .unwrap_or_else(|| "Warning".into());
-        let name = context.string_rooted(&name);
-        install(context, warning, "name", name)?;
-        if !context
-            .rooted_value(code)
-            .is_some_and(|value| value.is_undefined())
-        {
-            install(context, warning, "code", code)?;
-        }
-        if let Some(detail) = detail {
-            install(context, warning, "detail", detail)?;
-        }
-        if let Some(stack) = host_stack {
-            let stack = context.string_rooted(&stack);
-            install(context, warning, "stack", stack)?;
-        }
-        if let Some(id) = rejection_id {
-            let id = context.number(id);
-            install(context, warning, "id", id)?;
-        }
-        warning
-    } else {
-        // The syntax bridge performs ordinary instanceof, including public
-        // Symbol.hasInstance and Error prototype changes; policy stays native.
-        let check = context.host_function_data()?;
-        let result = context.call_rooted(check, undefined, &[payload])?;
-        if !context.truthy_rooted(result)? {
-            return Err(super::util_shared_vm::argument_type_error_with_expected(
-                context,
-                payload,
-                "warning",
-                "of type string or an instance of Error",
-            )?);
-        }
-        payload
-    };
-    if string_property(context, warning, "name")?.as_deref() == Some("DeprecationWarning") {
-        let no_deprecation = context.get_property_rooted(process, no_deprecation_key)?;
-        if context.truthy_rooted(no_deprecation)? {
-            return Ok(undefined);
-        }
-        let throw_key = context.string_rooted("throwDeprecation");
-        let should_throw = context.get_property_rooted(process, throw_key)?;
-        if context.truthy_rooted(should_throw)? {
-            let callback =
-                context.host_function(crate::host::shared_vm::operation("processThrowWarning"))?;
-            super::shared_event_loop::queue_next_tick(context, callback, undefined, &[warning])?;
-            return Ok(undefined);
-        }
-    }
-    queue_warning(context, warning)?;
-    Ok(undefined)
-}
-
-pub(crate) fn throw_warning(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let warning = args.first().copied().unwrap_or_else(|| context.undefined());
-    Err(context.throw(warning))
-}
-
-fn queue_warning(
-    context: &mut NativeContext<'_, NodeHost>,
-    warning: RootId,
-) -> Result<(), RootedError> {
-    let callback =
-        context.host_function(crate::host::shared_vm::operation("processDispatchWarning"))?;
-    let undefined = context.undefined();
-    crate::modules::shared_event_loop::queue_next_tick(context, callback, undefined, &[warning])
-}
-
-pub(crate) fn dispatch_warning(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let Some(warning) = args.first().copied() else { return Ok(context.undefined()); };
-    let process = context.host_mut().shared_state().borrow().process_module
-        .ok_or_else(|| RootedError::host("process is not initialized"))?;
-    let event = context.string_rooted("warning");
-    let emit_key = context.string_rooted("emit");
-    let operation = context.get_property_rooted(process, emit_key)?;
-    let emitted = context.call_rooted(operation, process, &[event, warning]);
-    context.release_root(event);
-    let emitted = emitted?;
-    context.release_root(emitted);
-    Ok(context.undefined())
-}
-
-fn string_property(
-    context: &mut NativeContext<'_, NodeHost>,
-    object: RootId,
-    name: &str,
-) -> Result<Option<String>, RootedError> {
-    let key = context.string_rooted(name);
-    let value = context.get_property_rooted(object, key)?;
-    context.string_text(value)
-}
-
-fn number_property(
-    context: &mut NativeContext<'_, NodeHost>,
-    object: RootId,
-    name: &str,
-) -> Result<Option<f64>, RootedError> {
-    let key = context.string_rooted(name);
-    let value = context.get_property_rooted(object, key)?;
-    let number = context
-        .rooted_value(value)
-        .and_then(|value| value.as_number());
-    context.release_root(value);
-    context.release_root(key);
-    Ok(number)
 }
 
 fn invalid_callback(
@@ -3620,17 +3373,66 @@ pub(crate) fn initialize_warning_policy(context: &mut NativeContext<'_, NodeHost
             context.define_data_property_rooted(process, key, yes, false, true, true)?;
         }
     }
+    let exposed = options.enabled("--expose-internals");
+    if exposed {
+        let emit_warning = warning_export(context, "emitWarning")?;
+        install(context, process, "emitWarning", emit_warning)?;
+    } else {
+        // Node's warning module is loaded on the first read of `process.emitWarning`.
+        let initializer = context.host_function(crate::host::shared_vm::operation("processEmitWarningInitialize"))?;
+        context.define_lazy_data_properties_rooted(process, &["emitWarning"], true, initializer)?;
+    }
     let env = get(context, process, "env")?;
     let disabled = get(context, env, "NODE_NO_WARNINGS")?;
     if options.enabled("--warnings") && context.string_text(disabled)?.as_deref() != Some("1") {
-        let console = crate::host::shared_vm::commonjs::node_library_module(context, "internal/process/pre_execution.js", "internal/console/global.js")?;
-        let initialize = crate::host::shared_vm::commonjs::node_library_export(context, "internal/process/pre_execution.js", "internal/console/constructor.js", "initializeGlobalConsole")?;
-        let undefined = context.undefined();
-        context.call_rooted(initialize, undefined, &[console])?;
-        let callback = crate::host::shared_vm::commonjs::node_library_export(context, "internal/process/pre_execution.js", "internal/process/warning.js", "onWarning")?;
+        // Node's listener, or, unless a script can reach Node's own to compare, a listener of
+        // the same name and length that sets up the console and Node's listener on its first
+        // warning: both cost more than the rest of the bootstrap, and most runs never warn.
+        let callback = if exposed {
+            warning_listener(context, process, &[])?
+        } else {
+            let factory = context.evaluate_script_rooted(
+                "(load) => function onWarning(warning) { return load()(warning); }",
+                "node:internal/process/warning-listener.js",
+            )?;
+            let load = context.host_function(crate::host::shared_vm::operation("processWarningListener"))?;
+            let undefined = context.undefined();
+            context.call_rooted(factory, undefined, &[load])?
+        };
         let on = get(context, process, "on")?;
         let event = context.string_rooted("warning");
         context.call_rooted(on, process, &[event, callback])?;
     }
     Ok(())
 }
+
+fn warning_export(context: &mut NativeContext<'_, NodeHost>, name: &str) -> Result<RootId, RootedError> {
+    crate::host::shared_vm::commonjs::node_library_export(context, "internal/process/pre_execution.js", "internal/process/warning.js", name)
+}
+
+/// Defines `process.emitWarning` as Node's.
+pub(crate) fn initialize_emit_warning(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let process = context.host_mut().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))?;
+    let emit_warning = warning_export(context, "emitWarning")?;
+    let key = context.string_rooted("emitWarning");
+    context.define_data_property_rooted(process, key, emit_warning, true, true, true)?;
+    Ok(context.undefined())
+}
+
+/// Node's `onWarning`, once its global console is initialized.
+pub(crate) fn warning_listener(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let state = context.host_mut().shared_state();
+    if let Some(listener) = state.borrow().builtin_cache.get(WARNING_LISTENER).copied() {
+        return Ok(listener);
+    }
+    let console = crate::host::shared_vm::commonjs::node_library_module(context, "internal/process/pre_execution.js", "internal/console/global.js")?;
+    let initialize = crate::host::shared_vm::commonjs::node_library_export(context, "internal/process/pre_execution.js", "internal/console/constructor.js", "initializeGlobalConsole")?;
+    let undefined = context.undefined();
+    context.call_rooted(initialize, undefined, &[console])?;
+    let listener = warning_export(context, "onWarning")?;
+    let listener = context.retain(listener)?;
+    state.borrow_mut().builtin_cache.insert(WARNING_LISTENER.into(), listener);
+    Ok(listener)
+}
+
+const WARNING_LISTENER: &str = "\0node/process/warningListener";

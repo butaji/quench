@@ -831,6 +831,9 @@ impl<H: Host> Vm<H> {
             };
             return self.call_value(p, getter, proxy, &[]);
         }
-        self.get_property(p, home, atom)
+        // Methods live on the home object, which does not carry its own brand.
+        self.own_property(home, atom).ok_or_else(|| {
+            self.type_error(p, "private member is not present on this object".into())
+        })
     }
 }
