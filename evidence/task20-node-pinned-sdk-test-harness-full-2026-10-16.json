@@ -1,0 +1,115 @@
+{
+  "scope": "Complete unchanged pinned parallel inventory after original SDK test harness, real Promise lifecycle, native Contextify and filesystem classifier",
+  "source_commit": "dd981010f2e962bba2fe699299f47a71d8c7f4c7",
+  "release": "v27.0.0-nightly20260819c79868f102",
+  "fixture_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+  "counts": {
+    "timeout": 95,
+    "fail": 2083,
+    "pass": 1871,
+    "skip": 678
+  },
+  "total": 4727,
+  "inventory_hash": "1e51ca4121020d14",
+  "baseline": {
+    "counts": {
+      "timeout": 83,
+      "fail": 2129,
+      "pass": 1837,
+      "skip": 678
+    },
+    "total": 4727,
+    "inventory_hash": "1e51ca4121020d14"
+  },
+  "gained": [
+    "test-assert-checktag.js",
+    "test-async-hooks-disable-during-promise.js",
+    "test-async-hooks-execution-async-resource-await.js",
+    "test-async-hooks-promise-enable-disable.js",
+    "test-async-hooks-promise-triggerid.js",
+    "test-async-hooks-promise.js",
+    "test-async-wrap-promise-after-enabled.js",
+    "test-fs-readdir-recursive.js",
+    "test-fs-readdir-types-symlinks.js",
+    "test-mock-timers-abortsignal-timeout.js",
+    "test-permission-fs-internal-module-stat.js",
+    "test-process-uncaught-exception-monitor.js",
+    "test-runner-aftereach-runtime-skip.js",
+    "test-runner-assert.js",
+    "test-runner-coverage-default-exclusion.mjs",
+    "test-runner-coverage-isolation-none-api.mjs",
+    "test-runner-custom-assertions.js",
+    "test-runner-filter-warning.js",
+    "test-runner-force-exit-flush.js",
+    "test-runner-misc.js",
+    "test-runner-mock-timers-date.js",
+    "test-runner-mock-timers-scheduler.js",
+    "test-runner-mock-timers.js",
+    "test-runner-option-precedence.js",
+    "test-runner-option-validation.js",
+    "test-runner-root-after-with-refed-handles.js",
+    "test-runner-root-duration.js",
+    "test-runner-subtest-after-hook.js",
+    "test-runner-tags-inheritance.mjs",
+    "test-runner-test-filepath.js",
+    "test-runner-test-fullname.js",
+    "test-runner-todo-suite-hook-failure.js",
+    "test-runner-typechecking.js",
+    "test-runner-wait-for.js",
+    "test-runner-xfail.js",
+    "test-shadow-realm-gc-module.js",
+    "test-tls-client-allow-partial-trust-chain.js"
+  ],
+  "lost": [
+    "test-child-process-bad-stdio.js",
+    "test-fs-glob.mjs",
+    "test-runner-global-setup-watch-mode.mjs"
+  ],
+  "skip_changes": {},
+  "memory_events_delta": {
+    "low": 0,
+    "high": 0,
+    "max": 0,
+    "oom": 0,
+    "oom_kill": 0,
+    "oom_group_kill": 0
+  },
+  "elapsed_seconds": 1693.2442550879787,
+  "raw": [
+    {
+      "path": "work/full-sdk-harness-pinned/results.json",
+      "bytes": 28140815,
+      "sha256": "6164344daadbd6dde18c49e948461c3f00479451a954069a69ef051db4669ddf"
+    },
+    {
+      "path": "work/full-sdk-harness-pinned/runner.log",
+      "bytes": 391315,
+      "sha256": "398cc182ad207db7d70fc77330bb6870d3a898d81fdf8257de61d8aa074e1ce3"
+    },
+    {
+      "path": "work/full-sdk-harness-pinned/receipt-before.json",
+      "bytes": 1109,
+      "sha256": "da867ba403a7c7d9b00a8c0ab84131cdbcb2c4fb99b8c29b9d4b9cf5bfc3d06b"
+    },
+    {
+      "path": "work/full-sdk-harness-pinned/receipt.json",
+      "bytes": 1753,
+      "sha256": "3767b162b1e1b8528dc534365954c80447bda543b57d0a6d5d243de67c04c125"
+    },
+    {
+      "path": "work/full-sdk-harness-pinned/summary.json",
+      "bytes": 150,
+      "sha256": "fed7af93fa9b019e8df7890266b9f90ac3af8677b080e5d3a0b56520700feec1"
+    },
+    {
+      "path": "work/full-sdk-harness-pinned/comparison.json",
+      "bytes": 1696,
+      "sha256": "2877eb7fd096220e032a84e77a03758ba4ecb3ac3095ec90993bb1196bd8a6c6"
+    }
+  ],
+  "limitations": [
+    "Goal remains open; all nonpass outcomes retained. No selected-case sums, skips/deadline/budget changes or speed claim.",
+    "This frozen dd981 run includes the normally merged7e SDK report/emitter state, native Contextify/MockTracker/test harness/Promise hooks, native filesystem classifier and actual SDK cache-type metadata. Later sharedd9 warning/prototype-index changes and native timer/tick callback-scope work are excluded.",
+    "Native compilation overlapped part of this run. Actual memory.events deltas are retained below; concurrent resource pressure is not subtracted from outcomes. All full outcomes retained, no speed claim or adjusted totals."
+  ]
+}

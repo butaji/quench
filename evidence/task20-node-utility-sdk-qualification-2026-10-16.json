@@ -1,0 +1,355 @@
+{
+  "scope": "Original SDK utility exports over genuine native lazy-property, timers, promise and libuv primitives; strict SDK wrappers",
+  "source_commit": "137e4d2a0352217f17d1409d9985b6bff0b7d60d",
+  "host": "Linux-6.18.44-x86_64-with-glibc2.41",
+  "node_latest_stable": "v26.12.0",
+  "tracked_crate_files": 695,
+  "checks": {
+    "core": 671,
+    "node_api": 389,
+    "shared": 7,
+    "framework": 43,
+    "workspace_all_targets": true,
+    "differentials": 5,
+    "framework_scenarios": 3,
+    "fixed_work_valid": 8,
+    "fixed_work_clean": 0
+  },
+  "utility_family": {
+    "inventory_hash": "f035af0889138a8c",
+    "total": 36,
+    "before": {
+      "pass": 18,
+      "fail": 16,
+      "skip": 2
+    },
+    "candidate": {
+      "pass": 25,
+      "fail": 9,
+      "skip": 2
+    },
+    "gained": [
+      "test-util-convert-signal-to-exit-code.mjs",
+      "test-util-debounce.js",
+      "test-util-exception-with-host-port.js",
+      "test-util-isPartialDeepStrictEqual.js",
+      "test-util-promisify.js",
+      "test-util-throttle.js",
+      "test-util.js"
+    ],
+    "lost": [],
+    "skip_changes": []
+  },
+  "limitations": [
+    "Goal remains open. Selected-family gains are not added to full audit totals. Latest completed full7f stable1793/5015, pinned1821/4727. New frozen source full inventories are separate.",
+    "Initial full389 source301 run388pass/1fail exposed displaced SDK strict directives. Exact original tests pass after restoring strict SDK wrappers; raw failure retained.",
+    "Initial focused attempts exposed missing native lazy properties and missing private loader timers forwarding. Actual failed observations retained; no assertions/fixtures/deadlines changed.",
+    "Remaining abort-transfer, weak-event and signal-tracing utility policies remain absent until genuine dependencies exist. Existing callbackify/parseArgs/style/stripVT/parseEnv adapters retained.",
+    "All-eight exact software instruction screen is a separate artifact; instrumented wall-time/RSS are not production claims.",
+    "Newer shared HTTP/net lifecycle work fetched after frozen source was compiled is excluded and requires subsequent normal merge and qualification.",
+    "Runner runtime_commit metadata observes live checkout; immutable bundle commit and per-file/binary hashes identify actual compared source.",
+    "Functional qualification only: seven of eight software instruction screens pass; RayTrace marginal +2.34865% exceeds the1% screen. Regression retained; no isolated source attribution or speed claim."
+  ],
+  "raw": [
+    {
+      "path": "work/util-sdk-strict-policy/all-api.log",
+      "bytes": 32141,
+      "sha256": "3657053593c46ca47bc3e27c14c0dd64db1723b715f13384c58f42d1bf8f2b97"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/buffer-concat-oracle.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/buffer-concat-oracle.log",
+      "bytes": 945,
+      "sha256": "6952b631101e34ed06edc5159ea6b526493f0567d64f94710f686417c70d0b7d"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/buffer-latin1-oracle.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/buffer-latin1-oracle.log",
+      "bytes": 1863,
+      "sha256": "09939bcf717a24a1d1193e5d2dbf4d0d6b23ecbde28bc8e551a3afaef73c562a"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/buffer-oracle.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/buffer-oracle.log",
+      "bytes": 4169,
+      "sha256": "f9d0f3418b5812dbcd7e927283a12ea6ff35b6b736c9073a3243ad20342338ce"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/buffer-poison-oracle.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/buffer-poison-oracle.log",
+      "bytes": 476,
+      "sha256": "13189736a66e7b1615619955feaa462064b24ed73d07b84b76bd4d5c21fd39e8"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/cache-config.json",
+      "bytes": 287,
+      "sha256": "d4a3d814d12ff550c3fe408b0e6606541386d55ca07d4aad8692fa0172b39707"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/cache-supervisor.log",
+      "bytes": 280,
+      "sha256": "ad13adf6cbf53e64ee3053032761c8f0c135aad11befd4158395b3b0dbf74a22"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/completed-core-cache-reclamation.json",
+      "bytes": 290,
+      "sha256": "6c8940e0335650ab46b1886c6d144d39f9b8b49ad010b30c5798494ffeeb53f0"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/core.log",
+      "bytes": 59197,
+      "sha256": "27c1478eb9b511eff6517a75e1d68d67b5170fa29f890dab400f246a886b130b"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/extras-config.json",
+      "bytes": 274,
+      "sha256": "8d71d1c6144a8bc197ab5c2bc70078501b7827c2d6b994d9225fc87962aadb87"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/extras-supervisor.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/extras.sh",
+      "bytes": 2719,
+      "sha256": "f0fa093125311a104be20553d3fe2bdf78d5ae3130dbeb80b2824f41644fcdcf"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/fixed-work.json",
+      "bytes": 153490,
+      "sha256": "9a94acae5f2af3067ed37b75d37617a6062f4938f7ed4ab576ddf394907d48a2"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/fixed-work.log",
+      "bytes": 1131,
+      "sha256": "6b7c80c1c62d88193fd324e02777fdf62cec0b323a1ad58e335376f2d0264c02"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/framework-scenarios.json",
+      "bytes": 1532,
+      "sha256": "430b01db7c0b95dabde93c79e4d6e37720d49c1a3e13c7d3491f1ec7b4998e8f"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/framework.log",
+      "bytes": 3798,
+      "sha256": "b41881f94821125815bc87efbbbd7d26b13fd072686394014795864fa55f2ae8"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/full-checkout.log",
+      "bytes": 45,
+      "sha256": "b65da47fb84a598c9f079bd1f31401382bd3764aa5e7fd96ad468cd887b18ba7"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/full-config.json",
+      "bytes": 271,
+      "sha256": "6c69389c056b799408e106a3c7af9b0f9bc3d29640994e68426537a97feb069e"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/full-supervisor.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/full.py",
+      "bytes": 543,
+      "sha256": "81a7412551eeead9dc5acd9512b018477d7b00b6782e299d698e6a9ed7f55a5a"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/gates-config.json",
+      "bytes": 271,
+      "sha256": "6a482147a0b158af4de6e715d50d63c0550202963d7b834c8374eda45e6492a3"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/gates-supervisor.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/gates.sh",
+      "bytes": 818,
+      "sha256": "3b979ca561a74becc507ca0786ba0033392d37a2873267b19642e045bc3e187f"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/incoming-merge-preview.txt",
+      "bytes": 914,
+      "sha256": "a344a3470af6935a03dad931adc99eb094cff4aaddfcdc88bc0ffb0fc8502de4"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/instruction-counts.log",
+      "bytes": 2950,
+      "sha256": "9579b2920dfd5d064463e508d4c4d7fe668b4c5f41db663c56fbefeab34daa02"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/main-source-post-gates-integrity.json",
+      "bytes": 107,
+      "sha256": "0a4e1ede9d1abbe56e977b30d670d306f27211b9653c907786414005a4a0163a"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/qualified-checkout.log",
+      "bytes": 61,
+      "sha256": "e1f25cf2e987503f322166e1d69175e74af1ffc57c92bd92f9fe7c8e58911c46"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/qualified-sparse-reduction.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/reclaim-core-cache.py",
+      "bytes": 1022,
+      "sha256": "e92fd1b57434c76f59bd43a69021bfb3e6b27797425a3aad1117f64ad28e2918"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/shadow-node.log",
+      "bytes": 195,
+      "sha256": "5bb1c6f6a341403cc0fb9a357f431916fbbeb47d4b36b6b0a8179f599a2f7a1f"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/shadow-quench.log",
+      "bytes": 195,
+      "sha256": "5bb1c6f6a341403cc0fb9a357f431916fbbeb47d4b36b6b0a8179f599a2f7a1f"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/shadow.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/shared.log",
+      "bytes": 882,
+      "sha256": "d99c6a9f5706b6646ed1147f63f0d8c50f9029f133b4e820707b13d462b1c48b"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/stable-util-candidate.json",
+      "bytes": 36855,
+      "sha256": "f0e1f27fe02e8b72531889123faf063f14933bc7223c557d787a93f20718e141"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/stable-util-candidate.log",
+      "bytes": 3627,
+      "sha256": "870ec9acf670288b77e499d46bbf822f2f4c80082edfa2528ef31934c15a155c"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/stale-check-metadata-reclamation.json",
+      "bytes": 54184,
+      "sha256": "d2f1a090a62ea5f3e4f2246649facd10da4c052461f7695a6d3e2120ecc0a7cb"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/stale-prebuild-check-metadata-reclamation.json",
+      "bytes": 111635,
+      "sha256": "ac3b96244958cf2d2c3cdfc0cda84638fd2082a6130fc67ba57eab4742a23041"
+    },
+    {
+      "path": "work/util-sdk-strict-policy/workspace.log",
+      "bytes": 7260,
+      "sha256": "6f5a172e437072791086bd2233394107bca11570ee6ae5cd00c508f398d0f8a4"
+    },
+    {
+      "path": "work/util-sdk-strict-bin/source-commit.txt",
+      "bytes": 41,
+      "sha256": "307684af4c0c8248fdc77d3e2028e44556f1a7314f2ef6d3048eb83b4857480c"
+    },
+    {
+      "path": "work/util-sdk-strict-bin/source-sha256.json",
+      "bytes": 85761,
+      "sha256": "e2b811af5ade2a5e2ca5eac528591a805786c663ea08258af48ba4db81efa499"
+    },
+    {
+      "path": "work/util-sdk-strict-bin/sha256.txt",
+      "bytes": 235,
+      "sha256": "c5e7dc51c3197543d4afec0fc68810f814d3eefd0bf3fc4d3425a5b8db6f819c"
+    },
+    {
+      "path": "work/util-sdk-policy/stable-util-before.json",
+      "bytes": 32638,
+      "sha256": "ad73e37321038db3cd9dbf66f257a9144e80659704bc0a3b93deb132fc37d616"
+    },
+    {
+      "path": "work/util-sdk-policy/stable-util-matched-receipt.json",
+      "bytes": 1461,
+      "sha256": "17f9f58783c67504756137ba07c0c899027b808565f362ff4323378786e912e4"
+    },
+    {
+      "path": "work/util-sdk-policy/all-api.log",
+      "bytes": 32954,
+      "sha256": "51fe7e0376d494f284adaad4a3a413267f1d60011e4a7d4e45e21a7bceef7076"
+    },
+    {
+      "path": "work/util-sdk-policy/strict-extend-focused.log",
+      "bytes": 440,
+      "sha256": "79a9831ee679b8fb6ad88ef00a7cdec7b5aecd3e3badfb1df0acf26095e2c31b"
+    },
+    {
+      "path": "work/util-sdk-policy/strict-projection-focused.log",
+      "bytes": 366,
+      "sha256": "127a402aedadb6c39cf02613353015292dbf5cfecfb188619a5ff0caa47f3798"
+    },
+    {
+      "path": "work/util-sdk-policy/focused.log",
+      "bytes": 1067,
+      "sha256": "784e336496c070b23e92fe78b9cf2f474d1eedc297c4fa13d5ea311fb65c8f8b"
+    },
+    {
+      "path": "work/util-sdk-policy/lazy-focused.log",
+      "bytes": 1059,
+      "sha256": "6eb1281e423c3cd272ef502b055ecf755b8a139f05721326401ac0580c14969c"
+    }
+  ],
+  "performance_screen": {
+    "all_eight_pass": false,
+    "passed_fixtures": 7,
+    "regressions": [
+      {
+        "fixture": "quench-bench/js-engine-benchmark/v8-v7/raytrace.js",
+        "metrics": {
+          "work": {
+            "aa0": 9854204231,
+            "aa1": 9854204319,
+            "observed_aa_relative_band": 8.930198515996234e-09,
+            "before": 9854204274,
+            "candidate": 8348097745,
+            "relative_delta": -0.1528389799036147,
+            "within_one_percent_plus_observed_band": true
+          },
+          "setup": {
+            "aa0": 1812374607,
+            "aa1": 1812374841,
+            "observed_aa_relative_band": 1.2911238057309638e-07,
+            "before": 1812374668,
+            "candidate": 117393558,
+            "relative_delta": -0.9352266614223058,
+            "within_one_percent_plus_observed_band": true
+          },
+          "marginal": {
+            "aa0": 8041829624,
+            "aa1": 8041829478,
+            "observed_aa_relative_band": 1.815507284746731e-08,
+            "before": 8041829606,
+            "candidate": 8230704187,
+            "relative_delta": 0.023486518647333796,
+            "within_one_percent_plus_observed_band": false
+          }
+        },
+        "passes_instruction_screen": false
+      }
+    ],
+    "artifact": "evidence/task20-node-utility-sdk-software-instruction-screen-2026-10-16.json"
+  }
+}

@@ -1,0 +1,13 @@
+
+running 8 tests
+test event_listener_warnings_preserve_error_identity_types_and_once_delivery ... ok
+test native_buffer_constructor_preserves_calls_species_original_methods_and_warning_identity ... ok
+test native_buffer_of_avoids_legacy_warnings_and_preserves_original_coercions ... ok
+test native_timer_duration_coercion_warning_policy_and_overflow_delay_match_node ... ok
+test native_tls_context_engine_errors_and_shared_crypto_warning_match_node ... ok
+test process_warning_policy_preserves_default_listener_removal_suppression_and_startup_descriptors ... ok
+test process_warning_uses_sdk_identity_and_only_public_option_getters ... ok
+test warning_options_validation_and_deprecation_delivery_match_node ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 399 filtered out; finished in 5.40s
+

@@ -4,6 +4,7 @@
 //! data and host state that those adapters consume.
 
 pub(crate) mod assert_shared_vm;
+pub(crate) mod napi;
 pub(crate) mod base64_shared_vm;
 pub(crate) mod async_hook_registry_shared_vm;
 pub(crate) mod async_hooks_shared_vm;
@@ -36,7 +37,6 @@ pub(crate) mod child_process_sync;
 pub(crate) mod clone_shared_vm;
 pub(crate) mod eval_globals_shared_vm;
 pub(crate) mod console_shared_vm;
-pub(crate) mod console_source;
 pub(crate) mod crypto_engine_shared_vm;
 pub(crate) mod crypto_error_shared_vm;
 pub(crate) mod crypto_sha1;
@@ -85,11 +85,14 @@ pub(crate) mod node_protocol_constants;
 pub(crate) mod os_facts;
 pub(crate) mod memory_facts;
 pub(crate) mod process_memory_shared_vm;
+#[cfg(target_os = "linux")]
+pub(crate) mod process_metrics_shared_vm;
 pub(crate) mod os_shared_vm;
 pub(crate) mod path_algorithms;
 pub(crate) mod path_shared_vm;
 pub(crate) mod perf_hooks;
 pub(crate) mod perf_timeline_query;
+pub(crate) mod process_binding_shared_vm;
 pub(crate) mod process_shared_vm;
 pub(crate) mod process_signals_state;
 pub(crate) mod process_state;
@@ -101,6 +104,7 @@ pub(crate) mod shared_event_loop;
 pub(crate) mod string_decoder_codec;
 pub(crate) mod string_decoder_shared_vm;
 pub(crate) mod test_shared_vm;
+pub(crate) mod contextify_shared_vm;
 pub(crate) mod text_decoder_codec;
 #[cfg(quench_icu)]
 pub(crate) mod text_decoder_icu;
@@ -115,7 +119,6 @@ pub(crate) mod url_legacy;
 pub(crate) mod url_shared_vm;
 pub(crate) mod url_whatwg_data;
 pub(crate) mod util_callbackify_shared_vm;
-pub(crate) mod util_extend_shared_vm;
 pub(crate) mod util_env;
 pub(crate) mod util_parse_args_shared_vm;
 pub(crate) mod util_shared_vm;
@@ -133,7 +136,6 @@ pub(crate) mod zlib_stream_shared_vm;
 pub(crate) mod trace_shared_vm;
 pub(crate) mod trace_state;
 
-pub(crate) mod console_timing_shared_vm;
 
 pub(crate) mod buffer_write_shared_vm;
 
@@ -157,3 +159,5 @@ pub(crate) mod zlib_native_codec;
 pub(crate) mod zlib_native_shared_vm;
 
 pub(crate) mod native_work;
+
+pub(crate) mod report_configuration_shared_vm;

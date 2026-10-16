@@ -19,7 +19,7 @@ pub(crate) fn config_variable_facts() -> &'static [(&'static str, ProcessFact)] 
     &[
         ("v8_enable_i18n_support", ProcessFact::Number(1.0)),
         ("node_module_version", ProcessFact::Number(127.0)),
-        ("napi_build_version", ProcessFact::String("9")),
+        ("napi_build_version", ProcessFact::String(env!("QUENCH_NODE_API_SUPPORTED_VERSION_MAX"))),
         (
             "node_builtin_shareable_builtins",
             ProcessFact::StringArray(&["deps/undici/undici.js"]),
@@ -64,7 +64,7 @@ pub(crate) fn version_facts() -> &'static [(&'static str, &'static str)] {
         ("llhttp", "9.2.1"),
         ("merve", "1.0.0"),
         ("modules", "127"),
-        ("napi", "9"),
+        ("napi", env!("QUENCH_NODE_API_SUPPORTED_VERSION_MAX")),
         ("nbytes", "1.0.0"),
         ("ncrypto", "1.0.0"),
         ("nghttp2", "1.61.0"),
@@ -394,6 +394,7 @@ struct ProcessControlCells {
 enum RequestedExit {
     Graceful(i32),
     Immediate(i32),
+    FatalExceptionHandler(i32),
 }
 
 impl ProcessControl {
@@ -437,14 +438,24 @@ impl ProcessControl {
         self.0.requested_exit.set(Some(RequestedExit::Immediate(code)));
     }
 
+    pub(crate) fn fail_fatal_exception_handler(&self) {
+        let code = super::node_protocol_constants::ExitCode::ExceptionInFatalExceptionHandler as i32;
+        self.0.exit_code.set(Some(code));
+        self.0.requested_exit.set(Some(RequestedExit::FatalExceptionHandler(code)));
+    }
+
+    pub(crate) fn fatal_exception_handler_failed(&self) -> bool {
+        matches!(self.0.requested_exit.get(), Some(RequestedExit::FatalExceptionHandler(_)))
+    }
+
     pub(crate) fn requested_exit_code(&self) -> Option<i32> {
         self.0.requested_exit.get().map(|request| match request {
-            RequestedExit::Graceful(code) | RequestedExit::Immediate(code) => code,
+            RequestedExit::Graceful(code) | RequestedExit::Immediate(code) | RequestedExit::FatalExceptionHandler(code) => code,
         })
     }
 
     pub(crate) fn exit_without_event(&self) -> bool {
-        matches!(self.0.requested_exit.get(), Some(RequestedExit::Immediate(_)))
+        matches!(self.0.requested_exit.get(), Some(RequestedExit::Immediate(_) | RequestedExit::FatalExceptionHandler(_)))
     }
 
     pub(crate) fn exit_emitting(&self) -> bool {

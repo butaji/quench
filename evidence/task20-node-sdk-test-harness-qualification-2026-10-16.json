@@ -1,0 +1,168 @@
+{
+  "scope": "Functional Node SDK test harness, real Contextify compilation and Promise async-hooks lifecycle; original pinned SDK filesystem regressions recovered in controls",
+  "source_commit": "dd981010f2e962bba2fe699299f47a71d8c7f4c7",
+  "normally_merged_shared_ancestor": "7e8676605",
+  "oracle_node": "v26.12.0 latest official stable verified2026-10-16",
+  "frozen_source_files": 725,
+  "functional": {
+    "core": {
+      "passed": 672,
+      "reused_from": "cce0f50ab",
+      "proof": "All Core/dependency sources unchanged; exact source diff and raw log SHA retained"
+    },
+    "node_api": {
+      "passed": 414,
+      "failed": 0
+    },
+    "framework": {
+      "passed": 43,
+      "failed": 0
+    },
+    "shared": {
+      "passed": 7,
+      "failed": 0
+    },
+    "workspace_all_targets": "pass",
+    "differential_bytes": {
+      "buffer-poison-oracle.diff": 0,
+      "shadow.diff": 0,
+      "buffer-concat-oracle.diff": 0,
+      "buffer-oracle.diff": 0,
+      "buffer-latin1-oracle.diff": 0
+    },
+    "framework_scenarios_byte_equal": 3
+  },
+  "implementation": [
+    "Native ContextifyScript owns actual compiled Core scripts behind weak wrapper identities; compileFunction creates real global functions. Unsupported sandbox/cache/deadline paths explicitly reject.",
+    "node:test scheduling/hooks/subtests/mock restoration use original SDK harness and MockTracker, replacing callback-only policy. Private SDK require capability follows immutable loader provenance.",
+    "Actual Promise resources have host identities before observable init; before/after/settlement and weak GC destruction notifications preserve real resources and trigger IDs. ALS snapshots keep independent store ownership.",
+    "Init can collect before an async frame exists or settle an awaited source reentrantly: closure/receiver/arguments, suspended handlers and detached reaction payloads are rooted; source state is read after init.",
+    "Repeated-string CLI defaults and cached-code-type constants derive from configured SDK declarations. No fabricated cache functions.",
+    "Private fs internalModuleStat follows real metadata/symlinks/cwd and returns native directory/file/error protocol; unchanged SDK traversal owns recursion."
+  ],
+  "original_pinned_controls": [
+    {
+      "path": "work/native-contextify/pinned-recursive-with-cache-types.json",
+      "bytes": 3781,
+      "sha256": "68164a46d52ca38d9b233c2a9c704910776867a99b9690dcc309e112a4f0c6c8"
+    },
+    {
+      "path": "work/native-contextify/pinned-symlinks-with-cache-types.json",
+      "bytes": 721,
+      "sha256": "e45d8b2ee98356a9386e8b60f65f41acb20d8cc23b71c1bfc3e03abeb7a76191"
+    }
+  ],
+  "performance": {
+    "stock_fixed_work_cases": 8,
+    "valid_rounds": 8,
+    "clean_rounds": 0,
+    "speed_claim": false,
+    "current_instruction_screen": "Not recaptured for this functional milestone",
+    "previous_retained_instruction_failure": "Source1208 RayTrace marginal+2.50950% failed existing1% screen; all32 samples valid and7/8 screens passed. Retained, no speed claim."
+  },
+  "full_inventories": {
+    "current_source": "Unchanged complete stable5015 then pinned4727 inventories running from separate immutable725-file checkout; no partial or selected-case sums",
+    "last_completed_source": "1208a19a6",
+    "last_completed_stable": {
+      "pass": 1819,
+      "skip": 638,
+      "fail": 2465,
+      "timeout": 93,
+      "total": 5015,
+      "gains": 26,
+      "lost": 0
+    },
+    "last_completed_pinned": {
+      "pass": 1837,
+      "skip": 678,
+      "fail": 2129,
+      "timeout": 83,
+      "total": 4727,
+      "gains": 19,
+      "lost": 3
+    }
+  },
+  "limitations": [
+    "All-four-thousand goal remains open; no changed fixtures, skip rules, deadlines, budgets or guest Node execution backend.",
+    "Public process.binding, full VM sandbox/cache/interrupt behavior and genuine V8 serializer/file-runner execution remain missing capabilities.",
+    "The original pinned loading failure on precursorcce is retained; adding actual SDK metadata fixes both original recursive-readdir controls, not a claim that an entire inventory is recovered.",
+    "User submodule edits and untracked user files are preserved; fixed-work report records source_dirty while the725-file frozen production manifest remains exact."
+  ],
+  "raw": [
+    {
+      "path": "work/sdk-harness/paired-build.log",
+      "bytes": 64,
+      "sha256": "e5388a3b4ffb189397d249d4c815753d32f88e1bd7426f4384000ed63cfe5080"
+    },
+    {
+      "path": "work/sdk-harness/all-api.log",
+      "bytes": 34392,
+      "sha256": "ded29b17af96d17c46694117b51789ed9e10cdaad8e1f0b3423fa72b9446d9db"
+    },
+    {
+      "path": "work/sdk-harness/framework.log",
+      "bytes": 3798,
+      "sha256": "b41881f94821125815bc87efbbbd7d26b13fd072686394014795864fa55f2ae8"
+    },
+    {
+      "path": "work/sdk-harness/shared.log",
+      "bytes": 882,
+      "sha256": "9f4a1685e0e36fc7ff06eefcdceb8b9cb1144fef8163a8d0c5a95002e5f1cda3"
+    },
+    {
+      "path": "work/sdk-harness/workspace.log",
+      "bytes": 213,
+      "sha256": "3426df47d4d94be8f42de127083f890ff4b3c6e3cce95a5ca53fbf76e777c218"
+    },
+    {
+      "path": "work/sdk-harness/core-unchanged-reuse.json",
+      "bytes": 574,
+      "sha256": "b0ffa1598af422f662cef2005abee9aaff0fb7e52b3048d0a9abee0f5335c25d"
+    },
+    {
+      "path": "work/sdk-harness/fixed-work.json",
+      "bytes": 153871,
+      "sha256": "763057bd0fa60758421dc58138e72e2ed2b1e9209a2fe21b0bddbefb5e306f04"
+    },
+    {
+      "path": "work/sdk-harness/fixed-work.log",
+      "bytes": 1120,
+      "sha256": "f8076ee203bcc1fff7d5e17c8015dea0e70c105d5f674adca89202de0f2c11d1"
+    },
+    {
+      "path": "work/sdk-harness/framework-scenarios.json",
+      "bytes": 1532,
+      "sha256": "430b01db7c0b95dabde93c79e4d6e37720d49c1a3e13c7d3491f1ec7b4998e8f"
+    },
+    {
+      "path": "work/sdk-harness/extras-supervisor.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/native-contextify/core.log",
+      "bytes": 59302,
+      "sha256": "6a16dbd27a8b58ee395d27d419b7f9bfc5d4fd20bff070b9dc9fdc2495daa52f"
+    },
+    {
+      "path": "work/native-contextify/cce-functional-qualification-held.json",
+      "bytes": 4403,
+      "sha256": "8134b3b096f9e53b884d88cc3780b6665e6eed6ffc809904d49126f526eea999"
+    },
+    {
+      "path": "work/native-contextify/pinned-recursive-control.json",
+      "bytes": 1261,
+      "sha256": "17599cb8d6d6cb331d9d40357f7d9c772af0aa5cca7493854fefb1d933a9a1a4"
+    },
+    {
+      "path": "work/sdk-harness-bin/receipt.json",
+      "bytes": 751,
+      "sha256": "b16d2c844fb16aaf4690976fa825ed9f784cb1b1e0c002f1aa8ae1efa9f49c8f"
+    },
+    {
+      "path": "work/sdk-harness-bin/source-sha256.json",
+      "bytes": 89875,
+      "sha256": "e2e86298bed05262265c959336aee92c5f624cdac6a1ac25b4ff0cd4701f29b7"
+    }
+  ]
+}

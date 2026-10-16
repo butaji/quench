@@ -229,7 +229,6 @@ impl SlotArena {
         unsafe { &mut *self.base().add(index) }
     }
 
-    #[cfg(any(debug_assertions, test, feature = "profile-memory"))]
     fn occupied(&self) -> &[Slot] {
         // SAFETY: the first `len` slots are initialized and accessible.
         unsafe { std::slice::from_raw_parts(self.base(), self.len) }
@@ -240,7 +239,6 @@ impl SlotArena {
         unsafe { std::slice::from_raw_parts_mut(self.base(), self.len) }
     }
 
-    #[cfg(any(debug_assertions, test, feature = "profile-memory"))]
     pub(super) fn iter(&self) -> impl Iterator<Item = &Slot> {
         self.occupied().iter()
     }
@@ -351,7 +349,6 @@ impl SlotArena {
         }
     }
 
-    #[cfg(any(debug_assertions, test, feature = "profile-memory"))]
     pub(super) fn iter(&self) -> impl Iterator<Item = &Slot> {
         self.slabs
             .iter()

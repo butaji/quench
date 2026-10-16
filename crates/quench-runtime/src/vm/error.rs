@@ -692,11 +692,10 @@ impl<H: Host> Vm<H> {
         result
     }
 
-    pub(super) fn install_error_stack(
+    fn define_error_stack_property(
         &mut self,
         program: &ResidualProgram,
         target: Value,
-        data: StackData,
     ) -> Result<(), JsError> {
         let intrinsics = self.realm.intrinsics.error_intrinsics[&self.realm.globals];
         let getter = intrinsics.stack_getter;
@@ -715,6 +714,16 @@ impl<H: Host> Vm<H> {
                 setter: Some(setter),
             },
         )?;
+        Ok(())
+    }
+
+    pub(super) fn install_error_stack(
+        &mut self,
+        program: &ResidualProgram,
+        target: Value,
+        data: StackData,
+    ) -> Result<(), JsError> {
+        self.define_error_stack_property(program, target)?;
         self.object_data_mut(target)
             .expect("stack target remains object-like")
             .set_stack_data(data);
@@ -2386,6 +2395,9 @@ impl<H: Host> Vm<H> {
         let object = self.heap.alloc(Cell::Object(Object::error(prototype)));
         let root = self.heap.root(object);
         let outcome = (|| {
+            // Reserve the native stack accessor before message/cause fields,
+            // then capture after their observable conversions have completed.
+            self.define_error_stack_property(program, self.heap.root_value(root).unwrap())?;
             if let Some(message) = message {
                 let value = self.heap.root_value(message).unwrap();
                 let message = self.coerce_js_string(program, value)?;
@@ -2467,6 +2479,7 @@ impl<H: Host> Vm<H> {
             let value = self.heap.alloc(Cell::Object(Object::error(prototype)));
             let root = self.heap.root(value);
             object = Some(root);
+            self.define_error_stack_property(program, value)?;
             if let Some(message) = message {
                 let message = self.heap.root_value(message).unwrap();
                 let message = self.coerce_js_string(program, message)?;
