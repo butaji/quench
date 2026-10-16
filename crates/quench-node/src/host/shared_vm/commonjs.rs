@@ -170,15 +170,15 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     context.release_root(initializer);
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_process_surface");
-    crate::modules::buffer_shared_vm::install_global(context)?;
+    context.scoped(crate::modules::buffer_shared_vm::install_global)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_buffer_global");
-    crate::modules::url_shared_vm::install_global(context)?;
+    context.scoped(crate::modules::url_shared_vm::install_global)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_url_global");
     crate::host::resident_pages::release_read_only_pages();
-    install_shared_web_globals(context)?;
-    crate::modules::base64_shared_vm::install(context)?;
+    context.scoped(install_shared_web_globals)?;
+    context.scoped(crate::modules::base64_shared_vm::install)?;
     let console = cached_builtin(context, BuiltinModule::Console)?;
     let global = context.global_root()?;
     set(context, global, "console", console)?;
@@ -195,8 +195,8 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     let print_eval = context.host_function(crate::host::shared_vm::operation("nodePrintEvalScript"))?;
     let key = context.string_rooted("\0quench:evalScript");
     context.define_data_property_rooted(global, key, print_eval, false, false, false)?;
-    install_performance_global(context)?;
-    crate::modules::crypto_shared_vm::install_global(context)?;
+    context.scoped(install_performance_global)?;
+    context.scoped(crate::modules::crypto_shared_vm::install_global)?;
     if node_primordials_source(context).is_some() {
         // Node 24 exposes these well-known disposal symbols before its
         // primordial snapshot is built. The runtime may not provide them yet,
@@ -220,11 +220,15 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
         context.seal_startup_intrinsics();
     }
     crate::host::resident_pages::release_read_only_pages();
-    preload_modules(context)?;
+    if node_primordials_source(context).is_some() {
+        context.scoped(crate::modules::node_errors_shared_vm::install_stack_formatter)?;
+        context.seal_startup_intrinsics();
+    }
+    context.scoped(preload_modules)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_preloads");
     if context.host_mut().eval_builtin_globals {
-        crate::modules::eval_globals_shared_vm::install(context)?;
+        context.scoped(crate::modules::eval_globals_shared_vm::install)?;
     }
     if context.is_module()? {
         return Ok(());
@@ -609,7 +613,7 @@ pub(crate) fn require_for_module(
     // Bare builtins participate in Module._cache just like resolved filenames.
     if !specifier.starts_with("node:")
         && !specifier.starts_with("internal/")
-        && BuiltinModule::from_specifier(&specifier).is_some()
+        && requested_builtin(context,&specifier).is_some()
     {
         let cache = commonjs_cache(context)?;
         let cached = get(context, cache, &specifier)?;
@@ -622,6 +626,11 @@ pub(crate) fn require_for_module(
         let error = context.error_rooted("Cannot find module 'vfs'")?;
         let code = context.string_rooted("MODULE_NOT_FOUND");
         set(context, error, "code", code)?;
+        return Err(context.throw(error));
+    }
+    if specifier == "node:stream/iter" && !context.host_mut().shared_state().borrow().cli_options.enabled("--experimental-stream-iter") {
+        let error=context.error_rooted("No such built-in module: node:stream/iter")?;
+        let code=context.string_rooted("ERR_UNKNOWN_BUILTIN_MODULE");set(context,error,"code",code)?;
         return Err(context.throw(error));
     }
     if specifier == "node:vfs" && !context.host_mut().vfs_enabled() {
@@ -868,6 +877,8 @@ pub(crate) fn require_for_module(
             | BuiltinModule::Buffer
             | BuiltinModule::Stream
             | BuiltinModule::StreamPromises
+            | BuiltinModule::StreamIter
+            | BuiltinModule::ZlibIter
             | BuiltinModule::Timers
             | BuiltinModule::InternalTimers
             | BuiltinModule::TimersPromises
@@ -970,6 +981,8 @@ enum BuiltinModule {
     Buffer,
     Stream,
     StreamPromises,
+    StreamIter,
+    ZlibIter,
     WebStreams,
     StringDecoder,
     WorkerThreads,
@@ -1037,6 +1050,8 @@ impl BuiltinModule {
             Self::Buffer => Some("buffer"),
             Self::Stream => Some("stream"),
             Self::StreamPromises => Some("stream/promises"),
+            Self::StreamIter => Some("stream/iter"),
+            Self::ZlibIter => Some("zlib/iter"),
             Self::WebStreams => Some("stream/web"),
             Self::StringDecoder => Some("string_decoder"),
             Self::WorkerThreads => Some("worker_threads"),
@@ -1093,12 +1108,12 @@ impl BuiltinModule {
 }
 
 fn internal_timers_exposed(context: &mut Context<'_>) -> bool {
-    context.host_mut().shared_state().borrow().exec_argv.iter()
-        .any(|argument| argument == "--expose-internals")
+    context.host_mut().shared_state().borrow().cli_options.enabled("--expose-internals")
 }
 
 fn requested_builtin(context: &mut Context<'_>, specifier: &str) -> Option<BuiltinModule> {
     let builtin = BuiltinModule::from_specifier(specifier)?;
+    if matches!(builtin,BuiltinModule::StreamIter | BuiltinModule::ZlibIter) && !context.host_mut().shared_state().borrow().cli_options.enabled("--experimental-stream-iter") { return None; }
     if matches!(builtin, BuiltinModule::InternalTimers) && !internal_timers_exposed(context) {
         None
     } else { Some(builtin) }
@@ -1229,6 +1244,10 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("node:buffer", BuiltinModule::Buffer),
     ("stream", BuiltinModule::Stream),
     ("node:stream", BuiltinModule::Stream),
+    ("stream/iter", BuiltinModule::StreamIter),
+    ("node:stream/iter", BuiltinModule::StreamIter),
+    ("zlib/iter", BuiltinModule::ZlibIter),
+    ("node:zlib/iter", BuiltinModule::ZlibIter),
     ("stream/promises", BuiltinModule::StreamPromises),
     ("node:stream/promises", BuiltinModule::StreamPromises),
     ("stream/web", BuiltinModule::WebStreams),
@@ -1409,10 +1428,15 @@ pub(crate) fn node_library_export(
     get(context, library, name)
 }
 
+/// A module of the pinned Node library, loaded on first use inside the startup intrinsics:
+/// its initialization captures the original intrinsic methods however a script has replaced
+/// or frozen them since (`with_startup_intrinsics` restores even nonconfigurable ones).
 pub(crate) fn node_library_module(context: &mut Context<'_>, owner: &str, relative: &str) -> Result<RootId, RootedError> {
     let root = context.host_mut().node_library_root.clone();
     let parent = module_record(context, &root.join("lib").join(owner), None, false)?;
-    load(context, &root.join("lib").join(relative), Some(parent), EntryGoal::CommonJs)
+    context.with_startup_intrinsics(|context| {
+        load(context, &root.join("lib").join(relative), Some(parent), EntryGoal::CommonJs)
+    })
 }
 
 pub(crate) fn module_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
@@ -1500,8 +1524,14 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::Internal("internal/buffer") => crate::modules::buffer_constructor_shared_vm::internal_module(context),
         BuiltinModule::Internal("internal/worker/io") =>
             native_global_namespace(context, &["MessageChannel", "MessagePort"]),
-        BuiltinModule::Internal("internal/abort_controller") =>
-            native_global_namespace(context, &["AbortController", "AbortSignal"]),
+        BuiltinModule::Internal("internal/abort_controller") => {
+            let module=native_global_namespace(context, &["AbortController", "AbortSignal"])?;
+            let data=context.host_mut().shared_state().borrow().event_targets_api
+                .ok_or_else(||RootedError::host("EventTarget API missing"))?;
+            let operation=get(context,data,"abortSignal")?;
+            set(context,module,"abortSignal",operation)?;
+            Ok(module)
+        },
         BuiltinModule::Internal("internal/process/task_queues") =>
             native_global_namespace(context, &["queueMicrotask"]),
         BuiltinModule::Internal("_http_incoming") => {
@@ -1552,6 +1582,8 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         }
         BuiltinModule::Stream => node_library_module(context, "stream.js", "stream.js"),
         BuiltinModule::StreamPromises => node_library_module(context, "stream.js", "stream/promises.js"),
+        BuiltinModule::StreamIter => node_library_module(context, "stream/iter.js", "stream/iter.js"),
+        BuiltinModule::ZlibIter => node_library_module(context, "zlib/iter.js", "zlib/iter.js"),
         BuiltinModule::WebStreams => node_library_module(context, "stream/web.js", "stream/web.js"),
         BuiltinModule::StringDecoder => node_library_module(context, "string_decoder.js", "string_decoder.js"),
         BuiltinModule::Timers => {
@@ -1595,13 +1627,17 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
                 .next()
                 .unwrap_or(crate::polyfills::bootstrap::dgram_tail::JS);
             let source = format!(
-                "(() => {{\n{}\n{}\n{}\n{}\n}})();",
+                "(__quenchDgramBufferSystemError => {{\n{}\n{}\n{}\n{}\n}})",
                 crate::polyfills::bootstrap::dgram_head::JS,
                 crate::polyfills::bootstrap::dgram::JS,
                 crate::polyfills::bootstrap::membership::JS,
                 dgram_tail,
             );
             let root = context.evaluate_script_rooted(&source, "node:dgram/bootstrap.js")?;
+            let codes = node_library_export(context, "internal/errors.js", "internal/errors.js", "codes")?;
+            let constructor = get(context, codes, "ERR_SOCKET_BUFFER_SIZE")?;
+            let undefined = context.undefined();
+            context.call_rooted(root, undefined, &[constructor])?;
             context.release_root(root);
             let global = context.global_root()?;
             get(context, global, "\0quench:dgram_module")
@@ -2274,7 +2310,10 @@ const getLinkedBinding = () => ({});
   switch (String(name)) {
     case "os":
     case "credentials":
+    case "config":
+    case "icu":
     case "encoding_binding":
+    case "zlib":
     case "symbols":
     case "http2":
     case "fs_event_wrap": return __nativeInternalBinding(name);
@@ -2287,6 +2326,7 @@ const getLinkedBinding = () => ({});
       getProxyDetails: __nativeInternalBinding("util").getProxyDetails,
       previewEntries: __nativeInternalBinding("util").previewEntries,
       getConstructorName: __nativeInternalBinding("util").getConstructorName,
+      getCallSites: __nativeInternalBinding("util").getCallSites,
       getExternalValue: __nativeInternalBinding("util").getExternalValue,
       constructSharedArrayBuffer: (length) => new SharedArrayBuffer(length),
       guessHandleType: () => "UNKNOWN",
@@ -2300,6 +2340,7 @@ const getLinkedBinding = () => ({});
       os: __nativeInternalBinding("constants").os || { signals: (require("os").constants || {}).signals || {}, errno: { EISDIR: -21 } },
       crypto: { ENGINE_METHOD_ALL: 0xffff },
     };
+    case "options": return __nativeInternalBinding("options");
     case "string_decoder": return __nativeInternalBinding("string_decoder");
     case "buffer": return Object.assign({}, require("buffer"), __nativeInternalBinding("buffer"));
     case "fs": return require("fs");
@@ -2373,12 +2414,13 @@ const getLinkedBinding = () => ({});
                     format!("{WRAPPER_PREFIX}{internal_binding}")
                 };
                 let wrapper_source = format!("{prefix}{text}{WRAPPER_SUFFIX}");
+                // The wrapper holds the text now, so the file is released before compiling it.
                 drop(text);
+                drop(file_text);
                 let wrapper = evaluate_wrapper(context, &prefix, &wrapper_source, &key)?;
                 // The compiled program keeps its own source; the module body runs inside this
-                // call, so the file text and wrapper are released before it.
+                // call, so the wrapper is released before it.
                 drop(wrapper_source);
-                drop(file_text);
                 if parent.is_none() {
                     crate::host::resident_pages::release_read_only_pages();
                     crate::host::resident_pages::quench_entry_compiled();
@@ -2430,6 +2472,9 @@ const getLinkedBinding = () => ({});
                 roots.borrow_mut().crypto_handle_symbol = Some(context.retain(symbol)?);
             }
         }
+    }
+    if library_relative == Some(Path::new("lib/internal/webidl.js")) {
+        if let Ok(exports)=&result { crate::modules::events_shared_vm::adopt_abort_converter(context,*exports)?; }
     }
     let is_fs_utilities = library_relative == Some(Path::new("lib/internal/fs/utils.js"));
     if is_fs_utilities {

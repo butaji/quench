@@ -91,20 +91,7 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        let number_value = self.intern_atom("\0quench:number-value");
-        self.set_property_with_attributes(
-            prototype,
-            number_value,
-            Value::number(0.0),
-            PropertyAttributes {
-                writable: false,
-                enumerable: false,
-                configurable: false,
-                accessor: false,
-                getter: None,
-                setter: None,
-            },
-        )?;
+        self.object_data_mut(prototype).expect("primitive prototype").set_boxed_primitive(Value::number(0.0));
         self.set_builtin_value_named(prototype, "constructor", number)?;
         self.set_builtin_named(program, prototype, "toString", Native::NumberString)?;
         self.set_builtin_named(program, prototype, "valueOf", Native::NumberValueOf)?;
@@ -175,8 +162,7 @@ impl<H: Host> Vm<H> {
             },
         );
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
-        let number_value = self.intern_atom("\0quench:number-value");
-        self.set_property(prototype, number_value, Value::number(0.0))?;
+        self.object_data_mut(prototype).expect("primitive prototype").set_boxed_primitive(Value::number(0.0));
         let methods = [
             ("toString", Native::NumberString),
             ("valueOf", Native::NumberValueOf),
@@ -233,8 +219,7 @@ impl<H: Host> Vm<H> {
         if let Some(number) = receiver.as_number() {
             return Ok(number);
         }
-        let value_atom = self.intern_atom("\0quench:number-value");
-        self.own_property(receiver, value_atom)
+        self.boxed_primitive_value(receiver)
             .and_then(Value::as_number)
             .ok_or_else(|| {
                 self.type_error(p, "Number method called on incompatible receiver".into())

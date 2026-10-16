@@ -65,6 +65,8 @@ pub(crate) struct SharedNodeState {
     pub(crate) fs: crate::modules::fs_state::FsState,
     pub(crate) fs_watch: crate::modules::fs_watch_shared_vm::State,
     pub(crate) tls_contexts: crate::modules::tls_shared_vm::contexts::State,
+    #[cfg(quench_icu)]
+    pub(crate) icu_converters: crate::modules::icu_binding_shared_vm::State,
     pub(crate) fs_stats: crate::modules::fs_shared_vm::stat::types::State,
     pub(crate) fs_policy: crate::modules::fs_policy_shared_vm::State,
     pub(crate) fs_stat_watch: crate::modules::fs_stat_watch_shared_vm::State,
@@ -88,6 +90,7 @@ pub(crate) struct SharedNodeState {
     pub(crate) stdin: crate::modules::process_stdin_shared_vm::State,
     pub(crate) process_ipc: crate::modules::child_process_ipc_shared_vm::State,
     pub(crate) zlib_streams: crate::modules::zlib_stream_shared_vm::State,
+    pub(crate) zlib_native: crate::modules::zlib_native_shared_vm::State,
     pub(crate) unhandled_rejection_mode: crate::modules::process_state::UnhandledRejectionMode,
     pub(crate) output: Option<NodeOutputSink>,
     pub(crate) net_auto_select_family_attempt_timeout: u64,
@@ -101,6 +104,8 @@ pub(crate) struct SharedNodeState {
     pub(crate) timer_duration_warnings: crate::modules::timers_shared_vm::TimerDurationWarnings,
     /// Invocation flags supplied by the embedder for this logical process.
     pub(crate) exec_argv: Vec<String>,
+    pub(crate) cli_options: crate::modules::cli_options::CliOptions,
+    initial_node_options: Option<String>,
     pub(crate) fetch: crate::modules::fetch_shared_vm::FetchState,
     pub(crate) diagnostics: crate::modules::diagnostics_channel_shared_vm::SharedDiagnosticsState,
     pub(crate) http: crate::modules::http_shared_vm::State,
@@ -197,6 +202,8 @@ impl SharedNodeState {
         self.net_handle_close_callbacks.clear();
         self.fs_watch = crate::modules::fs_watch_shared_vm::State::default();
         self.tls_contexts = crate::modules::tls_shared_vm::contexts::State::default();
+        #[cfg(quench_icu)]
+        { self.icu_converters = crate::modules::icu_binding_shared_vm::State::default(); }
         self.fs_stats = crate::modules::fs_shared_vm::stat::types::State::default();
         self.fs_policy = crate::modules::fs_policy_shared_vm::State::default();
         self.fs_stat_watch = crate::modules::fs_stat_watch_shared_vm::State::default();
@@ -217,6 +224,8 @@ impl SharedNodeState {
             fs,
             fs_watch: crate::modules::fs_watch_shared_vm::State::default(),
             tls_contexts: crate::modules::tls_shared_vm::contexts::State::default(),
+            #[cfg(quench_icu)]
+            icu_converters: crate::modules::icu_binding_shared_vm::State::default(),
             fs_stats: crate::modules::fs_shared_vm::stat::types::State::default(),
             fs_policy: crate::modules::fs_policy_shared_vm::State::default(),
             fs_stat_watch: crate::modules::fs_stat_watch_shared_vm::State::default(),
@@ -238,6 +247,7 @@ impl SharedNodeState {
             stdin: crate::modules::process_stdin_shared_vm::State::default(),
             process_ipc: crate::modules::child_process_ipc_shared_vm::State::default(),
             zlib_streams: crate::modules::zlib_stream_shared_vm::State::default(),
+            zlib_native: crate::modules::zlib_native_shared_vm::State::default(),
             unhandled_rejection_mode: crate::modules::process_state::UnhandledRejectionMode::Throw,
             output: None,
             net_auto_select_family: crate::modules::net_config::DEFAULT_AUTO_SELECT_FAMILY,
@@ -251,6 +261,8 @@ impl SharedNodeState {
             timer_handle_api: None,
             timer_duration_warnings: Default::default(),
             exec_argv: Vec::new(),
+            cli_options: Default::default(),
+            initial_node_options: std::env::var("NODE_OPTIONS").ok(),
             fetch: crate::modules::fetch_shared_vm::FetchState::new(),
             diagnostics:
                 crate::modules::diagnostics_channel_shared_vm::SharedDiagnosticsState::default(),
@@ -331,23 +343,7 @@ impl NodeHost {
 
     /// The last VFS CLI switch owns feature availability for this logical process.
     pub(crate) fn vfs_enabled(&self) -> bool {
-        let state = self.shared_state.borrow();
-        let mut arguments = state.exec_argv.iter();
-        let mut enabled = false;
-        while let Some(argument) = arguments.next() {
-            match argument.as_str() {
-                "--experimental-vfs" => enabled = true,
-                "--no-experimental-vfs" => enabled = false,
-                // The shared CLI retains option values and eval source in execArgv.
-                // They are input, even when their text matches a VFS switch.
-                "--trace-event-categories" | "--trace-event-file-pattern" | "-r" | "--require" => {
-                    let _ = arguments.next();
-                }
-                "-e" | "--eval" | "-p" | "--print" | "-pe" | "-ep" => break,
-                _ => {}
-            }
-        }
-        enabled
+        self.shared_state.borrow().cli_options.enabled("--experimental-vfs")
     }
 
     /// Execute a file through the CommonJS loader during shared-VM initialization.
@@ -374,6 +370,7 @@ impl NodeHost {
             );
         let net_family = crate::modules::net_config::auto_select_family_from_exec_argv(&exec_argv);
         let mut shared = self.shared_state.borrow_mut();
+        shared.cli_options=crate::modules::cli_options::CliOptions::parse(shared.initial_node_options.as_deref(),&exec_argv)?;
         shared.trace.configure(&exec_argv);
         shared.exec_argv = exec_argv;
         shared.unhandled_rejection_mode = mode;

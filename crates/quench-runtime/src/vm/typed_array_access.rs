@@ -8,6 +8,50 @@ pub(super) enum TypedArrayElement {
 }
 
 impl<H: Host> Vm<H> {
+    pub(crate) fn embedding_array_buffer_aligned_offset(
+        &mut self,
+        root: RootId,
+        alignment: usize,
+    ) -> Result<usize, JsError> {
+        let program = self.embedding_program()?;
+        if !alignment.is_power_of_two() {
+            return Err(
+                self.type_error(&program, "alignment must be a positive power of two".into())
+            );
+        }
+        let value = self
+            .heap
+            .root_value(root)
+            .ok_or_else(|| self.type_error(&program, "ArrayBuffer root expired".into()))?;
+        let Some(Cell::ArrayBuffer {
+            bytes,
+            detached,
+            shared: false,
+            resizable,
+            ..
+        }) = self.heap.get_mut(value)
+        else {
+            return Err(self.type_error(&program, "Expected an ArrayBuffer".into()));
+        };
+        if *detached || bytes.is_empty() {
+            return Ok(0);
+        }
+        let byte_length = bytes.len();
+        let before = bytes.capacity();
+        let address = if *resizable {
+            bytes.as_ptr_bytes() as usize
+        } else {
+            bytes.pin_address()
+        };
+        let after = bytes.capacity();
+        self.heap.adjust_external_bytes(before, after);
+        let offset = address.wrapping_neg() & (alignment - 1);
+        if offset > byte_length {
+            return Err(self.range_error(&program, "Aligned offset exceeds backing buffer".into()));
+        }
+        Ok(offset)
+    }
+
     pub(crate) fn embedding_uint8_array(&mut self, bytes: &[u8]) -> Result<Value, JsError> {
         let program = self.embedding_program()?;
         let buffer = self.new_fixed_array_buffer(&program, bytes.len(), false)?;
@@ -539,5 +583,37 @@ impl<H: Host> Vm<H> {
             }
             _ => self.to_number(p, value).map(TypedArrayElement::Number),
         }
+    }
+}
+
+#[cfg(test)]
+mod backing_address_tests {
+    use super::*;
+    #[test]
+    fn observed_alignment_accounts_owned_bytes_once_and_preserves_original_store() {
+        let mut vm = Vm::new(crate::SystemHost);
+        let program = crate::Engine::specialize("0;", "alignment-owner.js").unwrap();
+        vm.execute(&program).unwrap();
+        let buffer = vm.new_fixed_array_buffer(&program, 4096, false).unwrap();
+        let root = vm.heap.root(buffer);
+        let before = vm.heap.stats().5;
+        let offset = vm.embedding_array_buffer_aligned_offset(root, 64).unwrap();
+        assert!(offset < 64);
+        assert_eq!(vm.heap.stats().5, before + 4096);
+        let snapshot = vm.heap.get(buffer).unwrap().clone();
+        let Some(Cell::ArrayBuffer { bytes, .. }) = vm.heap.get_mut(buffer) else {
+            panic!("ArrayBuffer");
+        };
+        bytes.make_mut()[offset] = 17;
+        let Cell::ArrayBuffer { bytes, .. } = snapshot else {
+            panic!("ArrayBuffer snapshot");
+        };
+        assert_eq!(bytes[offset], 0);
+        assert_eq!(
+            vm.embedding_array_buffer_aligned_offset(root, 64).unwrap(),
+            offset
+        );
+        assert_eq!(vm.heap.stats().5, before + 4096);
+        vm.heap.release_root(root);
     }
 }

@@ -1567,6 +1567,7 @@ dependencies = [
  "socket2",
  "sysinfo",
  "url",
+ "zlib-rs",
  "zstd",
 ]
 
@@ -1606,6 +1607,7 @@ dependencies = [
  "cranelift-codegen",
  "cranelift-frontend",
  "cranelift-native",
+ "hashbrown 0.16.1",
  "libc",
  "libm",
  "num-bigint 0.4.8",

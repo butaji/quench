@@ -350,7 +350,7 @@ pub(crate) enum Native {
     DisposableStackDisposeAsyncWithCompletion,
     DisposableStackAsyncDisposalFulfilled,
     DisposableStackAsyncDisposalRejected,
-    FunctionCall, FunctionApply, FunctionBind, FunctionBoundCall, FunctionToString, AsyncFunction, GeneratorFunction, AsyncGeneratorFunction, AsyncGeneratorReturnResult, AsyncGeneratorDelegateReturnStart,
+    FunctionCall, FunctionApply, FunctionBind, FunctionBoundCall, FunctionToString, AsyncFunction, GeneratorFunction, AsyncGeneratorFunction, AsyncGeneratorDelegateReturnStart,
     Date,
     DateNow,
     DateGetTime, DateValueOf, DateGetTimezoneOffset, DateGetFullYear, DateGetMonth, DateGetDate, DateGetDay,
@@ -601,6 +601,8 @@ pub(crate) enum Native {
     /// A Wasm function as JavaScript sees it; its environment is the Wasm closure.
     WasmExportedFunction,
     HostFunction,
+    CallSiteConstructor,
+    CallSiteGetFunction,
 }
 
 /// A global's cold facts, boxed with its object part so the cell stays compact.
@@ -622,19 +624,14 @@ pub(crate) struct WasmMemoryHeader {
 pub(crate) enum WasmObjectSlot {
     Module(Box<crate::WasmModule>),
     /// The frozen exports object of an instance; its bindings stay alive through it.
-    Instance {
-        exports: Value,
-    },
+    Instance { exports: Value },
 }
 
 impl std::fmt::Debug for WasmObjectSlot {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Module(_) => f.write_str("Module"),
-            Self::Instance { exports } => f
-                .debug_struct("Instance")
-                .field("exports", exports)
-                .finish(),
+            Self::Instance { exports } => f.debug_struct("Instance").field("exports", exports).finish(),
         }
     }
 }
@@ -952,7 +949,11 @@ impl IteratorKind {
     pub(crate) fn is_collection_iterator(self) -> bool {
         matches!(
             self,
-            Self::MapKeys | Self::MapValues | Self::MapEntries | Self::SetValues | Self::SetEntries
+            Self::MapKeys
+                | Self::MapValues
+                | Self::MapEntries
+                | Self::SetValues
+                | Self::SetEntries
         )
     }
 }
@@ -1220,10 +1221,28 @@ pub(crate) enum CallSiteLocation {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) enum CallSiteName {
+    /// Resolve the safe debug name when a CallSite is read, not at capture.
+    Callable(Value),
+    Static(JsString),
+    Anonymous,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct CallSiteRecord {
     pub(crate) location: CallSiteLocation,
-    pub(crate) function_name: Option<String>,
+    pub(crate) name: CallSiteName,
     pub(crate) this_value: Value,
+    pub(crate) hide_identity: bool,
+    pub(crate) is_constructor: bool,
+    pub(crate) is_eval: bool,
+}
+
+impl CallSiteRecord {
+    fn visit_roots(&self, visit: &mut impl FnMut(Value)) {
+        visit(self.this_value);
+        if let CallSiteName::Callable(function) = self.name { visit(function); }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1246,6 +1265,7 @@ struct ObjectExtras {
     error_data: bool,
     module_namespace: bool,
     external_address: Option<usize>,
+    boxed_primitive: Option<Value>,
     structured_clone_forbidden: bool,
     structured_transfer_forbidden: bool,
     module_bindings: Vec<(Atom, ProgramId, u16)>,
@@ -1281,7 +1301,7 @@ impl StackData {
             (match &record.location {
                 CallSiteLocation::Source { file_name, .. } => file_name.capacity(),
                 CallSiteLocation::Native => 0,
-            }) + record.function_name.as_ref().map_or(0, String::capacity)
+            }) + match &record.name { CallSiteName::Static(name) => name.capacity(), _ => 0 }
         }
         match self {
             Self::Captured(records) => {
@@ -1580,6 +1600,15 @@ impl Object {
         self.extras().is_some_and(|extras| extras.error_data)
     }
 
+    /// Genuine primitive-wrapper data; guest properties cannot supply this slot.
+    pub(crate) fn boxed_primitive(&self) -> Option<Value> {
+        self.extras()?.boxed_primitive
+    }
+
+    pub(crate) fn set_boxed_primitive(&mut self, value: Value) {
+        self.extras_mut().boxed_primitive = Some(value);
+    }
+
     pub(crate) fn stack_data(&self) -> Option<&StackData> {
         self.extras()?.stack_data.as_ref()
     }
@@ -1588,21 +1617,24 @@ impl Object {
         self.extras_mut().stack_data = Some(data);
     }
 
-    /// Visit the values an object's extras keep alive: private-name homes and stack data.
+    /// Visit internal primitive data, private-name homes and captured stack roots.
     pub(crate) fn visit_extras_roots(&self, mut visit: impl FnMut(Value)) {
         let Some(extras) = self.extras() else {
             return;
         };
+        if let Some(value) = extras.boxed_primitive { visit(value); }
         for brand in &extras.private_names {
             visit(brand.home);
         }
         match extras.stack_data.as_ref() {
             Some(StackData::Captured(records)) => {
                 for record in records {
-                    visit(record.this_value);
+                    record.visit_roots(&mut visit);
                 }
             }
-            Some(StackData::CallSite(record)) => visit(record.this_value),
+            Some(StackData::CallSite(record)) => {
+                record.visit_roots(&mut visit);
+            },
             Some(StackData::Formatted(value)) => visit(*value),
             None => {}
         }
