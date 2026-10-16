@@ -20,6 +20,8 @@ const SUITE = process.env.TEST262_DIR
 const ASYNC_DONE_TIMEOUT_MS = 5000;
 const DEFAULT_HARNESS = ['assert.js', 'sta.js'];
 const ASYNC_HARNESS = 'doneprintHandle.js';
+// Manifest marker for a waived case the oracle cannot run.
+const UNVERIFIABLE = 'unverifiable';
 
 function frontmatter(source) {
   const match = /\/\*---([\s\S]*?)---\*\//.exec(source);
@@ -121,13 +123,18 @@ async function main() {
     console.log(`note: manifest adjudicated with ${manifest.oracle.version}; running ${process.version}`);
   }
   let contradicted = 0;
+  let byRule = 0;
   let total = 0;
   for (const group of manifest.groups) {
     let groupFailures = 0;
-    for (const { path: relative } of group.cases) {
+    for (const { path: relative, node } of group.cases) {
       total += 1;
       const verdict = await nodeFailures(relative);
-      if (verdict === null || verdict.unverifiable) {
+      // A case Node cannot run is waived by its group's Node-arbitrated rule
+      // only when the manifest says so; any Node verdict must then be a failure.
+      if (node === UNVERIFIABLE && verdict?.unverifiable) {
+        byRule += 1;
+      } else if (verdict === null || verdict.unverifiable) {
         contradicted += 1;
         console.log(`contradicted ${group.id} ${relative}: ${verdict ? verdict.unverifiable : 'Node passes'}`);
       } else {
@@ -136,7 +143,7 @@ async function main() {
     }
     console.log(`${group.id}: node fails ${groupFailures}/${group.cases.length}`);
   }
-  console.log(`waivers=${total} contradicted=${contradicted} node=${process.version}`);
+  console.log(`waivers=${total} by-rule=${byRule} contradicted=${contradicted} node=${process.version}`);
   process.exitCode = contradicted === 0 ? 0 : 1;
 }
 
