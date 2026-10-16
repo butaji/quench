@@ -175,6 +175,15 @@ impl<H: Host> Vm<H> {
                 .get_or_init(|| Box::new(derive_shape_lookup_index(&self.shapes, shape)));
             return index.slot(key).map(|slot| slot as usize);
         }
+        if let Some(slot) = self.shape_slot_memo.get(shape, key) {
+            return slot;
+        }
+        let slot = self.walked_property_shape_slot(shape, key);
+        self.shape_slot_memo.record(shape, key, slot);
+        slot
+    }
+    /// `property_shape_slot` of a non-dictionary shape, from its lookup index or its chain.
+    fn walked_property_shape_slot(&self, shape: u32, key: PropertyKey) -> Option<usize> {
         if let Some(index) = self.shapes[shape as usize].lookup_index.get() {
             return index.slot(key).map(|slot| slot as usize);
         }
@@ -1411,7 +1420,8 @@ impl<H: Host> Vm<H> {
             );
             return Some(value);
         }
-        let (cache, value) = self.inherited_field(receiver, atom)?;
+        let ordinary = self.heap.ordinary_object(object).is_some();
+        let (cache, value) = self.inherited_field(receiver, ordinary, atom)?;
         if self.field_cache_records(site) {
             self.inherited_field_caches.insert(site, cache);
         }
@@ -1443,8 +1453,15 @@ impl<H: Host> Vm<H> {
             prototype = data.proto();
             holder = Some(data);
         }
-        // SAFETY: the holder's shape was recorded together with this data slot.
-        let value = unsafe { self.heap.property_get_shaped(holder?, usize::from(cache.slot)) }?;
+        let value = match cache.answer {
+            // SAFETY: the holder's shape was recorded together with this data slot.
+            InheritedFieldAnswer::Slot(slot) => unsafe {
+                self.heap.property_get_shaped(holder?, usize::from(slot))
+            }?,
+            // Every recorded shape lacks the name, and the chain still ends here.
+            InheritedFieldAnswer::Absent if prototype.is_null() => Value::UNDEFINED,
+            InheritedFieldAnswer::Absent => return None,
+        };
         Some(FieldCacheHit {
             value,
             tier: 0,
@@ -1457,7 +1474,12 @@ impl<H: Host> Vm<H> {
     /// answers the load again, and the value.
     #[cold]
     #[inline(never)]
-    fn inherited_field(&self, object: &Object, atom: Atom) -> Option<(InheritedFieldCache, Value)> {
+    fn inherited_field(
+        &self,
+        object: &Object,
+        ordinary: bool,
+        atom: Atom,
+    ) -> Option<(InheritedFieldCache, Value)> {
         if self.shape_slot(object.shape(), atom).is_some() {
             return None;
         }
@@ -1465,10 +1487,19 @@ impl<H: Host> Vm<H> {
             receiver: object.shape(),
             prototype_shapes: [NO_FIELD_HOLDER; INHERITED_FIELD_CACHE_MAX_DEPTH],
             depth: 0,
-            slot: 0,
+            answer: InheritedFieldAnswer::Absent,
         };
+        // Shapes alone prove a name absent only for an ordinary receiver, whose shape holds
+        // every property it has; an arguments object's indices and other index names, and any
+        // exotic receiver's own answers, stay uncached.
+        let absence_cacheable = ordinary
+            && !object.is_arguments_object()
+            && !self.atom_class(atom).contains(AtomClass::ARRAY_INDEX);
         let mut prototype = object.proto();
         for depth in 0..INHERITED_FIELD_CACHE_MAX_DEPTH {
+            if prototype.is_null() {
+                return absence_cacheable.then_some((cache, Value::UNDEFINED));
+            }
             let Some(data) = self.heap.ordinary_object(prototype) else {
                 return None;
             };
@@ -1480,6 +1511,7 @@ impl<H: Host> Vm<H> {
                 return None;
             }
             cache.prototype_shapes[depth] = shape;
+            cache.depth = (depth + 1) as u8;
             if let Some(slot) = self.shape_slot(shape, atom) {
                 // The immediate prototype is the regular field cache's holder tier.
                 if depth == 0
@@ -1490,13 +1522,12 @@ impl<H: Host> Vm<H> {
                 {
                     return None;
                 }
-                cache.depth = (depth + 1) as u8;
-                cache.slot = slot as u16;
+                cache.answer = InheritedFieldAnswer::Slot(slot as u16);
                 return Some((cache, self.heap.property_get(data, slot)?));
             }
             prototype = data.proto();
         }
-        None
+        (prototype.is_null() && absence_cacheable).then_some((cache, Value::UNDEFINED))
     }
 
     #[cold]
