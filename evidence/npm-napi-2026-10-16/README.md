@@ -10,6 +10,7 @@ module linking and lane-view derivation. Oracle: official Node v26.12.0 (`engine
 | --- | --- | --- | --- | --- | --- |
 | `baseline-scenarios-1305d2582.json.gz` | 1305d2582 (clean) | 273 | 13 | 13 | 1 |
 | `scenarios-3e7f186de.json.gz` | 3e7f186de (clean) | 282 | 13 | 4 | 1 |
+| `scenarios-ec3b526e8.json.gz` | ec3b526e8 (clean, merged with v2-merged 5c7715c92) | 282 | 13 | 4 | 1 |
 
 Newly passing: @rollup/rollup-linux-x64-gnu, rollup, @img/sharp-linux-x64, sharp,
 @img/sharp-libvips-linux-x64, @tailwindcss/oxide-linux-x64-gnu, vite and
