@@ -20,6 +20,9 @@ pub(crate) fn values(context: &mut NativeContext<'_,NodeHost>,_:RootId,_:&[RootI
             let key=context.string_rooted(&name);let value=context.boolean(enabled);context.define_data_property_rooted(result,key,value,true,true,true)?;
         }
     }
+    for (name,value) in options.strings(){
+        let key=context.string_rooted(name);let value=context.string_rooted(value);context.define_data_property_rooted(result,key,value,true,true,true)?;
+    }
     Ok(result)
 }
 pub(crate) fn parse_environment(context: &mut NativeContext<'_,NodeHost>,_:RootId,args:&[RootId])->Result<RootId,RootedError>{
