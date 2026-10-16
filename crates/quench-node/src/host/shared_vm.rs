@@ -9,6 +9,12 @@ pub(crate) use commonjs::source_kind;
 
 pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
     quench_runtime::host_functions![
+        method "nodeLibraryRequire" (1) => commonjs::require_node_library,
+        method "nodeTestMock" (0) => crate::modules::test_shared_vm::mock,
+        method "nodeTestNamespace" (0) => crate::modules::test_shared_vm::namespace,
+        method "contextifyScript" (0) => crate::modules::contextify_shared_vm::script,
+        method "contextifyRunInContext" (0) => crate::modules::contextify_shared_vm::run_in_context,
+        method "contextifyCompileFunction" (0) => crate::modules::contextify_shared_vm::compile_function,
         method "nodePrintEvalScript" (1) => crate::shared_run::print_eval_script,
         method "callbackify" (1) => crate::modules::util_callbackify_shared_vm::callbackify,
         method "gc" (0) => crate::modules::process_shared_vm::collect_garbage,
@@ -116,6 +122,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "asyncTriggerId" (0) => crate::modules::async_hooks_shared_vm::trigger_id,
         method "asyncExecutionResource" (0) => crate::modules::async_hooks_shared_vm::execution_resource,
         method "asyncExternalInit" (3) => crate::modules::async_hooks_shared_vm::external_init,
+        method "asyncPromisePrune" (0) => crate::modules::async_hooks_shared_vm::prune_promises,
         method "asyncDestroyDispatch" (0) => crate::modules::async_hooks_shared_vm::destroy_dispatch,
         method "emitterAsyncConstructor" (0) => crate::modules::emitter_async_resource_shared_vm::constructor,
         method "emitterAsyncPrepare" (2) => crate::modules::emitter_async_resource_shared_vm::prepare,
@@ -435,6 +442,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "cliOptionsValues" (0) => crate::modules::cli_options_shared_vm::values,
         method "cliParseNodeOptions" (0) => crate::modules::cli_options_shared_vm::parse_environment,
         method "fsFileHandleReadParameters" (0) => crate::modules::fs_shared_vm::file_handle_read::parameters,
+        method "fsBindingInternalModuleStat" (0) => crate::modules::fs_directory_shared_vm::internal_module_stat,
         method "fsBindingReaddir" (0) => crate::modules::fs_directory_shared_vm::readdir,
         method "fsBindingReaddirRecursive" (0) => crate::modules::fs_directory_shared_vm::readdir_recursive,
         method "fsPromisesGlobInitialize" (0) => crate::modules::fs_shared_vm::initialize_promises_glob_policy,
@@ -639,7 +647,6 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "timersPromiseSchedule" (2) => crate::modules::timers_shared_vm::schedule_promise_timeout,
         method "timersPromiseComplete" (0) => crate::modules::timers_shared_vm::complete_promise_operation,
         method "timersPromiseAbort" (0) => crate::modules::timers_shared_vm::abort_promise_operation,
-        method "nodeTest" (2) => crate::modules::test_shared_vm::run,
         method "isBuiltin" (1) => crate::modules::module_shared_vm::is_builtin,
         method "createRequire" (1) => crate::modules::module_shared_vm::create_require,
         method "moduleNodePaths" (1) => crate::modules::module_shared_vm::node_module_paths,
@@ -683,6 +690,8 @@ pub(crate) fn operation(name: &str) -> HostFunctionId {
 }
 
 impl quench_runtime::Host for NodeHost {
+    const OBSERVE_PROMISE_LIFECYCLE: bool = true;
+
     fn proper_tail_calls(&self) -> bool {
         false
     }
@@ -909,8 +918,38 @@ impl quench_runtime::Host for NodeHost {
         }
     }
 
-    fn capture_job_context(&mut self) -> Option<quench_runtime::HostExecutionContext> {
-        crate::modules::async_hooks_shared_vm::capture_job_context(&self.shared_state)
+    fn create_promise_context(
+        &mut self,
+        parent: Option<quench_runtime::HostExecutionContext>,
+    ) -> Option<quench_runtime::HostExecutionContext> {
+        Some(crate::modules::async_hooks_shared_vm::create_promise_context(&self.shared_state, parent))
+    }
+
+    fn initialize_promise(
+        context: &mut NativeContext<'_, Self>,
+        promise: quench_runtime::RootId,
+        resource: quench_runtime::HostExecutionContext,
+    ) -> Result<(), RootedError> {
+        crate::modules::async_hooks_shared_vm::initialize_promise(context, promise, resource)
+    }
+
+    fn promise_job_boundary(
+        context: &mut NativeContext<'_, Self>,
+        resource: quench_runtime::HostExecutionContext,
+        before: bool,
+    ) -> Result<(), RootedError> {
+        crate::modules::async_hooks_shared_vm::promise_job_boundary(context, resource, before)
+    }
+
+    fn promise_settled(
+        context: &mut NativeContext<'_, Self>,
+        resource: quench_runtime::HostExecutionContext,
+    ) -> Result<(), RootedError> {
+        crate::modules::async_hooks_shared_vm::promise_settled(context, resource)
+    }
+
+    fn capture_job_context(&mut self, resource: Option<quench_runtime::HostExecutionContext>) -> Option<quench_runtime::HostExecutionContext> {
+        crate::modules::async_hooks_shared_vm::capture_job_context(&self.shared_state, resource)
             .map(quench_runtime::HostExecutionContext)
     }
 

@@ -2526,6 +2526,15 @@ fn drain_shared_jobs(
             #[cfg(quench_icu)]
             super::icu_binding_shared_vm::prune(runtime);
             super::net_reference_shared_vm::prune(runtime);
+            super::contextify_shared_vm::prune(runtime);
+            if !runtime.host_mut().shared_state().borrow().async_hooks.promise_resources.is_empty() {
+                let prune = runtime.host_function(crate::host::shared_vm::operation("asyncPromisePrune"))
+                    .map_err(|error| rooted_error_message(runtime, program, error))?;
+                let result = runtime.call_rooted(prune, prune, &[]);
+                runtime.release_root(prune);
+                let result = result.map_err(|error| rooted_error_message(runtime, program, error))?;
+                runtime.release_root(result);
+            }
             super::fs_stat_watch_shared_vm::prune(runtime);
             return Ok(());
         }

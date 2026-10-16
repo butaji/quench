@@ -934,6 +934,21 @@ pub(crate) fn require_for_module(
     load_with_resolution(context, &filename, Some(parent), goal, Some((directory_cache, &specifier)))
 }
 
+/// A require capability installed only in a configured SDK module wrapper.
+/// Public module.filename mutation cannot grant access to the timer adapter.
+pub(super) fn require_node_library(
+    context: &mut Context<'_>, receiver: RootId, args: &[RootId],
+) -> Result<RootId, RootedError> {
+    if let Some(value) = args.first() {
+        if context.string_text(*value)?.is_some_and(|name| {
+            name.strip_prefix("node:").unwrap_or(&name) == "internal/timers"
+        }) {
+            return cached_builtin(context, BuiltinModule::InternalTimers);
+        }
+    }
+    require(context, receiver, args)
+}
+
 pub(super) fn resolve(
     context: &mut Context<'_>,
     _: RootId,
@@ -2327,7 +2342,17 @@ fn load_with_resolution(
                     text.into()
                 };
                 let exports = get(context, module, "exports")?;
-                let require = get(context, module, "require")?;
+                let public_require = get(context, module, "require")?;
+                let require = if in_node_internal {
+                    let require = context.host_function_named_with_data(
+                        super::operation("nodeLibraryRequire"), "require", module,
+                    )?;
+                    for name in ["resolve", "main", "cache"] {
+                        let value = get(context, public_require, name)?;
+                        set(context, require, name, value)?;
+                    }
+                    require
+                } else { public_require };
                 let name = context.string_rooted(&key);
                 let directory = context.string_rooted(
                     &filename
@@ -2530,6 +2555,7 @@ pub(crate) fn node_internal_binding_source() -> &'static str {
   switch (String(name)) {
     case "os":
     case "timers":
+    case "contextify":
     case "credentials":
     case "config":
     case "icu":

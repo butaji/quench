@@ -9726,29 +9726,69 @@ fn process_capture_methods_have_public_names_and_ordinary_constructor_shapes() {
 }
 
 #[test]
+fn native_contextify_scripts_compile_once_keep_template_sites_and_return_global_functions() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-contextify-owned-script.js"), &["--expose-internals", "--no-warnings", "--expose-gc"]);
+}
+
+#[test]
+fn sdk_mock_tracker_preserves_call_records_restoration_and_virtual_timer_queue() {
+    compare_node_source_with_args(include_str!("../node-tests/test-sdk-mock-tracker.js"), &["--no-warnings"]);
+}
+
+#[test]
+fn original_sdk_test_harness_runs_hooks_subtests_contexts_and_mock_cleanup() {
+    compare_node_source_with_args(include_str!("../node-tests/test-sdk-test-harness.js"), &["--no-warnings", "--test-reporter=dot"]);
+}
+
+#[test]
+fn promise_async_hooks_observe_real_resources_trigger_identity_and_job_order() {
+    compare_node_source_with_args(include_str!("../node-tests/test-promise-async-hooks-lifecycle.js"), &[]);
+}
+
+#[test]
+fn promise_hooks_keep_suspended_continuations_and_reactions_live_during_gc() {
+    compare_node_source_with_args(include_str!("../node-tests/test-promise-hooks-gc-roots.js"), &["--expose-gc"]);
+}
+
+#[test]
+fn promise_init_hooks_can_settle_await_sources_reentrantly() {
+    compare_node_source_with_args(include_str!("../node-tests/test-promise-init-reentry.js"), &[]);
+}
+
+#[test]
+fn fs_internal_module_stat_follows_links_returns_errno_and_resolves_node_cwd() {
+    compare_node_source_with_args(include_str!("../node-tests/test-fs-internal-module-stat.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+#[test]
 fn process_fatal_handler_exits_preserve_sdk_status_event_suppression_and_explicit_requests() {
     compare_node_source_with_args(include_str!("../node-tests/test-process-fatal-handler-exit.js"), &[]);
 }
+
 
 #[test]
 fn cli_version_aliases_use_the_configured_sdk_and_short_circuit_before_guest_execution() {
     compare_node_source_with_args(include_str!("../node-tests/test-cli-version-order.js"), &[]);
 }
 
+
 #[test]
 fn process_report_configuration_uses_sdk_descriptors_validation_and_shared_native_state() {
     compare_node_source_with_args(include_str!("../node-tests/test-process-report-configuration.js"), &["--expose-internals", "--no-warnings"]);
 }
+
 
 #[test]
 fn process_capture_preserves_report_flag_snapshot_restoration_and_accessor_order() {
     compare_node_source_with_args(include_str!("../node-tests/test-process-capture-report-flags.js"), &[]);
 }
 
+
 #[test]
 fn process_report_startup_flags_preserve_environment_precedence_aliases_and_signal_registration() {
     compare_node_source_with_args(include_str!("../node-tests/test-process-report-startup.js"), &[]);
 }
+
 
 #[test]
 fn process_events_share_emitter_storage_inspection_borrowed_methods_and_once_wrappers() {
@@ -9758,4 +9798,9 @@ fn process_events_share_emitter_storage_inspection_borrowed_methods_and_once_wra
 #[test]
 fn process_warning_policy_preserves_default_listener_removal_suppression_and_startup_descriptors() {
     compare_node_source_with_args(include_str!("../node-tests/test-process-warning-policy.js"), &[]);
+}
+
+#[test]
+fn module_cache_protocol_types_come_from_configured_sdk_and_preserve_native_descriptors() {
+    compare_node_source_with_args(include_str!("../node-tests/test-module-cache-protocol.js"), &["--expose-internals", "--no-warnings"]);
 }

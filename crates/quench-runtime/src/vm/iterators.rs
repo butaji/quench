@@ -2872,7 +2872,7 @@ impl<H: Host> Vm<H> {
         let reason = error
             .thrown_value()
             .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
-        let promise = self.promise_object();
+        let promise = self.with_call_roots([reason], |vm| vm.promise_object())?;
         self.promise_settle(p, promise, PromiseState::Rejected, reason)?;
         Ok(promise)
     }
