@@ -142,3 +142,6 @@ pub(crate) mod crypto_key_shared_vm;
 
 #[cfg(target_os = "linux")]
 pub(crate) mod os_binding_shared_vm;
+
+pub(crate) mod cli_options;
+pub(crate) mod cli_options_shared_vm;
