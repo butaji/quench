@@ -301,7 +301,8 @@ fn preload_modules(context: &mut Context<'_>) -> Result<(), RootedError> {
 }
 
 fn install_vfs_globals(context: &mut Context<'_>) -> Result<(), RootedError> {
-    // The VFS sources wrap `globalThis.__nodeFs`, which building `fs` defines.
+    // The configured SDK owns public VFS policy; retain only native descriptor
+    // and stream bridges here, without evaluating the superseded JS facade.
     cached_builtin(context, BuiltinModule::Fs)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_vfs_fs_module");
@@ -341,15 +342,6 @@ fn install_vfs_globals(context: &mut Context<'_>) -> Result<(), RootedError> {
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_vfs_globals");
 
-    let source = format!(
-        "{}\n{}",
-        crate::polyfills::bootstrap::vfs_head::JS,
-        crate::polyfills::bootstrap::vfs::JS
-    );
-    let root = context.evaluate_script_rooted(&source, "node:bootstrap/vfs.js")?;
-    context.release_root(root);
-    #[cfg(feature = "profile-memory")]
-    context.profile_memory_checkpoint("node_vfs_polyfill");
     Ok(())
 }
 
@@ -673,7 +665,7 @@ pub(crate) fn require_for_module(
         let builtin_ids = serde_json::to_string(&builtin_ids)
             .map_err(|error| RootedError::host(error.to_string()))?;
         let source = format!(
-            r#"(() => {{
+            r#"((nativeUtil) => {{
   const ids = new Set({builtin_ids});
   class BuiltinModule {{
     static map = new Map(Array.from(ids, (id) => [id, new BuiltinModule(id)]));
@@ -696,19 +688,16 @@ pub(crate) fn require_for_module(
     }};
     if (name === "types") return {{ isNativeError: (value) => value instanceof Error, isPromise: (value) => value instanceof Promise }};
     if (name === "string_decoder") return {{ encodings: ["ascii", "utf8", "utf-8", "utf16le", "ucs2", "ucs-2", "base64", "base64url", "latin1", "binary", "hex"] }};
-    if (name === "util") return {{
-      constructSharedArrayBuffer: () => {{ throw new Error("SharedArrayBuffer construction is unavailable"); }},
-      guessHandleType: () => "UNKNOWN",
-      defineLazyProperties: (target, properties) => {{ for (const [key, getter] of Object.entries(properties)) Object.defineProperty(target, key, {{ configurable: true, get: getter }}); }},
-      privateSymbols: {{ arrow_message_private_symbol: Symbol("arrow_message"), decorated_private_symbol: Symbol("decorated") }},
-      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-    }};
+    if (name === "util") return nativeUtil;
     return {{}};
   }};
   return {{ BuiltinModule, internalBinding, require: () => {{ throw new Error("builtin source loading is unavailable"); }} }};
-}})()"#
+}})"#
         );
-        return context.evaluate_script_rooted(&source, "internal/bootstrap/realm.js");
+        let factory = context.evaluate_script_rooted(&source, "internal/bootstrap/realm.js")?;
+        let util = crate::modules::util_shared_vm::key_binding(context)?;
+        let undefined = context.undefined();
+        return context.call_rooted(factory, undefined, &[util]);
     }
     match requested_builtin(context, &specifier) {
         Some(BuiltinModule::Process) => {
@@ -884,6 +873,8 @@ pub(crate) fn require_for_module(
             | BuiltinModule::InternalChildProcess
             | BuiltinModule::Https
             | BuiltinModule::Http2
+            | BuiltinModule::DnsPromises
+            | BuiltinModule::CaresBinding
             | BuiltinModule::Http2Binding
             | BuiltinModule::Inspector
             | BuiltinModule::Repl
@@ -1045,6 +1036,8 @@ enum BuiltinModule {
     Https,
     Http2,
     Http2Binding,
+    CaresBinding,
+    DnsPromises,
     Vm,
     Inspector,
     Repl,
@@ -1104,6 +1097,8 @@ impl BuiltinModule {
             Self::Dgram => Some("dgram"),
             Self::Https => Some("https"),
             Self::Http2 => Some("http2"),
+            Self::DnsPromises => Some("dns/promises"),
+            Self::CaresBinding => Some("internalBinding/cares_wrap"),
             Self::Http2Binding => Some("internalBinding/http2"),
             Self::Vm => Some("vm"),
             Self::Inspector => Some("inspector"),
@@ -1157,8 +1152,8 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("internal/worker/io", BuiltinModule::Internal("internal/worker/io")),
     ("constants", BuiltinModule::Internal("constants")),
     ("node:constants", BuiltinModule::Internal("constants")),
-    ("dns/promises", BuiltinModule::Internal("dns/promises")),
-    ("node:dns/promises", BuiltinModule::Internal("dns/promises")),
+    ("dns/promises", BuiltinModule::DnsPromises),
+    ("node:dns/promises", BuiltinModule::DnsPromises),
     (
         "inspector/promises",
         BuiltinModule::Internal("inspector/promises"),
@@ -1500,6 +1495,10 @@ pub(crate) fn stream_module(context: &mut Context<'_>) -> Result<RootId, RootedE
     cached_builtin(context, BuiltinModule::Stream)
 }
 
+pub(crate) fn cares_binding(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    cached_builtin(context, BuiltinModule::CaresBinding)
+}
+
 pub(crate) fn http2_binding(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     cached_builtin(context, BuiltinModule::Http2Binding)
 }
@@ -1583,6 +1582,8 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
                 .ok_or_else(||RootedError::host("EventTarget API missing"))?;
             let operation=get(context,data,"abortSignal")?;
             set(context,module,"abortSignal",operation)?;
+            let aborted = crate::modules::util_aborted_source_shared_vm::original_aborted(context)?;
+            set(context,module,"aborted",aborted)?;
             Ok(module)
         },
         BuiltinModule::Internal("internal/process/task_queues") =>
@@ -1728,6 +1729,8 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             "node:https.js",
         ),
         BuiltinModule::TraceEvents => crate::modules::trace_shared_vm::module(context),
+        BuiltinModule::DnsPromises => { let dns = dns_module(context)?; get(context, dns, "promises") },
+        BuiltinModule::CaresBinding => crate::modules::cares_binding::module(context),
         BuiltinModule::Http2Binding => {
             let binding = context.object_rooted()?;
             // Native constant values and attributes from Node v26.12.0's HTTP/2
@@ -2327,6 +2330,15 @@ fn load_with_resolution(
             set(context, module, "loaded", loaded)?;
             return Ok(exports);
         }
+        if filename.extension().and_then(|extension| extension.to_str()) == Some("node") {
+            // Module._extensions['.node']: process.dlopen(module, filename).
+            let path = context.string_rooted(&filename.to_string_lossy());
+            crate::modules::napi::dlopen(context, module, &[module, path])?;
+            let exports = get(context, module, "exports")?;
+            let loaded = context.boolean(true);
+            set(context, module, "loaded", loaded)?;
+            return Ok(exports);
+        }
         let file_text = match std::fs::read(filename) {
             Ok(bytes) => String::from_utf8(bytes)
                 .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned()),
@@ -2342,7 +2354,7 @@ fn load_with_resolution(
                 let exports = context.parse_json_rooted(text)?;
                 set(context, module, "exports", exports)?;
             }
-            Some("mjs" | "node") => {
+            Some("mjs") => {
                 return Err(RootedError::host(
                     "this module format is not implemented on the shared VM",
                 ));
@@ -2401,6 +2413,10 @@ const getLinkedBinding = () => ({});
                     // This configured SDK entry exposes the engine's raw binding
                     // objects; it must not expose per-module library adapters.
                     "const internalBinding = __nativeInternalBinding;"
+                } else if library_relative == Some(Path::new("lib/internal/per_context/domexception.js")) {
+                    // This SDK per-context source has two explicit native symbol
+                    // capabilities in Node's wrapper. Reuse existing symbol owners.
+                    "const privateSymbols=__nativeInternalBinding('util').privateSymbols; const perIsolateSymbols=__nativeInternalBinding('symbols');"
                 } else if in_node_internal {
                     node_internal_binding_source()
                 } else {
@@ -2601,6 +2617,7 @@ pub(crate) fn node_internal_binding_source() -> &'static str {
     case "encoding_binding":
     case "zlib":
     case "symbols":
+    case "cares_wrap":
     case "http2":
     case "fs_event_wrap":
     case "errors":
@@ -2637,6 +2654,8 @@ pub(crate) fn node_internal_binding_source() -> &'static str {
     case "buffer": return Object.assign({}, require("buffer"), __nativeInternalBinding("buffer"));
     case "fs": return __nativeInternalBinding("fs");
     case "crypto": {
+      const native = __nativeInternalBinding("crypto");
+      if (native.getFipsCryptoGeneration) return native;
       const crypto = require("crypto");
       return Object.assign({}, crypto, __nativeInternalBinding("crypto_keys"), {
         setEngine: __nativeInternalBinding("crypto").setEngine,
@@ -2653,7 +2672,10 @@ pub(crate) fn node_internal_binding_source() -> &'static str {
       setDeserializeMainFunction: () => {},
     };
     case "process": return process;
-    case "messaging": return { DOMException: globalThis.DOMException };
+    case "messaging": {
+      if (__nativeInternalBinding("crypto").getFipsCryptoGeneration) return __nativeInternalBinding("messaging");
+      return { DOMException: globalThis.DOMException };
+    }
     case "performance": return {
       constants: { NODE_PERFORMANCE_MILESTONE_TIME_ORIGIN: 0, NODE_PERFORMANCE_MILESTONE_TIME_ORIGIN_TIMESTAMP: 1 },
       milestones: [0, 0], now: () => require("perf_hooks").performance.now() * 1e6,

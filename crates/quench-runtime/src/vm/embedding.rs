@@ -20,7 +20,7 @@ const TYPED_BRANDS: &[(crate::BuiltinBrand, TypedArrayKind)] = &[
     (crate::BuiltinBrand::Float32Array, TypedArrayKind::Float32),
     (crate::BuiltinBrand::Float64Array, TypedArrayKind::Float64),
 ];
-fn typed_array_brand(kind: TypedArrayKind) -> crate::BuiltinBrand {
+pub(super) fn typed_array_brand(kind: TypedArrayKind) -> crate::BuiltinBrand {
     TYPED_BRANDS
         .iter()
         .find(|(_, candidate)| *candidate == kind)
@@ -1055,7 +1055,11 @@ impl<H: Host> Vm<H> {
     }
 
     pub(crate) fn embedding_symbol(&mut self, description: Option<String>) -> Value {
-        self.heap.alloc(Cell::Symbol(description))
+        self.heap.alloc(Cell::Symbol(crate::heap::SymbolData::public(description)))
+    }
+
+    pub(crate) fn embedding_private_symbol(&mut self, description: Option<String>) -> Value {
+        self.heap.alloc(Cell::Symbol(crate::heap::SymbolData::host_private(description)))
     }
 
     fn create_embedding_object_with_prototype(

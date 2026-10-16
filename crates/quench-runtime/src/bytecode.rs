@@ -154,7 +154,12 @@ pub(crate) enum FieldLayout {
     Register,
     WriteRegister,
     ReadWriteRegister,
+    /// A register the instruction may also write its result to (`NO_OPTIONAL_REGISTER` for
+    /// none): an output.
     OptionalRegister,
+    /// A register the instruction reads when present (`NO_OPTIONAL_REGISTER` for none): an
+    /// input, encoded as `OptionalRegister` is.
+    OptionalReadRegister,
     NumericLocalTarget,
     NumericLocalStoreMarker,
     FunctionIndex,
@@ -606,7 +611,7 @@ opcodes!(
     IteratorClose => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
     // ArrayAccumulation past a literal's static prefix: `length` elisions, then the optional
     // value (iterated when the flag marks a spread), appended at the array's length.
-    AppendArray => CALL_EFFECT; layout Scalar; meaning ArrayLength, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
+    AppendArray => CALL_EFFECT; layout Scalar; meaning ArrayLength, @ Register, @ fields(Register, OptionalReadRegister, BooleanFlag),
     RequireObjectCoercible => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(Unused, Register, Unused),
     RequireIteratorResult => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(Unused, Register, Unused),
     SuperCallCheck => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(Unused, Unused, Unused),

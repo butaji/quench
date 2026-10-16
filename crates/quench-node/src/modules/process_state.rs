@@ -19,7 +19,7 @@ pub(crate) fn config_variable_facts() -> &'static [(&'static str, ProcessFact)] 
     &[
         ("v8_enable_i18n_support", ProcessFact::Number(1.0)),
         ("node_module_version", ProcessFact::Number(127.0)),
-        ("napi_build_version", ProcessFact::String("9")),
+        ("napi_build_version", ProcessFact::String(env!("QUENCH_NODE_API_SUPPORTED_VERSION_MAX"))),
         (
             "node_builtin_shareable_builtins",
             ProcessFact::StringArray(&["deps/undici/undici.js"]),
@@ -64,7 +64,7 @@ pub(crate) fn version_facts() -> &'static [(&'static str, &'static str)] {
         ("llhttp", "9.2.1"),
         ("merve", "1.0.0"),
         ("modules", "127"),
-        ("napi", "9"),
+        ("napi", env!("QUENCH_NODE_API_SUPPORTED_VERSION_MAX")),
         ("nbytes", "1.0.0"),
         ("ncrypto", "1.0.0"),
         ("nghttp2", "1.61.0"),

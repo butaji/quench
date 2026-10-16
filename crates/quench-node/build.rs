@@ -19,6 +19,9 @@ use std::{env, path::Path};
 const X86_64_LINUX_ORDER: &str = "link/x86_64-linux.order";
 const X86_64_LINUX_STATIC_ORDER: &str = "link/x86_64-linux-static.order";
 
+/// The Node-API functions `process.dlopen`ed addons import from the executable.
+const NODE_API_DYNAMIC_LIST: &str = "link/node-api.dynamic-list";
+
 /// The C runtime's frame registration hooks. A static C runtime's start code (`crtbeginT.o`)
 /// registers `.eh_frame` with the unwinder when these weak references resolve, which makes the
 /// whole section resident at startup. Production aborts on panic and the unwinder still finds
@@ -34,6 +37,12 @@ fn on_path(program: &str) -> bool {
 }
 
 fn main() {
+
+    println!("cargo:rustc-check-cfg=cfg(quench_openssl_provider)");
+    println!("cargo:rerun-if-env-changed=DEP_OPENSSL_VERSION_NUMBER");
+    let provider = std::env::var("DEP_OPENSSL_VERSION_NUMBER").ok()
+        .and_then(|v| u64::from_str_radix(&v,16).ok()).is_some_and(|v|v>=0x3000_0000);
+    if provider { println!("cargo:rustc-cfg=quench_openssl_provider"); }
     embed_node_sources();
     configure_icu();
     configure_native_zlib();
@@ -41,6 +50,7 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed={X86_64_LINUX_ORDER}");
     println!("cargo:rerun-if-changed={X86_64_LINUX_STATIC_ORDER}");
+    println!("cargo:rerun-if-changed={NODE_API_DYNAMIC_LIST}");
     println!("cargo:rustc-check-cfg=cfg(quench_openssl_engine)");
     println!("cargo:rerun-if-env-changed=DEP_OPENSSL_CONF");
     let configuration = std::env::var("DEP_OPENSSL_CONF").unwrap_or_default();
@@ -56,6 +66,10 @@ fn main() {
     let os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let static_runtime = env::var("CARGO_CFG_TARGET_FEATURE")
         .is_ok_and(|features| features.split(',').any(|feature| feature == "crt-static"));
+    if os == "linux" && !static_runtime {
+        let list = Path::new(&env::var("CARGO_MANIFEST_DIR").unwrap_or_default()).join(NODE_API_DYNAMIC_LIST);
+        println!("cargo:rustc-link-arg-bins=-Wl,--dynamic-list={}", list.display());
+    }
     // A static C runtime chooses its own executable kind.
     if os == "linux" && static_runtime {
         for hook in FRAME_REGISTRATION_HOOKS {
@@ -119,6 +133,10 @@ fn configure_node_compat_version(root: &std::path::Path) {
         definition("NODE_MINOR_VERSION"),
         definition("NODE_PATCH_VERSION")
     );
+    // Node-API versions the runtime supports and assumes for modules that declare none.
+    for name in ["NODE_API_SUPPORTED_VERSION_MAX", "NODE_API_DEFAULT_MODULE_API_VERSION"] {
+        println!("cargo:rustc-env=QUENCH_{name}={}", definition(name));
+    }
 }
 
 include!("src/node_source_dependencies.rs");
