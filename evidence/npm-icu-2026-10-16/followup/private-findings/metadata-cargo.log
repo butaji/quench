@@ -1,0 +1,5 @@
+     Locking 61 packages to highest Rust 1.99.0 compatible versions
+error: failed to download `oxc_parser v0.153.0`
+
+Caused by:
+  attempting to make an HTTP request, but --offline was specified

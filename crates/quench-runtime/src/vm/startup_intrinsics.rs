@@ -292,7 +292,10 @@ impl<H: Host> Vm<H> {
         Some(SlotProperty { value, attributes })
     }
 
-    /// Defines `key` on `holder` with `property`'s state, as `Object.defineProperty` would.
+    /// Restore a trusted snapshot, including a guest's non-configurable replacement.
+    /// This internal scope must capture the startup value even after a guest freezes
+    /// its replacement. Ordinary guest definitions still use normal descriptor rules;
+    /// both entering and leaving this scope restore complete descriptor state.
     fn redefine_slot_property(
         &mut self,
         p: &ResidualProgram,
@@ -300,11 +303,25 @@ impl<H: Host> Vm<H> {
         key: PropertyKey,
         property: SlotProperty,
     ) -> Result<bool, JsError> {
+        if let Some(mut attributes) = self.property_attributes(holder, key) {
+            if !attributes.configurable {
+                attributes.configurable = true;
+                self.set_property_attributes(holder, key, attributes);
+            }
+        }
+        let extensible = self.object_data(holder).is_some_and(Object::is_extensible);
+        if !extensible {
+            self.object_data_mut(holder).expect("sealed intrinsic holder").set_extensible(true);
+        }
         let key = self.property_key_value(key);
         let record = PropertyDescriptorRecord::from_attributes(property.value, property.attributes);
-        self.with_call_roots([key], |vm| {
+        let result = self.with_call_roots([key], |vm| {
             vm.define_own_property_record(p, holder, key, record)
-        })
+        });
+        if !extensible {
+            self.object_data_mut(holder).expect("sealed intrinsic holder").set_extensible(false);
+        }
+        result
     }
 
     /// `key` as a JavaScript property key value.

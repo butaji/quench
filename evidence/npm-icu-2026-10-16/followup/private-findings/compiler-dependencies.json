@@ -1,0 +1,8 @@
+{
+  "oxc_allocator": "/workspace/quench/target/npm-file-url/debug/deps/liboxc_allocator-09fc75cf986cdc0f.rlib",
+  "oxc_ast": "/workspace/quench/target/npm-file-url/debug/deps/liboxc_ast-8885dbfb8ae80628.rlib",
+  "oxc_parser": "/workspace/quench/target/npm-file-url/debug/deps/liboxc_parser-4421e48a6de4eb8c.rlib",
+  "oxc_semantic": "/workspace/quench/target/npm-file-url/debug/deps/liboxc_semantic-47b948aa8864b5f8.rlib",
+  "oxc_span": "/workspace/quench/target/npm-file-url/debug/deps/liboxc_span-b35fa63724ac3dc9.rlib",
+  "rustc_hash": "/workspace/quench/target/npm-file-url/debug/deps/librustc_hash-d1c80195e79b9d72.rlib"
+}
