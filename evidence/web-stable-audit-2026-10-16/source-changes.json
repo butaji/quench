@@ -1,0 +1,14 @@
+[
+  {
+    "path": "test/fixtures/permission/deny/protected-file.md",
+    "before": {
+      "sha256": "b0e78cd4bb13929391b33a2ad7d80f61d8b2f1d66533aaf31d95807e5f3863eb",
+      "mode": 33152,
+      "bytes": 84
+    },
+    "after": {
+      "mode": 33152,
+      "bytes": 7
+    }
+  }
+]

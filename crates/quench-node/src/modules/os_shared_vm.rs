@@ -4,6 +4,7 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
+#[cfg(not(target_os = "linux"))]
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let module = context.object_rooted()?;
     for name in [
@@ -15,6 +16,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         set(context, module, name, function)?;
     }
     for (name, operation) in [
+        #[cfg(not(target_os = "linux"))]
         ("totalmem", "osTotalmem"),
         ("uptime", "osUptime"),
         ("networkInterfaces", "osNetworkInterfaces"),
@@ -96,6 +98,9 @@ pub(crate) fn string_operation(
         "homedir" => std::env::var("HOME")
             .or_else(|_| std::env::var("USERPROFILE"))
             .unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into_owned()),
+        #[cfg(target_os = "linux")]
+        "tmpdir" => crate::modules::os_facts::temporary_directory(),
+        #[cfg(not(target_os = "linux"))]
         "tmpdir" => std::env::temp_dir().to_string_lossy().into_owned(),
         _ => String::new(),
     };
@@ -254,4 +259,12 @@ pub(crate) fn signal_constants(
         return Err(RootedError::host("cannot seal OS signal constants"));
     }
     Ok(signals)
+}
+
+pub(crate) fn freemem_operation(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    Ok(context.number(crate::modules::os_facts::memory_info().available as f64))
 }

@@ -174,8 +174,9 @@ pub(crate) fn system_error_name(number: f64) -> String {
         .unwrap_or_else(|| format!("Unknown system error {number}"))
 }
 
+pub(crate) const UV_UDP_REUSEADDR: i32 = 4;
+
 pub(crate) fn uv_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    const UV_UDP_REUSEADDR: i32 = 4;
     let binding = context.object_rooted()?;
     let mut result = Ok(());
     visit_system_errors(|number, name| {
