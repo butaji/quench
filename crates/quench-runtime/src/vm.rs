@@ -77,6 +77,7 @@ mod dispatch_frame;
 mod dispatch_wasm;
 mod dynamic_strings;
 mod embedding;
+mod provenance;
 mod environment;
 mod equality;
 mod error;
@@ -673,6 +674,8 @@ struct StringConcatCache {
 #[derive(Clone, Copy)]
 enum ShapeTransition {
     Root,
+    FunctionName { name: Atom },
+    Constructed { constructor: Value, new_target_is_base: bool },
     Add {
         key: property_key::PropertyKey,
         slot: u32,
@@ -693,6 +696,8 @@ enum ShapeTransition {
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum ShapeTransitionKey {
+    FunctionName(Atom),
+    Constructed(Value, bool),
     AddString(Atom, DataAttributes),
     /// A descriptor without accessor functions (`ShapeAttributes::accessors` is
     /// `NO_SHAPE_ACCESSORS`).
@@ -801,12 +806,14 @@ impl ShapeTransition {
         match self {
             Self::Add { key, .. } => key.symbol_value().is_some(),
             Self::Descriptor { attributes, .. } => attributes.accessors != NO_SHAPE_ACCESSORS,
-            Self::Root | Self::Delete { .. } | Self::Vacant | Self::Dictionary { .. } => false,
+            Self::Root | Self::FunctionName { .. } | Self::Constructed { .. } | Self::Delete { .. } | Self::Vacant | Self::Dictionary { .. } => false,
         }
     }
 
     fn cache_key(self) -> Option<ShapeTransitionKey> {
         match self {
+            Self::FunctionName { name } => Some(ShapeTransitionKey::FunctionName(name)),
+            Self::Constructed { constructor, new_target_is_base } => Some(ShapeTransitionKey::Constructed(constructor, new_target_is_base)),
             Self::Add {
                 key: PropertyKey::String(atom),
                 attributes,

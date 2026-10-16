@@ -1286,3 +1286,84 @@ if(previewCollection({})!==undefined)throw Error('ordinary object preview');
         Runtime::new(CollectionPreviewHost).execute(&program).unwrap();
     }
 }
+
+#[derive(Default)]
+struct ConstructorProvenanceHost {
+    constructor: Option<HostWeakRoot>,
+}
+impl Host for ConstructorProvenanceHost {
+    fn write_line(&mut self, _: &str) {}
+    fn clock_millis(&mut self) -> f64 {
+        0.0
+    }
+    fn functions(&self) -> &[HostFunction<Self>] {
+        crate::host_functions![
+            global "rememberConstructor" (1) => remember_constructor,
+            global "constructedName" (1) => constructed_name,
+        ]
+    }
+}
+fn remember_constructor(
+    context: &mut NativeContext<'_, ConstructorProvenanceHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let weak = context.host_weak_root(args[0])?;
+    context.host_mut().constructor = Some(weak);
+    Ok(context.undefined())
+}
+fn constructed_name(
+    context: &mut NativeContext<'_, ConstructorProvenanceHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    Ok(context
+        .constructed_name_rooted(args[0])?
+        .unwrap_or_else(|| context.undefined()))
+}
+#[test]
+fn constructor_provenance_roots_only_live_nonprototype_instances_across_shape_collection() {
+    let source = r#"
+var instance,child;
+function createInstance(){function Original(){};rememberConstructor(Original);instance=new Original;Object.setPrototypeOf(instance,null);Object.defineProperty(Original,'name',{value:'changed'})}
+function checkInstance(){if(constructedName(instance)!=='changed')throw Error('lost debug name')}
+function dropInstance(){instance=null}
+function createReflected(){function Base(){};function Target(){};rememberConstructor(Base);instance=Reflect.construct(Base,[],Target);Object.setPrototypeOf(instance,null)}
+function checkReflected(){if(constructedName(instance)!==undefined)throw Error('derived base name visible')}
+function createPrototype(){function PrototypeOwner(){};rememberConstructor(PrototypeOwner);const prototype=new PrototypeOwner;Object.setPrototypeOf(prototype,null);child=Object.create(prototype)}
+function checkPrototype(){if(constructedName(Object.getPrototypeOf(child))!==undefined)throw Error('prototype provenance visible')}
+"#;
+    for program in [
+        Engine::specialize_unspecialized(source, "constructor-provenance.js").unwrap(),
+        Engine::specialize(source, "constructor-provenance.js").unwrap(),
+    ] {
+        let mut runtime = Runtime::new(ConstructorProvenanceHost::default());
+        runtime.execute(&program).unwrap();
+        // Check release after each activation returns, avoiding conservative
+        // roots held by an active guest frame's locals or registers.
+        for (operation, alive) in [
+            ("createInstance", true),
+            ("checkInstance", true),
+            ("dropInstance", false),
+            ("createReflected", true),
+            ("checkReflected", true),
+            ("dropInstance", false),
+            ("createPrototype", false),
+            ("checkPrototype", false),
+        ] {
+            let global = runtime.global_root().unwrap();
+            let key = runtime.string_rooted(operation);
+            let function = runtime.get_property_rooted(global, key).unwrap();
+            let result = runtime.call_rooted(function, global, &[]).unwrap();
+            for root in [result, function, key, global] {
+                assert!(runtime.release_root(root));
+            }
+            runtime.collect(&program).unwrap();
+            let weak = runtime
+                .host_mut()
+                .constructor
+                .expect("remembered constructor");
+            assert_eq!(runtime.host_weak_root_is_live(weak), alive, "{operation}");
+        }
+    }
+}
