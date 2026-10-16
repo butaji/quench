@@ -8,16 +8,16 @@ const SUPPRESSED_MESSAGE_ARGUMENT: usize = 2;
 const DEFAULT_STACK_TRACE_LIMIT: usize = 10;
 
 const CALL_SITE_METHODS: &[(&str, Native)] = &[
+    ("getColumnNumber", Native::CallSiteGetColumnNumber),
+    ("getEvalOrigin", Native::CallSiteGetEvalOrigin),
     ("getFileName", Native::CallSiteGetFileName),
-    ("getThis", Native::CallSiteGetThis),
     ("getFunctionName", Native::CallSiteGetFunctionName),
     ("getLineNumber", Native::CallSiteGetLineNumber),
-    ("getColumnNumber", Native::CallSiteGetColumnNumber),
-    ("getTypeName", Native::CallSiteGetTypeName),
     ("getMethodName", Native::CallSiteGetMethodName),
-    ("isEval", Native::CallSiteIsEval),
-    ("getEvalOrigin", Native::CallSiteGetEvalOrigin),
+    ("getThis", Native::CallSiteGetThis),
+    ("getTypeName", Native::CallSiteGetTypeName),
     ("isConstructor", Native::CallSiteIsConstructor),
+    ("isEval", Native::CallSiteIsEval),
     ("isNative", Native::CallSiteIsNative),
     ("toString", Native::CallSiteToString),
 ];
@@ -40,6 +40,7 @@ pub(super) fn error_native_length(native: Native) -> Option<f64> {
         Native::ErrorCaptureStackTrace => 2.0,
         Native::ErrorStackSetter => 1.0,
         Native::ErrorToString
+        | Native::CallSiteConstructor
         | Native::ErrorStackGetter
         | Native::CallSiteGetFileName
         | Native::CallSiteGetThis
@@ -328,7 +329,7 @@ impl<H: Host> Vm<H> {
             roots.push(self.heap.root(prepare));
             let result = (|| {
                 if self.is_function(prepare) {
-                    let sites = self.error_call_site_array(program, &records)?;
+                    let sites = self.error_call_site_array(&records)?;
                     let sites_root = self.heap.root(sites);
                     let target = self.heap.root_value(receiver_root).unwrap();
                     let constructor = self.heap.root_value(roots[0]).unwrap();
@@ -378,24 +379,21 @@ impl<H: Host> Vm<H> {
 
     fn error_call_site_array(
         &mut self,
-        program: &ResidualProgram,
         records: &[CallSiteRecord],
     ) -> Result<Value, JsError> {
         let mut roots = Vec::with_capacity(records.len());
         let result = (|| {
             let mut sites = Vec::with_capacity(records.len());
             for record in records {
-                let site = self
-                    .heap
-                    .alloc(Cell::Object(Self::empty_object(self.object_proto)));
+                let intrinsics = self.realm.intrinsics.error_intrinsics[&self.realm.globals];
+                let mut object = Self::empty_object(intrinsics.call_site_prototype);
+                self.capture_constructed_name(&mut object, intrinsics.call_site_constructor, true);
+                let site = self.heap.alloc(Cell::Object(object));
                 let root = self.heap.root(site);
                 roots.push(root);
                 self.object_data_mut(site)
                     .expect("CallSite is an ordinary object")
                     .set_stack_data(StackData::CallSite(record.clone()));
-                for &(name, native) in CALL_SITE_METHODS {
-                    self.set_builtin_named(program, site, name, native)?;
-                }
                 sites.push(self.heap.root_value(root).unwrap());
             }
             Ok(self.heap.alloc(Cell::Array {
@@ -602,6 +600,12 @@ impl<H: Host> Vm<H> {
         self.string_build_result(program, text.finish())
     }
 
+    pub(super) fn call_site_constructor(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
+        let message = self.heap.alloc(Cell::String(JsString::from_str("Not supported")));
+        let error = self.construct_error_native(program, Native::Error, &[message])?;
+        Err(JsError::thrown(error, "Error: Not supported".into()))
+    }
+
     pub(super) fn call_site_native(
         &mut self,
         program: &ResidualProgram,
@@ -611,10 +615,16 @@ impl<H: Host> Vm<H> {
         let record = match self.object_data(receiver).and_then(Object::stack_data) {
             Some(StackData::CallSite(record)) => record.clone(),
             _ => {
-                return Err(self.type_error(
-                    program,
-                    "CallSite method called on incompatible receiver".into(),
-                ));
+                let method = CALL_SITE_METHODS.iter().find(|(_, candidate)| *candidate == native)
+                    .map(|(name, _)| *name).expect("CallSite method");
+                let message = if matches!(self.heap.get(receiver), Some(Cell::Proxy { .. })) {
+                    format!("Method {method} called on incompatible receiver #<Object>")
+                } else if !self.is_object_like(receiver) {
+                    format!("Method {method} called on incompatible receiver {}", self.detail_string(receiver))
+                } else {
+                    format!("CallSite method {method} expects CallSite as receiver")
+                };
+                return Err(self.type_error(program, message));
             }
         };
         match native {
@@ -2075,12 +2085,36 @@ impl<H: Host> Vm<H> {
         };
         self.set_builtin_function_name(stack_getter, "")?;
         self.set_builtin_function_name(stack_setter, "")?;
+        let call_site_constructor = if global == self.realm.globals && constructor == self.native_value(Native::Error) {
+            self.native_value(Native::CallSiteConstructor)
+        } else {
+            self.native_with_realm(Native::CallSiteConstructor, Value::NULL, global)
+        };
+        self.set_builtin_function_name(call_site_constructor, "CallSite")?;
+        let call_site_prototype = self.heap.alloc(Cell::Object(Self::empty_object(self.realm_object_prototype(global))));
+        self.set_named_constant(program, call_site_constructor, "prototype", call_site_prototype)?;
+        self.set_builtin_value_named(call_site_prototype, "constructor", call_site_constructor)?;
+        for &(name, native) in CALL_SITE_METHODS {
+            let function = if constructor == self.native_value(Native::Error) {
+                self.native_value(native)
+            } else {
+                self.native_with_realm(native, Value::NULL, global)
+            };
+            self.set_builtin_function_name(function, name)?;
+            let key = self.intern_atom(name);
+            self.set_property_with_attributes(call_site_prototype, key, function, PropertyAttributes {
+                writable: false, enumerable: false, configurable: false,
+                accessor: false, getter: None, setter: None,
+            })?;
+        }
         self.realm.intrinsics.error_intrinsics.insert(
             global,
             ErrorRealmIntrinsics {
                 constructor,
                 stack_getter,
                 stack_setter,
+                call_site_constructor,
+                call_site_prototype,
             },
         );
         self.set_builtin_named(

@@ -138,6 +138,7 @@ impl<H: Host> Vm<H> {
                 FunctionKind::Native(native) => matches!(
                     native,
                     Native::Function
+                        | Native::CallSiteConstructor
                         | Native::AbstractModuleSource
                         | Native::AsyncFunction
                         | Native::GeneratorFunction
@@ -1033,6 +1034,7 @@ impl<H: Host> Vm<H> {
             );
         }
         match native {
+            Native::CallSiteConstructor => self.call_site_constructor(p),
             Native::AbstractModuleSource => {
                 Err(self.type_error(p, "AbstractModuleSource cannot be constructed".into()))
             }
