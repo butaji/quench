@@ -901,6 +901,7 @@ impl<H: Host> Vm<H> {
         self.startup_intrinsics.remap_shapes(&mapping);
         self.shapes = shapes;
         self.transitions = transitions;
+        self.shape_slot_memo.clear();
         self.object_shapes.fill(u32::MAX);
         self.invalidate_field_caches();
         self.method_caches.fill([EMPTY_METHOD_CACHE; 2]);

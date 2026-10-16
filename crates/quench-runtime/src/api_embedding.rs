@@ -132,6 +132,12 @@ impl<H: Host> Runtime<H> {
         self.retain_completion(result)
     }
 
+    /// Create an array of `values` with the active realm's intrinsic prototype.
+    pub fn array_rooted(&mut self, values: &[RootId]) -> Result<RootId, RootedError> {
+        let result = self.vm.create_embedding_array(values);
+        self.retain_completion(result)
+    }
+
     /// Create a plain object whose `[[Prototype]]` is null.
     pub fn null_object_rooted(&mut self) -> Result<RootId, RootedError> {
         let result = self.vm.create_embedding_null_object();
@@ -147,6 +153,17 @@ impl<H: Host> Runtime<H> {
         key: RootId,
     ) -> Result<RootId, RootedError> {
         let result = self.vm.get_property_rooted(object, key);
+        self.retain_completion(result)
+    }
+
+    /// `object[name]` for a key given as Rust text; equivalent to `get_property_rooted` with
+    /// a string key, without allocating the key.
+    pub fn get_named_property_rooted(
+        &mut self,
+        object: RootId,
+        name: &str,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.get_named_property_rooted(object, name);
         self.retain_completion(result)
     }
 

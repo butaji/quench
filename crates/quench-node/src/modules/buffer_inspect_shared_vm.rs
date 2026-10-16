@@ -4,8 +4,7 @@ use quench_runtime::{BuiltinBrand, NativeContext, RootId, RootedError};
 type Context<'a> = NativeContext<'a, NodeHost>;
 pub(crate) const DEFAULT_INSPECT_MAX_BYTES: f64 = 50.0;
 fn get(c: &mut Context<'_>, o: RootId, n: &str) -> Result<RootId, RootedError> {
-    let k = c.string_rooted(n);
-    c.get_property_rooted(o, k)
+    c.get_named_property_rooted(o, n)
 }
 fn named(c: &mut Context<'_>, f: RootId, n: &str) -> Result<(), RootedError> {
     let k = c.string_rooted("name");

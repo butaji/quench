@@ -8,6 +8,14 @@ pub(super) fn apply(functions: &mut [Function], atoms: &CompilerAtoms<'_>) {
 
     for (id, function) in functions.iter_mut().enumerate() {
         if !has_closure(function) {
+            // No closure of this activation can exist, and no nested function captures
+            // its locals: a per-iteration or block copy of the environment is unobservable
+            // under the same layout conditions that let a closure's activation split.
+            if captured[id].is_empty()
+                && selective_layout_is_safe(function, id, dynamic_ancestors[id])
+            {
+                remove_unobservable_clones(function, &captured[id]);
+            }
             continue;
         }
 
