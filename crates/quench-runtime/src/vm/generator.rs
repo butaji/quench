@@ -313,6 +313,20 @@ impl<H: Host> Vm<H> {
                 vm.forward_promise(p, completion, promise)?;
                 return Ok(());
             }
+            vm.await_async_generator_return(p, generator, value, promise)
+        })
+    }
+
+    // Direct and delegated returns share awaited completion and the compiled
+    // finally/loop cleanup of their original generator frame.
+    fn await_async_generator_return(
+        &mut self,
+        p: &ResidualProgram,
+        generator: Value,
+        value: Value,
+        promise: Value,
+    ) -> Result<(), JsError> {
+        self.with_call_roots([generator, value, promise], |vm| {
             if let Some(record) = vm.generator_record_mut(generator) {
                 record.running = true;
             }
@@ -688,9 +702,7 @@ impl<H: Host> Vm<H> {
             }
         };
         if method.is_undefined() || method.is_null() {
-            self.close_generator(generator)?;
-            let result = self.iterator_result(value, true)?;
-            self.promise_resolve_value(p, promise, result)?;
+            self.await_async_generator_return(p, generator, value, promise)?;
             return Ok(promise);
         }
         if !self.is_function(method) {
@@ -884,18 +896,9 @@ impl<H: Host> Vm<H> {
                     }
                     return Err(self.type_error(p, "delegated iterator has no throw method".into()));
                 }
-                if let Some(record) = self.generator_record_mut(generator) {
-                    record.running = false;
-                    record.done = true;
-                    record.continuation = None;
-                }
-                let awaited = self.promise_for_value(p, argument)?;
-                return self.promise_then(
-                    p,
-                    awaited,
-                    self.native_value(Native::AsyncGeneratorReturnResult),
-                    Value::UNDEFINED,
-                );
+                let promise = self.promise_object();
+                self.await_async_generator_return(p, generator, argument, promise)?;
+                return Ok(promise);
             }
             if !self.is_function(method) {
                 return Err(self.type_error(p, "delegated iterator method is not callable".into()));
@@ -1028,8 +1031,9 @@ impl<H: Host> Vm<H> {
             }
             self.async_generator_next(p, generator, &[])
         } else {
-            self.close_generator(generator)?;
-            self.iterator_result(value, true)
+            let promise = self.promise_object();
+            self.await_async_generator_return(p, generator, value, promise)?;
+            Ok(promise)
         }
     }
 

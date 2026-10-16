@@ -205,6 +205,10 @@ impl FunctionCompiler<'_, '_> {
             let iterator = self.load_atom(closure.iterator);
             let ignored = self.reg();
             self.emit(Op::Call, ignored, close_fn, iterator, 0);
+            if closure.asynchronous {
+                let awaited = self.reg();
+                self.emit(Op::Await, awaited, ignored, 0, 0);
+            }
         }
         self.record_iterator_close_exclusion(start);
     }
@@ -227,6 +231,10 @@ impl FunctionCompiler<'_, '_> {
             let iterator = self.load_atom(closure.iterator);
             let ignored = self.reg();
             self.emit(Op::Call, ignored, close_fn, iterator, 0);
+            if closure.asynchronous {
+                let awaited = self.reg();
+                self.emit(Op::Await, awaited, ignored, 0, 0);
+            }
         }
         self.record_iterator_close_exclusion(start);
     }

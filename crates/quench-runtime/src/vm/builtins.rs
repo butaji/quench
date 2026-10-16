@@ -303,7 +303,7 @@ const NATIVES: &[Native] = &[
     Native::DisposableStackUseAsync, Native::DisposableStackDisposeAsync, Native::DisposableStackDisposeWithCompletion,
     Native::DisposableStackDisposeAsyncWithCompletion, Native::DisposableStackAsyncDisposalFulfilled,
     Native::DisposableStackAsyncDisposalRejected,
-    Native::FunctionCall, Native::FunctionApply, Native::FunctionBind, Native::FunctionBoundCall, Native::FunctionToString, Native::FunctionCaller, Native::AsyncFunction, Native::GeneratorFunction, Native::AsyncGeneratorFunction, Native::AsyncGeneratorReturnResult, Native::AsyncGeneratorDelegateReturnStart,
+    Native::FunctionCall, Native::FunctionApply, Native::FunctionBind, Native::FunctionBoundCall, Native::FunctionToString, Native::FunctionCaller, Native::AsyncFunction, Native::GeneratorFunction, Native::AsyncGeneratorFunction, Native::AsyncGeneratorDelegateReturnStart,
     Native::Date, Native::DateNow, Native::DateGetTime, Native::DateGetFullYear,
     Native::DateGetMonth, Native::DateGetDate, Native::DateGetDay, Native::DateGetHours,
     Native::DateGetMinutes, Native::DateGetSeconds, Native::DateGetMilliseconds,
