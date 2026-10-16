@@ -113,12 +113,6 @@
       "sha256": "b558f290ce7670d0a565bc072101d9cd61d33c8de23782f66d8600b2bfe2ae1b",
       "excerpt": "binding [[\"Zlib\",\"function\",[\"Zlib\",0],true,true,true],[\"BrotliEncoder\",\"function\",[\"BrotliEncoder\",0],true,true,true],[\"BrotliDecoder\",\"function\",[\"BrotliDecoder\",0],true,true,true],[\"ZstdCompress\",\"function\",[\"ZstdCompress\",0],true,true,true],[\"ZstdDecompress\",\"function\",[\"ZstdDecompress\",0],true,true,true],[\"crc32\",\"function\",[\"\",0],true,true,true],[\"ZLIB_VERSION\",\"string\",null,true,true,true]]\nZlib [[\"write\",\"function\",[\"write\",0],true,true,true],[\"writeSync\",\"function\",[\"writeSync\",0],true,true,true],[\"close\",\"function\",[\"close\",0],true,true,true],[\"init\",\"function\",[\"init\",0],true,true,true],[\"params\",\"function\",[\"params\",0],true,true,true],[\"reset\",\"function\",[\"reset\",0],true,true,true],[\"constructor\",\"function\",[\"Zlib\",0],true,false,true]]\nBrotliEncoder [[\"write\",\"function\",[\"write\",0],true,true,true],[\"writeSync\",\"function\",[\"writeSync\",0],true,true,true],[\"close\",\"function\",[\"close\",0],true,true,true],[\"init\",\"function\",[\"init\",0],true,true,true],[\"params\",\"function\",[\"params\",0],true,true,true],[\"reset\",\"function\",[\"reset\",0],true,true,true],[\"constructor\",\"function\",[\"BrotliEncoder\",0],true,false,true]]\nBrotliDecoder [[\"write\",\"function\",[\"write\",0],true,true,true],[\"writeSync\",\"function\",[\"writeSync\",0],true,true,true],[\"close\",\"function\",[\"close\",0],true,true,true],[\"init\",\"function\",[\"init\",0],true,true,true],[\"params\",\"function\",[\"params\",0],true,true,true],[\"reset\",\"function\",[\"reset\",0],true,true,true],[\"constructor\",\"function\",[\"BrotliDecoder\",0],true,false,true]]\nZstdCompress [[\"write\",\"function\",[\"write\",0],true,true,true],[\"writeSync\",\"function\",[\"writeSync\",0],true,true,true],[\"close\",\"function\",[\"close\",0],true,true,true],[\"init\",\"function\",[\"init\",0],true,true,true],[\"params\",\"function\",[\"params\",0],true,true,true],[\"reset\",\"function\",[\"reset\",0],true,true,true],[\"constructor\",\"function\",[\"ZstdCompress\",0],true,false,true]]\nZstdDecompress [[\"write\",\"function\",[\"write\",0],true,true,true],[\"writeSync\",\"function\",[\"writeSync\",0],true,true,true],[\"close\",\"function\",[\"close\",0],true,true,true],[\"init\",\"function\",[\"init\",0],true,true,true],[\"params\",\"function\",[\"params\",0],true,true,true],[\"reset\",\"function\",[\"reset\",0],true,true,true],[\"constructor\",\"function\",[\"ZstdDecompress\",0],true,false,true]]\ninit undefined\ninstance [[\"onerror\",\"function\",[\"\",3],true,true,true]]\nstep 0 undefined [0,22] [31,139,8,0,0,0,0] []\nstep 1 undefined [0,0] [0,0,3,43,46,41,74] []\nstep 2 undefined [0,0] [77,204,205,204,75,87,72] []\nstep 3 undefined [0,0] [76,46,41,77,204,81,72] []\nstep 4 undefined [0,0] [170,44,73,45,6,0,160] []\nstep 5 undefined [0,0] [221,133,119,22,0,0,0] []\nstep 6 undefined [7,0] [255,255,255,255,255,255,255] []\nroundtrip true\nclose undefined\n"
     },
-    "native_candidate": {
-      "path": "work/native-zlib-abi/native-candidate.log",
-      "bytes": 450,
-      "sha256": "9055b46c8c9a53887a8c79bc206b84077b09f6f58d0133236382be19fbc9249a",
-      "excerpt": "init undefined\ninstance [[\"onerror\",\"function\",[\"\",3],true,true,true]]\nstep 0 undefined [0,22] [31,139,8,0,0,0,0] []\nstep 1 undefined [0,0] [0,0,3,43,46,41,74] []\nstep 2 undefined [0,0] [77,204,205,204,75,87,72] []\nstep 3 undefined [0,0] [76,46,41,77,204,81,72] []\nstep 4 undefined [0,0] [170,44,73,45,6,0,160] []\nstep 5 undefined [0,0] [221,133,119,22,0,0,0] []\nstep 6 undefined [7,0] [255,255,255,255,255,255,255] []\nroundtrip true\nclose undefined\n"
-    },
     "pipeline_reference": {
       "path": "work/native-zlib-abi/iter-oracle.log",
       "bytes": 60,
@@ -136,6 +130,18 @@
       "bytes": 60,
       "sha256": "32d31beacced805921eb0d986f7cb7192255e2a9056ac15e53e4ae1063478c93",
       "excerpt": "aliases true true true\nasync 85 4400 true\nsync 73 4400 true\n"
+    },
+    "prototype_native_sample": {
+      "path": "work/native-zlib-abi/native-candidate.log",
+      "bytes": 450,
+      "sha256": "9055b46c8c9a53887a8c79bc206b84077b09f6f58d0133236382be19fbc9249a",
+      "excerpt": "init undefined\ninstance [[\"onerror\",\"function\",[\"\",3],true,true,true]]\nstep 0 undefined [0,22] [31,139,8,0,0,0,0] []\nstep 1 undefined [0,0] [0,0,3,43,46,41,74] []\nstep 2 undefined [0,0] [77,204,205,204,75,87,72] []\nstep 3 undefined [0,0] [76,46,41,77,204,81,72] []\nstep 4 undefined [0,0] [170,44,73,45,6,0,160] []\nstep 5 undefined [0,0] [221,133,119,22,0,0,0] []\nstep 6 undefined [7,0] [255,255,255,255,255,255,255] []\nroundtrip true\nclose undefined\n"
+    },
+    "frozen_native_streaming": {
+      "path": "work/native-zlib-abi/frozen-native-streaming.log",
+      "bytes": 530,
+      "sha256": "db156ff4a8c3e8f9eaacc36671b4ce105f62ff9b93733fc3b579cfa073786450",
+      "exact_reference": "work/native-zlib-abi/streaming-oracle.log"
     }
   },
   "modules": {
