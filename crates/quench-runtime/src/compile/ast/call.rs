@@ -359,6 +359,26 @@ impl FunctionCompiler<'_, '_> {
                 }
             }
         }
+        // Eval may mention private names only in its string. Its class home
+        // still needs the same lexical capture that compiled super access uses.
+        if self.dynamic_eval && let Some(atom) = self.super_home_atom {
+            let location = self.local_slots.get(&atom).copied()
+                .map(crate::bytecode::EvalBindingLocation::Local)
+                .or_else(|| self.scopes.iter().enumerate().find_map(|(depth, scope)| {
+                    let slot = *scope.get(&atom)?;
+                    let depth = u16::try_from(depth).ok()?;
+                    Some(crate::bytecode::EvalBindingLocation::Capture { depth, slot })
+                }));
+            if let Some(location) = location
+                && !direct.iter().any(|binding| binding.atom == atom)
+            {
+                direct.push(crate::bytecode::EvalBinding {
+                    atom, location, with_depth: 0,
+                    kind: LexicalBindingKind::Mutable,
+                    declaration: crate::bytecode::EvalBindingDeclaration::Variable,
+                });
+            }
+        }
         direct.sort_unstable_by_key(|binding| binding.atom);
         let captured = self.owner.captured_names(&self.scopes);
         let mut hidden: Vec<Atom> = self

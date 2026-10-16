@@ -833,3 +833,19 @@ native reentry and collection. Node policy derives display strings from them.
 The native class fallback reads builtin slots and data tags without public
 constructor or tag getters. Original user-constructor provenance after mutation
 and exact Node stack rendering remain separate compatibility gaps.
+
+## Private data fields
+
+Private data lives with its receiver, keyed by the actual declaring home and
+logical name. A private element retains both that home and its data through
+collection. Different creations of one class expression can stamp the same
+object without sharing values. Initialization checks duplicates before changing
+the stored value; private data and method brands do not consult public
+extensibility or Proxy traps, including revoked Proxy receivers.
+
+The atomic private-data definition operation is serialized in bytecode format
+92. Round-trip execution and generic/specialized collection tests cover the
+representation. Eval-capable methods retain their synthetic class-home capture
+in dynamic-name metadata, even when private syntax appears only inside eval's
+string. Complete private-environment contexts and the ordinary NUL string-key
+namespace remain separate conformance work.

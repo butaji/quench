@@ -592,7 +592,9 @@ impl FunctionCompiler<'_, '_> {
                         self.literal(Constant::Undefined)
                     };
                     self.set_class_field_function_name(field, value);
-                    if let Some(key) =
+                    if matches!(field, ClassField::Property(field) if matches!(&field.key, PropertyKey::PrivateIdentifier(_))) {
+                        self.emit(Op::DefinePrivateField, value, class_value, class_value, name.unwrap());
+                    } else if let Some(key) =
                         computed_key.filter(|_| matches!(field, ClassField::Property(_)))
                     {
                         self.emit(Op::SetIndex, value, class_value, key, 1);
@@ -769,9 +771,7 @@ impl FunctionCompiler<'_, '_> {
             );
             if private {
                 let field_atom = name.unwrap();
-                let cache = self.owner.cache_site();
-                self.emit(Op::SetField, value, this, cache, field_atom);
-                self.emit(Op::MarkPrivateName, 0, this, home, field_atom);
+                self.emit(Op::DefinePrivateField, value, this, home, field_atom);
             } else if let Some(key) = computed_key {
                 self.emit(Op::DefineComputedField, value, this, key, 0);
             } else if matches!(field, ClassField::AutoAccessor { .. }) {
