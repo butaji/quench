@@ -9601,3 +9601,8 @@ fn error_source_positions_preserve_captured_compiler_metadata_without_guest_hook
 fn native_protocol_constants_derive_from_configured_sdk_headers_and_preserve_descriptors() {
     compare_node_source_with_args(include_str!("../node-tests/test-native-protocol-constants.js"), &["--expose-internals", "--no-warnings"]);
 }
+
+#[test]
+fn native_caller_location_uses_original_activations_independently_of_error_hooks() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-caller-location.js"), &["--expose-internals", "--no-warnings"]);
+}

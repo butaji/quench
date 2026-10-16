@@ -322,6 +322,7 @@ impl<H: Host> Vm<H> {
                 function_name: name,
                 script_id: u64::from(program.raw()) + 1,
                 script_name: if unnamed_script { String::new() } else { file_name },
+                is_eval: unnamed_script,
                 line_number: line,
                 column_number: column,
             }

@@ -24,6 +24,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "utilParseArgsPositional" (1) => crate::modules::util_parse_args_shared_vm::positional_map,
         method "utilTypeCheck" (0) => crate::modules::util_shared_vm::type_check,
         method "utilProxyDetails" (0) => crate::modules::util_shared_vm::proxy_details,
+        method "utilGetCallerLocation" (0) => crate::modules::util_shared_vm::get_caller_location,
         method "utilGetCallSites" (0) => crate::modules::util_shared_vm::get_call_sites,
         method "utilConstructorName" (0) => crate::modules::util_shared_vm::constructor_name,
         method "utilPreviewEntries" (0) => crate::modules::util_shared_vm::preview_entries,
