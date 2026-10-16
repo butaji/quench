@@ -24,9 +24,7 @@ pub fn resolve(ascii_hostname: &str, family: Family, hints: i32, order: Order)
     let mut head = ptr::null_mut();
     let status = unsafe { libc::getaddrinfo(hostname.as_ptr(), ptr::null(), &options, &mut head) };
     if status != 0 {
-        // Capture errno before another system call can overwrite it.
-        let system_errno = (status == libc::EAI_SYSTEM).then(|| io::Error::last_os_error().raw_os_error()).flatten();
-        return Err(ResolveError::Gai { code: status, system_errno });
+        return Err(gai_error(status));
     }
     let list = AddressList(head);
     let mut cursor = list.0;
@@ -56,4 +54,10 @@ pub fn resolve(ascii_hostname: &str, family: Family, hints: i32, order: Order)
         Order::V6First => addresses.sort_by_key(IpAddr::is_ipv4),
     }
     if addresses.is_empty() { Err(ResolveError::NoData) } else { Ok(addresses) }
+}
+
+pub fn gai_error(code: i32) -> ResolveError {
+    // Preserve errno before another system call can overwrite it.
+    let system_errno = (code == libc::EAI_SYSTEM).then(|| io::Error::last_os_error().raw_os_error()).flatten();
+    ResolveError::Gai { code, system_errno }
 }

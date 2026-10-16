@@ -24,7 +24,7 @@ struct Shared {
 pub(crate) struct Pool {
     shared: Arc<Shared>,
     workers: Vec<thread::JoinHandle<()>>,
-    configured: usize,
+    configured: Option<usize>,
     started: bool,
 }
 fn worker_count(value: Option<&[u8]>) -> usize {
@@ -41,9 +41,8 @@ fn worker_count(value: Option<&[u8]>) -> usize {
     let count = unsafe { atoi(value.as_ptr()) } as u32 as usize;
     count.clamp(1, LIBUV_MAX_WORKERS)
 }
-impl Default for Pool {
-    fn default() -> Self {
-        // Capture environment at owning environment initialization, not from guest tasks.
+fn configured_workers() -> usize {
+        // libuv reads process environment at the first work submission.
         let value = std::env::var_os("UV_THREADPOOL_SIZE");
         #[cfg(unix)]
         let count = {
@@ -52,10 +51,16 @@ impl Default for Pool {
         };
         #[cfg(not(unix))]
         let count = worker_count(value.as_ref().and_then(|v| v.to_str()).map(str::as_bytes));
-        Self::with_workers(count)
+        count
+}
+impl Default for Pool {
+    fn default() -> Self {
+        Self { shared: Arc::new(Shared { queue: Mutex::new(Queue::default()), ready: Condvar::new() }),
+            workers: Vec::new(), configured: None, started: false }
     }
 }
 impl Pool {
+    #[cfg(test)]
     fn with_workers(configured: usize) -> Self {
         Self {
             shared: Arc::new(Shared {
@@ -63,7 +68,7 @@ impl Pool {
                 ready: Condvar::new(),
             }),
             workers: Vec::new(),
-            configured,
+            configured: Some(configured),
             started: false,
         }
     }
@@ -77,7 +82,8 @@ impl Pool {
                 "native pool stopped",
             ));
         }
-        for index in 0..self.configured {
+        let configured = *self.configured.get_or_insert_with(configured_workers);
+        for index in 0..configured {
             let shared = self.shared.clone();
             match thread::Builder::new()
                 .name(format!("quench-native-{index}"))

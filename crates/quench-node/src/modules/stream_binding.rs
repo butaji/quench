@@ -7,12 +7,15 @@ type Context<'a> = NativeContext<'a, NodeHost>;
 #[derive(Default)]
 pub(crate) struct State {
     pub(crate) readers: HashMap<u64, RootId>,
-    pub(crate) writes: VecDeque<(RootId, PendingWrite)>,
-    identities: Vec<HostWeakRoot>,
+    pub(crate) requests: VecDeque<(RootId, PendingRequest)>,
+    identities: Vec<(HostWeakRoot, RequestKind)>,
     array: Option<RootId>,
     buffer_getter: Option<RootId>,
 }
-pub(crate) struct PendingWrite {
+#[derive(Clone,Copy,PartialEq,Eq)]
+pub(crate) enum RequestKind { Write, Connect, Shutdown }
+pub(crate) struct PendingRequest {
+    pub(crate) kind: RequestKind,
     pub(crate) socket: u64,
     pub(crate) handle: RootId,
 }
@@ -76,20 +79,23 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
             "WriteWrap",
         )?;
         put(c, b, "WriteWrap", w)?;
+        let shutdown=c.host_constructor_named(crate::host::shared_vm::operation("nativeStreamShutdownWrap"),"ShutdownWrap")?;
+        put(c,b,"ShutdownWrap",shutdown)?;
         Ok(b)
     })
 }
-pub(crate) fn write_wrap(
+pub(crate) fn write_wrap(c:&mut Context<'_>,receiver:RootId,_:&[RootId])->Result<RootId,RootedError>{register_request(c,receiver,RequestKind::Write)}
+fn register_request(
     c: &mut Context<'_>,
     receiver: RootId,
-    _: &[RootId],
+    kind: RequestKind,
 ) -> Result<RootId, RootedError> {
     let shared = c.host_mut().shared_state();
     let entries = std::mem::take(&mut shared.borrow_mut().native_stream.identities);
     let mut live = Vec::with_capacity(entries.len() + 1);
-    for identity in entries {
+    for (identity, stored_kind) in entries {
         if c.resolve_host_weak_root(identity).is_some() {
-            live.push(identity);
+            live.push((identity, stored_kind));
         } else {
             c.release_host_weak_root(identity);
         }
@@ -101,10 +107,10 @@ pub(crate) fn write_wrap(
         .borrow_mut()
         .native_stream
         .identities
-        .push(identity);
+        .push((identity, kind));
     Ok(receiver)
 }
-fn branded(c: &mut Context<'_>, request: RootId) -> Result<bool, RootedError> {
+fn branded(c: &mut Context<'_>, request: RootId, kind: RequestKind) -> Result<bool, RootedError> {
     let ids = c
         .host_mut()
         .shared_state()
@@ -112,7 +118,8 @@ fn branded(c: &mut Context<'_>, request: RootId) -> Result<bool, RootedError> {
         .native_stream
         .identities
         .clone();
-    for identity in ids {
+    for (identity, stored_kind) in ids {
+        if stored_kind != kind { continue; }
         if let Some(value) = c.resolve_host_weak_root(identity) {
             if c.strict_equal_rooted(value, request)? {
                 return Ok(true);
@@ -128,7 +135,7 @@ pub(crate) fn write_buffer(
 ) -> Result<RootId, RootedError> {
     let socket = super::net_reference_shared_vm::handle_id(c, receiver)?;
     let request = args.first().copied().unwrap_or_else(|| c.undefined());
-    if !branded(c, request)? {
+    if !branded(c, request, RequestKind::Write)? {
         let e = c.type_error_rooted("Invalid WriteWrap request")?;
         return Err(c.throw(e));
     }
@@ -149,8 +156,8 @@ pub(crate) fn write_buffer(
         shared
             .borrow_mut()
             .native_stream
-            .writes
-            .push_back((request, PendingWrite { socket, handle }));
+            .requests
+            .push_back((request, PendingRequest { socket, handle, kind:RequestKind::Write }));
     } else {
         c.release_root(request);
         c.release_root(handle);
@@ -267,4 +274,150 @@ pub(crate) fn deliver_write(
         put(c, request, "writeStatus", args[0])?;
         Ok(c.undefined())
     }
+}
+
+pub(crate) fn connect_wrap(
+    c: &mut Context<'_>,
+    receiver: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    register_request(c, receiver, RequestKind::Connect)
+}
+pub(crate) fn shutdown_wrap(
+    c: &mut Context<'_>,
+    receiver: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    register_request(c, receiver, RequestKind::Shutdown)
+}
+fn retain_request(
+    c: &mut Context<'_>,
+    handle: RootId,
+    request: RootId,
+    kind: RequestKind,
+) -> Result<(RootId, RootId), RootedError> {
+    if !branded(c, request, kind)? {
+        let error = c.type_error_rooted("Invalid native stream request")?;
+        return Err(c.throw(error));
+    }
+    let request = c.retain(request)?;
+    let handle = c.retain(handle)?;
+    Ok((request, handle))
+}
+fn finish_submission(
+    c: &mut Context<'_>,
+    socket: u64,
+    request: RootId,
+    handle: RootId,
+    kind: RequestKind,
+    result: std::io::Result<()>,
+) -> RootId {
+    let error = if let Err(error) = result {
+        c.release_root(request);
+        c.release_root(handle);
+        -error.raw_os_error().unwrap_or(libc::EIO)
+    } else {
+        c.host_mut()
+            .shared_state()
+            .borrow_mut()
+            .native_stream
+            .requests
+            .push_back((
+                request,
+                PendingRequest {
+                    socket,
+                    handle,
+                    kind,
+                },
+            ));
+        0
+    };
+    c.number(f64::from(error))
+}
+fn connect(
+    c: &mut Context<'_>,
+    receiver: RootId,
+    args: &[RootId],
+    ipv6: bool,
+) -> Result<RootId, RootedError> {
+    let socket = super::net_reference_shared_vm::handle_id(c, receiver)?;
+    let request = args.first().copied().unwrap_or_else(|| c.undefined());
+    let input = args.get(1).copied().unwrap_or_else(|| c.undefined());
+    let text = c.to_string(input)?;
+    let ip = match text.parse::<std::net::IpAddr>() {
+        Ok(ip) if ip.is_ipv6() == ipv6 => ip,
+        _ => return Ok(c.number(-f64::from(libc::EINVAL))),
+    };
+    let input = args.get(2).copied().unwrap_or_else(|| c.undefined());
+    let port = c.to_number(input)?;
+    if !port.is_finite() || port.fract() != 0.0 || !(0.0..=f64::from(u16::MAX)).contains(&port) {
+        return Ok(c.number(-f64::from(libc::EINVAL)));
+    }
+    let (request, handle) = retain_request(c, receiver, request, RequestKind::Connect)?;
+    let shared = c.host_mut().shared_state();
+    let result = net::native_tcp_connect(
+        &mut shared.borrow_mut().tcp,
+        socket,
+        request,
+        std::net::SocketAddr::new(ip, port as u16),
+    );
+    Ok(finish_submission(
+        c,
+        socket,
+        request,
+        handle,
+        RequestKind::Connect,
+        result,
+    ))
+}
+pub(crate) fn connect4(
+    c: &mut Context<'_>,
+    receiver: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    connect(c, receiver, args, false)
+}
+pub(crate) fn connect6(
+    c: &mut Context<'_>,
+    receiver: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    connect(c, receiver, args, true)
+}
+pub(crate) fn shutdown(
+    c: &mut Context<'_>,
+    receiver: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let socket = super::net_reference_shared_vm::handle_id(c, receiver)?;
+    let request = args.first().copied().unwrap_or_else(|| c.undefined());
+    let (request, handle) = retain_request(c, receiver, request, RequestKind::Shutdown)?;
+    let shared = c.host_mut().shared_state();
+    let result = net::native_shutdown_request(&mut shared.borrow_mut().tcp, socket, request);
+    Ok(finish_submission(
+        c,
+        socket,
+        request,
+        handle,
+        RequestKind::Shutdown,
+        result,
+    ))
+}
+pub(crate) fn deliver_connect(
+    c: &mut Context<'_>,
+    request: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let callback = get(c, request, "oncomplete")?;
+    let success = c.to_number(args[0])? == 0.0;
+    let readable = c.boolean(success);
+    let writable = c.boolean(success);
+    let socket = super::net_reference_shared_vm::handle_id(c, args[1])?;
+    let result = c.call_rooted(
+        callback,
+        request,
+        &[args[0], args[1], request, readable, writable],
+    );
+    net::release_delivery(&mut c.host_mut().shared_state().borrow_mut().tcp, socket);
+    result
 }

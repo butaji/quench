@@ -14,6 +14,18 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let promised = context.host_function(crate::host::shared_vm::operation("dnsPromiseLookup"))?;
     set(context, promises, "lookup", promised)?;
     set(context, module, "promises", promises)?;
+    let service = context.host_function(crate::host::shared_vm::operation("dnsLookupService"))?;
+    set(context, module, "lookupService", service)?;
+    let promised_service = context.host_function(crate::host::shared_vm::operation("dnsPromiseLookupService"))?;
+    set(context, promises, "lookupService", promised_service)?;
+    context.with_startup_intrinsics(|context| {
+        let global = context.global_root()?;
+        let key = context.string_rooted("Symbol"); let symbol = context.get_property_rooted(global, key)?;
+        let key = context.string_rooted("for"); let symbol_for = context.get_property_rooted(symbol, key)?;
+        let name = context.string_rooted("nodejs.util.promisify.custom");
+        let custom = context.call_rooted(symbol_for, symbol, &[name])?;
+        context.define_data_property_rooted(service, custom, promised_service, false, false, true)
+    })?;
     for (name, operation) in [("getDefaultResultOrder", "dnsGetDefaultOrder"), ("setDefaultResultOrder", "dnsSetDefaultOrder")] {
         let method = context.host_function(crate::host::shared_vm::operation(operation))?;
         set(context, module, name, method)?;
@@ -267,12 +279,7 @@ fn complete_lookup(context: &mut NativeContext<'_, NodeHost>, request: RootId, s
     Ok(())
 }
 pub(crate) fn promise_lookup(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    let capability = context.with_startup_intrinsics(|context| {
-        let global = context.global_root()?;
-        let key = context.string_rooted("Promise"); let promise = context.get_property_rooted(global, key)?;
-        let key = context.string_rooted("withResolvers"); let factory = context.get_property_rooted(promise, key)?;
-        context.call_rooted(factory, promise, &[])
-    })?;
+    let capability = promise_capability(context)?;
     let key = context.string_rooted("promise"); let promise = context.get_property_rooted(capability, key)?;
     let callback = context.host_function_with_data(crate::host::shared_vm::operation("dnsPromiseComplete"), capability)?;
     let undefined = context.undefined();
@@ -339,4 +346,99 @@ fn invalid_argument_value(context: &mut NativeContext<'_, NodeHost>, name: &str,
     if let Some(reason) = reason { args.push(context.string_rooted(reason)); }
     let error = context.construct_rooted(constructor, constructor, &args)?;
     Err(context.throw(error))
+}
+
+fn promise_capability(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    context.with_startup_intrinsics(|context| {
+        let global = context.global_root()?;
+        let key = context.string_rooted("Promise"); let promise = context.get_property_rooted(global, key)?;
+        let key = context.string_rooted("withResolvers"); let factory = context.get_property_rooted(promise, key)?;
+        context.call_rooted(factory, promise, &[])
+    })
+}
+pub(crate) fn lookup_service(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    service_impl(context, args, None)
+}
+pub(crate) fn promise_lookup_service(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let capability = promise_capability(context)?;
+    service_impl(context, args, Some(capability))?;
+    let key = context.string_rooted("promise"); context.get_property_rooted(capability, key)
+}
+fn service_error(context: &mut NativeContext<'_, NodeHost>, status: RootId, address: RootId) -> Result<RootId, RootedError> {
+    let constructor = crate::host::shared_vm::commonjs::node_library_export(context, "dns.js", "internal/errors.js", "DNSException")?;
+    let syscall = context.string_rooted("getnameinfo");
+    context.construct_rooted(constructor, constructor, &[status, syscall, address])
+}
+fn service_impl(context: &mut NativeContext<'_, NodeHost>, args: &[RootId], capability: Option<RootId>) -> Result<RootId, RootedError> {
+    let expected = if capability.is_some() { 2 } else { 3 };
+    if args.len() != expected {
+        let codes = crate::host::shared_vm::commonjs::node_library_export(context, "dns.js", "internal/errors.js", "codes")?;
+        let key = context.string_rooted("ERR_MISSING_ARGS"); let constructor = context.get_property_rooted(codes, key)?;
+        let address = context.string_rooted("address"); let port = context.string_rooted("port"); let callback = context.string_rooted("callback");
+        let names = [address, port, callback];
+        let error = context.construct_rooted(constructor, constructor, &names[..expected])?;
+        return Err(context.throw(error));
+    }
+    let address = args[0]; let port = args[1];
+    let name = context.string_rooted("address"); validate(context, "validateString", &[address, name])?;
+    if context.string_text(address)?.and_then(|text| text.parse::<IpAddr>().ok()).is_none() {
+        invalid_argument_value(context, "address", address, None)?;
+    }
+    validate(context, "validatePort", &[port])?;
+    if capability.is_none() {
+        let name = context.string_rooted("callback"); validate(context, "validateFunction", &[args[2], name])?;
+    }
+    let port = context.to_number(port)? + 0.0;
+    let port = context.number(port);
+    let binding = crate::host::shared_vm::commonjs::cares_binding(context)?;
+    let key = context.string_rooted("GetNameInfoReqWrap"); let constructor = context.get_property_rooted(binding, key)?;
+    let request = context.construct_rooted(constructor, constructor, &[])?;
+    set(context, request, "hostname", address)?;
+    set(context, request, "port", port)?;
+    if let Some(capability) = capability {
+        for name in ["resolve", "reject"] {
+            let key = context.string_rooted(name); let value = context.get_property_rooted(capability, key)?;
+            set(context, request, name, value)?;
+        }
+    } else { set(context, request, "callback", args[2])?; }
+    let promise_mode = context.boolean(capability.is_some());
+    let complete = context.host_function_with_data(crate::host::shared_vm::operation("dnsServiceComplete"), promise_mode)?;
+    set(context, request, "oncomplete", complete)?;
+    let key = context.string_rooted("getnameinfo"); let operation = context.get_property_rooted(binding, key)?;
+    let status = context.call_rooted(operation, binding, &[request, address, port])?;
+    if context.rooted_value(status).and_then(Value::as_number).is_some_and(|status| status != 0.0) {
+        let error = service_error(context, status, address)?;
+        if capability.is_some() {
+            let key = context.string_rooted("reject"); let reject = context.get_property_rooted(request, key)?;
+            context.call_rooted(reject, request, &[error])?;
+        } else { return Err(context.throw(error)); }
+    }
+    Ok(request)
+}
+pub(crate) fn service_complete(context: &mut NativeContext<'_, NodeHost>, request: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let mode = context.host_function_data()?;
+    let promise_mode = context.rooted_value(mode).and_then(Value::as_bool).unwrap_or(false);
+    let undefined = context.undefined();
+    let status = args.first().copied().unwrap_or(undefined);
+    let failed = context.rooted_value(status).and_then(Value::as_number).is_some_and(|status| status != 0.0);
+    let hostname = args.get(1).copied().unwrap_or(undefined);
+    let service = args.get(2).copied().unwrap_or(undefined);
+    if failed {
+        // Original SDK promises onlookupservice reads this.host; callback policy reads this.hostname.
+        let key = context.string_rooted(if promise_mode { "host" } else { "hostname" });
+        let address = context.get_property_rooted(request, key)?;
+        let error = service_error(context, status, address)?;
+        let key = context.string_rooted(if promise_mode { "reject" } else { "callback" });
+        let callback = context.get_property_rooted(request, key)?;
+        context.call_rooted(callback, request, &[error])?;
+    } else if promise_mode {
+        let result = context.object_rooted()?;
+        set(context, result, "hostname", hostname)?; set(context, result, "service", service)?;
+        let key = context.string_rooted("resolve"); let resolve = context.get_property_rooted(request, key)?;
+        context.call_rooted(resolve, request, &[result])?;
+    } else {
+        let key = context.string_rooted("callback"); let callback = context.get_property_rooted(request, key)?;
+        let null = context.null(); context.call_rooted(callback, request, &[null, hostname, service])?;
+    }
+    Ok(context.undefined())
 }

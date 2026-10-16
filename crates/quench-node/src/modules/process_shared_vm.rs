@@ -1902,9 +1902,7 @@ pub(crate) fn finish_requested_exit(
     cleanup_environment(runtime, &shared_state);
     if process_control.exit_without_event() {
         super::tls_shared_vm::contexts::cleanup(runtime);
-        runtime.host_mut().shared_state().borrow_mut().native_tasks.shutdown();
-        super::crypto_secret_job_shared_vm::cleanup(runtime);
-        super::cares_binding::cleanup(runtime);
+        cleanup_native_work(runtime);
         super::zlib_native_shared_vm::cleanup(runtime);
         #[cfg(quench_icu)]
         super::icu_binding_shared_vm::cleanup(runtime);
@@ -3001,11 +2999,28 @@ fn cleanup_environment(
     state: &Rc<RefCell<crate::host::SharedNodeState>>,
 ) {
     let _span = crate::modules::trace_state::EnvironmentSpan::enter(state, "RunCleanup");
-    state.borrow_mut().native_tasks.shutdown();
-    crate::modules::cares_binding::cleanup(runtime);
     crate::modules::http_shared_vm::cleanup(runtime, state);
     super::fs_watch_shared_vm::cleanup(runtime);
     super::fs_stat_watch_shared_vm::cleanup(runtime);
+}
+
+// Exit listeners may submit native work. Accept it, then abandon it without
+// executing guest callbacks. Teardown also runs when an exit listener throws.
+fn cleanup_native_work(runtime: &mut quench_runtime::Runtime<NodeHost>) {
+    let shared = runtime.host_mut().shared_state();
+    shared.borrow_mut().native_tasks.shutdown();
+    super::crypto_secret_job_shared_vm::cleanup(runtime);
+    super::cares_binding::cleanup(runtime);
+    let callbacks = shared.borrow_mut().scheduler.take_all_shared_immediates();
+    for immediate in callbacks {
+        let callback = immediate.callback;
+        if let Some(execution) = callback.execution {
+            // No destroy dispatch is scheduled during final cancellation.
+            super::async_hooks_shared_vm::clear_context(runtime, &shared, execution.id);
+            runtime.release_root(execution.resource);
+        }
+        release_callback_roots(runtime, callback.callback, callback.receiver, callback.args);
+    }
 }
 
 // Builtin native objects remain usable throughout synchronous exit listeners.
@@ -3016,9 +3031,7 @@ fn emit_exit(
 ) -> Result<(), String> {
     let result = emit_exit_inner(runtime, program, code);
     super::tls_shared_vm::contexts::cleanup(runtime);
-        runtime.host_mut().shared_state().borrow_mut().native_tasks.shutdown();
-        super::crypto_secret_job_shared_vm::cleanup(runtime);
-        super::cares_binding::cleanup(runtime);
+        cleanup_native_work(runtime);
         super::zlib_native_shared_vm::cleanup(runtime);
     #[cfg(quench_icu)]
     super::icu_binding_shared_vm::cleanup(runtime);
