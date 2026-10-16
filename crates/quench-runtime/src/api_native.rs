@@ -5,6 +5,14 @@ use crate::{Host, JsError, RootId, RootedError, Value, vm::Vm};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HostFunctionId(pub u32);
 
+/// A host's synchronous module request never starts an async graph or re-enters
+/// a currently evaluating module. Namespace roots use the native call's scope.
+pub enum SynchronousModule<T> {
+    Namespace(T),
+    AsyncGraph,
+    Evaluating,
+}
+
 /// Arithmetic operations at native boundaries use the same guest coercions as code.
 #[derive(Clone, Copy)]
 pub enum NativeArithmetic {
@@ -883,6 +891,29 @@ impl<'a, H: Host> NativeContext<'a, H> {
     ) -> Result<RootId, RootedError> {
         let result = self.vm.embedding_value(data)
             .and_then(|value| self.vm.create_host_constructor_with_data(id, value));
+        self.completion(result)
+    }
+
+    pub fn evaluate_module_sync_rooted(
+        &mut self,
+        module: &crate::ModuleSource,
+    ) -> Result<SynchronousModule<RootId>, RootedError> {
+        let outcome = self.vm.evaluate_module_sync(module).map_err(|error| self.error(error))?;
+        Ok(match outcome {
+            SynchronousModule::Namespace(value) => SynchronousModule::Namespace(self.scoped_value(value)),
+            SynchronousModule::AsyncGraph => SynchronousModule::AsyncGraph,
+            SynchronousModule::Evaluating => SynchronousModule::Evaluating,
+        })
+    }
+
+    /// Add a constant export while retaining a namespace's original live bindings.
+    pub fn module_namespace_with_export_rooted(
+        &mut self,
+        namespace: RootId,
+        name: &str,
+        value: RootId,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.module_namespace_with_export_rooted(namespace, name, value);
         self.completion(result)
     }
 

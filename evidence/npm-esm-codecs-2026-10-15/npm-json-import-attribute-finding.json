@@ -1,0 +1,26 @@
+{
+  "source": "71db8015352e6056208f091a67645620226267e7",
+  "package": {
+    "name": "tar-stream",
+    "version": "3.2.2",
+    "types_only": false,
+    "installation": null
+  },
+  "node": [
+    {
+      "specifier": "tar-stream/package",
+      "code": "ERR_IMPORT_ATTRIBUTE_MISSING",
+      "name": "TypeError",
+      "message": "Module \"file:///workspace/quench/tests/npm-top300/node_modules/tar-stream/package.json\" needs an import attribute of \"type: json\""
+    }
+  ],
+  "quench": [
+    {
+      "specifier": "tar-stream/package",
+      "code": null,
+      "name": "SyntaxError",
+      "message": "module source has an early error"
+    }
+  ],
+  "scope": "ESM JSON imports without attributes must report Node26.12 coded missing-attribute TypeError, not parse JSON as JavaScript"
+}

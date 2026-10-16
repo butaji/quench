@@ -62,7 +62,7 @@ fn state(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         .host_mut()
         .shared_state()
         .borrow()
-        .module_cache
+        .builtin_cache
         .get(CACHE)
         .copied()
     {
@@ -89,7 +89,7 @@ fn state(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     c.host_mut()
         .shared_state()
         .borrow_mut()
-        .module_cache
+        .builtin_cache
         .insert(CACHE.into(), root);
     Ok(state)
 }
@@ -160,7 +160,7 @@ fn key_slots(c: &mut Context<'_>, state: RootId, key: RootId) -> Result<RootId, 
             .host_mut()
             .shared_state()
             .borrow()
-            .module_cache
+            .builtin_cache
             .get("\0builtin:buffer/FastBuffer")
             .copied()
             .ok_or_else(|| RootedError::host("FastBuffer is not initialized"))?;
@@ -427,7 +427,7 @@ pub(crate) fn operation(
                         .host_mut()
                         .shared_state()
                         .borrow()
-                        .module_cache
+                        .builtin_cache
                         .get("\0builtin:buffer/FastBuffer")
                         .copied()
                         .ok_or_else(|| RootedError::host("FastBuffer is not initialized"))?;

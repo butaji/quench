@@ -1,0 +1,393 @@
+{
+  "node": {
+    "executable": "/workspace/shared/node-v26.12.0-linux-x64/bin/node",
+    "sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943",
+    "versions": {
+      "node": "26.12.0",
+      "acorn": "8.19.0",
+      "ada": "4.0.0",
+      "amaro": "1.1.11",
+      "ares": "1.34.8",
+      "brotli": "1.2.0",
+      "cldr": "48.0",
+      "icu": "78.3",
+      "libffi": "3.8.0",
+      "lief": "1.0.0",
+      "llhttp": "9.4.3",
+      "merve": "1.2.2",
+      "modules": "147",
+      "napi": "10",
+      "nbytes": "0.1.4",
+      "ncrypto": "0.0.1",
+      "nghttp2": "1.70.0",
+      "nghttp3": "",
+      "ngtcp2": "",
+      "openssl": "3.5.9",
+      "simdjson": "5.0.3",
+      "simdutf": "7.7.0",
+      "sqlite": "3.54.0",
+      "tz": "2026e",
+      "undici": "8.11.2",
+      "unicode": "17.0",
+      "uv": "1.52.1",
+      "uvwasi": "0.0.23",
+      "v8": "14.6.202.34-node.39",
+      "zlib": "1.3.2.1-motley-456ae73",
+      "zstd": "1.5.7"
+    }
+  },
+  "host": {
+    "platform": "Linux x86_64",
+    "cpu_max": "400000 100000",
+    "memory_max": "17179869184"
+  },
+  "engines": {
+    "initial_candidate": {
+      "source": "59c02ec6bdc7414385123858bf28be09367e2448",
+      "path": "/workspace/scratch/npm-esm-codecs-candidate",
+      "sha256": "dc12d684d32b5b90d701afc6d3485794f4c55b34f82fc2529ff2418e977d8f36",
+      "profile": "iteration, opt-level=1, incremental disabled"
+    },
+    "initial_baseline": {
+      "source": "5858b2949",
+      "path": "/workspace/scratch/npm-esm-codecs-baseline",
+      "sha256": "c1a025219c28c11d20b16516ffd986def96f93da65ff62ec4a130e2551a989e6",
+      "profile": "iteration, opt-level=1, incremental disabled"
+    },
+    "cache_detection_candidate": {
+      "source": "61f1505470fa32467b5f8e6d7c6533c047bc95eb",
+      "path": "/workspace/scratch/npm-esm-codecs-detection-candidate",
+      "sha256": "338251d19a35c053660220c7d5f0f09d5fe18b0b79c14391730053be08436981",
+      "profile": "iteration, opt-level=1, incremental disabled"
+    },
+    "synchronized_candidate": {
+      "source": "1489484fc25329e06c6156c2f84ca6cf8d03f987",
+      "path": "/workspace/scratch/npm-esm-codecs-synced-candidate",
+      "sha256": "4379777bf856a8a77af21063180be2ee22bce5518c3d6a0c2031baa50cd6d7af",
+      "profile": "iteration, opt-level=1, incremental disabled"
+    },
+    "synchronized_baseline": {
+      "source": "ae439807e",
+      "path": "/workspace/scratch/npm-esm-codecs-synced-baseline",
+      "sha256": "3898d900d63a44e85be4a741eb94b721763633b93b64a1c8c254f00cbd13e5c5",
+      "profile": "iteration, opt-level=1, incremental disabled"
+    },
+    "followup_candidate": {
+      "source": "aeae0c1351f908188e112de84404178619b717aa",
+      "path": "/workspace/scratch/npm-current-sync-candidate",
+      "sha256": "dcfa4e361acbf4fd1afe253321207336be00b233ca67586da3d4fb68832d1617",
+      "profile": "iteration, opt-level=1, incremental disabled"
+    },
+    "followup_baseline": {
+      "source": "eefbda82eb476d3955c6bb3430cc742b3023aea5",
+      "path": "/workspace/scratch/npm-current-sync-baseline",
+      "sha256": "9babae48a015f0b50f34f85b58735946430b8410627066a0bb97b5ac8778655c",
+      "profile": "iteration, opt-level=1, incremental disabled"
+    },
+    "abort_policy_candidate": {
+      "source": "68e7ad0f4ea44571cf10051b216f1445c45a2f70",
+      "path": "/workspace/scratch/npm-abort-policy-candidate",
+      "sha256": "a6c221fbb8f6e96fd51a69b1b931d31892e68251cb782a7bc33a073be3615777",
+      "profile": "iteration, opt-level=1, incremental disabled"
+    },
+    "ipc_candidate": {
+      "source": "24b20661916b08bde4f367b8a803b7c3089dd21a",
+      "path": "/workspace/scratch/npm-ipc-next-candidate",
+      "sha256": "eb8eee615a8cfd99346cde5f09c96035a7aa6eea4fd1b2c89195140ae5219ead",
+      "profile": "iteration, opt-level=1, incremental disabled"
+    },
+    "lazy_events_candidate": {
+      "source": "c867e0f0556d16521b877bb1ace779ce441a8a33 + pending lazy-policy patch",
+      "path": "/workspace/scratch/npm-lazy-events-candidate",
+      "sha256": "7c75fbe3b158329cb7adf37c59e64daba2b36cacf5a4b78fb2a48895b18c0ce9",
+      "profile": "iteration, opt-level=1, incremental disabled"
+    },
+    "lazy_integrity_candidate": {
+      "source": "c867e0f0556d16521b877bb1ace779ce441a8a33 + pending lazy-policy/integrity patch, before array-storage repair",
+      "path": "/workspace/scratch/npm-lazy-integrity-candidate",
+      "sha256": "0d07f2639c1851a05ede96cc3138e7a8c642373f1106b6f3baed41c8329b8ddd",
+      "profile": "iteration, opt-level=1, incremental disabled"
+    },
+    "final_candidate": {
+      "source": "71db8015352e6056208f091a67645620226267e7",
+      "path": "/workspace/scratch/npm-integrity-final-candidate",
+      "sha256": "90b02c0002b101b2a93706bb27423e80630fac4ff42b372100799d68921ef01d",
+      "profile": "iteration, opt-level=1, incremental disabled"
+    },
+    "final_baseline": {
+      "source": "791776ba46e7920212949c49bbf43baa0da8fadc",
+      "sha256": "37a6b7ff031dbcf65c5dd7daf0fbb34fc351811bf3b3af177790526fd2888f60",
+      "path": "/workspace/scratch/npm-integrity-final-baseline",
+      "profile": "iteration, opt-level=1, incremental disabled"
+    },
+    "canonical_candidate": {
+      "source_commit": "faa120035a332d3b5eb232eaadcad1399f306d7d",
+      "fixture_commit": "0cc26891e137f6ac14bb36b5c657a27303599b67",
+      "executable": "/workspace/scratch/npm-canonical-sync-candidate",
+      "sha256": "d6482c1dbf34b2d0045f033404c6e469c916e893b7ceb8c205a610a7ce0681ff"
+    },
+    "canonical_baseline": {
+      "source_commit": "fcc81c6a09b8ff4fd68e923885c62cdc9542b6bc",
+      "executable": "/workspace/scratch/npm-canonical-sync-baseline",
+      "sha256": "f9fd7eb0579feaf22def17d914847423593eaa19f8802f45841de1c4f8597a8c"
+    }
+  },
+  "icu": {
+    "version": "76.1",
+    "libraries": {
+      "/lib/x86_64-linux-gnu/libicuuc.so.76.1": "a8e433e81075732faf255b17d4a25ce28632e41fef1a75e727ee7f4ed73ab151",
+      "/lib/x86_64-linux-gnu/libicudata.so.76.1": "a04b2b906193fa1e40f968a3d16d7d6c844a1fafbdd5bce6e9f67b01c124ff24"
+    }
+  },
+  "wpt": {
+    "commit": "ad450c89a7ba1c42597b5c899d7ba9e309b9e90c",
+    "urltestdata_sha256": "81e85fd3c199c08ef9c34cf651b3580eeedd080316493bfaf277a6b5ff8cf652",
+    "cases": 896
+  },
+  "case_counts": {
+    "mixed_decoder": 896,
+    "single_byte_decoder": 19968,
+    "two_byte_decoder": 1310720,
+    "url_public_contract_assertions": 126
+  },
+  "production_fallback_to_node": false,
+  "total_parity": false,
+  "performance_phase_started": false,
+  "synchronized_checks": {
+    "core_fast": 625,
+    "core_optimized": 625,
+    "node_api": 257,
+    "surface": {
+      "unqualified_match": 218,
+      "differences": 73,
+      "oracle_failures": 9
+    },
+    "instruction_guard_completions": 32
+  },
+  "followup_checks": {
+    "source": "aeae0c1351f908188e112de84404178619b717aa",
+    "core_fast": 626,
+    "node_api": 272,
+    "workspace_all_targets": true,
+    "scenarios": {
+      "behavior_pass": 273,
+      "declarations_pass": 13,
+      "quench_failed": 13,
+      "oracle_failed": 1
+    },
+    "optimized_core": "interrupted-not-passed",
+    "qualification": "incomplete; events.on abort propagation counterexample requires follow-up"
+  },
+  "abort_policy_checks": {
+    "source": "68e7ad0f4",
+    "core_fast": 626,
+    "node_api": {
+      "passed": 270,
+      "failed": 2
+    },
+    "scenarios": {
+      "api_pass": 272,
+      "declaration_pass": 13,
+      "quench_failed": 14,
+      "oracle_failed": 1
+    },
+    "surface": {
+      "unqualified_match": 218,
+      "differences": 73,
+      "oracle_failed": 9
+    },
+    "coverage": {
+      "checked": 464,
+      "total": 70236,
+      "qualified": false
+    },
+    "optimized_core": "interrupted to synchronize new Core integration; not passed"
+  },
+  "final_checks": {
+    "core_fast": 629,
+    "node_api": 279,
+    "events_api_focused": 3,
+    "workspace_all_targets": true,
+    "core_optimized": 629,
+    "scenarios": {
+      "api_pass": 273,
+      "declaration_pass": 13,
+      "quench_failed": 13,
+      "oracle_failed": 1
+    },
+    "surface": {
+      "unqualified_match": 218,
+      "differences": 73,
+      "oracle_failed": 9
+    },
+    "instruction_guard": {
+      "benchmarks": 8,
+      "explicit_completions": 32,
+      "maximum_delta_percent": 0.10715798854232625,
+      "maximum_benchmark": "raytrace",
+      "new_over_one_percent_finding": false
+    },
+    "qualified": false,
+    "node_lib": 4,
+    "decoder_and_url_corpora_match": true,
+    "baseline_scenarios": {
+      "api_pass": 267,
+      "declaration_pass": 13,
+      "quench_failed": 19,
+      "oracle_failed": 1
+    },
+    "scenario_gains": [
+      "whatwg-url",
+      "execa",
+      "@typescript-eslint/scope-manager",
+      "loose-envify",
+      "jsdom",
+      "@testing-library/dom"
+    ],
+    "scenario_regressions": [],
+    "coverage": {
+      "checked": 464,
+      "total": 70236,
+      "uncovered": 69772,
+      "qualified": false
+    },
+    "checks_complete": true
+  },
+  "latest_integration": {
+    "qualified_base": "f0dc383381d2ea66a54eff3c47a10587bfb96cb5",
+    "qualified_candidate": "b8b02f99245ee4e3392c84b75480733d7f135802",
+    "candidate_sha256": "8bf0b426e7f8cf23df979d055b84d91c21e6ca5878f88590618aa1773a07c7fe",
+    "qualification_packet": "../npm-fs-sync-2026-10-15/npm-fs-sync-summary.json",
+    "checks_complete": true,
+    "total_parity": false
+  },
+  "canonical_checks": {
+    "production_source": "faa120035a332d3b5eb232eaadcad1399f306d7d",
+    "fixture_source": "0cc26891e137f6ac14bb36b5c657a27303599b67",
+    "baseline_source": "fcc81c6a09b8ff4fd68e923885c62cdc9542b6bc",
+    "engines": {
+      "candidate": {
+        "source": "faa120035a332d3b5eb232eaadcad1399f306d7d",
+        "sha256": "d6482c1dbf34b2d0045f033404c6e469c916e893b7ceb8c205a610a7ce0681ff"
+      },
+      "baseline": {
+        "source": "fcc81c6a09b8ff4fd68e923885c62cdc9542b6bc",
+        "sha256": "f9fd7eb0579feaf22def17d914847423593eaa19f8802f45841de1c4f8597a8c"
+      },
+      "node": {
+        "version": "26.12.0",
+        "sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943"
+      }
+    },
+    "counts": {
+      "scenarios": {
+        "behavior-pass": 273,
+        "declarations-pass": 13,
+        "quench-failed": 13,
+        "oracle-failed": 1
+      },
+      "baseline-scenarios": {
+        "behavior-pass": 268,
+        "declarations-pass": 13,
+        "quench-failed": 18,
+        "oracle-failed": 1
+      },
+      "surface": {
+        "surface-match-unqualified": 218,
+        "surface-diff": 73,
+        "oracle-failed": 9
+      }
+    },
+    "coverage": {
+      "qualified": false,
+      "checked": 464,
+      "total": 70236
+    },
+    "instruction_guard": [
+      {
+        "fixture": "crypto",
+        "runs": 1,
+        "baseline_per_run": 1764158473.0,
+        "candidate_per_run": 1764227364.0,
+        "delta_percent": 0.0039050346697510094
+      },
+      {
+        "fixture": "deltablue",
+        "runs": 10,
+        "baseline_per_run": 267490303.6,
+        "candidate_per_run": 267462224.9,
+        "delta_percent": -0.010497090781270502
+      },
+      {
+        "fixture": "earley-boyer",
+        "runs": 1,
+        "baseline_per_run": 3095448730.0,
+        "candidate_per_run": 3096091947.0,
+        "delta_percent": 0.020779442856415847
+      },
+      {
+        "fixture": "navier-stokes",
+        "runs": 1,
+        "baseline_per_run": 1425010935.0,
+        "candidate_per_run": 1425012764.0,
+        "delta_percent": 0.00012834989227644068
+      },
+      {
+        "fixture": "raytrace",
+        "runs": 3,
+        "baseline_per_run": 902640151.6666666,
+        "candidate_per_run": 901179712.3333334,
+        "delta_percent": -0.16179640697753664
+      },
+      {
+        "fixture": "regexp",
+        "runs": 1,
+        "baseline_per_run": 1771004002.0,
+        "candidate_per_run": 1771457327.0,
+        "delta_percent": 0.025597062428320813
+      },
+      {
+        "fixture": "richards",
+        "runs": 25,
+        "baseline_per_run": 105419946.8,
+        "candidate_per_run": 105420267.12,
+        "delta_percent": 0.0003038514149655676
+      },
+      {
+        "fixture": "splay",
+        "runs": 75,
+        "baseline_per_run": 24571273.213333335,
+        "candidate_per_run": 24568798.14666667,
+        "delta_percent": -0.010073009425182534
+      }
+    ],
+    "exact_guard_completions": 32,
+    "node_api_provenance": {
+      "oracle_path": "/workspace/shared/node-v26.12.0-linux-x64/bin/node",
+      "oracle_version": "v26.12.0",
+      "oracle_sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943",
+      "candidate_source": "faa120035a332d3b5eb232eaadcad1399f306d7d",
+      "candidate_sha256": "d6482c1dbf34b2d0045f033404c6e469c916e893b7ceb8c205a610a7ce0681ff",
+      "fixture_source": "0cc26891e137f6ac14bb36b5c657a27303599b67",
+      "test_binary": "/workspace/quench/target/npm-file-url/debug/deps/child_entry-94fd2328f8a45425",
+      "test_sha256": "f180aacc8e9f485d70fa5b015e0e4f30bbfb03fc0ef182642885eb5798b909f0"
+    },
+    "instruction_findings_over_one_percent": [],
+    "total_node_parity": false,
+    "package_performance_phase_started": false,
+    "scenario_gains": [
+      "whatwg-url",
+      "execa",
+      "@typescript-eslint/scope-manager",
+      "jsdom",
+      "@testing-library/dom"
+    ],
+    "scenario_regressions": [],
+    "checks_complete": true,
+    "fast_core_tests": 632,
+    "optimized_core_tests": 632,
+    "selected_node_api_tests": 285,
+    "node_host_lifecycle_tests": 4,
+    "workspace_all_targets": true
+  }
+}
