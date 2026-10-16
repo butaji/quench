@@ -182,6 +182,18 @@ impl<H: Host> Vm<H> {
         H::initialize(&mut context).map_err(|error| context.finish_error(error))
     }
 
+    pub(super) fn initialize_host_shadow_realm(
+        &mut self,
+        global: crate::RootId,
+    ) -> Result<Option<Value>, JsError> {
+        let mut context = NativeContext::new(self);
+        let callback = H::initialize_shadow_realm(&mut context, global)
+            .map_err(|error| context.finish_error(error))?;
+        callback.map(|root| context.rooted_value(root)
+            .ok_or_else(|| JsError("Host realm formatter root expired".into())))
+            .transpose()
+    }
+
     pub(super) fn call_host_function(
         &mut self,
         receiver: Value,
