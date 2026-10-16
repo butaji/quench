@@ -8,7 +8,7 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
-    r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf2, scryptNative, Transform, cipherProcess, generateRsaKeyPairNative, rsaCryptNative, ecdhNative, setEngineNative, handleSymbol) => {
+    r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf2, scryptNative, Transform, cipherProcess, generateRsaKeyPairNative, rsaCryptNative, ecdhNative, setEngineNative, captureKeyBrands, handleSymbol) => {
   const states = new WeakMap();
   const secretKeys = new WeakMap();
   let repeatedHmacDigestWarningEmitted = false;
@@ -1672,13 +1672,14 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
   const privateEncrypt = (key, data) => rsaCrypt(false, true, key, data);
   const publicDecrypt = (key, data) => rsaCrypt(true, false, key, data);
   const keyObjectBrand = new WeakMap();
+  captureKeyBrands(secretKeys, keyObjectBrand);
   class KeyObject {
     constructor(type, pem, der, asymmetricKeyType, pkcs1Pem, pkcs1Der, asymmetricKeyDetails) {
       this.type = type;
       this.asymmetricKeyType = asymmetricKeyType;
       if (asymmetricKeyDetails !== undefined) this.asymmetricKeyDetails = asymmetricKeyDetails;
       this.key = Buffer.from(pem);
-      keyObjectBrand.set(this, { pem: Buffer.from(pem), der: Buffer.from(der), pkcs1Pem: Buffer.from(pkcs1Pem || pem), pkcs1Der: Buffer.from(pkcs1Der || der), asymmetricKeyType });
+      keyObjectBrand.set(this, { type, pem: Buffer.from(pem), der: Buffer.from(der), pkcs1Pem: Buffer.from(pkcs1Pem || pem), pkcs1Der: Buffer.from(pkcs1Der || der), asymmetricKeyType });
     }
     export(options = {}) {
       const state = keyObjectBrand.get(this);
@@ -1904,6 +1905,7 @@ pub(crate) fn module(
     ))?;
     let rsa_crypt = context.host_function(crate::host::shared_vm::operation("cryptoRsaCrypt"))?;
     let set_engine = context.host_function(crate::host::shared_vm::operation("cryptoSetEngine"))?;
+    let capture_brands = context.host_function(crate::host::shared_vm::operation("cryptoCaptureKeyBrands"))?;
     let ecdh = context.host_function(crate::host::shared_vm::operation("cryptoEcdh"))?;
     let handle_symbol = context.host_function(crate::host::shared_vm::operation("cryptoHandleSymbol"))?;
     let global = context.global_root()?;
@@ -1927,6 +1929,7 @@ pub(crate) fn module(
             rsa_crypt,
             ecdh,
             set_engine,
+            capture_brands,
             handle_symbol,
         ],
     )

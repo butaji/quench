@@ -2749,7 +2749,7 @@ impl<'a> Compiler<'a> {
             source_span: options.source_span,
             params: params.len() as u16,
             length: options.defaults.map_or_else(
-                || params.len() - usize::from(options.rest_override),
+                || params.len().saturating_sub(usize::from(options.rest_override)),
                 Self::formal_length,
             ) as u16,
             parameter_end_pc: if options.generator {

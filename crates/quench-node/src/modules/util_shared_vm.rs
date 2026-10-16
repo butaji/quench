@@ -17,6 +17,7 @@ const TYPE_PREDICATES: &[(&str, BuiltinBrand)] = &[
     ("isArrayBuffer", BuiltinBrand::ArrayBuffer),
     ("isSharedArrayBuffer", BuiltinBrand::SharedArrayBuffer),
     ("isAnyArrayBuffer", BuiltinBrand::AnyArrayBuffer),
+    ("isExternal", BuiltinBrand::External),
     ("isDataView", BuiltinBrand::DataView),
     ("isTypedArray", BuiltinBrand::TypedArray),
     ("isArrayBufferView", BuiltinBrand::ArrayBufferView),
@@ -448,7 +449,8 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         let name_key = context.string_rooted("name");
         let (function_name, length) = match brand {
             BuiltinBrand::ArrayBufferView => ("isView", 1),
-            BuiltinBrand::Date
+            BuiltinBrand::External
+            | BuiltinBrand::Date
             | BuiltinBrand::RegExp
             | BuiltinBrand::NativeError
             | BuiltinBrand::Promise
@@ -490,6 +492,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         let key = context.string_rooted(name);
         context.set_property_rooted(types, key, predicate, types)?;
     }
+    super::crypto_key_shared_vm::public_predicates(context, types)?;
     let key = context.string_rooted("types");
     context.set_property_rooted(module, key, types, module)?;
     // Retain original identities before publishing mutable util exports. Console
@@ -1141,6 +1144,7 @@ pub(crate) fn key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<R
     context.define_data_property_rooted(binding, key, function, true, true, true)?;
     for (name, operation) in [
         ("getPromiseDetails", "utilPromiseDetails"),
+        ("getExternalValue", "utilExternalValue"),
         ("markPromiseAsHandled", "utilMarkPromiseHandled"),
     ] {
         let function = context.host_function(crate::host::shared_vm::operation(operation))?;
@@ -1200,4 +1204,13 @@ pub(crate) fn symbols_binding(context: &mut NativeContext<'_, NodeHost>) -> Resu
 pub(crate) fn types_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let data = internal_formatters(context)?;
     get(context, data, "nativeTypes")
+}
+
+/// External wrappers expose the stored address, without touching native memory.
+pub(crate) fn external_value(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let value = args.first().copied().unwrap_or_else(|| context.undefined());
+    match context.external_address_rooted(value) {
+        Some(address) => Ok(context.bigint_rooted(address as i128)),
+        None => { let error = context.type_error_rooted("Value is not an external")?; Err(context.throw(error)) }
+    }
 }
