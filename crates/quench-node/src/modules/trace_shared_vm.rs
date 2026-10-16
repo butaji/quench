@@ -387,9 +387,12 @@ fn build_internal_binding(
         "modules" => return crate::host::shared_vm::commonjs::cached_native_binding(
             context, "\0binding:modules", module_protocol_binding,
         ),
+        "stream_wrap" => return super::stream_binding::binding(context),
         "tcp_wrap" => return super::tcp_binding::binding(context),
         "contextify" => return super::contextify_shared_vm::binding(context),
         "types" => return super::util_shared_vm::types_binding(context),
+        #[cfg(quench_openssl_provider)]
+        "messaging" => return super::dom_exception_shared_vm::module(context),
         "crypto_keys" => return super::crypto_key_shared_vm::binding(context),
         "util" => return super::util_shared_vm::key_binding(context),
         "options" => return super::cli_options_shared_vm::binding(context),

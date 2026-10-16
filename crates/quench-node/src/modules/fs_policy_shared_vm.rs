@@ -11,6 +11,7 @@ const EXPORTS: &[&str] = &[
     "BigIntStats",
     "getStatFsFromBinding",
     "getOptions",
+    "copyObject",
     "stringToFlags",
     "validateReadFileBufferOptions",
     "getReadFileBuffer",
@@ -52,6 +53,8 @@ pub(crate) fn adopt(
     for name in [
         "parseFileMode",
         "validateBuffer",
+        "validateBoolean",
+        "isInt32",
         "validateObject",
         "validateInteger",
         "validateEncoding",
@@ -66,6 +69,11 @@ pub(crate) fn adopt(
         let key = context.string_rooted(name);
         context.define_data_property_rooted(utilities, key, value, false, false, false)?;
     }
+    let is_view = crate::host::shared_vm::commonjs::node_library_export(
+        context, "fs.js", "internal/util/types.js", "isArrayBufferView",
+    )?;
+    let key = context.string_rooted("isArrayBufferView");
+    context.define_data_property_rooted(utilities, key, is_view, false, false, false)?;
     let codes = crate::host::shared_vm::commonjs::node_library_export(
         context,
         "fs.js",

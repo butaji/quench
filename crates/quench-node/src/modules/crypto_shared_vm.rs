@@ -1873,6 +1873,8 @@ pub(crate) fn install_global(
 
     #[cfg(quench_openssl_provider)]
     {
+        let exceptions=context.host_function(crate::host::shared_vm::operation("webDomExceptionInitialize"))?;
+        context.define_lazy_data_properties_rooted(global,&["DOMException","QuotaExceededError"],false,exceptions)?;
         let initialize=context.host_function(crate::host::shared_vm::operation("cryptoWebClasses"))?;
         context.define_lazy_data_properties_rooted(global,&["Crypto","SubtleCrypto","CryptoKey"],false,initialize)?;
     }

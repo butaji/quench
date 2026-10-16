@@ -641,7 +641,7 @@ fn build_key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         ("transfer_mode_private_symbol", "node:transfer_mode"),
     ] {
         let key = context.string_rooted(name);
-        let symbol = context.symbol_rooted(Some(description));
+        let symbol = context.private_symbol_rooted(Some(description));
         context.define_data_property_rooted(symbols, key, symbol, true, true, true)?;
     }
     let key = context.string_rooted("privateSymbols");

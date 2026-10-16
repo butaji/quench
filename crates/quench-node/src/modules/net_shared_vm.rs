@@ -532,11 +532,14 @@ struct SharedSocket {
     pending_write: Vec<u8>,
     write_failure: Option<std::io::Error>,
     write_offset: usize,
-    completions: VecDeque<usize>,
+    completions: VecDeque<WriteBoundary>,
     end_after_write: bool,
     read_ended: bool,
     write_ended: bool,
 }
+
+struct WriteBoundary { end: usize, owner: WriteOwner }
+enum WriteOwner { Guest, Native(RootId) }
 
 pub(crate) enum TransportEvent {
     Accepted {
@@ -552,6 +555,7 @@ pub(crate) enum TransportEvent {
     WriteComplete {
         socket: u64,
     },
+    NativeWriteComplete { request: RootId },
     ConnectError {
         socket: u64,
         failure: TcpConnectFailure,
@@ -828,7 +832,7 @@ pub(crate) fn write_with_completion(
         .sockets
         .get_mut(&socket)
         .expect("write checked live socket");
-    stream.completions.push_back(stream.pending_write.len());
+    stream.completions.push_back(WriteBoundary { end: stream.pending_write.len(), owner: WriteOwner::Guest });
     // Match uv_try_write admission for plain native streams. Keep callback
     // boundaries until poll, including completely synchronous writes.
     if stream.write_failure.is_none() && matches!(&stream.stream, SocketStream::Plain(_))
@@ -2538,9 +2542,12 @@ pub(crate) fn read_active(transport: &Transport, id: u64) -> bool {
 }
 
 fn poll_write_completions(socket: &mut SharedSocket, id: u64, events: &mut Vec<TransportEvent>) {
-    while socket.completions.front().is_some_and(|end| *end <= socket.write_offset) {
-        socket.completions.pop_front();
-        events.push(TransportEvent::WriteComplete { socket: id });
+    while socket.completions.front().is_some_and(|boundary| boundary.end <= socket.write_offset) {
+        let boundary = socket.completions.pop_front().expect("checked completion boundary");
+        events.push(match boundary.owner {
+            WriteOwner::Guest => TransportEvent::WriteComplete { socket: id },
+            WriteOwner::Native(request) => TransportEvent::NativeWriteComplete { request },
+        });
     }
 }
 pub(crate) fn native_tcp_create(transport: &mut Transport) -> std::io::Result<u64> {
@@ -2648,4 +2655,59 @@ pub(crate) fn native_tcp_has_ref(transport: &Transport, id: u64) -> bool {
         .or_else(|| listener_has_ref(transport, id))
         .or_else(|| socket_has_ref(transport, id))
         .unwrap_or(false)
+}
+
+/// Request identity is the actual retained guest WriteWrap root, never a fake fd.
+pub(crate) fn write_native_request(
+    transport: &mut Transport,
+    socket: u64,
+    request: RootId,
+    bytes: &[u8],
+) -> std::io::Result<bool> {
+    let stream = transport
+        .sockets
+        .get_mut(&socket)
+        .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EBADF))?;
+    // TLSWrap needs its own encrypted-stream submission contract.
+    if !matches!(&stream.stream, SocketStream::Plain(_)) {
+        return Err(std::io::Error::from_raw_os_error(libc::ENOTSUP));
+    }
+    if let Some(error) = &stream.write_failure {
+        return Err(std::io::Error::from_raw_os_error(
+            error.raw_os_error().unwrap_or(libc::EPIPE),
+        ));
+    }
+    let previous_end = stream.pending_write.len();
+    let queued_before = stream.write_offset < previous_end;
+    stream.pending_write.extend_from_slice(bytes);
+    // libuv cannot try-write past an already outstanding write request.
+    if !queued_before && !bytes.is_empty() {
+        match stream
+            .stream
+            .write(&stream.pending_write, stream.write_offset)
+        {
+            Ok(0) => {
+                stream.pending_write.truncate(previous_end);
+                return Err(std::io::ErrorKind::WriteZero.into());
+            }
+            Ok(written) => stream.write_offset += written,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
+                ) => {}
+            Err(error) => {
+                stream.pending_write.truncate(previous_end);
+                return Err(error);
+            }
+        }
+    }
+    let asynchronous = stream.write_offset < stream.pending_write.len();
+    if asynchronous {
+        stream.completions.push_back(WriteBoundary {
+            end: stream.pending_write.len(),
+            owner: WriteOwner::Native(request),
+        });
+    }
+    Ok(asynchronous)
 }

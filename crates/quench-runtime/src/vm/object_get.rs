@@ -369,6 +369,16 @@ impl<H: Host> Vm<H> {
         key: Value,
         receiver: Value,
     ) -> Result<Value, JsError> {
+        if self.is_host_private_symbol(key) {
+            if matches!(self.heap.get(object), Some(Cell::Proxy { .. })) { return Ok(Value::UNDEFINED); }
+            let Some((value, attributes)) = self.ordinary_own_property(p, object, key)? else { return Ok(Value::UNDEFINED); };
+            return if attributes.accessor {
+                match attributes.getter.filter(|value| !value.is_undefined()) {
+                    Some(getter) => self.call_value(p, getter, receiver, &[]),
+                    None => Ok(Value::UNDEFINED),
+                }
+            } else { Ok(value) };
+        }
         let mut owner = self.primitive_prototype(object).unwrap_or(object);
         loop {
             if let Some(Cell::Proxy {
