@@ -471,6 +471,22 @@ impl<H: Host> Vm<H> {
         Some(Value::number(final_length as f64))
     }
 
+    /// `array[length] = value` on a dense array (`dense_array_length`) as one append, when
+    /// no prototype claims the index (`inherited_index_unclaimed`).
+    pub(super) fn append_dense_element(&mut self, this: Value, index: usize, value: Value) -> bool {
+        if self.dense_array_length(this) != Some(index)
+            || index >= MAX_ARRAY_LENGTH
+            || !self.inherited_index_unclaimed(this, index)
+        {
+            return false;
+        }
+        let Some(object) = self.heap.array_mut(this) else {
+            unreachable!("matched an array above");
+        };
+        super::index::mutable_array_elements(object.elements_mut()).push(value);
+        true
+    }
+
     /// `pop` of a dense array (`dense_array_length`) as one removal, when its last element
     /// is present: the generic steps read that own data element, delete it and shorten
     /// `length` by one.
