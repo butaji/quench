@@ -98,12 +98,8 @@ fn derive_shape_lookup_index(shapes: &[Shape], shape: u32) -> ShapeLookupIndex {
         current = shape.parent();
     }
     entries.reverse();
-    let slots = entries.iter().copied().collect();
-    ShapeLookupIndex {
-        entries,
-        slots,
-        attributes,
-    }
+    entries.shrink_to_fit();
+    ShapeLookupIndex::new(entries, attributes)
 }
 
 /// What the inline field caches know about one read.
@@ -177,10 +173,10 @@ impl<H: Host> Vm<H> {
             let index = self.shapes[shape as usize]
                 .lookup_index
                 .get_or_init(|| Box::new(derive_shape_lookup_index(&self.shapes, shape)));
-            return index.slots.get(&key).map(|slot| *slot as usize);
+            return index.slot(key).map(|slot| slot as usize);
         }
         if let Some(index) = self.shapes[shape as usize].lookup_index.get() {
-            return index.slots.get(&key).map(|slot| *slot as usize);
+            return index.slot(key).map(|slot| slot as usize);
         }
         let mut current = Some(shape);
         let mut distance = 0;
