@@ -1082,3 +1082,12 @@ configurable descriptors; absent flags do not create false-valued properties.
 Native warning construction retains its explicit internal rejection metadata;
 public emitWarning metadata has Node's name, length and ordinary constructor
 shape and accesses the canonical process independently of global replacement.
+
+### Public warning construction
+
+`process.emitWarning` is the configured Node SDK function, including argument
+validation, option getter order, stack-constructor handling and function source.
+Rust promise-rejection delivery calls this public function with the normal
+string/type or Error arguments; it does not attach private string-key options.
+The SDK also owns the default warning listener. Full diagnostic report generation,
+exception abort/async-hook contracts and total Node compatibility remain open.

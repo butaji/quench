@@ -1,0 +1,8 @@
+/workspace/quench/tests/node/test/parallel/test-process-emitwarning.js:5
+const common = require('../common');
+               ^
+
+ReferenceError: require is not defined
+    at file:///workspace/quench/tests/node/test/parallel/test-process-emitwarning.js:5:16
+
+Node.js v26.12.0

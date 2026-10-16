@@ -9804,3 +9804,13 @@ fn process_warning_policy_preserves_default_listener_removal_suppression_and_sta
 fn module_cache_protocol_types_come_from_configured_sdk_and_preserve_native_descriptors() {
     compare_node_source_with_args(include_str!("../node-tests/test-module-cache-protocol.js"), &["--expose-internals", "--no-warnings"]);
 }
+
+#[test]
+fn process_warning_uses_sdk_identity_and_only_public_option_getters() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-warning-sdk-authority.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn process_rejection_warnings_pass_public_arguments_and_preserve_original_stack() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-rejection-warning-arguments.js"), &["--unhandled-rejections=warn", "--no-warnings"]);
+}
