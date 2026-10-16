@@ -312,7 +312,7 @@ impl<H: Host> Vm<H> {
     fn running_global_code(&self) -> bool {
         self.frames.last().is_some_and(|frame| {
             frame.function == super::ROOT_FUNCTION_ID
-                && self.programs.runs_in_global_scope(frame.program)
+                && self.programs.declares_global_variables(frame.program)
         })
     }
 
@@ -338,7 +338,7 @@ impl<H: Host> Vm<H> {
             // A sloppy direct eval declares its variables where its caller does,
             // so direct evals nested in it do too.
             if root_scope {
-                self.programs.mark_global_scope(program_id);
+                self.programs.mark_global_variables(program_id);
             } else {
                 self.programs.mark_caller_scope(program_id);
             }
