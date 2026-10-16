@@ -2,8 +2,7 @@ use super::*;
 use oxc_ast::ast::BinaryOperator;
 
 /// Shared Number/BigInt content mismatch diagnostic.
-pub(super) const MIXED_BIGINT_TYPES: &str =
-    "Cannot mix BigInt and other types, use explicit conversions";
+pub(super) const MIXED_BIGINT_TYPES: &str = "Cannot mix BigInt and other types, use explicit conversions";
 
 pub(super) enum ArrayLikeElementKind {
     Any,

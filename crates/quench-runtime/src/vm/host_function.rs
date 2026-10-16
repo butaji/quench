@@ -106,39 +106,27 @@ impl<H: Host> Vm<H> {
             },
         );
         if constructible {
-            let prototype = self
-                .heap
-                .alloc(Cell::Object(Self::empty_object(self.object_proto)));
+            let prototype = self.heap.alloc(Cell::Object(Self::empty_object(self.object_proto)));
             let constructor_atom = self.intern_atom("constructor");
             self.set_property(prototype, constructor_atom, function)?;
-            self.set_property_attributes(
-                prototype,
-                PropertyKey::string(constructor_atom),
-                PropertyAttributes {
-                    enumerable: false,
-                    ..DEFAULT_PROPERTY_ATTRIBUTES
-                },
-            );
+            self.set_property_attributes(prototype, PropertyKey::string(constructor_atom), PropertyAttributes {
+                enumerable: false,
+                ..DEFAULT_PROPERTY_ATTRIBUTES
+            });
             let prototype_atom = self.prototype_atom();
             self.set_property(function, prototype_atom, prototype)?;
-            self.set_property_attributes(
-                function,
-                PropertyKey::string(prototype_atom),
-                PropertyAttributes {
-                    enumerable: false,
-                    configurable: false,
-                    ..DEFAULT_PROPERTY_ATTRIBUTES
-                },
-            );
+            self.set_property_attributes(function, PropertyKey::string(prototype_atom), PropertyAttributes {
+                enumerable: false,
+                configurable: false,
+                ..DEFAULT_PROPERTY_ATTRIBUTES
+            });
         }
         Ok(function)
     }
 
     pub(super) fn host_function_constructible(&self, environment: Value) -> bool {
-        self.heap
-            .environment_slot(environment, HostEnvironmentSlot::Constructible as usize)
-            .and_then(Value::as_bool)
-            == Some(true)
+        self.heap.environment_slot(environment, HostEnvironmentSlot::Constructible as usize)
+            .and_then(Value::as_bool) == Some(true)
     }
 
     pub(crate) fn host_function_data(&self) -> Result<Value, JsError> {

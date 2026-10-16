@@ -864,14 +864,8 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<Value, JsError> {
         let realm = self.active_native_env().unwrap_or(self.realm.globals);
-        let prototype = self
-            .realm
-            .intrinsics
-            .builtin_prototypes
-            .get(&(realm, Native::BigInt))
-            .copied()
-            .or_else(|| self.primitive_prototype(value))
-            .unwrap_or(self.object_proto);
+        let prototype = self.realm.intrinsics.builtin_prototypes.get(&(realm, Native::BigInt)).copied()
+            .or_else(|| self.primitive_prototype(value)).unwrap_or(self.object_proto);
         let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
         let value_atom = self.intern_atom("\0quench:bigint-value");
         self.set_property(object, value_atom, value)?;
