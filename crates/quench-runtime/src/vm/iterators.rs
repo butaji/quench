@@ -22,21 +22,26 @@ impl From<JsError> for IteratorHelperFailure {
 }
 
 impl<H: Host> Vm<H> {
-    pub(super) fn spread_to_array(
+    /// ArrayAccumulation of a spread element: every value `source` iterates is appended to the
+    /// literal `array`.
+    pub(super) fn spread_into_array(
         &mut self,
         p: &ResidualProgram,
+        array: Value,
         source: Value,
-    ) -> Result<Value, JsError> {
-        let roots = self.iterable_to_rooted_list(p, source)?;
-        let values = roots
-            .iter()
-            .map(|root| self.heap.root_value(*root).unwrap())
-            .collect();
-        let array = self.new_array(values);
-        for root in roots {
-            self.heap.release_root(root);
-        }
-        Ok(array)
+    ) -> Result<(), JsError> {
+        self.with_call_roots([array], |vm| {
+            let roots = vm.iterable_to_rooted_list(p, source)?;
+            let values = roots
+                .iter()
+                .map(|root| vm.heap.root_value(*root).unwrap())
+                .collect::<Vec<_>>();
+            let outcome = vm.append_array_literal_elements(p, array, values);
+            for root in roots {
+                vm.heap.release_root(root);
+            }
+            outcome
+        })
     }
 
     pub(super) fn iterable_to_rooted_list(
