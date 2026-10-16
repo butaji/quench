@@ -1,0 +1,8 @@
+/workspace/quench/work/source-excerpt-cr.cjs:2
+});
+^
+
+ReferenceError: missing is not defined
+    at /workspace/quench/work/source-excerpt-cr.cjs:2:1
+
+Node.js v26.12.0
