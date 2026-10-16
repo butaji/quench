@@ -50,7 +50,7 @@ fn install_scalar_guards(
         .host_mut()
         .shared_state()
         .borrow()
-        .module_cache
+        .builtin_cache
         .contains_key(SCALAR_GUARDS)
     {
         return Ok(());
@@ -98,7 +98,7 @@ fn install_scalar_guards(
         .host_mut()
         .shared_state()
         .borrow_mut()
-        .module_cache
+        .builtin_cache
         .insert(SCALAR_GUARDS.to_owned(), retained);
     Ok(())
 }
