@@ -9592,6 +9592,25 @@ fn indirect_eval_script_identity_preserves_origins_fresh_values_templates_and_re
     compare_node_source_with_args(include_str!("../node-tests/test-indirect-eval-script-identity.js"), &[]);
 }
 
+#[test]
+fn error_source_positions_preserve_captured_compiler_metadata_without_guest_hooks() {
+    compare_node_source_with_args(include_str!("../node-tests/test-error-source-positions.js"), &["--expose-gc", "--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn native_protocol_constants_derive_from_configured_sdk_headers_and_preserve_descriptors() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-protocol-constants.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn native_caller_location_uses_original_activations_independently_of_error_hooks() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-caller-location.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn filesystem_glob_policy_defers_promises_dependencies_and_preserves_data_descriptors() {
+    compare_node_source_with_args(include_str!("../node-tests/test-fs-promises-glob-lazy-policy.js"), &["--expose-internals", "--no-warnings"]);
+}
 
 #[test]
 fn function_constructor_default_debug_names_remain_distinct_from_public_names_and_descriptors() {
@@ -9611,4 +9630,29 @@ fn function_constructor_sources_preserve_whitespace_parameter_positions_and_synt
 #[test]
 fn private_fields_keep_class_creation_identity_and_atomic_internal_initialization() {
     compare_node_source_with_args(include_str!("../node-tests/test-private-field-identity.js"), &[]);
+}
+
+#[test]
+fn private_eval_environments_cross_static_instance_and_ordinary_function_boundaries() {
+    compare_node_source_with_args(include_str!("../node-tests/test-private-eval-environments.js"), &[]);
+}
+
+#[test]
+fn private_brands_follow_initialization_without_branding_the_declaring_prototype() {
+    compare_node_source_with_args(include_str!("../node-tests/test-private-brand-initialization.js"), &[]);
+}
+
+#[test]
+fn static_blocks_retain_strict_eval_super_receiver_and_separate_var_contexts() {
+    compare_node_source_with_args(include_str!("../node-tests/test-static-block-context.js"), &[]);
+}
+
+#[test]
+fn tcp_default_listen_backlog_matches_node_when_syscall_tracing_is_available() {
+    compare_node_source_with_args(include_str!("../node-tests/test-tcp-default-listen-backlog.js"), &[]);
+}
+
+#[test]
+fn tcp_option_listen_backlog_matches_node_truthiness_and_int32_when_tracing_is_available() {
+    compare_node_source_with_args(include_str!("../node-tests/test-tcp-option-listen-backlog.js"), &[]);
 }

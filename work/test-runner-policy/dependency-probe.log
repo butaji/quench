@@ -1,0 +1,17 @@
+/workspace/work/node-stable-release/node-v26.12.0/lib/internal/modules/helpers.js:630
+for (let i = 0; i < _compileCacheStatus.length; ++i) {
+                                        ^
+
+TypeError: Cannot read properties of undefined (reading 'length')
+    at node:internal/modules/helpers:630:41
+    at node:internal/modules/esm/module_job:61:5
+    at node:internal/modules/esm/loader:19:38
+    at load (/workspace/quench/work/test-runner-policy/dependency-probe.cjs:16:65)
+    at node:internal/test_runner/mock/mock:35:19
+    at load (/workspace/quench/work/test-runner-policy/dependency-probe.cjs:22:2)
+    at node:internal/test_runner/test:57:25
+    at load (/workspace/quench/work/test-runner-policy/dependency-probe.cjs:22:2)
+    at node:internal/test_runner/harness:25:45
+    at load (/workspace/quench/work/test-runner-policy/dependency-probe.cjs:22:2)
+
+Node.js v26.12.0

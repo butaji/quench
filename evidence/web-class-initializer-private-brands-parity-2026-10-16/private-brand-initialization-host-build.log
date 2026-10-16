@@ -1,0 +1,6 @@
+   Compiling quench-runtime v0.1.0 (/workspace/quench/crates/quench-runtime)
+   Compiling quench-wasm v0.1.0 (/workspace/quench/crates/quench-wasm)
+   Compiling quench-node v0.1.0 (/workspace/quench/crates/quench-node)
+error: unable to copy /workspace/quench/work/host-build/iteration/incremental/quench_runtime-05smpo4jskr7f/s-hn9jnb72fv-1m8of1g-working/f0yrgn2xbqoeklp3fgkdb9f0y.o to /workspace/quench/work/host-build/iteration/deps/quench_runtime-f79793049cd6d90a.f0yrgn2xbqoeklp3fgkdb9f0y.0l16cnh.rcgu.o: No such file or directory (os error 2)
+
+error: could not compile `quench-runtime` (lib) due to 1 previous error

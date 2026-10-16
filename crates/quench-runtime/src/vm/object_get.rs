@@ -678,7 +678,7 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "Cannot add private field to a non-object".into()));
         };
         if object.initialize_private_field(PrivateBrand { home, name: atom }, value) { return Ok(()); }
-        let name = super::eval::private_identity_label(self.atom_name(atom)).unwrap_or_else(|| self.atom_name(atom).to_owned());
+        let name = crate::bytecode::private_identity_label(self.atom_name(atom)).unwrap_or_else(|| self.atom_name(atom).to_owned());
         Err(self.type_error(p, format!("Cannot initialize #{name} twice on the same object")))
     }
 
@@ -723,6 +723,11 @@ impl<H: Host> Vm<H> {
     /// so a found home is memoized while that environment lives.
     fn private_name_home(&mut self, p: &ResidualProgram, atom: Atom) -> Option<Value> {
         let frame_index = self.frames.len().checked_sub(1)?;
+        if let Some(binding) = self.name_binding(frame_index, atom)
+            && binding.kind == crate::bytecode::LexicalBindingKind::PrivateName
+        {
+            return self.load_name_binding(p, frame_index, binding).ok();
+        }
         let start = self.captured_parent_environment(frame_index);
         let key = PrivateHomeKey {
             environment: start,

@@ -1,3 +1,4 @@
+use crate::bytecode::private_identity_label;
 use super::object_descriptors::PropertyDescriptorRecord;
 use super::*;
 
@@ -127,7 +128,7 @@ impl<H: Host> Vm<H> {
         };
         let text = source_text.host_string().to_owned();
         let inherited_strict = self.direct_eval
-            && (self.in_class_field_initializer(p)
+            && (self.in_class_initializer(p)
                 || self.frames.last()
                     .and_then(|frame| p.functions.get(frame.function as usize))
                     .is_some_and(|function| function.strict));
@@ -172,7 +173,7 @@ impl<H: Host> Vm<H> {
             self.validate_strict_eval(p, source)?;
         }
         let context = self.direct_eval_context(p).unwrap_or_default();
-        let private_names = if context.home_atom.is_some() {
+        let private_names = if self.direct_eval {
             self.direct_eval_private_names(p)
                 .map_or_else(Vec::new, |(_, names)| names)
         } else {
@@ -275,6 +276,45 @@ impl<H: Host> Vm<H> {
         Ok(crate::PreparedScript { program: Rc::new(residual) })
     }
 
+    pub(crate) fn compile_embedding_host_script(
+        &mut self, source: &str, name: &str, origin: (u32, u32),
+    ) -> Result<crate::CompiledScript, JsError> {
+        let prepared = self.prepare_embedding_specialized_script(source, name, Some(origin))?;
+        let context = self.embedding_program()?;
+        let Some(source) = self.store_dynamic_program_shared(prepared.program.clone()) else {
+            return Err(self.type_error(&context, "dynamic program store is full".into()));
+        };
+        let state = Rc::new(crate::api::CompiledScriptState { program: prepared.program, source });
+        self.programs.register_owned_script(&state);
+        Ok(crate::CompiledScript { state })
+    }
+
+    pub(crate) fn compiled_script_is_current(&self, script: &crate::CompiledScript) -> bool {
+        script.state.program.atoms.belongs_to(&self.atom_sequence)
+            && self.programs.owns_script(&script.state)
+    }
+
+    pub(crate) fn evaluate_embedding_compiled_script(
+        &mut self, script: &crate::CompiledScript,
+    ) -> Result<Value, JsError> {
+        let context = self.embedding_program()?;
+        if !self.compiled_script_is_current(script) {
+            return Err(self.type_error(&context, "compiled Script belongs to a different runtime state".into()));
+        }
+        let realm = self.heap.weak_handle(self.realm.globals).expect("live realm global");
+        let id = match self.programs.owned_script_instance(script.state.source, realm) {
+            Some(id) => id,
+            None => {
+                let Some(id) = self.store_dynamic_program_shared(script.state.program.clone()) else {
+                    return Err(self.type_error(&context, "dynamic program store is full".into()));
+                };
+                self.programs.bind_script_instance(script.state.source, realm, id);
+                id
+            }
+        };
+        self.run_global_eval_program(&context, id)
+    }
+
     pub(crate) fn prepared_script_is_current(&self, prepared: &crate::PreparedScript) -> bool {
         prepared.program.atoms.belongs_to(&self.atom_sequence)
     }
@@ -321,7 +361,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         program_id: super::ProgramId,
     ) -> Result<Value, JsError> {
-        let field_initializer = self.direct_eval && self.in_class_field_initializer(p);
+        let class_initializer = self.direct_eval && self.in_class_initializer(p);
         let residual = self
             .programs
             .get(program_id)
@@ -458,8 +498,8 @@ impl<H: Host> Vm<H> {
             } else {
                 Value::NULL
             };
-            let parent = if direct_eval && (root_scope || field_initializer) {
-                let dynamic_bindings = if field_initializer {
+            let parent = if direct_eval && (root_scope || class_initializer) {
+                let dynamic_bindings = if class_initializer {
                     vec![
                         (self.runtime_atoms.new_target, Value::UNDEFINED),
                         (
@@ -563,31 +603,31 @@ impl<H: Host> Vm<H> {
         source: &str,
     ) -> Result<(), JsError> {
         if self.direct_eval
-            && self.in_class_field_initializer(p)
-            && crate::Engine::field_eval_references_arguments(source)
+            && self.in_class_initializer(p)
+            && crate::Engine::class_eval_references_arguments(source)
         {
             return self
                 .syntax_error_result(
                     p,
-                    "arguments is not allowed in class field initializer eval",
+                    "'arguments' is not allowed in class field initializer or static initialization block",
                 )
                 .map(drop);
         }
         Ok(())
     }
 
-    fn in_class_field_initializer(&mut self, p: &ResidualProgram) -> bool {
+    fn in_class_initializer(&mut self, p: &ResidualProgram) -> bool {
         self.frames
             .last()
             .and_then(|frame| p.functions.get(frame.function as usize))
-            .is_some_and(|function| function.class_field_initializer)
+            .is_some_and(|function| function.class_initializer)
     }
 
     fn direct_eval_function_context(&mut self, p: &ResidualProgram) -> bool {
         if !self.direct_eval {
             return false;
         }
-        if self.in_class_field_initializer(p) {
+        if self.in_class_initializer(p) {
             return true;
         }
         let new_target = self.runtime_atoms.new_target;
@@ -688,25 +728,45 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
-    fn direct_eval_private_names(
-        &mut self,
-        p: &ResidualProgram,
-    ) -> Option<(Value, Vec<(String, String)>)> {
+    fn direct_eval_private_names(&mut self, p: &ResidualProgram) -> Option<(Value, Vec<(String, String)>)> {
+        let frame = self.frames.len().checked_sub(1)?;
+        let mut atoms = Vec::new();
+        let metadata = p.functions.get(self.frames[frame].function as usize)?;
+        if let Some(pc) = self.frames[frame].binding_site_pc
+            && let Ok(index) = metadata.binding_sites.binary_search_by_key(&pc, |site| site.resume_pc)
+        {
+            atoms.extend(metadata.binding_sites[index].bindings.iter().filter(|binding| binding.kind == crate::bytecode::LexicalBindingKind::PrivateName).map(|binding| binding.atom));
+        }
+        atoms.extend(metadata.name_bindings.resolved().into_iter().filter(|binding| binding.kind == crate::bytecode::LexicalBindingKind::PrivateName).map(|binding| binding.atom));
+        let mut environment = self.captured_parent_environment(frame);
+        while let Some(Cell::Environment { parent, function, scope, .. }) = self.heap.get(environment) {
+            if let Some(owner) = scope.program.and_then(|program| self.programs.get(ProgramId::from_raw(program)))
+                && let Some(metadata) = owner.functions.get(*function as usize)
+            {
+                atoms.extend(metadata.name_bindings.resolved().into_iter().filter(|binding| binding.kind == crate::bytecode::LexicalBindingKind::PrivateName).map(|binding| binding.atom));
+            }
+            environment = *parent;
+        }
+        atoms.sort_unstable();atoms.dedup();
+        let mut bindings = atoms.into_iter().filter_map(|atom| self.name_binding(frame, atom)).filter(|binding| binding.kind == crate::bytecode::LexicalBindingKind::PrivateName).collect::<Vec<_>>();
+        bindings.sort_by_key(|binding| match binding.location { crate::bytecode::EvalBindingLocation::Local(_) => 0, crate::bytecode::EvalBindingLocation::Capture { depth, .. } => u32::from(depth)+1 });
+        let mut names = Vec::new();
+        let mut first_home = None;
+        for binding in bindings {
+            let identity = self.atom_name(binding.atom).to_owned();
+            let Some(label) = private_identity_label(&identity) else { continue; };
+            if names.iter().any(|(name, _)| name == &label) { continue; }
+            if let Ok(home) = self.load_name_binding(p, frame, binding) {
+                first_home.get_or_insert(home);
+                names.push((label, identity));
+            }
+        }
+        if !names.is_empty() { return Some((first_home?, names)); }
         let home = self.eval_home_binding(p)?;
-        let names = self
-            .object_data(home)
-            .into_iter()
-            .flat_map(|object| object.private_names())
-            .filter_map(|brand| {
-                let identity = self.atom_name(brand.name).to_owned();
-                private_identity_label(&identity).map(|label| (label, identity))
-            })
-            .fold(Vec::new(), |mut names, binding| {
-                if !names.iter().any(|(label, _)| label == &binding.0) {
-                    names.push(binding);
-                }
-                names
-            });
+        let names = self.object_data(home).into_iter().flat_map(|object| object.private_names()).filter_map(|brand| {
+            let identity = self.atom_name(brand.name).to_owned();
+            private_identity_label(&identity).map(|label| (label, identity))
+        }).fold(Vec::new(), |mut names, binding| { if !names.iter().any(|(label, _)| label == &binding.0) { names.push(binding); } names });
         (!names.is_empty()).then_some((home, names))
     }
 
@@ -719,10 +779,10 @@ impl<H: Host> Vm<H> {
             .functions
             .get(self.frames[frame].function as usize)?
             .super_home_atom;
-        let field_initializer = self.in_class_field_initializer(p);
+        let class_initializer = self.in_class_initializer(p);
         let atom = self.runtime_atoms.lexical_this;
         let super_calls = home_atom.is_some()
-            && !field_initializer
+            && !class_initializer
             && self
                 .lexical_this_owner(frame, atom)
                 .and_then(|(program, function, _)| {
@@ -738,7 +798,7 @@ impl<H: Host> Vm<H> {
             in_function: self.direct_eval_function_context(p),
             home_atom,
             super_calls,
-            field_initializer,
+            class_initializer,
         })
     }
 
@@ -808,10 +868,4 @@ impl<H: Host> Vm<H> {
         self.heap.release_root(value_root);
         result
     }
-}
-
-pub(super) fn private_identity_label(identity: &str) -> Option<String> {
-    let identity = identity.strip_prefix("\0quench:private:")?;
-    let (_, label) = identity.rsplit_once(':')?;
-    (!label.is_empty()).then(|| label.to_owned())
 }

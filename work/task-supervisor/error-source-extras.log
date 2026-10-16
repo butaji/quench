@@ -1,0 +1,3 @@
+Traceback (most recent call last):
+  File "<stdin>", line 6, in <module>
+AssertionError: {'status': 'failed', 'index': 0, 'command': ['bash', '/workspace/quench/work/error-source-policy/qualify.sh'], 'exit': 101, 'supervisor_pid': 3240184, 'session_id': 3240183, 'utc': '2026-10-16T10:28:50.744305+00:00'}

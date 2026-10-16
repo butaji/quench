@@ -89,10 +89,19 @@ impl<H: Host> Vm<H> {
 
     /// V8's named native-info load enters prototype lookup mode, whereas
     /// Reflect.get and computed-key reads retain the setup-mode accessor view.
-    pub(super) fn prepare_named_function_info_lookup(&mut self, mut object: Value, atom: Atom) {
+    #[inline(always)]
+    pub(super) fn prepare_named_function_info_lookup(&mut self, object: Value, atom: Atom) {
+        let name = atom == self.runtime_atoms.name;
+        if name || atom == self.length_atom {
+            self.prepare_function_info_prototypes(object, atom, name);
+        }
+    }
+
+    // Ordinary property reads never need text inspection or a prototype walk.
+    // Keep the exact native-info transition separate from that common path.
+    #[inline(never)]
+    fn prepare_function_info_prototypes(&mut self, mut object: Value, atom: Atom, name: bool) {
         let receiver = object;
-        let name = self.atom_units_equal_str(atom, "name");
-        if !name && !self.atom_units_equal_str(atom, "length") { return; }
         while let Some(data) = self.object_data(object) {
             if self.proxy_parts(object).is_some() { return; }
             if self.own_property(object, atom).is_some() {
