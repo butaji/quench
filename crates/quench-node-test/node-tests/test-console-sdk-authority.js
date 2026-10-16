@@ -25,5 +25,8 @@ new sdkConstructor({
 for(const args of [[],[null],[undefined],[{}],[{stdout:{}}],[{stdout:sink,colorMode:7}],[{stdout:sink,groupIndentation:-1}]]){
  try{Reflect.construct(sdkConstructor,args);out.push(['accepted']);}catch(error){out.push([error.name,error.code,error.message]);}
 }
+const weakGet=WeakMap.prototype.get,poison={};
+WeakMap.prototype.get=function(){throw poison};
+try{instance.log('protected diagnostic state')}finally{WeakMap.prototype.get=weakGet}
 out.push(getters,writes);
 console.log(JSON.stringify(out));
