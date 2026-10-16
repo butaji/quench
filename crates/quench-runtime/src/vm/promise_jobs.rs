@@ -450,34 +450,26 @@ impl<H: Host> Vm<H> {
         } else {
             reaction.on_rejected
         };
-        let job = self.native_with_env(Native::PromiseReactionJob, Value::NULL);
-        self.realm.promise.jobs.insert(
-            job,
-            PromiseJob {
+        self.realm
+            .jobs
+            .push_back(super::PendingJob::Reaction(PromiseJob {
+                realm: self.realm.globals,
                 handler,
                 next: reaction.next,
                 rejected: state == PromiseState::Rejected,
                 value,
                 execution_context: reaction.execution_context,
-            },
-        );
-        self.enqueue_job(job, vec![value]);
+            }));
     }
 
-    pub(super) fn promise_reaction_job(
+    /// NewPromiseReactionJob's body for a reaction the queue holds directly.
+    pub(super) fn run_promise_reaction(
         &mut self,
         p: &ResidualProgram,
-        value: Value,
-    ) -> Result<Value, JsError> {
-        let job = self
-            .active_native_callable()
-            .ok_or_else(|| JsError("Promise job without callback".into()))?;
-        let reaction = self
-            .realm
-            .promise
-            .jobs
-            .remove(&job)
-            .ok_or_else(|| JsError("stale Promise job".into()))?;
+        reaction: PromiseJob,
+    ) -> Result<(), JsError> {
+        let value = reaction.value;
+        let previous_global = self.switch_realm_global(reaction.realm);
         let previous_context = reaction
             .execution_context
             .map(|context| self.host.enter_job_context(context))
@@ -513,7 +505,8 @@ impl<H: Host> Vm<H> {
         if let Some(context) = reaction.execution_context {
             self.release_job_context(context);
         }
-        outcome
+        self.switch_realm_global(previous_global);
+        outcome.map(|_| ())
     }
 
     pub(super) fn release_job_context(&mut self, context: HostExecutionContext) {
