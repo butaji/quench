@@ -17,6 +17,7 @@ const TYPE_PREDICATES: &[(&str, BuiltinBrand)] = &[
     ("isArrayBuffer", BuiltinBrand::ArrayBuffer),
     ("isSharedArrayBuffer", BuiltinBrand::SharedArrayBuffer),
     ("isAnyArrayBuffer", BuiltinBrand::AnyArrayBuffer),
+    ("isExternal", BuiltinBrand::External),
     ("isDataView", BuiltinBrand::DataView),
     ("isTypedArray", BuiltinBrand::TypedArray),
     ("isArrayBufferView", BuiltinBrand::ArrayBufferView),
@@ -290,6 +291,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         let value = context.get_property_rooted(native_types, key)?;
         context.define_data_property_rooted(types, key, value, true, true, true)?;
     }
+    super::crypto_key_shared_vm::public_predicates(context, types)?;
     let key = context.string_rooted("types");
     context.set_property_rooted(module, key, types, module)?;
     // Retain original identities before publishing mutable util exports. Console
@@ -813,6 +815,7 @@ fn build_key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         ("getProxyDetails", "utilProxyDetails"),
         ("previewEntries", "utilPreviewEntries"),
         ("getPromiseDetails", "utilPromiseDetails"),
+        ("getExternalValue", "utilExternalValue"),
         ("markPromiseAsHandled", "utilMarkPromiseHandled"),
     ] {
         let operation = crate::host::shared_vm::operation(operation);
@@ -886,7 +889,8 @@ fn build_types_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<Root
         let name_key = context.string_rooted("name");
         let (function_name, length) = match brand {
             BuiltinBrand::ArrayBufferView => ("isView", 1),
-            BuiltinBrand::Date
+            BuiltinBrand::External
+            | BuiltinBrand::Date
             | BuiltinBrand::RegExp
             | BuiltinBrand::NativeError
             | BuiltinBrand::Promise
@@ -928,20 +932,7 @@ fn build_types_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<Root
         let key = context.string_rooted(name);
         context.set_property_rooted(types, key, predicate, types)?;
     }
-    let predicate = context.host_function_named(crate::host::shared_vm::operation("utilIsExternal"), "")?;
-    let key = context.string_rooted("isExternal");
-    context.define_data_property_rooted(types, key, predicate, true, true, true)?;
     Ok(types)
-}
-
-/// The VM exposes no external-pointer values; JavaScript objects cannot acquire
-/// this native-only brand through prototypes, tags or proxies.
-pub(crate) fn is_external(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    _: &[RootId],
-) -> Result<RootId, RootedError> {
-    Ok(context.boolean(false))
 }
 
 /// Node's optional full-details argument tests literal true, not truthiness.
@@ -1007,4 +998,13 @@ pub(crate) fn constructor_name(
         current = context.prototype_rooted(current)?;
     }
     Ok(context.string_rooted("Object"))
+}
+
+/// External wrappers expose the stored address, without touching native memory.
+pub(crate) fn external_value(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let value = args.first().copied().unwrap_or_else(|| context.undefined());
+    match context.external_address_rooted(value) {
+        Some(address) => Ok(context.bigint_rooted(address as i128)),
+        None => { let error = context.type_error_rooted("Value is not an external")?; Err(context.throw(error)) }
+    }
 }

@@ -25,7 +25,7 @@ const CALLABLE_FACADE: &str = quench_js_check::checked_js!(
 })"#
 );
 
-const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, endOperation, destroyOperation, encodingOperation, listenOperation, closeOperation, addressOperation, accountWriteOperation, endpointOperation, referenceOperation, socketReferenceOperation, unrefTimeoutOperation, socketOptionsOperation, serverOptionsOperation, initEndOperation, onReadableStreamEnd, initServerEmitterOperation, initSocketOptionsOperation, setNoDelay, setKeepAlive, initServerOptionsOperation, getConnections, initializeRead, readSocket) => {
+const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, endOperation, destroyOperation, encodingOperation, listenOperation, closeOperation, addressOperation, accountWriteOperation, endpointOperation, referenceOperation, socketReferenceOperation, unrefTimeoutOperation, socketOptionsOperation, serverOptionsOperation, initEndOperation, onReadableStreamEnd, initServerEmitterOperation, initSocketOptionsOperation, setNoDelay, setKeepAlive, initServerOptionsOperation, getConnections, initializeRead, readSocket, endStreamOperation) => {
   class Socket extends Duplex {
     constructor(options = {}) {
       options = { ...socketOptionsOperation(options, false) };
@@ -97,7 +97,7 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
     end(chunk, encoding, callback) {
       if (typeof chunk === 'function') { callback = chunk; chunk = undefined; encoding = undefined; }
       else if (typeof encoding === 'function') { callback = encoding; encoding = undefined; }
-      return super.end(chunk, encoding, callback);
+      return endStreamOperation(this, chunk, encoding, callback);
     }
     connect(port, host, callback) {
       const plan = endpointOperation(port, host, callback, true);
@@ -1374,6 +1374,12 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         "operation=>function(n){'use strict';return operation(this,n);}"
     ), "node:net/read.js")?;
     let read_socket = context.call_rooted(read_factory, undefined, &[read_operation])?;
+    let end_key = context.string_rooted("end");
+    let prototype_key = context.string_rooted("prototype");
+    let prototype = context.get_property_rooted(duplex, prototype_key)?;
+    let original_end = context.get_property_rooted(prototype, end_key)?;
+    let end_data = context.array_rooted(&[original_end, byte_length])?;
+    let end_stream = context.host_function_with_data(crate::host::shared_vm::operation("netSocketEndStream"), end_data)?;
     let factory = context.evaluate_script_rooted(NET_MODULE_FACTORY, "node:net/module.js")?;
     let undefined = context.undefined();
     let surface = context.call_rooted(
@@ -1406,6 +1412,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
             get_connections,
             initialize_read,
             read_socket,
+            end_stream,
         ],
     )?;
     let options_data = context.host_mut().shared_state().borrow().net_socket_option_keys
@@ -1566,11 +1573,15 @@ pub(crate) fn account_write_operation(
     }) {
         return Ok(undefined);
     }
-    let socket = args[0];
-    let chunk = args.get(1).copied().unwrap_or(undefined);
+    let byte_length = context.host_function_data()?;
+    account_write(context, byte_length, args[0], args.get(1).copied().unwrap_or(undefined), args.get(2).copied().unwrap_or(undefined))
+}
+
+fn account_write(context: &mut NativeContext<'_, NodeHost>, byte_length: RootId, socket: RootId, chunk: RootId, encoding: RootId) -> Result<RootId, RootedError> {
+    let undefined = context.undefined();
+
     let count = if context.string_text(chunk)?.is_some() {
-        let byte_length = context.host_function_data()?;
-        let encoding = args.get(2).copied().unwrap_or(undefined);
+
         let length = context.call_rooted(byte_length, undefined, &[chunk, encoding])?;
         context
             .rooted_value(length)
@@ -1598,6 +1609,32 @@ pub(crate) fn account_write_operation(
     let value = context.number(old + count);
     context.set_property_rooted(socket, key, value, socket)?;
     Ok(undefined)
+}
+
+pub(crate) fn end_stream(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let socket = args[0];
+    let data = context.host_function_data()?;
+    let key = context.string_rooted("0");
+    let original = context.get_property_rooted(data, key)?;
+    let key = context.string_rooted("_writableState");
+    let state = context.get_property_rooted(socket, key)?;
+    let key = context.string_rooted("ending");
+    let ending = context.get_property_rooted(state, key)?;
+    let key = context.string_rooted("destroyed");
+    let destroyed = context.get_property_rooted(state, key)?;
+    let accepted = !context.truthy_rooted(ending)? && !context.truthy_rooted(destroyed)?;
+    let result = context.call_rooted(original, socket, &args[1..])?;
+    if accepted {
+        let key = context.string_rooted("errored");
+        let error = context.get_property_rooted(state, key)?;
+        if !context.truthy_rooted(error)? {
+            let key = context.string_rooted("1");
+            let byte_length = context.get_property_rooted(data, key)?;
+            let missing = context.undefined();
+            account_write(context, byte_length, socket, args.get(1).copied().unwrap_or(missing), args.get(2).copied().unwrap_or(missing))?;
+        }
+    }
+    Ok(result)
 }
 
 pub(crate) fn write_operation(
@@ -1651,6 +1688,11 @@ pub(crate) fn end_operation(
         .first()
         .copied()
         .ok_or_else(|| RootedError::host("net.Socket.end requires a socket"))?;
+    // A fresh Socket has no transport to shut down; the real Writable final
+    // callback still completes its writable side.
+    let key = context.string_rooted("__quenchNetSocketId");
+    let id = context.get_property_rooted(socket, key)?;
+    if context.rooted_value(id).is_some_and(Value::is_undefined) { return Ok(socket); }
     let id = socket_id(context, socket)?;
     context.host_mut().net_pending_ends.push(id);
     Ok(socket)

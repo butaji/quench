@@ -347,14 +347,14 @@ impl<H: Host> Vm<H> {
         // A generic descriptor over an accessor keeps it an accessor, and accessors are holes.
         if attributes.accessor {
             self.unmap_argument_index(target, index);
-            if !self.set_array_element(target, index, Value::DELETED) {
+            if !self.store_validated_array_element(target, index, Value::DELETED) {
                 return Ok(false);
             }
             self.insert_descriptor(target, PropertyKey::string(atom), attributes);
             return Ok(true);
         }
         let next = descriptor_value.or(existing).unwrap_or(Value::UNDEFINED);
-        if !self.set_array_element(target, index, next) {
+        if !self.store_validated_array_element(target, index, next) {
             return Ok(false);
         }
         self.insert_descriptor(target, PropertyKey::string(atom), attributes);

@@ -5,6 +5,14 @@ use crate::{Host, JsError, RootId, RootedError, Value, vm::Vm};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HostFunctionId(pub u32);
 
+/// A host's synchronous module request never starts an async graph or re-enters
+/// a currently evaluating module. Namespace roots use the native call's scope.
+pub enum SynchronousModule<T> {
+    Namespace(T),
+    AsyncGraph,
+    Evaluating,
+}
+
 /// Arithmetic operations at native boundaries use the same guest coercions as code.
 #[derive(Clone, Copy)]
 pub enum NativeArithmetic {
@@ -28,6 +36,7 @@ pub struct RootedIterator {
 /// Builtin internal-slot brands, independent of prototypes and guest property hooks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BuiltinBrand {
+    External,
     Date,
     RegExp,
     NativeError,
@@ -271,6 +280,17 @@ impl<'a, H: Host> NativeContext<'a, H> {
     }
 
     /// Test an internal-slot brand without invoking guest getters or proxy traps.
+    /// Create an opaque, non-owning native address wrapper. Core never dereferences
+    /// the address; the embedding retains ownership of its native allocation.
+    pub fn external_rooted(&mut self, address: usize) -> Result<RootId, RootedError> {
+        let result = self.vm.create_embedding_external(address);
+        self.completion(result)
+    }
+
+    pub fn external_address_rooted(&self, value: RootId) -> Option<usize> {
+        self.vm.embedding_external_address(value)
+    }
+
     pub fn has_builtin_brand_rooted(
         &mut self,
         root: RootId,
@@ -879,6 +899,29 @@ impl<'a, H: Host> NativeContext<'a, H> {
     ) -> Result<RootId, RootedError> {
         let result = self.vm.embedding_value(data)
             .and_then(|value| self.vm.create_host_constructor_with_data(id, value));
+        self.completion(result)
+    }
+
+    pub fn evaluate_module_sync_rooted(
+        &mut self,
+        module: &crate::ModuleSource,
+    ) -> Result<SynchronousModule<RootId>, RootedError> {
+        let outcome = self.vm.evaluate_module_sync(module).map_err(|error| self.error(error))?;
+        Ok(match outcome {
+            SynchronousModule::Namespace(value) => SynchronousModule::Namespace(self.scoped_value(value)),
+            SynchronousModule::AsyncGraph => SynchronousModule::AsyncGraph,
+            SynchronousModule::Evaluating => SynchronousModule::Evaluating,
+        })
+    }
+
+    /// Add a constant export while retaining a namespace's original live bindings.
+    pub fn module_namespace_with_export_rooted(
+        &mut self,
+        namespace: RootId,
+        name: &str,
+        value: RootId,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.module_namespace_with_export_rooted(namespace, name, value);
         self.completion(result)
     }
 
