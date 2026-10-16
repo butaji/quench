@@ -1021,7 +1021,7 @@ pub struct Function {
     /// Lexical HomeObject captured by methods and arrows containing `super`.
     pub super_home_atom: Option<Atom>,
     pub constructible: bool,
-    pub class_field_initializer: bool,
+    pub class_initializer: bool,
     pub parameter_eval_arguments_error: bool,
     pub arguments_slot: Option<u16>,
     pub simple_parameters: bool,
@@ -1130,7 +1130,7 @@ pub(crate) enum PlainLocalContextIneligibility {
     AsyncFunction,
     GeneratorFunction,
     ClassConstructor,
-    ClassFieldInitializer,
+    ClassInitializer,
     NonSimpleParameters,
     LegacyCaptureLayout,
     DynamicNameResolution,
@@ -1153,7 +1153,7 @@ impl Function {
     /// A terminal return may skip its following Return instruction without being a
     /// proper tail call: the caller must still catch the callee's abrupt completion.
     pub(crate) fn permits_js_tail_call_at(&self, pc: u32) -> bool {
-        self.strict && !self.class_field_initializer && self.handler_at(pc).is_none()
+        self.strict && !self.class_initializer && self.handler_at(pc).is_none()
     }
 
     pub(crate) fn handler_at(&self, pc: u32) -> Option<Handler> {
@@ -1208,8 +1208,8 @@ impl Function {
         if self.is_class_constructor {
             return Some(PlainLocalContextIneligibility::ClassConstructor);
         }
-        if self.class_field_initializer {
-            return Some(PlainLocalContextIneligibility::ClassFieldInitializer);
+        if self.class_initializer {
+            return Some(PlainLocalContextIneligibility::ClassInitializer);
         }
         if !self.simple_parameters {
             return Some(PlainLocalContextIneligibility::NonSimpleParameters);
@@ -1286,7 +1286,7 @@ impl Function {
                 || self.is_generator
                 || self.is_class_constructor
                 || self.derived_constructor
-                || self.class_field_initializer
+                || self.class_initializer
                 || self.instance_initializer.is_some()
                 || self.inherited_with_scope
                 || !self.binding_sites.is_empty()
@@ -1407,7 +1407,7 @@ impl Function {
                 && !self.is_generator
                 && !self.is_class_constructor
                 && !self.derived_constructor
-                && !self.class_field_initializer
+                && !self.class_initializer
                 && !self.parameter_eval_arguments_error;
             let legacy_reflection = !self.has_restricted_legacy_caller_access();
             let live_parameters = self.reflects_live_parameters(atoms);

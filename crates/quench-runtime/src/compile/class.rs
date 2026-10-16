@@ -151,6 +151,11 @@ impl FunctionCompiler<'_, '_> {
             self.hidden_local(&format!("\0quench:home:class:{}", class.span.start));
         let mut private_bindings = FxHashMap::default();
         for element in &class.body.body {
+            if let ClassElement::AccessorProperty(accessor) = element {
+                let atom = self.owner.private_name_atom(accessor.span);
+                let home = if accessor.r#static { class_home_atom } else { constructor_home_atom };
+                private_bindings.insert(atom, home);
+            }
             let (key, is_static) = match element {
                 ClassElement::PropertyDefinition(field) => (&field.key, field.r#static),
                 ClassElement::MethodDefinition(method) => (&method.key, method.r#static),
@@ -190,7 +195,7 @@ impl FunctionCompiler<'_, '_> {
                 &scopes,
                 Some(self.function_id),
                 FunctionOptions {
-                    class_field_initializer: true,
+                    class_initializer: true,
                     non_constructible: true,
                     super_home: true,
                     super_home_atom: Some(if class_field_static(*field) {
@@ -250,7 +255,7 @@ impl FunctionCompiler<'_, '_> {
                         class_constructor: true,
                         derived_constructor: implicit_super,
                         non_constructible: false,
-                        class_field_initializer: false,
+                        class_initializer: false,
                         instance_fields: Some(&instance_fields),
                         instance_private_methods: Some(&instance_private_methods),
                         super_static: false,
@@ -275,7 +280,7 @@ impl FunctionCompiler<'_, '_> {
                 FunctionOptions {
                     instance_fields: Some(&instance_fields),
                     instance_private_methods: Some(&instance_private_methods),
-                    class_field_initializer: true,
+                    class_initializer: true,
                     non_constructible: true,
                     super_home: true,
                     super_home_atom: Some(constructor_home_atom),
@@ -317,39 +322,28 @@ impl FunctionCompiler<'_, '_> {
         self.define_class_method(prototype, class_value, None, Some("constructor"));
         self.store_atom(constructor_home_atom, prototype);
 
+        // Static methods/accessors exist before static fields execute. Data
+        // fields acquire their brand only when their initializer completes;
+        // instance members never brand the prototype merely by being declared.
+        let mut initialized_static_names = FxHashSet::default();
         for element in &class.body.body {
-            let (name, is_static) = match element {
-                ClassElement::PropertyDefinition(field) => match &field.key {
-                    PropertyKey::PrivateIdentifier(identifier) => {
-                        (Some(identifier.span), field.r#static)
-                    }
-                    _ => (None, false),
-                },
-                ClassElement::MethodDefinition(method) => match &method.key {
-                    PropertyKey::PrivateIdentifier(identifier) => {
-                        (Some(identifier.span), method.r#static)
-                    }
-                    _ => (None, false),
-                },
-                ClassElement::AccessorProperty(accessor) => {
-                    (Some(accessor.span), accessor.r#static)
+            let (name, accessor_name) = match element {
+                ClassElement::MethodDefinition(method) if method.r#static => {
+                    (matches!(&method.key, PropertyKey::PrivateIdentifier(_))
+                        .then(|| method.key.span()), None)
                 }
-                _ => (None, false),
-            };
-            let accessor_name = match element {
-                ClassElement::AccessorProperty(accessor) => {
-                    matches!(&accessor.key, PropertyKey::PrivateIdentifier(_))
-                        .then(|| accessor.key.span())
+                ClassElement::AccessorProperty(accessor) if accessor.r#static => {
+                    (Some(accessor.span), matches!(&accessor.key, PropertyKey::PrivateIdentifier(_))
+                        .then(|| accessor.key.span()))
                 }
-                _ => None,
+                _ => continue,
             };
             for name in name.into_iter().chain(accessor_name) {
-                let target = if is_static { class_value } else { prototype };
                 let atom = self.owner.private_name_atom(name);
-                if self.owner.private_name_is_overridden(atom) {
-                    continue;
-                }
-                self.emit(Op::MarkPrivateName, 0, target, target, atom);
+                if self.owner.private_name_is_overridden(atom)
+                    || !initialized_static_names.insert(atom)
+                { continue; }
+                self.emit(Op::MarkPrivateName, 0, class_value, class_value, atom);
             }
         }
 
@@ -627,6 +621,7 @@ impl FunctionCompiler<'_, '_> {
                         block,
                         &scopes,
                         Some(self.function_id),
+                        class_home_atom,
                         self.with_depth,
                     );
                     let function = self.reg();
@@ -1013,7 +1008,7 @@ impl Compiler<'_> {
                 derived_constructor: method.kind == MethodDefinitionKind::Constructor
                     && derived_constructor,
                 non_constructible: method.kind != MethodDefinitionKind::Constructor,
-                class_field_initializer: false,
+                class_initializer: false,
                 instance_fields,
                 instance_private_methods,
                 super_static: method.r#static,
@@ -1032,6 +1027,7 @@ impl Compiler<'_> {
         block: &StaticBlock<'_>,
         scopes: &[Rc<FxHashMap<Atom, u16>>],
         parent: Option<u32>,
+        home_atom: Atom,
         with_depth: u16,
     ) -> u32 {
         self.compile_function(
@@ -1050,16 +1046,16 @@ impl Compiler<'_> {
                 class_constructor: false,
                 derived_constructor: false,
                 non_constructible: false,
-                class_field_initializer: false,
+                class_initializer: true,
                 instance_fields: None,
                 instance_private_methods: None,
                 super_static: true,
-                super_home: false,
-                super_home_atom: None,
+                super_home: true,
+                super_home_atom: Some(home_atom),
                 rest_override: false,
                 implicit_super: false,
                 with_depth,
-                strict: false,
+                strict: true,
             },
         )
     }

@@ -123,7 +123,7 @@ mod tests {
             derived_constructor: false,
             instance_initializer: None,
             super_home_atom: None,
-            class_field_initializer: false,
+            class_initializer: false,
             locals: 0,
             local_atoms: vec![],
             environment_atoms: vec![],

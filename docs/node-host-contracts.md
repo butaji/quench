@@ -854,3 +854,16 @@ use that binding metadata. Ordinary-function eval uses OXC's ordinary-function
 grammar inside a private-name parsing context, and the extracted body must match
 the generated source boundaries. Complete private-environment contexts and the
 ordinary NUL string-key namespace remain separate conformance work.
+
+Private membership follows initialization: prototypes acquire no brand merely
+from a declaration, static data fields remain absent until initialization, and
+static private methods/accessors precede static fields. Auto-accessor backing
+identities retain their own lexical declaring-home binding, including public
+instance auto-accessors whose backing name is not visible to eval.
+
+Static blocks retain the actual class home for `super` and execute in strict
+mode. The compiler's class-initializer context is shared by field initializers,
+static blocks and their arrows: eval forbids lexical `arguments`, preserves
+`this`, and supplies undefined `new.target`. Ordinary nested functions introduce
+their own context. The existing serialized initializer flag represents this
+shared context; static blocks keep distinct variable scopes.
