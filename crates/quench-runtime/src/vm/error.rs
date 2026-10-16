@@ -1342,9 +1342,7 @@ impl<H: Host> Vm<H> {
             argument_strings.push(text);
         }
         let source = argument_strings.pop().unwrap_or_default();
-        let source = source.trim();
         let parameters = argument_strings.join(",");
-        let parser_parameters = format!("{parameters}\n");
         let source_name = format!("<Function:{}>", self.programs.len());
         let kind = match native {
             Native::AsyncFunction => crate::compile::DynamicFunctionKind::Async,
@@ -1353,8 +1351,8 @@ impl<H: Host> Vm<H> {
             _ => crate::compile::DynamicFunctionKind::Ordinary,
         };
         let residual = crate::Engine::specialize_function_constructor(
-            &parser_parameters,
-            source,
+            &parameters,
+            &source,
             &source_name,
             &*self,
             kind,
@@ -1396,21 +1394,8 @@ impl<H: Host> Vm<H> {
         })();
         self.set_active_program(active_program);
         let function = result?;
-        self.set_function_name_text(function, "anonymous".to_owned());
-        let function_source = match kind {
-            crate::compile::DynamicFunctionKind::Ordinary => {
-                format!("function anonymous({parameters}\n) {{\n{source}\n}}")
-            }
-            crate::compile::DynamicFunctionKind::Async => {
-                format!("async function anonymous({parameters}\n) {{\n{source}\n}}")
-            }
-            crate::compile::DynamicFunctionKind::Generator => {
-                format!("function* anonymous({parameters}\n) {{\n{source}\n}}")
-            }
-            crate::compile::DynamicFunctionKind::AsyncGenerator => {
-                format!("async function* anonymous({parameters}\n) {{\n{source}\n}}")
-            }
-        };
+        self.set_function_name_text(function, crate::compile::DYNAMIC_FUNCTION_PUBLIC_NAME.to_owned());
+        let function_source = kind.source(&parameters, &source);
         self.set_function_source(function, &function_source)?;
         Ok(function)
     }
