@@ -9392,3 +9392,19 @@ fn default_node_stack_policy_uses_real_coded_brands_and_system_errors() {
 fn node_compatibility_version_follows_bundled_library_target() {
     compare_node_source_with_args(include_str!("../node-tests/test-node-compatibility-version.js"), &[]);
 }
+
+#[test]
+fn native_buffer_backing_allocations_preserve_real_alignment_and_snapshots() {
+    compare_node_source_with_args(
+        include_str!("../node-tests/test-native-buffer-allocation.js"),
+        &["--no-warnings", "--expose-internals", "--expose-gc"],
+    );
+}
+
+#[test]
+fn native_buffer_pool_shares_real_aligned_backing_and_preserves_reentrant_copies() {
+    compare_node_source_with_args(
+        include_str!("../node-tests/test-native-buffer-pool.js"),
+        &["--no-warnings", "--experimental-stream-iter"],
+    );
+}
