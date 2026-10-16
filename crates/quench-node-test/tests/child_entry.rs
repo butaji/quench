@@ -9724,3 +9724,13 @@ fn process_auxiliary_capture_preserves_length_coercion_fractional_keys_and_repla
 fn process_capture_methods_have_public_names_and_ordinary_constructor_shapes() {
     compare_node_source_with_args(include_str!("../node-tests/test-process-capture-method-shape.js"), &[]);
 }
+
+#[test]
+fn native_contextify_scripts_compile_once_keep_template_sites_and_return_global_functions() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-contextify-owned-script.js"), &["--expose-internals", "--no-warnings", "--expose-gc"]);
+}
+
+#[test]
+fn sdk_mock_tracker_preserves_call_records_restoration_and_virtual_timer_queue() {
+    compare_node_source_with_args(include_str!("../node-tests/test-sdk-mock-tracker.js"), &["--no-warnings"]);
+}
