@@ -346,6 +346,8 @@ pub(crate) fn initialize_event_globals(
     let state_lookup=get(context,abort_state,"0")?;
     let state_map=get(context,abort_state,"1")?;
     set(context,data,"abortStateMap",state_map)?;
+    let abort_operation=get(context,abort_state,"2")?;
+    set(context,data,"abortSignal",abort_operation)?;
     set(context, data, "abortState", state_lookup)?;
     Ok(undefined)
 }
