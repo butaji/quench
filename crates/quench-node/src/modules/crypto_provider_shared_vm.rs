@@ -72,7 +72,7 @@ pub(crate) fn operation(
         "getOpenSSLSecLevelCrypto" => {
             let builder = openssl::ssl::SslContextBuilder::new(openssl::ssl::SslMethod::tls())
                 .map_err(|stack| super::crypto_error_shared_vm::decorated(c, stack))?;
-            Ok(c.number(builder.security_level() as f64))
+            Ok(c.number(builder.build().security_level() as f64))
         }
         "getCiphers" | "getHashes" | "getMacs" => {
             let kind = match op.as_str() {
