@@ -58,7 +58,8 @@ pub(crate) fn version_facts() -> &'static [(&'static str, &'static str)] {
         ("ares", "1.0.0"),
         ("brotli", "1.1.0"),
         ("cldr", "45.0"),
-        ("icu", "75.1"),
+        #[cfg(quench_icu)]
+        ("icu", env!("QUENCH_ICU_VERSION")),
         ("llhttp", "9.2.1"),
         ("merve", "1.0.0"),
         ("modules", "127"),

@@ -9143,6 +9143,71 @@ fn file_handle_read_parameters_preserve_defaults_options_getter_order_and_result
 }
 
 #[test]
+fn stack_function_names_follow_mutation_after_capture_and_preserve_utf16_without_getters() {
+    compare_node_source_with_args(r#"
+let calls=0;Error.prepareStackTrace=(_,frames)=>frames.slice(0,2);
+function Original(){return new Error};const error=Original();Object.defineProperty(Original,'name',{value:'Changed'});
+const sites=error.stack,out=[sites[0].getFunctionName()];
+Object.defineProperty(Original,'name',{value:'Later'});out.push(sites[0].getFunctionName(),sites[0].toString());
+Object.defineProperty(Original,'name',{value:'\ud800'});out.push(sites[0].getFunctionName());
+Object.defineProperty(Original,'name',{get(){calls++;throw Error('name getter')}});out.push(sites[0].getFunctionName(),sites[1].getFunctionName()===null,calls);
+Object.defineProperty(Original,'name',{value:'\0Public'});out.push(sites[0].getFunctionName());
+Object.defineProperty(Original,'name',{value:''});out.push(sites[0].getFunctionName()===null);
+console.log(JSON.stringify(out));
+"#, &[]);
+}
+
+#[test]
+fn native_constructed_names_preserve_base_identity_and_use_prototype_fallback_for_subclasses() {
+    compare_node_source_with_args(
+        r#"
+const get=require('internal/test/binding').internalBinding('util').getConstructorName,out=[];
+for(const [C,args] of [[Array,[]],[Map,[]],[Date,[]],[Uint8Array,[0]],[Error,[]],[TypeError,[]],[RangeError,[]],[URIError,[]],[EvalError,[]],[ReferenceError,[]],[SyntaxError,[]],[ArrayBuffer,[0]],[Number,[1]],[String,['x']],[Boolean,[true]],[Object,[]]]){
+ const value=new C(...args),saved=Object.getOwnPropertyDescriptor(C,'name');Object.setPrototypeOf(value,null);
+ try{Object.defineProperty(C,'name',{value:'Changed'});out.push(get(value))}finally{Object.defineProperty(C,'name',saved)}
+}
+function Original(){};const original=new Original;Object.setPrototypeOf(original,null);out.push(new Object(original)===original,get(new Object(original)));
+class CustomArray extends Array{};const array=new CustomArray;out.push(get(array));CustomArray.prototype.constructor=null;out.push(get(array));
+class CustomMap extends Map{};const map=new CustomMap;out.push(get(map));CustomMap.prototype.constructor=null;out.push(get(map));
+const tagged=new CustomArray;Object.defineProperty(tagged,Symbol.toStringTag,{value:'TaggedArray'});out.push(get(tagged));
+const foreign=require('vm').runInNewContext("const value=new Array;Object.setPrototypeOf(value,null);Object.defineProperty(Array,'name',{value:'ForeignArray'});value");out.push(get(foreign));
+console.log(JSON.stringify(out));
+"#,
+        &["--expose-internals", "--no-warnings"],
+    );
+}
+
+#[test]
+fn canonical_util_types_preserve_native_sources_javascript_sources_export_order_and_identity() {
+    compare_node_source_with_args(
+        r#"
+const types=require('util/types'),internal=require('internal/util/types'),raw=require('internal/test/binding').internalBinding('types');
+const out=[types===internal,types===require('util').types,Object.keys(raw),Object.entries(types).map(([key,value])=>[key,value.name,value.length,Function.prototype.toString.call(value),Object.hasOwn(value,'prototype'),Object.getOwnPropertyDescriptor(types,key)])];
+out.push(Object.keys(raw).every(key=>raw[key]===types[key]),types.isArrayBufferView===ArrayBuffer.isView);
+console.log(JSON.stringify(out));
+"#,
+        &["--expose-internals", "--no-warnings"],
+    );
+}
+
+#[test]
+fn errors_and_stack_rendering_preserve_utf16_and_capture_targets_observe_original_getters() {
+    compare_node_source_with_args(r#"
+const out=[];for(const [C,args] of [[Error,[]],[TypeError,[]],[RangeError,[]],[AggregateError,[[]]],[SuppressedError,[1,2]]]){
+ const error=new C(...args,'\ud800');out.push(error.message,error.toString(),error.stack.split('\n')[0]);
+}
+out.push(Error.prototype.toString.call({name:'\ud800',message:'\udfff'}));
+for(const object of [{name:'Custom',message:'text'},{name:'',message:'text'},{},{get name(){throw 17},message:'text'}]){
+ Error.captureStackTrace(object);try{out.push(object.stack.split('\n')[0])}catch(e){out.push(['threw',e])}
+}
+let calls=[];const target={get name(){calls.push('name');return {toString(){calls.push('name string');return '\ud800'}}},get message(){calls.push('message');return {toString(){calls.push('message string');return '\udfff'}}}};
+Error.captureStackTrace(target);const first=target.stack;out.push(first.split('\n')[0],target.stack===first,calls);
+Error.prepareStackTrace=(_,frames)=>frames[0].toString();function Frame(){return new Error};Object.defineProperty(Frame,'name',{value:'\ud800'});out.push(Frame().stack);
+console.log(JSON.stringify(out));
+"#, &[]);
+}
+
+#[test]
 fn implemented_cli_option_snapshots_tokenization_and_stream_iterator_policy_match_node() {
     for flags in [&["--no-warnings","--expose-internals"][..], &["--no-warnings","--expose-internals","--experimental-stream-iter"][..]] {
         compare_node_source_with_args(include_str!("../node-tests/test-cli-options-stream-iter.js"),flags);
@@ -9229,6 +9294,20 @@ console.log(JSON.stringify({complete:true,cases:rows.length,calls:rows.length*7,
 }
 
 #[test]
+fn callsites_share_native_prototypes_and_supported_methods_preserve_descriptors_and_brands() {
+    compare_node_source_with_args(r#"
+Error.prepareStackTrace=(_,frames)=>frames;function Frame(){return new Error};const first=Frame().stack,second=Frame().stack,site=first[0],proto=Object.getPrototypeOf(site),C=proto.constructor,out=[];
+const methods=['getColumnNumber','getEvalOrigin','getFileName','getFunctionName','getLineNumber','getMethodName','getThis','getTypeName','isConstructor','isEval','isNative','toString'];
+out.push(Reflect.ownKeys(site),Object.getPrototypeOf(first[1])===proto,Object.getPrototypeOf(second[0])===proto,C.name,C.length,Function.prototype.toString.call(C),Object.getOwnPropertyDescriptor(C,'prototype'),Object.getOwnPropertyDescriptor(proto,'constructor'));
+for(const key of methods){const f=proto[key];out.push([key,f.name,f.length,Function.prototype.toString.call(f),Object.getOwnPropertyDescriptor(proto,key)]);}
+for(const value of [undefined,null,1,'x',true,Symbol('s'),1n,{},()=>{},proto,new Proxy({}, {})])try{proto.getFileName.call(value)}catch(e){out.push([e.name,e.message])}
+for(const invoke of [()=>C(),()=>new C])try{invoke()}catch(e){out.push([e.name,e.message])}
+const get=require('internal/test/binding').internalBinding('util').getConstructorName;out.push(get(site));Object.defineProperty(C,'name',{value:'Changed'});proto.constructor=null;out.push(get(site));
+console.log(JSON.stringify(out));
+"#, &["--expose-internals","--no-warnings"]);
+}
+
+#[test]
 fn async_iterator_protocol_and_secondary_realm_inheritance_match_node() {
     compare_node_stream_source(include_str!("../node-tests/test-async-iterator-protocol.js"));
 }
@@ -9244,6 +9323,57 @@ fn async_delegated_return_unwinds_original_generator_finally() {
 }
 
 #[test]
+fn callsite_function_identity_obeys_strict_frame_visibility_and_ignores_name_getters() {
+    compare_node_source_with_args(r#"
+Error.prepareStackTrace=(_,frames)=>frames;
+function Loose(){return new Error}
+function Strict(){'use strict';return Loose()}
+function StrictLeaf(){'use strict';return new Error}
+function Outer(){return StrictLeaf()}
+const out=[];
+for(const [invoke,expected] of [[Loose,[Loose]],[Strict,[Loose,Strict]],[Outer,[StrictLeaf,Outer]]]){
+ const sites=invoke().stack;out.push(sites.slice(0,expected.length).map((site,index)=>[site.getFunction()===expected[index],site.getFunction()===undefined,site.getThis()===undefined]));
+}
+const site=Loose().stack[0];Object.defineProperty(Loose,'name',{get(){throw Error('name getter')}});out.push(site.getFunction()===Loose);
+const method=Object.getPrototypeOf(site).getFunction;out.push(method.name,method.length,Function.prototype.toString.call(method),Object.getOwnPropertyDescriptor(Object.getPrototypeOf(site),'getFunction'));
+for(const receiver of [{},undefined])try{method.call(receiver)}catch(e){out.push([e.name,e.message])}
+console.log(JSON.stringify(out));
+"#, &[]);
+}
+
+#[test]
+fn callsite_method_names_follow_receiver_descriptors_without_getters_or_proxy_traps() {
+    compare_node_source_with_args(
+        r#"
+Error.prepareStackTrace=(_,frames)=>frames[0];function Original(){return new Error().stack}
+const out=[];
+for(const object of [{Original},{renamed:Original},{a:Original,b:Original},Object.create({inherited:Original}),Object.defineProperty({},'hidden',{value:Original}),{0:Original},Object.defineProperty({},'Original',{value:Original})]){
+ const key=Reflect.ownKeys(object)[0]??'inherited';const site=object[key]();out.push([key,site.getFunctionName(),site.getMethodName()]);
+}
+const strict={go:function Named(){'use strict';return new Error().stack}};out.push(strict.go().getMethodName());
+const object={get value(){return new Error().stack}};out.push(object.value.getMethodName());
+let calls=0;const proxy=new Proxy({alias:Original},{get(){calls++;throw Error('trap')},ownKeys(){calls++;throw Error('keys')},getPrototypeOf(){calls++;throw Error('prototype')}});out.push(Original.call(proxy).getMethodName(),calls);
+const changing={old:Original};const site=changing.old();delete changing.old;changing.new=Original;out.push(site.getMethodName());
+Object.defineProperty(Original,'name',{get(){calls++;throw Error('function name')}});out.push(site.getMethodName(),calls);
+const wide={'\ud800':Original};out.push(wide['\ud800']().getMethodName());
+const numeric={0(){return new Error().stack}};out.push(numeric[0]().getMethodName());
+console.log(JSON.stringify(out));
+"#,
+        &[],
+    );
+}
+
+#[test]
 fn abort_listener_errors_are_reported_on_ticks_without_replacing_source_errors() {
     compare_node_source_with_args(include_str!("../node-tests/test-abort-listener-errors.js"), &["--no-warnings", "--experimental-stream-iter"]);
+}
+
+#[test]
+fn native_zlib_streaming_counts_bytes_pending_close_and_iterable_pipelines_match_node() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-zlib-streaming.js"), &["--no-warnings", "--expose-internals", "--experimental-stream-iter"]);
+}
+
+#[test]
+fn native_brotli_streaming_bytes_dictionaries_and_errors_match_node() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-brotli-streaming.js"), &["--no-warnings", "--expose-internals", "--experimental-stream-iter"]);
 }

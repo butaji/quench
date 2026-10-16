@@ -44,6 +44,7 @@ chrono = { version = "0.4", default-features = false, features = ["std", "clock"
 libc = "0.2"
 socket2 = { version = "0.6", features = ["all"] }
 zstd = "0.13"
+zlib-rs = "0.6.8"
 
 [build-dependencies]
 pkg-config = "0.3"
