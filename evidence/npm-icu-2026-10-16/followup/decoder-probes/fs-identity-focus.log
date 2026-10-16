@@ -1,0 +1,31 @@
+
+running 1 test
+
+thread 'application_fs_utility_names_do_not_adopt_node_library_types_or_state' (502134) panicked at crates/quench-node-test/tests/child_entry.rs:1639:9:
+assertion `left == right` failed: /workspace/scratch/quench-npm-file-url/tests/node/lib/internal/buffer.js:14
+const {
+^
+
+TypeError: cannot destructure null or undefined
+    at /workspace/scratch/quench-npm-file-url/tests/node/lib/internal/buffer.js:14:1
+    at /workspace/scratch/quench-npm-file-url/tests/node/lib/internal/encoding.js:18:24
+    at node:util/shared.js:300:18
+    at /workspace/scratch/quench-npm-file-url/tests/node/lib/internal/errors.js:955:5
+    at /workspace/scratch/quench-npm-file-url/tests/node/lib/internal/util.js:61:5
+    at /workspace/scratch/quench-npm-file-url/tests/node/lib/stream.js:32:5
+    at <eval>:2:10
+
+Node.js v22.0.0
+
+  left: Some(1)
+ right: Some(0)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test application_fs_utility_names_do_not_adopt_node_library_types_or_state ... FAILED
+
+failures:
+
+failures:
+    application_fs_utility_names_do_not_adopt_node_library_types_or_state
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 301 filtered out; finished in 2.16s
+

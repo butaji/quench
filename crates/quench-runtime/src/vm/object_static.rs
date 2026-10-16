@@ -109,14 +109,9 @@ impl<H: Host> Vm<H> {
             let text = self.to_string(p, this)?;
             return Ok(self.heap.alloc(Cell::String(text.into())));
         }
-        for marker in ["\0quench:number-value", "\0quench:bigint-value"] {
-            if let Some(value) = self
-                .lookup_atom(marker)
-                .and_then(|atom| self.own_property(this, atom))
-            {
-                let text = self.to_string(p, value)?;
-                return Ok(self.heap.alloc(Cell::String(text.into())));
-            }
+        if let Some((crate::BuiltinBrand::NumberObject | crate::BuiltinBrand::BigIntObject, value)) = self.boxed_primitive_data(this) {
+            let text = self.to_string(p, value)?;
+            return Ok(self.heap.alloc(Cell::String(text.into())));
         }
         let to_string = self.intern_atom("toString");
         let method = self.get_property(p, this, to_string)?;
@@ -133,16 +128,9 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let proxy_array =
             matches!(self.heap.get(value), Some(Cell::Proxy { .. })) && self.is_array(p, value)?;
-        let boxed_brand = [
-            ("\0quench:string-value", "String"),
-            ("\0quench:boolean-value", "Boolean"),
-            ("\0quench:number-value", "Number"),
-        ]
-        .into_iter()
-        .find_map(|(marker, brand)| {
-            self.lookup_atom(marker)
-                .and_then(|atom| self.own_property(value, atom))
-                .map(|_| brand)
+        let boxed_brand = self.boxed_primitive_data(value).and_then(|(brand, _)| {
+            use crate::BuiltinBrand as B;
+            match brand { B::StringObject => Some("String"), B::BooleanObject => Some("Boolean"), B::NumberObject => Some("Number"), _ => None }
         });
         let brand = if value.is_undefined() || value.is_deleted() {
             "Undefined"
@@ -845,6 +833,9 @@ impl<H: Host> Vm<H> {
         let extensible = self.object_data(target).is_some_and(Object::is_extensible);
         if !descriptor.compatible_with(current_record, extensible, |a, b| self.same_value(a, b)) {
             return Ok(false);
+        }
+        if current.configurable && (descriptor_value.is_some() || descriptor_accessor || attributes != current) {
+            self.reconfigure_function_name(target, key);
         }
         if descriptor_accessor {
             if is_new {

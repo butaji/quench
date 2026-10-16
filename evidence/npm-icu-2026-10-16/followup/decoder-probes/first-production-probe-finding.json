@@ -1,0 +1,1 @@
+{"production_qualification":false,"streaming_probe_exit":1,"cause":"CommonJS internalBinding adapter did not forward config/icu to the new native bindings; canonical encoding still saw hasIntl=false","next":"Forward config and icu through the existing binding adapter, then rebuild and retest."}

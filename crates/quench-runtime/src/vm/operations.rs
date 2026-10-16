@@ -438,9 +438,6 @@ impl<H: Host> Vm<H> {
         if native == Native::AsyncFromSyncValueRejected {
             return self.async_from_sync_value_rejected(p, args);
         }
-        if native == Native::AsyncGeneratorReturnResult {
-            return self.iterator_result(args.first().copied().unwrap_or(Value::UNDEFINED), true);
-        }
         if native == Native::AsyncGeneratorReturnFulfilled {
             return self.async_generator_return_fulfilled(p, args);
         }
@@ -1258,6 +1255,7 @@ impl<H: Host> Vm<H> {
                     Ok(self.function_caller(this))
                 }
             }
+            Native::CallSiteConstructor => self.call_site_constructor(p),
             Native::ErrorToString => self.error_to_string(p, this),
             Native::ErrorCaptureStackTrace => self.error_capture_stack_trace(p, args),
             Native::ErrorIsError => Ok(
@@ -1271,6 +1269,7 @@ impl<H: Host> Vm<H> {
             Native::ErrorStackSetter => self.error_stack_setter(p, this, args),
             Native::CallSiteGetFileName
             | Native::CallSiteGetThis
+            | Native::CallSiteGetFunction
             | Native::CallSiteGetFunctionName
             | Native::CallSiteGetLineNumber
             | Native::CallSiteGetColumnNumber

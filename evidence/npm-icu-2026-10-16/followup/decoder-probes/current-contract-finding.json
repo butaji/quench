@@ -1,0 +1,61 @@
+{
+  "source": "383fcec1750a9eca4673853b2137d3b746c246d3",
+  "cases": 33,
+  "differences": 3,
+  "rows": [
+    {
+      "node": {
+        "name": "encoder-encode-brand",
+        "error": {
+          "name": "TypeError",
+          "code": null,
+          "message": "Receiver must be an instance of class TextEncoder"
+        }
+      },
+      "quench": {
+        "name": "encoder-encode-brand",
+        "error": {
+          "name": "TypeError",
+          "code": null,
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "encoder-getter-brand",
+        "error": {
+          "name": "TypeError",
+          "code": null,
+          "message": "Cannot read private member #encoding from an object whose class did not declare it"
+        }
+      },
+      "quench": {
+        "name": "encoder-getter-brand",
+        "error": {
+          "name": "TypeError",
+          "code": null,
+          "message": "private member is not present on this object"
+        }
+      }
+    },
+    {
+      "node": {
+        "name": "encoder-encodeInto-brand",
+        "error": {
+          "name": "TypeError",
+          "code": null,
+          "message": "Receiver must be an instance of class TextEncoder"
+        }
+      },
+      "quench": {
+        "name": "encoder-encodeInto-brand",
+        "error": {
+          "name": "TypeError",
+          "code": null,
+          "message": "private member is not present on this object"
+        }
+      }
+    }
+  ]
+}

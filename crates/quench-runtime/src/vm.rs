@@ -1,4 +1,5 @@
 mod compiled;
+mod shape_transitions;
 mod startup_intrinsics;
 mod wasm;
 pub use compiled::ExecutionMode;
@@ -15,14 +16,14 @@ use crate::bytecode::{
 #[cfg(feature = "profile-memory")]
 use crate::heap::CellKind;
 use crate::heap::{
-    CallSiteLocation, CallSiteRecord, Cell, FunctionKind, GcTraceKind, Heap, IteratorConsumer,
+    CallSiteLocation, CallSiteName, CallSiteRecord, Cell, FunctionKind, GcTraceKind, Heap, IteratorConsumer,
     IteratorHelper, IteratorKind, Native, Object, ProxyKind, RootId, StackData, TypedArrayKind,
     WeakHandle,
 };
 use crate::host::{CapabilityId, Host, HostContext};
 use crate::profile::Profile;
 use crate::value::number_to_u32;
-use activation::CallContext;
+use activation::{CallContext, ConstructionTarget};
 use atomics::Test262AgentState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::OnceCell;
@@ -78,6 +79,7 @@ mod dispatch_wasm;
 mod dynamic_strings;
 mod embedding;
 mod provenance;
+mod inspection;
 mod environment;
 mod equality;
 mod error;
@@ -189,6 +191,9 @@ pub(super) struct Frame {
     program: ProgramId,
     function: u32,
     pc: usize,
+    /// Whether pc is a saved continuation after a call rather than the executing operation.
+    pc_is_resume: bool,
+    source_field: Option<(usize, crate::bytecode::FieldPart)>,
     // The current operation's lexical projection, independent of the PC
     // published for GC roots or saved as the continuation after a call.
     binding_site_pc: Option<u32>,
@@ -239,6 +244,10 @@ impl Default for CaptureCache {
 }
 
 impl Frame {
+    fn source_instruction_pc(&self) -> usize {
+        if self.pc_is_resume { self.pc.saturating_sub(1) } else { self.pc }
+    }
+
     fn empty(program: ProgramId, with_base: usize) -> Self {
         Self {
             context: CallContext::Internal,
@@ -247,6 +256,8 @@ impl Frame {
             program,
             function: 0,
             pc: 0,
+            pc_is_resume: true,
+            source_field: None,
             binding_site_pc: None,
             env: Value::NULL,
             this: Value::UNDEFINED,
@@ -460,6 +471,8 @@ struct RealmIntrinsics {
     arguments_objects: FxHashMap<(Value, bool), ArgumentsObjectTemplate>,
     iterator_prototypes: FxHashMap<Value, IteratorRealmPrototypes>,
     builtin_prototypes: FxHashMap<(Value, Native), Value>,
+    /// Original per-realm constructors for function factory allocations.
+    function_constructors: FxHashMap<(Value, Native), Value>,
     promise_constructors: FxHashMap<Value, Value>,
     error_intrinsics: FxHashMap<Value, ErrorRealmIntrinsics>,
     regexp_intrinsics: FxHashMap<Value, regexp::RegExpIntrinsics>,
@@ -489,6 +502,8 @@ struct ErrorRealmIntrinsics {
     constructor: Value,
     stack_getter: Value,
     stack_setter: Value,
+    call_site_constructor: Value,
+    call_site_prototype: Value,
 }
 #[derive(Clone, Copy)]
 struct ArgumentsObjectTemplate {
@@ -692,6 +707,7 @@ struct StringConcatCache {
 enum ShapeTransition {
     Root,
     FunctionName { name: Atom },
+    FunctionNameReconfigured,
     Constructed { constructor: Value, new_target_is_base: bool },
     Add {
         key: property_key::PropertyKey,
@@ -714,6 +730,7 @@ enum ShapeTransition {
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum ShapeTransitionKey {
     FunctionName(Atom),
+    FunctionNameReconfigured,
     Constructed(Value, bool),
     AddString(Atom, DataAttributes),
     /// A descriptor without accessor functions (`ShapeAttributes::accessors` is
@@ -823,13 +840,14 @@ impl ShapeTransition {
         match self {
             Self::Add { key, .. } => key.symbol_value().is_some(),
             Self::Descriptor { attributes, .. } => attributes.accessors != NO_SHAPE_ACCESSORS,
-            Self::Root | Self::FunctionName { .. } | Self::Constructed { .. } | Self::Delete { .. } | Self::Vacant | Self::Dictionary { .. } => false,
+            Self::Root | Self::FunctionName { .. } | Self::FunctionNameReconfigured | Self::Constructed { .. } | Self::Delete { .. } | Self::Vacant | Self::Dictionary { .. } => false,
         }
     }
 
     fn cache_key(self) -> Option<ShapeTransitionKey> {
         match self {
             Self::FunctionName { name } => Some(ShapeTransitionKey::FunctionName(name)),
+            Self::FunctionNameReconfigured => Some(ShapeTransitionKey::FunctionNameReconfigured),
             Self::Constructed { constructor, new_target_is_base } => Some(ShapeTransitionKey::Constructed(constructor, new_target_is_base)),
             Self::Add {
                 key: PropertyKey::String(atom),
@@ -1153,7 +1171,7 @@ pub(crate) struct Vm<H> {
     shapes: Vec<Shape>,
     /// The getters and setters of shapes' accessor descriptors (`ShapeAttributes`).
     shape_accessors: Vec<ShapeAccessors>,
-    transitions: FxHashMap<(u32, ShapeTransitionKey), u32>,
+    transitions: shape_transitions::ShapeTransitionIndex,
     atom_text: AtomTable,
     atoms: FxHashMap<u64, Atom>,
     atom_collisions: FxHashMap<u64, Vec<Atom>>,
@@ -1230,7 +1248,7 @@ pub(crate) struct Vm<H> {
     parameter_eval: bool,
     eval_script_context: bool,
     deferred_dependency_batch: bool,
-    construct_target: Option<Value>,
+    construct_target: Option<ConstructionTarget>,
     random_state: u64,
 }
 
@@ -1689,7 +1707,7 @@ impl<H: Host> Vm<H> {
             self.shapes.len(),
             self.shapes.capacity(),
             self.transitions.len(),
-            self.transitions.capacity() * size_of::<((u32, ShapeTransitionKey), u32)>(),
+            self.transitions.bytes(),
             self.field_caches.capacity() * size_of::<FieldCache>()
                 + self.megamorphic_field_indices.capacity() * size_of::<u32>()
                 + field_add_cache_bytes,
@@ -1725,8 +1743,7 @@ impl<H: Host> Vm<H> {
             .filter_map(|shape| shape.lookup_index.get())
             .map(|index| index.payload_capacity_bytes())
             .sum::<usize>();
-        let transition_table_bytes =
-            self.transitions.capacity() * size_of::<((u32, ShapeTransitionKey), u32)>();
+        let transition_table_bytes = self.transitions.bytes();
         let descriptor_side_table_bytes = self.descriptors.capacity()
             * size_of::<((Value, property_key::PropertyKey), PropertyAttributes)>();
         let cache_side_table_bytes = self.field_caches.capacity() * size_of::<FieldCache>()
@@ -2205,7 +2222,7 @@ impl<H: Host> Vm<H> {
                     .functions
                     .get(id as usize)
                     .is_some_and(|function| function.is_class_constructor)
-                    && self.construct_target.is_none()
+                    && !self.construct_target.is_some_and(|target| target.callee == callee)
                 {
                     Err(self.type_error(p, "class constructor cannot be called without new".into()))
                 } else {

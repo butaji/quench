@@ -1,0 +1,36 @@
+{
+  "node_source": "26e72d85a611e222e3f06025de8a3c496923bacd",
+  "version": "1.3.2.1-motley",
+  "defines": [
+    "HAVE_HIDDEN",
+    "ZLIB_IMPLEMENTATION",
+    "DEFLATE_SLIDE_HASH_SSE2",
+    "INFLATE_CHUNK_READ_64LE",
+    "INFLATE_CHUNK_SIMD_SSE2",
+    "ADLER32_SIMD_SSSE3",
+    "X86_NOT_WINDOWS"
+  ],
+  "source_sha256": {
+    "deps/zlib/adler32.c": "e47831f9eaffc530e2f6f9720266d94e74eed9fe5c2082473d3afb9cf8880c13",
+    "deps/zlib/compress.c": "5495bc53cd675dc10d9ab07e851e7b21324d43f6b513e759bd2bbd6698b539ab",
+    "deps/zlib/cpu_features.c": "7e80a4d297e5eb6e83b8a9c384ecb7b572ccfe63acdd70fd8bc703ce714d3d21",
+    "deps/zlib/crc32.c": "ca8594f9f859dcc1264ef0e26b052d09f8db2b5b9e16b3a58c687d2878ded901",
+    "deps/zlib/deflate.c": "6f5ee49848c58ee670fa8077c1cf4803ec63c6d9d4ec0b89e7cf84d4ddc9c72d",
+    "deps/zlib/gzclose.c": "35ea6e991a63095f797d8c4cc25817fac7a7155c2ba7dcdbbf648f7871c7ea40",
+    "deps/zlib/gzlib.c": "a968a4337aa5743adf00c4088b4e93ada3dba897e2a321f643fe81286b718f82",
+    "deps/zlib/gzread.c": "713edfd883f4230199ddb2b0f5dc90adb7fc96348e228fc38c249e4b4a797c5e",
+    "deps/zlib/gzwrite.c": "2ce783294c688330c716bfe106f43167d3dae5be84994176bc304d205d4f5b04",
+    "deps/zlib/infback.c": "f4c9a2c547e6038b2bcdb1c0c7d979eb7450aa1fa6518107203c3284939ef5fe",
+    "deps/zlib/inffast.c": "ce49de35d2d5c609e3a731db9ff93fa2e131558126f75f87454940c43c06c7d4",
+    "deps/zlib/inftrees.c": "64fc6aeea744510253a22f8b0611fcefa970458224a41a1649f5e0db340af8fe",
+    "deps/zlib/trees.c": "13eb6702d12ba96cb43c30d45ce7bde9c522b060d39938986f995606f3e69d8d",
+    "deps/zlib/uncompr.c": "953f5381650838d507b01499790bd64524433ea6ea29ea9325bf542af10cfe7d",
+    "deps/zlib/zutil.c": "04303a4d607958905f0c036aeca43d14218d01752e6c444fdbeb94983912ec38",
+    "deps/zlib/contrib/optimizations/inffast_chunk.c": "f89882677fdcccc2e4048dc60f6789c79208675d37fd2b04d2055b2d0911bc6f",
+    "deps/zlib/contrib/optimizations/inflate.c": "f47ff3fedab199d4bf59a018808dcaa1b206ce0d6dea06f09f217d375d713366",
+    "deps/zlib/adler32_simd.c": "885047cd158f16a9c386fd1f3f4251ec8e463be22960d60fe2df46c49e61bfbc"
+  },
+  "archive_sha256": "752b99b500732600d77273e6841d2786d1cc208fe2a897b1016defc21b637217",
+  "compiler": "gcc (Debian 14.2.0-19) 14.2.0",
+  "platform": "Linux-6.18.44-x86_64-with-glibc2.41"
+}

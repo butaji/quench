@@ -1,0 +1,11 @@
+{
+  "cwd": "/workspace/quench",
+  "commands": [
+    [
+      "python3",
+      "/workspace/quench/work/latest-node-audit/check-pinned-lost.py"
+    ]
+  ],
+  "state": "/workspace/quench/work/task-supervisor/pinned-lost-state.json",
+  "log": "/workspace/quench/work/task-supervisor/pinned-lost.log"
+}

@@ -1,5 +1,6 @@
 use super::object_descriptors::PropertyDescriptorRecord;
 use super::*;
+use super::program_store::CompilationOrigin;
 
 use crate::compile::eval_context_source;
 
@@ -40,7 +41,7 @@ impl<H: Host> Vm<H> {
         source_name: &str,
     ) -> Result<Value, JsError> {
         if let Some(expression) = crate::Engine::eval_single_expression(source) {
-            return self.eval_compiled_expression_named(p, expression, false, source_name);
+            return self.eval_compiled_expression_named(p, expression, false, source_name, CompilationOrigin::Source);
         }
         let residual =
             match crate::Engine::specialize_script_with_atom_prefix(source, source_name, &*self) {
@@ -216,7 +217,7 @@ impl<H: Host> Vm<H> {
         if !self.direct_eval
             && let Some(expression) = crate::Engine::eval_single_expression(source)
         {
-            return self.eval_compiled_expression_named(p, expression, strict, source_name);
+            return self.eval_compiled_expression_named(p, expression, strict, source_name, CompilationOrigin::Eval);
         }
         let context = self.direct_eval_context(p).unwrap_or_default();
         let private_names = if context.home_atom.is_some() {
@@ -851,7 +852,7 @@ impl<H: Host> Vm<H> {
                 self.load_eval_name(p, atom)
             }
             crate::compile::EvalExpressionKind::Import => {
-                self.eval_compiled_expression_named(p, expression, strict, &p.source_name)
+                self.eval_compiled_expression_named(p, expression, strict, &p.source_name, CompilationOrigin::Eval)
             }
             crate::compile::EvalExpressionKind::Other if self.direct_eval => {
                 self.eval_global_script(p, expression, strict)
@@ -869,7 +870,7 @@ impl<H: Host> Vm<H> {
         strict: bool,
     ) -> Result<Value, JsError> {
         let source_name = format!("<Eval:{}>", self.programs.len());
-        self.eval_compiled_expression_named(p, expression, strict, &source_name)
+        self.eval_compiled_expression_named(p, expression, strict, &source_name, CompilationOrigin::Eval)
     }
 
     fn eval_compiled_expression_named(
@@ -878,6 +879,7 @@ impl<H: Host> Vm<H> {
         expression: &str,
         strict: bool,
         source_name: &str,
+        origin: CompilationOrigin,
     ) -> Result<Value, JsError> {
         let body = if strict {
             format!("'use strict'; return ({expression});")
@@ -915,6 +917,7 @@ impl<H: Host> Vm<H> {
         let Some(program_id) = self.store_dynamic_program(residual) else {
             return Err(self.type_error(p, "dynamic program store is full".into()));
         };
+        self.programs.set_origin(program_id, origin);
         if self.direct_eval {
             self.programs.mark_caller_scope(program_id);
         }

@@ -1,0 +1,17 @@
+==477289== Callgrind, a call-graph generating cache profiler
+==477289== Copyright (C) 2002-2017, and GNU GPL'd, by Josef Weidendorfer et al.
+==477289== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info
+==477289== Command: /workspace/quench/work/quench-array-class-qualified /workspace/quench/work/clone-callgrind/deltablue-10.js
+==477289== Parent PID: 474273
+==477289== 
+==477289== For interactive control, run 'callgrind_control -h'.
+--477289-- WARNING: unhandled amd64-linux syscall: 323
+--477289-- You may be able to write your own handler.
+--477289-- Read the file README_MISSING_SYSCALL_OR_IOCTL.
+--477289-- Nevertheless we consider this a bug.  Please report
+--477289-- it at http://valgrind.org/support/bug_reports.html.
+==477289== 
+==477289== Events    : Ir
+==477289== Collected : 3578804581
+==477289== 
+==477289== I   refs:      3,578,804,581

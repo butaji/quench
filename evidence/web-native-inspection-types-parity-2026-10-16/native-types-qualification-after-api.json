@@ -1,0 +1,22 @@
+{
+  "candidate_source": "6a8ef406bcb3236f0cfa08d34688cefda5e2bfa6",
+  "binaries": {
+    "cli": {
+      "path": "work/quench-native-types-qualified",
+      "sha256": "81c74e4b2b9022462f73be33e0f3f663a8ac669c195646ca622c63821fd72269"
+    },
+    "runner": {
+      "path": "work/host-build/iteration/run-parallel",
+      "sha256": "98a8520da203623478bcc117965ab5f103b204bcea887a866b8fdbe29263019f"
+    },
+    "api_tests": {
+      "path": "work/host-build/iteration/deps/child_entry-a67896ab5b9c716a",
+      "sha256": "ccb19be24099a0fa2e1e0b8ea4c9ae16f59162bd15f5ee7c5ffedf746bb9310c"
+    }
+  },
+  "identity_checks": {
+    "cli": true,
+    "runner": true,
+    "api_tests": true
+  }
+}

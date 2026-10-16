@@ -1,0 +1,7 @@
+{
+  "path": "target/debug/deps/quench_runtime-6e31a5e435b3e201",
+  "bytes": 543839976,
+  "sha256": "287f7fc1372033438210343fd2e2e66e606bcb24c73cb7dcb81dd06e6f38af04",
+  "utc": "2026-10-16T06:18:53.784708+00:00",
+  "reason": "Completed Core650 test executable is an owned rebuildable cache. Raw passing log and qualified source are committed; upcoming integrated dependency graph rebuilds a new test executable. Frozen Node binaries remain unchanged."
+}

@@ -1,0 +1,51 @@
+   Compiling quench-runtime v0.1.0 (/workspace/scratch/quench-npm-file-url/crates/quench-runtime)
+   Compiling quench-wasm v0.1.0 (/workspace/scratch/quench-npm-file-url/crates/quench-wasm)
+   Compiling quench-node v0.1.0 (/workspace/scratch/quench-npm-file-url/crates/quench-node)
+   Compiling quench-node-test v0.1.0 (/workspace/scratch/quench-npm-file-url/crates/quench-node-test)
+    Finished `test` profile [unoptimized] target(s) in 32.69s
+     Running tests/child_entry.rs (/workspace/quench/target/npm-file-url/debug/deps/child_entry-ca607efb652420cf)
+
+running 302 tests
+test abort_listener_disposal_and_stopped_propagation_match_node ... ok
+test abort_onabort_uses_the_ordered_handler_wrapper ... ok
+test ambiguous_commonjs_sources_detect_esm_syntax_await_and_wrapper_bindings ... ok
+test application_fs_utility_names_do_not_adopt_node_library_types_or_state ... FAILED
+test application_internal_module_names_do_not_receive_node_bootstrap_transforms ... ok
+test assertion_exception_objects_share_strict_property_comparison ... ok
+test async_hooks_keep_active_snapshot_during_nested_subscription_changes ... ok
+test async_process_exit_preserves_requested_status_and_stops_rejection_dispatch ... ok
+test async_resource_hooks_preserve_scope_identity_receiver_and_destroy_order ... ok
+test before_exit_restarts_referenced_work_and_precedes_exit ... ok
+test before_exit_routes_original_exceptions_before_restarting_work ... ok
+test binary_base64_globals_preserve_utf16_coercion_validation_and_identity ... ok
+test binary_http_response_views_match_the_node_oracle ... FAILED
+test borrowed_emit_and_domain_errors_preserve_original_values ... ok
+test bounded_zlib_streams_match_node_roundtrips_and_close_lifecycle ... FAILED
+test buffer_alloc_supports_construction_and_ordinary_calls ... ok
+test buffer_pool_size_preserves_public_configuration_and_legacy_numeric_construction ... ok
+test buffer_private_encoding_does_not_consult_typed_length_or_subarray_hooks ... ok
+test buffer_string_encoding_uses_intrinsic_bytes_without_guest_iterator_hooks ... ok
+test callbackify_matches_node_descriptors_receivers_and_tick_order ... ok
+test canceled_preconnect_write_matches_node_callback_error ... FAILED
+test canonical_web_streams_share_globals_and_preserve_byte_and_abort_algorithms ... FAILED
+test child_cwd_accepts_file_urls_and_bytes_and_rejects_invalid_paths_before_launch ... ok
+test child_disposal_and_sync_shell_options_observe_public_hooks_and_native_validation ... ok
+test child_environment_coercion_inheritance_and_undefined_match_node ... ok
+test child_file_and_argument_null_validation_preserves_node_codes_and_messages ... ok
+test child_identity_uses_kernel_credentials_sessions_and_spawn_error_boundaries ... ok
+test child_ipc_stdio_maps_a_real_duplex_socket_at_standard_and_extra_descriptors ... ok
+test child_launches_inherit_guest_cwd_and_resolve_relative_overrides ... ok
+test child_options_snapshot_getters_once_and_validate_common_fields_in_native_code ... ok
+test child_process_reference_state_and_public_handle_hooks_match_node_liveness ... FAILED
+test child_stdin_backpressure_preserves_bytes_and_finishes_synchronously_drained_tail ... FAILED
+test child_stdin_destruction_closes_pipe_and_precedes_exit_observers ... FAILED
+test child_stdio_specs_match_node_pipe_ignore_inherit_and_descriptors ... FAILED
+test child_stdio_stream_forwarding_matches_node_pipe_ownership ... ok
+test child_stdout_without_newline_is_visible_before_stdin_response ... FAILED
+test children_inherit_directory_identity_after_rename_and_unlink ... FAILED
+test cli_eval_builtin_accessors_preserve_blocked_cache_inherited_setters_and_errors ... ok
+test cli_eval_builtin_globals_preserve_lazy_descriptors_cache_and_assignment ... ok
+test cli_eval_builtin_globals_use_original_module_identity_and_mutable_require_hook ... ok
+test cli_print_evaluates_script_statements_and_language_completion_like_node ... ok
+test cli_stdin_preserves_source_arguments_and_commonjs_origin ... ok
+test coded_argument_errors_preserve_prototype_shape_and_constant_code_rendering ... 

@@ -209,11 +209,15 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         {
             continue;
         }
-        let key = context.string_rooted(&name);
-        let value = context.string_rooted(&value);
-        if !context.set_property_rooted(env, key, value, env)? {
-            return Err(RootedError::host("cannot install process.env entry"));
-        }
+        // One entry's handles at a time, however large the environment.
+        context.scoped(|context| {
+            let key = context.string_rooted(&name);
+            let value = context.string_rooted(&value);
+            if !context.set_property_rooted(env, key, value, env)? {
+                return Err(RootedError::host("cannot install process.env entry"));
+            }
+            Ok(())
+        })?;
     }
     install(context, process, "env", env)?;
     let load_env_file =
@@ -267,7 +271,9 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     let ppid = context.number(ppid as f64);
     install(context, process, "ppid", ppid)?;
     let version = format!("v{}", process_state::NODE_VERSION);
-    set_text(context, process, "version", &version)?;
+    let version = context.string_rooted(&version);
+    let key = context.string_rooted("version");
+    context.define_data_property_rooted(process, key, version, false, true, true)?;
     let global = context.global_root()?;
     let symbol_key = context.string_rooted("Symbol");
     let symbol = context.get_property_rooted(global, symbol_key)?;
@@ -277,9 +283,11 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     if !context.set_property_rooted(process, tag, process_tag, process)? {
         return Err(RootedError::host("cannot set process toStringTag"));
     }
-    install_config(context, process)?;
-    install_facts(context, process, "features", process_state::feature_facts())?;
-    install_versions(context, process)?;
+    context.scoped(|context| install_config(context, process))?;
+    context.scoped(|context| {
+        install_facts(context, process, "features", process_state::feature_facts())
+    })?;
+    context.scoped(|context| install_versions(context, process))?;
     install(context, global, "global", global)?;
     define_global_process(context, global, process)?;
     let retained = context.retain(process)?;
@@ -430,9 +438,12 @@ fn install_versions(
     let versions = context.object_rooted()?;
     for (name, version) in process_state::version_facts() {
         let value = context.string_rooted(version);
-        install(context, versions, name, value)?;
+        let key = context.string_rooted(name);
+        context.define_data_property_rooted(versions, key, value, false, true, true)?;
     }
-    install(context, process, "versions", versions)
+    let key = context.string_rooted("versions");
+    context.define_data_property_rooted(process, key, versions, false, true, true)?;
+    Ok(())
 }
 
 fn set_text(
@@ -1898,6 +1909,9 @@ pub(crate) fn finish_requested_exit(
     cleanup_environment(runtime, &shared_state);
     if process_control.exit_without_event() {
         super::tls_shared_vm::contexts::cleanup(runtime);
+        super::zlib_native_shared_vm::cleanup(runtime);
+        #[cfg(quench_icu)]
+        super::icu_binding_shared_vm::cleanup(runtime);
         super::buffer_shared_vm::cleanup(runtime);
         return Ok(());
     }
@@ -2472,8 +2486,11 @@ fn drain_shared_jobs(
         if unhandled.is_empty() {
             runtime.clear_kept_objects();
             crate::modules::zlib_stream_shared_vm::prune(runtime);
+            super::zlib_native_shared_vm::prune(runtime);
             super::fs_watch_shared_vm::prune(runtime);
             super::tls_shared_vm::contexts::prune(runtime);
+            #[cfg(quench_icu)]
+            super::icu_binding_shared_vm::prune(runtime);
             super::net_reference_shared_vm::prune(runtime);
             super::fs_stat_watch_shared_vm::prune(runtime);
             return Ok(());
@@ -2985,6 +3002,9 @@ fn emit_exit(
 ) -> Result<(), String> {
     let result = emit_exit_inner(runtime, program, code);
     super::tls_shared_vm::contexts::cleanup(runtime);
+        super::zlib_native_shared_vm::cleanup(runtime);
+    #[cfg(quench_icu)]
+    super::icu_binding_shared_vm::cleanup(runtime);
     super::buffer_shared_vm::cleanup(runtime);
     result
 }
@@ -3634,13 +3654,7 @@ pub(crate) fn dispatch_warning(
     let code = string_property(context, warning, "code")?;
     let detail = string_property(context, warning, "detail")?;
 
-    let suppress_stderr = context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .exec_argv
-        .iter()
-        .any(|argument| argument == "--no-warnings");
+    let suppress_stderr = !context.host_mut().shared_state().borrow().cli_options.enabled("--warnings");
     if !suppress_stderr {
         let code = code.map_or_else(String::new, |code| format!(" [{code}]"));
         let mut output = format!("(node:{}){code} {name}: {message}\n", std::process::id());

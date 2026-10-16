@@ -1,0 +1,1 @@
+Launcher PATH omitted /workspace/.local/usr/bin; valgrind was not found. All 32 rows lack measurements. This attempt is not a completed instruction guard. Correct PATH explicitly and retain each measurement stdout/stderr/exit.

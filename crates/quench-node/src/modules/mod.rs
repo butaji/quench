@@ -9,6 +9,8 @@ pub(crate) mod async_hook_registry_shared_vm;
 pub(crate) mod async_hooks_shared_vm;
 pub(crate) mod async_hooks_state;
 pub(crate) mod buffer_codec;
+pub(crate) mod buffer_pool_shared_vm;
+pub(crate) mod buffer_alloc_shared_vm;
 pub(crate) mod buffer_shared_vm;
 pub(crate) mod buffer_search_shared_vm;
 pub(crate) mod buffer_bigint_shared_vm;
@@ -97,6 +99,8 @@ pub(crate) mod test_shared_vm;
 pub(crate) mod text_decoder_codec;
 #[cfg(quench_icu)]
 pub(crate) mod text_decoder_icu;
+#[cfg(quench_icu)]
+pub(crate) mod icu_binding_shared_vm;
 pub(crate) mod text_decoder_shared_vm;
 pub(crate) mod timers_shared_vm;
 pub(crate) mod tls_shared_vm;
@@ -140,3 +144,11 @@ pub(crate) mod crypto_key_shared_vm;
 
 #[cfg(target_os = "linux")]
 pub(crate) mod os_binding_shared_vm;
+
+pub(crate) mod cli_options;
+pub(crate) mod cli_options_shared_vm;
+
+pub(crate) mod zlib_native_codec;
+pub(crate) mod zlib_native_shared_vm;
+
+pub(crate) mod native_work;

@@ -205,6 +205,10 @@ impl FunctionCompiler<'_, '_> {
             let iterator = self.load_atom(closure.iterator);
             let ignored = self.reg();
             self.emit(Op::Call, ignored, close_fn, iterator, 0);
+            if closure.asynchronous {
+                let awaited = self.reg();
+                self.emit(Op::Await, awaited, ignored, 0, 0);
+            }
         }
         self.record_iterator_close_exclusion(start);
     }
@@ -227,6 +231,10 @@ impl FunctionCompiler<'_, '_> {
             let iterator = self.load_atom(closure.iterator);
             let ignored = self.reg();
             self.emit(Op::Call, ignored, close_fn, iterator, 0);
+            if closure.asynchronous {
+                let awaited = self.reg();
+                self.emit(Op::Await, awaited, ignored, 0, 0);
+            }
         }
         self.record_iterator_close_exclusion(start);
     }
@@ -388,7 +396,12 @@ impl FunctionCompiler<'_, '_> {
             {
                 self.named_class_expression(class, identifier.name.as_str())
             }
-            _ => self.expression(initializer),
+            _ => {
+                let debug_name = if !is_anonymous_function_definition(initializer) {
+                    if let BindingPattern::BindingIdentifier(identifier) = binding { Some(self.owner.atom(identifier.name.as_str())) } else { None }
+                } else { None };
+                self.expression_with_debug_name(initializer, debug_name)
+            },
         };
         if is_anonymous_function_definition(initializer)
             && let BindingPattern::BindingIdentifier(identifier) = binding

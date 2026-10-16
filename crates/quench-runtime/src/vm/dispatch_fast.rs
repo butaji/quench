@@ -1284,13 +1284,13 @@ lane_handler! {
 
 lane_handler! {
     /// `GetField` of a register or `this` at a site past one shape
-    /// (`Vm::field_site_polymorphic`): its inline own entries; any other read takes
+    /// (`Vm::field_site_polymorphic`): its inline entries; any other read takes
     /// `lane_get_field`.
     fn lane_get_field_polymorphic<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) })
-            .and_then(|object| (unsafe { vm(cx) }).polymorphic_own_field_hit(code, object, i.c))
+            .and_then(|object| (unsafe { vm(cx) }).polymorphic_field_hit(code, object, i.c))
         else {
             sibling!(lane_get_field::<H>, r, ip, Carried::SCRIPT)
         };
@@ -1302,14 +1302,14 @@ lane_handler! {
 lane_handler! {
     /// `GetField` of a register or `this` at a site whose primary entry names a prototype
     /// holder (`Vm::field_site_holder`), a method read: that entry inline; any other read
-    /// takes `lane_get_field`.
+    /// takes `lane_get_field_miss`, which moves a site gone polymorphic.
     fn lane_get_field_holder<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) })
             .and_then(|object| (unsafe { vm(cx) }).primary_holder_field_hit(code, object, i.c))
         else {
-            sibling!(lane_get_field::<H>, r, ip, Carried::SCRIPT)
+            sibling!(lane_get_field_miss::<H>, r, ip, Carried::SCRIPT)
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::SCRIPT)
@@ -1319,14 +1319,14 @@ lane_handler! {
 lane_handler! {
     /// `GetField` of a register or `this` at a site with an inherited entry
     /// (`Vm::field_site_inherited`), a method read beyond the immediate prototype: that entry
-    /// inline; any other read takes `lane_get_field`.
+    /// inline; any other read takes `lane_get_field_miss`.
     fn lane_get_field_inherited<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) })
             .and_then(|object| (unsafe { vm(cx) }).inherited_field_hit(code, object, i.c))
         else {
-            sibling!(lane_get_field::<H>, r, ip, Carried::SCRIPT)
+            sibling!(lane_get_field_miss::<H>, r, ip, Carried::SCRIPT)
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::SCRIPT)
@@ -1334,7 +1334,7 @@ lane_handler! {
 }
 
 lane_handler! {
-    /// A primary-entry miss of `lane_get_field_own`: a nested record moves to
+    /// A miss of a single-entry read (`lane_get_field_own`, `_holder`, `_inherited`): a nested record moves to
     /// `lane_get_field`, one whose site went polymorphic to `lane_get_field_polymorphic`,
     /// one whose primary entry names a prototype holder to `lane_get_field_holder`, one with
     /// an inherited entry to `lane_get_field_inherited`; the read itself takes
@@ -3127,6 +3127,7 @@ impl<H: Host> Vm<H> {
             let call_pc = unsafe { activation.call.offset_from(activation.caller_base) } as usize;
             let result = unsafe { (*activation.call).a };
             self.frames[caller].pc = call_pc + 1;
+            self.frames[caller].pc_is_resume = true;
             let count = usize::from(code.functions[activation.function as usize].registers);
             let window = &registers[activation.window..activation.window + count];
             let construct_this = activation
@@ -3148,7 +3149,11 @@ impl<H: Host> Vm<H> {
                         activation.function,
                         script.env,
                         script.this,
-                        script.callee,
+                        if script.constructs {
+                            CallContext::user_function(activation.function, script.callee).constructed()
+                        } else {
+                            CallContext::user_function(activation.function, script.callee)
+                        },
                         passed,
                         window,
                     );
@@ -3258,7 +3263,7 @@ lane_handler! {
         }
         let vm = unsafe { vm(cx) };
         let Some(target) = lane_script_target(cx, r.get(i.b)) else {
-            return exit(ip);
+            sibling!(lane_native_call::<H>, r, ip, Carried::SCRIPT)
         };
         if target.forwards {
             sibling!(lane_script_call_keeping::<H>, r, ip, Carried::SCRIPT)
@@ -3277,6 +3282,54 @@ lane_handler! {
             Ok((registers, base)) => next!(cx, registers, base, Carried::SCRIPT),
             Err(next) => next,
         }
+    }
+}
+
+lane_handler! {
+    /// A `Call` of `Array.prototype.push` or `pop` on a dense array (`Vm::array_push_dense`,
+    /// `Vm::array_pop_dense`), which completes without calling out or allocating cells; out
+    /// of line, so script calls keep their code. Any other call takes the general path.
+    #[inline(never)]
+    fn lane_native_call<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        // A call that returns its result completes its caller, which only an activation
+        // does in the lane.
+        let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
+        if returns && vm.lane_stack.activations.is_empty() {
+            return exit(ip);
+        }
+        let receiver = r.get(i.c);
+        let value = match vm.heap.get(r.get(i.b)) {
+            Some(Cell::Function {
+                kind: FunctionKind::Native(Native::ArrayPush),
+                ..
+            }) => {
+                let window = ImmediateLayout::call_window_base(i.imm());
+                let argc = ImmediateLayout::argument_count(i.imm());
+                // SAFETY: the call's window is registers of the running function, which
+                // the push neither moves nor frees.
+                let args = unsafe {
+                    std::slice::from_raw_parts(r.0.add(usize::from(window)), usize::from(argc))
+                };
+                vm.array_push_dense(receiver, args)
+            }
+            Some(Cell::Function {
+                kind: FunctionKind::Native(Native::ArrayPop),
+                ..
+            }) => vm.array_pop_dense(receiver),
+            _ => None,
+        };
+        let Some(value) = value else {
+            return exit(ip);
+        };
+        if returns {
+            let Some((registers, next, view)) = lane_complete_activation(cx, value) else {
+                unreachable!("a returning lane call has an activation caller");
+            };
+            next!(cx, registers, next, view)
+        }
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::SCRIPT)
     }
 }
 
@@ -3450,6 +3503,9 @@ lane_handler! {
 #[inline(always)]
 fn lane_script_target<H: Host>(cx: *mut LaneContext<H>, callee: Value) -> Option<ScriptCallTarget> {
     let vm = unsafe { vm(cx) };
+    if vm.construct_target.is_some_and(|target| target.callee == callee) {
+        return None;
+    }
     vm.script_call_target(callee)
         .or_else(|| vm.resolve_script_call_target(unsafe { &*(*cx).code }, callee))
 }
@@ -3474,11 +3530,13 @@ fn lane_activate<H: Host>(
     let argc = ImmediateLayout::argument_count(i.imm());
     let count = usize::from(target.registers);
     // A call that returns its callee's completion completes its caller too, which only an
-    // activation's return does in the lane; a strict caller makes it a tail call instead.
+    // activation's return does in the lane. A host permitting proper tail calls
+    // sends strict terminal calls to the general dispatch path instead.
     let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
     if returns
         && vm.lane_stack.activations.last().is_none_or(|caller| {
-            unsafe { &*(*cx).code }.functions[caller.function as usize].strict
+            vm.host.proper_tail_calls()
+                && unsafe { &*(*cx).code }.functions[caller.function as usize].strict
         })
     {
         return Err(exit(ip));
@@ -3498,8 +3556,6 @@ fn lane_activate<H: Host>(
     let Ok(guard) = crate::stack::GuestCallGuard::enter() else {
         return Err(exit(ip));
     };
-    // A `new.target` set for this activation has no observable binding to land in.
-    vm.construct_target = None;
     let stack = &mut vm.lane_stack;
     let window = stack.values.len();
     // SAFETY: capacity holds the window; each slot is written before the length covers
@@ -3582,11 +3638,13 @@ fn lane_activate_keeping<H: Host>(
     // A forwarding activation keeps every value passed after its registers.
     let window_size = if target.forwards { count + argc } else { count };
     // A call that returns its callee's completion completes its caller too, which only an
-    // activation's return does in the lane; a strict caller makes it a tail call instead.
+    // activation's return does in the lane. A host permitting proper tail calls
+    // sends strict terminal calls to the general dispatch path instead.
     let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
     if returns
         && vm.lane_stack.activations.last().is_none_or(|caller| {
-            unsafe { &*(*cx).code }.functions[caller.function as usize].strict
+            vm.host.proper_tail_calls()
+                && unsafe { &*(*cx).code }.functions[caller.function as usize].strict
         })
     {
         return Err(exit(ip));
@@ -3607,8 +3665,6 @@ fn lane_activate_keeping<H: Host>(
     let Ok(guard) = crate::stack::GuestCallGuard::enter() else {
         return Err(exit(ip));
     };
-    // A `new.target` set for this activation has no observable binding to land in.
-    vm.construct_target = None;
     let stack = &mut vm.lane_stack;
     let window = stack.values.len();
     // SAFETY: capacity holds the window; each slot is written before the length covers
@@ -3855,6 +3911,7 @@ fn lane_call_frame<H: Host>(ip: Ip) -> Ip {
         return exit(ip);
     };
     vm.frames[caller].pc = call_pc + 1;
+    vm.frames[caller].pc_is_resume = true;
     unsafe { &mut *(*cx).pending }.push(PendingGeneralCall {
         caller,
         caller_cursor: None,
@@ -4125,9 +4182,8 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
     }
 }
 
-/// The handler table covers one opcode byte; the opcode set must fit in it.
+/// Dense fast handlers cover the first opcode byte; later opcodes use general dispatch.
 const TABLE_SLOTS: usize = 1 << u8::BITS;
-const _: () = assert!(Op::COUNT <= TABLE_SLOTS);
 
 /// Opcodes per generated table row.
 const TABLE_ROW: u16 = 16;
@@ -4458,7 +4514,7 @@ fn derive_lane_view<H: Host>(
                 && F64UnaryOperator::from_tag(instruction.imm())
                     == Some(F64UnaryOperator::SquareRoot)
             {
-                tables[usize::from(backward_jump)][usize::from(acc)][op as usize].and_then(|_| {
+                tables[usize::from(backward_jump)][usize::from(acc)].get(op as usize).copied().flatten().and_then(|_| {
                     LaneHandler::producer(match acc {
                         ACC_NONE => lane_f64_sqrt::<H, ACC_NONE> as Handler,
                         ACC_A => lane_f64_sqrt::<H, ACC_A> as Handler,
@@ -4468,7 +4524,7 @@ fn derive_lane_view<H: Host>(
                     })
                 })
             } else if let Some(arith) = float_arithmetic(op, instruction.imm()) {
-                tables[usize::from(backward_jump)][usize::from(acc)][op as usize].and_then(|_| {
+                tables[usize::from(backward_jump)][usize::from(acc)].get(op as usize).copied().flatten().and_then(|_| {
                     LaneHandler::producer(
                         FloatArithmetic::<H>::HANDLERS[usize::from(op == Op::WasmF64Binary)]
                             [usize::from(arith)][usize::from(acc)],
@@ -4501,7 +4557,7 @@ fn derive_lane_view<H: Host>(
                     produces: false,
                 })
             } else {
-                tables[usize::from(backward_jump)][usize::from(acc)][op as usize]
+                tables[usize::from(backward_jump)][usize::from(acc)].get(op as usize).copied().flatten()
             });
             producer = selected
                 .filter(|selected| selected.produces)
@@ -4524,7 +4580,7 @@ fn derive_lane_view<H: Host>(
     let selected: Vec<*const ()> = records.iter().map(|record| record.handler).collect();
     // Whether a record's handler serves `op` with accumulator field `acc`.
     let serves = |handler: *const (), op: Op, acc: u8| {
-        tables[0][usize::from(acc)][op as usize]
+        tables[0][usize::from(acc)].get(op as usize).copied().flatten()
             .is_some_and(|served| handler == served.handler as *const ())
     };
     // A table follows its selected entry's jump, so every entry must run in

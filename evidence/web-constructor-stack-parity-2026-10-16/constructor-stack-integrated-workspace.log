@@ -1,0 +1,12 @@
+    Checking quench-runtime v0.1.0 (/workspace/quench/crates/quench-runtime)
+   Compiling zstd-sys v2.1.0+zstd.1.5.7
+   Compiling zstd-safe v7.3.0
+   Compiling quench-node v0.1.0 (/workspace/quench/crates/quench-node)
+    Checking zlib-rs v0.6.8
+    Checking flate2 v1.1.10
+    Checking zstd v0.13.3
+    Checking quench-wasm v0.1.0 (/workspace/quench/crates/quench-wasm)
+    Checking quench-test262 v0.1.0 (/workspace/quench/crates/quench-test262)
+    Checking quench-wasm-test v0.1.0 (/workspace/quench/crates/quench-wasm-test)
+    Checking quench-node-test v0.1.0 (/workspace/quench/crates/quench-node-test)
+    Finished `dev` profile [unoptimized] target(s) in 24.82s

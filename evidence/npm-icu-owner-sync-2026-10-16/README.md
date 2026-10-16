@@ -1,0 +1,3 @@
+# ICU checkpoint integration sync
+
+Source f279a4e0 merges the qualified npm source383fcec/evidenceb508d9b7 with integration318ac0b2. The owner's util implementation independently provides native binding caches and adds canonical inspection; retain it instead of duplicating npm's cache implementation. Keep config/icu forwarding, the three decoder regressions, the protected-startup regression, and all owner tests. This source passes workspace/all-target check,643 fast core tests and the CLI build. Full combined qualification remains pending; the earlier639/API319/corpus/all-eight receipts qualify383fcec only. No total parity or Node performance claim.
