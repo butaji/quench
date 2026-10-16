@@ -9689,3 +9689,38 @@ fn process_capture_callback_reset_prioritizes_null_and_original_type_validation(
 fn http_listening_derives_from_the_handle_and_close_cancels_pending_notification() {
     compare_node_source_with_args(include_str!("../node-tests/test-http-listening-handle.js"), &[]);
 }
+
+#[test]
+fn process_capture_state_is_canonical_receiver_independent_and_survives_collection() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-canonical-state.js"), &["--expose-gc"]);
+}
+
+#[test]
+fn process_uncaught_monitor_precedes_capture_and_can_replace_the_pending_handler() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-monitor-capture-transition.js"), &[]);
+}
+
+#[test]
+fn process_uncaught_events_ignore_monitor_results_and_use_emit_truthiness() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-uncaught-emit-truthiness.js"), &[]);
+}
+
+#[test]
+fn process_capture_delivery_reloads_the_callback_after_the_null_check() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-getter-order.js"), &[]);
+}
+
+#[test]
+fn process_auxiliary_capture_runs_in_reverse_order_with_exact_true_handling() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-auxiliary.js"), &[]);
+}
+
+#[test]
+fn process_auxiliary_capture_preserves_length_coercion_fractional_keys_and_replacement() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-auxiliary-coercion.js"), &["--expose-gc"]);
+}
+
+#[test]
+fn process_capture_methods_have_public_names_and_ordinary_constructor_shapes() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-method-shape.js"), &[]);
+}
