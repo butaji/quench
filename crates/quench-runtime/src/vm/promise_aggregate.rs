@@ -39,19 +39,17 @@ impl<H: Host> Vm<H> {
             ),
         });
         let errors = self.heap.root(errors);
-        let message = self.heap.alloc(Cell::String("All promises were rejected".into()));
-        let error = self.construct_error_native(p, Native::AggregateError, &[message])?;
-        let error = self.heap.root(error);
         let result = (|| {
-            let error = self.heap.root_value(error).unwrap_or(Value::UNDEFINED);
-            let errors = self.heap.root_value(errors).unwrap_or(Value::UNDEFINED);
-            self.set_builtin_value_named(error, "errors", errors)?;
-            Ok(error)
+            let message = self.heap.alloc(Cell::String("All promises were rejected".into()));
+            let error = self.construct_error_native(p, Native::AggregateError, &[message])?;
+            self.with_call_roots([error], |vm| {
+                let errors = vm.heap.root_value(errors).unwrap_or(Value::UNDEFINED);
+                vm.set_builtin_value_named(error, "errors", errors)?;
+                Ok(error)
+            })
         })();
-        self.heap.release_root(error);
         self.heap.release_root(errors);
-        let error = result?;
-        Ok(error)
+        result
     }
 
     pub(super) fn enqueue_aggregate_input(
