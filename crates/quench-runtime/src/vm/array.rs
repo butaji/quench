@@ -371,15 +371,12 @@ impl<H: Host> Vm<H> {
         self.array_push_with_array_like_semantics(p, this, args)
     }
 
-    /// `push` onto a plain dense array as one append: the generic steps reduce to it when the
-    /// array is extensible, unfrozen, holds no indexed descriptors or sparse elements, has a
-    /// writable `length`, and no prototype provides an accessor for an appended index (an
-    /// index no atom names cannot key any named property). `None` leaves every other
-    /// receiver to the generic algorithm.
-    fn array_push_dense(&mut self, this: Value, args: &[Value]) -> Option<Value> {
-        let Some(object) = self.heap.array(this) else {
-            return None;
-        };
+    /// The length of a plain dense array whose `push` and `pop` reduce to appending to and
+    /// removing from its element vector: it is extensible, unfrozen, holds no indexed
+    /// descriptors or sparse elements, is no arguments object and has a writable `length`.
+    /// `None` leaves every other receiver to the generic algorithms.
+    fn dense_array_length(&self, this: Value) -> Option<usize> {
+        let object = self.heap.array(this)?;
         if object.has_indexed_descriptors()
             || object.is_frozen()
             || !object.is_extensible()
@@ -389,14 +386,22 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let length = object.elements().len();
-        let final_length = length.checked_add(args.len())?;
-        if final_length > MAX_ARRAY_LENGTH {
-            return None;
-        }
         if self
             .property_attributes(this, PropertyKey::string(self.length_atom))
             .is_some_and(|attributes| !attributes.writable)
         {
+            return None;
+        }
+        Some(length)
+    }
+
+    /// `push` onto a dense array (`dense_array_length`) as one append, when no prototype
+    /// provides an accessor for an appended index (an index no atom names cannot key any
+    /// named property).
+    pub(super) fn array_push_dense(&mut self, this: Value, args: &[Value]) -> Option<Value> {
+        let length = self.dense_array_length(this)?;
+        let final_length = length.checked_add(args.len())?;
+        if final_length > MAX_ARRAY_LENGTH {
             return None;
         }
         for index in length..final_length {
@@ -411,6 +416,21 @@ impl<H: Host> Vm<H> {
         };
         super::index::mutable_array_elements(object.elements_mut()).extend_from_slice(args);
         Some(Value::number(final_length as f64))
+    }
+
+    /// `pop` of a dense array (`dense_array_length`) as one removal, when its last element
+    /// is present: the generic steps read that own data element, delete it and shorten
+    /// `length` by one.
+    pub(super) fn array_pop_dense(&mut self, this: Value) -> Option<Value> {
+        let length = self.dense_array_length(this)?;
+        let Some(last) = length.checked_sub(1) else {
+            return Some(Value::UNDEFINED);
+        };
+        let object = self.heap.array_mut(this)?;
+        if object.elements()[last].is_deleted() {
+            return None;
+        }
+        super::index::mutable_array_elements(object.elements_mut()).pop()
     }
 
     fn array_push_with_array_like_semantics(
@@ -443,6 +463,9 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         this: Value,
     ) -> Result<Value, JsError> {
+        if let Some(value) = self.array_pop_dense(this) {
+            return Ok(value);
+        }
         self.array_pop_with_array_like_semantics(p, this)
     }
 
