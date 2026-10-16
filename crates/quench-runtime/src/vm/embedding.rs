@@ -151,11 +151,21 @@ impl<H: Host> Vm<H> {
         self.embedding_filtered_own_keys(root, include_symbols, include_indices, true)
     }
 
-    pub(crate) fn embedding_non_index_own_keys(&mut self, root: RootId, enumerable_only: bool) -> Result<Vec<RootId>, JsError> {
+    pub(crate) fn embedding_non_index_own_keys(
+        &mut self,
+        root: RootId,
+        enumerable_only: bool,
+    ) -> Result<Vec<RootId>, JsError> {
         self.embedding_filtered_own_keys(root, true, false, enumerable_only)
     }
 
-    fn embedding_filtered_own_keys(&mut self, root: RootId, include_symbols: bool, include_indices: bool, enumerable_only: bool) -> Result<Vec<RootId>, JsError> {
+    fn embedding_filtered_own_keys(
+        &mut self,
+        root: RootId,
+        include_symbols: bool,
+        include_indices: bool,
+        enumerable_only: bool,
+    ) -> Result<Vec<RootId>, JsError> {
         let value = self.embedding_value(root)?;
         let program = self.embedding_program()?;
         let keys = if !include_indices && !matches!(self.heap.get(value), Some(Cell::Proxy { .. }))
@@ -184,7 +194,9 @@ impl<H: Host> Vm<H> {
                 }
                 let descriptor =
                     self.object_get_own_property_descriptor(&program, &[value, property])?;
-                if !descriptor.is_undefined() && (!enumerable_only || self.descriptor_flag(descriptor, "enumerable")) {
+                if !descriptor.is_undefined()
+                    && (!enumerable_only || self.descriptor_flag(descriptor, "enumerable"))
+                {
                     enumerable.push(*key);
                     retained[index] = true;
                 }
@@ -319,12 +331,18 @@ impl<H: Host> Vm<H> {
     }
 
     pub(crate) fn embedding_call_stack_source_names(&self) -> Vec<String> {
-        self.frames.iter().rev().filter_map(|frame| {
-            self.programs.source_name(frame.program).map(str::to_owned)
-        }).collect()
+        self.frames
+            .iter()
+            .rev()
+            .filter_map(|frame| self.programs.source_name(frame.program).map(str::to_owned))
+            .collect()
     }
 
-    pub(crate) fn embedding_instanceof(&mut self, value: RootId, constructor: RootId) -> Result<bool, JsError> {
+    pub(crate) fn embedding_instanceof(
+        &mut self,
+        value: RootId,
+        constructor: RootId,
+    ) -> Result<bool, JsError> {
         let value = self.embedding_value(value)?;
         let constructor = self.embedding_value(constructor)?;
         let program = self.embedding_program()?;
@@ -743,10 +761,17 @@ impl<H: Host> Vm<H> {
         self.to_string(&program, value)
     }
 
-    pub(crate) fn embedding_to_string_code_units(&mut self, root: RootId) -> Result<Vec<u16>, JsError> {
+    pub(crate) fn embedding_to_string_code_units(
+        &mut self,
+        root: RootId,
+    ) -> Result<Vec<u16>, JsError> {
         let value = self.embedding_value(root)?;
         let program = self.embedding_program()?;
-        Ok(self.coerce_js_string(&program, value)?.units().wide().into_owned())
+        Ok(self
+            .coerce_js_string(&program, value)?
+            .units()
+            .wide()
+            .into_owned())
     }
 
     pub(crate) fn embedding_to_number(&mut self, root: RootId) -> Result<f64, JsError> {

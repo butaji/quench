@@ -36,8 +36,15 @@ impl<H: Host> Vm<H> {
     }
 
     pub(crate) fn embedding_bytes_prefix(&self, value: Value, maximum: usize) -> Option<Vec<u8>> {
-        if let Some(Cell::ArrayBuffer { bytes, detached, .. }) = self.heap.get(value) {
-            return Some(if *detached { Vec::new() } else { bytes[..bytes.len().min(maximum)].to_vec() });
+        if let Some(Cell::ArrayBuffer {
+            bytes, detached, ..
+        }) = self.heap.get(value)
+        {
+            return Some(if *detached {
+                Vec::new()
+            } else {
+                bytes[..bytes.len().min(maximum)].to_vec()
+            });
         }
         self.embedding_view_bytes_prefix(value, maximum)
     }
@@ -488,7 +495,8 @@ impl<H: Host> Vm<H> {
                     unreachable!("typed copy backing buffer was validated");
                 };
                 // Set snapshots overlapping source bytes, unlike slice's forward copy.
-                bytes.make_mut()
+                bytes
+                    .make_mut()
                     .copy_within(source_offset..source_offset + byte_length, target_offset);
             } else {
                 let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get(source_buffer) else {

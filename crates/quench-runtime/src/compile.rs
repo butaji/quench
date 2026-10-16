@@ -1956,7 +1956,10 @@ impl<'a> Compiler<'a> {
             None,
             FunctionOptions {
                 defaults: None,
-                directive_completion: program.directives.last().map(|directive| &directive.expression),
+                directive_completion: program
+                    .directives
+                    .last()
+                    .map(|directive| &directive.expression),
                 source_span: None,
                 name_binding: None,
                 async_function: async_module,
@@ -2658,7 +2661,9 @@ impl<'a> Compiler<'a> {
             // Directive expressions precede the body and contribute its initial completion.
             let initial = if let Some(directive) = options.directive_completion {
                 function.string_literal(directive)
-            } else { function.literal(Constant::Undefined) };
+            } else {
+                function.literal(Constant::Undefined)
+            };
             function.emit(Op::Move, completion, initial, 0, 0);
             function.statement_completion = StatementCompletion::Track(completion);
         }
