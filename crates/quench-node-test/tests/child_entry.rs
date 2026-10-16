@@ -9592,6 +9592,25 @@ fn indirect_eval_script_identity_preserves_origins_fresh_values_templates_and_re
     compare_node_source_with_args(include_str!("../node-tests/test-indirect-eval-script-identity.js"), &[]);
 }
 
+#[test]
+fn error_source_positions_preserve_captured_compiler_metadata_without_guest_hooks() {
+    compare_node_source_with_args(include_str!("../node-tests/test-error-source-positions.js"), &["--expose-gc", "--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn native_protocol_constants_derive_from_configured_sdk_headers_and_preserve_descriptors() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-protocol-constants.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn native_caller_location_uses_original_activations_independently_of_error_hooks() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-caller-location.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn filesystem_glob_policy_defers_promises_dependencies_and_preserves_data_descriptors() {
+    compare_node_source_with_args(include_str!("../node-tests/test-fs-promises-glob-lazy-policy.js"), &["--expose-internals", "--no-warnings"]);
+}
 
 #[test]
 fn function_constructor_default_debug_names_remain_distinct_from_public_names_and_descriptors() {
@@ -9626,4 +9645,39 @@ fn private_brands_follow_initialization_without_branding_the_declaring_prototype
 #[test]
 fn static_blocks_retain_strict_eval_super_receiver_and_separate_var_contexts() {
     compare_node_source_with_args(include_str!("../node-tests/test-static-block-context.js"), &[]);
+}
+
+#[test]
+fn tcp_default_listen_backlog_matches_node_when_syscall_tracing_is_available() {
+    compare_node_source_with_args(include_str!("../node-tests/test-tcp-default-listen-backlog.js"), &[]);
+}
+
+#[test]
+fn tcp_option_listen_backlog_matches_node_truthiness_and_int32_when_tracing_is_available() {
+    compare_node_source_with_args(include_str!("../node-tests/test-tcp-option-listen-backlog.js"), &[]);
+}
+
+#[test]
+fn net_listen_lifecycle_retains_dns_generations_callbacks_and_public_method_shapes() {
+    compare_node_source_with_args(include_str!("../node-tests/test-net-listen-lifecycle.js"), &["--expose-gc"]);
+}
+
+#[test]
+fn net_dns_iterator_errors_close_once_preserve_original_abrupt_values_and_survive_gc() {
+    compare_node_source_with_args(include_str!("../node-tests/test-net-dns-iterator-errors.js"), &["--expose-gc"]);
+}
+
+#[test]
+fn process_capture_callback_reset_prioritizes_null_and_original_type_validation() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-callback-reset.js"), &[]);
+}
+
+#[test]
+fn http_listening_derives_from_the_handle_and_close_cancels_pending_notification() {
+    compare_node_source_with_args(include_str!("../node-tests/test-http-listening-handle.js"), &[]);
+}
+
+#[test]
+fn filesystem_readdir_sync_uses_sdk_policy_with_raw_names_and_recursive_native_layout() {
+    compare_node_source_with_args(include_str!("../node-tests/test-fs-readdir-sdk-policy.js"), &["--expose-internals", "--no-warnings"]);
 }

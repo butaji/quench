@@ -1,0 +1,20 @@
+[
+  {
+    "mode": "eval",
+    "exit": 0,
+    "stdout": "false\n",
+    "stderr": ""
+  },
+  {
+    "mode": "stdin-pipe",
+    "exit": 0,
+    "stdout": "false\n",
+    "stderr": ""
+  },
+  {
+    "mode": "stdin-regular-file",
+    "exit": 0,
+    "stdout": "true\n",
+    "stderr": ""
+  }
+]

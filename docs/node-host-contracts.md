@@ -29,6 +29,14 @@ ordinary callbacks cannot inherit a constructor entry. Receiver type names use
 the shared safe constructor-name operation; constructor/global receivers report
 null, and Proxy receivers do not invoke traps.
 
+The native error-source projection reads captured compiler positions without
+invoking `stack`, guest accessors or Proxy traps. A capture shares immutable
+compiler text, preserving its source through Script collection and repeated
+filenames; only a requested line is copied. Formatting releases that capture.
+When no unformatted source capture exists, lookup uses the current genuine
+JavaScript activation. The Node binding projects zero-based start columns and
+null-prototype records, leaving unnamed eval resource names undefined.
+
 Public function names and inferred debug names remain distinct. Variable
 initializer inference follows result-producing sequence, conditional and logical
 expressions without changing the public `.name`. A slotless shape transition
@@ -867,3 +875,75 @@ static blocks and their arrows: eval forbids lexical `arguments`, preserves
 `this`, and supplies undefined `new.target`. Ordinary nested functions introduce
 their own context. The existing serialized initializer flag represents this
 shared context; static blocks keep distinct variable scopes.
+
+TCP listeners share one native socket-creation path and Node's default backlog
+of 511, including ordinary net and HTTP listeners. Unix binds enable address
+reuse as libuv does; unsupported reuse-port requests retain their early error.
+Supplied `options.backlog` uses the JavaScript truthy default followed by shared
+ToNumber/ToInt32 conversion. Linux syscall comparisons cover default, IPv4,
+reuse-port and HTTP listeners plus numeric/string/nonfinite/wrapped options.
+The comparison explicitly reports when syscall tracing is unavailable.
+The native net.Server lifecycle receives the complete argument list, retains
+positional backlog/callback overloads, and delegates supplied-host lookup to the
+same public DNS module. Lookup callbacks retain traced data and compare the
+public listening generation before touching a cancelled server. New servers
+report a null address; listening derives from the actual handle. Closing before
+lookup completion and closing an already closed server complete through the
+canonical callback queue. Ordinary method/getter/wrapper constructor shapes and
+coded close errors remain separate from source-text/host-frame fidelity.
+
+DNS address selection uses the shared IP classifier and iterator protocol.
+Abrupt getters close the iterator without replacing the original thrown value;
+normal iterator-close failures remain observable. Tests collect during return
+and before callback delivery. Exception capture permits null reset before its
+occupied-slot check and uses the shared argument-type/coded-error policy.
+Bound-handle error/reentry details, original native-source/stack fidelity,
+diagnostic report flags and the wider Node lifecycle backlog remain open.
+
+## Native SDK protocol tables and caller capture
+
+The errors binding's exit codes and modules binding's compile-cache status names
+are generated from the configured SDK's C++ macro tables. Property descriptors,
+ordering and binding identity follow Node. These protocol declarations do not
+claim implementation of compile-cache operations or other missing bindings.
+
+The utility caller-location binding projects genuine compiler-owned activations,
+skipping its immediate JavaScript caller. Error hooks, public function-name
+getters and stack limits do not participate. Missing callers and unnamed eval
+Scripts produce undefined rather than fabricated bootstrap frames.
+
+The original promises glob policy materializes as a lazy data property, keeping
+its real function descriptor and identity. Merely loading native fs no longer
+imports the promises implementation's readline/history/OS dependencies. This
+preserves Node's binding-capture order and avoids loading unrelated modules.
+
+## Owned host Script code
+
+Core's `CompiledScript` handle owns one logical source record, while each realm
+uses a separate execution instance and caches. Detailed captures project the
+actual source record identity across those instances. Repeated runs in one realm
+reuse its template sites while producing fresh objects and functions.
+
+The opaque owner retains compiler code only. Realm associations are weak and
+pruned immediately after collection, before heap slot reuse. Reclamation retains
+live owners and the source records of escaped functions; dropping owners allows
+unused code and execution caches to be collected. Runtime reset or a foreign
+runtime rejects the handle through the existing atom-sequence ownership guard.
+This Core primitive does not by itself implement native `ContextifyScript`, VM
+timeouts, cached bytecode or code-generation restrictions.
+
+## Configured synchronous directory policy
+
+`fs.readdirSync` executes the configured Node SDK policy over native Rust
+`readdir` and `readdirRecursive` bindings. Linux scanning preserves raw filename
+bytes and reported directory types. Recursive walks follow directory symlinks,
+resolve unknown types with real metadata, and flatten lexical directory scans in
+breadth-first order. Actual scan errors retain their syscall and input path.
+
+Encoding uses the shared Buffer codecs; Buffer results retain the original
+filename bytes. Recursive Dirent results use Node's packed native layout, with
+Uint8 types and aligned Uint32 directory counts sharing one ArrayBuffer. The
+unchanged SDK owns validation and Dirent construction. Existing filesystem
+adapters capture a Rust forwarding function to this same policy, initialized
+after the filesystem module is cached. Their outer asynchronous validation and
+scheduling remain separate compatibility work.

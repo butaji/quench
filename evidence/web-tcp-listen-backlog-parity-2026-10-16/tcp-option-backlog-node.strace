@@ -1,0 +1,17 @@
+669873 listen(21, 511)                  = 0
+669873 listen(21, 511)                  = 0
+669873 listen(21, 7)                    = 0
+669873 listen(21, 7)                    = 0
+669873 listen(21, 0)                    = 0
+669873 listen(21, 511)                  = 0
+669873 listen(21, 0)                    = 0
+669873 listen(21, -1)                   = 0
+669873 listen(21, 0)                    = 0
+669873 listen(21, 1)                    = 0
+669877 +++ exited with 0 +++
+669878 +++ exited with 0 +++
+669876 +++ exited with 0 +++
+669875 +++ exited with 0 +++
+669874 +++ exited with 0 +++
+669879 +++ exited with 0 +++
+669873 +++ exited with 0 +++

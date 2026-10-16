@@ -1,0 +1,7 @@
+{
+  "path": "target/debug/deps/quench_runtime-faba0c2c63dca90b",
+  "bytes": 562130408,
+  "sha256": "c8b93252967a01c5d6437ec6d2855ba97d1563a5436327bdc325a8d74b5fc10b",
+  "qualified_source": "3218431de1e87a51b63fee8bd3091aa631eec046",
+  "reason": "Completed and published Core660 cache; future Core source differs. Preserve all frozen bundles, manifests, logs and source."
+}

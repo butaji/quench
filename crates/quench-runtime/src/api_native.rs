@@ -9,6 +9,18 @@ pub struct PreparedScript {
     pub(crate) program: std::rc::Rc<crate::ResidualProgram>,
 }
 
+/// A logical host Script with one source identity and separate execution caches
+/// in each realm. The handle owns code, not guest objects or realm globals.
+#[derive(Clone)]
+pub struct CompiledScript {
+    pub(crate) state: std::rc::Rc<CompiledScriptState>,
+}
+
+pub(crate) struct CompiledScriptState {
+    pub(crate) program: std::rc::Rc<crate::ResidualProgram>,
+    pub(crate) source: crate::vm::ProgramId,
+}
+
 /// Opaque index into the embedding's stable native-operation table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HostFunctionId(pub u32);
@@ -37,6 +49,17 @@ pub struct SourceStackFrame {
     /// Positive, non-reused compiled-source identity; zero is reserved for no script.
     pub script_id: u64,
     pub script_name: String,
+    /// True when the activation belongs to an unnamed eval Script.
+    pub is_eval: bool,
+    pub line_number: u32,
+    pub column_number: u32,
+}
+
+/// Compiler-owned source for an unformatted captured error, or the current activation.
+/// Positions are one-based, as in source stack frames; hosts choose their API projection.
+pub struct ErrorSourcePosition {
+    pub source_line: Option<String>,
+    pub script_name: Option<String>,
     pub line_number: u32,
     pub column_number: u32,
 }
@@ -373,6 +396,16 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.vm.embedding_source_stack_frames(limit)
     }
 
+    /// Read captured source without invoking properties, getters or proxy traps.
+    /// With no unformatted capture, project the current genuine source activation.
+    pub fn error_source_position_rooted(
+        &mut self,
+        error: RootId,
+    ) -> Result<Option<ErrorSourcePosition>, RootedError> {
+        let result = self.vm.embedding_error_source_position(error);
+        result.map_err(|error| self.error(error))
+    }
+
     /// Compiler-owned source names of live JavaScript callers, nearest first.
     /// This reads frame metadata without evaluating guest stack accessors.
     pub fn call_stack_source_names(&self) -> Vec<String> {
@@ -628,6 +661,28 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.vm.prepare_embedding_specialized_script_in_realm_with_origin(
             global, source, name, (line_offset, column_offset),
         ).map_err(|error| self.error(error))
+    }
+
+    /// Compile one logical Script. Its source identity persists across runs;
+    /// realm-bound execution state is allocated independently on first use.
+    pub fn compile_script_in_realm_with_origin(
+        &mut self, global: RootId, source: &str, name: &str,
+        line_offset: u32, column_offset: u32,
+    ) -> Result<CompiledScript, RootedError> {
+        self.vm.compile_embedding_script_in_realm(
+            global, source, name, (line_offset, column_offset),
+        ).map_err(|error| self.error(error))
+    }
+
+    pub fn compiled_script_is_current(&self, script: &CompiledScript) -> bool {
+        self.vm.compiled_script_is_current(script)
+    }
+
+    pub fn evaluate_compiled_script_in_realm_rooted(
+        &mut self, global: RootId, script: &CompiledScript,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.evaluate_embedding_compiled_script_in_realm(global, script);
+        self.completion(result)
     }
 
     pub fn prepared_script_is_current(&self, prepared: &PreparedScript) -> bool {
@@ -985,6 +1040,28 @@ impl<'a, H: Host> NativeContext<'a, H> {
     /// the allocated receiver; object completions replace it, like JavaScript functions.
     pub fn host_constructor(&mut self, id: HostFunctionId) -> Result<RootId, RootedError> {
         let result = self.vm.create_host_constructor(id);
+        self.completion(result)
+    }
+
+    /// Create an ordinary constructor with its immutable JavaScript creation name.
+    pub fn host_constructor_named(
+        &mut self,
+        id: HostFunctionId,
+        name: &str,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.create_named_host_constructor(id, name);
+        self.completion(result)
+    }
+
+    /// Retain traced private data on a named ordinary constructor.
+    pub fn host_constructor_named_with_data(
+        &mut self,
+        id: HostFunctionId,
+        name: &str,
+        data: RootId,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.embedding_value(data)
+            .and_then(|value| self.vm.create_named_host_constructor_with_data(id, name, value));
         self.completion(result)
     }
 

@@ -1,0 +1,74 @@
+[
+  {
+    "scenario": "express",
+    "observations": [
+      {
+        "engine": "node",
+        "exit_code": 0,
+        "stdout": "statuses 200,200,200,200,404\n",
+        "stderr": ""
+      },
+      {
+        "engine": "before",
+        "exit_code": 0,
+        "stdout": "statuses 200,200,200,200,404\n",
+        "stderr": ""
+      },
+      {
+        "engine": "candidate",
+        "exit_code": 0,
+        "stdout": "statuses 200,200,200,200,404\n",
+        "stderr": ""
+      }
+    ],
+    "matches": true
+  },
+  {
+    "scenario": "koa",
+    "observations": [
+      {
+        "engine": "node",
+        "exit_code": 0,
+        "stdout": "statuses 200,200,200,200,404\n",
+        "stderr": ""
+      },
+      {
+        "engine": "before",
+        "exit_code": 0,
+        "stdout": "statuses 200,200,200,200,404\n",
+        "stderr": ""
+      },
+      {
+        "engine": "candidate",
+        "exit_code": 0,
+        "stdout": "statuses 200,200,200,200,404\n",
+        "stderr": ""
+      }
+    ],
+    "matches": true
+  },
+  {
+    "scenario": "fastify",
+    "observations": [
+      {
+        "engine": "node",
+        "exit_code": 0,
+        "stdout": "statuses 200,200,200,200,404\n",
+        "stderr": ""
+      },
+      {
+        "engine": "before",
+        "exit_code": 0,
+        "stdout": "statuses 200,200,200,200,404\n",
+        "stderr": ""
+      },
+      {
+        "engine": "candidate",
+        "exit_code": 0,
+        "stdout": "statuses 200,200,200,200,404\n",
+        "stderr": ""
+      }
+    ],
+    "matches": true
+  }
+]

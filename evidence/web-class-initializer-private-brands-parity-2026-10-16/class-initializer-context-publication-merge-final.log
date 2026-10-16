@@ -1,0 +1,8 @@
+Auto-merging crates/quench-runtime/src/vm/tests.rs
+Merge made by the 'ort' strategy.
+ crates/quench-runtime/src/vm.rs         |   4 --
+ crates/quench-runtime/src/vm/index.rs   |  35 ++--------
+ crates/quench-runtime/src/vm/object.rs  | 112 +++++++++++++++++---------------
+ crates/quench-runtime/src/vm/tests.rs   |  24 +++++++
+ crates/quench-runtime/src/vm/vm_init.rs |   1 -
+ 5 files changed, 92 insertions(+), 84 deletions(-)
