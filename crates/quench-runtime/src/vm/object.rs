@@ -879,9 +879,7 @@ impl<H: Host> Vm<H> {
         object: Value,
         site: u16,
     ) -> Option<Value> {
-        if !(self.specialized && p.specialized) {
-            return None;
-        }
+        debug_assert!(self.lane_admits(p));
         let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
         let index = self.field_cache_index(site);
         // SAFETY: the active program's layout reserves every compiler-emitted site.
@@ -906,7 +904,8 @@ impl<H: Host> Vm<H> {
         value: Value,
         site: u16,
     ) -> bool {
-        if !(self.specialized && p.specialized) || self.method_caches_may_name(atom) {
+        debug_assert!(self.lane_admits(p));
+        if self.method_caches_may_name(atom) {
             return false;
         }
         let Some(record_id) = object.direct_object_index() else {
@@ -944,9 +943,7 @@ impl<H: Host> Vm<H> {
         object: Value,
         site: u16,
     ) -> Option<Value> {
-        if !(self.specialized && p.specialized) {
-            return None;
-        }
+        debug_assert!(self.lane_admits(p));
         let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
         let hit = self.cached_ordinary_holder_field_value(self.field_cache_index(site), receiver)?;
         self.profile
@@ -964,9 +961,7 @@ impl<H: Host> Vm<H> {
         object: Value,
         site: u16,
     ) -> Option<Value> {
-        if !(self.specialized && p.specialized) {
-            return None;
-        }
+        debug_assert!(self.lane_admits(p));
         let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
         let hit = self.cached_inherited_field_value(self.field_cache_index(site), receiver)?;
         self.profile
@@ -995,9 +990,7 @@ impl<H: Host> Vm<H> {
         object: Value,
         site: u16,
     ) -> Option<Value> {
-        if !(self.specialized && p.specialized) {
-            return None;
-        }
+        debug_assert!(self.lane_admits(p));
         let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
         let index = self.field_cache_index(site);
         // SAFETY: compiler-produced sites index exactly-sized cache vectors;
