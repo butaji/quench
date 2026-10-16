@@ -1367,3 +1367,207 @@ function checkPrototype(){if(constructedName(Object.getPrototypeOf(child))!==und
         }
     }
 }
+
+#[test]
+fn captured_errors_and_exposed_callsites_trace_callable_identity_until_release() {
+    let source = r#"
+var error,sites;
+Error.prepareStackTrace=(_,frames)=>frames;
+function createStack(){function Frame(){return new Error};rememberConstructor(Frame);error=Frame()}
+function exposeSites(){sites=error.stack;if(sites[0].getFunctionName()!=='Frame')throw Error('lost frame name')}
+function dropError(){error=null}
+function dropSites(){sites=null}
+"#;
+    for program in [
+        Engine::specialize_unspecialized(source,"stack-name-roots.js").unwrap(),
+        Engine::specialize(source,"stack-name-roots.js").unwrap(),
+    ] {
+        let mut runtime = Runtime::new(ConstructorProvenanceHost::default());
+        runtime.execute(&program).unwrap();
+        for (operation, alive) in [
+            ("createStack", true), ("exposeSites", true),
+            ("dropError", true), ("dropSites", false),
+        ] {
+            let global=runtime.global_root().unwrap();
+            let key=runtime.string_rooted(operation);
+            let function=runtime.get_property_rooted(global,key).unwrap();
+            let result=runtime.call_rooted(function,global,&[]).unwrap();
+            for root in [result,function,key,global]{assert!(runtime.release_root(root));}
+            runtime.collect(&program).unwrap();
+            let weak=runtime.host_mut().constructor.expect("remembered frame");
+            assert_eq!(runtime.host_weak_root_is_live(weak),alive,"{operation}");
+        }
+    }
+}
+
+struct ProtectedStartupHost;
+impl Host for ProtectedStartupHost {
+    fn write_line(&mut self, _: &str) {}
+    fn clock_millis(&mut self) -> f64 { 0.0 }
+    fn functions(&self) -> &[HostFunction<Self>] {
+        crate::host_functions![global "protectedStartup" (1) => protected_startup]
+    }
+    fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
+        context.seal_startup_intrinsics();
+        Ok(())
+    }
+}
+fn protected_startup(
+    context: &mut NativeContext<'_, ProtectedStartupHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let fail = args.first().is_some_and(|arg| context.rooted_value(*arg).and_then(Value::as_bool) == Some(true));
+    context.with_startup_intrinsics(|context| {
+        let result = context.evaluate_script_rooted(
+            "JSON.stringify([[1,2,3].slice(1), [2,3].map(x=>x*2), 'abc'.slice(1), Object.entries({x:1})])",
+            "protected-startup-originals.js",
+        )?;
+        context.collect()?;
+        if fail {
+            context.evaluate_script_rooted("throw globalThis.protectedMarker", "protected-startup-throw.js")
+        } else {
+            Ok(result)
+        }
+    })
+}
+#[test]
+fn startup_intrinsics_restore_frozen_replacements_and_deleted_nonextensible_properties() {
+    let source = r#"
+const descriptor=Object.getOwnPropertyDescriptor;
+const bad=function bad(){throw Error('guest replacement');};
+const getter=function getter(){throw Error('guest getter');};
+globalThis.protectedMarker={};
+Object.defineProperty(Array.prototype,'slice',{value:bad,writable:false,configurable:false});
+delete Array.prototype.map;
+Object.preventExtensions(Array.prototype);
+Object.defineProperty(String.prototype,'slice',{get:getter,configurable:false});
+Object.defineProperty(Object,'entries',{value:bad,writable:false,configurable:false});
+function check(){
+ const a=descriptor(Array.prototype,'slice'),s=descriptor(String.prototype,'slice'),o=descriptor(Object,'entries');
+ if(a.value!==bad||a.writable||a.configurable||s.get!==getter||s.configurable||o.value!==bad||o.writable||o.configurable)throw Error('guest descriptor changed');
+ if(Object.isExtensible(Array.prototype)||descriptor(Array.prototype,'map')!==undefined)throw Error('guest integrity changed');
+}
+check();
+if(protectedStartup(false)!=='[[2,3],[4,6],"bc",[["x",1]]]')throw Error('startup values changed');
+check();
+try{protectedStartup(true);throw Error('missing throw');}catch(error){if(error!==protectedMarker)throw error;}
+check();
+if(protectedStartup(false)!=='[[2,3],[4,6],"bc",[["x",1]]]')throw Error('repeated startup changed');
+check();
+"#;
+    for program in [
+        Engine::compile(crate::ExecutionRequest { source, name: "protected-startup.js", kind: crate::SourceKind::Script }).unwrap(),
+        Engine::specialize(source, "protected-startup.js").unwrap(),
+    ] {
+        Runtime::new(ProtectedStartupHost).execute(&program).unwrap();
+    }
+}
+
+#[test]
+fn function_factories_preserve_original_intrinsic_constructor_and_prototype_identity() {
+    let source = r#"
+const factories=[()=>function(){},()=>()=>{},()=>async function(){},()=>function*(){},()=>async function*(){}];
+for(const factory of factories){
+ const first=factory(),prototype=Object.getPrototypeOf(first),C=prototype.constructor;
+ const name=Object.getOwnPropertyDescriptor(C,'name'),descriptor=Object.getOwnPropertyDescriptor(prototype,'constructor');
+ Object.defineProperty(C,'name',{value:'Changed'+name.value});
+ Object.defineProperty(prototype,'constructor',{value:null});
+ const second=factory();
+ if(Object.getPrototypeOf(second)!==prototype)throw Error('factory prototype follows public constructor');
+ for(const value of [first,second]){Object.setPrototypeOf(value,null);if(constructedName(value)!=='Changed'+name.value)throw Error('factory lost original constructor')}
+ Object.defineProperty(prototype,'constructor',descriptor);Object.defineProperty(C,'name',name);
+}
+const asyncPrototype=Object.getPrototypeOf(async function(){}),generatorPrototype=Object.getPrototypeOf(function*(){}),asyncGeneratorPrototype=Object.getPrototypeOf(async function*(){});
+globalThis.AsyncFunction={prototype:{fake:true}};globalThis.GeneratorFunction={prototype:{fake:true}};globalThis.AsyncGeneratorFunction={prototype:{fake:true}};
+if(Object.getPrototypeOf(async function(){})!==asyncPrototype||Object.getPrototypeOf(function*(){})!==generatorPrototype||Object.getPrototypeOf(async function*(){})!==asyncGeneratorPrototype)throw Error('factory follows mutable globals');
+"#;
+    for program in [
+        Engine::specialize_unspecialized(source, "function-factory-origins.js").unwrap(),
+        Engine::specialize(source, "function-factory-origins.js").unwrap(),
+    ] {
+        Runtime::new(ConstructorProvenanceHost::default())
+            .execute(&program)
+            .unwrap();
+    }
+}
+
+#[test]
+fn completed_generator_creation_origin_retains_then_releases_its_function_identity() {
+    let source = r#"
+var state;
+function createIterator(){function* Creator(){};rememberConstructor(Creator);const value=Creator();state={value,next:value.next};Object.setPrototypeOf(value,null);Object.defineProperty(Creator,'name',{value:'Changed'})}
+function closeIterator(){state.next.call(state.value);if(constructedName(state.value)!=='Changed')throw Error('lost completed generator origin')}
+function dropIterator(){state=null}
+"#;
+    for program in [
+        Engine::specialize_unspecialized(source, "generator-origin-roots.js").unwrap(),
+        Engine::specialize(source, "generator-origin-roots.js").unwrap(),
+    ] {
+        let mut runtime = Runtime::new(ConstructorProvenanceHost::default());
+        runtime.execute(&program).unwrap();
+        for (operation, alive) in [
+            ("createIterator", true),
+            ("closeIterator", true),
+            ("dropIterator", false),
+        ] {
+            let global = runtime.global_root().unwrap();
+            let key = runtime.string_rooted(operation);
+            let function = runtime.get_property_rooted(global, key).unwrap();
+            let result = runtime.call_rooted(function, global, &[]).unwrap();
+            for root in [result, function, key, global] {
+                assert!(runtime.release_root(root));
+            }
+            runtime.collect(&program).unwrap();
+            let weak = runtime.host_mut().constructor.unwrap();
+            assert_eq!(runtime.host_weak_root_is_live(weak), alive, "{operation}");
+        }
+    }
+}
+
+#[derive(Default)]
+struct BoxedPrimitiveHost {
+    payload: Option<HostWeakRoot>,
+}
+impl Host for BoxedPrimitiveHost {
+    fn write_line(&mut self, _: &str) {}
+    fn clock_millis(&mut self) -> f64 { 0.0 }
+    fn functions(&self) -> &[HostFunction<Self>] {
+        crate::host_functions![global "rememberPayload" (1) => remember_boxed_payload]
+    }
+}
+fn remember_boxed_payload(
+    context: &mut NativeContext<'_, BoxedPrimitiveHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let weak = context.host_weak_root(args[0])?;
+    context.host_mut().payload = Some(weak);
+    Ok(context.undefined())
+}
+#[test]
+fn boxed_primitive_internal_values_survive_collection_and_release_with_the_wrapper() {
+    let source = r#"
+var wrapper;
+function createWrapper(){const value=Symbol('payload');rememberPayload(value);wrapper=Object(value);Object.setPrototypeOf(wrapper,null)}
+function readWrapper(){const value=Symbol.prototype.valueOf.call(wrapper);if(typeof value!=='symbol'||value.description!=='payload')throw Error('lost wrapper payload')}
+function dropWrapper(){wrapper=null}
+"#;
+    for program in [
+        Engine::specialize_unspecialized(source, "boxed-primitive-roots.js").unwrap(),
+        Engine::specialize(source, "boxed-primitive-roots.js").unwrap(),
+    ] {
+        let mut runtime = Runtime::new(BoxedPrimitiveHost::default());
+        runtime.execute(&program).unwrap();
+        for (operation, alive) in [("createWrapper", true), ("readWrapper", true), ("dropWrapper", false)] {
+            let global = runtime.global_root().unwrap();
+            let key = runtime.string_rooted(operation);
+            let function = runtime.get_property_rooted(global, key).unwrap();
+            let result = runtime.call_rooted(function, global, &[]).unwrap();
+            for root in [result, function, key, global] { assert!(runtime.release_root(root)); }
+            runtime.collect(&program).unwrap();
+            let payload = runtime.host_mut().payload.unwrap();
+            assert_eq!(runtime.host_weak_root_is_live(payload), alive, "{operation}");
+        }
+    }
+}

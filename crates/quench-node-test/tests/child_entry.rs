@@ -9141,3 +9141,365 @@ out.push(calls);console.log(JSON.stringify(out));
 fn file_handle_read_parameters_preserve_defaults_options_getter_order_and_result_prototype() {
     compare_node_stream_source(include_str!("../node-tests/test-file-handle-read-parameters.js"));
 }
+
+#[test]
+fn stack_function_names_follow_mutation_after_capture_and_preserve_utf16_without_getters() {
+    compare_node_source_with_args(r#"
+let calls=0;Error.prepareStackTrace=(_,frames)=>frames.slice(0,2);
+function Original(){return new Error};const error=Original();Object.defineProperty(Original,'name',{value:'Changed'});
+const sites=error.stack,out=[sites[0].getFunctionName()];
+Object.defineProperty(Original,'name',{value:'Later'});out.push(sites[0].getFunctionName(),sites[0].toString());
+Object.defineProperty(Original,'name',{value:'\ud800'});out.push(sites[0].getFunctionName());
+Object.defineProperty(Original,'name',{get(){calls++;throw Error('name getter')}});out.push(sites[0].getFunctionName(),sites[1].getFunctionName()===null,calls);
+Object.defineProperty(Original,'name',{value:'\0Public'});out.push(sites[0].getFunctionName());
+Object.defineProperty(Original,'name',{value:''});out.push(sites[0].getFunctionName()===null);
+console.log(JSON.stringify(out));
+"#, &[]);
+}
+
+#[test]
+fn native_constructed_names_preserve_base_identity_and_use_prototype_fallback_for_subclasses() {
+    compare_node_source_with_args(
+        r#"
+const get=require('internal/test/binding').internalBinding('util').getConstructorName,out=[];
+for(const [C,args] of [[Array,[]],[Map,[]],[Date,[]],[Uint8Array,[0]],[Error,[]],[TypeError,[]],[RangeError,[]],[URIError,[]],[EvalError,[]],[ReferenceError,[]],[SyntaxError,[]],[ArrayBuffer,[0]],[Number,[1]],[String,['x']],[Boolean,[true]],[Object,[]]]){
+ const value=new C(...args),saved=Object.getOwnPropertyDescriptor(C,'name');Object.setPrototypeOf(value,null);
+ try{Object.defineProperty(C,'name',{value:'Changed'});out.push(get(value))}finally{Object.defineProperty(C,'name',saved)}
+}
+function Original(){};const original=new Original;Object.setPrototypeOf(original,null);out.push(new Object(original)===original,get(new Object(original)));
+class CustomArray extends Array{};const array=new CustomArray;out.push(get(array));CustomArray.prototype.constructor=null;out.push(get(array));
+class CustomMap extends Map{};const map=new CustomMap;out.push(get(map));CustomMap.prototype.constructor=null;out.push(get(map));
+const tagged=new CustomArray;Object.defineProperty(tagged,Symbol.toStringTag,{value:'TaggedArray'});out.push(get(tagged));
+const foreign=require('vm').runInNewContext("const value=new Array;Object.setPrototypeOf(value,null);Object.defineProperty(Array,'name',{value:'ForeignArray'});value");out.push(get(foreign));
+console.log(JSON.stringify(out));
+"#,
+        &["--expose-internals", "--no-warnings"],
+    );
+}
+
+#[test]
+fn canonical_util_types_preserve_native_sources_javascript_sources_export_order_and_identity() {
+    compare_node_source_with_args(
+        r#"
+const types=require('util/types'),internal=require('internal/util/types'),raw=require('internal/test/binding').internalBinding('types');
+const out=[types===internal,types===require('util').types,Object.keys(raw),Object.entries(types).map(([key,value])=>[key,value.name,value.length,Function.prototype.toString.call(value),Object.hasOwn(value,'prototype'),Object.getOwnPropertyDescriptor(types,key)])];
+out.push(Object.keys(raw).every(key=>raw[key]===types[key]),types.isArrayBufferView===ArrayBuffer.isView);
+console.log(JSON.stringify(out));
+"#,
+        &["--expose-internals", "--no-warnings"],
+    );
+}
+
+#[test]
+fn errors_and_stack_rendering_preserve_utf16_and_capture_targets_observe_original_getters() {
+    compare_node_source_with_args(r#"
+const out=[];for(const [C,args] of [[Error,[]],[TypeError,[]],[RangeError,[]],[AggregateError,[[]]],[SuppressedError,[1,2]]]){
+ const error=new C(...args,'\ud800');out.push(error.message,error.toString(),error.stack.split('\n')[0]);
+}
+out.push(Error.prototype.toString.call({name:'\ud800',message:'\udfff'}));
+for(const object of [{name:'Custom',message:'text'},{name:'',message:'text'},{},{get name(){throw 17},message:'text'}]){
+ Error.captureStackTrace(object);try{out.push(object.stack.split('\n')[0])}catch(e){out.push(['threw',e])}
+}
+let calls=[];const target={get name(){calls.push('name');return {toString(){calls.push('name string');return '\ud800'}}},get message(){calls.push('message');return {toString(){calls.push('message string');return '\udfff'}}}};
+Error.captureStackTrace(target);const first=target.stack;out.push(first.split('\n')[0],target.stack===first,calls);
+Error.prepareStackTrace=(_,frames)=>frames[0].toString();function Frame(){return new Error};Object.defineProperty(Frame,'name',{value:'\ud800'});out.push(Frame().stack);
+console.log(JSON.stringify(out));
+"#, &[]);
+}
+
+#[test]
+fn implemented_cli_option_snapshots_tokenization_and_stream_iterator_policy_match_node() {
+    for flags in [&["--no-warnings","--expose-internals"][..], &["--no-warnings","--expose-internals","--experimental-stream-iter"][..]] {
+        compare_node_source_with_args(include_str!("../node-tests/test-cli-options-stream-iter.js"),flags);
+    }
+}
+
+#[test]
+fn stream_iterator_webidl_uses_genuine_original_abort_signal_brands() {
+    compare_node_source_with_args(include_str!("../node-tests/test-stream-iter-abort-brand.js"),&["--no-warnings","--expose-internals","--experimental-stream-iter"]);
+}
+
+#[test]
+fn internal_abort_operation_uses_original_provider_state_reason_and_dependent_delivery() {
+    compare_node_source_with_args(include_str!("../node-tests/test-internal-abort-provider.js"),&["--no-warnings","--expose-internals"]);
+}
+
+#[test]
+fn text_decoder_stream_boundaries_and_repeated_flush_match_node() {
+    compare_node_stream_source(r#"
+const inputs=[['utf-8',[239,187,191,226,130,172,240,159,152,128,65]],['utf-16le',[255,254,61,216,0,222,65,0]],['utf-16be',[254,255,216,61,222,0,0,65]],['shift_jis',[130,160,65]],['big5',[164,164,65]],['euc-kr',[176,161,65]],['gb18030',[144,48,129,48,65]],['iso-2022-jp',[27,36,66,36,34,27,40,66,65]]];
+const rows=[];
+for(const [encoding,bytes]of inputs)for(const fatal of [false,true])for(const ignoreBOM of [false,true])for(let cut=0;cut<=bytes.length;cut++){
+ const decoder=new TextDecoder(encoding,{fatal,ignoreBOM});
+ try {const first=decoder.decode(Uint8Array.from(bytes.slice(0,cut)),{stream:true});const second=decoder.decode(Uint8Array.from(bytes.slice(cut)));const flushed=decoder.decode();rows.push([encoding,fatal,ignoreBOM,cut,[first,second,flushed]]);}
+ catch(e){rows.push([encoding,fatal,ignoreBOM,cut,{name:e.name,code:e.code??null,message:e.message}]);}
+}
+console.log(JSON.stringify({complete:true,cases:rows.length,rows}));
+"#);
+}
+
+#[test]
+fn text_decoder_descriptors_validation_and_utf8_encoding_match_node() {
+    compare_node_stream_source(r#"
+const rows=[];
+function capture(name,fn){try{rows.push({name,result:fn()});}catch(error){rows.push({name,error:{name:error.name,code:error.code??null,message:error.message}});}}
+function descriptors(object){return Reflect.ownKeys(object).map(key=>{const d=Object.getOwnPropertyDescriptor(object,key);return {key:String(key),enumerable:d.enumerable,configurable:d.configurable,...('writable'in d?{writable:d.writable}:{}),...('value'in d?{value:typeof d.value==='function'?[d.value.name,d.value.length]:typeof d.value==='symbol'?String(d.value):d.value}:{}),...(d.get?{get:[d.get.name,d.get.length]}:{}),...(d.set?{set:[d.set.name,d.set.length]}:{})};});}
+capture('decoder-prototype',()=>descriptors(TextDecoder.prototype));
+capture('encoder-prototype',()=>descriptors(TextEncoder.prototype));
+capture('decoder-instance-symbols',()=>Reflect.ownKeys(new TextDecoder()).map(String));
+capture('encoder-instance-symbols',()=>Reflect.ownKeys(new TextEncoder()).map(String));
+capture('decoder-label-symbol',()=>new TextDecoder(Symbol('encoding')).encoding);
+for(const options of [null,3,true,'x',()=>{}])capture('decoder-options-'+String(options),()=>{const d=new TextDecoder('utf-8',options);return[d.encoding,d.fatal,d.ignoreBOM];});
+capture('decoder-options-observation-order',()=>{const calls=[];const label={toString(){calls.push('label');return'utf-8';}};const options={get fatal(){calls.push('fatal');return true;},get ignoreBOM(){calls.push('ignoreBOM');return false;}};const d=new TextDecoder(label,options);return[calls,d.encoding,d.fatal,d.ignoreBOM];});
+capture('decoder-label-versus-options-error-priority',()=>new TextDecoder('not-an-encoding',3).encoding);
+for(const key of ['encoding','fatal','ignoreBOM'])capture('decoder-getter-brand-'+key,()=>Object.getOwnPropertyDescriptor(TextDecoder.prototype,key).get.call({}));
+capture('decoder-decode-brand',()=>TextDecoder.prototype.decode.call({}));
+for(const options of [null,3,true,'x',()=>{}])capture('decode-options-'+String(options),()=>new TextDecoder().decode(new Uint8Array([65]),options));
+capture('decode-options-getter',()=>{const calls=[];const d=new TextDecoder();const out=d.decode(new Uint8Array([65]),{get stream(){calls.push('stream');return true;}});return[calls,out,d.decode()];});
+capture('decode-shared-buffer',()=>{const b=new SharedArrayBuffer(2);new Uint8Array(b).set([65,66]);return new TextDecoder().decode(b);});
+capture('decode-view-offset',()=>new TextDecoder().decode(new DataView(new Uint8Array([0,65,66,0]).buffer,1,2)));
+capture('decode-detached-buffer',()=>{const b=new ArrayBuffer(2);structuredClone(b,{transfer:[b]});return new TextDecoder().decode(b);});
+capture('encoder-symbol',()=>Array.from(new TextEncoder().encode(Symbol('text'))));
+capture('encoder-encodeInto-invalid-destination',()=>new TextEncoder().encodeInto('x',[]));
+capture('encoder-encodeInto-symbol',()=>new TextEncoder().encodeInto(Symbol('text'),new Uint8Array(30)));
+capture('encoder-encodeInto-coercion-order',()=>{const calls=[];let error;try{new TextEncoder().encodeInto({toString(){calls.push('string');return'x';}},[]);}catch(e){error={name:e.name,code:e.code??null,message:e.message};}return[calls,error];});
+capture('encoder-partial-codepoint',()=>{const out=[];for(let length=0;length<=5;length++){const b=new Uint8Array(length).fill(255);out.push([new TextEncoder().encodeInto('😀x',b),Array.from(b)]);}return out;});
+console.log(JSON.stringify({complete:true,cases:rows.length,rows}));
+"#);
+}
+
+#[test]
+fn text_decoder_stream_errors_recover_and_reset_bom_match_node() {
+    compare_node_stream_source(r#"
+const fixtures=[
+ ['utf-8',[0xef,0xbb,0xbf,0x41],[0xe2,0x28,0xa1]],
+ ['utf-16le',[0xff,0xfe,0x41,0],[0,0xd8,0x41,0]],
+ ['utf-16be',[0xfe,0xff,0,0x41],[0xd8,0,0,0x41]],
+ ['shift_jis',[0x82,0xa0,0x41],[0x82,0x20,0xff]],
+ ['big5',[0xa4,0xa4,0x41],[0xa4,0x20,0xff]],
+ ['euc-kr',[0xb0,0xa1,0x41],[0xb0,0x20,0xff]],
+ ['gb18030',[0x90,0x30,0x81,0x30,0x41],[0x90,0x30,0x20,0xff]],
+ ['iso-2022-jp',[27,36,66,36,34,27,40,66,65],[27,36,255,27]],
+ ['windows-1252',[0x41,0x80],[0x81,0xff]],
+];
+const rows=[];
+for(const [encoding,valid,invalid]of fixtures)for(const fatal of [false,true])for(const ignoreBOM of [false,true])for(let cut=0;cut<=invalid.length;cut++){
+ const decoder=new TextDecoder(encoding,{fatal,ignoreBOM}),out=[];
+ const steps=[[invalid.slice(0,cut),true],[invalid.slice(cut),true],[[],false],[valid.slice(0,1),true],[valid.slice(1),false],[[],false],[valid,false]];
+ for(const[bytes,stream]of steps)try{out.push({value:decoder.decode(Uint8Array.from(bytes),{stream})});}catch(e){out.push({error:{name:e.name,code:e.code??null,message:e.message}});}
+ rows.push([encoding,fatal,ignoreBOM,cut,out]);
+}
+console.log(JSON.stringify({complete:true,cases:rows.length,calls:rows.length*7,rows}));
+"#);
+}
+
+#[test]
+fn callsites_share_native_prototypes_and_supported_methods_preserve_descriptors_and_brands() {
+    compare_node_source_with_args(r#"
+Error.prepareStackTrace=(_,frames)=>frames;function Frame(){return new Error};const first=Frame().stack,second=Frame().stack,site=first[0],proto=Object.getPrototypeOf(site),C=proto.constructor,out=[];
+const methods=['getColumnNumber','getEvalOrigin','getFileName','getFunctionName','getLineNumber','getMethodName','getThis','getTypeName','isConstructor','isEval','isNative','toString'];
+out.push(Reflect.ownKeys(site),Object.getPrototypeOf(first[1])===proto,Object.getPrototypeOf(second[0])===proto,C.name,C.length,Function.prototype.toString.call(C),Object.getOwnPropertyDescriptor(C,'prototype'),Object.getOwnPropertyDescriptor(proto,'constructor'));
+for(const key of methods){const f=proto[key];out.push([key,f.name,f.length,Function.prototype.toString.call(f),Object.getOwnPropertyDescriptor(proto,key)]);}
+for(const value of [undefined,null,1,'x',true,Symbol('s'),1n,{},()=>{},proto,new Proxy({}, {})])try{proto.getFileName.call(value)}catch(e){out.push([e.name,e.message])}
+for(const invoke of [()=>C(),()=>new C])try{invoke()}catch(e){out.push([e.name,e.message])}
+const get=require('internal/test/binding').internalBinding('util').getConstructorName;out.push(get(site));Object.defineProperty(C,'name',{value:'Changed'});proto.constructor=null;out.push(get(site));
+console.log(JSON.stringify(out));
+"#, &["--expose-internals","--no-warnings"]);
+}
+
+#[test]
+fn async_iterator_protocol_and_secondary_realm_inheritance_match_node() {
+    compare_node_stream_source(include_str!("../node-tests/test-async-iterator-protocol.js"));
+}
+
+#[test]
+fn generator_loop_return_preserves_cleanup_order_rejections_and_finally() {
+    compare_node_stream_source(include_str!("../node-tests/test-generator-loop-return.js"));
+}
+
+#[test]
+fn async_delegated_return_unwinds_original_generator_finally() {
+    compare_node_stream_source(include_str!("../node-tests/test-async-delegate-return.js"));
+}
+
+#[test]
+fn callsite_function_identity_obeys_strict_frame_visibility_and_ignores_name_getters() {
+    compare_node_source_with_args(r#"
+Error.prepareStackTrace=(_,frames)=>frames;
+function Loose(){return new Error}
+function Strict(){'use strict';return Loose()}
+function StrictLeaf(){'use strict';return new Error}
+function Outer(){return StrictLeaf()}
+const out=[];
+for(const [invoke,expected] of [[Loose,[Loose]],[Strict,[Loose,Strict]],[Outer,[StrictLeaf,Outer]]]){
+ const sites=invoke().stack;out.push(sites.slice(0,expected.length).map((site,index)=>[site.getFunction()===expected[index],site.getFunction()===undefined,site.getThis()===undefined]));
+}
+const site=Loose().stack[0];Object.defineProperty(Loose,'name',{get(){throw Error('name getter')}});out.push(site.getFunction()===Loose);
+const method=Object.getPrototypeOf(site).getFunction;out.push(method.name,method.length,Function.prototype.toString.call(method),Object.getOwnPropertyDescriptor(Object.getPrototypeOf(site),'getFunction'));
+for(const receiver of [{},undefined])try{method.call(receiver)}catch(e){out.push([e.name,e.message])}
+console.log(JSON.stringify(out));
+"#, &[]);
+}
+
+#[test]
+fn callsite_method_names_follow_receiver_descriptors_without_getters_or_proxy_traps() {
+    compare_node_source_with_args(
+        r#"
+Error.prepareStackTrace=(_,frames)=>frames[0];function Original(){return new Error().stack}
+const out=[];
+for(const object of [{Original},{renamed:Original},{a:Original,b:Original},Object.create({inherited:Original}),Object.defineProperty({},'hidden',{value:Original}),{0:Original},Object.defineProperty({},'Original',{value:Original})]){
+ const key=Reflect.ownKeys(object)[0]??'inherited';const site=object[key]();out.push([key,site.getFunctionName(),site.getMethodName()]);
+}
+const strict={go:function Named(){'use strict';return new Error().stack}};out.push(strict.go().getMethodName());
+const object={get value(){return new Error().stack}};out.push(object.value.getMethodName());
+let calls=0;const proxy=new Proxy({alias:Original},{get(){calls++;throw Error('trap')},ownKeys(){calls++;throw Error('keys')},getPrototypeOf(){calls++;throw Error('prototype')}});out.push(Original.call(proxy).getMethodName(),calls);
+const changing={old:Original};const site=changing.old();delete changing.old;changing.new=Original;out.push(site.getMethodName());
+Object.defineProperty(Original,'name',{get(){calls++;throw Error('function name')}});out.push(site.getMethodName(),calls);
+const wide={'\ud800':Original};out.push(wide['\ud800']().getMethodName());
+const numeric={0(){return new Error().stack}};out.push(numeric[0]().getMethodName());
+console.log(JSON.stringify(out));
+"#,
+        &[],
+    );
+}
+
+#[test]
+fn abort_listener_errors_are_reported_on_ticks_without_replacing_source_errors() {
+    compare_node_source_with_args(include_str!("../node-tests/test-abort-listener-errors.js"), &["--no-warnings", "--experimental-stream-iter"]);
+}
+
+#[test]
+fn function_factory_constructor_names_follow_original_realms_and_ignore_public_links() {
+    compare_node_source_with_args(r#"
+const get=require('internal/test/binding').internalBinding('util').getConstructorName,out=[];
+const factories=[()=>function(){},()=>()=>{},()=>async function(){},()=>function*(){},()=>async function*(){}];
+for(const factory of factories){
+ const first=factory(),prototype=Object.getPrototypeOf(first),C=prototype.constructor;
+ const name=Object.getOwnPropertyDescriptor(C,'name'),descriptor=Object.getOwnPropertyDescriptor(prototype,'constructor');
+ Object.defineProperty(C,'name',{value:'Changed'+name.value});Object.defineProperty(prototype,'constructor',{value:null});
+ const second=factory();out.push(Object.getPrototypeOf(second)===prototype);
+ for(const value of [first,second]){Object.setPrototypeOf(value,null);out.push(get(value))}
+ Object.defineProperty(C,'name',{value:''});out.push(get(first));
+ let calls=0;Object.defineProperty(C,'name',{get(){calls++;throw Error('constructor name')}});out.push(get(first),calls);
+ Object.defineProperty(prototype,'constructor',descriptor);Object.defineProperty(C,'name',name);
+}
+const prototypes=factories.map(factory=>Object.getPrototypeOf(factory()));
+for(const name of ['AsyncFunction','GeneratorFunction','AsyncGeneratorFunction'])globalThis[name]={prototype:{fake:true}};
+out.push(factories.map((factory,index)=>Object.getPrototypeOf(factory())===prototypes[index]));
+for(const expression of ['function(){}','()=>{}','async function(){}','function*(){}','async function*(){}']){
+ const values=require('vm').runInNewContext(`const make=()=>(${expression}),first=make(),p=Object.getPrototypeOf(first),C=p.constructor;Object.defineProperty(C,'name',{value:'Foreign'+C.name});Object.defineProperty(p,'constructor',{value:null});const second=make(),same=Object.getPrototypeOf(second)===p;Object.setPrototypeOf(first,null);Object.setPrototypeOf(second,null);[first,second,same]`);
+ out.push(get(values[0]),get(values[1]),values[2]);
+}
+for(const value of [Array.prototype.map,Math.max,(()=>{}).bind(null),(async()=>{}).bind(null),(function*(){}).bind(null)]){
+ const prototype=Object.getPrototypeOf(value),C=prototype.constructor,name=Object.getOwnPropertyDescriptor(C,'name');
+ Object.setPrototypeOf(value,null);Object.defineProperty(C,'name',{value:'Changed'+name.value});
+ try{out.push(get(value))}finally{Object.defineProperty(C,'name',name);Object.setPrototypeOf(value,prototype)}
+}
+console.log(JSON.stringify(out));
+"#, &["--expose-internals","--no-warnings"]);
+}
+
+#[test]
+fn constructor_class_names_preserve_iterator_origins_proxy_kinds_and_prototype_roles() {
+    compare_node_source_with_args(include_str!("../node-tests/test-constructor-class-data.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn callsite_type_names_and_constructor_flags_follow_actual_activation_and_receiver_identity() {
+    compare_node_source_with_args(include_str!("../node-tests/test-callsite-type-construction.js"), &[]);
+}
+
+#[test]
+fn inferred_debug_names_preserve_empty_public_names_and_native_name_property_state() {
+    compare_node_source_with_args(include_str!("../node-tests/test-inferred-function-debug-names.js"), &[]);
+}
+
+#[test]
+fn native_zlib_streaming_counts_bytes_pending_close_and_iterable_pipelines_match_node() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-zlib-streaming.js"), &["--no-warnings", "--expose-internals", "--experimental-stream-iter"]);
+}
+
+#[test]
+fn native_brotli_streaming_bytes_dictionaries_and_errors_match_node() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-brotli-streaming.js"), &["--no-warnings", "--expose-internals", "--experimental-stream-iter"]);
+}
+
+#[test]
+fn native_zstd_streaming_frames_dictionaries_pledges_and_errors_match_node() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-zstd-streaming.js"), &["--no-warnings", "--expose-internals", "--experimental-stream-iter"]);
+}
+
+#[test]
+fn default_node_stack_policy_uses_real_coded_brands_and_system_errors() {
+    compare_node_source_with_args(include_str!("../node-tests/test-node-error-stack-policy.js"), &["--no-warnings", "--expose-internals"]);
+}
+
+#[test]
+fn node_compatibility_version_follows_bundled_library_target() {
+    compare_node_source_with_args(include_str!("../node-tests/test-node-compatibility-version.js"), &[]);
+}
+
+#[test]
+fn native_buffer_backing_allocations_preserve_real_alignment_and_snapshots() {
+    compare_node_source_with_args(
+        include_str!("../node-tests/test-native-buffer-allocation.js"),
+        &["--no-warnings", "--expose-internals", "--expose-gc"],
+    );
+}
+
+#[test]
+fn native_buffer_pool_shares_real_aligned_backing_and_preserves_reentrant_copies() {
+    compare_node_source_with_args(
+        include_str!("../node-tests/test-native-buffer-pool.js"),
+        &["--no-warnings", "--experimental-stream-iter"],
+    );
+}
+
+#[test]
+fn boxed_primitive_brands_use_internal_values_and_reject_forged_properties_and_proxies() {
+    compare_node_source_with_args(include_str!("../node-tests/test-boxed-primitive-slots.js"), &[]);
+}
+
+#[test]
+fn callsite_columns_follow_member_parenthesized_and_constructor_call_syntax() {
+    compare_node_source_with_args(include_str!("../node-tests/test-callsite-call-columns.js"), &[]);
+}
+
+#[test]
+fn util_call_sites_capture_actual_metadata_without_error_hooks_and_use_node_validation() {
+    compare_node_source_with_args(include_str!("../node-tests/test-util-real-call-sites.js"), &[]);
+}
+
+#[test]
+fn optional_private_and_complex_call_columns_follow_actual_syntax_tokens() {
+    for source in [include_str!("../node-tests/test-optional-private-call-columns.js"), include_str!("../node-tests/test-call-column-trivia.js"), include_str!("../node-tests/test-complex-call-columns.js"), include_str!("../node-tests/test-special-call-columns.js")] {
+        compare_node_source_with_args(source, &[]);
+    }
+}
+
+#[test]
+fn getter_operation_columns_remain_distinct_from_call_continuations() {
+    compare_node_source_with_args(include_str!("../node-tests/test-getter-call-columns.js"), &[]);
+}
+
+#[test]
+fn property_reads_and_writes_capture_their_own_operation_positions() {
+    for source in [include_str!("../node-tests/test-property-access-columns.js"), include_str!("../node-tests/test-assignment-access-columns.js")] {
+        compare_node_source_with_args(source, &[]);
+    }
+}
+
+#[test]
+fn source_positions_use_javascript_line_terminators_and_utf16_columns() {
+    compare_node_source_with_args(include_str!("../node-tests/test-source-line-terminators.js"), &[]);
+}
+
+#[test]
+fn fused_field_reads_preserve_each_getter_operation_source() {
+    compare_node_source_with_args(include_str!("../node-tests/test-fused-field-source-positions.js"), &[]);
+}
+
+#[test]
+fn callsite_eval_classification_follows_compilation_origin_and_survives_escaped_closures() {
+    compare_node_source_with_args(include_str!("../node-tests/test-callsite-eval-origin.js"), &["--expose-gc"]);
+}

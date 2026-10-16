@@ -55,6 +55,19 @@ pub trait Host {
     fn write_line(&mut self, text: &str);
     fn clock_millis(&mut self) -> f64;
 
+    /// ECMAScript proper tail calls discard strict caller activations. Hosts
+    /// matching engines that retain those observable frames can disable them.
+    fn proper_tail_calls(&self) -> bool {
+        true
+    }
+
+    /// Optional retained callback owning the host's Error stack policy,
+    /// including dispatch of user prepareStackTrace hooks. Called as
+    /// (global, error, callSites). The host owns the callback root's lifetime.
+    fn error_stack_formatter(&self) -> Option<crate::RootId> {
+        None
+    }
+
     /// Stable native-operation table for this host's lifetime. Mutable host
     /// state belongs in `Self`; operation indices must never be reassigned.
     fn functions(&self) -> &[crate::HostFunction<Self>]

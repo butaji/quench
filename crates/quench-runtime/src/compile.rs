@@ -1552,6 +1552,7 @@ struct Compiler<'a> {
     source: &'a str,
     text: &'a str,
     source_line_starts: Vec<usize>,
+    source_comments: Vec<Span>,
     /// Byte offset of each non-ASCII character with the running excess of
     /// UTF-8 bytes over UTF-16 units through it; columns count UTF-16 units.
     source_utf16_excess: Vec<(usize, usize)>,
@@ -1833,10 +1834,11 @@ impl<'a> Compiler<'a> {
     ) -> Self {
         let atoms = CompilerAtoms::new(atom_prefix);
         let mut source_line_starts = vec![0];
-        source_line_starts.extend(
-            text.match_indices('\n')
-                .map(|(index, _)| index.saturating_add(1)),
-        );
+        source_line_starts.extend(text.char_indices().filter_map(|(index, character)| {
+            let crlf_prefix = character == '\r' && text.as_bytes().get(index + 1) == Some(&b'\n');
+            (matches!(character, '\n' | '\r' | '\u{2028}' | '\u{2029}') && !crlf_prefix)
+                .then_some(index + character.len_utf8())
+        }));
         let mut excess = 0;
         let source_utf16_excess = text
             .char_indices()
@@ -1850,6 +1852,7 @@ impl<'a> Compiler<'a> {
             source,
             text,
             source_line_starts,
+            source_comments: Vec::new(),
             source_utf16_excess,
             mode,
             root_strict: false,
@@ -1874,6 +1877,27 @@ impl<'a> Compiler<'a> {
             superinstructions: vec![],
             captured_name_scopes: FxHashMap::default(),
         }
+    }
+
+    /// Locate a delimiter between OXC-owned expression boundaries. Comment text
+    /// is excluded using OXC's own spans, including comments containing delimiters.
+    fn source_delimiter(&self, start: u32, end: u32, delimiter: char) -> u32 {
+        let mut cursor = start as usize;
+        let end = (end as usize).min(self.text.len());
+        let mut comment = self.source_comments.partition_point(|span| span.end <= start);
+        while cursor < end {
+            if let Some(span) = self.source_comments.get(comment) {
+                if span.start as usize <= cursor && cursor < span.end as usize {
+                    cursor = span.end as usize;
+                    comment += 1;
+                    continue;
+                }
+            }
+            let Some(character) = self.text[cursor..end].chars().next() else { break; };
+            if character == delimiter { return cursor as u32; }
+            cursor += character.len_utf8();
+        }
+        start
     }
 
     fn source_position(&self, offset: u32) -> SourcePosition {
@@ -1905,6 +1929,7 @@ impl<'a> Compiler<'a> {
         module_goal: bool,
         inherited_strict: bool,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        self.source_comments = program.comments.iter().map(|comment| comment.span).collect();
         self.module_goal = module_goal;
         let module_requests = if module_goal {
             module_requests(&program.body)

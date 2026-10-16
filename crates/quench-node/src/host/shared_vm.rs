@@ -22,8 +22,9 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "parseEnv" (1) => crate::modules::util_shared_vm::parse_env,
         method "parseArgs" (0) => crate::modules::util_parse_args_shared_vm::parse,
         method "utilParseArgsPositional" (1) => crate::modules::util_parse_args_shared_vm::positional_map,
-        method "utilTypeCheck" (1) => crate::modules::util_shared_vm::type_check,
+        method "utilTypeCheck" (0) => crate::modules::util_shared_vm::type_check,
         method "utilProxyDetails" (0) => crate::modules::util_shared_vm::proxy_details,
+        method "utilGetCallSites" (0) => crate::modules::util_shared_vm::get_call_sites,
         method "utilConstructorName" (0) => crate::modules::util_shared_vm::constructor_name,
         method "utilPreviewEntries" (0) => crate::modules::util_shared_vm::preview_entries,
         method "availableMemory" (0) => crate::modules::process_memory_shared_vm::available,
@@ -61,6 +62,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "bufferConstructor" (0) => crate::modules::buffer_shared_vm::constructor,
         method "webStreamsInitialize" (0) => commonjs::initialize_web_streams,
         method "markAsUncloneable" (1) => crate::modules::clone_shared_vm::mark_as_uncloneable,
+        method "createUnsafeArrayBuffer" (0) => crate::modules::buffer_alloc_shared_vm::allocate,
+        method "arrayBufferAlignedOffset" (0) => crate::modules::buffer_alloc_shared_vm::aligned_offset,
         method "markAsUntransferable" (1) => crate::modules::clone_shared_vm::mark_as_untransferable,
         method "isMarkedAsUntransferable" (1) => crate::modules::clone_shared_vm::is_marked_as_untransferable,
         method "webApisInitialize" (0) => commonjs::initialize_web_apis,
@@ -283,8 +286,23 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "emitterListenerCount" (3) => crate::modules::event_emitter_shared_vm::count,
         method "eventsListenerCount" (2) => crate::modules::events_shared_vm::listener_count,
         method "eventsGetEventListeners" (2) => crate::modules::events_shared_vm::get_event_listeners,
+        method "abortSignalBrand" (1) => crate::modules::events_shared_vm::abort_signal_brand,
         method "abortAddEventListener" (6) => crate::modules::events_abort_shared_vm::abort_add_event_listener,
         method "abortDispatchListeners" (4) => crate::modules::events_abort_shared_vm::abort_dispatch_listeners,
+        method "eventTargetQueueError" (1) => crate::modules::events_abort_shared_vm::queue_listener_error,
+        method "eventTargetRethrow" (0) => crate::modules::events_abort_shared_vm::rethrow_listener_error,
+        #[cfg(quench_node_brotli)]
+        method "BrotliEncoder" (0) => crate::modules::zlib_native_shared_vm::create_brotli_encoder,
+        #[cfg(quench_node_brotli)]
+        method "BrotliDecoder" (0) => crate::modules::zlib_native_shared_vm::create_brotli_decoder,
+        method "ZstdCompress" (0) => crate::modules::zlib_native_shared_vm::create_zstd_compress,
+        method "ZstdDecompress" (0) => crate::modules::zlib_native_shared_vm::create_zstd_decompress,
+        method "Zlib" (0) => crate::modules::zlib_native_shared_vm::create,
+        method "zlibNativeInit" (0) => crate::modules::zlib_native_shared_vm::initialize,
+        method "zlibNativeWrite" (0) => crate::modules::zlib_native_shared_vm::write,
+        method "zlibNativeWriteSync" (0) => crate::modules::zlib_native_shared_vm::write_sync,
+        method "zlibNativeClose" (0) => crate::modules::zlib_native_shared_vm::close,
+        method "zlibNativePoll" (0) => crate::modules::zlib_native_shared_vm::poll,
         method "eventsAddAbortListener" (2) => crate::modules::events_abort_shared_vm::add_abort_listener,
         method "abortListenerDispose" (0) => crate::modules::events_abort_shared_vm::abort_listener_dispose,
         method "abortedListenerJob" (0) => crate::modules::events_abort_shared_vm::aborted_listener_job,
@@ -402,6 +420,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "fsPromiseWatchCancel" (0) => crate::modules::fs_watch_shared_vm::promise::cancel,
         method "urlIsURL" (1) => crate::modules::url_shared_vm::is_url,
         method "toPathIfFileURL" (1) => crate::modules::url_shared_vm::to_path_if_file_url,
+        method "cliOptionsValues" (0) => crate::modules::cli_options_shared_vm::values,
+        method "cliParseNodeOptions" (0) => crate::modules::cli_options_shared_vm::parse_environment,
         method "fsFileHandleReadParameters" (0) => crate::modules::fs_shared_vm::file_handle_read::parameters,
         method "fsReadFileSync" (2) => crate::modules::fs_shared_vm::read_file_sync,
         method "fsValidateAbortSignal" (1) => crate::modules::fs_shared_vm::validate_read_signal,
@@ -518,6 +538,16 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "perfHooksCompareEntries" (2) => crate::modules::perf_timeline_query::compare,
         method "perfHooksNow" (0) => crate::modules::perf_hooks::now,
         method "dnsLookup" (3) => crate::modules::dns_shared_vm::lookup,
+        #[cfg(quench_icu)]
+        method "icuGetConverter" (2) => crate::modules::icu_binding_shared_vm::get_converter,
+        #[cfg(quench_icu)]
+        method "icuDecode" (4) => crate::modules::icu_binding_shared_vm::decode,
+        #[cfg(quench_icu)]
+        method "icuStringWidth" (3) => crate::modules::icu_binding_shared_vm::string_width,
+        #[cfg(quench_icu)]
+        method "icuTranscode" (3) => crate::modules::icu_binding_shared_vm::transcode,
+        #[cfg(quench_icu)]
+        method "icuErrorName" (1) => crate::modules::icu_binding_shared_vm::error_name,
         method "zlibStreamOpen" (4) => crate::modules::zlib_stream_shared_vm::open,
         method "zlibPrepare" (2) => crate::modules::zlib_options_shared_vm::prepare,
         method "zlibStreamSync" (1) => crate::modules::zlib_stream_shared_vm::sync,
@@ -636,6 +666,14 @@ pub(crate) fn operation(name: &str) -> HostFunctionId {
 }
 
 impl quench_runtime::Host for NodeHost {
+    fn proper_tail_calls(&self) -> bool {
+        false
+    }
+
+    fn error_stack_formatter(&self) -> Option<quench_runtime::RootId> {
+        self.shared_state().borrow().builtin_cache.get(crate::modules::node_errors_shared_vm::DEFAULT_STACK_FORMATTER).copied()
+    }
+
     fn write_line(&mut self, text: &str) {
         let output = self.shared_state().borrow().output.clone();
         match output {
@@ -785,7 +823,11 @@ impl quench_runtime::Host for NodeHost {
                     "import {{ createRequire as __quenchCreateRequire }} from 'node:module';\nconst __quenchRequire = __quenchCreateRequire({filename});\nconst __quenchModule = __quenchRequire({filename});\nexport default __quenchModule;\n"
                 );
                 source.push_str("export { __quenchModule as 'module.exports' };\n");
-                for (index, export) in commonjs_exports::names(&path, &String::from_utf8_lossy(&bytes)).into_iter().enumerate() {
+                for (index, export) in
+                    commonjs_exports::names(&path, &String::from_utf8_lossy(&bytes))
+                        .into_iter()
+                        .enumerate()
+                {
                     let local = format!("__quenchExport{index}");
                     source.push_str("const ");
                     source.push_str(&local);
@@ -879,7 +921,9 @@ impl quench_runtime::Host for NodeHost {
 
     fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
         crate::host::resident_pages::release_read_only_pages();
-        crate::modules::text_decoder_shared_vm::install_global(context)?;
+        // Each step stores what it builds in the heap or retains it, so its own handles are
+        // released as it ends (`scoped`) instead of piling up for the whole bootstrap.
+        context.scoped(crate::modules::text_decoder_shared_vm::install_global)?;
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_text_decoder");
         context
@@ -887,78 +931,87 @@ impl quench_runtime::Host for NodeHost {
             .shared_state()
             .borrow_mut()
             .reset_cached_vm_roots();
-        crate::modules::process_shared_vm::initialize(context)?;
+        context.scoped(crate::modules::process_shared_vm::initialize)?;
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_process");
         crate::host::resident_pages::release_read_only_pages();
-        crate::modules::events_shared_vm::initialize_targets(context)?;
-        crate::modules::async_hook_registry_shared_vm::initialize(context)?;
+        context.scoped(|context| {
+            crate::modules::events_shared_vm::initialize_targets(context)?;
+            crate::modules::async_hook_registry_shared_vm::initialize(context).map(|_| ())
+        })?;
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_event_target_polyfill");
-        let event_data = context
-            .host_mut()
-            .shared_state()
-            .borrow()
-            .event_targets_api
-            .ok_or_else(|| RootedError::host("event listener configuration missing"))?;
-        let initialize =
-            context.host_function_with_data(operation("emitterInitialize"), event_data)?;
-        let dispatch =
-            context.host_function_with_data(operation("emitterEmitListeners"), event_data)?;
-        let emitter_factory = context.evaluate_script_rooted(
-            crate::polyfills::bootstrap::event_emitter::JS,
-            "node:bootstrap/event-emitter.js",
-        )?;
-        let undefined = context.undefined();
-        let event_emitter =
-            context.call_rooted(emitter_factory, undefined, &[initialize, dispatch])?;
-        context.release_root(event_emitter);
-        crate::modules::event_constructor_shared_vm::install(context)?;
-        crate::modules::event_emitter_shared_vm::initialize(context)?;
-        crate::modules::event_limits_shared_vm::initialize(context)?;
-        // Native stdio writes still participate in the shared EventEmitter
-        // protocol; consumers such as util.styleText validate that protocol.
-        let global = context.global_root()?;
-        let key = context.string_rooted("__nodeEventEmitter");
-        let emitter = context.get_property_rooted(global, key)?;
-        let key = context.string_rooted("prototype");
-        let prototype = context.get_property_rooted(emitter, key)?;
-        let key = context.string_rooted("process");
-        let process = context.get_property_rooted(global, key)?;
-        for name in ["stdout", "stderr"] {
-            let key = context.string_rooted(name);
-            let stream = context.get_property_rooted(process, key)?;
-            context.set_prototype_rooted(stream, prototype)?;
-        }
-        crate::modules::child_process_ipc_shared_vm::install_process(context, process, emitter)?;
+        context.scoped(install_event_emitter)?;
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_event_emitter_polyfill");
         crate::host::resident_pages::release_read_only_pages();
-        let expose_gc = context
-            .host_mut()
-            .shared_state()
-            .borrow()
-            .exec_argv
-            .iter()
-            .any(|flag| flag == "--expose-gc" || flag == "--expose_gc");
-        if expose_gc {
-            let collect = context.host_function(operation("gc"))?;
-            let factory = context.evaluate_script_rooted(
-                "collect => function gc(...args) { return collect(...args); }",
-                "node:bootstrap/gc.js",
-            )?;
-            let undefined = context.undefined();
-            let gc = context.call_rooted(factory, undefined, &[collect])?;
-            let key = context.string_rooted("gc");
-            context.define_data_property_rooted(global, key, gc, true, true, false)?;
-        }
-        crate::modules::timers_shared_vm::install_promisify_globals(context)?;
+        context.scoped(install_gc_global)?;
+        context.scoped(crate::modules::timers_shared_vm::install_promisify_globals)?;
         commonjs::initialize(context)?;
-        // The original inspector initializes private state using intrinsic
-        // methods. Capture it before guests can freeze replacement methods.
-        commonjs::node_library_export(context, "util.js", "internal/util/inspect.js", "inspect")?;
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_commonjs");
         Ok(())
     }
+}
+
+/// The shared EventEmitter, and the process streams that take part in its protocol.
+fn install_event_emitter(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
+    let event_data = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .event_targets_api
+        .ok_or_else(|| RootedError::host("event listener configuration missing"))?;
+    let initialize = context.host_function_with_data(operation("emitterInitialize"), event_data)?;
+    let dispatch =
+        context.host_function_with_data(operation("emitterEmitListeners"), event_data)?;
+    let emitter_factory = context.evaluate_script_rooted(
+        crate::polyfills::bootstrap::event_emitter::JS,
+        "node:bootstrap/event-emitter.js",
+    )?;
+    let undefined = context.undefined();
+    let event_emitter = context.call_rooted(emitter_factory, undefined, &[initialize, dispatch])?;
+    context.release_root(event_emitter);
+    crate::modules::event_constructor_shared_vm::install(context)?;
+    crate::modules::event_emitter_shared_vm::initialize(context)?;
+    crate::modules::event_limits_shared_vm::initialize(context)?;
+    // Native stdio writes still participate in the shared EventEmitter
+    // protocol; consumers such as util.styleText validate that protocol.
+    let global = context.global_root()?;
+    let key = context.string_rooted("__nodeEventEmitter");
+    let emitter = context.get_property_rooted(global, key)?;
+    let key = context.string_rooted("prototype");
+    let prototype = context.get_property_rooted(emitter, key)?;
+    let key = context.string_rooted("process");
+    let process = context.get_property_rooted(global, key)?;
+    for name in ["stdout", "stderr"] {
+        let key = context.string_rooted(name);
+        let stream = context.get_property_rooted(process, key)?;
+        context.set_prototype_rooted(stream, prototype)?;
+    }
+    crate::modules::child_process_ipc_shared_vm::install_process(context, process, emitter)
+}
+
+/// `globalThis.gc` under `--expose-gc`.
+fn install_gc_global(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
+    let expose_gc = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .exec_argv
+        .iter()
+        .any(|flag| flag == "--expose-gc" || flag == "--expose_gc");
+    if expose_gc {
+        let collect = context.host_function(operation("gc"))?;
+        let factory = context.evaluate_script_rooted(
+            "collect => function gc(...args) { return collect(...args); }",
+            "node:bootstrap/gc.js",
+        )?;
+        let undefined = context.undefined();
+        let gc = context.call_rooted(factory, undefined, &[collect])?;
+        let key = context.string_rooted("gc");
+        let global = context.global_root()?;
+        context.define_data_property_rooted(global, key, gc, true, true, false)?;
+    }
+    Ok(())
 }

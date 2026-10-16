@@ -19,8 +19,6 @@ const TYPE_PREDICATES: &[(&str, BuiltinBrand)] = &[
     ("isAnyArrayBuffer", BuiltinBrand::AnyArrayBuffer),
     ("isExternal", BuiltinBrand::External),
     ("isDataView", BuiltinBrand::DataView),
-    ("isTypedArray", BuiltinBrand::TypedArray),
-    ("isArrayBufferView", BuiltinBrand::ArrayBufferView),
     ("isArgumentsObject", BuiltinBrand::ArgumentsObject),
     ("isAsyncFunction", BuiltinBrand::AsyncFunction),
     ("isGeneratorFunction", BuiltinBrand::GeneratorFunction),
@@ -51,29 +49,13 @@ const TYPE_PREDICATES: &[(&str, BuiltinBrand)] = &[
     ("isFloat64Array", BuiltinBrand::Float64Array),
 ];
 
+// Node src/node_util.cc validates the native stack-frame request against this limit.
+const NODE_CALL_SITE_FRAME_LIMIT: usize = 200;
+
 pub(crate) const MAX_SAFE_INTEGER: f64 = ((1_u64 << f64::MANTISSA_DIGITS) - 1) as f64;
 
 const UTIL: &str = quench_js_check::checked_js!(
-    r#"((inspect, format, formatWithOptions, warnedCodes) => {
-  const getCallSites = (frameCount = 10, options) => {
-    if (frameCount !== null && typeof frameCount === "object") {
-      options = frameCount;
-      frameCount = 10;
-    }
-    if (options !== undefined && (options === null || typeof options !== "object")) {
-      throw new TypeError("The options argument must be an object");
-    }
-    if (!Number.isInteger(frameCount) || frameCount < 1 || frameCount > 200) {
-      throw new RangeError("The frame count must be an integer between 1 and 200");
-    }
-    const scriptName = globalThis.process?.argv?.[1] || "";
-    return Array.from({ length: frameCount }, () => ({
-      scriptName,
-      scriptId: scriptName,
-      lineNumber: 0,
-      columnNumber: 0,
-    }));
-  };
+    r#"((inspect, format, formatWithOptions, warnedCodes, getCallSites) => {
   const inherits = (ctor, superCtor) => {
     const invalidType = (kind, name, expected, received) => {
       const error = new TypeError(
@@ -262,13 +244,16 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let inspect = crate::host::shared_vm::commonjs::node_library_export(context, "util.js", "internal/util/inspect.js", "inspect")?;
     let format = crate::host::shared_vm::commonjs::node_library_export(context, "util.js", "internal/util/inspect.js", "format")?;
     let format_with_options = crate::host::shared_vm::commonjs::node_library_export(context, "util.js", "internal/util/inspect.js", "formatWithOptions")?;
+    let get_call_sites = crate::host::shared_vm::commonjs::node_library_export(
+        context, "util.js", "util.js", "getCallSites",
+    )?;
     let factory = context.evaluate_script_rooted(UTIL, "node:util/shared.js")?;
     let undefined = context.undefined();
     let global = context.global_root()?;
     let set_key = context.string_rooted("Set");
     let set = context.get_property_rooted(global, set_key)?;
     let warned_codes = context.construct_rooted(set, set, &[])?;
-    let module = context.call_rooted(factory, undefined, &[inspect, format, format_with_options, warned_codes])?;
+    let module = context.call_rooted(factory, undefined, &[inspect, format, format_with_options, warned_codes, get_call_sites])?;
     super::util_style_shared_vm::install(context, module, inspect)?;
     super::util_extend_shared_vm::install(context, module, warned_codes)?;
     let compare = context.host_function(crate::host::shared_vm::operation("isDeepStrictEqual"))?;
@@ -285,13 +270,9 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     context.set_property_rooted(module, parse_args_key, parse_args, module)?;
     let callbackify_key = context.string_rooted("callbackify");
     context.set_property_rooted(module, callbackify_key, callbackify, module)?;
-    let native_types = types_binding(context)?;
-    let types = context.object_rooted()?;
-    for key in context.own_keys_rooted(native_types)? {
-        let value = context.get_property_rooted(native_types, key)?;
-        context.define_data_property_rooted(types, key, value, true, true, true)?;
-    }
-    super::crypto_key_shared_vm::public_predicates(context, types)?;
+    let types = crate::host::shared_vm::commonjs::node_library_module(
+        context, "util.js", "internal/util/types.js",
+    )?;
     let key = context.string_rooted("types");
     context.set_property_rooted(module, key, types, module)?;
     // Retain original identities before publishing mutable util exports. Console
@@ -806,6 +787,7 @@ fn build_key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let binding = context.object_rooted()?;
     for (name, operation) in [
         ("getConstructorName", "utilConstructorName"),
+        ("getCallSites", "utilGetCallSites"),
         ("getOwnNonIndexProperties", "utilOwnNonIndexProperties"),
         ("getPromiseDetails", "utilPromiseDetails"),
         ("getProxyDetails", "utilProxyDetails"),
@@ -814,14 +796,7 @@ fn build_key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         ("markPromiseAsHandled", "utilMarkPromiseHandled"),
     ] {
         let operation = crate::host::shared_vm::operation(operation);
-        let function = if name == "getConstructorName" {
-            let global = context.global_root()?;
-            let symbol = context.startup_data_property_rooted(global, "Symbol")
-                .ok_or_else(|| RootedError::host("original Symbol constructor missing"))?;
-            let tag = context.startup_data_property_rooted(symbol, "toStringTag")
-                .ok_or_else(|| RootedError::host("original toStringTag symbol missing"))?;
-            context.host_function_named_with_data(operation, name, tag)?
-        } else { context.host_function_named(operation, name)? };
+        let function = context.host_function_named(operation, name)?;
         let key = context.string_rooted(name);
         context.define_data_property_rooted(binding, key, function, true, true, true)?;
     }
@@ -873,56 +848,52 @@ pub(crate) fn types_binding(context: &mut NativeContext<'_, NodeHost>) -> Result
     crate::host::shared_vm::commonjs::cached_native_binding(context, "\0binding:types", build_types_binding)
 }
 fn build_types_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    // node_types.cc's raw native slot predicates, in its export order. The
+    // configured internal/util/types.js owns JavaScript predicates and aliases.
+    use BuiltinBrand as B;
+    const NATIVE_BRANDS: &[BuiltinBrand] = &[
+        B::ArgumentsObject,
+        B::ArrayBuffer,
+        B::AsyncFunction,
+        B::BigIntObject,
+        B::BooleanObject,
+        B::Date,
+        B::External,
+        B::GeneratorFunction,
+        B::GeneratorObject,
+        B::Map,
+        B::MapIterator,
+        B::ModuleNamespaceObject,
+        B::NativeError,
+        B::NumberObject,
+        B::Promise,
+        B::Proxy,
+        B::RegExp,
+        B::Set,
+        B::SetIterator,
+        B::SharedArrayBuffer,
+        B::StringObject,
+        B::SymbolObject,
+        B::WeakMap,
+        B::WeakSet,
+        B::AnyArrayBuffer,
+        B::BoxedPrimitive,
+    ];
     let types = context.object_rooted()?;
-    for (index, &(name, brand)) in TYPE_PREDICATES.iter().enumerate() {
+    for brand in NATIVE_BRANDS {
+        let (index, (name, _)) = TYPE_PREDICATES
+            .iter()
+            .enumerate()
+            .find(|(_, (_, candidate))| candidate == brand)
+            .expect("native type predicate brand");
         let data = context.number(index as f64);
-        let predicate = context
-            .host_function_with_data(crate::host::shared_vm::operation("utilTypeCheck"), data)?;
-        let name_key = context.string_rooted("name");
-        let (function_name, length) = match brand {
-            BuiltinBrand::ArrayBufferView => ("isView", 1),
-            BuiltinBrand::External
-            | BuiltinBrand::Date
-            | BuiltinBrand::RegExp
-            | BuiltinBrand::NativeError
-            | BuiltinBrand::Promise
-            | BuiltinBrand::Map
-            | BuiltinBrand::Set
-            | BuiltinBrand::WeakMap
-            | BuiltinBrand::WeakSet
-            | BuiltinBrand::Proxy
-            | BuiltinBrand::ArrayBuffer
-            | BuiltinBrand::SharedArrayBuffer
-            | BuiltinBrand::AnyArrayBuffer
-            | BuiltinBrand::ArgumentsObject
-            | BuiltinBrand::AsyncFunction
-            | BuiltinBrand::GeneratorFunction
-            | BuiltinBrand::GeneratorObject
-            | BuiltinBrand::MapIterator
-            | BuiltinBrand::SetIterator
-            | BuiltinBrand::ModuleNamespaceObject
-            | BuiltinBrand::BooleanObject
-            | BuiltinBrand::NumberObject
-            | BuiltinBrand::StringObject
-            | BuiltinBrand::SymbolObject
-            | BuiltinBrand::BigIntObject
-            | BuiltinBrand::BoxedPrimitive => ("", 0),
-            _ => (name, 1),
-        };
-        let name_value = context.string_rooted(function_name);
-        context.define_data_property_rooted(predicate, name_key, name_value, false, false, true)?;
-        let length_key = context.string_rooted("length");
-        let length_value = context.number(f64::from(length));
-        context.define_data_property_rooted(
-            predicate,
-            length_key,
-            length_value,
-            false,
-            false,
-            true,
+        let predicate = context.host_function_named_with_data(
+            crate::host::shared_vm::operation("utilTypeCheck"),
+            "",
+            data,
         )?;
         let key = context.string_rooted(name);
-        context.set_property_rooted(types, key, predicate, types)?;
+        context.define_data_property_rooted(types, key, predicate, true, true, true)?;
     }
     Ok(types)
 }
@@ -952,62 +923,15 @@ pub(crate) fn preview_entries(
     }
 }
 
-/// Read an own data property without inheriting descriptor-object getters.
-fn inspection_data_property(
-    context: &mut NativeContext<'_, NodeHost>, object: RootId, key: RootId,
-) -> Result<Option<RootId>, RootedError> {
-    let descriptor = context.own_property_descriptor_rooted(object, key)?;
-    if context.is_object_rooted(descriptor)? {
-        for key in context.own_keys_rooted(descriptor)? {
-            if context.string_text(key)?.as_deref() == Some("value") {
-                return context.get_property_rooted(descriptor, key).map(Some);
-            }
-        }
-    }
-    Ok(None)
-}
-
-/// Native class fallback for inspection, without public constructor/tag getters.
-/// User base-constructor provenance is captured by Core at actual allocation.
+/// Core owns creation identity, safe prototype lookup and intrinsic class display.
 pub(crate) fn constructor_name(
-    context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId],
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let absent = context.undefined();
-    let value = args.first().copied().unwrap_or(absent);
-    if let Some(name) = context.constructed_name_rooted(value)? {
-        if context.string_text(name)?.is_some_and(|name| !name.is_empty() && name != "Object") { return Ok(name); }
-    }
-    if context.proxy_target_rooted(value)?.is_some() { return Ok(context.string_rooted("Object")); }
-    if context.is_array_rooted(value)? { return Ok(context.string_rooted("Array")); }
-    for &(name, brand) in TYPE_PREDICATES {
-        use BuiltinBrand as B;
-        if matches!(brand, B::Proxy | B::TypedArray | B::ArrayBufferView | B::AnyArrayBuffer | B::BoxedPrimitive | B::NativeError | B::GeneratorObject | B::MapIterator | B::SetIterator | B::ModuleNamespaceObject) { continue; }
-        if context.has_builtin_brand_rooted(value, brand)? {
-            let name = name.strip_prefix("is").expect("type predicate prefix");
-            let name = name.strip_suffix("Object").unwrap_or(name);
-            return Ok(context.string_rooted(name));
-        }
-    }
-    if context.is_callable_rooted(value)? { return Ok(context.string_rooted("Function")); }
-    if context.has_builtin_brand_rooted(value, BuiltinBrand::NativeError)? { return Ok(context.string_rooted("Error")); }
-    let tag = context.host_function_data()?;
-    let constructor_key = context.string_rooted("constructor");
-    let mut current = value;
-    while context.is_object_rooted(current)? {
-        if context.proxy_target_rooted(current)?.is_some() { break; }
-        if let Some(data) = inspection_data_property(context, current, tag)? {
-            if context.string_text(data)?.is_some() { return Ok(data); }
-        }
-        if !context.strict_equal_rooted(current, value)? {
-            if let Some(constructor) = inspection_data_property(context, current, constructor_key)? {
-                if let Some(name) = context.original_function_name_rooted(constructor)? {
-                    if context.string_text(name)?.is_some_and(|name| !name.is_empty() && name != "Object") { return Ok(name); }
-                }
-            }
-        }
-        current = context.prototype_rooted(current)?;
-    }
-    Ok(context.string_rooted("Object"))
+    let value = args.first().copied().unwrap_or_else(|| context.undefined());
+    Ok(context.constructor_name_rooted(value)?
+        .unwrap_or_else(|| context.string_rooted("Object")))
 }
 
 /// External wrappers expose the stored address, without touching native memory.
@@ -1017,4 +941,33 @@ pub(crate) fn external_value(context: &mut NativeContext<'_, NodeHost>, _: RootI
         Some(address) => Ok(context.bigint_rooted(address as i128)),
         None => { let error = context.type_error_rooted("Value is not an external")?; Err(context.throw(error)) }
     }
+}
+
+/// The configured util.js validates the public API and owns source-map policy.
+pub(crate) fn get_call_sites(
+    context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let count = args.first().and_then(|root| context.rooted_value(*root)).and_then(quench_runtime::Value::as_number);
+    // Match the native binding's validated frame-count domain without guest coercion.
+    let Some(count) = count.filter(|n| n.is_finite() && n.fract() == 0.0 && (1.0..=NODE_CALL_SITE_FRAME_LIMIT as f64).contains(n)) else {
+        let error = context.range_error_rooted("Invalid stack frame count")?;
+        return Err(context.throw(error));
+    };
+    // Node's native operation drops the util.js caller frame, even when borrowed directly.
+    let frames = context.source_stack_frames(count as usize + 1);
+    let mut sites = Vec::with_capacity(frames.len().saturating_sub(1));
+    for frame in frames.into_iter().skip(1) {
+        let site = context.null_object_rooted()?;
+        let function = context.string_units_rooted(&frame.function_name);
+        let id = context.string_rooted(&frame.script_id.to_string());
+        let script = context.string_rooted(&frame.script_name);
+        let line = context.number(f64::from(frame.line_number));
+        let column = context.number(f64::from(frame.column_number));
+        for (name, value) in [("functionName", function), ("scriptId", id), ("scriptName", script), ("lineNumber", line), ("columnNumber", column), ("column", column)] {
+            let key = context.string_rooted(name);
+            context.define_data_property_rooted(site, key, value, true, true, true)?;
+        }
+        sites.push(site);
+    }
+    context.array_rooted(&sites)
 }

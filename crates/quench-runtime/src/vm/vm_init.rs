@@ -87,7 +87,7 @@ impl<H: Host> Vm<H> {
             profile: Profile,
             shapes: Shape::table(),
             shape_accessors: Vec::new(),
-            transitions: FxHashMap::default(),
+            transitions: Default::default(),
             atom_text: AtomTable::default(),
             atoms: FxHashMap::default(),
             atom_collisions: FxHashMap::default(),

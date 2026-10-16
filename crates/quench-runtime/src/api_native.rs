@@ -22,6 +22,17 @@ pub enum NativeArithmetic {
     BitwiseAnd,
 }
 
+/// A copied projection of a genuine JavaScript activation. Native helper frames are excluded.
+pub struct SourceStackFrame {
+    /// UTF-16 code units preserve function names, including lone surrogates.
+    pub function_name: Vec<u16>,
+    /// Positive, non-reused compiled-source identity; zero is reserved for no script.
+    pub script_id: u64,
+    pub script_name: String,
+    pub line_number: u32,
+    pub column_number: u32,
+}
+
 /// Private weak host reference, pruned by the core collector before slot reuse.
 /// Its persistent root must be released when the host resource is discarded.
 #[derive(Clone, Copy, Debug)]
@@ -283,6 +294,13 @@ impl<'a, H: Host> NativeContext<'a, H> {
         Ok(name.map(|name| self.string_units_rooted(&name.units().to_vec())))
     }
 
+    /// Constructor display from creation identity and safe prototype data.
+    pub fn constructor_name_rooted(&mut self, root: RootId) -> Result<Option<RootId>, RootedError> {
+        let result = self.vm.embedding_constructor_name(root);
+        let name = result.map_err(|error| self.error(error))?;
+        Ok(name.map(|name| self.string_units_rooted(&name.units().to_vec())))
+    }
+
     /// Snapshot collection entries without advancing iterators or invoking hooks.
     pub fn collection_preview_rooted(&mut self, root: RootId) -> Result<Option<CollectionPreview>, RootedError> {
         let result = self.vm.embedding_collection_preview(root);
@@ -340,6 +358,11 @@ impl<'a, H: Host> NativeContext<'a, H> {
     ) -> Result<bool, RootedError> {
         let result = self.vm.embedding_strict_equal(left, right);
         result.map_err(|error| self.error(error))
+    }
+
+    /// Capture actual JavaScript source frames independently of Error hooks and stack limits.
+    pub fn source_stack_frames(&mut self, limit: usize) -> Vec<SourceStackFrame> {
+        self.vm.embedding_source_stack_frames(limit)
     }
 
     /// Compiler-owned source names of live JavaScript callers, nearest first.
@@ -783,6 +806,13 @@ impl<'a, H: Host> NativeContext<'a, H> {
 
     /// Copy native bytes into an intrinsic Uint8Array with its own fixed backing.
     /// No guest constructor, iterator, or indexed property hook is invoked.
+    /// Compute the real byte offset needed to align an ArrayBuffer's backing
+    /// address. Fixed buffers retain their physical address across snapshots
+    /// and writes; resizable buffers retain it only until they resize.
+    pub fn array_buffer_aligned_offset_rooted(&mut self, root: RootId, alignment: usize) -> Result<usize, RootedError> {
+        self.vm.embedding_array_buffer_aligned_offset(root, alignment).map_err(|error| self.error(error))
+    }
+
     pub fn uint8_array_rooted(&mut self, bytes: &[u8]) -> Result<RootId, RootedError> {
         let result = self.vm.embedding_uint8_array(bytes);
         self.completion(result)
@@ -1063,6 +1093,21 @@ impl<'a, H: Host> NativeContext<'a, H> {
 
     pub fn release_root(&mut self, root: RootId) -> bool {
         self.vm.release_root(root)
+    }
+
+    /// Runs `step` and then releases the roots it created, so a long host call made of steps
+    /// that store their results in the heap (a bootstrap's installers) holds only one step's
+    /// handles at a time. On failure they stay, as the error's exception root must.
+    pub fn scoped(
+        &mut self,
+        step: impl FnOnce(&mut Self) -> Result<(), RootedError>,
+    ) -> Result<(), RootedError> {
+        let mark = self.roots.len();
+        step(self)?;
+        for root in self.roots.drain(mark..) {
+            self.vm.release_root(root);
+        }
+        Ok(())
     }
 
     pub fn collect(&mut self) -> Result<(), RootedError> {

@@ -42,5 +42,8 @@ mod api;
 pub use api::{
     BuiltinBrand, BuiltinData, CollectionPreview, PromiseSnapshot, ExecutionRequest, HostFunction, HostFunctionId, HostWeakRoot,
     NativeArithmetic, NativeContext, PromiseRejectionEvent, RootedError, RootedIterator, Runtime,
-    RuntimeError, SourceKind, SynchronousModule,
+    RuntimeError, SourceKind, SourceStackFrame, SynchronousModule,
 };
+
+#[cfg(test)]
+mod host_stack_tests;

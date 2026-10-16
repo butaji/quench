@@ -2,6 +2,36 @@ use super::array_literal::AccumulatedElement;
 use super::*;
 
 impl FunctionCompiler<'_, '_> {
+    pub(super) fn with_source_offset<T>(&mut self, offset: u32, emit: impl FnOnce(&mut Self) -> T) -> T {
+        let position = self.owner.source_position(offset);
+        let previous = self.current_source_position.replace((position.line, position.column));
+        let result = emit(self);
+        self.current_source_position = previous;
+        result
+    }
+
+    pub(super) fn static_access_source_offset(&self, member: &StaticMemberExpression<'_>) -> u32 {
+        if member.optional {
+            self.owner.source_delimiter(member.object.span().end, member.span.end, '?')
+        } else { member.property.span.start }
+    }
+
+    pub(super) fn computed_access_source_offset(&self, member: &ComputedMemberExpression<'_>) -> u32 {
+        self.owner.source_delimiter(member.object.span().end, member.span.end, '[')
+    }
+
+    pub(super) fn call_source_offset(&self, call: &CallExpression<'_>) -> u32 {
+        if !call.optional {
+            match &call.callee {
+                Expression::Identifier(_) | Expression::Super(_) => return call.callee.span().start,
+                Expression::StaticMemberExpression(member) => return member.property.span.start,
+                _ => {}
+            }
+        }
+        let start = call.type_arguments.as_ref().map_or(call.callee.span().end, |arguments| arguments.span.end);
+        self.owner.source_delimiter(start, call.span.end, '(')
+    }
+
     pub(super) fn throw_invalid_call_assignment(&mut self, call: &Expression<'_>) -> Register {
         if self.strict {
             self.owner
@@ -109,37 +139,37 @@ impl FunctionCompiler<'_, '_> {
         self.literal(Constant::Undefined)
     }
 
-    pub(super) fn logical(&mut self, value: &LogicalExpression<'_>) -> Register {
+    pub(super) fn logical(&mut self, value: &LogicalExpression<'_>, debug_name: Option<Atom>) -> Register {
         if value.operator.is_coalesce() {
-            return self.coalesce(value);
+            return self.coalesce(value, debug_name);
         }
-        let left = self.expression(&value.left);
+        let left = self.expression_with_debug_name(&value.left, debug_name);
         let dst = self.reg();
         self.emit(Op::Move, dst, left, 0, 0);
         let jump = self.emit(Op::JumpFalse, left, 0, 0, 0);
         if value.operator.is_or() {
             let skip = self.emit(Op::Jump, 0, 0, 0, 0);
             self.patch(jump);
-            let right = self.expression(&value.right);
+            let right = self.expression_with_debug_name(&value.right, debug_name);
             self.emit(Op::Move, dst, right, 0, 0);
             self.patch(skip);
         } else {
-            let right = self.expression(&value.right);
+            let right = self.expression_with_debug_name(&value.right, debug_name);
             self.emit(Op::Move, dst, right, 0, 0);
             self.patch(jump);
         }
         dst
     }
 
-    pub(super) fn conditional(&mut self, value: &ConditionalExpression<'_>) -> Register {
+    pub(super) fn conditional(&mut self, value: &ConditionalExpression<'_>, debug_name: Option<Atom>) -> Register {
         let dst = self.reg();
         let test = self.expression(&value.test);
         let other = self.emit(Op::JumpFalse, test, 0, 0, 0);
-        let yes = self.expression(&value.consequent);
+        let yes = self.expression_with_debug_name(&value.consequent, debug_name);
         self.emit(Op::Move, dst, yes, 0, 0);
         let end = self.emit(Op::Jump, 0, 0, 0, 0);
         self.patch(other);
-        let no = self.expression(&value.alternate);
+        let no = self.expression_with_debug_name(&value.alternate, debug_name);
         self.emit(Op::Move, dst, no, 0, 0);
         self.patch(end);
         dst
@@ -403,13 +433,10 @@ impl FunctionCompiler<'_, '_> {
         };
         let atom = self.owner.atom(member.property.name.as_str());
         let cache = self.owner.cache_site();
-        self.emit(
-            Op::GetField,
-            callee,
-            FieldBase::register(receiver).0,
-            cache,
-            atom,
-        );
+        let source = self.static_access_source_offset(member);
+        self.with_source_offset(source, |compiler| compiler.emit(
+            Op::GetField, callee, FieldBase::register(receiver).0, cache, atom,
+        ));
         if let Some(end) = end {
             self.patch(end);
         }
@@ -433,7 +460,8 @@ impl FunctionCompiler<'_, '_> {
             (self.reg(), None)
         };
         let key = self.expression_outside_optional_chain(&member.expression);
-        self.emit(Op::GetIndex, callee, receiver, key, 0);
+        let source = self.computed_access_source_offset(member);
+        self.with_source_offset(source, |compiler| compiler.emit(Op::GetIndex, callee, receiver, key, 0));
         if let Some(end) = end {
             self.patch(end);
         }
@@ -454,13 +482,9 @@ impl FunctionCompiler<'_, '_> {
         };
         let atom = self.owner.private_name_atom(member.field.span);
         let cache = self.owner.cache_site();
-        self.emit(
-            Op::GetField,
-            callee,
-            FieldBase::register(receiver).0,
-            cache,
-            atom,
-        );
+        self.with_source_offset(member.field.span.start, |compiler| compiler.emit(
+            Op::GetField, callee, FieldBase::register(receiver).0, cache, atom,
+        ));
         if let Some(end) = end {
             self.patch(end);
         }

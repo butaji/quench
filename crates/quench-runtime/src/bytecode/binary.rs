@@ -333,6 +333,10 @@ pub(super) fn write_program(
         out.pair(site.first);
         out.optional_pair(site.second);
         out.optional_pair(site.sink);
+        for source in site.sources {
+            out.u8(source.is_some() as u8);
+            if let Some((line, column)) = source { out.u32(line); out.u32(column); }
+        }
     }
     out.u32(program.object_sites.len() as u32);
     for site in &program.object_sites {
@@ -727,6 +731,11 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             first: input.pair()?,
             second: input.optional_pair()?,
             sink: input.optional_pair()?,
+            sources: [
+                input.optional_source_location()?,
+                input.optional_source_location()?,
+                input.optional_source_location()?,
+            ],
         })
     })?;
     let object_sites = input.list(|input| {
@@ -850,6 +859,13 @@ impl<'a> BinaryReader<'a> {
         Ok((value != u32::MAX).then_some(value))
     }
     pub(super) fn pair(&mut self) -> Result<(u32, u16), String> { Ok((self.u32()?, self.u16()?)) }
+    pub(super) fn optional_source_location(&mut self) -> Result<Option<(u32, u32)>, String> {
+        match self.u8()? {
+            0 => Ok(None),
+            1 => Ok(Some((self.u32()?, self.u32()?))),
+            _ => Err("invalid residual source option".into()),
+        }
+    }
     pub(super) fn optional_pair(&mut self) -> Result<Option<(u32, u16)>, String> {
         match self.u8()? { 0 => Ok(None), 1 => Ok(Some(self.pair()?)), _ => Err("invalid residual option".into()) }
     }

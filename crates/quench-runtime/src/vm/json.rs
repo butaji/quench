@@ -37,7 +37,6 @@ struct JsonSerialization {
     property_list: Option<Vec<Atom>>,
     gap: String,
     ancestors: Vec<Value>,
-    wrappers: JsonWrapperSlots,
     to_json: Atom,
 }
 
@@ -47,15 +46,6 @@ struct JsonSerialization {
 enum JsonKey {
     Index(usize),
     Name(Atom),
-}
-
-/// The internal-slot atoms of the primitive wrappers SerializeJSONProperty unboxes, resolved
-/// once per stringify call instead of hashed for every serialized object.
-struct JsonWrapperSlots {
-    string: Atom,
-    number: Atom,
-    boolean: Atom,
-    bigint: Atom,
 }
 
 fn write_json_string(value: &JsString, output: &mut String) {
@@ -912,12 +902,6 @@ impl<H: Host> Vm<H> {
             property_list,
             gap,
             ancestors: Vec::new(),
-            wrappers: JsonWrapperSlots {
-                string: self.intern_atom("\0quench:string-value"),
-                number: self.intern_atom("\0quench:number-value"),
-                boolean: self.intern_atom("\0quench:boolean-value"),
-                bigint: self.intern_atom("\0quench:bigint-value"),
-            },
             to_json: self.intern_atom("toJSON"),
         };
         let holder = self.json_object();
@@ -981,24 +965,15 @@ impl<H: Host> Vm<H> {
     }
 
     fn json_boxed_string_or_number(&self, value: Value) -> Option<Value> {
-        for marker in ["\0quench:string-value", "\0quench:number-value"] {
-            let Some(atom) = self.lookup_atom(marker) else {
-                continue;
-            };
-            if let Some(value) = self.own_property(value, atom) {
-                return Some(value);
-            }
-        }
-        None
+        self.boxed_primitive_data(value).and_then(|(brand, payload)| {
+            matches!(brand, crate::BuiltinBrand::StringObject | crate::BuiltinBrand::NumberObject).then_some(payload)
+        })
     }
 
     fn json_gap(&mut self, p: &ResidualProgram, value: Value) -> Result<String, JsError> {
-        let number_box = self
-            .json_boxed_value(value, "\0quench:number-value")
-            .is_some();
-        let string_box = self
-            .json_boxed_value(value, "\0quench:string-value")
-            .is_some();
+        let brand = self.boxed_primitive_data(value).map(|(brand, _)| brand);
+        let number_box = brand == Some(crate::BuiltinBrand::NumberObject);
+        let string_box = brand == Some(crate::BuiltinBrand::StringObject);
         let value = if number_box {
             Value::number(self.to_number(p, value)?)
         } else if string_box {
@@ -1021,11 +996,6 @@ impl<H: Host> Vm<H> {
             ));
         }
         Ok(String::new())
-    }
-
-    fn json_boxed_value(&self, value: Value, marker: &str) -> Option<Value> {
-        self.lookup_atom(marker)
-            .and_then(|atom| self.own_property(value, atom))
     }
 
     fn json_serialize_property(
@@ -1124,7 +1094,7 @@ impl<H: Host> Vm<H> {
             }
             return Ok(Some(JsonValue::Number(value)));
         }
-        let unboxed = self.json_unbox(p, value, &state.wrappers)?;
+        let unboxed = self.json_unbox(p, value)?;
         if unboxed != value {
             return self.json_serialize_value(p, unboxed, state);
         }
@@ -1177,7 +1147,9 @@ impl<H: Host> Vm<H> {
             | Some(Cell::WasmObject { .. })
             | Some(Cell::WasmGlobal { .. })
             | Some(Cell::WasmMemory { .. })
-            | Some(Cell::WasmTable { .. }) => self.json_serialize_object(p, value, state).map(Some),
+            | Some(Cell::WasmTable { .. }) => {
+                self.json_serialize_object(p, value, state).map(Some)
+            }
             Some(Cell::Environment { .. })
             | Some(Cell::Iterator { .. })
             | Some(Cell::ArrayFromAsyncState(_))
@@ -1194,23 +1166,17 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn json_unbox(
-        &mut self,
-        p: &ResidualProgram,
-        value: Value,
-        wrappers: &JsonWrapperSlots,
-    ) -> Result<Value, JsError> {
-        if self.own_property(value, wrappers.string).is_some() {
-            let text = self.to_string(p, value)?;
-            return Ok(self.heap.alloc(Cell::String(text.into())));
+    fn json_unbox(&mut self, p: &ResidualProgram, value: Value) -> Result<Value, JsError> {
+        use crate::BuiltinBrand as B;
+        match self.boxed_primitive_data(value) {
+            Some((B::StringObject, _)) => {
+                let text = self.to_string(p, value)?;
+                Ok(self.heap.alloc(Cell::String(text.into())))
+            }
+            Some((B::NumberObject, _)) => Ok(Value::number(self.to_number(p, value)?)),
+            Some((B::BooleanObject | B::BigIntObject, payload)) => Ok(payload),
+            _ => Ok(value),
         }
-        if self.own_property(value, wrappers.number).is_some() {
-            return Ok(Value::number(self.to_number(p, value)?));
-        }
-        Ok(self
-            .own_property(value, wrappers.boolean)
-            .or_else(|| self.own_property(value, wrappers.bigint))
-            .unwrap_or(value))
     }
 
     fn json_raw_text(&self, value: Value) -> Option<String> {
