@@ -20,12 +20,17 @@ struct ProgramEntry {
     compiled: Option<Option<Rc<super::compiled::CompiledProgram>>>,
     /// The environment the program's root body evaluates in.
     scope: ProgramScope,
+    /// Source provenance is independent of the root binding environment.
+    origin: CompilationOrigin,
     /// Dynamic code (eval, `Function`, host scripts): reclaimed once nothing
     /// can run it. The main program and modules stay for the realm's life.
     reclaimable: bool,
     /// The reclamation pass current at insertion.
     pass: u64,
 }
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum CompilationOrigin { Source, Eval }
 
 /// Where a stored program's root body evaluates, which decides whether its
 /// by-name loads can only reach the global environment.
@@ -37,9 +42,6 @@ enum ProgramScope {
     /// An eval program evaluated in the global environment (indirect eval or a
     /// host script), whose names resolve as script code's do.
     Global,
-    /// A body compiled as Script code but evaluated in a direct eval caller's
-    /// environment, whose bindings its names may denote.
-    Caller,
 }
 
 #[derive(Clone, Copy)]
@@ -151,12 +153,16 @@ impl ProgramStore {
         id
     }
 
-    pub(crate) fn mark_global_scope(&mut self, id: ProgramId) {
-        self.set_scope(id, ProgramScope::Global);
+    pub(super) fn set_origin(&mut self, id: ProgramId, origin: CompilationOrigin) {
+        if let Some(entry) = self.entry_mut(id) { entry.origin = origin; }
     }
 
-    pub(crate) fn mark_caller_scope(&mut self, id: ProgramId) {
-        self.set_scope(id, ProgramScope::Caller);
+    pub(super) fn is_eval(&self, id: ProgramId) -> bool {
+        self.entry(id).is_some_and(|entry| entry.origin == CompilationOrigin::Eval)
+    }
+
+    pub(crate) fn mark_global_scope(&mut self, id: ProgramId) {
+        self.set_scope(id, ProgramScope::Global);
     }
 
     fn set_scope(&mut self, id: ProgramId, scope: ProgramScope) {
@@ -170,7 +176,6 @@ impl ProgramStore {
         self.entry(id).is_some_and(|entry| match entry.scope {
             ProgramScope::Own => entry.residual.kind == crate::bytecode::ProgramKind::Script,
             ProgramScope::Global => true,
-            ProgramScope::Caller => false,
         })
     }
 
@@ -198,6 +203,7 @@ impl ProgramStore {
             .iter()
             .map(|_| std::cell::OnceCell::new())
             .collect();
+        let origin = if program.kind == crate::bytecode::ProgramKind::Eval { CompilationOrigin::Eval } else { CompilationOrigin::Source };
         self.programs.push(Some(ProgramEntry {
             residual: program,
             wasm_signatures: None,
@@ -212,6 +218,7 @@ impl ProgramStore {
             lane_views,
             compiled: None,
             scope: ProgramScope::Own,
+            origin,
             reclaimable: false,
             pass: self.reclaim_passes,
         }));

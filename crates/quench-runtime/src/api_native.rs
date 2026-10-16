@@ -22,6 +22,17 @@ pub enum NativeArithmetic {
     BitwiseAnd,
 }
 
+/// A copied projection of a genuine JavaScript activation. Native helper frames are excluded.
+pub struct SourceStackFrame {
+    /// UTF-16 code units preserve function names, including lone surrogates.
+    pub function_name: Vec<u16>,
+    /// Positive, non-reused compiled-source identity; zero is reserved for no script.
+    pub script_id: u64,
+    pub script_name: String,
+    pub line_number: u32,
+    pub column_number: u32,
+}
+
 /// Private weak host reference, pruned by the core collector before slot reuse.
 /// Its persistent root must be released when the host resource is discarded.
 #[derive(Clone, Copy, Debug)]
@@ -347,6 +358,11 @@ impl<'a, H: Host> NativeContext<'a, H> {
     ) -> Result<bool, RootedError> {
         let result = self.vm.embedding_strict_equal(left, right);
         result.map_err(|error| self.error(error))
+    }
+
+    /// Capture actual JavaScript source frames independently of Error hooks and stack limits.
+    pub fn source_stack_frames(&mut self, limit: usize) -> Vec<SourceStackFrame> {
+        self.vm.embedding_source_stack_frames(limit)
     }
 
     /// Compiler-owned source names of live JavaScript callers, nearest first.
@@ -790,6 +806,13 @@ impl<'a, H: Host> NativeContext<'a, H> {
 
     /// Copy native bytes into an intrinsic Uint8Array with its own fixed backing.
     /// No guest constructor, iterator, or indexed property hook is invoked.
+    /// Compute the real byte offset needed to align an ArrayBuffer's backing
+    /// address. Fixed buffers retain their physical address across snapshots
+    /// and writes; resizable buffers retain it only until they resize.
+    pub fn array_buffer_aligned_offset_rooted(&mut self, root: RootId, alignment: usize) -> Result<usize, RootedError> {
+        self.vm.embedding_array_buffer_aligned_offset(root, alignment).map_err(|error| self.error(error))
+    }
+
     pub fn uint8_array_rooted(&mut self, bytes: &[u8]) -> Result<RootId, RootedError> {
         let result = self.vm.embedding_uint8_array(bytes);
         self.completion(result)

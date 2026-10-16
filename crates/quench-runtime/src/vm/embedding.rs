@@ -1,12 +1,5 @@
 use super::*;
 
-const BOXED_MARKERS: &[(crate::BuiltinBrand, &str)] = &[
-    (crate::BuiltinBrand::BooleanObject, "\0quench:boolean-value"),
-    (crate::BuiltinBrand::NumberObject, "\0quench:number-value"),
-    (crate::BuiltinBrand::StringObject, "\0quench:string-value"),
-    (crate::BuiltinBrand::SymbolObject, "\0quench:symbol-value"),
-    (crate::BuiltinBrand::BigIntObject, "\0quench:bigint-value"),
-];
 const TYPED_BRANDS: &[(crate::BuiltinBrand, TypedArrayKind)] = &[
     (crate::BuiltinBrand::Uint8Array, TypedArrayKind::Uint8),
     (
@@ -36,15 +29,22 @@ fn typed_array_brand(kind: TypedArrayKind) -> crate::BuiltinBrand {
 }
 
 impl<H: Host> Vm<H> {
-    pub(super) fn boxed_primitive_data(
-        &self,
-        value: Value,
-    ) -> Option<(crate::BuiltinBrand, Value)> {
-        BOXED_MARKERS.iter().find_map(|&(brand, marker)| {
-            self.lookup_atom(marker)
-                .and_then(|atom| self.own_property(value, atom))
-                .map(|payload| (brand, payload))
-        })
+    pub(super) fn boxed_primitive_value(&self, value: Value) -> Option<Value> {
+        self.object_data(value)?.boxed_primitive()
+    }
+
+    pub(super) fn boxed_primitive_data(&self, value: Value) -> Option<(crate::BuiltinBrand, Value)> {
+        let payload = self.boxed_primitive_value(value)?;
+        use crate::BuiltinBrand as B;
+        let brand = match self.heap.get(payload) {
+            Some(Cell::String(_)) => B::StringObject,
+            Some(Cell::Symbol(_)) => B::SymbolObject,
+            Some(Cell::BigInt(_)) => B::BigIntObject,
+            _ if payload.as_bool().is_some() => B::BooleanObject,
+            _ if payload.as_number().is_some() => B::NumberObject,
+            _ => unreachable!("primitive wrapper contains primitive data"),
+        };
+        Some((brand, payload))
     }
 
     pub(crate) fn embedding_host_weak_root(&mut self, target: RootId) -> Result<RootId, JsError> {
@@ -287,17 +287,8 @@ impl<H: Host> Vm<H> {
             | B::SymbolObject
             | B::BigIntObject
             | B::BoxedPrimitive => {
-                if value.direct_object_index().is_none() && !matches!(cell, Some(Cell::Object(_))) {
-                    false
-                } else {
-                    BOXED_MARKERS.iter().copied().any(|(candidate, marker)| {
-                        (brand == B::BoxedPrimitive || brand == candidate)
-                            && self
-                                .lookup_atom(marker)
-                                .and_then(|atom| self.own_property(value, atom))
-                                .is_some()
-                    })
-                }
+                self.boxed_primitive_data(value)
+                    .is_some_and(|(actual, _)| brand == B::BoxedPrimitive || brand == actual)
             }
             typed => {
                 let kind = TYPED_BRANDS
@@ -316,6 +307,24 @@ impl<H: Host> Vm<H> {
         right: RootId,
     ) -> Result<bool, JsError> {
         Ok(self.strict_equal(self.embedding_value(left)?, self.embedding_value(right)?))
+    }
+
+    pub(crate) fn embedding_source_stack_frames(&mut self, limit: usize) -> Vec<crate::SourceStackFrame> {
+        let records: Vec<_> = self.frames.iter().rev().filter_map(|frame| {
+            self.source_call_site_record(frame, false).map(|(record, module)| (frame.program, record, module))
+        }).take(limit).collect();
+        records.into_iter().map(|(program, mut record, module)| {
+            Self::map_call_site_source(&mut self.host, &mut record, module);
+            let name = self.call_site_name(&record).map_or_else(Vec::new, |name| name.units().to_vec());
+            let CallSiteLocation::Source { file_name, line, column } = record.location else { unreachable!("source projection"); };
+            crate::SourceStackFrame {
+                function_name: name,
+                script_id: u64::from(program.raw()) + 1,
+                script_name: file_name,
+                line_number: line,
+                column_number: column,
+            }
+        }).collect()
     }
 
     pub(crate) fn embedding_call_stack_source_names(&self) -> Vec<String> {
