@@ -23,6 +23,9 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "parseArgs" (0) => crate::modules::util_parse_args_shared_vm::parse,
         method "utilParseArgsPositional" (1) => crate::modules::util_parse_args_shared_vm::positional_map,
         method "utilTypeCheck" (1) => crate::modules::util_shared_vm::type_check,
+        method "utilProxyDetails" (0) => crate::modules::util_shared_vm::proxy_details,
+        method "utilConstructorName" (0) => crate::modules::util_shared_vm::constructor_name,
+        method "utilPreviewEntries" (0) => crate::modules::util_shared_vm::preview_entries,
         method "availableMemory" (0) => crate::modules::process_memory_shared_vm::available,
         method "constrainedMemory" (0) => crate::modules::process_memory_shared_vm::constrained,
         method "uptime" (0) => crate::modules::process_shared_vm::uptime,
@@ -95,8 +98,6 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "exec" (3) => crate::modules::child_process_exec_shared_vm::exec,
         method "childProcessPromiseExec" (1) => crate::modules::child_process_exec_shared_vm::promise_exec,
         method "childProcessPromiseExecSettled" (3) => crate::modules::child_process_exec_shared_vm::promise_settled,
-        method "utilInspectShallowLabel" (2) => crate::modules::util_shared_vm::inspect_shallow_label,
-        method "utilInspectCustom" (4) => crate::modules::util_shared_vm::inspect_custom,
         method "nodeErrorConstructor" (0) => crate::modules::node_errors_shared_vm::constructor,
         method "nodeErrorBrand" (0) => crate::modules::node_errors_shared_vm::brand,
         method "asyncHookInit" (7) => crate::modules::async_hook_registry_shared_vm::initialize_hook,
@@ -117,12 +118,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "emitterAsyncLink" (2) => crate::modules::emitter_async_resource_shared_vm::link,
         method "emitterAsyncOwner" (1) => crate::modules::emitter_async_resource_shared_vm::owner,
         method "nodeErrorToString" (1) => crate::modules::node_errors_shared_vm::to_string,
-        method "utilInspectBuiltin" (5) => crate::modules::util_inspect_builtin_shared_vm::render,
-        method "utilFormatString" (2) => crate::modules::util_format_string_shared_vm::format,
         method "utilInspectQuote" (1) => crate::modules::util_shared_vm::inspect_quote,
         method "styleText" (3) => crate::modules::util_style_shared_vm::style_text,
-        method "utilColorAliasGet" (0) => crate::modules::util_style_shared_vm::alias_get,
-        method "utilColorAliasSet" (1) => crate::modules::util_style_shared_vm::alias_set,
         method "execFileEvent" (2) => crate::modules::child_process_exec_shared_vm::event,
         method "childProcessShellArgsWarning" (1) => crate::modules::child_process_shared_vm::shell_args_warning,
         method "childProcessForkPlan" (3) => crate::modules::child_process_fork_shared_vm::plan,
@@ -405,6 +402,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "fsPromiseWatchCancel" (0) => crate::modules::fs_watch_shared_vm::promise::cancel,
         method "urlIsURL" (1) => crate::modules::url_shared_vm::is_url,
         method "toPathIfFileURL" (1) => crate::modules::url_shared_vm::to_path_if_file_url,
+        method "fsFileHandleReadParameters" (0) => crate::modules::fs_shared_vm::file_handle_read::parameters,
         method "fsReadFileSync" (2) => crate::modules::fs_shared_vm::read_file_sync,
         method "fsValidateAbortSignal" (1) => crate::modules::fs_shared_vm::validate_read_signal,
         method "fsReadFileComplete" (5) => crate::modules::fs_shared_vm::complete_read_file,
@@ -846,6 +844,10 @@ impl quench_runtime::Host for NodeHost {
     fn stack_source_name(&mut self, source_name: &str, is_module: bool) -> String {
         if is_module {
             self.import_meta_url(source_name)
+        } else if self.eval_builtin_globals && source_name == self.inline_source.compilation_name() {
+            self.inline_source.label().to_owned()
+        } else if let Ok(relative) = std::path::Path::new(source_name).strip_prefix(self.node_library_root.join("lib")) {
+            format!("node:{}", relative.with_extension("").to_string_lossy().replace('\\', "/"))
         } else {
             source_name.to_owned()
         }
@@ -962,6 +964,9 @@ impl quench_runtime::Host for NodeHost {
         }
         crate::modules::timers_shared_vm::install_promisify_globals(context)?;
         commonjs::initialize(context)?;
+        // The original inspector initializes private state using intrinsic
+        // methods. Capture it before guests can freeze replacement methods.
+        commonjs::node_library_export(context, "util.js", "internal/util/inspect.js", "inspect")?;
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_commonjs");
         Ok(())

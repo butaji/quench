@@ -130,9 +130,7 @@ pub(crate) mod console_timing_shared_vm;
 
 pub(crate) mod buffer_write_shared_vm;
 
-pub(crate) mod util_format_string_shared_vm;
 
-pub(crate) mod util_inspect_builtin_shared_vm;
 
 pub(crate) mod buffer_fill_shared_vm;
 
@@ -140,6 +138,7 @@ pub(crate) mod buffer_inspect_shared_vm;
 
 pub(crate) mod encoding_binding_shared_vm;
 
+pub(crate) mod crypto_key_shared_vm;
+
 #[cfg(target_os = "linux")]
 pub(crate) mod os_binding_shared_vm;
-pub(crate) mod crypto_key_shared_vm;
