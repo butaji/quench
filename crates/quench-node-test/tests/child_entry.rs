@@ -9916,3 +9916,13 @@ fn compare_node_file_source_with_args(source: &str, flags: &[&str]) {
     }
     assert_eq!(observations[0].stdout, observations[1].stdout);
 }
+
+#[test]
+fn sdk_vfs_mkdir_realpath_preserve_handler_protocol_and_result_projection() {
+    compare_node_file_source_with_args(include_str!("../node-tests/test-sdk-vfs-mkdir-realpath-protocol.js"), &["--experimental-vfs", "--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn sdk_vfs_open_preserves_flag_mode_validation_and_raw_path_dispatch() {
+    compare_node_file_source_with_args(include_str!("../node-tests/test-sdk-vfs-open-protocol.js"), &["--experimental-vfs", "--expose-internals", "--no-warnings"]);
+}

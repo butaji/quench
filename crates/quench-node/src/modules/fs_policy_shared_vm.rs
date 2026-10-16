@@ -169,3 +169,41 @@ pub(crate) fn vfs_exists_sync(
     let original = context.host_function_data()?;
     context.call_rooted(original, this, args)
 }
+
+/// Install only the public SDK boundaries that dispatch before validation.
+/// Fixed arity comes from both original SDK declarations (fs.js mkdirSync and
+/// realpathSync). The retained fallback keeps all native host behavior.
+pub(super) fn wrap_vfs_pair(
+    context: &mut NativeContext<'_, NodeHost>,
+    original: RootId,
+    name: &str,
+) -> Result<RootId, RootedError> {
+    let name_root = context.string_rooted(name);
+    let data = context.array_rooted(&[original, name_root])?;
+    let wrapper = context.host_function_with_data(
+        crate::host::shared_vm::operation("fsVfsPair"), data,
+    )?;
+    let key = context.string_rooted("name");
+    context.define_data_property_rooted(wrapper, key, name_root, false, false, true)?;
+    Ok(wrapper)
+}
+
+pub(crate) fn vfs_pair(
+    context: &mut NativeContext<'_, NodeHost>,
+    this: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let data = context.host_function_data()?;
+    let original = get(context, data, "0")?;
+    let name_root = get(context, data, "1")?;
+    let name = context.to_string(name_root)?;
+    let path = args.first().copied().unwrap_or_else(|| context.undefined());
+    let options = args.get(1).copied().unwrap_or_else(|| context.undefined());
+    let forwarded = [path, options];
+    if let Some(value) = vfs_read(context, &name, &forwarded)? {
+        // mkdir's SDK handler returns a presence envelope even when its public
+        // result is undefined. realpath returns its actual public result.
+        return if name == "mkdirSync" { get(context, value, "result") } else { Ok(value) };
+    }
+    context.call_rooted(original, this, &forwarded)
+}

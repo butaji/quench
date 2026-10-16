@@ -409,6 +409,13 @@ pub(crate) fn open_sync(
         "parseFileMode",
         &[mode, name, default_mode],
     )?;
+    // SDK fs.js openSync dispatches after flag/mode policy and before path
+    // validation. Keep the original path and the numeric policy roots intact.
+    if let Some(result) = crate::modules::fs_policy_shared_vm::vfs_read(
+        context, "openSync", &[value, flags, mode],
+    )? {
+        return Ok(result);
+    }
     let flags = context.to_number(flags)? as i32;
     let mode = context.to_number(mode)? as u32;
     let value = crate::modules::fs_path::validate(context, value, "path")?;
