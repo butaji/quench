@@ -151,20 +151,33 @@ pub(super) fn invalid_value(
 /// Project the configured SDK fs.js dispatch literally: only null handlers
 /// skip dispatch; direct property lookup preserves inherited/accessor behavior.
 /// Only an undefined handler result selects the native fallback.
+pub(super) fn vfs_handlers(
+    context: &mut NativeContext<'_, NodeHost>,
+) -> Result<Option<RootId>, RootedError> {
+    let state = context.host_mut().shared_state().borrow().fs_policy.vfs_state;
+    let Some(state) = state else { return Ok(None); };
+    let handlers = get(context, state, "handlers")?;
+    Ok((!context.rooted_value(handlers).is_some_and(|v| v.is_null())).then_some(handlers))
+}
+
+pub(super) fn vfs_call(
+    context: &mut NativeContext<'_, NodeHost>,
+    handlers: RootId,
+    name: &str,
+    args: &[RootId],
+) -> Result<Option<RootId>, RootedError> {
+    let function = get(context, handlers, name)?;
+    let result = context.call_rooted(function, handlers, args)?;
+    Ok((!context.rooted_value(result).is_some_and(|v| v.is_undefined())).then_some(result))
+}
+
 pub(super) fn vfs_read(
     context: &mut NativeContext<'_, NodeHost>,
     name: &str,
     args: &[RootId],
 ) -> Result<Option<RootId>, RootedError> {
-    let state = context.host_mut().shared_state().borrow().fs_policy.vfs_state;
-    let Some(state) = state else { return Ok(None); };
-    let handlers = get(context, state, "handlers")?;
-    if context.rooted_value(handlers).is_some_and(|v| v.is_null()) {
-        return Ok(None);
-    }
-    let function = get(context, handlers, name)?;
-    let result = context.call_rooted(function, handlers, args)?;
-    Ok((!context.rooted_value(result).is_some_and(|v| v.is_undefined())).then_some(result))
+    let Some(handlers) = vfs_handlers(context)? else { return Ok(None); };
+    vfs_call(context, handlers, name, args)
 }
 
 pub(crate) fn vfs_exists_sync(
