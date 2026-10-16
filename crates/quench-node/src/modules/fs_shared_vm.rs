@@ -2095,8 +2095,8 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let stat_factory =
         context.evaluate_script_rooted(STAT_SYNC_API, "node:fs/shared-stat-sync.js")?;
     let undefined = context.undefined();
-    let stat_sync = context.call_rooted(stat_factory, undefined, &[stat_host])?;
-    let stat_sync = metadata_public::wrap(context, stat_sync, "statSync")?;
+    let stat_continuation = context.call_rooted(stat_factory, undefined, &[stat_host])?;
+    let stat_sync = metadata_public::wrap(context, stat_continuation, "statSync")?;
     set(context, module, "statSync", stat_sync)?;
     let statfs_host = context.host_function(crate::host::shared_vm::operation("fsStatfsSync"))?;
     let statfs_factory =
@@ -2119,7 +2119,8 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let exists_api = context.call_rooted(
         exists_factory,
         undefined,
-        &[stat_sync, access_host, chmod_host, fchmod_host],
+        // existsSync falls through to the filesystem, not another VFS dispatch.
+        &[stat_continuation, access_host, chmod_host, fchmod_host],
     )?;
     let exists = get(context, exists_api, "exists")?;
     let exists_sync = get(context, exists_api, "existsSync")?;
