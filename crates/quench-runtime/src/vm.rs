@@ -960,6 +960,9 @@ struct Shape {
     /// `PROTOTYPE_SLOT_UNKNOWN` until first derived, `PROTOTYPE_SLOT_NONE` when absent or an
     /// accessor. Dictionary shapes never memoize.
     prototype_slot: std::cell::Cell<u32>,
+    /// Memo of whether this immutable shape's keys include an array-index name: `None` until
+    /// first derived (`Vm::shape_has_index_key`). Dictionary shapes never memoize.
+    index_keys: std::cell::Cell<Option<bool>>,
 }
 // Every object layout and property key costs one shape; keep the record compact.
 #[cfg(target_pointer_width = "64")]
@@ -1008,6 +1011,7 @@ impl Shape {
             lookup_index: OnceCell::new(),
             long_walks: std::cell::Cell::new(0),
             prototype_slot: std::cell::Cell::new(PROTOTYPE_SLOT_UNKNOWN),
+            index_keys: std::cell::Cell::new(None),
         }
     }
 }
