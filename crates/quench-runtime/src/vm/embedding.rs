@@ -1,12 +1,5 @@
 use super::*;
 
-const BOXED_MARKERS: &[(crate::BuiltinBrand, &str)] = &[
-    (crate::BuiltinBrand::BooleanObject, "\0quench:boolean-value"),
-    (crate::BuiltinBrand::NumberObject, "\0quench:number-value"),
-    (crate::BuiltinBrand::StringObject, "\0quench:string-value"),
-    (crate::BuiltinBrand::SymbolObject, "\0quench:symbol-value"),
-    (crate::BuiltinBrand::BigIntObject, "\0quench:bigint-value"),
-];
 const TYPED_BRANDS: &[(crate::BuiltinBrand, TypedArrayKind)] = &[
     (crate::BuiltinBrand::Uint8Array, TypedArrayKind::Uint8),
     (
@@ -36,15 +29,22 @@ fn typed_array_brand(kind: TypedArrayKind) -> crate::BuiltinBrand {
 }
 
 impl<H: Host> Vm<H> {
-    pub(super) fn boxed_primitive_data(
-        &self,
-        value: Value,
-    ) -> Option<(crate::BuiltinBrand, Value)> {
-        BOXED_MARKERS.iter().find_map(|&(brand, marker)| {
-            self.lookup_atom(marker)
-                .and_then(|atom| self.own_property(value, atom))
-                .map(|payload| (brand, payload))
-        })
+    pub(super) fn boxed_primitive_value(&self, value: Value) -> Option<Value> {
+        self.object_data(value)?.boxed_primitive()
+    }
+
+    pub(super) fn boxed_primitive_data(&self, value: Value) -> Option<(crate::BuiltinBrand, Value)> {
+        let payload = self.boxed_primitive_value(value)?;
+        use crate::BuiltinBrand as B;
+        let brand = match self.heap.get(payload) {
+            Some(Cell::String(_)) => B::StringObject,
+            Some(Cell::Symbol(_)) => B::SymbolObject,
+            Some(Cell::BigInt(_)) => B::BigIntObject,
+            _ if payload.as_bool().is_some() => B::BooleanObject,
+            _ if payload.as_number().is_some() => B::NumberObject,
+            _ => unreachable!("primitive wrapper contains primitive data"),
+        };
+        Some((brand, payload))
     }
 
     pub(crate) fn embedding_host_weak_root(&mut self, target: RootId) -> Result<RootId, JsError> {
@@ -287,17 +287,8 @@ impl<H: Host> Vm<H> {
             | B::SymbolObject
             | B::BigIntObject
             | B::BoxedPrimitive => {
-                if value.direct_object_index().is_none() && !matches!(cell, Some(Cell::Object(_))) {
-                    false
-                } else {
-                    BOXED_MARKERS.iter().copied().any(|(candidate, marker)| {
-                        (brand == B::BoxedPrimitive || brand == candidate)
-                            && self
-                                .lookup_atom(marker)
-                                .and_then(|atom| self.own_property(value, atom))
-                                .is_some()
-                    })
-                }
+                self.boxed_primitive_data(value)
+                    .is_some_and(|(actual, _)| brand == B::BoxedPrimitive || brand == actual)
             }
             typed => {
                 let kind = TYPED_BRANDS

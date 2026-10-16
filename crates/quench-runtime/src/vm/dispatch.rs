@@ -826,6 +826,9 @@ impl<H: Host> Vm<H> {
                     .pop()
                     .ok_or_else(|| JsError("iterator cleanup stack underflow".into()))?;
             }
+            Op::SetFunctionDebugName => {
+                self.set_function_debug_name(self.read(f, i.register_a()), i.atom_index());
+            }
             Op::SetFunctionName => {
                 self.set_function_name(p, self.read(f, i.register_a()), i.atom_index())?;
             }
@@ -1434,7 +1437,7 @@ impl<H: Host> Vm<H> {
                     if let Some((id, env, this)) = self.inline_construct_target(p, f, callee) {
                         let arguments: *const [Value] = self.register_window(f, window);
                         self.frames[f].pc = *pc;
-                        self.construct_target = Some(callee);
+                        self.construct_target = Some(ConstructionTarget { callee, new_target: callee });
                         // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
                         let pushed = self.push_general_user_frame(
                             p,

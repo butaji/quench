@@ -369,3 +369,14 @@ fn nested_class_in_computed_key_keeps_outer_private_names() {
         ["42", "0", "1"]
     );
 }
+
+#[test]
+fn generator_return_inside_loop_head_pattern_closes_pattern_iterator() {
+    assert_eq!(
+        output("var log = []; function source(name) { return { [Symbol.iterator]() { return { next() { log.push(name + ':next'); return { done: false }; }, return() { log.push(name + ':return'); return {}; } }; } }; } function* plain() { for ([ {} = yield ] of [source('a')]) {} } var g = plain(); g.next(); print(JSON.stringify(g.return(7)) + ' ' + log.join()); log = []; function* guarded() { try { for (var [ x = yield ] of [source('b')]) {} } finally { log.push('finally'); } } g = guarded(); g.next(); print(JSON.stringify(g.return(8)) + ' ' + log.join()); "),
+        [
+            "{\"value\":7,\"done\":true} a:next,a:return",
+            "{\"value\":8,\"done\":true} b:next,b:return,finally"
+        ]
+    );
+}

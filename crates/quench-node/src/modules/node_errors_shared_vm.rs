@@ -4,6 +4,50 @@ use super::event_constructor_shared_vm::get;
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
+const NODE_ERROR_BRAND: &str = "\0node/errors/privateBrand";
+pub(crate) const DEFAULT_STACK_FORMATTER: &str = "\0node/errors/defaultStackFormatter";
+pub(crate) fn install_stack_formatter(
+    context: &mut NativeContext<'_, NodeHost>,
+) -> Result<(), RootedError> {
+    let callback = crate::host::shared_vm::commonjs::node_library_export(
+        context,
+        "internal/errors.js",
+        "internal/errors.js",
+        "prepareStackTraceCallback",
+    )?;
+    let prepare = crate::host::shared_vm::commonjs::node_library_export(
+        context,
+        "internal/errors.js",
+        "internal/errors.js",
+        "ErrorPrepareStackTrace",
+    )?;
+    let global = context.global_root()?;
+    let constructor = get(context, global, "Error")?;
+    let key = context.string_rooted("prepareStackTrace");
+    context.define_data_property_rooted(constructor, key, prepare, true, false, true)?;
+    let brand = crate::host::shared_vm::commonjs::node_library_export(
+        context,
+        "internal/errors.js",
+        "internal/errors.js",
+        "kIsNodeError",
+    )?;
+    let brand = context.retain(brand)?;
+    context
+        .host_mut()
+        .shared_state()
+        .borrow_mut()
+        .builtin_cache
+        .insert(NODE_ERROR_BRAND.into(), brand);
+    let callback = context.retain(callback)?;
+    context
+        .host_mut()
+        .shared_state()
+        .borrow_mut()
+        .builtin_cache
+        .insert(DEFAULT_STACK_FORMATTER.into(), callback);
+    Ok(())
+}
+
 const INVALID_ARGUMENT_TYPE: &str = "ERR_INVALID_ARG_TYPE";
 pub(crate) struct NodeErrorApi {
     brand: RootId,
@@ -53,7 +97,8 @@ fn coded_error_prototype(
         return Ok(prototype);
     }
     if state.borrow().node_error_api.is_none() {
-        let brand = context.symbol_rooted(Some("kIsNodeError"));
+        let brand = state.borrow().builtin_cache.get(NODE_ERROR_BRAND).copied();
+        let brand = brand.unwrap_or_else(|| context.symbol_rooted(Some("kIsNodeError")));
         let brand = context.retain(brand)?;
         state.borrow_mut().node_error_api = Some(NodeErrorApi {
             brand,
