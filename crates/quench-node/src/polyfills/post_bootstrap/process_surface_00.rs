@@ -129,7 +129,6 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
     globalThis.process.versions.brotli ??= "1.1.0";
     globalThis.process.versions.nbytes ??= "1.0.0";
     globalThis.process.versions.cldr ??= "45.0";
-    globalThis.process.versions.icu ??= "75.1";
     globalThis.process.versions.nghttp2 ??= "1.61.0";
     globalThis.process.versions.llhttp ??= "9.2.1";
     globalThis.process.versions.nghttp3 ??= "1.3.0";
