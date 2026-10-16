@@ -9830,3 +9830,18 @@ fn process_native_cpu_resource_and_rss_facts_use_sdk_validation_and_live_os_data
 fn process_default_warning_listener_preserves_sdk_source_without_internal_exposure() {
     compare_node_source_with_args(include_str!("../node-tests/test-process-warning-listener-source.js"), &[]);
 }
+
+#[test]
+fn sdk_test_context_survives_native_ticks_timers_and_immediate_callbacks() {
+    compare_node_source_with_args(include_str!("../node-tests/test-sdk-test-context-callbacks.js"), &["--no-warnings", "--test-reporter=dot"]);
+}
+
+#[test]
+fn native_callback_uncaught_handlers_observe_resource_before_after_hook_and_scope_restore() {
+    compare_node_source_with_args(include_str!("../node-tests/test-async-callback-error-scope.js"), &[]);
+}
+
+#[test]
+fn native_tick_resources_own_mutable_callback_slots_and_complete_actual_hook_lifecycle() {
+    compare_node_source_with_args(include_str!("../node-tests/test-tick-resource-canonical-slots.js"), &[]);
+}

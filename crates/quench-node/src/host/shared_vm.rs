@@ -133,6 +133,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "asyncExecutionResource" (0) => crate::modules::async_hooks_shared_vm::execution_resource,
         method "asyncExternalInit" (3) => crate::modules::async_hooks_shared_vm::external_init,
         method "asyncPromisePrune" (0) => crate::modules::async_hooks_shared_vm::prune_promises,
+        method "asyncTickInvoke" (0) => crate::modules::shared_event_loop::invoke_tick,
+        method "asyncHookDispatch" (2) => crate::modules::async_hook_registry_shared_vm::dispatch,
         method "asyncDestroyDispatch" (0) => crate::modules::async_hooks_shared_vm::destroy_dispatch,
         method "emitterAsyncConstructor" (0) => crate::modules::emitter_async_resource_shared_vm::constructor,
         method "emitterAsyncPrepare" (2) => crate::modules::emitter_async_resource_shared_vm::prepare,

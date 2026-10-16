@@ -24,7 +24,7 @@ const STRING_OPTIONS: &[(&str, &str)] = &[
     ("--diagnostic-dir", ""),
 ];
 fn canonical_option(option: &str) -> &str { if option == "--report-directory" { "--report-dir" } else { option } }
-pub(crate) fn takes_string_value(option: &str) -> bool { STRING_OPTIONS.iter().any(|(name, _)| *name == canonical_option(option)) || EMPTY_STRING_LIST_OPTIONS.contains(&option) }
+pub(crate) fn takes_string_value(option: &str) -> bool { STRING_OPTIONS.iter().any(|(name, _)| *name == canonical_option(option)) || EMPTY_STRING_LIST_OPTIONS.contains(&canonical_option(option)) }
 #[derive(Clone, Debug)]
 pub(crate) struct CliOptions {
     booleans: std::collections::BTreeMap<&'static str, bool>,
