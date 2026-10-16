@@ -458,6 +458,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "fsBindingReaddir" (0) => crate::modules::fs_directory_shared_vm::readdir,
         method "fsBindingReaddirRecursive" (0) => crate::modules::fs_directory_shared_vm::readdir_recursive,
         method "fsPromisesGlobInitialize" (0) => crate::modules::fs_shared_vm::initialize_promises_glob_policy,
+        method "fsVfsPair" (2) => crate::modules::fs_policy_shared_vm::vfs_pair,
         method "fsVfsExistsSync" (1) => crate::modules::fs_policy_shared_vm::vfs_exists_sync,
         method "fsReadFileSync" (2) => crate::modules::fs_shared_vm::read_file_sync,
         method "fsValidateAbortSignal" (1) => crate::modules::fs_shared_vm::validate_read_signal,

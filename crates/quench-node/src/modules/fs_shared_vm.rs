@@ -2178,6 +2178,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         context.evaluate_script_rooted(REALPATH_SYNC_API, "node:fs/shared-realpath-sync.js")?;
     let undefined = context.undefined();
     let realpath_sync = context.call_rooted(realpath_sync_factory, undefined, &[realpath_host])?;
+    let realpath_sync = super::fs_policy_shared_vm::wrap_vfs_pair(context, realpath_sync, "realpathSync")?;
     set(context, module, "realpathSync", realpath_sync)?;
     let native = context.string_rooted("native");
     if !context.set_property_rooted(realpath_sync, native, realpath_sync, realpath_sync)? {
@@ -2199,6 +2200,9 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let rm = context.call_rooted(factory, undefined, &[rm])?;
     set(context, module, "rm", rm)?;
     sync::install(context, module)?;
+    let mkdir_sync = get(context, module, "mkdirSync")?;
+    let mkdir_sync = super::fs_policy_shared_vm::wrap_vfs_pair(context, mkdir_sync, "mkdirSync")?;
+    set(context, module, "mkdirSync", mkdir_sync)?;
     let fsync_sync = get(context, module, "fsyncSync")?;
     let fdatasync_sync = get(context, module, "fdatasyncSync")?;
     let async_sync_factory =
