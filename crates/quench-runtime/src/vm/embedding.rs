@@ -1083,6 +1083,18 @@ impl<H: Host> Vm<H> {
         self.with_embedding_realm(global, |vm| vm.evaluate_embedding_specialized_script_with_origin(source, name, Some(origin)))
     }
 
+    pub(crate) fn prepare_embedding_specialized_script_in_realm_with_origin(
+        &mut self, global: RootId, source: &str, name: &str, origin: (u32, u32),
+    ) -> Result<crate::PreparedScript, JsError> {
+        self.with_embedding_realm(global, |vm| vm.prepare_embedding_specialized_script(source, name, Some(origin)))
+    }
+
+    pub(crate) fn evaluate_embedding_prepared_script_in_realm(
+        &mut self, global: RootId, prepared: &crate::PreparedScript,
+    ) -> Result<Value, JsError> {
+        self.with_embedding_realm(global, |vm| vm.evaluate_embedding_prepared_script(prepared))
+    }
+
     fn with_embedding_realm<T>(
         &mut self, global: RootId, run: impl FnOnce(&mut Self) -> Result<T, JsError>,
     ) -> Result<T, JsError> {

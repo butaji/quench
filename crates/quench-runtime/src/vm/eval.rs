@@ -221,6 +221,13 @@ impl<H: Host> Vm<H> {
         name: &str,
         origin: Option<(u32, u32)>,
     ) -> Result<Value, JsError> {
+        let prepared = self.prepare_embedding_specialized_script(source, name, origin)?;
+        self.evaluate_embedding_prepared_script(&prepared)
+    }
+
+    pub(crate) fn prepare_embedding_specialized_script(
+        &mut self, source: &str, name: &str, origin: Option<(u32, u32)>,
+    ) -> Result<crate::PreparedScript, JsError> {
         let program = self.embedding_program()?;
         let mut residual = crate::Engine::specialize_script_with_atom_prefix(source, name, &*self)
             .map_err(|diagnostics| {
@@ -240,7 +247,22 @@ impl<H: Host> Vm<H> {
             source.line_offset = line_offset;
             source.column_offset = column_offset;
         }
-        let Some(program_id) = self.store_dynamic_program(residual) else {
+        let residual = self.intern_program_atoms(residual);
+        Ok(crate::PreparedScript { program: Rc::new(residual) })
+    }
+
+    pub(crate) fn prepared_script_is_current(&self, prepared: &crate::PreparedScript) -> bool {
+        prepared.program.atoms.belongs_to(&self.atom_sequence)
+    }
+
+    pub(crate) fn evaluate_embedding_prepared_script(
+        &mut self, prepared: &crate::PreparedScript,
+    ) -> Result<Value, JsError> {
+        let program = self.embedding_program()?;
+        if !self.prepared_script_is_current(prepared) {
+            return Err(self.type_error(&program, "prepared Script belongs to a different runtime state".into()));
+        }
+        let Some(program_id) = self.store_dynamic_program_shared(prepared.program.clone()) else {
             return Err(self.type_error(&program, "dynamic program store is full".into()));
         };
         self.run_global_eval_program(&program, program_id)
