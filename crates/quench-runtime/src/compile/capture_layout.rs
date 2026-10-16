@@ -8,6 +8,11 @@ pub(super) fn apply(functions: &mut [Function], atoms: &CompilerAtoms<'_>) {
 
     for (id, function) in functions.iter_mut().enumerate() {
         if !has_closure(function) {
+            // Its locals stay where they are; a per-iteration copy no descendant can observe
+            // (no captured fresh binding, no dynamic name resolution) still does nothing.
+            if id != 0 && !dynamic_ancestors[id] && !function.has_dynamic_scope_access() {
+                remove_unobservable_clones(function, &captured[id]);
+            }
             continue;
         }
 
