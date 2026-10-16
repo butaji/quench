@@ -2019,10 +2019,23 @@ pub(crate) struct ProgramSource {
     pub(crate) column_offset: u32,
 }
 
+/// Starts of JavaScript source lines, including an empty line after a final terminator.
+pub(crate) fn source_line_starts(text: &str) -> impl Iterator<Item = usize> + '_ {
+    std::iter::once(0).chain(text.char_indices().filter_map(|(index, character)| {
+        let crlf_prefix = character == '\r' && text.as_bytes().get(index + 1) == Some(&b'\n');
+        (matches!(character, '\n' | '\r' | '\u{2028}' | '\u{2029}') && !crlf_prefix)
+            .then_some(index + character.len_utf8())
+    }))
+}
+
 impl ProgramSource {
     pub(crate) fn source_line(&self, line: u32) -> Option<&str> {
         let compiled_line = line.checked_add(self.line_offset)?.checked_sub(1)?;
-        let text = self.text.lines().nth(compiled_line as usize)?;
+        let mut starts = source_line_starts(&self.text);
+        let start = starts.nth(compiled_line as usize)?;
+        let end = starts.next().unwrap_or(self.text.len());
+        let text = self.text.get(start..end)?
+            .trim_end_matches(['\r', '\n', '\u{2028}', '\u{2029}']);
         if line != 1 {
             return Some(text);
         }
