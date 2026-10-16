@@ -128,7 +128,7 @@ impl<H: Host> Vm<H> {
         };
         let text = source_text.host_string().to_owned();
         let inherited_strict = self.direct_eval
-            && (self.in_class_field_initializer(p)
+            && (self.in_class_initializer(p)
                 || self.frames.last()
                     .and_then(|frame| p.functions.get(frame.function as usize))
                     .is_some_and(|function| function.strict));
@@ -311,7 +311,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         program_id: super::ProgramId,
     ) -> Result<Value, JsError> {
-        let field_initializer = self.direct_eval && self.in_class_field_initializer(p);
+        let class_initializer = self.direct_eval && self.in_class_initializer(p);
         let residual = self
             .programs
             .get(program_id)
@@ -446,8 +446,8 @@ impl<H: Host> Vm<H> {
             } else {
                 Value::NULL
             };
-            let parent = if direct_eval && (root_scope || field_initializer) {
-                let dynamic_bindings = if field_initializer {
+            let parent = if direct_eval && (root_scope || class_initializer) {
+                let dynamic_bindings = if class_initializer {
                     vec![
                         (self.runtime_atoms.new_target, Value::UNDEFINED),
                         (
@@ -551,31 +551,31 @@ impl<H: Host> Vm<H> {
         source: &str,
     ) -> Result<(), JsError> {
         if self.direct_eval
-            && self.in_class_field_initializer(p)
-            && crate::Engine::field_eval_references_arguments(source)
+            && self.in_class_initializer(p)
+            && crate::Engine::class_eval_references_arguments(source)
         {
             return self
                 .syntax_error_result(
                     p,
-                    "arguments is not allowed in class field initializer eval",
+                    "'arguments' is not allowed in class field initializer or static initialization block",
                 )
                 .map(drop);
         }
         Ok(())
     }
 
-    fn in_class_field_initializer(&mut self, p: &ResidualProgram) -> bool {
+    fn in_class_initializer(&mut self, p: &ResidualProgram) -> bool {
         self.frames
             .last()
             .and_then(|frame| p.functions.get(frame.function as usize))
-            .is_some_and(|function| function.class_field_initializer)
+            .is_some_and(|function| function.class_initializer)
     }
 
     fn direct_eval_function_context(&mut self, p: &ResidualProgram) -> bool {
         if !self.direct_eval {
             return false;
         }
-        if self.in_class_field_initializer(p) {
+        if self.in_class_initializer(p) {
             return true;
         }
         let new_target = self.runtime_atoms.new_target;
@@ -727,10 +727,10 @@ impl<H: Host> Vm<H> {
             .functions
             .get(self.frames[frame].function as usize)?
             .super_home_atom;
-        let field_initializer = self.in_class_field_initializer(p);
+        let class_initializer = self.in_class_initializer(p);
         let atom = self.runtime_atoms.lexical_this;
         let super_calls = home_atom.is_some()
-            && !field_initializer
+            && !class_initializer
             && self
                 .lexical_this_owner(frame, atom)
                 .and_then(|(program, function, _)| {
@@ -746,7 +746,7 @@ impl<H: Host> Vm<H> {
             in_function: self.direct_eval_function_context(p),
             home_atom,
             super_calls,
-            field_initializer,
+            class_initializer,
         })
     }
 

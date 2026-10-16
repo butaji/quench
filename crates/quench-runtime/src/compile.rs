@@ -187,7 +187,7 @@ pub(crate) struct EvalContext {
     pub in_function: bool,
     pub home_atom: Option<Atom>,
     pub super_calls: bool,
-    pub field_initializer: bool,
+    pub class_initializer: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -268,7 +268,7 @@ impl Engine {
         })
     }
 
-    pub(crate) fn field_eval_references_arguments(source: &str) -> bool {
+    pub(crate) fn class_eval_references_arguments(source: &str) -> bool {
         let context = eval_context_source(source, &[], true);
         let allocator = Allocator::with_capacity(context.len());
         let mut parsed = annex_b_targets::parse_program(&allocator, &context, SourceType::script());
@@ -276,7 +276,7 @@ impl Engine {
             return false; // The normal eval compiler owns syntax and exhaustion errors.
         }
         eval_method_body(&mut parsed.program, false)
-            .is_some_and(|body| early::field_eval_references_arguments(&body.statements))
+            .is_some_and(|body| early::class_eval_references_arguments(&body.statements))
     }
 
     pub(crate) fn static_module_has_early_error(source: &str) -> bool {
@@ -1444,7 +1444,7 @@ struct FunctionOptions<'a> {
     class_constructor: bool,
     derived_constructor: bool,
     non_constructible: bool,
-    class_field_initializer: bool,
+    class_initializer: bool,
     instance_fields: Option<&'a [ClassField<'a>]>,
     instance_private_methods: Option<&'a [Atom]>,
     super_static: bool,
@@ -1759,9 +1759,9 @@ impl<'a> Compiler<'a> {
                 class_constructor: false,
                 derived_constructor: false,
                 non_constructible: false,
-                class_field_initializer: self
+                class_initializer: self
                     .eval_context
-                    .is_some_and(|context| context.field_initializer),
+                    .is_some_and(|context| context.class_initializer),
                 instance_fields: None,
                 instance_private_methods: None,
                 super_static: false,
@@ -2377,7 +2377,7 @@ impl<'a> Compiler<'a> {
             && !options.generator
             && !options.class_constructor
             && !options.derived_constructor
-            && !options.class_field_initializer
+            && !options.class_initializer
             && !options.implicit_super
             && options.with_depth == 0
             && self.eval_context.is_none()
@@ -2447,7 +2447,7 @@ impl<'a> Compiler<'a> {
                     .eval_context
                     .is_some_and(|context| context.super_calls));
         function.strict = root_strict;
-        function.class_field_initializer = options.class_field_initializer;
+        function.class_initializer = options.class_initializer;
         if capture_script_completion {
             let completion = function.reg();
             // Directive expressions precede the body and contribute its initial completion.
@@ -2564,7 +2564,7 @@ impl<'a> Compiler<'a> {
             constructible: !options.non_constructible
                 && !options.async_function
                 && !options.generator,
-            class_field_initializer: options.class_field_initializer,
+            class_initializer: options.class_initializer,
             parameter_eval_arguments_error: function.parameter_eval_arguments_error,
             arguments_slot,
             simple_parameters,
