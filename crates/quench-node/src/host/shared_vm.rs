@@ -649,6 +649,10 @@ pub(crate) fn operation(name: &str) -> HostFunctionId {
 }
 
 impl quench_runtime::Host for NodeHost {
+    fn proper_tail_calls(&self) -> bool {
+        false
+    }
+
     fn write_line(&mut self, text: &str) {
         let output = self.shared_state().borrow().output.clone();
         match output {
