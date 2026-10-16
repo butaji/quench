@@ -9589,5 +9589,14 @@ fn indirect_eval_script_identity_preserves_origins_fresh_values_templates_and_re
 #[test]
 fn fs_glob_uses_original_policy_and_real_dirent_types_across_all_three_apis() {
     compare_node_source_with_args(include_str!("../node-tests/test-fs-original-glob-policy.js"), &[]);
+}
 
+#[test]
+fn function_constructor_default_debug_names_remain_distinct_from_public_names_and_descriptors() {
+    compare_node_source_with_args(include_str!("../node-tests/test-function-constructor-debug-names.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn function_prototype_info_lookups_preserve_native_accessor_layout_and_descriptor_transitions() {
+    compare_node_source_with_args(include_str!("../node-tests/test-function-prototype-info-lookups.js"), &["--expose-internals", "--no-warnings"]);
 }
