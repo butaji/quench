@@ -20,3 +20,7 @@ All32 fixed-work instruction captures are valid and identities unchanged; all8 g
 | splay | -10.7414% | pass |
 
 These subsets do not establish total Node parity. The prior short Express JSON load reported249timeouts; no framework throughput victory or authored optimization is claimed.
+
+## Optimized-build fix forward
+
+The published heap-census foundation initially failed a normal optimized host build because its iterator and occupied-slice helper still had debug/test/profile gates. The retained debug/profile/Core checks did not cover that configuration. The minimal fix removes the three gates in `heap/slots.rs`; an explicit optimized library check on the isolated published source plus this fix passes (11.00s). The larger live-memory API work was stashed and excluded. Initial failures and corrected check logs are retained.
