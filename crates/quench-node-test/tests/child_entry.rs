@@ -8283,3 +8283,236 @@ out[2]=target[0];console.log(JSON.stringify(out));
 "#,
     );
 }
+
+#[cfg(target_os = "linux")]
+const PROCESS_MEMORY_SOURCE: &str = r#"
+const fs=require('node:fs'),os=require('node:os'),assert=require('node:assert'),processModule=require('node:process'),out=[];
+const physical=os.totalmem();
+for(const name of ['availableMemory','constrainedMemory']){
+ const fn=processModule[name],descriptor=Object.getOwnPropertyDescriptor(processModule,name);
+ out.push([name,fn.name,fn.length,Object.getOwnPropertyNames(fn),descriptor.writable,descriptor.enumerable,descriptor.configurable]);
+ const value=Reflect.apply(fn,{unrelated:true},[{valueOf(){throw Error('argument coercion')}}]);
+ assert(Number.isFinite(value)&&value>=0);
+ if(name==='availableMemory')assert(value<=physical);
+ else out.push(['constraint',value]);
+ assert.throws(()=>Reflect.construct(fn,[]),TypeError);
+}
+const original=fs.readFileSync;fs.readFileSync=()=>{throw Error('public fs hook')};
+try{assert.strictEqual(typeof processModule.availableMemory(),'number');assert.strictEqual(typeof processModule.constrainedMemory(),'number');out.push('native facts')}finally{fs.readFileSync=original}
+console.log(JSON.stringify(out));
+"#;
+#[cfg(target_os = "linux")]
+#[test]
+fn process_memory_reports_kernel_constraints_and_native_function_metadata() {
+    compare_node_stream_source(PROCESS_MEMORY_SOURCE);
+}
+#[cfg(target_os = "linux")]
+#[test]
+fn process_memory_constraints_respect_inherited_data_limits() {
+    use std::os::unix::process::CommandExt;
+    const DATA_LIMIT_BYTES: u64 = 12 * 1024 * 1024 * 1024;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", PROCESS_MEMORY_SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        // The lower soft limit applies only to this test child, leaving the runner unchanged.
+        unsafe {
+            command.pre_exec(|| {
+                let mut limit = std::mem::MaybeUninit::<libc::rlimit>::uninit();
+                if libc::getrlimit(libc::RLIMIT_DATA, limit.as_mut_ptr()) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                let mut limit = limit.assume_init();
+                limit.rlim_cur = limit.rlim_cur.min(DATA_LIMIT_BYTES as libc::rlim_t);
+                if libc::setrlimit(libc::RLIMIT_DATA, &limit) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(
+            observation.stderr.is_empty(),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn os_memory_functions_report_native_values_names_and_primitive_conversion() {
+    compare_node_stream_source(
+        r#"
+const assert=require('node:assert'),OriginalSymbol=globalThis.Symbol;globalThis.Symbol=function(){throw Error('public Symbol')};let os;
+try{os=require('node:os')}finally{globalThis.Symbol=OriginalSymbol}
+const out=[],physical=os.totalmem();
+for(const name of ['freemem','totalmem']){
+ const f=os[name],d=Object.getOwnPropertyDescriptor(f,Symbol.toPrimitive),hook=f[Symbol.toPrimitive];
+ const value=f();assert(Number.isFinite(value)&&value>=0&&value<=physical);
+ out.push([name,f.name,f.length,Object.getOwnPropertyNames(f),Reflect.ownKeys(f).map(String),d.writable,d.enumerable,d.configurable,hook.name,hook.length,hook===f]);
+ assert.strictEqual(Function.prototype.toString.call(f),'function () { [native code] }');
+ assert.strictEqual(f.valueOf(),f);assert.throws(()=>Reflect.construct(f,[]),TypeError);
+ assert.strictEqual(typeof +f,'number');assert(/^\d+$/.test(String(f)));
+ const original=os[name];os[name]=()=>-1;
+ try{const number=original[Symbol.toPrimitive].call({unrelated:true},Symbol('hint'));assert(number>=0&&number<=physical);out.push('captured native value')}finally{os[name]=original}
+}
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn os_tmpdir_uses_live_nonempty_environment_precedence_and_removes_one_slash() {
+    compare_node_stream_source(
+        r#"
+const os=require('node:os'),out=[];
+for(const values of [[undefined,undefined,undefined],['','/tmp-value','/temp-value'],['','','/temp-value'],['','',''],['a///','b','c'],['/','b','c'],['//','b','c'],['a\\','b','c'],['relative/','b','c'],['😀///','b','c']]){
+ for(const [i,key] of ['TMPDIR','TMP','TEMP'].entries()){if(values[i]===undefined)delete process.env[key];else process.env[key]=values[i]}
+ out.push(os.tmpdir());
+}
+const environment=process.env;process.env={TMPDIR:'/replacement'};
+try{out.push(os.tmpdir())}finally{process.env=environment}
+process.env.TMPDIR='';process.env.TMP='';process.env.TEMP='';process.env.TEMPDIR='/ignored';out.push(os.tmpdir());
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn os_canonical_exports_reflection_constants_and_stable_host_values_match_node() {
+    compare_node_stream_source(
+        r#"
+const os=require('node:os'),out=[];
+for(const key of Reflect.ownKeys(os)){
+ const d=Object.getOwnPropertyDescriptor(os,key),v=os[key];
+ out.push([String(key),d.writable,d.enumerable,d.configurable,typeof v]);
+ if(typeof v==='function'){
+  let constructible=true;try{Reflect.construct(Object,[],v)}catch{constructible=false}
+  out.push([v.name,v.length,constructible,Reflect.ownKeys(v).map(String),Object.getOwnPropertyNames(v).map(k=>{const d=Object.getOwnPropertyDescriptor(v,k);return[k,d.writable,d.enumerable,d.configurable]}),Function.prototype.toString.call(v)]);
+  if(v[Symbol.toPrimitive])out.push([v[Symbol.toPrimitive].name,v[Symbol.toPrimitive].length,Function.prototype.toString.call(v[Symbol.toPrimitive])]);
+ }
+}
+out.push(os.constants, Object.getPrototypeOf(os.constants)===null);
+for(const k of ['dlopen','errno','signals','priority'])out.push([k,Object.getPrototypeOf(os.constants[k])===null,Object.isFrozen(os.constants[k])]);
+out.push(os.networkInterfaces(),os.userInfo(),os.homedir(),os.hostname(),os.machine(),os.version(),os.release(),os.type(),os.arch(),os.platform(),os.endianness(),os.availableParallelism());
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn os_user_info_reads_account_records_and_native_encodings_without_public_hooks() {
+    compare_node_stream_source(
+        r#"
+const os=require('node:os'),out=[];
+const original=Buffer.from;Buffer.from=()=>{throw Error('public Buffer.from')};
+try{
+ for(const encoding of [undefined,'utf8','UTF-8','hex','base64','base64url','ascii','latin1','binary','utf16le','ucs2','buffer','BUFFER','not-encoding',null,0,false,{},new String('hex')]){
+  const events=[],value=os.userInfo({get encoding(){events.push('encoding');return encoding}});
+  out.push([events,Object.getPrototypeOf(value)===null,Object.keys(value),value]);
+ }
+ for(const options of [undefined,null,1,'hex',()=>{}])out.push(os.userInfo(options));
+ for(const thrown of [17,'error',Symbol.for('marker'),new Error('getter')]){
+  try{os.userInfo({get encoding(){throw thrown}})}catch(e){out.push(e===thrown)}
+ }
+ const environment=process.env;
+ for(const home of ['', '/different-home','😀///']){process.env.HOME=home;out.push([os.homedir(),os.userInfo().homedir])}
+ delete process.env.HOME;out.push([os.homedir(),os.userInfo().homedir]);
+}finally{Buffer.from=original}
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn os_priority_validation_native_system_errors_and_process_effects_match_node() {
+    compare_node_stream_source(
+        r#"
+const os=require('node:os'),out=[];
+const record=f=>{try{out.push(['ok',f()])}catch(e){out.push([e.name,e.message,e.code,e.info,Reflect.ownKeys(e).map(String),e.constructor.name,Object.getPrototypeOf(e).constructor.name])}};
+for(const pid of [null,true,false,'foo',{},[],/x/,NaN,Infinity,-Infinity,3.14,2**32,-1,2147483647]){
+ record(()=>os.getPriority(pid));record(()=>os.setPriority(pid,0));
+}
+for(const p of [null,true,'foo',{},[],NaN,Infinity,-Infinity,3.14,2**32,-21,20,undefined])record(()=>os.setPriority(0,p));
+const before=os.getPriority();os.setPriority(Math.min(19,before+1));out.push(os.getPriority()===Math.min(19,before+1));
+os.setPriority(process.pid,Math.min(19,before+2));out.push(os.getPriority()===Math.min(19,before+2));
+const child=require('node:child_process').spawnSync(process.execPath,['-e','console.log(require("node:os").getPriority())'],{encoding:'utf8'});out.push([child.status,child.stdout.trim()===String(Math.min(19,before+2)),child.stderr]);
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn os_load_and_uptime_use_kernel_data_and_return_fresh_results() {
+    compare_node_stream_source(
+        r#"
+const assert=require('node:assert'),os=require('node:os'),fs=require('node:fs');
+const before=Number(fs.readFileSync('/proc/uptime','utf8').split(' ')[0]),actual=os.uptime(),after=Number(fs.readFileSync('/proc/uptime','utf8').split(' ')[0]);assert(actual>=before&&actual<=after);
+const first=os.loadavg();assert(Array.isArray(first)&&first.length===3&&first.every(x=>typeof x==='number'&&Number.isFinite(x)&&x>=0));
+first.fill(-1);const current=os.loadavg();assert(current.every(x=>x>=0));assert.notStrictEqual(first,current);
+const kernel=fs.readFileSync('/proc/loadavg','utf8').trim().split(/\s+/).slice(0,3).map(Number);
+assert(current.every((x,i)=>Math.abs(x-kernel[i])<1));
+console.log('live os facts');
+"#,
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn os_priority_changes_are_visible_to_the_kernel_on_the_child_process_pid() {
+    struct RunningChild(std::process::Child);
+    impl Drop for RunningChild {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("ready.json");
+    let child = Command::new(env!("CARGO_BIN_EXE_run-parallel"))
+        .env(quench_node::shared_run::CHILD_RUNNER_ENV, "1")
+        .args(["-e", "const os=require('node:os');const priority=Math.min(19,os.getPriority()+1);os.setPriority(priority);require('node:fs').writeFileSync(process.argv[1],JSON.stringify(priority));setInterval(()=>{},1000)"])
+        .arg(&marker)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut child = RunningChild(child);
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !marker.exists() {
+        assert!(
+            child.0.try_wait().unwrap().is_none(),
+            "priority child exited before readiness"
+        );
+        assert!(
+            std::time::Instant::now() < deadline,
+            "priority child did not become ready"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let expected: i32 = serde_json::from_slice(&std::fs::read(marker).unwrap()).unwrap();
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let actual = unsafe { libc::getpriority(libc::PRIO_PROCESS, child.0.id()) };
+    assert_eq!(unsafe { *libc::__errno_location() }, 0);
+    assert_eq!(actual, expected);
+}
