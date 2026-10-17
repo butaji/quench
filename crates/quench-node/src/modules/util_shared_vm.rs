@@ -873,27 +873,49 @@ pub(crate) fn define_lazy_properties(
     Ok(context.undefined())
 }
 
-/// One `defineLazyProperties` entry: `key` on `target` reads the export of library module
-/// `id` on first access.
+/// One `defineLazyProperties` entry: `key` on `target` reads the same-named export of
+/// library module `id` on first access.
 fn define_lazy_property(
     context: &mut NativeContext<'_, NodeHost>, target: RootId, id: RootId, key: RootId, enumerable: bool,
 ) -> Result<(), RootedError> {
-    let name = context.to_string(key)?;
+    define_lazy_export(context, target, id, key, key, enumerable)
+}
+
+/// `property` on `target` reads export `export` of library module `id` on first access.
+fn define_lazy_export(
+    context: &mut NativeContext<'_, NodeHost>, target: RootId, id: RootId, property: RootId, export: RootId, enumerable: bool,
+) -> Result<(), RootedError> {
+    let name = context.to_string(property)?;
     let flag = context.boolean(enumerable);
-    let data = context.array_rooted(&[target, id, key, flag])?;
+    let data = context.array_rooted(&[target, id, property, flag, export])?;
     let initializer = context.host_function_with_data(
         crate::host::shared_vm::operation("utilLazyPropertyInitialize"), data,
     )?;
     context.define_lazy_data_properties_rooted(target, &[&name], enumerable, initializer)
 }
 
-/// Node's bootstrap `defineLazyProperties(globalThis, 'buffer', ['atob', 'btoa'])`.
-pub(crate) fn install_lazy_base64_globals(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
+/// Globals Node's bootstrap defines lazily from its library, each `(property, module,
+/// export, enumerable)`: `defineLazyProperties(globalThis, 'buffer', ['atob', 'btoa'])`
+/// and `exposeLazyInterfaces` for the URL and Blob interfaces. The `__node*` names are
+/// the host's own aliases of the original interfaces.
+const LAZY_GLOBALS: &[(&str, &str, &str, bool)] = &[
+    ("atob", "buffer", "atob", true),
+    ("btoa", "buffer", "btoa", true),
+    ("URL", "internal/url", "URL", false),
+    ("URLSearchParams", "internal/url", "URLSearchParams", false),
+    ("Blob", "internal/blob", "Blob", false),
+    ("File", "internal/file", "File", false),
+    ("__nodeURL", "internal/url", "URL", false),
+    ("__nodeURLSearchParams", "internal/url", "URLSearchParams", false),
+];
+
+pub(crate) fn install_lazy_globals(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
     let global = context.global_root()?;
-    let id = context.string_rooted("buffer");
-    for name in ["atob", "btoa"] {
-        let key = context.string_rooted(name);
-        define_lazy_property(context, global, id, key, true)?;
+    for &(property, id, export, enumerable) in LAZY_GLOBALS {
+        let property = context.string_rooted(property);
+        let id = context.string_rooted(id);
+        let export = context.string_rooted(export);
+        define_lazy_export(context, global, id, property, export, enumerable)?;
     }
     Ok(())
 }
@@ -928,10 +950,12 @@ pub(crate) fn initialize_lazy_property(
     let id = get(context, data, "1")?;
     let key = get(context, data, "2")?;
     let flag = get(context, data, "3")?;
+    let export = get(context, data, "4")?;
+    let export = if context.rooted_value(export).is_some_and(|value| value.is_undefined()) { key } else { export };
     let enumerable = context.truthy_rooted(flag)?;
     let id = context.to_string(id)?;
     let module = crate::host::shared_vm::commonjs::library_require(context, &id)?;
-    let value = context.get_property_rooted(module, key)?;
+    let value = context.get_property_rooted(module, export)?;
     context.define_data_property_rooted(target, key, value, true, enumerable, true)?;
     Ok(context.undefined())
 }
