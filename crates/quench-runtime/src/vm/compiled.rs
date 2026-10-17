@@ -1,4 +1,4 @@
-//! The compiled execution mode: the fast lane specialized to one program.
+//! Cranelift-backed compiled tiers for the shared VM.
 //!
 //! In Ershov's terms the lane's per-instruction semantics have two readings.
 //! The lane handlers interpret them; this module is their generating
@@ -42,15 +42,15 @@ use cranelift_codegen::ir::{
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 
-/// How a VM executes Wasm functions. JavaScript always runs on the shared
-/// interpreter; both modes run in the same VM with the same heap, frames and
-/// instances.
+/// How the shared VM executes JavaScript and Wasm functions. Compiled code is
+/// lazy and falls back to the interpreter; both modes use the same VM, heap,
+/// frames and host APIs.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ExecutionMode {
     /// The shared interpreter: general loop and fast lane.
     #[default]
     Interpreted,
-    /// Wasm functions with a compiled denotation run as native code.
+    /// Hot supported JavaScript functions and Wasm functions run as native code.
     Compiled,
 }
 
@@ -338,6 +338,14 @@ struct CodeMemory {
 impl CodeMemory {
     fn new(bytes: &[u8]) -> Option<Self> {
         let length = bytes.len().max(1);
+        // `mmap` rounds to whole pages. Store that rounded length explicitly
+        // so the JS tier's budget reflects its executable mappings.
+        let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        let page_size = usize::try_from(page_size).ok()?;
+        let length = length
+            .checked_add(page_size.checked_sub(1)?)?
+            .checked_div(page_size)?
+            .checked_mul(page_size)?;
         // SAFETY: an anonymous private mapping; the result is checked.
         let pointer = unsafe {
             libc::mmap(
@@ -370,6 +378,46 @@ impl Drop for CodeMemory {
     fn drop(&mut self) {
         // SAFETY: the mapping this value owns.
         unsafe { libc::munmap(self.pointer.cast(), self.length) };
+    }
+}
+
+/// A guarded JavaScript numeric function compiled from a narrow residual
+/// bytecode subset. It owns one W^X executable mapping and has no heap roots.
+pub(super) struct CompiledJsFunction {
+    _code: CodeMemory,
+    entry: unsafe extern "C" fn(*const f64) -> f64,
+    params: usize,
+    mapped_bytes: usize,
+}
+
+impl CompiledJsFunction {
+    pub(super) fn from_artifact(artifact: super::js_compiled::JsJitArtifact) -> Option<Self> {
+        let code = CodeMemory::new(&artifact.code)?;
+        let mapped_bytes = code.length;
+        // SAFETY: the JS compiler emits the C ABI `fn(*const f64) -> f64`.
+        let entry = unsafe {
+            std::mem::transmute::<*mut u8, unsafe extern "C" fn(*const f64) -> f64>(code.pointer)
+        };
+        Some(Self {
+            _code: code,
+            entry,
+            params: artifact.params,
+            mapped_bytes,
+        })
+    }
+
+    pub(super) fn params(&self) -> usize {
+        self.params
+    }
+
+    pub(super) fn call(&self, arguments: &[f64]) -> f64 {
+        // SAFETY: `arguments` has the formal count encoded into the function;
+        // the compiler emits loads only for that many values.
+        unsafe { (self.entry)(arguments.as_ptr()) }
+    }
+
+    pub(super) fn mapped_bytes(&self) -> usize {
+        self.mapped_bytes
     }
 }
 
@@ -2740,6 +2788,97 @@ impl<H: Host> Vm<H> {
 
     pub(crate) fn execution_mode(&self) -> ExecutionMode {
         self.execution_mode
+    }
+
+    /// Try the per-function JavaScript tier at an already-initialized frame's
+    /// entry. A guard miss leaves the frame untouched so the interpreter can
+    /// run from the same bytecode PC.
+    pub(super) fn js_jit_at_entry(
+        &mut self,
+        program: &ResidualProgram,
+        frame: usize,
+    ) -> Option<(usize, crate::bytecode::Register, Value)> {
+        if cfg!(any(
+            feature = "profile-aggregate",
+            feature = "profile-trace",
+            feature = "profile-memory",
+            feature = "profile-gc-time"
+        ))
+            || self.execution_mode != ExecutionMode::Compiled
+            || program.kind == crate::bytecode::ProgramKind::Wasm
+            || self.frames.get(frame)?.pc != 0
+        {
+            return None;
+        }
+        let program_id = self.frames[frame].program;
+        let function_id = self.frames[frame].function;
+        let function = program.functions.get(function_id as usize)?;
+        let tier = self.programs.js_tier(program_id, function_id);
+        if matches!(tier.as_ref(), Some(super::program_store::JsTierState::Unsupported)) {
+            return None;
+        }
+        if tier.is_none()
+            && !super::js_compiled::function_candidate(function, &program.atoms)
+        {
+            return None;
+        }
+
+        let params = usize::from(function.params);
+        let registers = self.frames[frame].registers.get(..params)?;
+        let mut arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
+        let mut numeric = true;
+        for value in registers {
+            match value.as_number() {
+                Some(value) => arguments.push(value),
+                None => {
+                    numeric = false;
+                    break;
+                }
+            }
+        }
+
+        let compiled = match tier {
+            Some(super::program_store::JsTierState::Compiled(compiled)) => {
+                if !numeric {
+                    return None;
+                }
+                compiled
+            }
+            Some(super::program_store::JsTierState::Unsupported) => return None,
+            Some(super::program_store::JsTierState::Hot { .. }) | None => {
+                if !self.programs.note_js_function_entry(
+                    program_id,
+                    function_id,
+                    numeric,
+                ) || !numeric
+                {
+                    return None;
+                }
+                let residual = self.programs.get(program_id)?;
+                let compiled = super::js_compiled::compile(&residual, function_id)
+                    .and_then(CompiledJsFunction::from_artifact)
+                    .map(Rc::new);
+                self.programs
+                    .install_js_tier(program_id, function_id, compiled.clone());
+                compiled?
+            }
+        };
+
+        if compiled.params() != params {
+            return None;
+        }
+
+        let last_pc = function.code.len().checked_sub(1)?;
+        let terminal = function.code.get(last_pc)?.as_wide();
+        if terminal.op() != Op::Return {
+            return None;
+        }
+        let return_register = terminal.register_a();
+        Some((
+            last_pc,
+            return_register,
+            Value::number(compiled.call(&arguments)),
+        ))
     }
 
     /// Compile every function of `program` that has a compiled denotation,

@@ -103,6 +103,26 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "processKillNative" (2) => crate::modules::process_shared_vm::kill_native,
         method "processKill" (2) => crate::modules::process_shared_vm::kill,
         method "bufferConstructor" (0) => crate::modules::buffer_shared_vm::constructor,
+        method "encodingToAscii" (0) => crate::modules::encoding_binding_shared_vm::to_ascii,
+        method "encodingToUnicode" (0) => crate::modules::encoding_binding_shared_vm::to_unicode,
+        method "urlBindingDomainToAscii" (0) => crate::modules::url_binding_shared_vm::domain_to_ascii,
+        method "urlBindingDomainToUnicode" (0) => crate::modules::url_binding_shared_vm::domain_to_unicode,
+        method "urlBindingFormat" (0) => crate::modules::url_binding_shared_vm::format,
+        method "urlBindingGetOrigin" (0) => crate::modules::url_binding_shared_vm::get_origin,
+        method "urlBindingParse" (0) => crate::modules::url_binding_shared_vm::parse,
+        method "urlBindingPathToFileUrl" (0) => crate::modules::url_binding_shared_vm::path_to_file_url,
+        method "urlBindingUpdate" (0) => crate::modules::url_binding_shared_vm::update,
+        method "urlBindingCanParse" (0) => crate::modules::url_binding_shared_vm::can_parse,
+        method "blobBindingCreate" (0) => crate::modules::blob_binding_shared_vm::create,
+        method "blobBindingStoreDataObject" (0) => crate::modules::blob_binding_shared_vm::store_data_object,
+        method "blobBindingGetDataObject" (0) => crate::modules::blob_binding_shared_vm::get_data_object,
+        method "blobBindingRevokeObjectUrl" (0) => crate::modules::blob_binding_shared_vm::revoke_object_url,
+        method "blobBindingConcat" (0) => crate::modules::blob_binding_shared_vm::concat,
+        method "blobBindingCreateFromFilePath" (0) => crate::modules::blob_binding_shared_vm::create_from_file_path,
+        method "blobHandleGetReader" (0) => crate::modules::blob_binding_shared_vm::get_reader,
+        method "blobHandleSlice" (0) => crate::modules::blob_binding_shared_vm::slice,
+        method "blobReaderPull" (0) => crate::modules::blob_binding_shared_vm::pull,
+        method "blobReaderSetWakeup" (0) => crate::modules::blob_binding_shared_vm::set_wakeup,
         method "bufferBindingAtob" (0) => crate::modules::buffer_binding_shared_vm::atob,
         method "bufferBindingBtoa" (0) => crate::modules::buffer_binding_shared_vm::btoa,
         method "bufferBindingByteLengthUtf8" (0) => crate::modules::buffer_binding_shared_vm::byte_length_utf8,
@@ -259,17 +279,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "pathParse" (1) => crate::modules::path_shared_vm::parse_operation,
         method "pathFormat" (1) => crate::modules::path_shared_vm::format_operation,
         method "pathMatchesGlob" (2) => crate::modules::path_shared_vm::matches_glob_operation,
-        method "urlParse" (3) => crate::modules::url_shared_vm::parse,
-        method "urlInitialize" (0) => crate::modules::url_shared_vm::initialize,
-        method "urlResolve" (2) => crate::modules::url_shared_vm::resolve,
-        method "urlResolveObject" (2) => crate::modules::url_shared_vm::resolve_object,
-        method "urlFormat" (2) => crate::modules::url_shared_vm::format,
         method "domainTrampolineCall" (0) => crate::modules::domain_trampoline::call,
-        method "domainToASCII" (1) => crate::modules::url_shared_vm::domain_to_ascii,
-        method "domainToUnicode" (1) => crate::modules::url_shared_vm::domain_to_unicode,
-        method "urlToHttpOptions" (1) => crate::modules::url_shared_vm::url_to_http_options,
-        method "querystringParse" (4) => crate::modules::querystring_shared_vm::parse,
-        method "querystringStringify" (4) => crate::modules::querystring_shared_vm::stringify,
         #[cfg(target_os = "linux")]
         method "osAvailableParallelism" (0) => crate::modules::os_binding_shared_vm::available_parallelism,
         #[cfg(target_os = "linux")]
@@ -575,8 +585,6 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         #[cfg(quench_openssl_provider)]
         method "cryptoNativeOneShotDigest" (0) => crate::modules::crypto_hash_shared_vm::one_shot,
         method "cryptoSecretMaterial" (1) => crate::modules::crypto_key_shared_vm::secret_material,
-        method "urlIsURLInstance" (1) => crate::modules::url_shared_vm::is_url_instance,
-        method "urlGetURLHref" (1) => crate::modules::url_shared_vm::get_url_href,
         #[cfg(quench_openssl_provider)]
         method "cryptoNativeSignatureNew" (0) => crate::modules::crypto_signature_shared_vm::new,
         #[cfg(quench_openssl_provider)]
@@ -672,7 +680,6 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "fsPromiseWatchExecutor" (2) => crate::modules::fs_watch_shared_vm::promise::executor,
         method "fsPromiseWatchEvent" (3) => crate::modules::fs_watch_shared_vm::promise::event,
         method "fsPromiseWatchCancel" (0) => crate::modules::fs_watch_shared_vm::promise::cancel,
-        method "urlIsURL" (1) => crate::modules::url_shared_vm::is_url,
         method "toPathIfFileURL" (1) => crate::modules::url_shared_vm::to_path_if_file_url,
         method "cliOptionsValues" (0) => crate::modules::cli_options_shared_vm::values,
         method "cliParseNodeOptions" (0) => crate::modules::cli_options_shared_vm::parse_environment,
@@ -957,7 +964,6 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "createRequire" (1) => crate::modules::module_shared_vm::create_require,
         method "moduleNodePaths" (1) => crate::modules::module_shared_vm::node_module_paths,
         method "findPackageJSON" (1) => crate::modules::module_shared_vm::find_package_json,
-        method "pathToFileURL" (2) => crate::modules::url_shared_vm::path_to_file_url,
         method "fileURLToPath" (1) => crate::modules::url_shared_vm::file_url_to_path,
         method "fileURLToPathBuffer" (2) => crate::modules::url_shared_vm::file_url_to_path_buffer,
         global "structuredClone" (1) => crate::modules::clone_shared_vm::structured_clone,
@@ -1162,7 +1168,7 @@ impl quench_runtime::Host for NodeHost {
                 let resolution = match resolver.resolve(&base, &resolution_specifier) {
                     Ok(resolution) => resolution,
                     Err(oxc_resolver::ResolveError::Specifier(_)) => return Ok(None),
-                    Err(error) => return Err(esm_errors::unresolved(error, specifier, &base, &referrer_path)),
+                    Err(error) => return Err(esm_errors::unresolved(&resolver, error, specifier, &base, &referrer_path)),
                 };
                 resolution.full_path()
             }
