@@ -56,6 +56,9 @@ pub(crate) fn version_facts() -> &'static [(&'static str, &'static str)] {
         ("node", NODE_VERSION),
         ("acorn", "8.18.0"),
         ("ada", "2.7.8"),
+        #[cfg(quench_node_cares)]
+        ("ares", super::cares_channel_shared_vm::VERSION),
+        #[cfg(not(quench_node_cares))]
         ("ares", "1.0.0"),
         ("brotli", "1.1.0"),
         ("cldr", "45.0"),
@@ -384,6 +387,7 @@ pub(crate) struct ProcessControl(Rc<ProcessControlCells>);
 #[derive(Debug)]
 struct ProcessControlCells {
     started: std::time::Instant,
+    performance_origins: Option<(f64, f64)>,
     exit_code: Cell<Option<i32>>,
     requested_exit: Cell<Option<RequestedExit>>,
     exit_emitting: Cell<bool>,
@@ -409,12 +413,15 @@ impl ProcessControl {
         let umask = INITIAL_UMASK;
         Self(Rc::new(ProcessControlCells {
             started: std::time::Instant::now(),
+            performance_origins: sample_performance_origins(),
             exit_code: Cell::new(None),
             requested_exit: Cell::new(None),
             exit_emitting: Cell::new(false),
             umask: Cell::new(umask),
         }))
     }
+
+    pub(crate) fn performance_origins(&self) -> Option<(f64, f64)> { self.0.performance_origins }
 
     pub(crate) fn uptime(&self) -> f64 {
         self.0.started.elapsed().as_secs_f64()
@@ -503,4 +510,18 @@ pub(crate) fn shared_openssl() -> bool {
     }
     #[cfg(not(unix))]
     false
+}
+
+// Capture actual clock coordinates at environment creation, rather than synthesizing
+// a zero origin when a performance module happens to be imported later.
+fn sample_performance_origins() -> Option<(f64, f64)> {
+    #[cfg(unix)] {
+        const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
+        const MICROS_PER_SECOND: f64 = 1_000_000.0;
+        let mut time: libc::timespec = unsafe { std::mem::zeroed() };
+        if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut time) } != 0 { return None; }
+        let wall = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok()?;
+        Some((time.tv_sec as f64 * NANOS_PER_SECOND + time.tv_nsec as f64, wall.as_secs_f64() * MICROS_PER_SECOND))
+    }
+    #[cfg(not(unix))] { None }
 }

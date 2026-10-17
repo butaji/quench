@@ -1,0 +1,756 @@
+{
+  "recorded_utc": "2026-10-17T00:06:29.534946+00:00",
+  "qualification": "Completed unchanged original full stable inventory; overall parity remains open.",
+  "source_commit": "66efb8ca236bc0bd4338a5b4a1cc6a523ffb62e8",
+  "release": "v26.12.0",
+  "fixture_commit": "26e72d85a611e222e3f06025de8a3c496923bacd",
+  "counts": {
+    "pass": 1990,
+    "fail": 2278,
+    "timeout": 110,
+    "skip": 637
+  },
+  "total": 5015,
+  "inventory_hash": "a3820c977f97ed07",
+  "comparison": {
+    "generated_utc": "2026-10-17T00:05:40.425919+00:00",
+    "source_commit": "66efb8ca236bc0bd4338a5b4a1cc6a523ffb62e8",
+    "release": "stable",
+    "total": 5015,
+    "counts_before": {
+      "timeout": 112,
+      "pass": 1938,
+      "fail": 2329,
+      "skip": 636
+    },
+    "counts_after": {
+      "pass": 1990,
+      "fail": 2278,
+      "timeout": 110,
+      "skip": 637
+    },
+    "inventory_hash_before": "a3820c977f97ed07",
+    "inventory_hash_after": "a3820c977f97ed07",
+    "gained_passes": [
+      {
+        "fixture": "test-abort-controller-any-timeout.js",
+        "before": "timeout",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-abortcontroller.js",
+        "before": "timeout",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-abortsignal-any-source-gc.mjs",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-buffer-read.js",
+        "before": "timeout",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-buffer-readdouble.js",
+        "before": "timeout",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-buffer-readfloat.js",
+        "before": "timeout",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-buffer-readint.js",
+        "before": "timeout",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-c-ares.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-cluster-child-index-dgram.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-crypto-hkdf.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dgram-bind-error-callback.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dgram-bind-fd-error.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dgram-bind-fd.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dgram-create-socket-handle-fd.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dgram-create-socket-handle.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dgram-custom-lookup.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dgram-default-lookup-ip.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dgram-multicast-set-interface.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dgram-send-callback-recursive.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dgram-send-cb-quelches-error.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dgram-udp6-link-local-address.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-diagnostics-channel-udp.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-cancel-reverse-lookup.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-channel-cancel-promise.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-channel-cancel.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-channel-timeout.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-get-server.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-lookup.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-multi-channel.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-negative-zero.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-perf_hooks.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-resolve-promises.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-resolveany-bad-ancount.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-resolveany-ttl-overflow.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-resolveany.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-resolvens-typeerror.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-resolver-max-timeout.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-resolvesrv-econnrefused.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-resolvesrv.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-setlocaladdress.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-setserver-when-querying.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-setservers-type-check.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-module-loading-error.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-ref-unref-return.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-stream2-read-sync-stack.js",
+        "before": "timeout",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-tls-canonical-ip.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-trace-events-console.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-fs-accessSync.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-fs-copyFileSync.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-fs-linkSync.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-fs-rename-callback.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-fs-renameSync.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-mount-errors.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-webcrypto-constructors.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-webcrypto-detached-parameters.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-worker-message-port-multiple-sharedarraybuffers.js",
+        "before": "fail",
+        "after": "pass"
+      }
+    ],
+    "lost_passes": [
+      {
+        "fixture": "test-cluster-dgram-reuse.js",
+        "before": "pass",
+        "after": "fail"
+      },
+      {
+        "fixture": "test-crypto-domain.js",
+        "before": "pass",
+        "after": "fail"
+      },
+      {
+        "fixture": "test-crypto-domains.js",
+        "before": "pass",
+        "after": "fail"
+      },
+      {
+        "fixture": "test-dgram-bind-socket-close-before-cluster-reply.js",
+        "before": "pass",
+        "after": "timeout"
+      },
+      {
+        "fixture": "test-shadow-realm-gc-module.js",
+        "before": "pass",
+        "after": "timeout"
+      }
+    ],
+    "all_status_changes": [
+      {
+        "fixture": "test-abort-controller-any-timeout.js",
+        "before": "timeout",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-abortcontroller-internal.js",
+        "before": "timeout",
+        "after": "fail"
+      },
+      {
+        "fixture": "test-abortcontroller.js",
+        "before": "timeout",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-abortsignal-any-source-gc.mjs",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-buffer-read.js",
+        "before": "timeout",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-buffer-readdouble.js",
+        "before": "timeout",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-buffer-readfloat.js",
+        "before": "timeout",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-buffer-readint.js",
+        "before": "timeout",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-c-ares.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-cluster-child-index-dgram.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-cluster-dgram-1.js",
+        "before": "fail",
+        "after": "timeout"
+      },
+      {
+        "fixture": "test-cluster-dgram-2.js",
+        "before": "fail",
+        "after": "timeout"
+      },
+      {
+        "fixture": "test-cluster-dgram-reuse.js",
+        "before": "pass",
+        "after": "fail"
+      },
+      {
+        "fixture": "test-crypto-domain.js",
+        "before": "pass",
+        "after": "fail"
+      },
+      {
+        "fixture": "test-crypto-domains.js",
+        "before": "pass",
+        "after": "fail"
+      },
+      {
+        "fixture": "test-crypto-hkdf.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dgram-bind-error-callback.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dgram-bind-fd-error.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dgram-bind-fd.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dgram-bind-socket-close-before-cluster-reply.js",
+        "before": "pass",
+        "after": "timeout"
+      },
+      {
+        "fixture": "test-dgram-create-socket-handle-fd.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dgram-create-socket-handle.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dgram-custom-lookup.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dgram-default-lookup-ip.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dgram-multicast-set-interface.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dgram-send-callback-recursive.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dgram-send-cb-quelches-error.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dgram-udp6-link-local-address.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-diagnostics-channel-udp.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-cancel-reverse-lookup.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-channel-cancel-promise.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-channel-cancel.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-channel-timeout.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-get-server.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-lookup.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-multi-channel.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-negative-zero.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-perf_hooks.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-resolve-promises.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-resolveany-bad-ancount.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-resolveany-ttl-overflow.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-resolveany.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-resolvens-typeerror.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-resolver-max-timeout.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-resolvesrv-econnrefused.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-resolvesrv.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-setlocaladdress.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-setserver-when-querying.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-setservers-type-check.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-module-loading-error.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-process-dlopen-error-message-crash.js",
+        "before": "fail",
+        "after": "skip"
+      },
+      {
+        "fixture": "test-ref-unref-return.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-runner-global-setup-teardown.mjs",
+        "before": "fail",
+        "after": "timeout"
+      },
+      {
+        "fixture": "test-shadow-realm-gc-module.js",
+        "before": "pass",
+        "after": "timeout"
+      },
+      {
+        "fixture": "test-stream2-read-sync-stack.js",
+        "before": "timeout",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-tls-canonical-ip.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-tls-tlswrap-segfault.js",
+        "before": "fail",
+        "after": "timeout"
+      },
+      {
+        "fixture": "test-trace-events-console.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-fs-accessSync.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-fs-copyFileSync.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-fs-linkSync.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-fs-rename-callback.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-fs-renameSync.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-mount-errors.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-webcrypto-constructors.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-webcrypto-detached-parameters.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-worker-message-port-multiple-sharedarraybuffers.js",
+        "before": "fail",
+        "after": "pass"
+      }
+    ],
+    "memory_event_deltas": {
+      "low": 0,
+      "high": 0,
+      "max": 3960,
+      "oom": 0,
+      "oom_kill": 0,
+      "oom_group_kill": 0
+    },
+    "receipt_exit": 1,
+    "elapsed_seconds": 2282.9086458599777
+  },
+  "raw_artifacts": {
+    "work/full-api471-vfs-four-stable/results.json": "8aad11ac63738f6e987b64af3f5b5414a594b55d9a330681ff4449e1c4f0f49e",
+    "work/full-api471-vfs-four-stable/receipt.json": "b94ab72aaf16c8c983c5185a202f36ce4721be09b6c07cee952c64137f34aa83",
+    "work/full-api471-vfs-four-stable/summary.json": "d731de2b75ad243d23395ecd20a3f44912d1be186a16cecc3e4f3984de1fc18f",
+    "work/full-api471-vfs-four-stable/comparison-native-backends.json": "4fb7a99e46423396581fb123c6255950d0bd68d6de03e4faf2d27f2a17d03bd8"
+  },
+  "receipt": {
+    "source_commit": "66efb8ca236bc0bd4338a5b4a1cc6a523ffb62e8",
+    "checkout_commit": "66efb8ca236bc0bd4338a5b4a1cc6a523ffb62e8",
+    "release": "v26.12.0",
+    "fixture_commit": "26e72d85a611e222e3f06025de8a3c496923bacd",
+    "command": [
+      "/tmp/quench-vfs-four-full-bin/run-parallel",
+      "--all",
+      "--parallel-dir",
+      "/workspace/work/node-stable-release/node-v26.12.0/test/parallel",
+      "--jobs",
+      "4",
+      "--timeout-secs",
+      "30",
+      "--results",
+      "/workspace/quench/work/full-api471-vfs-four-stable/results.json"
+    ],
+    "binaries_before": {
+      "quench-node": "c42796cdecd597e674282df0e28dfed00623351271961f71912653cd84b69b1a",
+      "run-parallel": "7959ad84bc7009ab3aedc2b8886bc8497a0cc254317b6400439bd316bbdb498c",
+      "openssl-cli": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1"
+    },
+    "protected_before": {
+      "restored": true,
+      "sha256": "b0e78cd4bb13929391b33a2ad7d80f61d8b2f1d66533aaf31d95807e5f3863eb"
+    },
+    "memory_before": "low 0\nhigh 0\nmax 1269299\noom 2\noom_kill 1\noom_group_kill 0\n",
+    "started_utc": "2026-10-16T23:27:10.292415+00:00",
+    "exit": 1,
+    "changed_sources_after": [],
+    "elapsed_seconds": 2282.9086458599777,
+    "protected_after": {
+      "restored": true,
+      "sha256": "b0e78cd4bb13929391b33a2ad7d80f61d8b2f1d66533aaf31d95807e5f3863eb"
+    },
+    "memory_after": "low 0\nhigh 0\nmax 1273259\noom 2\noom_kill 1\noom_group_kill 0\n",
+    "binaries_after": {
+      "quench-node": "c42796cdecd597e674282df0e28dfed00623351271961f71912653cd84b69b1a",
+      "run-parallel": "7959ad84bc7009ab3aedc2b8886bc8497a0cc254317b6400439bd316bbdb498c",
+      "openssl-cli": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1"
+    },
+    "finished_utc": "2026-10-17T00:05:13.360908+00:00"
+  },
+  "limits": [
+    "Five lost prior passes are retained explicitly and require focused controls; no net count hides them.",
+    "Baseline and this run use different optimization levels (prior opt0, current opt1); result does not isolate the cause of every status change or establish a speed claim.",
+    "Unchanged upstream skip decisions remain in the raw inventory. No original fixture was rewritten or newly filtered.",
+    "The later Worker/IPC/key-family/FileHandle/VFS-v10 candidate is a separate frozen source; these counts do not describe it."
+  ]
+}

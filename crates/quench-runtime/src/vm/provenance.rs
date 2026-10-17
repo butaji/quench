@@ -78,6 +78,11 @@ impl<H: Host> Vm<H> {
         };
         let name = name.clone();
         let name = self.intern_js_atom(&name);
+        self.capture_function_name_for_atom(function, name);
+    }
+
+    /// `capture_function_name` of a name already interned as `name`.
+    pub(super) fn capture_function_name_for_atom(&mut self, function: Value, name: Atom) {
         if self.original_function_name(function) == Some(name) {
             return;
         }
@@ -93,11 +98,12 @@ impl<H: Host> Vm<H> {
         self.append_function_name(function, shape, name);
     }
 
-    /// `capture_function_name` of a closure `closure_in_realm` just made, whose shape holds no
-    /// original name yet. No construction has seen its cell since the last collection, which
-    /// cleared `constructed_shapes`, so no memo entry names it.
-    pub(super) fn capture_fresh_closure_name(&mut self, function: Value, name: &JsString) {
-        let name = self.intern_js_atom(name);
+    /// `capture_function_name` of a closure `closure_in_realm` just made with the plan's
+    /// `name`, whose atom is the name its string spells, or none for the empty name. Its shape
+    /// holds no original name yet, and no construction has seen its cell since the last
+    /// collection, which cleared `constructed_shapes`, so no memo entry names it.
+    pub(super) fn capture_fresh_closure_name(&mut self, function: Value, name: Option<Atom>) {
+        let name = name.unwrap_or_else(|| self.intern_atom(""));
         let Some(shape) = self.object_data(function).map(Object::shape) else { return; };
         debug_assert!(shape_names(&self.shapes, shape).0.is_none(), "a fresh closure has no original name");
         self.append_function_name(function, shape, name);

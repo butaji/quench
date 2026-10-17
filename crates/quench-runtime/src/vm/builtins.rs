@@ -722,7 +722,7 @@ impl<H: Host> Vm<H> {
         ] {
             let value = self
                 .heap
-                .alloc(Cell::Symbol(Some(format!("Symbol.{name}").into())));
+                .alloc(Cell::Symbol(crate::heap::SymbolData::public(Some(format!("Symbol.{name}").into()))));
             self.well_known_symbols.insert(name.into(), value);
             self.set_named_constant(program, symbol, name, value)?;
         }
@@ -893,7 +893,7 @@ impl<H: Host> Vm<H> {
         let atom = self.intern_atom("Temporal");
         let key = self.heap.alloc(Cell::String(self.atom_value(atom)));
         self.with_call_roots([initializer, key], |vm| {
-            vm.define_lazy_data_properties(program, vm.realm.globals, &[key], false, initializer)
+            vm.define_lazy_data_properties(program, vm.realm.globals, &[(key, false)], false, initializer)
         })?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_temporal");

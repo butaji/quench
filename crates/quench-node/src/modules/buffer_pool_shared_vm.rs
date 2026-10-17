@@ -8,8 +8,7 @@ const SLICE_ALIGNMENT: i32 = 8;
 // Node reserves a conservative UTF-8 upper bound before encoding a string.
 const UTF8_BYTES_PER_SCALAR_BOUND: usize = 4;
 fn get(c: &mut Context<'_>, o: RootId, n: &str) -> Result<RootId, RootedError> {
-    let k = c.string_rooted(n);
-    c.get_property_rooted(o, k)
+    c.get_named_property_rooted(o, n)
 }
 fn put(c: &mut Context<'_>, o: RootId, n: &str, v: RootId) -> Result<(), RootedError> {
     let k = c.string_rooted(n);

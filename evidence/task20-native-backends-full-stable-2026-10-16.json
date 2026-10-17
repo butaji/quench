@@ -1,0 +1,918 @@
+{
+  "schema_version": 1,
+  "task": "TOD-20",
+  "recorded_utc": "2026-10-16T22:25:49.430365+00:00",
+  "goal_complete": false,
+  "candidate_source_commit": "e5babf0a73c369c81826d19d180786b746cdf3ee",
+  "qualified_publication_commit": "994be21d0",
+  "oracle_version": "v26.12.0",
+  "fixture_commit": "26e72d85a611e222e3f06025de8a3c496923bacd",
+  "full_audit": {
+    "generated_utc": "2026-10-16T22:23:12.280076+00:00",
+    "source_commit": "e5babf0a73c369c81826d19d180786b746cdf3ee",
+    "release": "stable",
+    "total": 5015,
+    "counts_before": {
+      "timeout": 108,
+      "fail": 2398,
+      "pass": 1871,
+      "skip": 638
+    },
+    "counts_after": {
+      "timeout": 112,
+      "pass": 1938,
+      "fail": 2329,
+      "skip": 636
+    },
+    "inventory_hash_before": "a3820c977f97ed07",
+    "inventory_hash_after": "a3820c977f97ed07",
+    "gained_passes": [
+      {
+        "fixture": "test-aborted-util.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-assert-partial-deep-equal.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-child-process-bad-stdio.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-console-diagnostics-channels.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-console-group.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-console-instance.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-console-methods.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-console-table.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-console-tty-colors.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-console.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-crypto-default-shake-lengths-oneshot.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-crypto-default-shake-lengths.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-crypto-hash.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-crypto-hmac.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-crypto-oneshot-hash-xof.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-crypto-oneshot-hash.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-crypto-secret-keygen.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-crypto-webcrypto-aes-decrypt-tag-too-small.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-crypto.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-debug-v8-fast-api.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-default-order-ipv4.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-default-order-ipv6.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-default-order-verbatim.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-lookup-promises-options-deprecated.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-lookup-promises.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-lookupService-promises.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-lookupService.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-promises-exists.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-set-default-order.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-domexception-cause.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-fileurltopathbuffer.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-fs-cp-async-file-modes.mjs",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-global-webcrypto-classes.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-global-webcrypto.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-internal-only-binding.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-primordials-apply.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-primordials-regexp.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-stream-writable-samecb-singletick.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-tcp-wrap-connect.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-tcp-wrap-listen.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-tcp-wrap.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-tls-close-notify.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-trace-events-get-category-enabled-buffer.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-destructuring.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-file-handle.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-fs-existsSync.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-fs-mkdirSync.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-fs-opendir-callback.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-fs-opendirSync.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-fs-promises-stat-no-throw.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-fs-readFileSync.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-fs-readdirSync.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-fs-realpathSync.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-fs-stat-callback.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-fs-writeFile-callback.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-fs-writeFileSync.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-memory-provider-dynamic.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-mount-point-url.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-multi-mount.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-rename-symlink-descendant.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-rename.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-webcrypto-algorithm-name-ascii.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-webcrypto-cryptokey-brand-check.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-webcrypto-digest.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-webcrypto-enforce-range.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-webcrypto-getrandomvalues-properties.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-webcrypto-methods-not-async.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-webcrypto-pbkdf2-iteration-limits.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-webcrypto-random-backing-buffer.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-webcrypto-random.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-webcrypto-supports-overloads.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-webcrypto-supports-receiver.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-webcrypto-util.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-webcrypto-webidl-brand.js",
+        "before": "fail",
+        "after": "pass"
+      }
+    ],
+    "lost_passes": [
+      {
+        "fixture": "test-buffer-read.js",
+        "before": "pass",
+        "after": "timeout"
+      },
+      {
+        "fixture": "test-buffer-readdouble.js",
+        "before": "pass",
+        "after": "timeout"
+      },
+      {
+        "fixture": "test-buffer-readfloat.js",
+        "before": "pass",
+        "after": "timeout"
+      },
+      {
+        "fixture": "test-buffer-readint.js",
+        "before": "pass",
+        "after": "timeout"
+      },
+      {
+        "fixture": "test-dgram-bind-fd-error.js",
+        "before": "pass",
+        "after": "fail"
+      },
+      {
+        "fixture": "test-fs-append-file.js",
+        "before": "pass",
+        "after": "fail"
+      },
+      {
+        "fixture": "test-trace-events-console.js",
+        "before": "pass",
+        "after": "fail"
+      }
+    ],
+    "all_status_changes": [
+      {
+        "fixture": "test-aborted-util.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-assert-partial-deep-equal.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-buffer-read.js",
+        "before": "pass",
+        "after": "timeout"
+      },
+      {
+        "fixture": "test-buffer-readdouble.js",
+        "before": "pass",
+        "after": "timeout"
+      },
+      {
+        "fixture": "test-buffer-readfloat.js",
+        "before": "pass",
+        "after": "timeout"
+      },
+      {
+        "fixture": "test-buffer-readint.js",
+        "before": "pass",
+        "after": "timeout"
+      },
+      {
+        "fixture": "test-child-process-bad-stdio.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-console-diagnostics-channels.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-console-group.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-console-instance.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-console-methods.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-console-table.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-console-tty-colors.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-console.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-crypto-default-shake-lengths-oneshot.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-crypto-default-shake-lengths.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-crypto-hash.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-crypto-hmac.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-crypto-oneshot-hash-xof.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-crypto-oneshot-hash.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-crypto-secret-keygen.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-crypto-webcrypto-aes-decrypt-tag-too-small.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-crypto.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-debug-v8-fast-api.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dgram-bind-fd-error.js",
+        "before": "pass",
+        "after": "fail"
+      },
+      {
+        "fixture": "test-dns-default-order-ipv4.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-default-order-ipv6.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-default-order-verbatim.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-lookup-promises-options-deprecated.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-lookup-promises.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-lookupService-promises.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-lookupService.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-promises-exists.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-dns-set-default-order.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-domexception-cause.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-fileurltopathbuffer.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-fs-append-file.js",
+        "before": "pass",
+        "after": "fail"
+      },
+      {
+        "fixture": "test-fs-cp-async-file-modes.mjs",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-global-webcrypto-classes.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-global-webcrypto.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-internal-only-binding.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-primordials-apply.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-primordials-regexp.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-stream-writable-samecb-singletick.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-tcp-wrap-connect.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-tcp-wrap-listen.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-tcp-wrap.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-tls-close-notify.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-tls-enable-trace-cli.js",
+        "before": "skip",
+        "after": "fail"
+      },
+      {
+        "fixture": "test-tls-enable-trace.js",
+        "before": "skip",
+        "after": "fail"
+      },
+      {
+        "fixture": "test-trace-events-console.js",
+        "before": "pass",
+        "after": "fail"
+      },
+      {
+        "fixture": "test-trace-events-get-category-enabled-buffer.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-destructuring.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-file-handle.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-fs-existsSync.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-fs-mkdirSync.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-fs-opendir-callback.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-fs-opendirSync.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-fs-promises-stat-no-throw.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-fs-readFileSync.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-fs-readdirSync.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-fs-realpathSync.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-fs-stat-callback.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-fs-writeFile-callback.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-fs-writeFileSync.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-memory-provider-dynamic.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-mount-point-url.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-multi-mount.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-rename-symlink-descendant.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-vfs-rename.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-webcrypto-algorithm-name-ascii.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-webcrypto-cryptokey-brand-check.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-webcrypto-digest.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-webcrypto-enforce-range.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-webcrypto-getrandomvalues-properties.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-webcrypto-methods-not-async.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-webcrypto-pbkdf2-iteration-limits.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-webcrypto-random-backing-buffer.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-webcrypto-random.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-webcrypto-supports-overloads.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-webcrypto-supports-receiver.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-webcrypto-util.js",
+        "before": "fail",
+        "after": "pass"
+      },
+      {
+        "fixture": "test-webcrypto-webidl-brand.js",
+        "before": "fail",
+        "after": "pass"
+      }
+    ],
+    "memory_event_deltas": {
+      "low": 0,
+      "high": 0,
+      "max": 247254,
+      "oom": 0,
+      "oom_kill": 0,
+      "oom_group_kill": 0
+    },
+    "receipt_exit": 1,
+    "elapsed_seconds": 2455.5595428520464
+  },
+  "qualification": {
+    "source_file_count": 803,
+    "changed_sources_after": [],
+    "binaries_before": {
+      "quench-node": "0fc948b8a80595c7d646d9efc30d2df60ed286c68584464e9e6f43f53b334fc1",
+      "run-parallel": "ad744e0273fb6020f0691b46c1d16da19cee3317ca6beb2d1f58dc4b073c8c46",
+      "openssl-cli": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1"
+    },
+    "binaries_after": {
+      "quench-node": "0fc948b8a80595c7d646d9efc30d2df60ed286c68584464e9e6f43f53b334fc1",
+      "run-parallel": "ad744e0273fb6020f0691b46c1d16da19cee3317ca6beb2d1f58dc4b073c8c46",
+      "openssl-cli": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1"
+    },
+    "protected_fixture_before": {
+      "restored": true,
+      "sha256": "b0e78cd4bb13929391b33a2ad7d80f61d8b2f1d66533aaf31d95807e5f3863eb"
+    },
+    "protected_fixture_after": {
+      "restored": true,
+      "sha256": "b0e78cd4bb13929391b33a2ad7d80f61d8b2f1d66533aaf31d95807e5f3863eb"
+    },
+    "command": [
+      "/workspace/quench/work/vfs-native-backends-bin/run-parallel",
+      "--all",
+      "--parallel-dir",
+      "/workspace/work/node-stable-release/node-v26.12.0/test/parallel",
+      "--jobs",
+      "4",
+      "--timeout-secs",
+      "30",
+      "--results",
+      "/workspace/quench/work/full-native-backends-stable/results.json"
+    ],
+    "started_utc": "2026-10-16T21:41:57.756964+00:00",
+    "finished_utc": "2026-10-16T22:22:53.445203+00:00"
+  },
+  "regression_notes": {
+    "test-dgram-bind-fd-error.js": "Actual unchanged Stage5/v3 UDP probes pass; this later unpublished implementation is excluded from audited e5 binary.",
+    "test-fs-append-file.js": "Promise FileHandle is rejected as path; genuine native FileHandle/promise ownership repair remains open.",
+    "test-trace-events-console.js": "Unexpected trace name in console-only category; remains open.",
+    "buffer_read_timeouts": "Four previously passing original Buffer read fixtures timed out at unchanged30s; retained for focused investigation, no adjusted counts."
+  },
+  "pinned_full_audit": "Running separately; no count inferred.",
+  "oracle_full_reference": {
+    "selected": 5012,
+    "pass": 4579,
+    "skip": 417,
+    "fail": 16,
+    "note": "Official upstream harness reference is a different selection than this5015-case audit; not used to overwrite candidate statuses."
+  },
+  "performance_claim": false,
+  "raw_artifacts": "work/full-native-backends-stable/{results,receipt,summary,comparison-await-parent}.json"
+}

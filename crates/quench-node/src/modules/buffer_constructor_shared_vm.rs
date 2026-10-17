@@ -6,8 +6,7 @@ const FAST_BUFFER_CACHE: &str = "\0builtin:buffer/FastBuffer";
 const MAX_DEPRECATION_LOCATION_CHECKS: f64 = 10_000.0;
 const WARNING: &str = "Buffer() is deprecated due to security and usability issues. Please use the Buffer.alloc(), Buffer.allocUnsafe(), or Buffer.from() methods instead.";
 fn get(context: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, RootedError> {
-    let key = context.string_rooted(name);
-    context.get_property_rooted(object, key)
+    context.get_named_property_rooted(object, name)
 }
 fn set(
     context: &mut Context<'_>,
