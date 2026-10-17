@@ -89,6 +89,14 @@ impl<H: Host> Vm<H> {
         self.capture_function_name_atom(function, name);
     }
 
+    /// Gives a function `closure_in_realm` made a moment ago its original name. No
+    /// constructed-shape memo entry can name a fresh function, so none is dropped.
+    pub(super) fn name_fresh_function(&mut self, function: Value, name: Atom) {
+        let Some(shape) = self.object_data(function).map(Object::shape) else { return; };
+        let shape = self.append_cached_shape_transition(shape, ShapeTransition::FunctionName { name });
+        self.object_data_mut(function).expect("function object").set_shape(shape);
+    }
+
     fn capture_function_name_atom(&mut self, function: Value, name: Atom) {
         let Some(shape) = self.object_data(function).map(Object::shape) else { return; };
         // A first original name makes the function record what it constructs.

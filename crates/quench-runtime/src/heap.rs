@@ -1141,7 +1141,10 @@ impl Heap {
         if full {
             self.gc_profile.mark_clear_nanos += mark_clear_started.elapsed().as_nanos() as u64;
         }
-        let mut work: Vec<Value> = roots.into_iter().chain(self.roots.values()).collect();
+        let roots = roots.into_iter();
+        let mut work = Vec::with_capacity(roots.size_hint().0 + self.roots.slot_count());
+        work.extend(roots);
+        work.extend(self.roots.values());
         #[cfg(debug_assertions)]
         let verify_roots = work.clone();
         #[cfg(feature = "profile-aggregate")]
