@@ -1233,11 +1233,6 @@ impl From<Vec<SourcePosition>> for SourcePositions {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PlainLocalContextIneligibility {
     RootFunction,
-    AsyncFunction,
-    GeneratorFunction,
-    ClassConstructor,
-    ClassInitializer,
-    NonSimpleParameters,
     LegacyCaptureLayout,
     DynamicNameResolution,
 }
@@ -1248,8 +1243,6 @@ pub(crate) enum PlainLocalSlotIneligibility {
     MappedArgument,
     SelfBinding,
     Captured,
-    NotEnvironmentVisible,
-    HiddenName,
 }
 
 impl Function {
@@ -1303,21 +1296,6 @@ impl Function {
         if self.parent.is_none() {
             return Some(PlainLocalContextIneligibility::RootFunction);
         }
-        if self.is_async {
-            return Some(PlainLocalContextIneligibility::AsyncFunction);
-        }
-        if self.is_generator {
-            return Some(PlainLocalContextIneligibility::GeneratorFunction);
-        }
-        if self.is_class_constructor {
-            return Some(PlainLocalContextIneligibility::ClassConstructor);
-        }
-        if self.class_initializer {
-            return Some(PlainLocalContextIneligibility::ClassInitializer);
-        }
-        if !self.simple_parameters {
-            return Some(PlainLocalContextIneligibility::NonSimpleParameters);
-        }
         let selective = self.selective_capture_slots.is_some();
         let has_legacy_environment_access = self.code.iter().any(|instruction| {
             instruction.op() == Op::MakeClosure && !selective
@@ -1345,11 +1323,7 @@ impl Function {
     /// temporal dead zone (`initialization`). Compilation specializes these slots'
     /// operations, validation re-derives the same proof, and the interpreter memoizes it in
     /// `plain_locals` to read plain local operands directly.
-    pub(crate) fn plain_local_slots<'a>(
-        &self,
-        atom_name: impl Fn(Atom) -> Option<&'a str>,
-        superinstructions: &[Superinstruction],
-    ) -> Vec<bool> {
+    pub(crate) fn plain_local_slots(&self, superinstructions: &[Superinstruction]) -> Vec<bool> {
         let mut plain = vec![false; usize::from(self.locals)];
         if !self.plain_local_context_is_safe() {
             return plain;
@@ -1363,11 +1337,7 @@ impl Function {
             }
         }
         for (slot, plain) in plain.iter_mut().enumerate() {
-            *plain = self
-                .local_atoms
-                .get(slot)
-                .and_then(|atom| atom_name(*atom))
-                .is_some_and(|name| self.plain_local_slot_is_safe(slot, name));
+            *plain = self.plain_local_slot_is_safe(slot);
         }
         for (slot, dead_zone) in dead_zone.iter_mut().enumerate() {
             *dead_zone &= plain[slot];
@@ -1642,35 +1612,25 @@ impl Function {
     pub(crate) fn plain_local(&self, program: &ResidualProgram, slot: usize) -> bool {
         self.plain_locals
             .get_or_init(|| {
-                let atoms = &program.atoms;
-                self.plain_local_slots(
-                    |atom| {
-                        usize::try_from(atom)
-                            .ok()
-                            .filter(|atom| *atom < atoms.len())
-                            .map(|atom| &atoms[atom])
-                    },
-                    &program.superinstructions,
-                )
-                .into_boxed_slice()
+                self.plain_local_slots(&program.superinstructions)
+                    .into_boxed_slice()
             })
             .get(slot)
             .copied()
             .unwrap_or(false)
     }
 
-    pub(crate) fn plain_local_slot_is_safe(&self, slot: usize, atom_name: &str) -> bool {
-        self.plain_local_slot_ineligibility(slot, atom_name).is_none()
+    pub(crate) fn plain_local_slot_is_safe(&self, slot: usize) -> bool {
+        self.plain_local_slot_ineligibility(slot).is_none()
     }
 
     pub(crate) fn plain_local_slot_ineligibility(
         &self,
         slot: usize,
-        atom_name: &str,
     ) -> Option<PlainLocalSlotIneligibility> {
-        let Some(&atom) = self.local_atoms.get(slot) else {
+        if self.local_atoms.get(slot).is_none() {
             return Some(PlainLocalSlotIneligibility::MissingAtom);
-        };
+        }
         if self.is_self_binding_slot(slot) {
             return Some(PlainLocalSlotIneligibility::SelfBinding);
         }
@@ -1688,12 +1648,6 @@ impl Function {
             && self.arguments_are_mapped()
         {
             return Some(PlainLocalSlotIneligibility::MappedArgument);
-        }
-        if !self.environment_atoms.contains(&atom) {
-            return Some(PlainLocalSlotIneligibility::NotEnvironmentVisible);
-        }
-        if atom_name.starts_with('\0') {
-            return Some(PlainLocalSlotIneligibility::HiddenName);
         }
         None
     }
