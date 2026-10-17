@@ -16,14 +16,26 @@ fn is_bare_specifier(specifier: &str) -> bool {
     !specifier.starts_with('.') && !Path::new(specifier).is_absolute()
 }
 
+/// The require resolver: each ancestor's `node_modules`, then Node's global paths.
 pub(super) fn commonjs_resolver() -> oxc_resolver::Resolver {
+    let modules = std::iter::once(NODE_MODULES.to_owned())
+        .chain(
+            crate::modules::module_shared_vm::global_paths()
+                .iter()
+                .map(|path| path.to_string_lossy().into_owned()),
+        )
+        .collect();
     oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
         extensions: vec![".js".into(), ".json".into(), ".node".into()],
         main_files: vec!["index".into()],
         condition_names: vec!["node".into(), "require".into(), "default".into()],
+        modules,
         ..Default::default()
     })
 }
+
+/// The directory each ancestor of a requester searches for packages.
+const NODE_MODULES: &str = "node_modules";
 
 /// An existing explicit filesystem target needs no package or extension search.
 /// URL delimiters and percent escapes stay with the full resolver.
@@ -968,6 +980,7 @@ pub(super) fn require_node_library(
     require(context, receiver, args)
 }
 
+/// `require.resolve(request, options)`: `Module._resolveFilename(request, module, false, options)`.
 pub(super) fn resolve(
     context: &mut Context<'_>,
     _: RootId,
@@ -975,7 +988,91 @@ pub(super) fn resolve(
 ) -> Result<RootId, RootedError> {
     let specifier = specifier(context, args, Request::Resolve)?;
     let parent = context.host_function_data()?;
-    resolve_request(context, &specifier, parent)
+    let lookup = lookup_paths(context, args.get(1).copied())?;
+    resolve_request(context, &specifier, parent, lookup.as_deref())
+}
+
+/// `require.resolve.paths(request)`: `Module._resolveLookupPaths(request, module)`. A builtin
+/// has none; a relative request resolves from its parent's directory; any other searches the
+/// parent's `node_modules` chain, then the global paths.
+pub(super) fn resolve_paths(
+    context: &mut Context<'_>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let specifier = specifier(context, args, Request::Resolve)?;
+    if requested_builtin(context, &specifier).is_some() {
+        return Ok(context.null());
+    }
+    let parent = context.host_function_data()?;
+    let filename = get(context, parent, "filename")?;
+    let filename = context.string_text(filename)?;
+    let paths: Vec<String> = if is_relative_request(&specifier) {
+        let directory = filename
+            .as_deref()
+            .and_then(|filename| Path::new(filename).parent())
+            .map_or_else(|| ".".to_owned(), |directory| directory.to_string_lossy().into_owned());
+        vec![directory]
+    } else {
+        let parent_paths = get(context, parent, "paths")?;
+        let mut paths = Vec::new();
+        if context.is_array_rooted(parent_paths)? {
+            let length = get(context, parent_paths, "length")?;
+            for index in 0..context.to_number(length)? as usize {
+                let path = get(context, parent_paths, &index.to_string())?;
+                paths.push(context.to_string(path)?);
+            }
+        }
+        paths.extend(
+            crate::modules::module_shared_vm::global_paths()
+                .iter()
+                .map(|path| path.to_string_lossy().into_owned()),
+        );
+        paths
+    };
+    let paths = paths.iter().map(|path| context.string_rooted(path)).collect::<Vec<_>>();
+    context.array_rooted(&paths)
+}
+
+/// `_resolveLookupPaths`' relative request: a `.` followed by nothing, `.` or `/`.
+fn is_relative_request(specifier: &str) -> bool {
+    let mut characters = specifier.chars();
+    characters.next() == Some('.') && matches!(characters.next(), None | Some('.' | '/'))
+}
+
+/// `options.paths` of `Module._resolveFilename`, each element passed through `path.resolve`.
+/// Options that are not an object, or have no `paths`, resolve from the parent.
+fn lookup_paths(context: &mut Context<'_>, options: Option<RootId>) -> Result<Option<Vec<PathBuf>>, RootedError> {
+    let Some(options) = options else { return Ok(None) };
+    if !context.is_object_rooted(options)? || context.is_callable_rooted(options)? {
+        return Ok(None);
+    }
+    let paths = get(context, options, "paths")?;
+    if context.rooted_value(paths).is_some_and(|value| value.is_undefined()) {
+        return Ok(None);
+    }
+    if !context.is_array_rooted(paths)? {
+        let name = context.string_rooted("options.paths");
+        return Err(throw_node_error(context, "ERR_INVALID_ARG_VALUE", &[name, paths])?);
+    }
+    let path = crate::modules::path_shared_vm::module(context)?;
+    let resolve = get(context, path, "resolve")?;
+    let length = get(context, paths, "length")?;
+    let mut directories = Vec::new();
+    for index in 0..context.to_number(length)? as usize {
+        let entry = get(context, paths, &index.to_string())?;
+        let resolved = context.call_rooted(resolve, path, &[entry])?;
+        directories.push(PathBuf::from(context.to_string(resolved)?));
+    }
+    Ok(Some(directories))
+}
+
+/// Throws Node's `code` error built by lib/internal/errors.js from `args`.
+fn throw_node_error(context: &mut Context<'_>, code: &str, args: &[RootId]) -> Result<RootedError, RootedError> {
+    let codes = node_library_export(context, "internal/modules/cjs/loader.js", "internal/errors.js", "codes")?;
+    let constructor = get(context, codes, code)?;
+    let error = context.construct_rooted(constructor, constructor, args)?;
+    Ok(context.throw(error))
 }
 
 pub(crate) fn resolve_from_parent(
@@ -994,18 +1091,20 @@ pub(crate) fn resolve_from_parent(
             module_record(context, &filename, None, false)?
         }
     };
-    resolve_request(context, &specifier, parent)
+    let lookup = lookup_paths(context, args.get(3).copied())?;
+    resolve_request(context, &specifier, parent, lookup.as_deref())
 }
 
 fn resolve_request(
     context: &mut Context<'_>,
     specifier: &str,
     parent: RootId,
+    lookup: Option<&[PathBuf]>,
 ) -> Result<RootId, RootedError> {
     if requested_builtin(context, specifier).is_some() {
         return Ok(context.string_rooted(specifier));
     }
-    let filename = resolve_filename(context, specifier, parent)?;
+    let filename = resolve_filename_in(context, specifier, parent, lookup)?;
     Ok(context.string_rooted(&filename.to_string_lossy()))
 }
 
@@ -1877,6 +1976,17 @@ fn resolve_filename(
     specifier: &str,
     parent: RootId,
 ) -> Result<PathBuf, RootedError> {
+    resolve_filename_in(context, specifier, parent, None)
+}
+
+/// `Module._resolveFilename`: `lookup` holds `options.paths`, the directories a request
+/// resolves from in order instead of its parent's directory.
+fn resolve_filename_in(
+    context: &mut Context<'_>,
+    specifier: &str,
+    parent: RootId,
+    lookup: Option<&[PathBuf]>,
+) -> Result<PathBuf, RootedError> {
     let filename = get(context, parent, "filename")?;
     let directory = match context.string_text(filename)? {
         Some(filename) => Path::new(&filename).parent().unwrap_or(Path::new(".")).to_owned(),
@@ -1923,19 +2033,25 @@ fn resolve_filename(
             }
         }
     }
-    let (base, resolved_specifier) = if node_internal {
-        (node_lib.as_path(), format!("./{internal_specifier}"))
+    let (bases, resolved_specifier) = if node_internal {
+        (vec![node_lib], format!("./{internal_specifier}"))
     } else {
-        (
-            directory.as_path(),
-            specifier.to_owned(),
-        )
+        (lookup.map_or_else(|| vec![directory], <[PathBuf]>::to_vec), specifier.to_owned())
     };
-    if let Some(path) = exact_file_path(base, &resolved_specifier) {
-        return std::fs::canonicalize(path).map_err(|error| RootedError::host(error.to_string()));
-    }
     let resolver = commonjs_resolver();
-    match resolver.resolve(base, &resolved_specifier) {
+    let mut outcome = Err(oxc_resolver::ResolveError::NotFound(resolved_specifier.clone()));
+    let mut base = bases.first().map_or(Path::new("."), PathBuf::as_path);
+    for directory in &bases {
+        base = directory;
+        if let Some(path) = exact_file_path(base, &resolved_specifier) {
+            return std::fs::canonicalize(path).map_err(|error| RootedError::host(error.to_string()));
+        }
+        outcome = resolver.resolve(base, &resolved_specifier);
+        if !matches!(outcome, Err(oxc_resolver::ResolveError::NotFound(_))) {
+            break;
+        }
+    }
+    match outcome {
         Ok(resolution) => Ok(resolution.full_path()),
         Err(oxc_resolver::ResolveError::NotFound(_)) if !node_internal && is_bare_specifier(specifier) && let Some(super::esm_errors::MissingPackageFile::ExportsTarget { target, package }) =
             super::esm_errors::missing_package_file(&resolver, base, specifier) =>
@@ -2196,14 +2312,21 @@ fn module_record(
         set(context, process, "mainModule", module)?;
     }
     let require = context.host_function_with_data(super::operation("require"), module)?;
-    let resolve = context.host_function_with_data(super::operation("resolve"), module)?;
-    set(context, require, "resolve", resolve)?;
+    install_resolve(context, require, module)?;
     let main = get(context, process, "mainModule")?;
     set(context, require, "main", main)?;
     let cache = commonjs_cache(context)?;
     set(context, require, "cache", cache)?;
     set(context, module, "require", require)?;
     Ok(module)
+}
+
+/// `require.resolve` and `require.resolve.paths` for `module` (`makeRequireFunction`).
+fn install_resolve(context: &mut Context<'_>, require: RootId, module: RootId) -> Result<(), RootedError> {
+    let resolve = context.host_function_with_data(super::operation("resolve"), module)?;
+    let paths = context.host_function_named_with_data(super::operation("resolvePaths"), "paths", module)?;
+    set(context, resolve, "paths", paths)?;
+    set(context, require, "resolve", resolve)
 }
 
 pub(crate) fn create_require(
@@ -2428,8 +2551,6 @@ fn load_with_resolution(
         let file_text = match library_relative {
             Some(path) if path == Path::new("lib/internal/child_process.js") =>
                 super::policy_projection::project(&file_text, &["setupChannel", "kChannelHandle"]).map_err(RootedError::host)?,
-            Some(path) if path == Path::new("lib/internal/child_process/serialization.js") =>
-                super::policy_projection::project(&file_text, &["json"]).map_err(RootedError::host)?,
             Some(path) if path == Path::new("lib/net.js") =>
                 super::policy_projection::project(&file_text, &["BoundSocket"]).map_err(RootedError::host)?,
             Some(path) if path == Path::new("lib/child_process.js") =>
@@ -2629,8 +2750,7 @@ pub(crate) fn compile_public(context: &mut Context<'_>, module: RootId, args: &[
     let wrapper = evaluate_wrapper(context, WRAPPER_PREFIX, &source, &name)?;
     let exports = get(context, module, "exports")?;
     let require = context.host_function_with_data(super::operation("require"), module)?;
-    let resolve = context.host_function_with_data(super::operation("resolve"), module)?;
-    set(context, require, "resolve", resolve)?;
+    install_resolve(context, require, module)?;
     let global = context.global_root()?;
     let process = get(context, global, "process")?;
     let main = get(context, process, "mainModule")?;
@@ -2753,7 +2873,8 @@ pub(crate) fn node_internal_binding_source() -> &'static str {
     case "string_decoder": return __nativeInternalBinding("string_decoder");
     case "buffer":
     case "url":
-    case "blob": return __nativeInternalBinding(name);
+    case "blob":
+    case "ipc_serdes": return __nativeInternalBinding(name);
     case "fs": return __nativeInternalBinding("fs");
     case "crypto": {
       const native = __nativeInternalBinding("crypto");
