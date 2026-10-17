@@ -29,12 +29,13 @@ marks; it must not read the interior-mutable shape lookup caches.
 Pacing has one authority, `heap/pacing.rs` (`GenerationalPacing::plan`), a
 state machine over measured young survival: generational while most young
 allocations die, full collections with a larger interval while most survive.
-Allocation, live size and survival share one unit, allocation weight: one per
-cell or record plus one per 64 payload bytes. `Cell::payload_bytes` is the
-authority for a cell's payload (string units, array element storage,
-ArrayBuffer and Wasm memory/table bytes); the heap's payload ledger adds it at
-allocation and growth and subtracts it at reclamation, so live weight needs no
-extra trace. A `gc-tuning` + `profile-gc-time` build with `QUENCH_GC_TRACE=1`
+Allocation is charged in weight: one per cell or record plus one per 64
+payload bytes. `Cell::payload_bytes` is the authority for a cell's payload
+(string units, array element storage, ArrayBuffer and Wasm memory/table
+bytes); the heap's payload ledger adds it at allocation and growth and
+subtracts it at reclamation, so live weight needs no extra trace. Survival
+compares live weight with allocated weight; budgets stay proportional to live
+cells and records, which also hold memory the weight does not see. A `gc-tuning` + `profile-gc-time` build with `QUENCH_GC_TRACE=1`
 prints each plan and recounts the ledger after every full collection. Rope
 flattening, the property arena and collection entries are not yet charged.
 
