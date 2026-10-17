@@ -74,3 +74,33 @@ chunks for the Wasm compile to reuse, so its transient lands on fresh pages.
 `evidence/npm-icu-2026-10-16/npm-icu-fixed-callgrind-guard.sh`, dynamic production builds,
 base `ed31cf0fa`, candidate `85ed4a1ee`: per-run deltas −0.01% to +0.01% on seven fixtures,
 Splay +0.57% (below the 1% hold, decision 24).
+
+## Session 2: no-JIT and JIT (`coremark-session2-11.csv`, 11 rounds)
+
+Static `quench-node` built from `dd7897569` (`v2-cloud-wasm` after merging `v2-merged`; the
+published merge `f8c17bb39` adds only this evidence), hash in `binaries-session2.sha256`.
+JIT is `quench-node --jit`: the same VM in its compiled mode, Wasm functions through
+Cranelift (decision 34). Node is official v26.12.0; Wasmtime and Winch come from the `bm`
+harness. Started more than 30 minutes after session 1.
+
+| Mode | Runtime | Median Score | Range | Median max RSS |
+| -- | -- | --: | -- | --: |
+| No JIT | **quench-node** | **3,086.2** | 2,844–3,236 | 18.14 MB |
+| No JIT | Wasmi v2 | 2,935.6 | 2,810–3,015 | 5.38 MB |
+| No JIT | Stitch | 2,197.6 | 2,072–2,308 | 4.54 MB |
+| No JIT | Wasm3 | 1,996.9 | 1,916–2,098 | **4.04 MB** |
+| No JIT | WAMR | 1,871.0 | 1,738–1,981 | 4.15 MB |
+| No JIT | Pulley | 1,438.4 | 1,375–1,543 | 14.22 MB |
+| No JIT | Bun, JIT off | 690.8 | 670–707 | 18.66 MB |
+| No JIT | Tinywasm | 620.5 | 566–672 | 5.43 MB |
+| JIT | Node v26.12.0 | **20,898.6** | 19,728–22,036 | 52.86 MB |
+| JIT | Bun 1.4.2 | 20,656.9 | 19,939–21,330 | 27.32 MB |
+| JIT | Wasmtime | 19,650.2 | 18,397–20,513 | 14.07 MB |
+| JIT | **quench-node --jit** | 17,508.0 | 16,694–18,131 | 20.29 MB |
+| JIT | Winch | 9,970.1 | 9,361–10,760 | **12.00 MB** |
+
+* **No-JIT Score: won again** (1.05x Wasmi v2, ahead in 10 of 11 rounds). With session 1
+  (11 of 11), that is two Linux sessions, but on two binaries (`85ed4a1ee`, `dd7897569`).
+* **No-JIT max RSS: lost** (18.14 vs 4.04 MB, 4.5x).
+* **JIT Score: lost** (0.84x Node, behind in 11 of 11). **JIT max RSS: lost** (20.29 vs
+  Winch 12.00 MB, 1.7x); below Node 52.86 and Bun 27.32 MB, above Wasmtime 14.07 MB.
