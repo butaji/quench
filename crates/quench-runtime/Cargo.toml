@@ -19,6 +19,8 @@ profile-aggregate = []
 profile-trace = ["profile-aggregate"]
 profile-memory = []
 profile-gc-time = []
+# Reads the collection pacing knobs from the environment (measurement builds only).
+gc-tuning = []
 reference = []
 
 [dependencies]

@@ -501,7 +501,7 @@ impl<H: Host> Vm<H> {
                     && let Some(atom) =
                         self.root_global_lexical_atom(p, self.frames[f].function, slot)
                 {
-                    self.realm.global_lexical_bindings.insert(atom, value);
+                    self.realm.bind_global_lexical(atom, value);
                 }
                 *self
                     .frame_binding_mut(p, f, slot)

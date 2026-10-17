@@ -294,7 +294,7 @@ impl<H: Host> Vm<H> {
         key: Value,
         value: Value,
     ) -> bool {
-        self.try_replace_element_of::<true>(object, key, value, crate::heap::Heap::array_mut)
+        self.try_replace_element_of::<true>(object, key, value, crate::heap::Heap::array_store_mut)
     }
 
     /// `object[key] = value` that appends to a dense array at its length
@@ -318,7 +318,7 @@ impl<H: Host> Vm<H> {
             object,
             key,
             value,
-            crate::heap::Heap::record_array_mut,
+            crate::heap::Heap::record_array_store_mut,
         )
     }
 
@@ -330,12 +330,12 @@ impl<H: Host> Vm<H> {
         object: Value,
         key: Value,
         value: Value,
-        array: fn(&mut crate::heap::Heap, Value) -> Option<&mut crate::heap::ArrayObject>,
+        array: fn(&mut crate::heap::Heap, Value, Value) -> Option<&mut crate::heap::ArrayObject>,
     ) -> bool {
         let Some(index) = key.as_int().and_then(|index| usize::try_from(index).ok()) else {
             return false;
         };
-        let Some(array) = array(&mut self.heap, object) else {
+        let Some(array) = array(&mut self.heap, object, value) else {
             return false;
         };
         if array.has_indexed_descriptors() || array.is_frozen() || array.arguments_map().is_some() {
@@ -359,7 +359,7 @@ impl<H: Host> Vm<H> {
     /// Overwrites a present dense array element after every guard has passed.
     #[inline(always)]
     pub(super) fn replace_dense_element(&mut self, object: Value, index: usize, value: Value) {
-        let Some(array_object) = self.heap.array_mut(object) else {
+        let Some(array_object) = self.heap.array_store_mut(object, value) else {
             unreachable!("dense element replacement requires an array")
         };
         // Only a mapped arguments object mirrors its elements into parameter bindings.
@@ -475,7 +475,7 @@ impl<H: Host> Vm<H> {
         let elements = array_object.elements();
         let dense_len = elements.len();
         if index < dense_len {
-            let Some(array_object) = self.heap.array_mut(object) else {
+            let Some(array_object) = self.heap.array_store_mut(object, value) else {
                 unreachable!()
             };
             let elements = array_object.elements_mut();

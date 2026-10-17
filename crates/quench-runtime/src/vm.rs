@@ -1,4 +1,5 @@
 mod compiled;
+mod js_compiled;
 mod shape_transitions;
 mod startup_intrinsics;
 mod wasm;
@@ -50,6 +51,8 @@ struct RuntimeAtoms {
     constructor: Atom,
     /// Canonical key for named function-info lookup; paired with length_atom.
     name: Atom,
+    /// The empty string, an anonymous function's initial name.
+    empty: Atom,
 }
 pub(crate) mod activation;
 mod activation_lifecycle;
@@ -119,7 +122,8 @@ mod method_cache;
 mod module;
 mod number;
 mod object;
-mod shape_slot_memo;
+mod shape_memo;
+mod name_atom_memo;
 mod object_assignment;
 mod object_array;
 mod object_builtins;
@@ -467,15 +471,31 @@ impl PendingJob {
 }
 struct Realm {
     globals: Value,
+    /// Every global lexical name of the realm, including every bound one
+    /// (`Realm::bind_global_lexical`), so it alone answers whether a name is one.
     global_lexical_declarations: FxHashSet<Atom>,
     global_lexical_bindings: FxHashMap<Atom, Value>,
     immutable_global_lexical_bindings: FxHashSet<Atom>,
+    /// Every inactive realm's global lexical state, keyed by its global, except the realm
+    /// last switched away from, which `parked` holds.
     global_lexical_states: FxHashMap<Value, GlobalLexicalState>,
+    /// The realm last switched away from, so switching back to it, which jobs and calls
+    /// across two realms do on every turn, moves its state without hashing.
+    parked: Option<ParkedRealm>,
     intrinsics: RealmIntrinsics,
     jobs: std::collections::VecDeque<PendingJob>,
     template_objects: FxHashMap<(ProgramId, u32, u32), Value>,
     promise: PromiseRuntime,
 }
+impl Realm {
+    /// Binds global lexical `atom` to `value`, declaring a name bound for the first time.
+    fn bind_global_lexical(&mut self, atom: Atom, value: Value) {
+        if self.global_lexical_bindings.insert(atom, value).is_none() {
+            self.global_lexical_declarations.insert(atom);
+        }
+    }
+}
+
 #[derive(Default)]
 struct RealmIntrinsics {
     arguments_objects: FxHashMap<(Value, bool), ArgumentsObjectTemplate>,
@@ -540,6 +560,17 @@ struct GlobalLexicalState {
     bindings: FxHashMap<Atom, Value>,
     immutable_bindings: FxHashSet<Atom>,
 }
+/// An inactive realm with its global lexical state and the prototypes the realm-following
+/// VM fields held while it was active (`REALM_FOLLOWING_PROTOTYPES`).
+struct ParkedRealm {
+    global: Value,
+    state: GlobalLexicalState,
+    prototypes: [Value; REALM_FOLLOWING_PROTOTYPES.len()],
+}
+/// The natives whose prototypes VM fields follow from the active realm
+/// (`Vm::realm_prototype_field`).
+const REALM_FOLLOWING_PROTOTYPES: [Native; 4] =
+    [Native::Object, Native::Function, Native::Array, Native::String];
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct FieldCache {
     receiver: u32,
@@ -643,6 +674,12 @@ impl FieldAddCacheSet {
         len: 0,
         entries: [FieldAddCache::EMPTY; FIELD_ADD_CACHE_WAYS],
     };
+    #[inline(always)]
+    fn find(&self, source_shape: u32, atom: Atom) -> Option<&FieldAddCache> {
+        self.entries[..usize::from(self.len)]
+            .iter()
+            .find(|cache| cache.source_shape == source_shape && cache.atom == atom)
+    }
     #[inline(always)]
     fn find_mut(&mut self, source_shape: u32, atom: Atom) -> Option<&mut FieldAddCache> {
         self.entries[..usize::from(self.len)]
@@ -1170,6 +1207,8 @@ const DEFAULT_PROPERTY_ATTRIBUTES: PropertyAttributes = PropertyAttributes {
     setter: None,
 };
 pub(crate) struct Vm<H> {
+    /// VM-wide running-job admission for native microtask checkpoints.
+    native_microtask_running: bool,
     pub(crate) host: H,
     specialized: bool,
     heap: Heap,
@@ -1223,11 +1262,19 @@ pub(crate) struct Vm<H> {
     temporal_plain_month_day_proto: Value,
     temporal_plain_year_month_proto: Value,
     natives: Vec<(Native, Value)>,
+    /// One shared string value per program atom a function name spells (`atom_string`):
+    /// strings are immutable, so every closure of a plan can hold the same name value.
+    /// Only program atoms and the anonymous name are kept, so the loaded program bounds it.
+    atom_strings: FxHashMap<Atom, Value>,
     /// The function values in `natives`. One native serves every realm, so it runs in the
     /// realm of its caller rather than switching to the creator's.
     shared_natives: FxHashSet<Value>,
     frames: Vec<Box<Frame>>,
     native_stack_frames: Vec<(usize, String)>,
+    /// Emptied root lists of finished native calls, reused by the next `NativeContext`.
+    pub(crate) native_root_lists: Vec<Vec<RootId>>,
+    /// The roots the last collection gathered, which sizes the next one's root vector.
+    gc_root_count: usize,
     frame_pool: Vec<Box<Frame>>,
     /// Activations a running lane holds without frames.
     lane_stack: dispatch_fast::LaneStack,
@@ -1250,6 +1297,9 @@ pub(crate) struct Vm<H> {
     program_cache_layouts: Vec<ProgramCacheLayout>,
     /// The register file of the frame the general loop dispatches; see `run_general_loop`.
     active_registers: *mut Value,
+    /// The error of a call the lane made in place (`dispatch_fast::lane_call_native`), which
+    /// the general loop raises at that call's instruction once the lane exits there.
+    lane_raised: Option<JsError>,
     /// `program_cache_layouts[active_program]`, kept by `set_active_program`.
     active_layout: ProgramCacheLayout,
     /// The active program's materialized constants, kept by `set_active_program` and by
@@ -1261,7 +1311,9 @@ pub(crate) struct Vm<H> {
     /// The getters and setters of shapes' accessor descriptors (`ShapeAttributes`).
     shape_accessors: Vec<ShapeAccessors>,
     transitions: shape_transitions::ShapeTransitionIndex,
-    shape_slot_memo: shape_slot_memo::ShapeSlotMemo,
+    shape_slot_memo: shape_memo::ShapeSlotMemo,
+    shape_attribute_memo: shape_memo::ShapeAttributeMemo,
+    name_atom_memo: name_atom_memo::NameAtomMemo,
     atom_text: AtomTable,
     /// Every atom, hashed by its text (`atom_keys::text_hash`); equal hashes are told apart
     /// by comparing the texts, which the atom tables hold.
@@ -1275,6 +1327,8 @@ pub(crate) struct Vm<H> {
     /// The strings most recently matched by a RegExp, most recent first, each prepared once
     /// for repeated matching (`Vm::regexp_subject`).
     regexp_subjects: Vec<Rc<quench_regexp::Subject>>,
+    /// The subject of the last short string matched, reused in place once no match holds it.
+    regexp_short_subject: Option<Rc<quench_regexp::Subject>>,
     regexp_matchers: regexp::RegExpMatcherCache,
     // One lazily derived class byte per atom; length tracks `atom_sequence`.
     atom_classes: Vec<std::cell::Cell<u8>>,
@@ -1308,11 +1362,17 @@ pub(crate) struct Vm<H> {
     /// `prototype` (`construction::ClosureShapes`); derived from shapes, so field-cache
     /// invalidation clears it.
     closure_shapes: [Option<construction::ClosureShapes>; 2],
+    /// The shape a new RegExp object starts in and the one its own `lastIndex` moves it to
+    /// (`Vm::regexp_from_matcher`), as the first one recorded; derived from shapes, so
+    /// field-cache invalidation clears it.
+    regexp_object_shapes: Option<(u32, u32)>,
     /// A RegExp receiver shape verified to hold an own writable data `lastIndex` at the paired
     /// slot; derived from shapes, so field-cache invalidation clears it.
     regexp_last_index_layout: Option<(u32, u32)>,
     /// Derived from shapes, so field-cache invalidation clears it.
     regexp_builtin_layout: Option<regexp::RegExpBuiltinLayout>,
+    /// Derived from shapes, so field-cache invalidation clears it.
+    regexp_symbol_layouts: Vec<regexp::RegExpSymbolLayout>,
     /// An object verified to hold the native `Function.prototype[@@hasInstance]` as a
     /// non-writable, non-configurable data property, which it then holds for its lifetime;
     /// rooted so the identity stays meaningful. `Value::NULL` when none.
@@ -1377,42 +1437,60 @@ impl<H: Host> Vm<H> {
     #[cold]
     #[inline(never)]
     fn swap_realm_global(&mut self, previous: Value, global: Value) {
-        self.realm.global_lexical_states.insert(
-            previous,
-            GlobalLexicalState {
+        let leaving = ParkedRealm {
+            global: previous,
+            state: GlobalLexicalState {
                 declarations: std::mem::take(&mut self.realm.global_lexical_declarations),
                 bindings: std::mem::take(&mut self.realm.global_lexical_bindings),
                 immutable_bindings: std::mem::take(
                     &mut self.realm.immutable_global_lexical_bindings,
                 ),
             },
-        );
-        let state = self
-            .realm
-            .global_lexical_states
-            .remove(&global)
-            .unwrap_or_default();
+            prototypes: REALM_FOLLOWING_PROTOTYPES.map(|native| *self.realm_prototype_field(native)),
+        };
+        let parked = match self.realm.parked.replace(leaving) {
+            Some(parked) if parked.global == global => Some(parked),
+            parked => {
+                if let Some(parked) = parked {
+                    self.realm.global_lexical_states.insert(parked.global, parked.state);
+                }
+                None
+            }
+        };
         self.realm.globals = global;
+        let state = match parked {
+            Some(parked) => {
+                // Natives are shared by every realm and allocate from these fields, so the
+                // fields follow the active realm: a native called from a realm builds that
+                // realm's objects.
+                for (native, prototype) in REALM_FOLLOWING_PROTOTYPES.into_iter().zip(parked.prototypes) {
+                    debug_assert!(self
+                        .realm
+                        .intrinsics
+                        .builtin_prototypes
+                        .get(&(global, native))
+                        .is_none_or(|intrinsic| *intrinsic == prototype));
+                    *self.realm_prototype_field(native) = prototype;
+                }
+                parked.state
+            }
+            None => {
+                for native in REALM_FOLLOWING_PROTOTYPES {
+                    if let Some(&prototype) = self
+                        .realm
+                        .intrinsics
+                        .builtin_prototypes
+                        .get(&(global, native))
+                    {
+                        *self.realm_prototype_field(native) = prototype;
+                    }
+                }
+                self.realm.global_lexical_states.remove(&global).unwrap_or_default()
+            }
+        };
         self.realm.global_lexical_declarations = state.declarations;
         self.realm.global_lexical_bindings = state.bindings;
         self.realm.immutable_global_lexical_bindings = state.immutable_bindings;
-        // Natives are shared by every realm and allocate from these fields, so the fields
-        // follow the active realm: a native called from a realm builds that realm's objects.
-        for native in [
-            Native::Object,
-            Native::Function,
-            Native::Array,
-            Native::String,
-        ] {
-            if let Some(&prototype) = self
-                .realm
-                .intrinsics
-                .builtin_prototypes
-                .get(&(global, native))
-            {
-                *self.realm_prototype_field(native) = prototype;
-            }
-        }
     }
 
     /// The VM field holding the active realm's `native.prototype`.
@@ -1475,9 +1553,7 @@ impl<H: Host> Vm<H> {
                     .map(|_| ());
             }
             if self.eval_script_context {
-                self.realm
-                    .global_lexical_bindings
-                    .insert(atom, Value::DELETED);
+                self.realm.bind_global_lexical(atom, Value::DELETED);
             }
         }
         self.realm
@@ -1597,7 +1673,7 @@ impl<H: Host> Vm<H> {
             .global_lexical_atoms
             .contains(&atom)
         {
-            self.realm.global_lexical_bindings.insert(atom, value);
+            self.realm.bind_global_lexical(atom, value);
         }
     }
     /// Publishes a finished script root's global lexical bindings; every other activation
@@ -1642,7 +1718,9 @@ impl<H: Host> Vm<H> {
                 )
             })
             .collect::<Vec<_>>();
-        self.realm.global_lexical_bindings.extend(bindings);
+        for (atom, value) in bindings {
+            self.realm.bind_global_lexical(atom, value);
+        }
     }
     pub(crate) fn execute(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
         self.execute_with_job_drain(program, &[], true)
@@ -1749,8 +1827,8 @@ impl<H: Host> Vm<H> {
         let (_, collections, _, _, _, _) = self.heap.stats();
         let gc = self.heap.gc_profile();
         eprintln!(
-            "{{\"kind\":\"quench-gc-time\",\"collections\":{collections},\"mark_nanos\":{},\"sweep_nanos\":{},\"mark_clear_nanos\":{}}}",
-            gc.mark_nanos, gc.sweep_nanos, gc.mark_clear_nanos,
+            "{{\"kind\":\"quench-gc-time\",\"collections\":{collections},\"mark_nanos\":{},\"sweep_nanos\":{},\"mark_clear_nanos\":{},\"vm_owner_edges_nanos\":{},\"vm_roots_nanos\":{},\"vm_shape_setup_nanos\":{},\"vm_after_nanos\":{}}}",
+            gc.mark_nanos, gc.sweep_nanos, gc.mark_clear_nanos, gc.vm_phase_nanos[0], gc.vm_phase_nanos[1], gc.vm_phase_nanos[2], gc.vm_phase_nanos[3],
         );
     }
     #[cfg(feature = "profile-memory")]
@@ -1982,14 +2060,18 @@ impl<H: Host> Vm<H> {
         self.shapes.truncate(1);
         self.transitions.clear();
         self.shape_slot_memo.clear();
+        self.shape_attribute_memo.clear();
+        self.atom_strings.clear();
         // The sealed holders and their shapes belong to the discarded heap.
         self.startup_intrinsics = Default::default();
         self.atom_text = program.atoms.clone();
         self.atom_sequence = Rc::new(crate::bytecode::AtomSequence::new(self.atom_text.clone()));
         self.atoms.clear();
+        self.name_atom_memo.clear();
         self.array_index_atoms.clear();
         self.atom_classes.clear();
         self.regexp_subjects.clear();
+        self.regexp_short_subject = None;
         self.regexp_matchers.clear();
         self.atom_classes
             .resize_with(self.atom_text.len(), Default::default);
@@ -2017,6 +2099,7 @@ impl<H: Host> Vm<H> {
             then: self.intern_atom("then"),
             constructor: self.intern_atom("constructor"),
             name: self.intern_atom("name"),
+            empty: self.intern_atom(""),
         };
         self.field_caches = vec![EMPTY_CACHE; program.cache_sites as usize];
         Self::prime_loop_decoding(program);
@@ -2041,8 +2124,10 @@ impl<H: Host> Vm<H> {
         self.programs.reset(program.clone());
         self.instanceof_constructor_layout = None;
         self.closure_shapes = [None; 2];
+        self.regexp_object_shapes = None;
         self.regexp_last_index_layout = None;
         self.regexp_builtin_layout = None;
+        self.regexp_symbol_layouts.clear();
         self.instanceof_has_instance_holder = Value::NULL;
         self.program_cache_layouts.clear();
         self.program_cache_layouts.push(ProgramCacheLayout {
@@ -2347,6 +2432,11 @@ impl<H: Host> Vm<H> {
                 result
             }
         }
+    }
+
+    /// Counts collections; see `Heap::collection_epoch`.
+    pub(crate) fn collection_epoch(&self) -> u64 {
+        self.heap.collection_epoch()
     }
 
     fn with_call_roots<R>(
