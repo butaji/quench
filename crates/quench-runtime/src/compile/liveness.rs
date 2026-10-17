@@ -3,6 +3,9 @@ use crate::bytecode::{
     ImmediateRole, Instr, InstructionField, Operand, Register, Superinstruction, WideInstruction,
 };
 
+/// The registers a root mask covers: one bit each.
+pub(crate) const ROOT_MAP_REGISTERS: u16 = u64::BITS as u16;
+
 pub(crate) type MethodSite = (u32, u16, Vec<Register>, Option<(u32, u16)>);
 
 /// The argument registers of each method site, by site index: the compiler's site specs, or
@@ -60,7 +63,7 @@ pub(super) fn transfers(
     fields: &[FieldSite],
     superinstructions: &[Superinstruction],
 ) -> Option<Vec<(u64, u64)>> {
-    if function.registers > 64 {
+    if function.registers > ROOT_MAP_REGISTERS {
         return None;
     }
     Some(

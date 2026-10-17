@@ -1857,7 +1857,7 @@ impl OperandKind {
 
 impl Operand {
     const TAG_SHIFT: u16 = 14;
-    const PAYLOAD_MASK: u16 = (1 << Self::TAG_SHIFT) - 1;
+    pub(crate) const PAYLOAD_MASK: u16 = (1 << Self::TAG_SHIFT) - 1;
 
     pub(crate) const fn kind(self) -> Option<OperandKind> {
         match self.0 >> Self::TAG_SHIFT {
