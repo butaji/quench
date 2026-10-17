@@ -186,10 +186,13 @@ impl<H: Host> Vm<H> {
             return index.slot(key).map(|slot| slot as usize);
         }
         if let Some(slot) = self.shape_slot_memo.get(shape, key) {
-            return slot;
+            return slot.map(|slot| slot as usize);
         }
         let slot = self.walked_property_shape_slot(shape, key);
-        self.shape_slot_memo.record(shape, key, slot);
+        // A slot past u32 is never memoized; it is walked again.
+        if let Some(recorded) = slot.map(u32::try_from).transpose().ok() {
+            self.shape_slot_memo.record(shape, key, recorded);
+        }
         slot
     }
     /// `property_shape_slot` of a non-dictionary shape, from its lookup index or its chain.
@@ -263,6 +266,20 @@ impl<H: Host> Vm<H> {
                     }),
             );
         }
+        let memo_slot = u32::try_from(slot).ok().filter(|_| !self.shape_is_dictionary(shape));
+        if let Some(memo_slot) = memo_slot
+            && let Some(attributes) = self.shape_attribute_memo.get(shape, memo_slot)
+        {
+            return attributes.map(|attributes| attributes.attributes(&self.shape_accessors));
+        }
+        let attributes = self.walked_shape_attribute(shape, slot);
+        if let Some(memo_slot) = memo_slot {
+            self.shape_attribute_memo.record(shape, memo_slot, attributes);
+        }
+        attributes.map(|attributes| attributes.attributes(&self.shape_accessors))
+    }
+    /// The attributes the nearest transition describing `slot` gives it, walking `shape`'s chain.
+    fn walked_shape_attribute(&self, shape: u32, slot: usize) -> Option<ShapeAttributes> {
         let mut current = Some(shape);
         while let Some(id) = current {
             let shape = &self.shapes[id as usize];
@@ -271,18 +288,18 @@ impl<H: Host> Vm<H> {
                     slot: candidate,
                     attributes,
                 } if candidate as usize == slot => {
-                    return Some(attributes.attributes(&self.shape_accessors));
+                    return Some(attributes);
                 }
                 ShapeTransition::Add {
                     slot: candidate,
                     attributes,
                     ..
                 } if candidate as usize == slot => {
-                    return Some(attributes.shape().attributes(&self.shape_accessors));
+                    return Some(attributes.shape());
                 }
                 ShapeTransition::Delete {
                     slot: candidate, ..
-                } if candidate as usize == slot => return Some(DEFAULT_PROPERTY_ATTRIBUTES),
+                } if candidate as usize == slot => return Some(DEFAULT_SHAPE_ATTRIBUTES),
                 ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured | ShapeTransition::FunctionLengthReconfigured
                 | ShapeTransition::Constructed { .. }
                 | ShapeTransition::Root
@@ -994,6 +1011,28 @@ impl<H: Host> Vm<H> {
         self.profile
             .field_cache_hit(usize::from(hit.tier), hit.depth);
         Some(hit.value)
+    }
+
+    /// `primary_own_field_hit` for a receiver any heap cell holds, such as a function's own
+    /// static field (`Strength.REQUIRED`), which a direct object's record lookup misses.
+    #[inline(always)]
+    pub(super) fn cell_own_field_hit(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        site: u16,
+    ) -> Option<Value> {
+        debug_assert!(self.lane_admits(p));
+        let receiver = self.heap.object(object)?;
+        // SAFETY: the active program's layout reserves every compiler-emitted site.
+        let cache = unsafe { *self.field_caches.get_unchecked(self.field_cache_index(site)) };
+        if cache.receiver != receiver.shape() || cache.holder != NO_FIELD_HOLDER {
+            return None;
+        }
+        // SAFETY: as for `cached_field_hit`.
+        let value = unsafe { self.heap.property_get_shaped(receiver, cache.slot as usize) }?;
+        self.profile.field_cache_hit(0, 0);
+        Some(value)
     }
 
     /// `primary_holder_field_hit` for a receiver any heap cell holds, such as a function whose
@@ -2434,27 +2473,26 @@ impl<H: Host> Vm<H> {
         if set == NO_FIELD_ADD_SET {
             return false;
         }
-        let Some(&mut cache) =
-            unsafe { self.field_add_sets.get_unchecked_mut(set as usize) }.find_mut(shape, atom)
+        let Some(cache) =
+            unsafe { self.field_add_sets.get_unchecked(set as usize) }.find(shape, atom)
         else {
             return false;
         };
+        let (target_shape, slot) = (cache.target_shape, cache.slot);
         let epoch = crate::heap::prototype_layout_epoch();
         if cache.proved_epoch != epoch || cache.proved_prototype != proto {
+            let depth = cache.prototype_depth;
             // Entries record only non-dictionary source and prototype shapes, a shape's
             // dictionary state is fixed when it is created, and shape compaction clears these
             // caches, so a matching shape needs no dictionary probe here or along the chain.
             if !self.field_add_prototype_chain_matches(proto, cache.prototype_shapes()) {
                 return false;
             }
-            self.prove_field_add_chain(set as usize, shape, atom, proto, cache.prototype_depth, epoch);
+            self.prove_field_add_chain(set as usize, shape, atom, proto, depth, epoch);
         }
-        debug_assert_eq!(cache.slot as usize, self.shapes[shape as usize].storage_len());
-        if !self
-            .heap
-            .add_inline_property(object, usize::from(cache.slot), value, cache.target_shape)
-        {
-            self.heap.property_add(object, value, cache.target_shape);
+        debug_assert_eq!(slot as usize, self.shapes[shape as usize].storage_len());
+        if !self.heap.add_inline_property(object, usize::from(slot), value, target_shape) {
+            self.heap.property_add(object, value, target_shape);
         }
         if self.method_caches_may_name(atom) {
             self.invalidate_method_caches_for_prototype_add(object, atom);

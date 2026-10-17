@@ -769,6 +769,30 @@ impl<H: Host> Vm<H> {
         self.embedding_has_builtin_brand(root, crate::BuiltinBrand::Promise)
     }
 
+    pub(crate) fn embedding_pending_promise(&mut self) -> Result<Value, JsError> {
+        self.promise_object()
+    }
+
+    pub(crate) fn embedding_resolve_promise(&mut self, promise: RootId, value: RootId) -> Result<(), JsError> {
+        let promise = self.embedding_value(promise)?;
+        let value = self.embedding_value(value)?;
+        let state = self.realm.promise.records.get(&promise)
+            .ok_or_else(|| JsError("value does not have Promise internal slots".into()))?.state;
+        if state != super::promise::PromiseState::Pending { return Ok(()); }
+        let program = self.embedding_program()?;
+        self.promise_resolve_value(&program, promise, value)
+    }
+
+    pub(crate) fn embedding_reject_promise(&mut self, promise: RootId, reason: RootId) -> Result<(), JsError> {
+        let promise = self.embedding_value(promise)?;
+        let reason = self.embedding_value(reason)?;
+        if !self.realm.promise.records.contains_key(&promise) {
+            return Err(JsError("value does not have Promise internal slots".into()));
+        }
+        let program = self.embedding_program()?;
+        self.promise_settle(&program, promise, super::promise::PromiseState::Rejected, reason)
+    }
+
     pub(crate) fn embedding_promise_snapshot(&self, root: RootId) -> Result<Option<crate::PromiseSnapshot<Value>>, JsError> {
         use crate::PromiseSnapshot as Snapshot;
         let value = self.embedding_value(root)?;
