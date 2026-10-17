@@ -123,6 +123,7 @@ fn decoder_rejects_out_of_range_local_load() {
         functions: vec![Function {
             parent: None,
             name: None,
+            inferred_name: None,
             is_arrow: false,
             self_binding_slot: None,
             source_span: None,
@@ -207,6 +208,7 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
         functions: vec![Function {
             parent: None,
             name: None,
+            inferred_name: None,
             is_arrow: false,
             self_binding_slot: None,
             source_span: None,
