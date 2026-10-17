@@ -1247,6 +1247,9 @@ pub(crate) struct Vm<H> {
     program_cache_layouts: Vec<ProgramCacheLayout>,
     /// The register file of the frame the general loop dispatches; see `run_general_loop`.
     active_registers: *mut Value,
+    /// The error of a call the lane made in place (`dispatch_fast::lane_call_native`), which
+    /// the general loop raises at that call's instruction once the lane exits there.
+    lane_raised: Option<JsError>,
     /// `program_cache_layouts[active_program]`, kept by `set_active_program`.
     active_layout: ProgramCacheLayout,
     /// The active program's materialized constants, kept by `set_active_program` and by
@@ -1314,6 +1317,8 @@ pub(crate) struct Vm<H> {
     regexp_last_index_layout: Option<(u32, u32)>,
     /// Derived from shapes, so field-cache invalidation clears it.
     regexp_builtin_layout: Option<regexp::RegExpBuiltinLayout>,
+    /// Derived from shapes, so field-cache invalidation clears it.
+    regexp_symbol_layouts: Vec<regexp::RegExpSymbolLayout>,
     /// An object verified to hold the native `Function.prototype[@@hasInstance]` as a
     /// non-writable, non-configurable data property, which it then holds for its lifetime;
     /// rooted so the identity stays meaningful. `Value::NULL` when none.
@@ -2048,6 +2053,7 @@ impl<H: Host> Vm<H> {
         self.regexp_object_shapes = None;
         self.regexp_last_index_layout = None;
         self.regexp_builtin_layout = None;
+        self.regexp_symbol_layouts.clear();
         self.instanceof_has_instance_holder = Value::NULL;
         self.program_cache_layouts.clear();
         self.program_cache_layouts.push(ProgramCacheLayout {

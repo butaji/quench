@@ -125,6 +125,21 @@ pub(super) struct RegExpBuiltinLayout {
     exec_slot: u32,
 }
 
+/// A RegExp receiver shape and `RegExp.prototype` shape that together prove `symbol` absent
+/// from the receiver and an own data property of the prototype at `slot`. Shapes hold
+/// attributes, so the proof holds while both match; the slot's value is reread.
+#[derive(Clone, Copy)]
+pub(super) struct RegExpSymbolLayout {
+    symbol: Value,
+    receiver: u32,
+    prototype: u32,
+    slot: u32,
+}
+
+/// The symbol methods a string method looks up on a RegExp argument: `@@replace`,
+/// `@@split`, `@@match`, `@@matchAll` and `@@search`, each with its own layout.
+pub(super) const REGEXP_SYMBOL_LAYOUTS: usize = 5;
+
 /// The replace value of a fast `RegExp.prototype[@@replace]`: a template already converted
 /// to a string, or a callable invoked per match.
 #[derive(Clone, Copy)]
@@ -657,6 +672,77 @@ impl<H: Host> Vm<H> {
             return None;
         };
         Some((Rc::clone(matcher), meta.flags.clone()))
+    }
+
+    /// `GetMethod(receiver, symbol)` for a RegExp `receiver` whose shape and prototype's
+    /// shape prove the method an ordinary data property of `RegExp.prototype`
+    /// (`RegExpSymbolLayout`); `None` leaves the lookup to the general path.
+    pub(super) fn regexp_proven_symbol_method(
+        &mut self,
+        receiver: Value,
+        symbol: Value,
+    ) -> Option<Value> {
+        if !matches!(self.heap.get(receiver), Some(Cell::RegExp { .. })) {
+            return None;
+        }
+        let prototype = self
+            .realm
+            .intrinsics
+            .regexp_intrinsics
+            .get(&self.realm.globals)?
+            .prototype;
+        let receiver_data = self.object_data(receiver)?;
+        if receiver_data.proto() != prototype {
+            return None;
+        }
+        let receiver_shape = receiver_data.shape();
+        let prototype_shape = self.object_data(prototype)?.shape();
+        let proven = self.regexp_symbol_layouts.iter().find(|layout| {
+            layout.symbol == symbol
+                && layout.receiver == receiver_shape
+                && layout.prototype == prototype_shape
+        });
+        let slot = match proven {
+            Some(layout) => layout.slot as usize,
+            None => {
+                let slot =
+                    self.verify_regexp_symbol_layout(receiver, prototype, symbol)?;
+                self.regexp_symbol_layouts.retain(|layout| layout.symbol != symbol);
+                self.regexp_symbol_layouts.truncate(REGEXP_SYMBOL_LAYOUTS - 1);
+                self.regexp_symbol_layouts.push(RegExpSymbolLayout {
+                    symbol,
+                    receiver: receiver_shape,
+                    prototype: prototype_shape,
+                    slot: slot as u32,
+                });
+                slot
+            }
+        };
+        self.heap.property_get(self.object_data(prototype)?, slot)
+    }
+
+    /// Checks `regexp_proven_symbol_method`'s proof for the current shapes and returns the
+    /// prototype's slot of `symbol`.
+    #[cold]
+    fn verify_regexp_symbol_layout(
+        &self,
+        receiver: Value,
+        prototype: Value,
+        symbol: Value,
+    ) -> Option<usize> {
+        let key = PropertyKey::symbol(symbol);
+        let shared = |object: Value| {
+            self.object_data(object)
+                .is_some_and(|data| !self.shape_is_dictionary(data.shape()))
+        };
+        if !shared(receiver) || !shared(prototype) || self.property_attributes(receiver, key).is_some()
+        {
+            return None;
+        }
+        if self.property_attributes(prototype, key)?.accessor {
+            return None;
+        }
+        self.object_property_slot(prototype, key).map(|(_, slot)| slot)
     }
 
     /// Checks the shape-determined half of `regexp_replace_fast_matcher`'s proof and returns

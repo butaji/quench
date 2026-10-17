@@ -9,8 +9,21 @@ use std::rc::Rc;
 /// host/API boundaries; an ASCII string is its own host text.
 #[derive(Clone)]
 pub(crate) struct JsString {
-    inner: Rc<JsStringInner>,
+    repr: StringRepr,
 }
+
+/// A flat ASCII string holds its units in place, without a record of its own; a short one
+/// then allocates nothing. A rope, whose halves flatten on first read, and a `Wide` string,
+/// whose lossy host text is made once, share a `JsStringInner`.
+#[derive(Clone)]
+enum StringRepr {
+    /// `FlatUnits::Short` or `FlatUnits::Ascii`.
+    Ascii(FlatUnits),
+    Shared(Rc<JsStringInner>),
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(size_of::<JsString>() == size_of::<FlatUnits>());
 
 /// Flat code units. A string whose units are all ASCII is always stored `Short` when they
 /// fit and `Ascii` otherwise (`FlatUnits::ascii`), so equal strings share a representation.
@@ -513,8 +526,27 @@ impl JsStringBuilder {
 
 impl JsString {
     fn from_flat(units: FlatUnits) -> Self {
-        Self {
-            inner: Rc::new(JsStringInner::flat(units)),
+        let repr = if units.is_ascii() {
+            StringRepr::Ascii(units)
+        } else {
+            StringRepr::Shared(Rc::new(JsStringInner::flat(units)))
+        };
+        Self { repr }
+    }
+
+    /// The string's record as a rope half.
+    fn shared(&self) -> Rc<JsStringInner> {
+        match &self.repr {
+            StringRepr::Ascii(units) => Rc::new(JsStringInner::flat(units.clone())),
+            StringRepr::Shared(inner) => inner.clone(),
+        }
+    }
+
+    /// A flat `Wide` string's host text, if made.
+    fn existing_host(&self) -> Option<&Rc<str>> {
+        match &self.repr {
+            StringRepr::Ascii(_) => None,
+            StringRepr::Shared(inner) => inner.existing_host(),
         }
     }
 
@@ -549,10 +581,14 @@ impl JsString {
 
     /// The flat units, flattening a rope on first use.
     pub(crate) fn flat(&self) -> &FlatUnits {
-        self.inner.flat.get_or_init(|| {
-            let units = if self.inner.ascii {
+        let inner = match &self.repr {
+            StringRepr::Ascii(units) => return units,
+            StringRepr::Shared(inner) => inner,
+        };
+        inner.flat.get_or_init(|| {
+            let units = if inner.ascii {
                 let mut output = String::with_capacity(self.len());
-                self.inner.for_each_run(|run| {
+                inner.for_each_run(|run| {
                     if let Units::Ascii(bytes) = run {
                         output.push_str(std::str::from_utf8(bytes).expect("ASCII units are UTF-8"));
                     }
@@ -560,10 +596,10 @@ impl JsString {
                 FlatUnits::ascii(&output)
             } else {
                 let mut output = Vec::with_capacity(self.len());
-                self.inner.for_each_run(|run| run.extend_into(&mut output));
+                inner.for_each_run(|run| run.extend_into(&mut output));
                 FlatUnits::Wide(Rc::from(output))
             };
-            self.inner.release_halves();
+            inner.release_halves();
             units
         })
     }
@@ -573,15 +609,22 @@ impl JsString {
         match self.flat() {
             FlatUnits::Short(text) => text.as_str(),
             FlatUnits::Ascii(text) => text,
-            FlatUnits::Wide(units) => self
-                .inner
-                .host(|| Rc::<str>::from(String::from_utf16_lossy(units))),
+            FlatUnits::Wide(units) => match &self.repr {
+                StringRepr::Shared(inner) => {
+                    inner.host(|| Rc::<str>::from(String::from_utf16_lossy(units)))
+                }
+                StringRepr::Ascii(_) => unreachable!("an in-place string is ASCII"),
+            },
         }
     }
 
     /// Bytes of flat units this string holds; a rope owns only its node until it flattens.
     pub(crate) fn flat_unit_bytes(&self) -> usize {
-        match self.inner.flat.get().map(FlatUnits::view) {
+        let flat = match &self.repr {
+            StringRepr::Ascii(units) => Some(units),
+            StringRepr::Shared(inner) => inner.flat.get(),
+        };
+        match flat.map(FlatUnits::view) {
             Some(Units::Ascii(bytes)) => bytes.len(),
             Some(Units::Wide(units)) => std::mem::size_of_val(units),
             None => 0,
@@ -589,7 +632,10 @@ impl JsString {
     }
 
     pub(crate) fn len(&self) -> usize {
-        self.inner.length as usize
+        match &self.repr {
+            StringRepr::Ascii(units) => units.view().len(),
+            StringRepr::Shared(inner) => inner.length as usize,
+        }
     }
 
     pub(crate) fn capacity(&self) -> usize {
@@ -598,7 +644,7 @@ impl JsString {
             FlatUnits::Ascii(text) => text.len(),
             FlatUnits::Wide(units) => {
                 std::mem::size_of_val(&**units)
-                    + self.inner.existing_host().map_or(0, |host| host.len())
+                    + self.existing_host().map_or(0, |host| host.len())
             }
         }
     }
@@ -617,7 +663,7 @@ impl JsString {
                 RC_HEADER_BYTES + std::mem::size_of_val(&**units),
             ),
         };
-        let host_storage = self.inner.existing_host().map(|host| {
+        let host_storage = self.existing_host().map(|host| {
             (
                 Rc::as_ptr(host) as *const u8 as usize,
                 RC_HEADER_BYTES + host.len(),
@@ -627,11 +673,11 @@ impl JsString {
     }
 
     pub(crate) fn push_js_string(&mut self, text: &Self) {
-        if self.inner.length == 0 {
+        if self.len() == 0 {
             *self = text.clone();
             return;
         }
-        if text.inner.length == 0 {
+        if text.len() == 0 {
             return;
         }
         if self.len() + text.len() <= FLAT_CONCAT_MAX_UNITS {
@@ -643,10 +689,10 @@ impl JsString {
                 .expect("a short concatenation is within the string length limit");
             return;
         }
-        self.inner = Rc::new(JsStringInner::concat(
-            self.inner.clone(),
-            text.inner.clone(),
-        ));
+        self.repr = StringRepr::Shared(Rc::new(JsStringInner::concat(
+            self.shared(),
+            text.shared(),
+        )));
     }
 
     pub(crate) fn repeat(&self, count: usize) -> Self {
@@ -659,11 +705,9 @@ impl JsString {
             }
             count >>= 1;
             if count > 0 {
+                let half = power.shared();
                 power = Self {
-                    inner: Rc::new(JsStringInner::concat(
-                        power.inner.clone(),
-                        power.inner.clone(),
-                    )),
+                    repr: StringRepr::Shared(Rc::new(JsStringInner::concat(half.clone(), half))),
                 };
             }
         }
@@ -838,12 +882,12 @@ mod tests {
         let paired = JsString::from_units(&[0xD83E, 0xDD80]);
         let lone = JsString::from_units(&[0xD800]);
 
-        assert!(paired.inner.existing_host().is_none());
-        assert!(lone.inner.existing_host().is_none());
-        assert!(paired.inner.existing_host().is_none());
-        assert!(lone.inner.existing_host().is_none());
+        assert!(paired.existing_host().is_none());
+        assert!(lone.existing_host().is_none());
+        assert!(paired.existing_host().is_none());
+        assert!(lone.existing_host().is_none());
         assert_eq!(lone.host_string(), "�");
         assert_eq!(lone.units(), &[0xD800]);
-        assert!(lone.inner.existing_host().is_some());
+        assert!(lone.existing_host().is_some());
     }
 }
