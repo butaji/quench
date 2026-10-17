@@ -918,7 +918,7 @@ impl Engine {
                 global_immutable_atoms: vec![],
                 name_bindings: Default::default(),
                 binding_sites: vec![],
-                source_positions: vec![],
+                source_positions: Default::default(),
                 environment_clones: vec![],
                 code: lowering.code,
                 wide: lowering.wide,

@@ -311,8 +311,8 @@ pub(super) fn write_program(
             out.u16(handler.return_slot.unwrap_or(u16::MAX));
             out.u16(handler.with_depth);
         }
-        out.u32(function.source_positions.len() as u32);
-        for position in &function.source_positions {
+        out.u32(function.source_positions.iter().count() as u32);
+        for position in function.source_positions.iter() {
             out.u32(position.pc);
             out.u32(position.line);
             out.u32(position.column);
@@ -361,9 +361,10 @@ pub(super) fn write_program(
             out.u32(instruction.imm());
         }
     }
-    out.u32(program.register_roots.len() as u32);
-    for value in &program.register_roots {
-        out.u64(*value);
+    let register_roots = program.register_roots.bytes();
+    out.u32(register_roots.len() as u32);
+    for byte in register_roots {
+        out.u8(*byte);
     }
     std::fs::write(path, out.bytes).map_err(|error| error.to_string())
 }
@@ -653,13 +654,16 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
                 with_depth,
             })
         })?;
-        let source_positions = input.list(|input| {
-            Ok(SourcePosition {
-                pc: input.u32()?,
-                line: input.u32()?,
-                column: input.u32()?,
-            })
-        })?;
+        let source_positions = input
+            .list(|input| {
+                Ok(SourcePosition {
+                    pc: input.u32()?,
+                    line: input.u32()?,
+                    column: input.u32()?,
+                })
+            })?
+            .into_iter()
+            .collect();
         Ok(Function {
             parent,
             name,
@@ -775,7 +779,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         }
         Ok(Superinstruction::new(code))
     })?;
-    let register_roots = input.list(|input| input.u64())?;
+    let register_roots = super::RegisterRoots::from_bytes(input.list(|input| input.u8())?);
     input.finish()?;
     let program = super::ResidualProgram {
         specialized,

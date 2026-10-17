@@ -705,7 +705,7 @@ impl<H: Host> Vm<H> {
         self.object_data(prototype)?;
         let mut object = Self::empty_object(prototype);
         self.capture_constructed_name(&mut object, callee, true);
-        Some(self.heap.alloc(Cell::Object(object)))
+        Some(self.heap.alloc_object(object))
     }
 
     pub(super) fn own_function_prototype_data(
