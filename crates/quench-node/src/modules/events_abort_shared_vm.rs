@@ -31,16 +31,8 @@ pub(crate) fn abort_add_event_listener(
             return Ok(undefined);
         }
     }
-    let records = get(context, state, "listeners")?;
-    let entries = listener_records(context, records)?;
-    for entry in &entries {
-        let callback = get(context, *entry, "listener")?;
-        if context.strict_equal_rooted(callback, listener)? {
-            return Ok(undefined);
-        }
-    }
     let data = context.host_function_data()?;
-    let entry = context.object_rooted()?;
+    let entry = context.null_object_rooted()?;
     named_set(context, data, entry, "listener", listener)?;
     let options_present = !context
         .rooted_value(options)
@@ -53,6 +45,12 @@ pub(crate) fn abort_add_event_listener(
     let once = context.truthy_rooted(once)?;
     let once = context.boolean(once);
     named_set(context, data, entry, "once", once)?;
+    let weak_key = get(context, data, "weakKey")?;
+    let weak = if options_present {
+        context.get_property_rooted(options, weak_key)?
+    } else {
+        undefined
+    };
     let resist_key = get(context, data, "resistKey")?;
     let resist = if options_present {
         context.get_property_rooted(options, resist_key)?
@@ -62,6 +60,22 @@ pub(crate) fn abort_add_event_listener(
     let resist = context.truthy_rooted(resist)?;
     let resist = context.boolean(resist);
     named_set(context, data, entry, "resistStopPropagation", resist)?;
+    // Option getters may synchronously register/remove listeners. Resolve the
+    // authoritative list only after every getter has finished. From here to
+    // append only private records and captured Core weak builtins are accessed.
+    let records = get(context, state, "listeners")?;
+    let entries = listener_records(context, records)?;
+    for entry in &entries {
+        let callback = super::events_weak_shared_vm::listener(context, data, *entry)?;
+        if context.strict_equal_rooted(callback, listener)? {
+            return Ok(undefined);
+        }
+    }
+    if context.truthy_rooted(weak)? {
+        super::events_weak_shared_vm::register(
+            context, data, entry, signal, state, listener, weak, refresh,
+        )?;
+    }
     let key = context.string_rooted(&entries.len().to_string());
     context.define_data_property_rooted(records, key, entry, true, true, true)?;
     update_listener_count(context, data, state, false)?;
@@ -141,6 +155,7 @@ pub(crate) fn abort_dispatch_listeners(
     let state = args.get(1).copied().unwrap_or(undefined);
     let event = args.get(2).copied().unwrap_or(undefined);
     let remove = args.get(3).copied().unwrap_or(undefined);
+    let data = context.host_function_data()?;
     let records = get(context, state, "listeners")?;
     for entry in listener_records(context, records)? {
         let current = get(context, state, "listeners")?;
@@ -159,8 +174,14 @@ pub(crate) fn abort_dispatch_listeners(
         if context.truthy_rooted(stopped)? && !context.truthy_rooted(resist)? {
             continue;
         }
-        let listener = get(context, entry, "listener")?;
+        let listener = super::events_weak_shared_vm::listener(context, data, entry)?;
         let once = get(context, entry, "once")?;
+        if context.rooted_value(listener).is_some_and(|v| v.is_undefined()) {
+            if context.truthy_rooted(once)? {
+                super::events_weak_shared_vm::remove_dead_once(context, data, entry, signal, state)?;
+            }
+            continue;
+        }
         if context.truthy_rooted(once)? {
             context.call_rooted(remove, undefined, &[signal, state, listener])?;
         }
@@ -426,17 +447,35 @@ pub(crate) fn abort_remove_event_listener(
     let refresh = args.get(3).copied().unwrap_or(undefined);
     let data = context.host_function_data()?;
     let records = get(context, state, "listeners")?;
-    let mut retained = Vec::new();
     for entry in listener_records(context, records)? {
-        let callback = get(context, entry, "listener")?;
+        let callback = super::events_weak_shared_vm::listener(context, data, entry)?;
         if context.strict_equal_rooted(callback, listener)? {
-            update_listener_count(context, data, state, true)?;
-        } else {
-            retained.push(entry);
+            remove_entry(context, data, signal, state, entry, refresh)?;
         }
     }
-    let records = context.array_rooted(&retained)?;
-    super::event_constructor_shared_vm::named_set(context, data, state, "listeners", records)?;
-    context.call_rooted(refresh, undefined, &[signal, state])?;
     Ok(undefined)
+}
+
+/// Entry identity is the single unlink operation for explicit, once and GC
+/// removal. Finalization never has to recover a collected callback identity.
+pub(crate) fn remove_entry(
+    context: &mut NativeContext<'_, NodeHost>,
+    data: RootId, signal: RootId, state: RootId, entry: RootId, refresh: RootId,
+) -> Result<(), RootedError> {
+    let records = get(context, state, "listeners")?;
+    let mut retained = Vec::new();
+    let mut found = false;
+    for candidate in listener_records(context, records)? {
+        if context.strict_equal_rooted(candidate, entry)? { found = true; }
+        else { retained.push(candidate); }
+    }
+    if found {
+        super::events_weak_shared_vm::unregister(context, data, entry)?;
+        let records = context.array_rooted(&retained)?;
+        super::event_constructor_shared_vm::named_set(context, data, state, "listeners", records)?;
+        update_listener_count(context, data, state, true)?;
+        let undefined = context.undefined();
+        context.call_rooted(refresh, undefined, &[signal, state])?;
+    }
+    Ok(())
 }

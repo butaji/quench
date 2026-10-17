@@ -120,6 +120,12 @@ fn create_handle(
         }
     }
     register_identity(context, handle, id)?;
+    if matches!(kind, EndpointKind::Socket)
+        && super::net_shared_vm::socket_is_tcp(&context.host_mut().shared_state().borrow().tcp, id)
+    {
+        let prototype = super::tcp_binding::prototype(context)?;
+        context.set_prototype_rooted(handle, prototype)?;
+    }
     for (name, referenced) in [("ref", true), ("unref", false)] {
         let referenced = context.boolean(referenced);
         let data = context.array_rooted(&[id_root, handle, is_socket, referenced])?;
@@ -328,7 +334,7 @@ pub(crate) fn owner_symbol(context: &mut NativeContext<'_, NodeHost>) -> Result<
 }
 
 
-fn register_identity(context: &mut NativeContext<'_, NodeHost>, handle: RootId, id: u64) -> Result<(), RootedError> {
+pub(crate) fn register_identity(context: &mut NativeContext<'_, NodeHost>, handle: RootId, id: u64) -> Result<(), RootedError> {
     let shared = context.host_mut().shared_state();
     let entries = std::mem::take(&mut shared.borrow_mut().net_handle_identities);
     let mut live = Vec::with_capacity(entries.len() + 1);
@@ -344,14 +350,17 @@ fn register_identity(context: &mut NativeContext<'_, NodeHost>, handle: RootId, 
     Ok(())
 }
 
-pub(crate) fn handle_id(context: &mut NativeContext<'_, NodeHost>, handle: RootId) -> Result<u64, RootedError> {
+pub(crate) fn optional_handle_id(context: &mut NativeContext<'_, NodeHost>, handle: RootId) -> Result<Option<u64>, RootedError> {
     let entries = context.host_mut().shared_state().borrow().net_handle_identities.clone();
     for (identity, id) in entries {
         if let Some(original) = context.resolve_host_weak_root(identity) {
-            if context.strict_equal_rooted(original, handle)? { return Ok(id); }
+            if context.strict_equal_rooted(original, handle)? { return Ok(Some(id)); }
         }
     }
-    Err(RootedError::host("native endpoint identity missing"))
+    Ok(None)
+}
+pub(crate) fn handle_id(context:&mut NativeContext<'_,NodeHost>,handle:RootId)->Result<u64,RootedError>{
+    optional_handle_id(context,handle)?.ok_or_else(||RootedError::host("native endpoint identity missing"))
 }
 
 pub(crate) fn get_sock_name(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
@@ -390,11 +399,12 @@ pub(crate) fn close(context: &mut NativeContext<'_, NodeHost>, receiver: RootId,
     }
     let handle = context.retain(receiver)?;
     shared.borrow_mut().net_handle_close_callbacks.insert(id, handle);
+    super::stream_binding::release_reader(context, id);
     super::net_shared_vm::close_socket(&mut shared.borrow_mut().tcp, id);
     Ok(context.undefined())
 }
 
-fn onclose_symbol(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+pub(crate) fn onclose_symbol(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let shared = context.host_mut().shared_state();
     if let Some(symbol) = shared.borrow().net_handle_onclose_symbol { return Ok(symbol); }
     let symbol = context.symbol_rooted(Some("handle_onclose"));
@@ -422,9 +432,16 @@ pub(crate) fn prune(runtime: &mut quench_runtime::Runtime<NodeHost>) {
     let shared = runtime.host_mut().shared_state();
     let entries = std::mem::take(&mut shared.borrow_mut().net_handle_identities);
     let mut live = Vec::with_capacity(entries.len());
+    let mut dead = Vec::new();
     for (identity, id) in entries {
         if runtime.host_weak_root_is_live(identity) { live.push((identity, id)); }
-        else { runtime.release_host_weak_root(identity); }
+        else { runtime.release_host_weak_root(identity); dead.push(id); }
+    }
+    for id in dead {
+        if !live.iter().any(|(_, existing)| *existing == id) {
+            super::net_shared_vm::native_tcp_close(&mut shared.borrow_mut().tcp, id);
+            super::native_async_wrap::collect_tcp(runtime,id);
+        }
     }
     shared.borrow_mut().net_handle_identities = live;
 }
@@ -442,6 +459,7 @@ pub(crate) fn close_complete(context: &mut NativeContext<'_, NodeHost>, receiver
         }
         Ok(context.undefined())
     })();
+    super::stream_binding::release_reader(context, id);
     let socket = context.host_mut().shared_state().borrow_mut().net_sockets.remove(&id);
     if let Some(socket) = socket { context.release_root(socket.root); }
     result
@@ -452,10 +470,12 @@ pub(crate) fn read_start(context: &mut NativeContext<'_, NodeHost>, receiver: Ro
     let Some(id) = tcp_option_owner(context, receiver)? else { return Ok(context.number(-f64::from(libc::EBADF))); };
     let shared = context.host_mut().shared_state();
     let result = super::net_shared_vm::start_read(&mut shared.borrow_mut().tcp, id);
+    if result.is_ok() { super::stream_binding::retain_reader(context, id, receiver)?; }
     Ok(option_result(context, result))
 }
 pub(crate) fn read_stop(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     let Some(id) = tcp_option_owner(context, receiver)? else { return Ok(context.number(-f64::from(libc::EBADF))); };
     super::net_shared_vm::stop_read(&mut context.host_mut().shared_state().borrow_mut().tcp, id);
+    super::stream_binding::release_reader(context, id);
     Ok(context.number(0.0))
 }

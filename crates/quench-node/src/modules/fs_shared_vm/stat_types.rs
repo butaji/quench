@@ -55,8 +55,7 @@ fn get(
     object: RootId,
     name: &str,
 ) -> Result<RootId, RootedError> {
-    let key = context.string_rooted(name);
-    context.get_property_rooted(object, key)
+    context.get_named_property_rooted(object, name)
 }
 fn set(
     context: &mut NativeContext<'_, NodeHost>,

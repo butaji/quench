@@ -1,18 +1,6 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
-    /// Whether closures of `function` join `function_values`, the identity cache its readers
-    /// search: the closures a module root makes, which its `MakeClosure` reuses and reading
-    /// its exports finds, and a Wasm program's functions, which its tables reuse. Each is a
-    /// root's direct child or a Wasm program's.
-    pub(super) fn caches_function_identity(
-        p: &ResidualProgram,
-        function: &crate::bytecode::Function,
-    ) -> bool {
-        p.kind == crate::bytecode::ProgramKind::Wasm
-            || function.parent.is_none_or(|parent| parent == super::ROOT_FUNCTION_ID)
-    }
-
     pub(super) fn cached_functions(
         &self,
         program: ProgramId,

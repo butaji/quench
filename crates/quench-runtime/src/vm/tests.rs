@@ -327,7 +327,7 @@ fn shape_roots_keep_symbols_and_active_accessors_alive() {
 
     let program = Engine::specialize("", "shape-roots.js").unwrap();
     let mut vm = Vm::new(SilentHost);
-    let symbol = vm.heap.alloc(Cell::Symbol(None));
+    let symbol = vm.heap.alloc(Cell::Symbol(crate::heap::SymbolData::public(None)));
     let symbol_weak = vm.heap.weak_handle(symbol).unwrap();
     let symbol_shape = vm.transition_property_shape(0, PropertyKey::symbol(symbol));
     let first =
@@ -1387,6 +1387,7 @@ fn dictionary_shapes_fall_back_after_deletion_and_prototype_use() {
         getAnswer: function() { return this.answer; }
       };
       var inherited = {};
+      var inheritor = Object.create(inherited);
       Object.setPrototypeOf(inherited, prototype);
       print(inherited.answer);
       print(inherited.getAnswer());
@@ -1481,6 +1482,53 @@ fn dictionary_shapes_fall_back_after_deletion_and_prototype_use() {
         ] {
             assert!(vm.profile.dictionary_transitions[trigger.index()] > 0);
         }
+    }
+}
+
+#[test]
+fn prototype_change_on_a_non_prototype_keeps_shape_and_caches_sound() {
+    // Two receivers share a shape while their prototypes differ and then swap: every
+    // cached load, store, add and method call must follow each receiver's actual chain.
+    let source = r#"
+      function A() {} A.prototype.kind = "a"; A.prototype.who = function() { return "A" + this.n; };
+      function B() {} B.prototype.kind = "b"; B.prototype.who = function() { return "B" + this.n; };
+      Object.defineProperty(B.prototype, "late", { set(v) { this.seen = v; }, configurable: true });
+      function read(o) { return o.kind + o.who() + o.n; }
+      function add(o) { o.late = 1; return Object.prototype.hasOwnProperty.call(o, "late"); }
+      var out = [];
+      for (var i = 0; i < 3; i++) {
+        var x = { n: i }, y = { n: i };
+        Object.setPrototypeOf(x, A.prototype);
+        Object.setPrototypeOf(y, B.prototype);
+        out.push(read(x), read(y), add(x), add(y));
+        Object.setPrototypeOf(x, B.prototype);
+        Object.setPrototypeOf(y, A.prototype);
+        out.push(read(x), read(y));
+      }
+      var array = [];
+      Object.setPrototypeOf(array, { length: "inherited" });
+      out.push(read2(array));
+      print(out.join(","));
+      function read2(o) { return o.length; }
+    "#;
+    let expected = (0..3)
+        .map(|i| format!("aA{i}{i},bB{i}{i},true,false,bB{i}{i},aA{i}{i}"))
+        .chain(["0".to_owned()])
+        .collect::<Vec<_>>()
+        .join(",");
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let program = compile(source, "prototype-change.js").unwrap();
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), [expected.as_str()], "{mode}");
+        let atom = vm.intern_atom("x");
+        let x = vm.own_property(vm.realm.globals, atom).unwrap();
+        let shape = vm.object_data(x).unwrap().shape();
+        assert!(!vm.shape_is_dictionary(shape), "{mode}: receiver keeps a cacheable shape");
     }
 }
 
@@ -5609,7 +5657,7 @@ fn proxy_reads_root_operands_and_results_through_nested_callbacks() {
                 let atom = vm.intern_atom("entry");
                 let property = if symbol {
                     super::property_key::PropertyKey::symbol(
-                        vm.heap.alloc(super::Cell::Symbol(Some("entry".into()))),
+                        vm.heap.alloc(super::Cell::Symbol(crate::heap::SymbolData::public(Some("entry".into())))),
                     )
                 } else {
                     super::property_key::PropertyKey::string(atom)
@@ -5679,7 +5727,7 @@ fn proxy_reads_root_operands_and_results_through_nested_callbacks() {
                         if symbol {
                             assert_eq!(returned_key, key);
                             assert!(
-                                matches!(vm.heap.get(returned_key), Some(super::Cell::Symbol(Some(name))) if name == "entry")
+                                matches!(vm.heap.get(returned_key), Some(super::Cell::Symbol(crate::heap::SymbolData { description: Some(name), .. })) if name.as_ref() == "entry")
                             );
                         } else {
                             assert_eq!(vm.to_string(&program, returned_key).unwrap(), "entry");
@@ -5688,7 +5736,7 @@ fn proxy_reads_root_operands_and_results_through_nested_callbacks() {
                     }
                     Ok(result) if phase == "result-symbol" => {
                         assert!(
-                            matches!(vm.heap.get(result),Some(super::Cell::Symbol(Some(name))) if name=="answer")
+                            matches!(vm.heap.get(result),Some(super::Cell::Symbol(crate::heap::SymbolData { description: Some(name), .. })) if name.as_ref()=="answer")
                         );
                         Some(vm.heap.weak_handle(result).unwrap())
                     }
@@ -6072,7 +6120,7 @@ fn proxy_presence_and_delete_root_fresh_operands_and_restore_scopes() {
                         .map(|elements| (elements[0], elements[1]))
                         .expect("operands");
                     let key = if symbol {
-                        vm.heap.alloc(super::Cell::Symbol(Some("entry".into())))
+                        vm.heap.alloc(super::Cell::Symbol(crate::heap::SymbolData::public(Some("entry".into()))))
                     } else if phase == "coercion" {
                         let atom = vm.intern_atom("keyOperand");
                         let factory = vm.own_property(vm.realm.globals, atom).unwrap();
@@ -6139,7 +6187,7 @@ fn proxy_presence_and_delete_root_fresh_operands_and_restore_scopes() {
                             );
                             assert_eq!(vm.heap.weak_value(handles[1]), Some(key));
                             assert!(if symbol {
-                                matches!(vm.heap.get(key),Some(super::Cell::Symbol(Some(name))) if name=="entry")
+                                matches!(vm.heap.get(key),Some(super::Cell::Symbol(crate::heap::SymbolData { description: Some(name), .. })) if name.as_ref()=="entry")
                             } else {
                                 matches!(vm.heap.get(key),Some(super::Cell::String(name)) if name.host_string()=="entry")
                             });
@@ -6364,7 +6412,7 @@ fn proxy_own_keys_keeps_captured_target_after_revoking_getter() {
                         assert_eq!(keys.len(), 2);
                         assert_eq!(vm.to_string(&program, keys[0]).unwrap(), "first");
                         assert!(
-                            matches!(vm.heap.get(keys[1]),Some(super::Cell::Symbol(Some(name))) if name=="entry")
+                            matches!(vm.heap.get(keys[1]),Some(super::Cell::Symbol(crate::heap::SymbolData { description: Some(name), .. })) if name.as_ref()=="entry")
                         );
                         for (handle, value) in handles.iter().zip([proxy, target, handler]) {
                             assert_eq!(
