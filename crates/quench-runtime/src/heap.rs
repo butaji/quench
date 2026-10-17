@@ -38,13 +38,26 @@ use slots::{FreeSlotBitmap, SLOTS_PER_SLAB, SlotArena};
 const DENSE_ARRAY_HOLE_BUDGET_BYTES: usize = 256 * 1024;
 const MAX_DENSE_ARRAY_HOLE_LENGTH: usize = DENSE_ARRAY_HOLE_BUDGET_BYTES / size_of::<Value>();
 use pacing::pacing;
+#[inline(always)]
+fn payload_unit() -> usize {
+    #[cfg(feature = "gc-tuning")]
+    return *PAYLOAD_BYTES_PER_ALLOCATION_TUNED;
+    #[cfg(not(feature = "gc-tuning"))]
+    PAYLOAD_BYTES_PER_ALLOCATION
+}
 /// The fewest allocations after which a collection is full on a small heap.
 #[cfg(test)]
 pub(crate) const FULL_COLLECTION_ALLOCATION_BOUND: usize =
     pacing::PRODUCTION_PACING.minimum_allocation_cap;
 /// Payload bytes beside a cell (string units, array elements) that weigh as one more
 /// allocation toward the next collection.
+#[cfg(not(feature = "gc-tuning"))]
 const PAYLOAD_BYTES_PER_ALLOCATION: usize = 64;
+/// Diagnostic builds read the unit from `QUENCH_GC_PAYLOAD_UNIT` to measure it.
+#[cfg(feature = "gc-tuning")]
+static PAYLOAD_BYTES_PER_ALLOCATION_TUNED: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
+    std::env::var("QUENCH_GC_PAYLOAD_UNIT").ok().and_then(|v| v.parse().ok()).unwrap_or(64)
+});
 const PARALLEL_MARK_MINIMUM_SLOTS: usize = 50_000;
 const PARALLEL_MARK_MAX_THREADS: usize = 4;
 // Paired Splay screens on the 4-vCPU Linux host favored the collector thread;
@@ -306,7 +319,7 @@ pub(crate) struct Heap {
     full_due: bool,
     pacing_state: pacing::PacingState,
     /// Live count after, and cells allocated before, the previous collection.
-    live_after_previous: usize,
+    live_weight_after_previous: usize,
     /// The slot and record property owners the last full sweep listed, which size the next
     /// sweep's lists so they do not regrow from empty (and reallocate) every collection.
     property_owner_counts: (usize, usize),
@@ -765,7 +778,7 @@ impl Heap {
             self.gc_profile.allocated_size_buckets[kind][Self::size_bucket(bytes)] += 1;
         }
         let payload = cell.payload_bytes();
-        let weight = 1 + payload / PAYLOAD_BYTES_PER_ALLOCATION;
+        let weight = 1 + payload / payload_unit();
         self.payload_bytes = self.payload_bytes.saturating_add(payload);
         self.allocations += weight;
         self.allocations_since_full = self.allocations_since_full.saturating_add(weight);
@@ -1020,7 +1033,7 @@ impl Heap {
         self.live_after_full = 0;
         self.full_due = false;
         self.pacing_state = pacing::PacingState::default();
-        self.live_after_previous = 0;
+        self.live_weight_after_previous = 0;
         self.old_live = 0;
         self.threshold = pacing().minimum_young;
         self.total_allocations = 0;
@@ -1055,8 +1068,8 @@ impl Heap {
     pub(crate) fn charge_payload_growth(&mut self, bytes: usize) {
         self.payload_bytes = self.payload_bytes.saturating_add(bytes);
         let pending = self.uncharged_payload_bytes.saturating_add(bytes);
-        let weight = pending / PAYLOAD_BYTES_PER_ALLOCATION;
-        self.uncharged_payload_bytes = pending % PAYLOAD_BYTES_PER_ALLOCATION;
+        let weight = pending / payload_unit();
+        self.uncharged_payload_bytes = pending % payload_unit();
         self.allocations += weight;
         self.allocations_since_full = self.allocations_since_full.saturating_add(weight);
     }
@@ -1378,7 +1391,7 @@ impl Heap {
         }
         // Live weight in the units allocation is charged in: one per cell or record plus
         // its payload.
-        let live = live + self.payload_bytes / PAYLOAD_BYTES_PER_ALLOCATION;
+        let live_weight = live + self.payload_bytes / payload_unit();
         let allocated = std::mem::take(&mut self.allocations);
         if full {
             self.allocations_since_full = 0;
@@ -1395,7 +1408,8 @@ impl Heap {
             pacing::CollectionOutcome {
                 full,
                 live,
-                previous_live: self.live_after_previous,
+                live_weight,
+                previous_live_weight: self.live_weight_after_previous,
                 live_after_full: self.live_after_full,
                 allocated,
                 since_full: self.allocations_since_full,
@@ -1411,9 +1425,9 @@ impl Heap {
         }
         #[cfg(feature = "gc-tuning")]
         if std::env::var_os("QUENCH_GC_TRACE").is_some() {
-            eprintln!("gc full={full} live={live} prev={} after_full={} alloc={} since_full={} next={next:?} state={:?}", self.live_after_previous, self.live_after_full, allocated, self.allocations_since_full, self.pacing_state);
+            eprintln!("gc full={full} live={live} prev={} after_full={} alloc={} since_full={} next={next:?} state={:?}", self.live_weight_after_previous, self.live_after_full, allocated, self.allocations_since_full, self.pacing_state);
         }
-        self.live_after_previous = live;
+        self.live_weight_after_previous = live_weight;
         self.threshold = next.threshold;
         self.full_due = next.full;
         #[cfg(feature = "profile-aggregate")]
