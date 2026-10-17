@@ -21,9 +21,13 @@ pub(crate) mod write_public;
 
 #[path = "fs_shared_vm/metadata_public.rs"]
 pub(crate) mod metadata_public;
+pub(crate) mod callback_public;
+#[path = "fs_shared_vm/file_handle_write.rs"]
+pub(crate) mod file_handle_write;
+pub(crate) mod promise_public;
 
 const PROMISES_FACTORY: &str = quench_js_check::checked_js!(
-    r#"(readFile, stat, lstat, readdir, readlink, realpath, openSync, closeSync, readSync, writeSync, fstatSync, fchmodSync, fsyncSync, fdatasyncSync, writeFileSync, appendFileSync, readvSync, writevSync, createReadStream, normalizeRead, apply) => ({
+    r#"(readFile, stat, lstat, readdir, readlink, realpath, openSync, closeSync, readSync, writeSync, fstatSync, fchmodSync, fsyncSync, fdatasyncSync, writeFileSync, appendFileSync, readvSync, writevSync, normalizeRead, apply, registerHandle, closeHandle) => ({
   readFile: (...args) => Promise.resolve().then(() => {
     const handle = args[0];
     if (handle && typeof handle.readFile === 'function') return handle.readFile(args[1]);
@@ -97,6 +101,7 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(
         closePromise ||= Promise.resolve().then(() => {
           fs.closeSync(fd);
           closed = true;
+          closeHandle(handle);
           handle.fd = -1;
           handle.emit("close");
         });
@@ -235,6 +240,7 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(
       sync: () => Promise.resolve().then(() => (ensureOpen("fsync"), fs.fsyncSync(fd))),
       datasync: () => Promise.resolve().then(() => (ensureOpen("fdatasync"), fs.fdatasyncSync(fd))),
     };
+    registerHandle(handle, fd);
     handle[Symbol.asyncDispose] = handle.close;
     handle[Symbol.dispose] = handle.close;
     return handle;
@@ -2054,7 +2060,7 @@ fn make_readdir_sync(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
 pub(crate) fn readdir_policy(
     context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let policy = directory_policy(context)?;
+    let policy = library_policy(context)?;
     let function = get(context, policy, "readdirSync")?;
     let undefined = context.undefined();
     context.call_rooted(function, undefined, args)
@@ -2101,14 +2107,15 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let statfs_host = context.host_function(crate::host::shared_vm::operation("fsStatfsSync"))?;
     let statfs_factory =
         context.evaluate_script_rooted(STATFS_SYNC_API, "node:fs/shared-statfs-sync.js")?;
-    let statfs_sync = context.call_rooted(statfs_factory, undefined, &[statfs_host])?;
+    let statfs_continuation = context.call_rooted(statfs_factory, undefined, &[statfs_host])?;
+    let statfs_sync = metadata_public::wrap(context, statfs_continuation, "statfsSync")?;
     set(context, module, "statfsSync", statfs_sync)?;
     let statfs_factory =
         context.evaluate_script_rooted(ASYNC_STATFS_API, "node:fs/shared-async-statfs.js")?;
     let statfs = context.call_rooted(
         statfs_factory,
         undefined,
-        &[statfs_sync, to_path_if_file_url],
+        &[statfs_continuation, to_path_if_file_url],
     )?;
     set(context, module, "statfs", statfs)?;
     let exists_factory = context.evaluate_script_rooted(EXISTS_API, "node:fs/shared-exists.js")?;
@@ -2135,6 +2142,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let access_sync = metadata_public::wrap(context, access_sync, "accessSync")?;
     let chmod = get(context, exists_api, "chmod")?;
     let chmod_sync = get(context, exists_api, "chmodSync")?;
+    let chmod_sync = metadata_public::wrap(context, chmod_sync, "chmodSync")?;
     let fchmod = get(context, exists_api, "fchmod")?;
     let fchmod_sync = get(context, exists_api, "fchmodSync")?;
     let fchmod_sync = metadata_public::wrap(context, fchmod_sync, "fchmodSync")?;
@@ -2178,6 +2186,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         context.evaluate_script_rooted(READLINK_SYNC_API, "node:fs/shared-readlink-sync.js")?;
     let undefined = context.undefined();
     let readlink_sync = context.call_rooted(readlink_factory, undefined, &[readlink_host])?;
+    let readlink_sync = metadata_public::wrap(context, readlink_sync, "readlinkSync")?;
     set(context, module, "readlinkSync", readlink_sync)?;
     let readlink_factory =
         context.evaluate_script_rooted(ASYNC_READLINK_API, "node:fs/shared-async-readlink.js")?;
@@ -2211,7 +2220,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let rm = context.call_rooted(factory, undefined, &[rm])?;
     set(context, module, "rm", rm)?;
     sync::install(context, module)?;
-    for name in ["fstatSync", "closeSync", "renameSync", "linkSync", "copyFileSync"] {
+    for name in ["fstatSync", "closeSync", "renameSync", "linkSync", "copyFileSync", "rmSync", "rmdirSync", "unlinkSync", "symlinkSync", "truncateSync", "mkdtempSync", "chownSync", "lchownSync", "utimesSync", "fchownSync", "ftruncateSync", "fsyncSync", "fdatasyncSync"] {
         let original = get(context, module, name)?;
         let function = metadata_public::wrap(context, original, name)?;
         set(context, module, name, function)?;
@@ -2381,30 +2390,14 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     )?;
     let append_file = context.call_rooted(append_file_factory, undefined, &[append_file_sync])?;
     set(context, module, "appendFile", append_file)?;
-    let streams = crate::host::shared_vm::commonjs::stream_module(context)?;
-    let readable = get(context, streams, "Readable")?;
-    let read_stream_factory = context
-        .evaluate_script_rooted(CREATE_READ_STREAM, "node:fs/shared-create-read-stream.js")?;
-    let read_stream_open =
-        context.host_function(crate::host::shared_vm::operation("fsReadStreamOpen"))?;
-    let read_stream_read =
-        context.host_function(crate::host::shared_vm::operation("fsReadStreamRead"))?;
-    let read_stream_close =
-        context.host_function(crate::host::shared_vm::operation("fsReadStreamClose"))?;
-    let read_stream_api = context.call_rooted(
-        read_stream_factory,
-        undefined,
-        &[
-            read_stream_open,
-            read_stream_read,
-            read_stream_close,
-            readable,
-        ],
+    // The read stream extends `stream.Readable`, whose module graph is most of what loading
+    // `fs` would otherwise build: it is created when a script first observes either name.
+    let initialize_read_stream = context.host_function_with_data(
+        crate::host::shared_vm::operation("fsReadStreamInitialize"), module,
     )?;
-    let create_read_stream = get(context, read_stream_api, "createReadStream")?;
-    let read_stream = get(context, read_stream_api, "ReadStream")?;
-    set(context, module, "createReadStream", create_read_stream)?;
-    set(context, module, "ReadStream", read_stream)?;
+    context.define_lazy_data_properties_rooted(
+        module, &["createReadStream", "ReadStream"], true, initialize_read_stream,
+    )?;
     let rm_sync = get(context, module, "rmSync")?;
     let promises = promises_module(
         context,
@@ -2426,7 +2419,6 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         copy_file_sync,
         readv_sync,
         writev_sync,
-        create_read_stream,
     )?;
     set(context, promises, "opendir", opendir_promise)?;
     for name in ["stat", "lstat"] {
@@ -2531,11 +2523,10 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         context.release_root(name_root);
         context.release_root(promise);
     }
+    promise_public::install(context, promises)?;
     set(context, module, "promises", promises)?;
 
-    let streams = crate::host::shared_vm::commonjs::stream_module(context)?;
-    let writable = get(context, streams, "Writable")?;
-    write_stream::install(context, module, writable)?;
+    write_stream::install(context, module)?;
 
     let install_missing_fs_methods = context.evaluate_script_rooted(
         "(fs) => { for (const name of ['utimesSync', 'lutimesSync', 'futimesSync', 'utimes', 'lutimes', 'futimes', 'rm', 'write']) { if (typeof fs[name] === 'function') continue; Object.defineProperty(fs, name, { configurable: true, writable: true, value() { const error = new Error(`${name} is unavailable outside a mounted VFS`); error.code = 'ENOSYS'; throw error; } }); } }",
@@ -2543,6 +2534,16 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     )?;
     let undefined = context.undefined();
     context.call_rooted(install_missing_fs_methods, undefined, &[module])?;
+    for name in ["lutimesSync", "futimesSync", "createReadStream", "createWriteStream"] {
+        let original = get(context, module, name)?;
+        let function = metadata_public::wrap(context, original, name)?;
+        set(context, module, name, function)?;
+    }
+    for name in ["access", "chmod", "fchmod", "statfs", "exists", "chown", "lchown", "fchown", "utimes", "lutimes", "futimes", "fsync", "fdatasync", "ftruncate", "lstat", "rm"] {
+        let original = get(context, module, name)?;
+        let function = callback_public::wrap(context, original, name)?;
+        set(context, module, name, function)?;
+    }
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_vfs_fs_fallbacks");
     let global = context.global_root()?;
@@ -2574,7 +2575,6 @@ pub(crate) fn promises_module(
     copy_file_sync: RootId,
     readv_sync: RootId,
     writev_sync: RootId,
-    create_read_stream: RootId,
 ) -> Result<RootId, RootedError> {
     let factory = context.evaluate_script_rooted(PROMISES_FACTORY, "node:fs/promises/shared.js")?;
     let read_file = context.host_function(crate::host::shared_vm::operation("fsReadFileSync"))?;
@@ -2588,6 +2588,7 @@ pub(crate) fn promises_module(
     let global=context.global_root()?;
     let reflect=get(context,global,"Reflect")?;
     let apply=get(context,reflect,"apply")?;
+    let (handle_bridge, register_handle, close_handle) = file_handle_write::bridge(context)?;
     let promises = context.call_rooted(
         factory,
         undefined,
@@ -2610,11 +2611,13 @@ pub(crate) fn promises_module(
             append_file_sync,
             readv_sync,
             writev_sync,
-            create_read_stream,
             normalize_read,
             apply,
+            register_handle,
+            close_handle,
         ],
     )?;
+    file_handle_write::install(context, promises, handle_bridge)?;
     set(context, promises, "constants", constants)?;
     let mkdir_factory = context.evaluate_script_rooted(
         "(mkdirSync) => (...args) => Promise.resolve().then(() => mkdirSync(...args))",
@@ -2900,7 +2903,7 @@ pub(crate) fn read_stream_read(
         (result, path)
     };
     match result {
-        Ok(Some(bytes)) => crate::modules::buffer_shared_vm::from_bytes(context, &bytes),
+        Ok(Some(bytes)) => crate::modules::buffer_shared_vm::from_vec(context, bytes),
         Ok(None) => Ok(context.null()),
         Err(error) => Err(stream_io_error(context, error, "read", &path)?),
     }
@@ -2964,25 +2967,72 @@ pub(super) fn stream_io_error(
     Ok(context.throw(exception))
 }
 
-/// Install unchanged Node glob exports when the native fs module is first
-/// required. The original policy retains its own lazy traversal-module import.
-pub(crate) fn initialize_glob_policy(
+/// Defines `fs.createReadStream` and `fs.ReadStream` over `stream.Readable` when a script first
+/// observes either (the lazy group `module` installs).
+pub(crate) fn initialize_read_stream(
+    context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let module = context.host_function_data()?;
+    let undefined = context.undefined();
+    let streams = crate::host::shared_vm::commonjs::stream_module(context)?;
+    let readable = get(context, streams, "Readable")?;
+    let read_stream_factory = context
+        .evaluate_script_rooted(CREATE_READ_STREAM, "node:fs/shared-create-read-stream.js")?;
+    let read_stream_open =
+        context.host_function(crate::host::shared_vm::operation("fsReadStreamOpen"))?;
+    let read_stream_read =
+        context.host_function(crate::host::shared_vm::operation("fsReadStreamRead"))?;
+    let read_stream_close =
+        context.host_function(crate::host::shared_vm::operation("fsReadStreamClose"))?;
+    let read_stream_api = context.call_rooted(
+        read_stream_factory,
+        undefined,
+        &[
+            read_stream_open,
+            read_stream_read,
+            read_stream_close,
+            readable,
+        ],
+    )?;
+    let create_read_stream = get(context, read_stream_api, "createReadStream")?;
+    let read_stream = get(context, read_stream_api, "ReadStream")?;
+    set(context, module, "createReadStream", create_read_stream)?;
+    set(context, module, "ReadStream", read_stream)?;
+    Ok(context.undefined())
+}
+
+/// The members `fs` takes from Node's own `lib/fs.js` and `internal/fs/utils.js`, in the order
+/// the module defines them.
+const LIBRARY_POLICY_MEMBERS: [&str; 4] = ["Dirent", "glob", "globSync", "readdirSync"];
+
+/// Install Node's own glob, directory reader and `Dirent` when a script first observes one of
+/// them: loading `lib/fs.js` builds Buffer, util and their dependencies, which reading a file
+/// does not need. Node's promises module is likewise loaded only when requested; in particular
+/// its readline dependencies must not eagerly capture the OS binding while merely requiring fs.
+pub(crate) fn install_library_policy(
     context: &mut NativeContext<'_, NodeHost>, module: RootId,
 ) -> Result<(), RootedError> {
-    let policy = crate::host::shared_vm::commonjs::node_library_module(context, "fs.js", "fs.js")?;
-    for name in ["glob", "globSync", "readdirSync"] {
-        let function = get(context, policy, name)?;
-        set(context, module, name, function)?;
-    }
-    let directory = directory_policy(context)?;
-    let readdir = get(context, policy, "readdirSync")?;
-    set(context, directory, "readdirSync", readdir)?;
-    // Node's public fs module does not load its promises implementation until
-    // requested. In particular its readline dependencies must not eagerly
-    // capture the OS binding while merely requiring fs.
+    let initialize = context.host_function_with_data(
+        crate::host::shared_vm::operation("fsLibraryPolicyInitialize"), module,
+    )?;
+    context.define_lazy_data_properties_rooted(module, &LIBRARY_POLICY_MEMBERS, true, initialize)?;
     let promises = get(context, module, "promises")?;
     let initializer = context.host_function(crate::host::shared_vm::operation("fsPromisesGlobInitialize"))?;
     context.define_lazy_data_properties_rooted(promises, &["glob"], true, initializer)
+}
+
+/// Defines the library members on the `fs` module (the lazy group `install_library_policy`
+/// defines) from the directory policy.
+pub(crate) fn initialize_library_policy(
+    context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let module = context.host_function_data()?;
+    let policy = library_policy(context)?;
+    for name in LIBRARY_POLICY_MEMBERS {
+        let value = get(context, policy, name)?;
+        set(context, module, name, value)?;
+    }
+    Ok(context.undefined())
 }
 
 pub(crate) fn initialize_promises_glob_policy(
@@ -2999,22 +3049,31 @@ pub(crate) fn initialize_promises_glob_policy(
     Ok(context.undefined())
 }
 
-/// The native filesystem and original fs utilities import one another. Keep the
-/// constructor in private policy and initialize it after the native module is
-/// cached, so both imports observe the same completed filesystem object.
+/// The private copy of Node's library members that the native readers call, whatever a script
+/// later assigns to the public module. It is filled from `lib/fs.js` on first use.
 fn directory_policy(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     crate::host::shared_vm::commonjs::cached_native_binding(
         context, "\0binding:fs-directory-policy", |context| context.null_object_rooted(),
     )
 }
 
-pub(crate) fn initialize_directory_policy(
-    context: &mut NativeContext<'_, NodeHost>, module: RootId,
-) -> Result<(), RootedError> {
+/// The directory policy, loading Node's `lib/fs.js` into it the first time. The native module is
+/// cached before this runs, so the library and the native module observe one completed
+/// filesystem object.
+fn library_policy(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    let policy = directory_policy(context)?;
+    let reader = get(context, policy, "readdirSync")?;
+    if !context.rooted_value(reader).is_some_and(|value| value.is_undefined()) {
+        return Ok(policy);
+    }
+    let library = crate::host::shared_vm::commonjs::node_library_module(context, "fs.js", "fs.js")?;
     let dirent = crate::host::shared_vm::commonjs::node_library_export(
         context, "fs.js", "internal/fs/utils.js", "Dirent",
     )?;
-    let policy = directory_policy(context)?;
     set(context, policy, "Dirent", dirent)?;
-    set(context, module, "Dirent", dirent)
+    for name in ["glob", "globSync", "readdirSync"] {
+        let function = get(context, library, name)?;
+        set(context, policy, name, function)?;
+    }
+    Ok(policy)
 }

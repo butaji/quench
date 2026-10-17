@@ -16,7 +16,14 @@ pub(super) fn active_shape_attributes(
     shapes: &[Shape],
     shape: u32,
 ) -> Vec<Option<(property_key::PropertyKey, ShapeAttributes)>> {
-    let mut chain = Vec::new();
+    // Both vectors are sized exactly: collections call this for every rooted shape.
+    let mut depth = 0;
+    let mut current = Some(shape);
+    while let Some(id) = current {
+        depth += 1;
+        current = shapes[id as usize].parent();
+    }
+    let mut chain = Vec::with_capacity(depth);
     let mut current = Some(shape);
     while let Some(id) = current {
         chain.push(id);
@@ -24,7 +31,7 @@ pub(super) fn active_shape_attributes(
     }
     chain.reverse();
 
-    let mut entries = Vec::new();
+    let mut entries = Vec::with_capacity(shapes[shape as usize].storage_len());
     for id in chain {
         match shapes[id as usize].transition {
             ShapeTransition::Add {
@@ -292,6 +299,8 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn collect_slow(&mut self, _program: &ResidualProgram, full: bool) {
         let full = self.heap.collection_is_full(full);
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        let mut phase_started = std::time::Instant::now();
         self.constructed_shapes.fill(super::provenance::ConstructedShape::EMPTY);
         #[cfg(feature = "profile-aggregate")]
         for (index, frame) in self.frames.iter().enumerate() {
@@ -348,10 +357,16 @@ impl<H: Host> Vm<H> {
                 .flat_map(|(_, edges)| edges.iter().copied())
                 .collect::<Vec<_>>()
         };
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        {
+            self.heap.record_vm_gc_phase(0, phase_started);
+            phase_started = std::time::Instant::now();
+        }
         // Roots are gathered source by source: a single iterator chain over
-        // every source costs each root a step through every nesting level.
-        let mut roots = Vec::new();
-        self.programs.extend_roots(&mut roots);
+        // every source costs each root a step through every nesting level. The previous
+        // collection's count sizes the vector, which otherwise regrows from empty each time.
+        let mut roots = Vec::with_capacity(self.gc_root_count);
+        self.programs.extend_roots(&mut roots, full);
         roots.extend(self.wasm_js.roots());
         roots.extend([
             self.realm.globals,
@@ -401,6 +416,7 @@ impl<H: Host> Vm<H> {
             self.realm
                 .global_lexical_states
                 .iter()
+                .chain(self.realm.parked.iter().map(|parked| (&parked.global, &parked.state)))
                 .flat_map(|(global, state)| {
                     std::iter::once(*global).chain(state.bindings.values().copied())
                 }),
@@ -586,6 +602,7 @@ impl<H: Host> Vm<H> {
                 .flat_map(|(realm, prototype)| [*realm, *prototype]),
         );
         roots.extend(self.natives.iter().map(|(_, value)| *value));
+        roots.extend(self.atom_strings.values().copied());
         roots.extend(self.realm.intrinsics.iterator_prototypes.iter().flat_map(
             |(realm, prototypes)| {
                 [
@@ -695,10 +712,16 @@ impl<H: Host> Vm<H> {
                 )
         }));
         roots.extend(external_roots);
+        self.gc_root_count = roots.len();
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("QUENCH_MEMORY_PEAK").is_some() {
             let phase = format!("gc_{}_before", self.heap.collection_count() + 1);
             self.report_memory_snapshot(&phase);
+        }
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        {
+            self.heap.record_vm_gc_phase(1, phase_started);
+            phase_started = std::time::Instant::now();
         }
         let shape_count = self.shapes.len();
         let shape_word_count = shape_count.div_ceil(u64::BITS as usize);
@@ -728,6 +751,8 @@ impl<H: Host> Vm<H> {
             |trace_kind: GcTraceKind, owner: Value, shape: u32, prototype: bool, roots: &mut Vec<Value>| {
                 shape_trace.append(trace_kind, owner, shape, prototype, roots);
             };
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        self.heap.record_vm_gc_phase(2, phase_started);
         let finalization_jobs = self.heap.collect_with_object_roots(
             roots,
             |trace_kind, owner, shape, prototype, roots| {
@@ -736,6 +761,8 @@ impl<H: Host> Vm<H> {
             Some(&parallel_object_roots),
             full,
         );
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        let after_collection_started = std::time::Instant::now();
         let mut live_shapes = shape_trace.live_shapes();
         // The startup snapshot reads its holders' sealed shapes, which no object may hold now.
         live_shapes.extend(self.startup_intrinsics.sealed_shapes());
@@ -841,6 +868,8 @@ impl<H: Host> Vm<H> {
         if let Some(concats) = &mut self.string_concats {
             concats.fill(EMPTY_STRING_CONCAT_CACHE);
         }
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        self.heap.record_vm_gc_phase(3, after_collection_started);
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("QUENCH_MEMORY_PEAK").is_some() {
             let phase = format!("gc_{}_after", self.heap.collection_count());
@@ -904,6 +933,7 @@ impl<H: Host> Vm<H> {
         self.shapes = shapes;
         self.transitions = transitions;
         self.shape_slot_memo.clear();
+        self.shape_attribute_memo.clear();
         self.object_shapes.fill(u32::MAX);
         self.invalidate_field_caches();
         self.method_caches.fill([EMPTY_METHOD_CACHE; 2]);
@@ -942,16 +972,42 @@ impl<H: Host> Vm<H> {
     pub(crate) fn drain_jobs(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
         self.check_execution_interrupt()?;
         loop{
-            while let Some(job)=self.realm.jobs.pop_front(){
-                self.check_execution_interrupt()?;self.run_pending_job(program,job)?;
-                self.advance_static_module_jobs(program)?;self.advance_dynamic_import_jobs(program,true)?;
-            }
+            self.drain_pending_microtasks(program)?;
             // Async futex completion is an agent task: settle only after the
             // existing microtask queue drains, then run its Promise reactions.
             self.poll_shared_async_waiters(program)?;
             if self.realm.jobs.is_empty(){break}
         }
         Ok(Value::UNDEFINED)
+    }
+
+    /// Preserve existing internal drains, including recursive promise/module
+    /// drains. Only NativeContext checkpoint admission checks the running flag.
+    fn drain_pending_microtasks(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
+        let previous = std::mem::replace(&mut self.native_microtask_running, true);
+        let result = (|| {
+            self.check_execution_interrupt()?;
+            while let Some(job) = self.realm.jobs.pop_front() {
+                self.check_execution_interrupt()?;
+                self.run_pending_job(program, job)?;
+                self.advance_static_module_jobs(program)?;
+                self.advance_dynamic_import_jobs(program, true)?;
+            }
+            Ok(Value::UNDEFINED)
+        })();
+        self.native_microtask_running = previous;
+        result
+    }
+
+    /// The VM-wide admission fact shared with native embedder task checkpoints.
+    pub(crate) fn native_microtask_checkpoint_is_active(&self) -> bool {
+        self.native_microtask_running
+    }
+
+    /// A native microtask-only checkpoint, with no native agent-task polling.
+    pub(crate) fn native_microtask_checkpoint(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
+        if self.native_microtask_running { return Ok(Value::UNDEFINED); }
+        self.drain_pending_microtasks(program)
     }
 
     /// Runs a job already taken off the queue: a finished job roots nothing, so a drain
@@ -962,14 +1018,17 @@ impl<H: Host> Vm<H> {
         job: PendingJob,
     ) -> Result<(), JsError> {
         let roots = job.roots();
-        self.with_call_roots(roots, |vm| match job {
+        let previous = std::mem::replace(&mut self.native_microtask_running, true);
+        let result = self.with_call_roots(roots, |vm| match job {
             PendingJob::Call {
                 callback,
                 this,
                 args,
             } => vm.call_value(program, callback, this, &args).map(|_| ()),
             PendingJob::Reaction(reaction) => vm.run_promise_reaction(program, reaction),
-        })
+        });
+        self.native_microtask_running = previous;
+        result
     }
 
 

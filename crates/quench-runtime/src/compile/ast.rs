@@ -673,6 +673,25 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         }
     }
 
+    /// SetFunctionName of `value` to `name`. A closure just made into `value` from an
+    /// anonymous function definition is instead made with the name (`inferred_name`): no
+    /// code runs between its creation and the naming, and the definition always gets this
+    /// name, so it is static.
+    pub(super) fn emit_function_name(&mut self, value: Register, name: Atom) {
+        if let Some(made) = self.code.last()
+            && made.op() == Op::MakeClosure
+            && made.result_register() == value
+            && let Some(Some(function)) = self.owner.functions.get_mut(made.closure_function_index() as usize)
+            && function.name.is_none()
+            && function.inferred_name.is_none()
+            && !function.is_class_constructor
+        {
+            function.inferred_name = Some(name);
+            return;
+        }
+        self.emit(Op::SetFunctionName, value, 0, 0, name);
+    }
+
     pub(super) fn hidden_local(&mut self, name: &str) -> Atom {
         let mut candidate = name.to_owned();
         while self.local_slots.contains_key(&self.owner.atom(&candidate)) {
@@ -741,7 +760,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                     && Self::anonymous_function_definition(initializer)
                 {
                     let name = self.owner.atom(identifier.name.as_str());
-                    self.emit(Op::SetFunctionName, value, 0, 0, name);
+                    self.emit_function_name(value, name);
                 }
                 self.emit(Op::Move, current, value, 0, 0);
                 self.patch(skip);

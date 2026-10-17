@@ -47,13 +47,7 @@ pub(crate) fn install(c: &mut Context<'_>, socket: RootId) -> Result<(), RootedE
     let function = get(c, data, "verifyError")?;
     let key = c.string_rooted("verifyError");
     c.define_data_property_rooted(handle, key, function, true, true, true)?;
-    let configuration = c
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .event_targets_api
-        .ok_or_else(|| RootedError::host("TLS assignment configuration missing"))?;
-    crate::modules::event_constructor_shared_vm::named_set(c, configuration, socket, "ssl", handle)
+    c.assign_named_property_rooted(socket, "ssl", handle)
 }
 pub(crate) fn reusable(c: &mut Context<'_>, socket: RootId) -> Result<Option<RootId>, RootedError> {
     if super::sessions::find_owner(c, socket)?.is_none() {

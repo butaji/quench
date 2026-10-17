@@ -1,4 +1,4 @@
-use crate::value::Value;
+use crate::value::{HeapReference, Value};
 use crate::value_vec::{INLINE_PROPERTY_COUNT, ValueArena, ValueVec};
 use rayon::prelude::*;
 use rayon::{Scope, ThreadPool, ThreadPoolBuilder};
@@ -16,6 +16,7 @@ mod memory_stats;
 pub use memory_stats::HeapMemoryComposition;
 #[cfg(feature = "profile-memory")]
 mod memory_profile;
+mod pacing;
 mod records;
 mod root;
 mod slots;
@@ -35,17 +36,22 @@ use slots::{FreeSlotBitmap, SLOTS_PER_SLAB, SlotArena};
 // representation. The slot limit is derived from Value's representation.
 const DENSE_ARRAY_HOLE_BUDGET_BYTES: usize = 256 * 1024;
 const MAX_DENSE_ARRAY_HOLE_LENGTH: usize = DENSE_ARRAY_HOLE_BUDGET_BYTES / size_of::<Value>();
-const LARGE_HEAP_MINIMUM_LIVE_CELLS: usize = 1 << 16;
-/// Allocations a collection allows at least, whatever survived. The trunk owns this
-/// headroom with the factors below (decision 21). The owner chose RSS-first pacing on
-/// 2026-10-17 (lowest peak RSS among Node and Bun on the npm packages), restoring 384 cells
-/// and the factors below from the Score-only 2^18, 2/1, 4/1 and 4/1 of e14aadb13. Those
-/// had cut fixed-work instructions 4-19% on five benches; on the npm scenarios they raised
-/// peak RSS 10-30% (evidence/npm-rss-2026-10-17/pacing-experiment.txt).
-pub(crate) const MINIMUM_GC_ALLOCATION_HEADROOM: usize = 384;
+use pacing::pacing;
+/// The fewest allocations after which a collection is full on a small heap.
+#[cfg(test)]
+pub(crate) const FULL_COLLECTION_ALLOCATION_BOUND: usize =
+    pacing::PRODUCTION_PACING.minimum_allocation_cap;
 /// Payload bytes beside a cell (string units, array elements) that weigh as one more
 /// allocation toward the next collection.
 const PAYLOAD_BYTES_PER_ALLOCATION: usize = 64;
+/// Backing-store bytes (ArrayBuffer contents) allocated since the last collection that
+/// make the next one due, at least; the budget grows to the live external bytes a
+/// collection leaves. Buffers die only with their cells, so streaming code that drops
+/// one buffer per chunk retains every chunk until a collection. Like V8's external
+/// memory limit this bounds that garbage without collecting at every chunk: on the
+/// SaltyAom video route (64 KiB chunks, Linux x86_64, 4 vCPU) one collection per
+/// 64 KiB buffer cut peak RSS 112 -> 47 MB and throughput by two thirds.
+const MINIMUM_EXTERNAL_COLLECTION_BUDGET: usize = 8 << 20;
 const PARALLEL_MARK_MINIMUM_SLOTS: usize = 50_000;
 const PARALLEL_MARK_MAX_THREADS: usize = 4;
 // Paired Splay screens on the 4-vCPU Linux host favored the collector thread;
@@ -66,63 +72,6 @@ fn mark_word_if_new(word: &AtomicU64, mask: u64) -> bool {
     word.fetch_or(mask, Ordering::Relaxed) & mask == 0
 }
 
-#[derive(Clone, Copy)]
-struct GcHeadroomFactor {
-    numerator: usize,
-    denominator: usize,
-}
-
-impl GcHeadroomFactor {
-    fn allocation_headroom(self, live_cells: usize) -> usize {
-        debug_assert!(self.denominator > 0);
-        let whole = live_cells / self.denominator;
-        let remainder = live_cells % self.denominator;
-        whole * self.numerator + remainder * self.numerator / self.denominator
-    }
-}
-
-// Half a live set of new cells before the next collection on small heaps (RSS-first
-// pacing, above).
-const SMALL_HEAP_GC_HEADROOM: GcHeadroomFactor = GcHeadroomFactor {
-    numerator: 1,
-    denominator: 2,
-};
-// This is the sweep variable for large-heap RSS/Score measurements. A factor
-// of 1/1 allows one live set's worth of new cells before collection (2x total
-// occupied high-water); 4/1 allows four (5x). The trunk owns this factor
-// (decision 21); RSS-first pacing (above) keeps it at 1/1. Lane
-// measurements on Linux x86_64: RSS lane 1/2, stock Splay max RSS 66.3 -> 54.5 MB
-// for -14% Score (one run); Score lane, Splay paired non-PGO rounds: 1/1 3542,
-// 2/1 3638, 4/1 4023, 8/1 below 4/1.
-const LARGE_HEAP_GC_HEADROOM: GcHeadroomFactor = GcHeadroomFactor {
-    numerator: 1,
-    denominator: 1,
-};
-
-#[derive(Clone, Copy)]
-struct FullCollectionGrowthFactor {
-    numerator: usize,
-    denominator: usize,
-}
-
-impl FullCollectionGrowthFactor {
-    fn allocation_limit(self, live_cells: usize) -> usize {
-        debug_assert!(self.denominator > 0);
-        let whole = live_cells / self.denominator;
-        let remainder = live_cells % self.denominator;
-        whole
-            .saturating_mul(self.numerator)
-            .saturating_add(remainder.saturating_mul(self.numerator) / self.denominator)
-    }
-}
-
-// Bound total allocations between full collections at one live set (RSS-first pacing,
-// above). Minor collections may run earlier to sweep the young cells.
-const FULL_COLLECTION_GROWTH: FullCollectionGrowthFactor = FullCollectionGrowthFactor {
-    numerator: 1,
-    denominator: 1,
-};
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum CollectionState {
     #[default]
@@ -140,17 +89,6 @@ pub(crate) enum GcTraceKind {
 
 pub(crate) type ParallelObjectRootTrace<'a> =
     dyn Fn(GcTraceKind, Value, u32, bool, &mut Vec<Value>) + Sync + 'a;
-
-fn gc_allocation_headroom(live_cells: usize) -> usize {
-    let factor = if live_cells >= LARGE_HEAP_MINIMUM_LIVE_CELLS {
-        LARGE_HEAP_GC_HEADROOM
-    } else {
-        SMALL_HEAP_GC_HEADROOM
-    };
-    factor
-        .allocation_headroom(live_cells)
-        .max(MINIMUM_GC_ALLOCATION_HEADROOM)
-}
 
 pub(super) struct Slot {
     cell: Option<Cell>,
@@ -352,6 +290,9 @@ pub(crate) struct Heap {
     remembered_marks: Vec<u64>,
     remembered: Vec<u32>,
     young: Vec<u32>,
+    /// The young cells with weak entries (weak maps and sets, weak refs, finalization
+    /// registries): a minor collection prunes only these and the remembered cells.
+    young_weak: Vec<u32>,
     free_by_slab: Vec<FreeSlotBitmap>,
     free_slabs: Vec<u32>,
     free_slots: usize,
@@ -360,7 +301,20 @@ pub(crate) struct Heap {
     allocations_since_full: usize,
     /// Payload bytes grown since the last charge, below one allocation's weight.
     uncharged_payload_bytes: usize,
-    full_collection_growth_limit: usize,
+    /// What the last full collection kept, which the generational pacing grows from.
+    live_after_full: usize,
+    /// The next collection traces the whole heap.
+    full_due: bool,
+    pacing_state: pacing::PacingState,
+    /// Live count after, and cells allocated before, the previous collection.
+    live_after_previous: usize,
+    allocations_at_previous: u64,
+    /// Backing-store bytes allocated since the last collection, against its budget.
+    external_since_collection: usize,
+    external_collection_budget: usize,
+    /// The slot and record property owners the last full sweep listed, which size the next
+    /// sweep's lists so they do not regrow from empty (and reallocate) every collection.
+    property_owner_counts: (usize, usize),
     old_live: usize,
     threshold: usize,
     total_allocations: u64,
@@ -526,6 +480,9 @@ pub(crate) struct GcProfile {
     pub minor_mark_nanos: u64,
     pub sweep_nanos: u64,
     pub mark_clear_nanos: u64,
+    /// VM-side collection phases: owner edges, root gathering, shape-trace setup, and
+    /// the work after the heap collection.
+    pub vm_phase_nanos: [u64; 4],
     #[cfg(feature = "profile-aggregate")]
     pub full_collections: u64,
     #[cfg(feature = "profile-aggregate")]
@@ -576,6 +533,7 @@ impl Default for GcProfile {
             minor_mark_nanos: 0,
             sweep_nanos: 0,
             mark_clear_nanos: 0,
+            vm_phase_nanos: [0; 4],
             #[cfg(feature = "profile-aggregate")]
             full_collections: 0,
             #[cfg(feature = "profile-aggregate")]
@@ -697,8 +655,9 @@ impl Heap {
             free_by_slab: Vec::with_capacity(12),
             free_slabs: Vec::with_capacity(12),
             free_slots: 0,
-            threshold: MINIMUM_GC_ALLOCATION_HEADROOM,
-            max_threshold: MINIMUM_GC_ALLOCATION_HEADROOM,
+            threshold: pacing().minimum_young,
+            max_threshold: pacing().minimum_young,
+            external_collection_budget: MINIMUM_EXTERNAL_COLLECTION_BUDGET,
             ..Self::default()
         }
     }
@@ -783,7 +742,13 @@ impl Heap {
         if self.marked_prototype == Some(prototype) {
             return;
         }
-        if let Some(object) = self.object_mut(prototype) {
+        // A flag, not an edge: no write barrier for record prototypes.
+        let object = match prototype.direct_object_index() {
+            // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
+            Some(record_id) => Some(unsafe { self.object_records.get_live_mut_unbarriered(record_id) }),
+            None => self.object_mut(prototype),
+        };
+        if let Some(object) = object {
             object.mark_as_prototype();
             self.marked_prototype = Some(prototype);
         }
@@ -804,13 +769,13 @@ impl Heap {
             Cell::Array { object } => {
                 object.elements().capacity() * size_of::<Value>() / PAYLOAD_BYTES_PER_ALLOCATION
             }
-            _ => 0,
+            cell => cell.external_bytes() / PAYLOAD_BYTES_PER_ALLOCATION,
         };
         self.allocations += weight;
         self.allocations_since_full = self.allocations_since_full.saturating_add(weight);
         let track_young = self.tracks_young_cells();
         self.total_allocations += 1;
-        self.external_bytes += cell.external_bytes();
+        self.charge_external_growth(cell.external_bytes());
         let cell = match cell {
             Cell::Object(object) => match self.object_records.try_insert(object) {
                 Ok(record_id) => {
@@ -860,6 +825,7 @@ impl Heap {
 
     /// The slot part of `alloc`, for a cell no record space takes.
     fn alloc_in_slot(&mut self, cell: Cell, track_young: bool) -> Value {
+        let weak = cell.has_weak_entries();
         while let Some(slab) = self.free_slabs.last().copied() {
             let slab_index = slab as usize;
             let Some(offset) = self.free_by_slab[slab_index].pop() else {
@@ -875,6 +841,9 @@ impl Heap {
             self.slots.get_mut(slot).unwrap().cell = Some(cell);
             if track_young {
                 self.young.push(index);
+            }
+            if weak {
+                self.young_weak.push(index);
             }
             #[cfg(feature = "profile-memory")]
             self.profile_allocation(Value::heap(index));
@@ -893,6 +862,9 @@ impl Heap {
         }
         if track_young {
             self.young.push(index as u32);
+        }
+        if weak {
+            self.young_weak.push(index as u32);
         }
         Value::heap(index as u32)
     }
@@ -1011,10 +983,10 @@ impl Heap {
         for (_, owner) in owners {
             let object = if let Some(record_id) = owner.direct_object_index() {
                 // SAFETY: direct owners were collected from live marked records.
-                Some(unsafe { object_records.get_live_mut(record_id) })
+                Some(unsafe { object_records.get_live_mut_unbarriered(record_id) })
             } else if let Some(record_id) = owner.direct_array_index() {
                 // SAFETY: array owners were collected from live array records.
-                Some(&mut **unsafe { array_records.get_live_mut(record_id) })
+                Some(&mut **unsafe { array_records.get_live_mut_unbarriered(record_id) })
             } else {
                 owner
                     .legacy_heap_index()
@@ -1046,20 +1018,27 @@ impl Heap {
         self.free_slabs.clear();
         self.free_slots = 0;
         self.external_bytes = 0;
+        self.external_since_collection = 0;
+        self.external_collection_budget = MINIMUM_EXTERNAL_COLLECTION_BUDGET;
         self.allocations = 0;
         self.allocations_since_full = 0;
-        self.full_collection_growth_limit = 0;
+        self.live_after_full = 0;
+        self.full_due = false;
+        self.pacing_state = pacing::PacingState::default();
+        self.live_after_previous = 0;
+        self.allocations_at_previous = 0;
         self.old_live = 0;
-        self.threshold = MINIMUM_GC_ALLOCATION_HEADROOM;
+        self.threshold = pacing().minimum_young;
         self.total_allocations = 0;
         self.collections = 0;
         self.peak_live = 0;
         self.peak_survivors = 0;
-        self.max_threshold = MINIMUM_GC_ALLOCATION_HEADROOM;
+        self.max_threshold = pacing().minimum_young;
         self.properties.reset();
         self.remembered_marks.clear();
         self.remembered.clear();
         self.young.clear();
+        self.young_weak.clear();
         self.roots.clear();
         self.sparse_arrays = None;
         self.collection_state = CollectionState::Idle;
@@ -1086,23 +1065,35 @@ impl Heap {
         self.allocations += weight;
         self.allocations_since_full = self.allocations_since_full.saturating_add(weight);
     }
+    /// Accounts new backing-store bytes; past the external budget a collection is due.
+    pub(crate) fn charge_external_growth(&mut self, bytes: usize) {
+        self.external_bytes += bytes;
+        self.external_since_collection = self.external_since_collection.saturating_add(bytes);
+        if self.external_since_collection >= self.external_collection_budget {
+            self.threshold = self.threshold.min(self.allocations);
+        }
+    }
     pub fn should_collect(&self) -> bool {
         self.allocations >= self.threshold
     }
     pub(crate) fn should_full_collect(&self) -> bool {
-        self.full_collection_growth_limit == 0
-            || self.allocations_since_full >= self.full_collection_growth_limit
+        self.full_due
+            || pacing().allocation_cap_reached(
+                self.live_after_full,
+                self.allocations_since_full,
+            )
     }
-    fn minor_collection_scheduled(&self) -> bool {
-        let allocations_to_threshold = self.threshold.saturating_sub(self.allocations);
-        self.allocations_since_full
-            .saturating_add(allocations_to_threshold)
-            < self.full_collection_growth_limit
-    }
+    /// Every collection may be minor, so the legacy young list and barrier are always kept.
     fn tracks_young_cells(&self) -> bool {
-        cfg!(test) || self.minor_collection_scheduled()
+        true
     }
     pub(crate) fn is_old(&self, value: Value) -> bool {
+        if let Some(record_id) = value.direct_object_index() {
+            return self.object_records.is_marked(record_id);
+        }
+        if let Some(record_id) = value.direct_array_index() {
+            return self.array_records.is_marked(record_id);
+        }
         value
             .legacy_heap_index()
             .map(|index| index as usize)
@@ -1126,11 +1117,11 @@ impl Heap {
     pub fn collect(&mut self, roots: impl IntoIterator<Item = Value>) -> Vec<(Value, Value)> {
         self.collect_with_object_roots(roots, |_, _, _, _, _| {}, None, true)
     }
-    /// Whether a collection requested as `full` traces and sweeps the whole heap.
-    /// Direct records do not yet carry a generation. A full trace is the
-    /// exact fallback until their write barrier and remembered set exist.
+    /// Whether a collection requested as `full` traces and sweeps the whole heap. Records
+    /// and legacy cells share one generation rule: survivors stay marked (old), the write
+    /// barriers log old owners they write, and a minor traces roots and that log only.
     pub(crate) fn collection_is_full(&self, full: bool) -> bool {
-        full || self.has_direct_records()
+        full
     }
 
     pub(crate) fn collect_with_object_roots(
@@ -1172,14 +1163,54 @@ impl Heap {
             Self::clear_marks(&self.marks);
             self.remembered.clear();
             self.remembered_marks.fill(0);
+            self.object_records.clear_marks();
+            self.array_records.clear_marks();
         }
         #[cfg(feature = "profile-aggregate")]
         if full {
             self.gc_profile.mark_clear_nanos += mark_clear_started.elapsed().as_nanos() as u64;
         }
-        let mut work: Vec<Value> = roots.into_iter().chain(self.roots.values()).collect();
+        let roots = roots.into_iter();
+        let mut work = Vec::with_capacity(roots.size_hint().0 + self.roots.slot_count());
+        work.extend(roots);
+        work.extend(self.roots.values());
         #[cfg(debug_assertions)]
         let verify_roots = work.clone();
+        #[cfg(debug_assertions)]
+        let verify_old_records = (!full).then(|| {
+            let mut old = Vec::new();
+            self.object_records
+                .for_each_marked(|id| old.push(Value::direct_object(id)));
+            self.array_records
+                .for_each_marked(|id| old.push(Value::direct_array(id)));
+            old
+        });
+        if !full {
+            #[cfg(feature = "profile-aggregate")]
+            {
+                self.gc_profile.remembered_owner_scans += (self.object_records.remembered_count()
+                    + self.array_records.remembered_count())
+                    as u64;
+            }
+            work.extend(
+                self.object_records
+                    .take_remembered()
+                    .into_iter()
+                    .map(Value::direct_object),
+            );
+            work.extend(
+                self.array_records
+                    .take_remembered()
+                    .into_iter()
+                    .map(Value::direct_array),
+            );
+        }
+        #[cfg(debug_assertions)]
+        let verify_remembered_records: Vec<Value> = if full {
+            Vec::new()
+        } else {
+            work[verify_roots.len()..].to_vec()
+        };
         #[cfg(feature = "profile-aggregate")]
         {
             self.gc_profile.roots += work.len() as u64;
@@ -1235,7 +1266,9 @@ impl Heap {
             if full {
                 self.debug_verify_full(&verify_roots, &mut object_roots);
             } else {
-                self.debug_verify_minor(&verify_roots, &mut object_roots);
+                let mut pinned = verify_old_records.unwrap_or_default();
+                pinned.extend(verify_remembered_records);
+                self.debug_verify_minor(&verify_roots, &pinned, &mut object_roots);
             }
         }
         let finalization_jobs = self.prune_weak_entries(full);
@@ -1270,8 +1303,13 @@ impl Heap {
         } else {
             self.sweep_serial(full)
         };
-        let mut direct_property_owners = Vec::new();
-        if full {
+        let mut direct_property_owners = Vec::with_capacity(if full {
+            self.property_owner_counts.1
+        } else {
+            0
+        });
+        let legacy_live = live;
+        {
             #[cfg(feature = "profile-aggregate")]
             {
                 self.gc_profile.sweep_slots +=
@@ -1282,7 +1320,7 @@ impl Heap {
             let properties = &mut self.properties;
             let (object_live, object_freed) = self.object_records.sweep(|record| match record {
                 RecordSweep::Keep(record_id, object) => {
-                    if object.properties().has_compact_range() {
+                    if full && object.properties().has_compact_range() {
                         direct_property_owners.push((
                             object.properties().start_offset(),
                             Value::direct_object(record_id),
@@ -1300,7 +1338,7 @@ impl Heap {
             let mut dead_arrays = Vec::new();
             let (array_live, array_freed) = self.array_records.sweep(|record| match record {
                 RecordSweep::Keep(record_id, array) => {
-                    if array.properties().has_compact_range() {
+                    if full && array.properties().has_compact_range() {
                         direct_property_owners.push((
                             array.properties().start_offset(),
                             Value::direct_array(record_id),
@@ -1339,6 +1377,7 @@ impl Heap {
         }
         let _ = (freed_cells, swept_slots);
         if full {
+            self.property_owner_counts = (property_owners.len(), direct_property_owners.len());
             self.compact_property_arena(property_owners, direct_property_owners);
         }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
@@ -1346,26 +1385,33 @@ impl Heap {
             self.gc_profile.sweep_nanos += sweep_started.elapsed().as_nanos() as u64;
         }
         self.allocations = 0;
+        self.external_since_collection = 0;
+        self.external_collection_budget = self.external_bytes.max(MINIMUM_EXTERNAL_COLLECTION_BUDGET);
         if full {
             self.allocations_since_full = 0;
-            self.old_live = live;
-            self.full_collection_growth_limit = FULL_COLLECTION_GROWTH
-                .allocation_limit(live)
-                .max(MINIMUM_GC_ALLOCATION_HEADROOM);
+            self.old_live = legacy_live;
             self.young.clear();
             self.remembered.clear();
             self.remembered_marks.fill(0);
         }
-        let allocation_headroom = gc_allocation_headroom(live);
-        self.threshold = if full {
-            allocation_headroom
-        } else {
-            let remaining_full_growth = self
-                .full_collection_growth_limit
-                .saturating_sub(self.allocations_since_full)
-                .max(1);
-            allocation_headroom.min(remaining_full_growth)
-        };
+        if full {
+            self.live_after_full = live;
+        }
+        let next = pacing().plan(
+            &mut self.pacing_state,
+            pacing::CollectionOutcome {
+                full,
+                live,
+                previous_live: self.live_after_previous,
+                live_after_full: self.live_after_full,
+                allocated: (self.total_allocations - self.allocations_at_previous) as usize,
+                since_full: self.allocations_since_full,
+            },
+        );
+        self.live_after_previous = live;
+        self.allocations_at_previous = self.total_allocations;
+        self.threshold = next.threshold;
+        self.full_due = next.full;
         #[cfg(feature = "profile-aggregate")]
         {
             self.gc_profile.allocations_between_collections_total +=
@@ -1467,7 +1513,11 @@ impl Heap {
         let mut freed_cells = 0;
         let mut swept_slots = 0;
         let properties = &mut self.properties;
-        let mut property_owners_for_sweep = Vec::new();
+        let mut property_owners_for_sweep = Vec::with_capacity(if full {
+            self.property_owner_counts.0
+        } else {
+            0
+        });
         {
             let external_bytes = &mut self.external_bytes;
             let free_by_slab = &mut self.free_by_slab;
@@ -1759,13 +1809,19 @@ impl Heap {
     fn debug_verify_minor(
         &mut self,
         roots: &[Value],
+        old_records: &[Value],
         object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
     ) {
         let minor_marks = Self::snapshot_marks(&self.marks);
+        let minor_object_marks = self.object_records.snapshot_marks();
+        let minor_array_marks = self.array_records.snapshot_marks();
         let young = self.young.clone();
         #[cfg(feature = "profile-aggregate")]
         let profile = self.gc_profile;
         Self::clear_marks(&self.marks);
+        self.object_records.clear_marks();
+        self.array_records.clear_marks();
+        let pinned_records: rustc_hash::FxHashSet<Value> = old_records.iter().copied().collect();
         let mut young_slots = vec![false; self.slots.len()];
         for index in young.iter().copied() {
             young_slots[index as usize] = true;
@@ -1775,6 +1831,7 @@ impl Heap {
             (slot.cell.is_some() && !young_slots[index] && Self::marked_words(&minor_marks, index))
                 .then_some(Value::heap(index as u32))
         }));
+        work.extend(old_records.iter().copied());
         let mut ephemerons = weak::EphemeronWork::default();
         self.collection_state = CollectionState::FullMarking;
         self.mark_work(
@@ -1783,6 +1840,28 @@ impl Heap {
             &mut ephemerons,
             GcTraceKind::VerifyFull,
         );
+        let verified_object_marks = self.object_records.snapshot_marks();
+        let verified_array_marks = self.array_records.snapshot_marks();
+        let young_record_mismatch = |identity: Value, id: u32, minor: &[u64], verified: &[u64]| {
+            let word = id as usize / u64::BITS as usize;
+            let mask = 1_u64 << (id as usize % u64::BITS as usize);
+            !pinned_records.contains(&identity)
+                && (minor[word] & mask != 0) != (verified[word] & mask != 0)
+        };
+        self.object_records.for_each_live(|id, _| {
+            assert!(
+                !young_record_mismatch(Value::direct_object(id), id, &minor_object_marks, &verified_object_marks),
+                "minor collection's young object records differ from a full mark with old records pinned: {id}"
+            );
+        });
+        self.array_records.for_each_live(|id, _| {
+            assert!(
+                !young_record_mismatch(Value::direct_array(id), id, &minor_array_marks, &verified_array_marks),
+                "minor collection's young array records differ from a full mark with old records pinned: {id}"
+            );
+        });
+        self.object_records.restore_marks(&minor_object_marks);
+        self.array_records.restore_marks(&minor_array_marks);
         for index in young {
             let index = index as usize;
             if self.get(Value::heap(index as u32)).is_some() {
@@ -1975,6 +2054,10 @@ impl Heap {
         }
     }
     #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+    pub(crate) fn record_vm_gc_phase(&mut self, phase: usize, started: std::time::Instant) {
+        self.gc_profile.vm_phase_nanos[phase] += started.elapsed().as_nanos() as u64;
+    }
+    #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
     pub(crate) const fn gc_profile(&self) -> GcProfile {
         self.gc_profile
     }
@@ -1992,10 +2075,18 @@ impl Heap {
             .get(&array)
             .map(|elements| elements.length)
     }
-    pub(crate) fn sparse_set(&mut self, array: Value, index: usize, value: Value) {
-        if let Some(owner) = array.legacy_heap_index() {
-            self.remember(owner as usize);
+    /// The write barrier for an edge stored outside `owner`'s own storage (sparse elements,
+    /// owner-attached VM tables): `owner` is logged as if it had been written.
+    pub(crate) fn write_barrier(&mut self, owner: Value) {
+        match owner.heap_reference() {
+            Some(HeapReference::ObjectRecord(record_id)) => self.object_records.remember(record_id),
+            Some(HeapReference::ArrayRecord(record_id)) => self.array_records.remember(record_id),
+            Some(HeapReference::LegacySlot(index)) => self.remember(index as usize),
+            None => {}
         }
+    }
+    pub(crate) fn sparse_set(&mut self, array: Value, index: usize, value: Value) {
+        self.write_barrier(array);
         let arrays = self
             .sparse_arrays
             .get_or_insert_with(|| Box::new(FxHashMap::default()));
@@ -2088,7 +2179,7 @@ impl Heap {
     pub(crate) fn property_set(&mut self, object: Value, slot: usize, value: Value) {
         let vector = {
             let data = self
-                .object_mut(object)
+                .object_store_mut(object, value)
                 .expect("property owner is an object");
             if data.inline_properties().is_some() {
                 data.set_inline_property(slot, value);
@@ -2107,7 +2198,7 @@ impl Heap {
     ) {
         let vector = {
             let data = self
-                .object_mut(object)
+                .object_store_mut(object, value)
                 .expect("property owner is an object");
             if data.inline_properties().is_some() {
                 debug_assert!(slot < INLINE_PROPERTY_COUNT);
@@ -2133,7 +2224,7 @@ impl Heap {
         value: Value,
     ) -> bool {
         // SAFETY: the caller proves the record live; `&mut self` is exclusive.
-        let data = unsafe { self.object_records.get_live_mut(record_id) };
+        let data = unsafe { self.object_records.get_live_mut_storing(record_id, value) };
         if data.inline_properties().is_some() {
             debug_assert!(slot < INLINE_PROPERTY_COUNT);
             data.set_inline_property(slot, value);
@@ -2156,7 +2247,7 @@ impl Heap {
             return false;
         };
         // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
-        let data = unsafe { self.object_records.get_live_mut(record_id) };
+        let data = unsafe { self.object_records.get_live_mut_storing(record_id, value) };
         if slot >= INLINE_PROPERTY_COUNT || data.inline_properties().is_none() {
             return false;
         }
