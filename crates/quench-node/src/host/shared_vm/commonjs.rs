@@ -1924,7 +1924,10 @@ fn resolve_filename(
             set(context, error, "requireStack", stack)?;
             Err(context.throw(error))
         }
-        Err(error) => Err(RootedError::host(error.to_string())),
+        Err(error) => match super::esm_errors::require_unresolved(&error) {
+            Some(error) => Err(throw_module_load_error(context, error)?),
+            None => Err(RootedError::host(error.to_string())),
+        },
     }
 }
 
@@ -2158,10 +2161,32 @@ fn require_module_error(context: &mut Context<'_>, code: &'static str, message: 
     Ok(context.throw(error))
 }
 
+/// Throw a module-load failure as Node's coded error.
+fn throw_module_load_error(context: &mut Context<'_>, error: quench_runtime::ModuleLoadError) -> Result<RootedError, RootedError> {
+    let exception = match error.kind {
+        quench_runtime::ModuleLoadErrorKind::Error => context.error_rooted(&error.message)?,
+        quench_runtime::ModuleLoadErrorKind::TypeError => context.type_error_rooted(&error.message)?,
+    };
+    match (error.kind, error.code) {
+        (_, None) => {}
+        (quench_runtime::ModuleLoadErrorKind::Error, Some(code)) => crate::modules::node_errors_shared_vm::decorate_error(context, exception, code)?,
+        (quench_runtime::ModuleLoadErrorKind::TypeError, Some(code)) => {
+            crate::modules::node_errors_shared_vm::decorate_type_error(context, exception, code)?
+        }
+    }
+    Ok(context.throw(exception))
+}
+
 fn require_es_module(context: &mut Context<'_>, filename: &Path, parent: Option<RootId>) -> Result<RootId, RootedError> {
+    if super::esm_errors::node_modules_typescript(filename) {
+        let error = super::esm_errors::type_stripping_unsupported(&filename.to_string_lossy());
+        return Err(throw_module_load_error(context, error)?);
+    }
     let url = url::Url::from_file_path(filename).map_err(|_| RootedError::host("invalid ES module filename"))?;
-    let module = quench_runtime::Host::resolve_dynamic_import(context.host_mut(), &filename.to_string_lossy(), url.as_str())
-        .map_err(|error| RootedError::host(error.message))?.ok_or_else(|| RootedError::host("ES module source unavailable"))?;
+    let module = match quench_runtime::Host::resolve_dynamic_import(context.host_mut(), &filename.to_string_lossy(), url.as_str()) {
+        Ok(module) => module,
+        Err(error) => return Err(throw_module_load_error(context, error)?),
+    }.ok_or_else(|| RootedError::host("ES module source unavailable"))?;
     let namespace = match context.evaluate_module_sync_rooted(&module)? {
         quench_runtime::SynchronousModule::Namespace(namespace) => namespace,
         quench_runtime::SynchronousModule::AsyncGraph => {
