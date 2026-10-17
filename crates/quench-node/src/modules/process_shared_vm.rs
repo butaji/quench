@@ -3563,7 +3563,7 @@ fn warning_export(context: &mut NativeContext<'_, NodeHost>, name: &str) -> Resu
 }
 
 /// The environment `process.env` starts from: a worker's own, else the OS environment.
-fn environment(context: &mut NativeContext<'_, NodeHost>) -> Vec<(String, String)> {
+pub(crate) fn environment(context: &mut NativeContext<'_, NodeHost>) -> Vec<(String, String)> {
     let worker_env = context.host_mut().shared_state().borrow().messaging.context.as_ref().map(|worker| worker.env.clone());
     worker_env.unwrap_or_else(|| std::env::vars().collect())
 }
