@@ -238,6 +238,8 @@ struct CallContext {
     callout: usize,
     // Fields below are the VM's, never read by compiled code.
     program: ProgramId,
+    /// Number of Wasm-to-host callouts made by this native invocation.
+    import_callouts: *mut u64,
     /// What a callout that returned `RAISED_STATUS` raised.
     raised: Option<Raised>,
 }
@@ -271,6 +273,13 @@ unsafe extern "C" fn import_callout<H: Host>(
     // SAFETY: compiled code passes the context `run_compiled` made, whose
     // VM is suspended in that call.
     let context = unsafe { &mut *context };
+    if !context.import_callouts.is_null() {
+        // SAFETY: only diagnostic-enabled calls provide this pointer, and it
+        // points to a counter owned by the suspended native invocation.
+        unsafe {
+            *context.import_callouts = (*context.import_callouts).saturating_add(1);
+        }
+    }
     let vm = unsafe { &mut *context.vm.cast::<Vm<H>>() };
     // The VM's own code runs outside compiled code: no guard fault is ours.
     let active = ACTIVE_CONTEXT.with(|current| current.replace(std::ptr::null_mut()));
@@ -329,9 +338,85 @@ pub(super) struct CompiledProgram {
     /// The environment slots of the globals compiled code accesses, in the
     /// order of the context's global addresses.
     globals: Vec<u32>,
+    diagnostics: Option<WasmJitDiagnostics>,
+}
+
+/// Counters allocated only for opt-in benchmark diagnostics. These runs are
+/// intended to explain coverage; their timings are not qualification scores.
+struct WasmJitDiagnostics {
+    program: u32,
+    total_functions: usize,
+    compiled_functions: usize,
+    code_bytes: usize,
+    mapped_bytes: usize,
+    compile_ns: u128,
+    native_entry_requests: Vec<std::cell::Cell<u64>>,
+    interpreter_fallback_entries: Vec<std::cell::Cell<u64>>,
+    compiled_to_vm_callouts: std::cell::Cell<u64>,
+}
+
+impl Drop for CompiledProgram {
+    fn drop(&mut self) {
+        let Some(stats) = &self.diagnostics else {
+            return;
+        };
+        let entries = stats
+            .native_entry_requests
+            .iter()
+            .enumerate()
+            .filter_map(|(function, count)| {
+                let count = count.get();
+                (count > 0).then(|| format!("[{function},{count}]"))
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let fallbacks = stats
+            .interpreter_fallback_entries
+            .iter()
+            .enumerate()
+            .filter_map(|(function, count)| {
+                let count = count.get();
+                (count > 0).then(|| format!("[{function},{count}]"))
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        eprintln!(
+            "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compiled_functions\":{},\"total_functions\":{},\"code_bytes\":{},\"mapped_bytes\":{},\"compile_ns\":{},\"native_entry_requests\":[{}],\"interpreter_fallback_entries\":[{}],\"compiled_to_vm_callouts\":{}}}",
+            stats.program,
+            stats.compiled_functions,
+            stats.total_functions,
+            stats.code_bytes,
+            stats.mapped_bytes,
+            stats.compile_ns,
+            entries,
+            fallbacks,
+            stats.compiled_to_vm_callouts.get(),
+        );
+    }
+}
+
+fn jit_diagnostics_enabled() -> bool {
+    std::env::var_os("QUENCH_WASM_JIT_STATS").is_some_and(|value| value == "1")
 }
 
 impl CompiledProgram {
+    pub(super) fn has_function(&self, function: usize) -> bool {
+        self.functions
+            .get(function)
+            .is_some_and(Option::is_some)
+    }
+
+    pub(super) fn has_function_or_note_fallback(&self, function: usize) -> bool {
+        let available = self.has_function(function);
+        if !available
+            && let Some(stats) = &self.diagnostics
+            && let Some(fallbacks) = stats.interpreter_fallback_entries.get(function)
+        {
+            fallbacks.set(fallbacks.get().saturating_add(1));
+        }
+        available
+    }
+
     #[cfg(test)]
     pub(super) fn native_entries(&self, function: usize) -> Option<u64> {
         self.functions
@@ -2970,6 +3055,7 @@ impl<H: Host> Vm<H> {
         if code.kind != crate::bytecode::ProgramKind::Wasm {
             return None;
         }
+        let compile_started = jit_diagnostics_enabled().then(std::time::Instant::now);
         let mut analysis = Analysis {
             vm: self,
             program,
@@ -3091,12 +3177,13 @@ impl<H: Host> Vm<H> {
             link(&mut bytes, offset, &call, offsets[call.callee]?)?;
         }
         let memory = CodeMemory::new(&bytes)?;
+        let mapped_bytes = memory.length;
         let base = memory.pointer as usize;
         let table: Box<[usize]> = offsets
             .iter()
             .map(|offset| offset.map_or(0, |offset| base + offset))
             .collect();
-        let functions = plans
+        let functions: Vec<Option<CompiledFunction>> = plans
             .into_iter()
             .zip(entries)
             .map(|(plan, entry)| {
@@ -3114,6 +3201,21 @@ impl<H: Host> Vm<H> {
                 })
             })
             .collect();
+        let compiled_functions = functions
+            .iter()
+            .filter(|function| function.is_some())
+            .count();
+        let diagnostics = jit_diagnostics_enabled().then(|| WasmJitDiagnostics {
+            program: program.raw(),
+            total_functions: count,
+            compiled_functions,
+            code_bytes: bytes.len(),
+            mapped_bytes,
+            compile_ns: compile_started.map_or(0, |started| started.elapsed().as_nanos()),
+            native_entry_requests: (0..count).map(|_| std::cell::Cell::new(0)).collect(),
+            interpreter_fallback_entries: (0..count).map(|_| std::cell::Cell::new(0)).collect(),
+            compiled_to_vm_callouts: std::cell::Cell::new(0),
+        });
         Some(CompiledProgram {
             _code: memory,
             table,
@@ -3123,6 +3225,7 @@ impl<H: Host> Vm<H> {
             fixed_base,
             wraps,
             globals,
+            diagnostics,
         })
     }
 
@@ -3160,17 +3263,46 @@ impl<H: Host> Vm<H> {
         id: u32,
         args: &[Value],
     ) -> Option<Result<Value, JsError>> {
+        self.run_compiled_inner(program, env, id, args)
+    }
+
+    fn run_compiled_inner(
+        &mut self,
+        program: ProgramId,
+        env: Value,
+        id: u32,
+        args: &[Value],
+    ) -> Option<Result<Value, JsError>> {
         if self.execution_mode != ExecutionMode::Compiled {
             return None;
         }
         let compiled = match self.programs.compiled(program) {
             Some(compiled) => compiled?,
             None => {
+                let diagnose = jit_diagnostics_enabled()
+                    && self
+                        .programs
+                        .get(program)
+                        .is_some_and(|code| code.kind == crate::bytecode::ProgramKind::Wasm);
+                let started = diagnose.then(std::time::Instant::now);
                 let compiled = self.compile_program(program, env).map(Rc::new);
+                if diagnose && compiled.is_none() {
+                    let total_functions = self
+                        .programs
+                        .get(program)
+                        .map_or(0, |code| code.functions.len());
+                    eprintln!(
+                        "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compile_failed\":true,\"total_functions\":{},\"compile_ns\":{}}}",
+                        program.raw(),
+                        total_functions,
+                        started.expect("diagnostic timer started").elapsed().as_nanos(),
+                    );
+                }
                 self.programs.set_compiled(program, compiled.clone());
                 compiled?
             }
         };
+        let result = (|| {
         let function = compiled.functions.get(id as usize)?.as_ref()?;
         if args.len() != function.params.len() {
             return None;
@@ -3216,6 +3348,12 @@ impl<H: Host> Vm<H> {
         let (guard_start, guard_end) = guard.map_or((0, 0), |(start, size)| {
             (start as usize, start as usize + size)
         });
+        let mut import_callouts = 0u64;
+        let import_callouts_ptr = if compiled.diagnostics.is_some() {
+            &mut import_callouts
+        } else {
+            std::ptr::null_mut()
+        };
         let mut context = CallContext {
             stack_limit: stack_pointer.saturating_sub(COMPILED_STACK_BUDGET),
             interrupt: self.execution_interrupt.atomic_flag(),
@@ -3228,9 +3366,15 @@ impl<H: Host> Vm<H> {
             globals: globals.as_ptr(),
             callout: import_callout::<H> as Callout as usize,
             program,
+            import_callouts: import_callouts_ptr,
             raised: None,
         };
         let mut out = 0u64;
+        if let Some(stats) = &compiled.diagnostics
+            && let Some(entries) = stats.native_entry_requests.get(id as usize)
+        {
+            entries.set(entries.get().saturating_add(1));
+        }
         #[cfg(test)]
         function
             .native_entries
@@ -3261,7 +3405,17 @@ impl<H: Host> Vm<H> {
             // grows memory.
             None => unsafe { (function.entry)(&mut context, base, length, raw.as_ptr(), &mut out) },
         };
-        if i64::from(status) == TERMINATED_STATUS { return Some(Err(JsError::execution_terminated())); }
+        if let Some(stats) = &compiled.diagnostics {
+            stats.compiled_to_vm_callouts.set(
+                stats
+                    .compiled_to_vm_callouts
+                    .get()
+                    .saturating_add(import_callouts),
+            );
+        }
+        if i64::from(status) == TERMINATED_STATUS {
+            return Some(Err(JsError::execution_terminated()));
+        }
         if i64::from(status) == RAISED_STATUS {
             return match context.raised.take()? {
                 Raised::Error(error) => Some(Err(error)),
@@ -3279,6 +3433,14 @@ impl<H: Host> Vm<H> {
             },
             None => self.programs.constant(program, VOID_RESULT_CONSTANT)?,
         }))
+        })();
+        if let Some(stats) = &compiled.diagnostics
+            && result.is_none()
+            && let Some(fallbacks) = stats.interpreter_fallback_entries.get(id as usize)
+        {
+            fallbacks.set(fallbacks.get().saturating_add(1));
+        }
+        result
     }
 }
 

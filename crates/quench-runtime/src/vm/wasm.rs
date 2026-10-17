@@ -1721,6 +1721,106 @@ mod tests {
     }
 
     #[test]
+    fn compiled_wasm_fallback_caller_keeps_native_callee_entries() {
+        let caller_signature = crate::WasmSignature {
+            params: vec![],
+            results: vec![crate::WasmType::I32],
+        };
+        let callee_signature = crate::WasmSignature {
+            params: vec![],
+            results: vec![crate::WasmType::I32],
+        };
+        let helper_signature = crate::WasmSignature {
+            params: vec![crate::WasmType::I32],
+            results: vec![crate::WasmType::I32],
+        };
+        let module = crate::Engine::lower_wasm_module_for(
+            crate::ExecutionMode::Compiled,
+            "compiled-wasm-fallback-caller",
+            [
+                crate::WasmFunctionBody {
+                    ty: crate::WasmCallableType::Embedded(caller_signature),
+                    locals: vec![],
+                    operators: vec![
+                        Operator::Call { function_index: 1 },
+                        Operator::I32Const { value: 0 },
+                        Operator::I32Add,
+                        Operator::End,
+                    ]
+                    .into_iter()
+                    .map(Ok),
+                },
+                crate::WasmFunctionBody {
+                    ty: crate::WasmCallableType::Embedded(callee_signature),
+                    locals: vec![],
+                    operators: vec![
+                        // This helper is interpreter-only. Its call to the
+                        // compiled leaf must still leave the fast lane.
+                        Operator::TableSize { table: 0 },
+                        Operator::Call { function_index: 2 },
+                        Operator::I32Const { value: 0 },
+                        Operator::I32Add,
+                        Operator::End,
+                    ]
+                    .into_iter()
+                    .map(Ok),
+                },
+                crate::WasmFunctionBody {
+                    ty: crate::WasmCallableType::Embedded(helper_signature),
+                    locals: vec![],
+                    operators: vec![
+                        Operator::LocalGet { local_index: 0 },
+                        Operator::I32Const { value: 1 },
+                        Operator::I32Add,
+                        Operator::End,
+                    ]
+                        .into_iter()
+                        .map(Ok),
+                },
+            ],
+            &crate::WasmTypes::default(),
+            &[],
+            &[],
+            &[],
+            &[crate::WasmTable {
+                ty: wasmparser::TableType {
+                    element_type: wasmparser::RefType::FUNCREF,
+                    table64: false,
+                    initial: 1,
+                    maximum: Some(1),
+                    shared: false,
+                },
+                initializer: crate::WasmReferenceInitializer::Null.into(),
+            }],
+            &[],
+            &[],
+            &[],
+        )
+        .unwrap();
+        let mut vm = Vm::new(crate::SystemHost);
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        let instance = vm.instantiate_wasm_module(&module).unwrap();
+
+        assert_eq!(
+            vm.invoke_wasm(&instance, 0, &[]).unwrap(),
+            Some(crate::WasmValue::I32(2))
+        );
+
+        let program = vm
+            .programs
+            .find_shared(&module.program)
+            .expect("registered Wasm program");
+        let compiled = vm
+            .programs
+            .compiled(program)
+            .flatten()
+            .expect("compiled callee");
+        assert_eq!(compiled.native_entries(0), None);
+        assert_eq!(compiled.native_entries(1), None);
+        assert_eq!(compiled.native_entries(2), Some(1));
+    }
+
+    #[test]
     fn tag_import_roots_transfer_identity_without_retaining_exporter_environment() {
         type Body = crate::WasmFunctionBody<
             std::vec::IntoIter<Result<Operator<'static>, wasmparser::BinaryReaderError>>,

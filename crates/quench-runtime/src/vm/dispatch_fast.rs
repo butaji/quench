@@ -4663,6 +4663,19 @@ lane_handler! {
             return exit(ip);
         }
         let vm = unsafe { vm(cx) };
+        // Keep eligible calls on the general dispatcher so they can enter
+        // native code. Unsupported calls stay on the fast interpreter lane.
+        if vm.execution_mode == super::ExecutionMode::Compiled
+            && i.a & crate::bytecode::RETURN_REGISTER == 0
+            && vm
+                .programs
+                .has_compiled_function_or_note_fallback(
+                    unsafe { (*cx).program },
+                    i.b as usize,
+                )
+        {
+            return exit(ip);
+        }
         // SAFETY: the program's views outlive the lane run.
         let views = unsafe { &*(*cx).views };
         let stack = &mut vm.lane_stack;
@@ -6341,8 +6354,7 @@ impl<H: Host> Vm<H> {
                 .map_or(&[][..], |views| views) as *const _,
             constants: self.programs.constants(program) as *const _,
             inline_calls: inline_calls
-                && code.kind == crate::bytecode::ProgramKind::Wasm
-                && self.execution_mode != super::compiled::ExecutionMode::Compiled,
+                && code.kind == crate::bytecode::ProgramKind::Wasm,
             memory: MemoryView::NONE,
             resolved: (Value::UNDEFINED, MemoryView::NONE),
             script_calls: inline_calls
