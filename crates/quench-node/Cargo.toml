@@ -29,7 +29,7 @@ sysinfo = "0.32"
 openssl = "0.10"
 openssl-sys = "0.9"
 foreign-types = "0.3"
-oxc_resolver = "2"
+oxc_resolver = "11"
 oxc_allocator = { workspace = true }
 oxc_ast = { workspace = true }
 oxc_ast_visit = { workspace = true }
