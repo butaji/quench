@@ -16,7 +16,14 @@ pub(super) fn active_shape_attributes(
     shapes: &[Shape],
     shape: u32,
 ) -> Vec<Option<(property_key::PropertyKey, ShapeAttributes)>> {
-    let mut chain = Vec::new();
+    // Both vectors are sized exactly: collections call this for every rooted shape.
+    let mut depth = 0;
+    let mut current = Some(shape);
+    while let Some(id) = current {
+        depth += 1;
+        current = shapes[id as usize].parent();
+    }
+    let mut chain = Vec::with_capacity(depth);
     let mut current = Some(shape);
     while let Some(id) = current {
         chain.push(id);
@@ -24,7 +31,7 @@ pub(super) fn active_shape_attributes(
     }
     chain.reverse();
 
-    let mut entries = Vec::new();
+    let mut entries = Vec::with_capacity(shapes[shape as usize].storage_len());
     for id in chain {
         match shapes[id as usize].transition {
             ShapeTransition::Add {
@@ -349,8 +356,9 @@ impl<H: Host> Vm<H> {
                 .collect::<Vec<_>>()
         };
         // Roots are gathered source by source: a single iterator chain over
-        // every source costs each root a step through every nesting level.
-        let mut roots = Vec::new();
+        // every source costs each root a step through every nesting level. The previous
+        // collection's count sizes the vector, which otherwise regrows from empty each time.
+        let mut roots = Vec::with_capacity(self.gc_root_count);
         self.programs.extend_roots(&mut roots);
         roots.extend(self.wasm_js.roots());
         roots.extend([
@@ -586,6 +594,7 @@ impl<H: Host> Vm<H> {
                 .flat_map(|(realm, prototype)| [*realm, *prototype]),
         );
         roots.extend(self.natives.iter().map(|(_, value)| *value));
+        roots.extend(self.atom_strings.values().copied());
         roots.extend(self.realm.intrinsics.iterator_prototypes.iter().flat_map(
             |(realm, prototypes)| {
                 [
@@ -695,6 +704,7 @@ impl<H: Host> Vm<H> {
                 )
         }));
         roots.extend(external_roots);
+        self.gc_root_count = roots.len();
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("QUENCH_MEMORY_PEAK").is_some() {
             let phase = format!("gc_{}_before", self.heap.collection_count() + 1);
@@ -904,6 +914,7 @@ impl<H: Host> Vm<H> {
         self.shapes = shapes;
         self.transitions = transitions;
         self.shape_slot_memo.clear();
+        self.shape_attribute_memo.clear();
         self.object_shapes.fill(u32::MAX);
         self.invalidate_field_caches();
         self.method_caches.fill([EMPTY_METHOD_CACHE; 2]);

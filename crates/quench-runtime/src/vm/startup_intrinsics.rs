@@ -51,6 +51,9 @@ struct SwappedProperty {
 #[derive(Default)]
 pub(super) struct StartupIntrinsics {
     holders: Vec<SealedHolder>,
+    /// The holders, their sealed values and their sealed shapes' symbol keys and accessor
+    /// functions: fixed once sealed, so derived then rather than at every collection.
+    sealed_roots: Box<[Value]>,
     /// Open `enter_startup_intrinsics` calls; only the outermost one swaps.
     depth: usize,
     swapped: Vec<SwappedProperty>,
@@ -106,9 +109,18 @@ impl<H: Host> Vm<H> {
 
     /// Values the snapshot keeps alive: holders, their sealed values, the symbol keys and
     /// accessor functions of their sealed shapes, and the script's state of a swap.
-    pub(super) fn startup_intrinsic_roots(&self) -> Vec<Value> {
+    pub(super) fn startup_intrinsic_roots(&self) -> impl Iterator<Item = Value> + '_ {
+        self.startup_intrinsics.sealed_roots.iter().copied().chain(
+            self.startup_intrinsics
+                .swapped
+                .iter()
+                .flat_map(|swapped| swapped.previous.iter().flat_map(SlotProperty::values)),
+        )
+    }
+
+    fn sealed_roots(&self, holders: &[SealedHolder]) -> Box<[Value]> {
         let mut roots = Vec::new();
-        for sealed in &self.startup_intrinsics.holders {
+        for sealed in holders {
             roots.push(sealed.holder);
             roots.extend(sealed.values.iter().copied());
             for (key, attributes) in super::gc::active_shape_attributes(&self.shapes, sealed.shape)
@@ -119,10 +131,7 @@ impl<H: Host> Vm<H> {
                 roots.extend(key.symbol_value().into_iter().chain(getter).chain(setter));
             }
         }
-        for swapped in &self.startup_intrinsics.swapped {
-            roots.extend(swapped.previous.iter().flat_map(SlotProperty::values));
-        }
-        roots
+        roots.into_boxed_slice()
     }
 
     /// Records the intrinsics: every own shape property of the global object, of each object a
@@ -150,10 +159,11 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        let sealed = holders
+        let sealed: Vec<_> = holders
             .into_iter()
             .filter_map(|holder| self.sealed_holder(holder))
             .collect();
+        self.startup_intrinsics.sealed_roots = self.sealed_roots(&sealed);
         self.startup_intrinsics.holders = sealed;
     }
 
@@ -244,13 +254,18 @@ impl<H: Host> Vm<H> {
         if self.startup_intrinsics.depth > 0 {
             return Ok(());
         }
+        let mut resealed = false;
         for index in 0..self.startup_intrinsics.holders.len() {
             if !self.holder_unchanged(index) {
                 let holder = self.startup_intrinsics.holders[index].holder;
                 if let Some(sealed) = self.sealed_holder(holder) {
                     self.startup_intrinsics.holders[index] = sealed;
+                    resealed = true;
                 }
             }
+        }
+        if resealed {
+            self.startup_intrinsics.sealed_roots = self.sealed_roots(&self.startup_intrinsics.holders);
         }
         // The swap list stays traced until every script value is back in place.
         let swapped = self.startup_intrinsics.swapped.clone();

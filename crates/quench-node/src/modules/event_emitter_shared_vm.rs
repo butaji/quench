@@ -90,15 +90,12 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         "(invoke) => function wrapper(...args) { return invoke(...args); }",
         "node:events/once-wrapper.js",
     )?;
-    super::event_constructor_shared_vm::named_set(
-        context,
-        data,
-        data,
+    context.assign_named_property_rooted(data,
         "onceFactory",
         once_factory,
     )?;
     let emit_bridge = get(context, prototype, "emit")?;
-    super::event_constructor_shared_vm::named_set(context, data, data, "emitBridge", emit_bridge)?;
+    context.assign_named_property_rooted(data, "emitBridge", emit_bridge)?;
     let mut operations = [
         "emitterEventNames",
         "emitterListeners",
@@ -253,7 +250,6 @@ pub(crate) fn emit_listeners(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    use super::event_constructor_shared_vm::set;
     let missing = context.undefined();
     let target = args.first().copied().unwrap_or(missing);
     let event = args.get(1).copied().unwrap_or(missing);
@@ -274,7 +270,7 @@ pub(crate) fn emit_listeners(
     let key = get(context, data, "emittingKey")?;
     let count = context.get_property_rooted(record, key)?;
     let next = context.numeric_update_rooted(count, false)?;
-    set(context, data, record, key, next)?;
+    context.assign_property_rooted(record, key, next)?;
     let result: Result<(), RootedError> = (|| {
         let mut index = 0;
         loop {
@@ -296,7 +292,7 @@ pub(crate) fn emit_listeners(
     let cleanup: Result<(), RootedError> = (|| {
         let count = context.get_property_rooted(record, key)?;
         let next = context.numeric_update_rooted(count, true)?;
-        set(context, data, record, key, next)
+        context.assign_property_rooted(record, key, next)
     })();
     if let Err(cleanup) = cleanup {
         if let Err(error) = result {
@@ -317,7 +313,7 @@ fn mutable_record(
     event: RootId,
     record: RootId,
 ) -> Result<RootId, RootedError> {
-    use super::event_constructor_shared_vm::{named_set, set};
+    
     let key = get(context, data, "emittingKey")?;
     let emitting = context.get_property_rooted(record, key)?;
     let zero = context.number(0.0);
@@ -326,13 +322,13 @@ fn mutable_record(
     }
     let values = entries(context, record)?;
     let copy = context.array_rooted(&values)?;
-    set(context, data, copy, key, zero)?;
+    context.assign_property_rooted(copy, key, zero)?;
     let warned = get(context, record, "warned")?;
     if context.truthy_rooted(warned)? {
         let yes = context.boolean(true);
-        named_set(context, data, copy, "warned", yes)?;
+        context.assign_named_property_rooted(copy, "warned", yes)?;
     }
-    set(context, data, events, event, copy)?;
+    context.assign_property_rooted(events, event, copy)?;
     Ok(copy)
 }
 
@@ -374,7 +370,7 @@ pub(crate) fn remove_listener(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    use super::event_constructor_shared_vm::{event_removed, named_set, set};
+    use super::event_constructor_shared_vm::event_removed;
     let missing = context.undefined();
     let target = args.first().copied().unwrap_or(missing);
     let event = args.get(1).copied().unwrap_or(missing);
@@ -446,7 +442,7 @@ pub(crate) fn remove_listener(
                 break;
             }
             let next = get(context, record, &(index + 1).to_string())?;
-            named_set(context, data, record, &index.to_string(), next)?;
+            context.assign_named_property_rooted(record, &index.to_string(), next)?;
             index += 1;
         }
         let pop = get(context, record, "pop")?;
@@ -456,7 +452,7 @@ pub(crate) fn remove_listener(
     let one = context.number(1.0);
     if context.strict_equal_rooted(length, one)? {
         let current = get(context, record, "0")?;
-        set(context, data, events, event, current)?;
+        context.assign_property_rooted(events, event, current)?;
     }
     notify_removed(
         context,
@@ -473,14 +469,14 @@ fn reset_listener_store(
     data: RootId,
     target: RootId,
 ) -> Result<(), RootedError> {
-    use super::event_constructor_shared_vm::{named_set, set};
+    
     let events = context.null_object_rooted()?;
-    named_set(context, data, target, "_events", events)?;
+    context.assign_named_property_rooted(target, "_events", events)?;
     let zero = context.number(0.0);
-    named_set(context, data, target, "_eventsCount", zero)?;
+    context.assign_named_property_rooted(target, "_eventsCount", zero)?;
     let key = get(context, data, "shapeKey")?;
     let no = context.boolean(false);
-    set(context, data, target, key, no)
+    context.assign_property_rooted(target, key, no)
 }
 
 /// Bulk removal has its own numeric update rule and public notification order.
@@ -489,7 +485,7 @@ pub(crate) fn remove_all_listeners(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    use super::event_constructor_shared_vm::{named_set, set};
+    
     let missing = context.undefined();
     let target = args.first().copied().unwrap_or(missing);
     let event = args.get(1).copied().unwrap_or(missing);
@@ -510,11 +506,11 @@ pub(crate) fn remove_all_listeners(
         if !undefined(context, record) {
             let count = get(context, target, "_eventsCount")?;
             let next = context.numeric_update_rooted(count, true)?;
-            named_set(context, data, target, "_eventsCount", next)?;
+            context.assign_named_property_rooted(target, "_eventsCount", next)?;
             let zero = context.number(0.0);
             if context.strict_equal_rooted(next, zero)? {
                 let fresh = context.null_object_rooted()?;
-                named_set(context, data, target, "_events", fresh)?;
+                context.assign_named_property_rooted(target, "_events", fresh)?;
             } else {
                 let delete = get(context, data, "delete")?;
                 context.call_rooted(delete, missing, &[events, event])?;
@@ -522,7 +518,7 @@ pub(crate) fn remove_all_listeners(
         }
         let key = get(context, data, "shapeKey")?;
         let no = context.boolean(false);
-        set(context, data, target, key, no)?;
+        context.assign_property_rooted(target, key, no)?;
         return Ok(target);
     }
     if !provided {
@@ -576,7 +572,7 @@ pub(crate) fn add_listener(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    use super::event_constructor_shared_vm::{named_set, set};
+    
     let missing = context.undefined();
     let target = args.first().copied().unwrap_or(missing);
     let event = args.get(1).copied().unwrap_or(missing);
@@ -588,9 +584,9 @@ pub(crate) fn add_listener(
     let mut events = get(context, target, "_events")?;
     if undefined(context, events) {
         events = context.null_object_rooted()?;
-        named_set(context, data, target, "_events", events)?;
+        context.assign_named_property_rooted(target, "_events", events)?;
         let zero = context.number(0.0);
-        named_set(context, data, target, "_eventsCount", zero)?;
+        context.assign_named_property_rooted(target, "_eventsCount", zero)?;
     } else {
         let notification = get(context, events, "newListener")?;
         if !undefined(context, notification) {
@@ -611,7 +607,7 @@ pub(crate) fn add_listener(
     }
     let previous = context.get_property_rooted(events, event)?;
     let current = if undefined(context, previous) {
-        set(context, data, events, event, listener)?;
+        context.assign_property_rooted(events, event, listener)?;
         listener
     } else if context.is_callable_rooted(previous)? {
         let values = if prepend {
@@ -622,8 +618,8 @@ pub(crate) fn add_listener(
         let current = context.array_rooted(&values)?;
         let key = get(context, data, "emittingKey")?;
         let zero = context.number(0.0);
-        set(context, data, current, key, zero)?;
-        set(context, data, events, event, current)?;
+        context.assign_property_rooted(current, key, zero)?;
+        context.assign_property_rooted(events, event, current)?;
         current
     } else {
         let current = mutable_record(context, data, events, event, previous)?;
@@ -641,15 +637,13 @@ pub(crate) fn once_invoke(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    use super::event_constructor_shared_vm::named_set;
     let state = context.host_function_data()?;
     let fired = get(context, state, "fired")?;
     if context.truthy_rooted(fired)? {
         return Ok(context.undefined());
     }
-    let data = get(context, state, "api")?;
     let yes = context.boolean(true);
-    named_set(context, data, state, "fired", yes)?;
+    context.assign_named_property_rooted(state, "fired", yes)?;
     let target = get(context, state, "target")?;
     let event = get(context, state, "type")?;
     let listener = get(context, state, "listener")?;
@@ -664,7 +658,6 @@ pub(crate) fn once(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    use super::event_constructor_shared_vm::named_set;
     let missing = context.undefined();
     let target = args.first().copied().unwrap_or(missing);
     let event = args.get(1).copied().unwrap_or(missing);
@@ -682,7 +675,7 @@ pub(crate) fn once(
         ("listener", listener),
         ("fired", no),
     ] {
-        named_set(context, data, state, name, value)?;
+        context.assign_named_property_rooted(state, name, value)?;
     }
     let invoke = context.host_function_with_data(
         crate::host::shared_vm::operation("emitterOnceInvoke"),
@@ -690,8 +683,8 @@ pub(crate) fn once(
     )?;
     let factory = get(context, data, "onceFactory")?;
     let wrapper = context.call_rooted(factory, missing, &[invoke])?;
-    named_set(context, data, state, "wrapper", wrapper)?;
-    named_set(context, data, wrapper, "listener", listener)?;
+    context.assign_named_property_rooted(state, "wrapper", wrapper)?;
+    context.assign_named_property_rooted(wrapper, "listener", listener)?;
     let add = get(
         context,
         target,
@@ -757,17 +750,16 @@ pub(crate) fn emit(
             } else {
                 let error = context.error_rooted("Unhandled error.")?;
                 let code = context.string_rooted("ERR_UNHANDLED_ERROR");
-                super::event_constructor_shared_vm::named_set(context, data, error, "code", code)?;
+                context.assign_named_property_rooted(error, "code", code)?;
                 error
             };
             if context.is_object_rooted(error)? {
-                use super::event_constructor_shared_vm::named_set;
-                named_set(context, data, error, "domainEmitter", target)?;
+                context.assign_named_property_rooted(error, "domainEmitter", target)?;
                 let domain_key = context.string_rooted("domain");
                 context
                     .define_data_property_rooted(error, domain_key, domain, true, false, true)?;
                 let no = context.boolean(false);
-                named_set(context, data, error, "domainThrown", no)?;
+                context.assign_named_property_rooted(error, "domainThrown", no)?;
             }
             let domain_emit = get(context, domain, "emit")?;
             context.call_rooted(domain_emit, domain, &[event, error])?;

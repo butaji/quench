@@ -71,6 +71,29 @@ impl<H: Host> Vm<H> {
         outcome
     }
 
+/// CreateDataPropertyOrThrow of a class field adds an ordinary data property and nothing
+    /// else when the target is an extensible ordinary object (not a Proxy, array, arguments
+    /// or other exotic object) that lacks the key and the key is no array index.
+    fn class_field_is_plain_add(&self, target: Value, key: PropertyKey) -> bool {
+        let index_key = match key {
+            PropertyKey::String(atom) => self.atom_class(atom).contains(AtomClass::ARRAY_INDEX),
+            PropertyKey::Symbol(_) => false,
+            PropertyKey::Private(_) => return false,
+        };
+        let Some(object) = self.heap.ordinary_object(target) else {
+            return false;
+        };
+        // Wrapper, error and arguments objects carry exotic or virtual own properties.
+        !index_key
+            && object.is_extensible()
+            && !object.is_arguments_object()
+            && object.boxed_primitive().is_none()
+            && object.stack_data().is_none()
+            && !object.has_error_data()
+            && self.property_shape_slot(object.shape(), key).is_none()
+            && !self.descriptors.contains_key(&(target, key))
+    }
+
     pub(super) fn define_class_field(
         &mut self,
         p: &ResidualProgram,
@@ -78,6 +101,9 @@ impl<H: Host> Vm<H> {
         key: PropertyKey,
         value: Value,
     ) -> Result<(), JsError> {
+        if self.class_field_is_plain_add(target, key) {
+            return self.create_shape_data_property(target, key, value, DEFAULT_DATA_ATTRIBUTES);
+        }
         let target = self.heap.root(target);
         let value = self.heap.root(value);
         let outcome = (|| {

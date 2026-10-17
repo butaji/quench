@@ -1,6 +1,6 @@
 //! EventEmitterAsyncResource composes the canonical emitter and async resource.
 
-use super::event_constructor_shared_vm::{get, named_set};
+use super::event_constructor_shared_vm::get;
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
@@ -49,13 +49,13 @@ pub(super) fn install(
     let undefined = context.undefined();
     let getter = context.call_rooted(factory, undefined, &[native])?;
     let descriptor = context.null_object_rooted()?;
-    named_set(context, api, descriptor, "get", getter)?;
+    context.assign_named_property_rooted(descriptor, "get", getter)?;
     let yes = context.boolean(true);
-    named_set(context, api, descriptor, "enumerable", yes)?;
-    named_set(context, api, descriptor, "configurable", yes)?;
+    context.assign_named_property_rooted(descriptor, "enumerable", yes)?;
+    context.assign_named_property_rooted(descriptor, "configurable", yes)?;
     let key = context.string_rooted("EventEmitterAsyncResource");
     context.define_property_descriptor_rooted(emitter, key, descriptor)?;
-    named_set(context, api, api, "asyncGetterInstalled", yes)
+    context.assign_named_property_rooted(api, "asyncGetterInstalled", yes)
 }
 
 pub(crate) fn constructor(
@@ -83,16 +83,16 @@ pub(crate) fn constructor(
         let prototype = get(context, array, "prototype")?;
         (get(context, prototype, "unshift")?, false)
     };
-    named_set(context, api, api, "asyncUnshift", unshift)?;
+    context.assign_named_property_rooted(api, "asyncUnshift", unshift)?;
     let flag = context.boolean(uncurried);
-    named_set(context, api, api, "asyncUnshiftUncurried", flag)?;
+    context.assign_named_property_rooted(api, "asyncUnshiftUncurried", flag)?;
     for name in ["get", "set", "has"] {
         let method = get(context, prototype, name)?;
-        named_set(context, api, api, &format!("asyncWeak{name}"), method)?;
+        context.assign_named_property_rooted(api, &format!("asyncWeak{name}"), method)?;
     }
     for name in ["asyncEmitterResources", "asyncResourceEmitters"] {
         let map = context.construct_rooted(weak, weak, &[])?;
-        named_set(context, api, api, name, map)?;
+        context.assign_named_property_rooted(api, name, map)?;
     }
     let async_module = super::async_hooks_shared_vm::module(context)?;
     let resource = get(context, async_module, "AsyncResource")?;
@@ -114,9 +114,9 @@ pub(crate) fn constructor(
     let mut arguments = vec![emitter, resource];
     arguments.extend(operations);
     let class = context.call_rooted(factory, undefined, &arguments)?;
-    named_set(context, api, api, "asyncEmitterClass", class)?;
+    context.assign_named_property_rooted(api, "asyncEmitterClass", class)?;
     let prototype = get(context, class, "prototype")?;
-    named_set(context, api, api, "asyncEmitterHome", prototype)?;
+    context.assign_named_property_rooted(api, "asyncEmitterHome", prototype)?;
     Ok(class)
 }
 
@@ -184,8 +184,8 @@ pub(crate) fn prepare(
         (options, name)
     };
     let setup = context.null_object_rooted()?;
-    named_set(context, api, setup, "options", options)?;
-    named_set(context, api, setup, "name", name)?;
+    context.assign_named_property_rooted(setup, "options", options)?;
+    context.assign_named_property_rooted(setup, "name", name)?;
     Ok(setup)
 }
 
