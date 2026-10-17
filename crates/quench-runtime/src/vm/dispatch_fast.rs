@@ -95,14 +95,35 @@ pub(super) struct LaneView {
     activation: Option<ActivationShape>,
 }
 
-/// Registers a lane call writes as one fixed block when the window fits it:
-/// slots past the window lie in spare stack capacity, so the block needs no
-/// loop over the window's size.
+/// Registers a lane call writes as one fixed block: a window fills whole blocks, whose slots
+/// past the window lie in spare stack capacity, so no store depends on the window's size.
 const ACTIVATION_FILL_BLOCK: usize = 8;
 
 /// `ACTIVATION_FILL_BLOCK` for a JavaScript activation, whose bodies keep more values in
 /// registers: on V8-v7, most called functions have 9 to 16.
 const SCRIPT_FILL_BLOCK: usize = 2 * ACTIVATION_FILL_BLOCK;
+
+/// The lane-stack room `fill_window::<BLOCK>` writes for a window of `count` registers.
+const fn fill_room<const BLOCK: usize>(count: usize) -> usize {
+    count.next_multiple_of(BLOCK)
+}
+
+/// Writes `initial` to the `count` registers at `registers`, as whole blocks of `BLOCK`.
+///
+/// # Safety
+/// `registers` has room for `fill_room::<BLOCK>(count)` values, none of them live.
+#[inline(always)]
+unsafe fn fill_window<const BLOCK: usize>(registers: *mut Value, count: usize, initial: Value) {
+    for block in 0..count.div_ceil(BLOCK) {
+        // SAFETY: the block ends within the room the caller provides.
+        unsafe {
+            registers
+                .add(block * BLOCK)
+                .cast::<[Value; BLOCK]>()
+                .write_unaligned([initial; BLOCK]);
+        }
+    }
+}
 
 /// A function's register window as a lane activation starts it: every
 /// register its initial value, then the parameters at their base.
@@ -307,6 +328,8 @@ pub(super) struct ScriptCallTarget {
     strict: bool,
     /// `new` may activate it too (`Vm::inline_constructible`).
     constructs: bool,
+    /// `new` may run its body as the stores alone (`Function::only_initializes_this_fields`).
+    initializes: bool,
     /// It keeps the values it was passed for a forwarded `arguments` (`CallPlan::forwards_arguments`).
     forwards: bool,
     /// The slots its depth-0 captures read (`LaneContext::capture`), or null where the walk
@@ -325,6 +348,7 @@ const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
     params: 0,
     strict: false,
     constructs: false,
+    initializes: false,
     forwards: false,
     capture: std::ptr::null(),
 };
@@ -3610,6 +3634,8 @@ impl<H: Host> Vm<H> {
             params: body.params,
             strict: body.strict,
             constructs: Self::inline_constructible(body),
+            initializes: Self::inline_constructible(body)
+                && body.only_initializes_this_fields(&code.constants),
             forwards: plan.forwards_arguments,
             capture,
         };
@@ -3895,11 +3921,28 @@ lane_handler! {
         if target.forwards {
             sibling!(lane_script_construct_keeping::<H>, r, ip, Carried::SCRIPT)
         }
-        let Some(this) = vm.inline_construct_receiver(callee) else {
+        let built = if target.initializes {
+            // SAFETY: the context's program outlives the lane run.
+            lane_initialize_fields(vm, unsafe { &*(*cx).code }, callee, target.function, r, i)
+        } else {
+            vm.inline_construct_receiver(callee).map(|this| (this, false))
+        };
+        let Some((this, initialized)) = built else {
             return exit(ip);
         };
         // Allocating the receiver can make a collection due.
         note_allocation(vm);
+        if initialized {
+            // The body completed with `undefined`, so [[Construct]] yields the receiver.
+            if i.a & crate::bytecode::RETURN_REGISTER == 0 {
+                r.set(i.a, this);
+                next!(cx, r, following(ip), Carried::SCRIPT)
+            }
+            if let Some((registers, next, view)) = lane_complete_activation(cx, this) {
+                next!(cx, registers, next, view)
+            }
+            // A frame completes in the general loop, which the activation below leaves for.
+        }
         match lane_activate(cx, r, ip, target, i.c, this, true) {
             Ok((registers, base)) => next!(cx, registers, base, Carried::SCRIPT),
             Err(next) => next,
@@ -4111,7 +4154,7 @@ fn lane_activate<H: Host>(
     }
     if vm.lane_stack.activations.len() == vm.lane_stack.activations.capacity()
         || vm.lane_stack.values.capacity() - vm.lane_stack.values.len()
-            < count.max(SCRIPT_FILL_BLOCK)
+            < fill_room::<SCRIPT_FILL_BLOCK>(count)
     {
         return Err(lane_script_call_frame::<H>(ip));
     }
@@ -4125,15 +4168,7 @@ fn lane_activate<H: Host>(
     // plain activation (`Vm::place_plain_parameters`).
     let callee_registers = unsafe {
         let registers = stack.values.as_mut_ptr().add(window);
-        if count <= SCRIPT_FILL_BLOCK {
-            registers
-                .cast::<[Value; SCRIPT_FILL_BLOCK]>()
-                .write_unaligned([Value::UNDEFINED; SCRIPT_FILL_BLOCK]);
-        } else {
-            for index in 0..count {
-                registers.add(index).write(Value::UNDEFINED);
-            }
-        }
+        fill_window::<SCRIPT_FILL_BLOCK>(registers, count, Value::UNDEFINED);
         for offset in 0..argc {
             registers
                 .add(usize::from(offset))
@@ -4174,6 +4209,42 @@ fn lane_activate<H: Host>(
         (*cx).capture = target.capture;
     }
     Ok((callee_registers, base))
+}
+
+/// The body of [[Construct]] for a constructor that only stores its parameters into fields
+/// of `this` (`ScriptCallTarget::initializes`): its receiver
+/// (`Vm::inline_construct_receiver`), and whether every store was a cached add
+/// (`Vm::primary_field_add_hit`), which runs no guest code, so the body completed. After a
+/// miss the constructor activates on the receiver: its body repeats the stores made so far
+/// as stores of the same values to the own data properties they added, which leaves the
+/// object as one activation would. Out of line, so the construct keeps its tail dispatch.
+#[inline(never)]
+fn lane_initialize_fields<H: Host>(
+    vm: &mut Vm<H>,
+    code: &ResidualProgram,
+    callee: Value,
+    function: u32,
+    r: Registers,
+    i: &LaneInstruction,
+) -> Option<(Value, bool)> {
+    let this = vm.inline_construct_receiver(callee)?;
+    let argc = ImmediateLayout::argument_count(i.imm());
+    for store in code.functions[function as usize].this_field_stores() {
+        let atom = store.atom_index();
+        // Parameter `k` of a plain activation is argument `k`, or undefined when not passed.
+        let parameter = store.register_a();
+        let value = if parameter < argc {
+            r.get(i.c + parameter)
+        } else {
+            Value::UNDEFINED
+        };
+        if !vm.field_cache_atom_eligible(atom)
+            || !vm.primary_field_add_hit(code, this, atom, value, store.cache_site_index())
+        {
+            return Some((this, false));
+        }
+    }
+    Some((this, true))
 }
 
 /// `lane_activate` for a target that keeps its passed values, or for values a forwarding
@@ -4222,7 +4293,7 @@ fn lane_activate_keeping<H: Host>(
     }
     if vm.lane_stack.activations.len() == vm.lane_stack.activations.capacity()
         || vm.lane_stack.values.capacity() - vm.lane_stack.values.len()
-            < window_size.max(ACTIVATION_FILL_BLOCK)
+            < fill_room::<ACTIVATION_FILL_BLOCK>(window_size)
     {
         return Err(lane_script_call_frame::<H>(ip));
     }
@@ -4236,15 +4307,7 @@ fn lane_activate_keeping<H: Host>(
     // plain activation (`Vm::place_plain_parameters`).
     let callee_registers = unsafe {
         let registers = stack.values.as_mut_ptr().add(window);
-        if count <= ACTIVATION_FILL_BLOCK {
-            registers
-                .cast::<[Value; ACTIVATION_FILL_BLOCK]>()
-                .write_unaligned([Value::UNDEFINED; ACTIVATION_FILL_BLOCK]);
-        } else {
-            for index in 0..count {
-                registers.add(index).write(Value::UNDEFINED);
-            }
-        }
+        fill_window::<ACTIVATION_FILL_BLOCK>(registers, count, Value::UNDEFINED);
         match arguments {
             ActivationArguments::Window(base) => {
                 for index in 0..argc.min(usize::from(target.params)) {
@@ -4372,7 +4435,7 @@ lane_handler! {
             && vm.frames.len() + stack.activations.len()
                 < super::dispatch_frame::WASM_ACTIVATION_LIMIT
             && stack.values.capacity() - stack.values.len()
-                >= usize::from(shape.registers).max(ACTIVATION_FILL_BLOCK)
+                >= fill_room::<ACTIVATION_FILL_BLOCK>(usize::from(shape.registers))
         {
             let window = stack.values.len();
             let count = usize::from(shape.registers);
@@ -4382,17 +4445,7 @@ lane_handler! {
             // the length covers it, and no activation's window moves.
             let callee_registers = unsafe {
                 let registers = stack.values.as_mut_ptr().add(window);
-                if count <= ACTIVATION_FILL_BLOCK {
-                    registers
-                        .cast::<[Value; ACTIVATION_FILL_BLOCK]>()
-                        .write_unaligned([shape.initial; ACTIVATION_FILL_BLOCK]);
-                } else {
-                    let mut index = 0;
-                    while index < count {
-                        registers.add(index).write(shape.initial);
-                        index += 1;
-                    }
-                }
+                fill_window::<ACTIVATION_FILL_BLOCK>(registers, count, shape.initial);
                 let mut offset = 0;
                 while offset < passed {
                     registers
@@ -4451,7 +4504,7 @@ fn lane_call_frame<H: Host>(ip: Ip) -> Ip {
     let code = unsafe { &*(*cx).code };
     let callee = u32::from(i.b);
     let count = usize::from(code.functions[usize::from(i.b)].registers);
-    let window = count.max(ACTIVATION_FILL_BLOCK);
+    let window = fill_room::<ACTIVATION_FILL_BLOCK>(count);
     let stack = &vm.lane_stack;
     let values_full = stack.values.capacity() - stack.values.len() < window;
     let activations_full = stack.activations.len() == stack.activations.capacity();
