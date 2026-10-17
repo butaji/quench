@@ -988,12 +988,23 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
     ]
 }
 
+/// The host function registered as `name`. Hosts resolve operations per request (an
+/// incoming message's stream methods, an accepted socket's handle), so the names are
+/// indexed once rather than searched among every binding.
 pub(crate) fn operation(name: &str) -> HostFunctionId {
-    let index = bindings()
-        .iter()
-        .position(|binding| binding.name == name)
-        .expect("registered Node operation");
-    HostFunctionId(u32::try_from(index).expect("Node binding index fits u32"))
+    static INDEX: std::sync::OnceLock<std::collections::HashMap<&'static str, u32>> =
+        std::sync::OnceLock::new();
+    let index = INDEX.get_or_init(|| {
+        let mut index = std::collections::HashMap::new();
+        for (position, binding) in bindings().iter().enumerate() {
+            // A repeated name resolves to its first registration.
+            index
+                .entry(binding.name)
+                .or_insert(u32::try_from(position).expect("Node binding index fits u32"));
+        }
+        index
+    });
+    HostFunctionId(*index.get(name).expect("registered Node operation"))
 }
 
 impl quench_runtime::Host for NodeHost {
