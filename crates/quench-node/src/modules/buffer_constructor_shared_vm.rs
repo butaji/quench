@@ -31,16 +31,7 @@ pub(crate) fn install(context: &mut Context<'_>, fast: RootId) -> Result<RootId,
     set(context, data, "warned", no)?;
     let zero = context.number(0.0);
     set(context, data, "checks", zero)?;
-    let pending = context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .exec_argv
-        .iter()
-        .any(|argument| {
-            argument == "--pending-deprecation" || argument == "--pending-deprecation=true"
-        })
-        || std::env::var("NODE_PENDING_DEPRECATION").as_deref() == Ok("1");
+    let pending = context.host_mut().shared_state().borrow().cli_options.enabled("--pending-deprecation");
     let pending = context.boolean(pending);
     set(context, data, "pending", pending)?;
     let global = context.global_root()?;
@@ -205,14 +196,19 @@ pub(crate) fn of(
     Ok(result)
 }
 
-/// Internal users and public Buffer allocations share one Uint8Array subclass.
-pub(crate) fn internal_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+/// The canonical FastBuffer, loading the buffer module on first use.
+pub(crate) fn fast_buffer(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     let shared = context.host_mut().shared_state();
     if shared.borrow().builtin_cache.get(FAST_BUFFER_CACHE).is_none() {
         crate::host::shared_vm::commonjs::buffer_module(context)?;
     }
-    let fast = shared.borrow().builtin_cache.get(FAST_BUFFER_CACHE).copied()
-        .ok_or_else(|| RootedError::host("canonical FastBuffer missing"))?;
+    let fast = shared.borrow().builtin_cache.get(FAST_BUFFER_CACHE).copied();
+    fast.ok_or_else(|| RootedError::host("canonical FastBuffer missing"))
+}
+
+/// Internal users and public Buffer allocations share one Uint8Array subclass.
+pub(crate) fn internal_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    let fast = fast_buffer(context)?;
     let module = context.object_rooted()?;
     let key = context.string_rooted("FastBuffer");
     context.define_data_property_rooted(module, key, fast, true, true, true)?;

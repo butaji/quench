@@ -1,6 +1,47 @@
 //! Immutable creation names share the shape's lifetime and property transitions.
 use super::*;
 
+// V8 JSFunction::kNameDescriptorIndex: length precedes the native name accessor.
+const FUNCTION_NATIVE_NAME_DESCRIPTOR_INDEX: usize = 1;
+
+/// A memo of `Vm::constructed_shape`: the shape an object of `shape` takes when
+/// `constructor` constructs it. The answer depends only on that key, the constructor's
+/// immutable original name and the shape tree, so it holds until a collection, which can
+/// renumber shapes or reuse a dead constructor's cell and so clears every entry.
+#[derive(Clone, Copy)]
+pub(super) struct ConstructedShape {
+    shape: u32,
+    constructor: Value,
+    new_target_is_base: bool,
+    constructed: u32,
+}
+
+/// Entries in the direct-mapped `Vm::constructed_shapes` memo; a power of two.
+pub(super) const CONSTRUCTED_SHAPE_ENTRIES: usize = 64;
+
+impl ConstructedShape {
+    /// An entry no construction matches: no constructor is `undefined`.
+    pub(super) const EMPTY: Self = Self {
+        shape: u32::MAX,
+        constructor: Value::UNDEFINED,
+        new_target_is_base: false,
+        constructed: u32::MAX,
+    };
+
+    fn cache_index(&self) -> usize {
+        // Heap handles differ in their low payload bits; the shape separates one
+        // constructor's bases.
+        let handle = self.constructor.heap_index().unwrap_or_default() as usize;
+        (handle ^ self.shape as usize) & (CONSTRUCTED_SHAPE_ENTRIES - 1)
+    }
+
+    fn same_construction(&self, other: &Self) -> bool {
+        self.shape == other.shape
+            && self.constructor == other.constructor
+            && self.new_target_is_base == other.new_target_is_base
+    }
+}
+
 pub(super) fn shape_names(shapes: &[Shape], shape: u32) -> (Option<Atom>, Option<(Value, bool)>, bool) {
     let (mut function, mut constructed, mut reconfigured) = (None, None, false);
     let mut current = Some(shape);
@@ -20,6 +61,16 @@ pub(super) fn shape_names(shapes: &[Shape], shape: u32) -> (Option<Atom>, Option
     (function, constructed, reconfigured)
 }
 
+pub(super) fn shape_function_length_reconfigured(shapes: &[Shape], shape: u32) -> bool {
+    let mut current = Some(shape);
+    while let Some(id) = current {
+        let shape = &shapes[id as usize];
+        if matches!(shape.transition, ShapeTransition::FunctionLengthReconfigured) { return true; }
+        current = shape.parent();
+    }
+    false
+}
+
 impl<H: Host> Vm<H> {
     pub(super) fn capture_function_name(&mut self, function: Value, name: Value) {
         let Some(Cell::String(name)) = self.heap.get(name) else {
@@ -35,6 +86,10 @@ impl<H: Host> Vm<H> {
 
     fn capture_function_name_atom(&mut self, function: Value, name: Atom) {
         let Some(shape) = self.object_data(function).map(Object::shape) else { return; };
+        // A first original name makes the function record what it constructs.
+        if shape_names(&self.shapes, shape).0.is_none() {
+            self.constructed_shapes.fill(ConstructedShape::EMPTY);
+        }
         let shape = self.append_cached_shape_transition(shape, ShapeTransition::FunctionName { name });
         self.object_data_mut(function).expect("function object").set_shape(shape);
     }
@@ -53,19 +108,90 @@ impl<H: Host> Vm<H> {
         { return false; }
         let Some(object) = self.object_data(function) else { return false; };
         let (name, _, reconfigured) = shape_names(&self.shapes, object.shape());
-        name.is_some() && !reconfigured && !object.was_used_as_prototype()
+        name.is_some() && !reconfigured
+            && self.shape_entries(object.shape()).get(FUNCTION_NATIVE_NAME_DESCRIPTOR_INDEX)
+                .is_some_and(|(candidate, _)| *candidate == key)
+            && (!object.was_used_as_prototype() || object.prototype_lookup_ready())
     }
 
     pub(super) fn reconfigure_function_name(&mut self, function: Value, key: PropertyKey) {
-        if !self.default_function_name_info(function, key) { return; }
-        let shape = self.object_data(function).expect("function object").shape();
-        let shape = self.append_cached_shape_transition(shape, ShapeTransition::FunctionNameReconfigured);
+        if !matches!(self.heap.get(function), Some(Cell::Function { .. })) { return; }
+        let Some(object) = self.object_data(function) else { return; };
+        let (name, _, reconfigured) = shape_names(&self.shapes, object.shape());
+        if name.is_none() { return; }
+        let transition = match key {
+            PropertyKey::String(atom) if self.atom_units_equal_str(atom, "name") && !reconfigured => ShapeTransition::FunctionNameReconfigured,
+            PropertyKey::String(atom) if self.atom_units_equal_str(atom, "length")
+                && !shape_function_length_reconfigured(&self.shapes, object.shape()) => ShapeTransition::FunctionLengthReconfigured,
+            _ => return,
+        };
+        let shape = self.append_cached_shape_transition(object.shape(), transition);
         self.object_data_mut(function).expect("function object").set_shape(shape);
+    }
+
+    /// V8's named native-info load enters prototype lookup mode, whereas
+    /// Reflect.get and computed-key reads retain the setup-mode accessor view.
+    #[inline(always)]
+    pub(super) fn prepare_named_function_info_lookup(&mut self, object: Value, atom: Atom) {
+        if !self.reads_function_info(atom) {
+            return;
+        }
+        // An array's own `length` answers the read before any function's could.
+        let array_length = atom == self.length_atom
+            && self.heap.array(object).is_some_and(|array| !array.is_arguments_object());
+        if !array_length {
+            self.prepare_function_info_prototypes(object, atom, atom == self.runtime_atoms.name);
+        }
+    }
+
+    /// Whether a named read of `atom` can enter prototype lookup mode: the function
+    /// information keys `name` and `length`. Fixed per read site, so a site may decide it once.
+    #[inline(always)]
+    pub(super) fn reads_function_info(&self, atom: Atom) -> bool {
+        atom == self.runtime_atoms.name || atom == self.length_atom
+    }
+
+    // Ordinary property reads never need text inspection or a prototype walk.
+    // Keep the exact native-info transition separate from that common path.
+    #[inline(never)]
+    fn prepare_function_info_prototypes(&mut self, mut object: Value, atom: Atom, name: bool) {
+        let receiver = object;
+        while let Some(data) = self.object_data(object) {
+            if self.proxy_parts(object).is_some() { return; }
+            if self.own_property(object, atom).is_some() {
+                if matches!(self.heap.get(object), Some(Cell::Function { .. })) {
+                    let (original, _, reconfigured) = shape_names(&self.shapes, data.shape());
+                    let default = original.is_some() && if name { !reconfigured }
+                        else { !shape_function_length_reconfigured(&self.shapes, data.shape()) };
+                    if default {
+                        let mut current = receiver;
+                        while let Some(data) = self.object_data(current) {
+                            if self.proxy_parts(current).is_some() || data.prototype_lookup_ready() { break; }
+                            let next = data.proto();
+                            self.object_data_mut(current).expect("lookup object").prepare_prototype_lookup();
+                            current = next;
+                        }
+                    }
+                }
+                return;
+            }
+            if self.property_attributes(object, PropertyKey::string(atom)).is_some_and(|attributes| attributes.accessor) { return; }
+            object = data.proto();
+        }
     }
 
     pub(super) fn original_function_name(&self, function: Value) -> Option<Atom> {
         let object = self.object_data(function)?;
         shape_names(&self.shapes, object.shape()).0
+    }
+
+    /// The source/debug name can differ from the public creation name: dynamic
+    /// Function constructors expose "anonymous" while their source name is empty.
+    pub(super) fn original_debug_name(&self, function: Value) -> Option<JsString> {
+        if let Some(Cell::Function { kind: FunctionKind::User(program, id) | FunctionKind::NumericUser(program, id), .. }) = self.heap.get(function) {
+            if self.programs.is_function_constructor_body(*program, *id) { return None; }
+        }
+        self.original_function_name(function).map(|name| self.atom_value(name))
     }
 
     /// V8's debug name reads data properties but never invokes a name accessor.
@@ -81,11 +207,27 @@ impl<H: Host> Vm<H> {
                 return Some(name.clone());
             }
         }
-        self.original_function_name(function)
-            .map(|name| self.atom_value(name))
+        self.original_debug_name(function)
     }
 
     fn constructed_shape(
+        &mut self,
+        shape: u32,
+        constructor: Value,
+        new_target_is_base: bool,
+    ) -> u32 {
+        let entry = ConstructedShape { shape, constructor, new_target_is_base, constructed: shape };
+        let index = entry.cache_index();
+        let cached = self.constructed_shapes[index];
+        if cached.same_construction(&entry) {
+            return cached.constructed;
+        }
+        let constructed = self.derive_constructed_shape(shape, constructor, new_target_is_base);
+        self.constructed_shapes[index] = ConstructedShape { constructed, ..entry };
+        constructed
+    }
+
+    fn derive_constructed_shape(
         &mut self,
         shape: u32,
         constructor: Value,

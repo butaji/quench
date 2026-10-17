@@ -134,21 +134,9 @@ pub(crate) fn prepare(
             context.define_data_property_rooted(options, key, number, true, true, true)?;
         }
     }
-    let serialization = get(context, options, "serialization")?;
-    if !synchronous
-        && !context
-            .rooted_value(serialization)
-            .is_some_and(|value| value.is_undefined())
-        && !matches!(
-            context.string_text(serialization)?.as_deref(),
-            Some("json" | "advanced")
-        )
-    {
-        let inspect = super::util_shared_vm::internal_inspect(context)?;
-        let detail = context.call_rooted(inspect, undefined, &[serialization])?;
-        let detail = context.to_string(detail)?;
-        let error = context.type_error_rooted(&format!("The property 'options.serialization' must be one of: undefined, 'json', 'advanced'. Received {detail}"))?;
-        return Err(coded(context, error, "ERR_INVALID_ARG_VALUE")?);
+    if !synchronous {
+        let serialization = get(context, options, "serialization")?;
+        validate_serialization(context, serialization)?;
     }
     Ok(options)
 }
@@ -343,4 +331,25 @@ pub(crate) fn sync_options(
         }
     }
     Ok(options)
+}
+
+pub(super) fn validate_serialization(
+    context: &mut NativeContext<'_, NodeHost>, serialization: RootId,
+) -> Result<(), RootedError> {
+    if !context
+            .rooted_value(serialization)
+            .is_some_and(|value| value.is_undefined())
+        && !matches!(
+            context.string_text(serialization)?.as_deref(),
+            Some("json" | "advanced")
+        )
+    {
+        let inspect = super::util_shared_vm::internal_inspect(context)?;
+        let undefined = context.undefined();
+        let detail = context.call_rooted(inspect, undefined, &[serialization])?;
+        let detail = context.to_string(detail)?;
+        let error = context.type_error_rooted(&format!("The property 'options.serialization' must be one of: undefined, 'json', 'advanced'. Received {detail}"))?;
+        return Err(coded(context, error, "ERR_INVALID_ARG_VALUE")?);
+    }
+    Ok(())
 }

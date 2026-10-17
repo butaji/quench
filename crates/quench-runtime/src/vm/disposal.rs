@@ -418,20 +418,20 @@ impl<H: Host> Vm<H> {
             Ok(method) => method,
             Err(error) => {
                 let reason = self.thrown_value_for(p, error);
-                let promise = self.promise_object();
+                let promise = self.with_call_roots([reason], |vm| vm.promise_object())?;
                 self.promise_settle(p, promise, PromiseState::Rejected, reason)?;
                 return Ok(promise);
             }
         };
         if method.is_undefined() || method.is_null() {
-            let promise = self.promise_object();
+            let promise = self.promise_object()?;
             self.promise_settle(p, promise, PromiseState::Fulfilled, Value::UNDEFINED)?;
             return Ok(promise);
         }
         if !self.is_function(method) {
             let error = self.type_error(p, "AsyncIterator return is not callable".into());
             let reason = self.thrown_value_for(p, error);
-            let promise = self.promise_object();
+            let promise = self.with_call_roots([reason], |vm| vm.promise_object())?;
             self.promise_settle(p, promise, PromiseState::Rejected, reason)?;
             return Ok(promise);
         }
@@ -439,7 +439,7 @@ impl<H: Host> Vm<H> {
             Ok(result) => result,
             Err(error) => {
                 let reason = self.thrown_value_for(p, error);
-                let promise = self.promise_object();
+                let promise = self.with_call_roots([reason], |vm| vm.promise_object())?;
                 self.promise_settle(p, promise, PromiseState::Rejected, reason)?;
                 return Ok(promise);
             }
@@ -448,7 +448,7 @@ impl<H: Host> Vm<H> {
             Ok(promise) => promise,
             Err(error) => {
                 let reason = self.thrown_value_for(p, error);
-                let promise = self.promise_object();
+                let promise = self.with_call_roots([reason], |vm| vm.promise_object())?;
                 self.promise_settle(p, promise, PromiseState::Rejected, reason)?;
                 return Ok(promise);
             }
@@ -788,7 +788,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         if let Err(error) = self.require_async_stack(p, stack) {
             let reason = self.thrown_value_for(p, error);
-            let promise = self.promise_object();
+            let promise = self.with_call_roots([reason], |vm| vm.promise_object())?;
             self.promise_settle(p, promise, PromiseState::Rejected, reason)?;
             return Ok(promise);
         }
@@ -827,7 +827,7 @@ impl<H: Host> Vm<H> {
         let resources = self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), values),
         });
-        let result = self.promise_object();
+        let result = self.with_call_roots([resources], |vm| vm.promise_object())?;
         let state = self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), Rc::new(vec![
                 resources,
@@ -974,7 +974,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         completion: Value,
     ) -> Result<Value, JsError> {
-        let promise = self.promise_object();
+        let promise = self.with_call_roots([completion], |vm| vm.promise_object())?;
         let (state, value) = if completion.is_deleted() {
             (PromiseState::Fulfilled, Value::UNDEFINED)
         } else {

@@ -1,0 +1,12 @@
+/workspace/work/node-stable-release/node-v26.12.0/lib/internal/fs/glob.js:131
+  return new (lazyMinimatch().Minimatch)(pattern, opts);
+         ^
+
+TypeError: value is not a constructor
+    at createMatcher (node:internal/fs/glob:131:10)
+    at node:internal/fs/glob:686:62
+    at new Glob (node:internal/fs/glob:686:21)
+    at globSync (node:fs:3941:10)
+    at [eval]:1:27
+
+Node.js v26.12.0

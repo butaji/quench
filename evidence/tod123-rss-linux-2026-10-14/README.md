@@ -377,3 +377,115 @@ run Crypto +0.03%, DeltaBlue +0.08%, EarleyBoyer +3.54%, NavierStokes +0.02%, Ra
 differs by +11M in transition lookups (the trunk's constructed-shape transitions consult
 the index on every construction) and by collector work whose timing moves with the
 lighter start; Test262 stage 10 and stages 29–92 and Node `framework-core` 43/43 pass.
+
+## Node's stack policy on first use
+
+- The trunk had started loading `internal/errors.js` and its requirements at every start for
+  Node's stack policy: about 0.8G instructions and 5.5 MiB on an empty script (9120 KiB
+  against 3484 KiB, static unbolted). The default stack formatter is now a native
+  trampoline that loads Node's `prepareStackTraceCallback` on its first call;
+  `Error.prepareStackTrace` is a lazy data property whose initializer loads the module
+  inside the startup intrinsics and keeps its private brand as loaded.
+- A library module builds the primordials before entering the module cache, which
+  materializes the property first, so a script that requires `internal/errors` itself gets
+  the module the initializer loaded.
+
+Bolted static against QuickJS after the trunk merge (`board-bolt-vs-qjs-b23.txt`, 3 runs,
+KiB): Richards 3240 vs 3328–3428, DeltaBlue 3624 vs 3736–3896, RayTrace 3464 vs 3444–3520,
+NavierStokes 4548 vs 5028–5052, EarleyBoyer 9912–10040 vs 16048–16708, Splay 47844–48008
+vs 146948–147052; Crypto 4052–4180 vs 3424–3672 and RegExp 13212–13228 vs 6644–6816 remain.
+
+Guard (`guard-lazy-errors-raw.txt`, base `origin/v2-merged` f79a94a74, candidate this
+batch, both static unbolted): start-up −0.79G to −0.89G instructions on every fixture; per
+run Crypto +0.27%, DeltaBlue −0.85%, EarleyBoyer −0.81%, NavierStokes 0.00%, RayTrace
++1.79%, RegExp −3.69%, Richards −0.09%, Splay +0.05%. RayTrace's +8M per run is collector
+work (`active_shape_attributes` +9M) whose timing moves with the lighter start; its whole
+run is 2.30G → 1.50G. Node `framework-core` 43/43; `child_entry` error tests match the
+trunk's failures (Node 22 oracle) except the trunk's new call-site test, whose remaining
+differences are Node 27 validator messages.
+
+## Internal policies on first use, single-copy shape lookup index
+
+- The trunk's buffer and call-site policies loaded `util.js`, `internal/errors.js` and
+  `internal/validators.js` at every start (13776 against 3536 KiB on an empty script, static
+  unbolted, base `origin/v2-merged` b7723be8e). Only a script given `--expose-internals` can
+  replace those exports before a policy's first use, so only then are the policies captured
+  before it runs; otherwise each loads on first use.
+- A shape's lookup index kept every (key, slot) pair twice; its key map is now a table of
+  positions into the ordered entries (421 → 219 KiB on an empty script).
+
+Bolted static against QuickJS (`board-bolt-vs-qjs-b24.txt`, 3 runs, KiB): Richards 3260 vs
+3304–3484, DeltaBlue 3640–3644 vs 3596–3856, RayTrace 3484–3488 vs 3488–3524, NavierStokes
+4680–4684 vs 4996–5096, EarleyBoyer 9912–10084 vs 16264–16828, Splay 47908–48024 vs
+146944–147036; Crypto 4048–4132 vs 3460–3612 and RegExp 12964–13236 vs 6656–6844 remain.
+
+Guard (`guard-lazy-policies-raw.txt`, base b7723be8e): start-up −1.28G to −1.36G
+instructions on every fixture; per run Crypto −0.01%, DeltaBlue −0.23%, EarleyBoyer −0.06%,
+NavierStokes 0.00%, RayTrace +2.21%, RegExp −3.44%, Richards −0.09%, Splay −0.72%.
+RayTrace's +14M per run is collector work only (219M → 259M per three runs; the rest
+1707M → 1703M): the base collects 89M during its heavier start-up. Its whole run is 3.30G →
+2.05G. Runtime lib 660/660, Test262 stages 29–92 pass, `framework-core` 43/43, `child_entry`
+error/buffer/shadow/call-site failures equal the trunk's. Stage 10's
+`dynamic-import/usage-from-eval.js` fails on the trunk's runtime as well (missing module
+fixture under eval).
+
+## Host regexes no longer widen the JS regex engine
+
+- `quench-node`'s host regexes (ANSI stripping, `path.matchesGlob`) took the `regex` crate
+  with default features; feature unification gave every crate-backed JavaScript RegExp a
+  lazy DFA and its caches, and the binary the full Unicode tables. Neither host pattern
+  needs them; `quench-node` now asks for `quench-regexp`'s feature set.
+
+Bolted static, retrained orders (`board-bolt-b25-trimmed-regex.txt`, 3 runs, KiB): RegExp
+11664–11676 (was 12964–13236), Crypto 4008–4032, DeltaBlue 3632–3760, EarleyBoyer
+9876–9912, NavierStokes 4560–4688, RayTrace 3468–3472, Richards 3248, Splay 48008–48020.
+
+Guard (`guard-trimmed-regex-raw.txt`, base the previous candidate 89d86f247, candidate
+this commit after the trunk merge): per run RegExp +7.78% — its searches move from the
+lazy DFA (−170M) to the bounded backtracker (+381M) and its visited-set clearing (+56M);
+the wall-clock score is unchanged (538 against 528). DeltaBlue +0.47%, others within
+±0.13%. NavierStokes' start-up +32M is the trunk's indexed-store exotic checks
+(`prototype_chain_has_indexed_set_exotic`, c21d556db) merged in between. The trade buys
+1.3 MiB of RegExp's resident set.
+
+## Array element payload charged toward the next collection
+
+- A collection is due after a weighted count of allocations; a string's flat units already
+  weighed one allocation per 64 bytes, but an array's elements weighed nothing however far
+  they grew. Array elements now weigh by the same rule: their capacity at allocation and
+  each growth of the backing vector (indexed stores, `push`), remainders carried forward.
+  The headroom factors (decision 21) are unchanged.
+
+Paired unbolted runs against the previous build (decision 5): Splay 48330 → 42430 KiB,
+DeltaBlue 4052 → 3832, Crypto 4430 → 4274, RegExp 12074 → 11886, others within noise;
+every fixture's score equal or higher.
+
+Bolted static against QuickJS (`board-bolt-vs-qjs-b26.txt`, 3 runs, KiB): Richards
+3216–3384 vs 3276–3480, DeltaBlue 3464 vs 3616–3928, RayTrace 3268–3456 vs 3372–3500,
+NavierStokes 4388–4516 vs 4928–5080, EarleyBoyer 9832–9956 vs 16472–16640, Splay
+42056–42184 vs 146884–147080; Crypto 3740–3944 vs 3516–3668 and RegExp 11388–11408 vs
+6636–6848 remain. Node 22 and Bun, with and without their JITs (`board-node-bun.txt`):
+every fixture at least 23 MiB (Bun without JIT), Splay 63–447 MiB.
+
+Guard (`guard-array-payload-raw.txt`, base `origin/v2-merged` f9355e67c): per run
+Crypto 0.00%, DeltaBlue +0.76%, EarleyBoyer +0.56%, NavierStokes 0.00%, RayTrace +0.06%,
+RegExp +0.67%, Richards 0.00%, Splay +0.56%: the added collections. Splay's set-up runs
++144M (its extra collections, which take 6 MiB off its peak). Runtime lib 671/671,
+Test262 stages 29–92 and `framework-core` 43/43 pass.
+
+## The SDK console on the V8-v7 boards
+
+The trunk made the global `console` Node's SDK console. Every V8-v7 fixture prints through
+`console.log`, and the first call loads `console.js` and its requirements (inspect, errors,
+validators, buffer, util, debuglog, diagnostics_channel, trace_events) and the primordials:
+static unbolted, an empty script 3152 KiB, `console.log("x")` 12336 KiB, about 8.5 MiB of it
+anonymous and resident for the rest of the run. Bolted against QuickJS
+(`board-bolt-vs-qjs-b27-sdk-console.txt`): Richards 12104–12268 vs 3256–3484, Crypto
+12812–12964 vs 3492–3612, Splay 50724–50752 vs 146916–147164; only Splay stays lower.
+
+This batch keeps the load lazy (console, warning listener, process wrappers: an empty script
+15.5 → 5.1 MiB on the iteration build), reserves the compiler's function slots once and drops
+the parse tree before a compilation's finishing passes (Crypto 4560 → 4352 KiB unbolted,
+before the SDK console), and releases read-only pages after a library loads on first use
+(file pages after a console load 4084 → 1472 KiB). The console's own cost needs a decision
+outside this lane (TOD-123).

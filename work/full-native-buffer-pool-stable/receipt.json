@@ -1,0 +1,43 @@
+{
+  "source_commit": "b6738fa9553fb172655d04bd27f120e7b43f9a25",
+  "checkout_commit": "b6738fa9553fb172655d04bd27f120e7b43f9a25",
+  "release": "v26.12.0",
+  "fixture_commit": "26e72d85a611e222e3f06025de8a3c496923bacd",
+  "command": [
+    "/workspace/quench/work/native-buffer-pool-bin/run-parallel",
+    "--all",
+    "--parallel-dir",
+    "/workspace/work/node-stable-release/node-v26.12.0/test/parallel",
+    "--jobs",
+    "4",
+    "--timeout-secs",
+    "30",
+    "--results",
+    "/workspace/quench/work/full-native-buffer-pool-stable/results.json"
+  ],
+  "binaries_before": {
+    "quench-node": "662b4514411441d91872775b2898a129a24c83d1049fd222eb66b233903947ea",
+    "run-parallel": "0ceb524cddaca2dad91127ee8782ae904f31a3784ce83ca7df71da8014c93f55",
+    "openssl-cli": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1"
+  },
+  "protected_before": {
+    "restored": true,
+    "sha256": "b0e78cd4bb13929391b33a2ad7d80f61d8b2f1d66533aaf31d95807e5f3863eb"
+  },
+  "memory_before": "low 0\nhigh 0\nmax 802309\noom 0\noom_kill 0\noom_group_kill 0\n",
+  "started_utc": "2026-10-16T06:17:40.324002+00:00",
+  "exit": 1,
+  "changed_sources_after": [],
+  "elapsed_seconds": 1673.620643880975,
+  "protected_after": {
+    "restored": true,
+    "sha256": "b0e78cd4bb13929391b33a2ad7d80f61d8b2f1d66533aaf31d95807e5f3863eb"
+  },
+  "memory_after": "low 0\nhigh 0\nmax 806360\noom 0\noom_kill 0\noom_group_kill 0\n",
+  "binaries_after": {
+    "quench-node": "662b4514411441d91872775b2898a129a24c83d1049fd222eb66b233903947ea",
+    "run-parallel": "0ceb524cddaca2dad91127ee8782ae904f31a3784ce83ca7df71da8014c93f55",
+    "openssl-cli": "f4aa15f2822f670af7b5c1043d7aa6ebbbc64229fd2fae382edfc6a4524749c1"
+  },
+  "finished_utc": "2026-10-16T06:45:34.052312+00:00"
+}

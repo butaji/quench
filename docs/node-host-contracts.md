@@ -29,12 +29,25 @@ ordinary callbacks cannot inherit a constructor entry. Receiver type names use
 the shared safe constructor-name operation; constructor/global receivers report
 null, and Proxy receivers do not invoke traps.
 
+The native error-source projection reads captured compiler positions without
+invoking `stack`, guest accessors or Proxy traps. A capture shares immutable
+compiler text, preserving its source through Script collection and repeated
+filenames; only a requested line is copied. Formatting releases that capture.
+When no unformatted source capture exists, lookup uses the current genuine
+JavaScript activation. The Node binding projects zero-based start columns and
+null-prototype records, leaving unnamed eval resource names undefined.
+
 Public function names and inferred debug names remain distinct. Variable
 initializer inference follows result-producing sequence, conditional and logical
 expressions without changing the public `.name`. A slotless shape transition
 records when the native name-property state is reconfigured; reading the name
-or inspecting its descriptor does not materialize it. Shape compaction preserves
-both creation names and that transition. The added metadata opcode requires
+or inspecting its descriptor does not reconfigure it. Shape compaction preserves
+creation names and the name/length descriptor transitions. Prototype setup and
+named native-info lookup are separate lifecycle states. A named native name or
+length read prepares the prototype chain; computed reads and Reflect.get retain
+the setup view. Getter-free diagnostics derive native-name accessor visibility
+from that state and the actual ordered descriptor position, including deletion
+and restoration of length. The added metadata opcode requires
 bytecode format 90; opcodes outside the dense fast table use general dispatch.
 This covers those inference contexts, not every V8 debug-name inference rule.
 
@@ -43,9 +56,8 @@ is independent of its binding environment. Full eval, expression eval and
 Function-constructor bodies retain that origin across escaped closures and
 collection. Ordinary functions called from eval and host-compiled scripts remain
 source code, including host scripts with eval-like filenames. Captured CallSites
-copy the classification before their program can be reclaimed. Eval origins,
-filenames, source URLs and the complete Node stack API still require conformance
-work.
+copy the classification before their program can be reclaimed. Complete eval/sourceURL/source-map metadata and the Node stack API still
+require conformance work.
 
 Function factory origins derive from the existing function kind and creation
 realm. The realm owns its original constructors and intrinsic prototypes, so
@@ -62,6 +74,46 @@ are cached after success; a thrown formatter leaves the capture available for a
 later attempt. Native coded errors share the library's private Node error symbol.
 UDP buffer-size errors construct the original `ERR_SOCKET_BUFFER_SIZE` class,
 which owns its context getters and custom inspection behavior.
+
+Eval CallSites retain the actual compiling caller's immutable source name and
+position, including nested eval and Function-constructor origins. Capture reads
+compiler/creation metadata and executes no public name getters. Unnamed eval
+scripts expose an absent filename through CallSites and an empty script name
+through detailed capture. Empty frame debug names use the eval display label.
+Wide call anchors use the decoded opcode during source relocation.
+
+Indirect global eval reuses live compiled-script identity across contexts;
+execution supplies the target realm and allocates fresh values. Strict scripts
+and tagged-template syntax are excluded according to the configured Node/V8
+cache rules. Parser-owned syntax includes nested template sites. Entries use the
+program store's existing reclamation lifecycle, validate the program identity
+on lookup and disappear when their program is reclaimed or the store resets.
+Complete V8 cache ageing, contextual direct-eval identity, sourceURL/source-map
+metadata, complete prototype-cache transitions, raw UTF16 Function-constructor
+source and compatibility-normalized parameter positions remain open. Function-constructor public names are initialized as
+creation data: public anonymous is distinct from the empty default source/debug
+name. Stack names and native constructor display share this distinction across
+all four constructor kinds without invoking public name getters.
+
+Function-constructor compilation and public source text share a kind-owned
+canonical renderer. Public source preserves parameter/body whitespace, and
+compiled source retains the expression wrapper that Node includes in first-line
+parameter columns. Body lines begin after the canonical header newline. OXC
+validates the generated identifier and parameter boundary; only the synthetic
+outer identifier is removed before semantic binding, so anonymous is not a
+self binding. Nested names and real parameter bindings remain intact.
+
+## Parsed eval execution
+
+Direct and indirect eval execute the existing OXC-compiled Eval goal, retaining
+the original source and statement completion values. Host Script evaluation
+uses the Script goal, including single expressions. Neither path interprets
+source substrings or inserts an expression-return wrapper. Binding scopes,
+strictness, early errors and captured environments share the compiler and VM
+operations used by other code. A lone regexp expression uses OXC's literal span
+and flags with the original UTF-16 pattern units, preserving lone surrogates.
+Complete eval/sourceURL metadata, synthetic diagnostic filenames and
+Function-constructor wrapper positions still need separate conformance work.
 
 ## Detailed source stack capture
 
@@ -789,3 +841,328 @@ native reentry and collection. Node policy derives display strings from them.
 The native class fallback reads builtin slots and data tags without public
 constructor or tag getters. Original user-constructor provenance after mutation
 and exact Node stack rendering remain separate compatibility gaps.
+
+## Native SDK protocol tables and caller capture
+
+The errors binding's exit codes and modules binding's compile-cache status names
+are generated from the configured SDK's C++ macro tables. Property descriptors,
+ordering and binding identity follow Node. These protocol declarations do not
+claim implementation of compile-cache operations or other missing bindings.
+
+The utility caller-location binding projects genuine compiler-owned activations,
+skipping its immediate JavaScript caller. Error hooks, public function-name
+getters and stack limits do not participate. Missing callers and unnamed eval
+Scripts produce undefined rather than fabricated bootstrap frames.
+
+The original promises glob policy materializes as a lazy data property, keeping
+its real function descriptor and identity. Merely loading native fs no longer
+imports the promises implementation's readline/history/OS dependencies. This
+preserves Node's binding-capture order and avoids loading unrelated modules.
+
+## Owned host Script code
+
+Core's `CompiledScript` handle owns one logical source record, while each realm
+uses a separate execution instance and caches. Detailed captures project the
+actual source record identity across those instances. Repeated runs in one realm
+reuse its template sites while producing fresh objects and functions.
+
+The opaque owner retains compiler code only. Realm associations are weak and
+pruned immediately after collection, before heap slot reuse. Reclamation retains
+live owners and the source records of escaped functions; dropping owners allows
+unused code and execution caches to be collected. Runtime reset or a foreign
+runtime rejects the handle through the existing atom-sequence ownership guard.
+This Core primitive does not by itself implement native `ContextifyScript`, VM
+timeouts, cached bytecode or code-generation restrictions.
+
+## Configured synchronous directory policy
+
+`fs.readdirSync` executes the configured Node SDK policy over native Rust
+`readdir` and `readdirRecursive` bindings. Linux scanning preserves raw filename
+bytes and reported directory types. Recursive walks follow directory symlinks,
+resolve unknown types with real metadata, and flatten lexical directory scans in
+breadth-first order. Actual scan errors retain their syscall and input path.
+
+Encoding uses the shared Buffer codecs; Buffer results retain the original
+filename bytes. Recursive Dirent results use Node's packed native layout, with
+Uint8 types and aligned Uint32 directory counts sharing one ArrayBuffer. The
+unchanged SDK owns validation and Dirent construction. Existing filesystem
+adapters capture a Rust forwarding function to this same policy, initialized
+after the filesystem module is cached. Their outer asynchronous validation and
+scheduling remain separate compatibility work.
+
+## Private data fields
+
+Private data lives with its receiver, keyed by the actual declaring home and
+logical name. A private element retains both that home and its data through
+collection. Different creations of one class expression can stamp the same
+object without sharing values. Initialization checks duplicates before changing
+the stored value; private data and method brands do not consult public
+extensibility or Proxy traps, including revoked Proxy receivers.
+
+The atomic private-data definition operation is serialized in bytecode format
+92. Round-trip execution and generic/specialized collection tests cover the
+representation. Eval-capable methods retain their synthetic class-home capture
+in dynamic-name metadata, even when private syntax appears only inside eval's
+string. Bytecode format 93 adds lexical private-name bindings that retain each
+name's actual declaring home independently of the method's super home. Static
+and instance names, escaped ordinary closures, and outer/shadowed class names
+use that binding metadata. Ordinary-function eval uses OXC's ordinary-function
+grammar inside a private-name parsing context, and the extracted body must match
+the generated source boundaries. Complete private-environment contexts and the
+ordinary NUL string-key namespace remain separate conformance work.
+
+Private membership follows initialization: prototypes acquire no brand merely
+from a declaration, static data fields remain absent until initialization, and
+static private methods/accessors precede static fields. Auto-accessor backing
+identities retain their own lexical declaring-home binding, including public
+instance auto-accessors whose backing name is not visible to eval.
+
+Static blocks retain the actual class home for `super` and execute in strict
+mode. The compiler's class-initializer context is shared by field initializers,
+static blocks and their arrows: eval forbids lexical `arguments`, preserves
+`this`, and supplies undefined `new.target`. Ordinary nested functions introduce
+their own context. The existing serialized initializer flag represents this
+shared context; static blocks keep distinct variable scopes.
+
+TCP listeners share one native socket-creation path and Node's default backlog
+of 511, including ordinary net and HTTP listeners. Unix binds enable address
+reuse as libuv does; unsupported reuse-port requests retain their early error.
+Supplied `options.backlog` uses the JavaScript truthy default followed by shared
+ToNumber/ToInt32 conversion. Linux syscall comparisons cover default, IPv4,
+reuse-port and HTTP listeners plus numeric/string/nonfinite/wrapped options.
+The comparison explicitly reports when syscall tracing is unavailable.
+The native net.Server lifecycle receives the complete argument list, retains
+positional backlog/callback overloads, and delegates supplied-host lookup to the
+same public DNS module. Lookup callbacks retain traced data and compare the
+public listening generation before touching a cancelled server. New servers
+report a null address; listening derives from the actual handle. Closing before
+lookup completion and closing an already closed server complete through the
+canonical callback queue. Ordinary method/getter/wrapper constructor shapes and
+coded close errors remain separate from source-text/host-frame fidelity.
+
+DNS address selection uses the shared IP classifier and iterator protocol.
+Abrupt getters close the iterator without replacing the original thrown value;
+normal iterator-close failures remain observable. Tests collect during return
+and before callback delivery. Exception capture permits null reset before its
+occupied-slot check and uses the shared argument-type/coded-error policy.
+Its primary slot belongs to one retained process state object, reset with the
+VM heap. Set/has ignore their receiver; callback delivery uses that state as its
+receiver, so captureFn mutation remains observable. Guest string properties
+cannot impersonate the slot. GC and repeated-execution checks cover its roots.
+Uncaught delivery emits uncaughtExceptionMonitor before selecting the primary
+callback, then re-reads captureFn for the property call after its null check.
+Monitor results are ignored; uncaught event results use JavaScript truthiness.
+Both events share the canonical process-event dispatch operation.
+Auxiliary capture tries callbacks in reverse order and accepts only literal
+true. It re-reads the callback collection for each property call; ordinary
+subtraction owns length coercion, including fractional property keys and guest
+collection during coercion. The retained Runtime subtraction adapter shares the
+same VM operation as native contexts. Public capture methods have Node's public
+names and ordinary constructor shapes. Diagnostic report integration and
+internal auxiliary registration remain unqualified.
+A thrown monitor, primary, auxiliary or uncaught listener enters a distinct
+fatal-handler exit state, using the configured SDK's typed exit code and
+suppressing normal exit events. Explicit exits retain their own status and event
+policy, including an explicitly requested code 7. The protocol enum and public
+binding table derive from the same header declaration. A 19-child oracle matrix
+covers top-level, next-tick, promise, auxiliary and explicit-exit paths.
+Bound-handle error/reentry details, original native-source/stack fidelity,
+diagnostic report flags and the wider Node lifecycle backlog remain open.
+
+The public utility module retains the configured SDK's actual exports object,
+including its lazy properties and shared warning caches. Rust owns the native
+`util.defineLazyProperties` protocol: each property uses Core's lazy data slot,
+loads its original SDK module on observation, and becomes a writable data
+property. Assignment and descriptor reflection use the same Core operation as
+other lazy host properties. No duplicate JavaScript utility policy is installed.
+The already qualified callbackify, argument parsing, styling and environment
+adapters remain native. Public terminal escape stripping uses the original SDK
+inspect policy, including terminated OSC hyperlinks and colon-delimited CSI
+parameters; its UTF-16 and argument validation behavior share that owner. Abort transfer/weak-event and signal-tracing exports
+remain unavailable until their genuine host dependencies exist.
+
+The libuv utility binding derives its complete error inventory, ordering and
+messages from the configured SDK's `UV_ERRNO_MAP`. A target C preprocessor
+resolves `uv/errno.h` numeric definitions during the Rust build; it executes no
+host API implementation or target program. Rust publishes immutable numeric
+constants and constructs fresh error maps and fresh value arrays on each call,
+using startup intrinsics. SDK utility policy owns public argument validation and
+error construction; native I/O uses the same status-name authority directly.
+
+Configured SDK module wrappers execute in strict mode before binding setup,
+including prepared realm wrappers. Binding setup must not invalidate the SDK's
+strict directive: assignment errors on primitive targets, rejected proxy writes
+and nonwritable properties retain Node's behavior. Application CommonJS wrappers
+retain their source-directed strictness.
+
+## Native compiled Script foundation
+
+The internal contextify binding owns real Core CompiledScript values behind
+collector-cleared weak wrapper identities. Main-context execution reuses the
+compiled source and its realm template sites. Escaped functions retain their
+compiler source after the Script wrapper is collected. Function compilation
+parses genuine generated function input in the global lexical environment;
+it does not capture the calling CommonJS module's lexical bindings.
+
+This binding currently provides main-context Script execution and ordinary
+function compilation. Source-offset options, sandbox execution, bytecode caches
+and interrupt/deadline controls are rejected explicitly. Source-URL metadata
+and import customization remain separate work. The existing public vm surface
+and the full original test runner are not claimed complete by this foundation.
+
+Mock call records, restoration and virtual timer scheduling use the unchanged
+SDK MockTracker policy. The global test mock and per-callback mock trackers are
+real SDK instances. Configured SDK wrappers receive a private native require
+capability for the internal timer adapter; changing a public module filename
+cannot grant this capability. Ordinary guest imports keep their original
+visibility rules.
+
+The node:test projection uses the original SDK harness for scheduling, hooks,
+subtests and test contexts. It exposes the SDK's real MockTracker, assertion
+registration and snapshot policy through native lazy accessors. File-oriented
+runner execution still requires a genuine V8 serializer and is unavailable.
+Repeated-string CLI option defaults come from the configured SDK declarations;
+startup environment and invocation values populate those lists.
+
+Core exposes real Promise creation, job-boundary and settlement observations to
+opted-in hosts. Node assigns Promise identities before observable init callbacks,
+keeps resource objects weakly, and maps private AsyncLocalStorage job snapshots
+to the actual execution resource. Init callbacks may collect or settle awaited
+sources reentrantly: incoming async closure state, suspended continuation handlers
+and detached reaction payloads remain rooted across those callbacks. Hosts without
+observers retain the optimized primitive-await path.
+
+The private fs internalModuleStat binding follows native filesystem symlinks and
+returns the configured SDK classifier protocol: directory1, other successful
+metadata0, or a negative libuv error. It resolves relative paths through Node's
+cwd owner. Original SDK recursive traversal owns policy for using this result.
+
+## Configured CLI version and flag order
+
+The Node-compatible CLI derives --version/-v from the same configured SDK
+version as process.version and process.versions.node. It handles version flags
+while parsing startup options, before evaluating guest source. An explicit -- or
+the first guest argument ends option parsing, so later version spellings remain
+guest arguments. The oracle checks aliases, jitless ordering, eval side effects
+and both argument boundaries. General help/unknown-option parity remains open.
+
+## Diagnostic-report configuration and one process listener store
+
+The lazy process.report getter returns the configured Node library's report
+object. Rust owns its mutable configuration, initialized from the same parsed
+startup options used by native option queries. The original SDK owns public
+validation, property/method descriptors, signal changes and field order.
+Report directory aliases, option/environment precedence, and report-signal's
+ordered implication of report-on-signal are covered against the oracle.
+
+Capture installation snapshots reportOnUncaughtException with strict true and
+then disables it. Clearing restores the saved flag only when auxiliary length
+is strictly numeric zero. The process.report reference is evaluated before the
+saved-flag getter on restoration; installation reads process.report separately
+for the read and write. Slot mutation precedes report getter failures.
+
+Process uses the common EventEmitter store for registration, dispatch,
+inspection, symbols, borrowed methods, prepending and mutable _events records.
+Signal watching and IPC counted references are actual listener add/remove
+observers; no second scheduler listener map mirrors those facts. Exit dispatch
+uses the public process emit hook after entering the named exit state.
+The Node26 ordinary once-wrapper shape is retained. Report generation/file I/O,
+abort toggles, default warning listener/source fidelity and the broader Node
+compatibility backlog remain unqualified.
+
+## Warning listener policy
+
+The configured SDK's onWarning function is the actual default listener. Native
+warning dispatch only emits the warning event, so listener removal and warning
+suppression follow the common EventEmitter store. The original global console
+is initialized with its lazy process streams before this policy can write.
+The CLI option owner supplies repeatable disable-warning values, redirect paths
+and trace/deprecation flags. Truthy startup aliases have Node's read-only,
+configurable descriptors; absent flags do not create false-valued properties.
+Native warning construction retains its explicit internal rejection metadata;
+public emitWarning metadata has Node's name, length and ordinary constructor
+shape and accesses the canonical process independently of global replacement.
+
+Queued next ticks, Timeouts and Immediates retain their actual async identity
+and resource with the pending invocation. Dispatch enters that resource's scope,
+emits before/after hooks, and restores the previous scope. Uncaught handlers run
+before after/pop so they observe the failing resource. Completion and cancellation
+release inherited local stores and queue destruction notifications. Refreshing a
+completed timer creates its new identity before retaining a new invocation.
+TickObject callback and argument fields remain canonical mutable slots; the
+scheduler retains an invocation view rather than a second callback policy.
+
+### Public warning construction
+
+`process.emitWarning` is the configured Node SDK function, including argument
+validation, option getter order, stack-constructor handling and function source.
+Rust promise-rejection delivery calls this public function with the normal
+string/type or Error arguments; it does not attach private string-key options.
+The SDK also owns the default warning listener. Full diagnostic report generation,
+exception abort/async-hook contracts and total Node compatibility remain open.
+
+### Linux process CPU and resource facts
+
+The native `process_methods` binding supplies process and thread `getrusage`
+results, live resident memory, and a real monotonic `hrtimeBuffer`. The configured
+SDK `wrapProcessMethods` owns public CPU/resource function shape, validation,
+previous-value getter order and subtraction. RSS reads the operating system
+without using guest filesystem methods. Exposed internal exports are captured
+before guest execution; other callers initialize this policy with the existing
+lazy process surface.
+
+`process.report.compact` keeps SDK boolean validation. Its native `setCompact`
+binding separately applies truthiness, matching the SDK's native implementation.
+Other native report setters retain their declared input kinds.
+
+These facts do not provide heap accounting: the existing full `memoryUsage()`
+heap fields and diagnostic report generation still need a Runtime memory owner.
+The native CPU/resource/RSS implementation currently applies on Linux; other
+platform paths retain their existing behavior.
+
+### Canonical SDK Console
+
+The global console, public console module and SDK internal global console share
+one object. The configured SDK owns the callable Console constructor, stream
+validation, grouping, formatting, tables, counters, timers and error handling.
+Rust installs the namespace before guest preloads and exposes its global methods
+with Node's variadic arity and namespace names; instance methods retain the SDK's
+parameter metadata. Trace requests use the real native tracing binding and its
+shared phase representation. The duplicate Console class and timing policy are
+removed; Rust process streams continue to perform the actual writes.
+
+Diagnostics-channel adapter storage uses the configured SDK's SafeMap and
+SafeWeakMap constructors, so later changes to public collection prototypes do
+not affect internal channel lookup. The internal test-binding module is the
+original SDK module and exports the same primordial owner used by SDK policies.
+It exposes cached raw native bindings and runs against current process state, so
+its warning observes guest replacements and current warning options.
+
+### Native backend ownership and configured SDK crypto policy
+
+Linux child cancellation uses an owned pidfd and the original child wait owner.
+Exit cleanup discards pending native callbacks without executing guest code.
+Failed-spawn errors precede real failed-pipe close completions. Public spawn
+observes the mutable ChildProcess prototype hook used by SDK MockTracker.
+
+Resolver requests use the shared pool for actual getaddrinfo/getnameinfo, retain
+their real request roots and read mutable completion slots at dispatch. TCP owns
+actual descriptors and connect/write/shutdown requests; public socket admission
+transfers read ownership from the raw handle. Close completion uses one prepend
+queue, with request cancellation before handle completion.
+
+Configured SDK Hash/Hmac and secret-key wrappers use owned fetched OpenSSL
+digests, native incremental contexts, actual copies and provider-backed jobs.
+Digest inventory and aliases come from the selected OpenSSL 3.5.9 provider.
+This does not establish full asymmetric KeyObject or WebCrypto parity. The
+historical public KeyObject family remains in place.
+
+VFS read/write/open/metadata boundaries preserve SDK validation, argument counts,
+getters and undefined-only fallthrough. existsSync falls through to its unwrapped
+native stat continuation after an undefined handler result. Legacy bootstrap VFS
+facades are retired. Host-private symbols use compact native identity and stay
+outside ordinary integrity and reflection queries.
+
+Qualification and retained failures appear in
+`evidence/task20-native-backends-qualified-2026-10-16.json`. Full parallel counts
+remain separate from selected API and upstream proof inventories.

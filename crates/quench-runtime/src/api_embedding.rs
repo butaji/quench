@@ -37,6 +37,11 @@ impl RootedError {
 }
 
 impl<H: Host> Runtime<H> {
+    /// Count actual heap record/arena capacities and unique live payloads without guest effects.
+    pub fn heap_memory_composition(&self) -> crate::HeapMemoryComposition {
+        self.vm.embedding_heap_memory_composition()
+    }
+
     /// Scope a native embedding frame in captured Error stacks. Native frames
     /// carry no invented JavaScript filename or source position.
     pub fn with_native_stack_frame<T>(
@@ -157,6 +162,12 @@ impl<H: Host> Runtime<H> {
     ) -> Result<bool, RootedError> {
         let result = self.vm.set_property_rooted(object, key, value, receiver);
         result.map_err(|error| self.retain_error(error))
+    }
+
+    /// Apply shared subtraction, retaining guest coercion results and exceptions.
+    pub fn subtract_rooted(&mut self, left: RootId, right: RootId) -> Result<RootId, RootedError> {
+        let result = self.vm.embedding_subtract(left, right);
+        self.retain_completion(result)
     }
 
     /// Invoke an existing callable with a rooted receiver and arguments.

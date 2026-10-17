@@ -42,6 +42,7 @@ pub(crate) use atoms::{AtomPrefix, NoAtomPrefix};
 /// The synthetic method supplies parsing context only; execution uses its body.
 fn eval_method_body<'a, 'b>(
     program: &'b mut Program<'a>,
+    ordinary_function: bool,
 ) -> Option<&'b mut oxc_ast::ast::FunctionBody<'a>> {
     let [Statement::ExpressionStatement(statement)] = program.body.as_mut_slice() else {
         return None;
@@ -64,6 +65,14 @@ fn eval_method_body<'a, 'b>(
             function
         }
         _ => return None,
+    };
+    let body = function.body.as_deref_mut()?;
+    if !ordinary_function { return Some(body); }
+    let [Statement::ExpressionStatement(statement)] = body.statements.as_mut_slice() else {
+        return None;
+    };
+    let Expression::FunctionExpression(function) = statement.expression.without_parentheses_mut() else {
+        return None;
     };
     function.body.as_deref_mut()
 }
@@ -156,10 +165,21 @@ pub(crate) enum DynamicFunctionKind {
     AsyncGenerator,
 }
 
-pub(crate) enum EvalExpressionKind {
-    Identifier(String),
-    Import,
-    Other,
+pub(crate) const DYNAMIC_FUNCTION_PUBLIC_NAME: &str = "anonymous";
+
+impl DynamicFunctionKind {
+    fn source_prefix(self) -> &'static str {
+        match self {
+            Self::Ordinary => "function",
+            Self::Async => "async function",
+            Self::Generator => "function*",
+            Self::AsyncGenerator => "async function*",
+        }
+    }
+
+    pub(crate) fn source(self, parameters: &str, body: &str) -> String {
+        format!("{} {DYNAMIC_FUNCTION_PUBLIC_NAME}({parameters}\n) {{\n{body}\n}}", self.source_prefix())
+    }
 }
 
 #[derive(Clone, Copy, Default)]
@@ -167,21 +187,16 @@ pub(crate) struct EvalContext {
     pub in_function: bool,
     pub home_atom: Option<Atom>,
     pub super_calls: bool,
-    pub field_initializer: bool,
+    pub class_initializer: bool,
 }
 
 #[derive(Clone, Copy)]
 enum ParsedProgramShape {
     Any,
     DynamicFunction { parameter_list_end: usize },
-    Eval(EvalContext),
+    Eval(EvalContext, Option<Span>),
 }
 
-#[derive(Clone, Copy)]
-enum DynamicFunctionValidation {
-    None,
-    ParameterBoundary,
-}
 pub(crate) struct EvalRegExpLiteral {
     pub(crate) span: Range<usize>,
     pub(crate) flags: String,
@@ -200,37 +215,23 @@ pub(crate) struct StaticModulePlan {
     pub(crate) has_top_level_await: bool,
 }
 pub(crate) use crate::bytecode::ModuleReexport as StaticModuleReexport;
-fn eval_expression_span(body: &[Statement<'_>], directives: &[Directive<'_>]) -> Option<Span> {
-    match body {
-        [Statement::ExpressionStatement(statement)] if directives.is_empty() => {
-            Some(statement.expression.span())
-        }
-        [] if directives.len() == 1 => Some(directives[0].expression.span()),
-        _ => None,
-    }
-}
-
 impl Engine {
-    pub(crate) fn eval_single_string_constant(source: &str) -> Option<Constant> {
+    /// V8 excludes tagged templates from eval's compilation cache because each
+    /// evaluation owns distinct template objects, including nested function sites.
+    pub(crate) fn eval_has_tagged_template(source: &str) -> bool {
+        use oxc_ast_visit::Visit;
+        struct TaggedTemplate(bool);
+        impl<'a> Visit<'a> for TaggedTemplate {
+            fn visit_tagged_template_expression(&mut self, _: &TaggedTemplateExpression<'a>) {
+                self.0 = true;
+            }
+        }
         let allocator = Allocator::with_capacity(source.len());
         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
-        if stack::validate_parsed(&parsed).is_err() || !parsed.diagnostics.is_empty() {
-            return None;
-        }
-        let literal = match (
-            parsed.program.body.as_slice(),
-            parsed.program.directives.as_slice(),
-        ) {
-            ([], [directive]) => &directive.expression,
-            ([Statement::ExpressionStatement(statement)], []) => {
-                let Expression::StringLiteral(literal) = &statement.expression else {
-                    return None;
-                };
-                literal
-            }
-            _ => return None,
-        };
-        Some(string::constant(literal))
+        if stack::validate_parsed(&parsed).is_err() || !parsed.diagnostics.is_empty() { return true; }
+        let mut visitor = TaggedTemplate(false);
+        visitor.visit_program(&parsed.program);
+        visitor.0
     }
 
     pub(crate) fn eval_single_regexp_literal(source: &str) -> Option<EvalRegExpLiteral> {
@@ -245,7 +246,7 @@ impl Engine {
         let Statement::ExpressionStatement(statement) = &parsed.program.body[0] else {
             return None;
         };
-        let Expression::RegExpLiteral(literal) = &statement.expression else {
+        let Expression::RegExpLiteral(literal) = statement.expression.without_parentheses() else {
             return None;
         };
         let flags = [
@@ -267,172 +268,15 @@ impl Engine {
         })
     }
 
-    pub(crate) fn strict_octal_numeric_early_error(source: &str) -> Option<String> {
-        let allocator = Allocator::with_capacity(source.len());
-        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
-        if stack::validate_parsed(&parsed).is_err() {
-            return None;
-        }
-        parsed
-            .diagnostics
-            .is_empty()
-            .then(|| early::strict_octal_numeric_early_error(&parsed.program))
-            .flatten()
-    }
-
-    pub(crate) fn field_eval_references_arguments(source: &str) -> bool {
+    pub(crate) fn class_eval_references_arguments(source: &str) -> bool {
         let context = eval_context_source(source, &[], true);
         let allocator = Allocator::with_capacity(context.len());
         let mut parsed = annex_b_targets::parse_program(&allocator, &context, SourceType::script());
         if stack::validate_parsed(&parsed).is_err() || !parsed.diagnostics.is_empty() {
             return false; // The normal eval compiler owns syntax and exhaustion errors.
         }
-        eval_method_body(&mut parsed.program)
-            .is_some_and(|body| early::field_eval_references_arguments(&body.statements))
-    }
-
-    pub(crate) fn eval_has_use_strict_directive(source: &str) -> bool {
-        let allocator = Allocator::with_capacity(source.len());
-        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
-        if stack::validate_parsed(&parsed).is_err() || !parsed.diagnostics.is_empty() {
-            return false;
-        }
-        parsed
-            .program
-            .directives
-            .iter()
-            .any(|directive| directive.directive == "use strict")
-    }
-
-    pub(crate) fn eval_expression_kind(source: &str) -> EvalExpressionKind {
-        let allocator = Allocator::with_capacity(source.len());
-        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
-        if stack::validate_parsed(&parsed).is_err() || !parsed.diagnostics.is_empty() {
-            return EvalExpressionKind::Other;
-        }
-        match parsed.program.body.as_slice() {
-            [Statement::ExpressionStatement(statement)] => {
-                match statement.expression.without_parentheses() {
-                    Expression::Identifier(identifier) => {
-                        EvalExpressionKind::Identifier(identifier.name.to_string())
-                    }
-                    Expression::ImportExpression(_) => EvalExpressionKind::Import,
-                    _ => EvalExpressionKind::Other,
-                }
-            }
-            _ => EvalExpressionKind::Other,
-        }
-    }
-
-    pub(crate) fn eval_single_expression(source: &str) -> Option<&str> {
-        let allocator = Allocator::with_capacity(source.len());
-        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
-        if stack::validate_parsed(&parsed).is_err() {
-            return None;
-        }
-        if !parsed.diagnostics.is_empty() {
-            return None;
-        }
-        let span = eval_expression_span(&parsed.program.body, &parsed.program.directives)?;
-        source.get(span.start as usize..span.end as usize)
-    }
-
-    /// Classify the body of the synthetic eval method in its private-name
-    /// grammar context instead of reparsing that body as a standalone Script.
-    pub(crate) fn eval_method_expression(source: &str) -> Option<&str> {
-        let allocator = Allocator::with_capacity(source.len());
-        let mut parsed = Parser::new(&allocator, source, SourceType::script()).parse();
-        if stack::validate_parsed(&parsed).is_err() || !parsed.diagnostics.is_empty() {
-            return None;
-        }
-        let body = eval_method_body(&mut parsed.program)?;
-        // The synthetic class method is already strict. Literal directives
-        // have no effects before its sole expression.
-        let span = eval_expression_span(&body.statements, &[])?;
-        source.get(span.start as usize..span.end as usize)
-    }
-
-    pub(crate) fn eval_statement_slices(source: &str) -> Option<Vec<&str>> {
-        let allocator = Allocator::with_capacity(source.len());
-        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
-        if stack::validate_parsed(&parsed).is_err() {
-            return None;
-        }
-        if !parsed.diagnostics.is_empty() {
-            return None;
-        }
-        let mut statements =
-            Vec::with_capacity(parsed.program.directives.len() + parsed.program.body.len());
-        for directive in &parsed.program.directives {
-            let span = directive.expression.span();
-            statements.push(source.get(span.start as usize..span.end as usize)?);
-        }
-        for statement in &parsed.program.body {
-            if matches!(statement, Statement::EmptyStatement(_)) {
-                continue;
-            }
-            let span = match statement {
-                Statement::ExpressionStatement(expression) => expression.expression.span(),
-                _ => statement.span(),
-            };
-            let text = source.get(span.start as usize..span.end as usize)?;
-            statements.push(if matches!(statement, Statement::VariableDeclaration(_)) {
-                text.strip_suffix(';').unwrap_or(text)
-            } else {
-                text
-            });
-        }
-        Some(statements)
-    }
-
-    pub(crate) fn eval_requires_compiled_program(source: &str) -> bool {
-        use oxc_ast_visit::Visit;
-
-        struct ResidualSyntax(bool);
-        impl<'a> Visit<'a> for ResidualSyntax {
-            fn visit_reg_exp_literal(&mut self, _: &RegExpLiteral<'a>) {
-                self.0 = true;
-            }
-            fn visit_assignment_expression(&mut self, _: &AssignmentExpression<'a>) {
-                self.0 = true;
-            }
-            fn visit_update_expression(&mut self, _: &UpdateExpression<'a>) {
-                self.0 = true;
-            }
-        }
-
-        let allocator = Allocator::with_capacity(source.len());
-        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
-        if stack::validate_parsed(&parsed).is_err() {
-            return true;
-        }
-        // OXC lowering owns reference writes and RegExp token contents.
-        let mut residual = ResidualSyntax(false);
-        residual.visit_program(&parsed.program);
-        !parsed.diagnostics.is_empty()
-            || !parsed.program.comments.is_empty()
-            || residual.0
-            || parsed.program.body.iter().any(|statement| {
-                matches!(
-                    statement,
-                    Statement::VariableDeclaration(_)
-                        | Statement::ClassDeclaration(_)
-                        | Statement::FunctionDeclaration(_)
-                        | Statement::BlockStatement(_)
-                        | Statement::DoWhileStatement(_)
-                        | Statement::ForStatement(_)
-                        | Statement::ForInStatement(_)
-                        | Statement::ForOfStatement(_)
-                        | Statement::WhileStatement(_)
-                        | Statement::SwitchStatement(_)
-                        | Statement::IfStatement(_)
-                        | Statement::TryStatement(_)
-                        | Statement::LabeledStatement(_)
-                        | Statement::WithStatement(_)
-                ) || matches!(statement, Statement::ExpressionStatement(statement)
-                        if matches!(statement.expression.without_parentheses(), Expression::UnaryExpression(unary)
-                            if unary.operator == oxc_syntax::operator::UnaryOperator::Delete))
-            })
+        eval_method_body(&mut parsed.program, false)
+            .is_some_and(|body| early::class_eval_references_arguments(&body.statements))
     }
 
     pub(crate) fn static_module_has_early_error(source: &str) -> bool {
@@ -718,7 +562,10 @@ impl Engine {
         annex_b_forbidden_names: &[String],
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let method_source;
-        let (source, source_type) = if context.home_atom.is_some() {
+        let raw_source_len = source.len();
+        let ordinary_private_context = context.home_atom.is_none()
+            && context.in_function && !private_names.is_empty();
+        let (source, source_type) = if context.home_atom.is_some() || ordinary_private_context {
             method_source = if private_names.is_empty() && !context.super_calls {
                 let directive = if inherited_strict {
                     "'use strict';\n"
@@ -727,6 +574,11 @@ impl Engine {
                 };
                 format!("{directive}({{__eval() {{\n{source}\n}}}})")
             } else {
+                let ordinary_source;
+                let source = if ordinary_private_context {
+                    ordinary_source = format!("(function() {{\n{source}\n}});");
+                    ordinary_source.as_str()
+                } else { source };
                 eval_context_source(source, private_names, context.super_calls)
             };
             (method_source.as_str(), SourceType::script())
@@ -740,6 +592,13 @@ impl Engine {
                 },
             )
         };
+        let body_span = if context.home_atom.is_some() || ordinary_private_context {
+            let suffix = if ordinary_private_context { "\n});\n}\n})" }
+                else if private_names.is_empty() && !context.super_calls { "\n}})" }
+                else { "\n}\n})" };
+            let body_start = source.len() - suffix.len() - raw_source_len - "{\n".len();
+            Some(Span::new(body_start as u32, (body_start + "{\n".len() + raw_source_len + "\n}".len()) as u32))
+        } else { None };
         Self::specialize_with_mode_and_private_names(
             source,
             name,
@@ -751,7 +610,7 @@ impl Engine {
             inherited_strict,
             private_names,
             annex_b_forbidden_names,
-            ParsedProgramShape::Eval(context),
+            ParsedProgramShape::Eval(context, body_span),
         )
     }
 
@@ -783,36 +642,6 @@ impl Engine {
     }
     /// Compile already-coerced Function-constructor parameter and body strings
     /// through the same OXC script pipeline used by ordinary source.
-    pub(crate) fn specialize_dynamic_function(
-        parameters: &str,
-        body: &str,
-        name: &str,
-        atom_prefix: &dyn AtomPrefix,
-    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        Self::specialize_dynamic_function_with_kind(
-            parameters,
-            body,
-            name,
-            atom_prefix,
-            DynamicFunctionKind::Ordinary,
-        )
-    }
-    pub(crate) fn specialize_dynamic_function_with_kind(
-        parameters: &str,
-        body: &str,
-        name: &str,
-        atom_prefix: &dyn AtomPrefix,
-        kind: DynamicFunctionKind,
-    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        Self::specialize_dynamic_function_source(
-            parameters,
-            body,
-            name,
-            atom_prefix,
-            kind,
-            DynamicFunctionValidation::None,
-        )
-    }
     pub(crate) fn specialize_function_constructor(
         parameters: &str,
         body: &str,
@@ -820,42 +649,14 @@ impl Engine {
         atom_prefix: &dyn AtomPrefix,
         kind: DynamicFunctionKind,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        Self::specialize_dynamic_function_source(
-            parameters,
-            body,
-            name,
-            atom_prefix,
-            kind,
-            DynamicFunctionValidation::ParameterBoundary,
-        )
-    }
-    fn specialize_dynamic_function_source(
-        parameters: &str,
-        body: &str,
-        name: &str,
-        atom_prefix: &dyn AtomPrefix,
-        kind: DynamicFunctionKind,
-        validation: DynamicFunctionValidation,
-    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let body = early::normalize_dynamic_function_body(body);
         let parameters = early::normalize_dynamic_function_parameters(parameters);
-        let prefix = match kind {
-            DynamicFunctionKind::Ordinary => "function",
-            DynamicFunctionKind::Async => "async function",
-            DynamicFunctionKind::Generator => "function*",
-            DynamicFunctionKind::AsyncGenerator => "async function*",
-        };
-        let function_prefix = format!("{prefix}(");
         let expression_wrapper = "(";
-        let parameter_list_end =
-            expression_wrapper.len() + function_prefix.len() + parameters.len() + ")".len();
-        let source = format!("{expression_wrapper}{function_prefix}{parameters}) {{{body}\n}})");
-        let expected_shape = match validation {
-            DynamicFunctionValidation::None => ParsedProgramShape::Any,
-            DynamicFunctionValidation::ParameterBoundary => {
-                ParsedProgramShape::DynamicFunction { parameter_list_end }
-            }
-        };
+        let function_prefix = format!("{} {DYNAMIC_FUNCTION_PUBLIC_NAME}(", kind.source_prefix());
+        let parameter_list_end = expression_wrapper.len() + function_prefix.len()
+            + parameters.len() + "\n)".len();
+        let source = format!("{expression_wrapper}{})", kind.source(&parameters, &body));
+        let expected_shape = ParsedProgramShape::DynamicFunction { parameter_list_end };
         Self::specialize_with_program_shape(
             &source,
             name,
@@ -866,29 +667,6 @@ impl Engine {
             false,
             false,
             expected_shape,
-        )
-    }
-    pub(crate) fn specialize_dynamic_function_with_private_names(
-        parameters: &str,
-        body: &str,
-        name: &str,
-        atom_prefix: &dyn AtomPrefix,
-        private_names: &[(String, String)],
-    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        let body = early::normalize_dynamic_function_body(body);
-        let source = format!("(function({parameters}) {{{body}\n}})");
-        Self::specialize_with_mode_and_private_names(
-            &source,
-            name,
-            SpecializationMode::of(atom_prefix),
-            atom_prefix,
-            SourceType::script(),
-            false,
-            false,
-            false,
-            private_names,
-            &[],
-            ParsedProgramShape::Any,
         )
     }
     fn specialize_module_with_mode(
@@ -1021,20 +799,29 @@ impl Engine {
                 span,
             }]);
         }
+        let ordinary_private_context = matches!(expected_shape, ParsedProgramShape::Eval(context, _)
+            if context.home_atom.is_none() && context.in_function && !private_name_overrides.is_empty());
+        let wrapped_eval = matches!(expected_shape, ParsedProgramShape::Eval(context, _)
+            if context.home_atom.is_some()) || ordinary_private_context;
         let dynamic_function_shape = match expected_shape {
             ParsedProgramShape::Any => true,
-            ParsedProgramShape::Eval(context) => {
-                context.home_atom.is_none() || eval_method_body(&mut parsed.program).is_some()
+            ParsedProgramShape::Eval(_, expected_span) => {
+                !wrapped_eval || eval_method_body(&mut parsed.program, ordinary_private_context)
+                    .is_some_and(|body| Some(body.span) == expected_span)
             }
             ParsedProgramShape::DynamicFunction { parameter_list_end } => {
-                match parsed.program.body.as_slice() {
-                    [Statement::ExpressionStatement(statement)] => match &statement.expression {
+                match parsed.program.body.as_mut_slice() {
+                    [Statement::ExpressionStatement(statement)] => match &mut statement.expression {
                         Expression::ParenthesizedExpression(expression) => {
-                            match &expression.expression {
+                            match &mut expression.expression {
                                 Expression::FunctionExpression(function) => {
-                                    function.id.is_none()
+                                    let valid = function.id.as_ref().is_some_and(|identifier| identifier.name == DYNAMIC_FUNCTION_PUBLIC_NAME)
                                         && function.body.is_some()
-                                        && function.params.span.end as usize == parameter_list_end
+                                        && function.params.span.end as usize == parameter_list_end;
+                                    // The generated public source name is not a dynamic
+                                    // Function self binding. OXC still owns the grammar.
+                                    if valid { function.id = None; }
+                                    valid
                                 }
                                 _ => false,
                             }
@@ -1068,7 +855,7 @@ impl Engine {
         }
         let private_name_ids = private_name_ids(&semantic.semantic);
         let private_name_labels = private_name_labels(&semantic.semantic);
-        let inherited_private_ids = if matches!(expected_shape, ParsedProgramShape::Eval(context) if context.home_atom.is_some())
+        let inherited_private_ids = if wrapped_eval
         {
             let mut ids = FxHashSet::default();
             if let [Statement::ExpressionStatement(statement)] = parsed.program.body.as_slice()
@@ -1107,10 +894,10 @@ impl Engine {
         // Validate in method grammar, then remove the context wrapper. Original
         // spans still address `normalized`, retaining exact nested function source.
         drop(semantic);
-        let eval_context = if let ParsedProgramShape::Eval(context) = expected_shape {
-            if context.home_atom.is_some() {
-                let body =
-                    eval_method_body(&mut parsed.program).expect("validated eval method shape");
+        let eval_context = if let ParsedProgramShape::Eval(context, _) = expected_shape {
+            if wrapped_eval {
+                let body = eval_method_body(&mut parsed.program, ordinary_private_context)
+                    .expect("validated eval context shape");
                 let statements = std::mem::replace(
                     &mut body.statements,
                     oxc_allocator::Vec::new_in(&&allocator),
@@ -1143,7 +930,7 @@ impl Engine {
             .into_iter()
             .filter_map(|(span, name)| annex_b_forbidden_names.contains(&name).then_some(span))
             .collect();
-        let program = compiler.program(&parsed.program, module_goal, inherited_strict);
+        let emitted = compiler.program(&parsed.program, module_goal, inherited_strict);
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("QUENCH_MEMORY").is_some() {
             eprintln!(
@@ -1152,19 +939,12 @@ impl Engine {
                 allocator.capacity(),
             );
         }
-        program
-    }
-
-    pub(crate) fn eval_parameter_early_error(source: &str, strict: bool) -> Option<String> {
-        let allocator = Allocator::with_capacity(source.len().saturating_mul(2));
-        let parsed = Parser::new(&allocator, source, SourceType::unambiguous()).parse();
-        if stack::validate_parsed(&parsed).is_err() {
-            return None;
-        }
-        if !parsed.diagnostics.is_empty() {
-            return Some(format!("SyntaxError: {}", parsed.diagnostics[0]));
-        }
-        early::parameter_early_error(&parsed.program, strict)
+        // The tree is the largest structure of a compilation; the passes that finish the
+        // program do not read it.
+        drop(parsed);
+        drop(allocator);
+        let (compiler, module) = emitted?;
+        compiler.finish(module)
     }
 
     pub(crate) fn strict_eval_syntax_error(source: &str, in_function: bool) -> Option<String> {
@@ -1327,6 +1107,36 @@ fn push_module_request(
             module_type,
         });
     }
+}
+
+/// The functions and arrows written in `program`, each of which the compiler emits.
+/// The module records `Compiler::program` reads from the tree for `Compiler::finish`.
+struct ModuleParts {
+    requests: Vec<crate::bytecode::ModuleRequest>,
+    imports: Vec<crate::bytecode::ModuleImportBinding>,
+    link_plan: Option<crate::bytecode::ModuleLinkPlan>,
+}
+
+fn source_function_count(program: &Program<'_>) -> usize {
+    struct Counter(usize);
+    impl<'a> oxc_ast_visit::Visit<'a> for Counter {
+        fn visit_function(
+            &mut self,
+            function: &oxc_ast::ast::Function<'a>,
+            flags: oxc_syntax::scope::ScopeFlags,
+        ) {
+            self.0 += 1;
+            oxc_ast_visit::walk::walk_function(self, function, flags);
+        }
+
+        fn visit_arrow_function_expression(&mut self, arrow: &ArrowFunctionExpression<'a>) {
+            self.0 += 1;
+            oxc_ast_visit::walk::walk_arrow_function_expression(self, arrow);
+        }
+    }
+    let mut counter = Counter(0);
+    oxc_ast_visit::Visit::visit_program(&mut counter, program);
+    counter.0
 }
 
 fn has_top_level_await(statements: &[Statement<'_>]) -> bool {
@@ -1669,7 +1479,7 @@ struct FunctionOptions<'a> {
     class_constructor: bool,
     derived_constructor: bool,
     non_constructible: bool,
-    class_field_initializer: bool,
+    class_initializer: bool,
     instance_fields: Option<&'a [ClassField<'a>]>,
     instance_private_methods: Option<&'a [Atom]>,
     super_static: bool,
@@ -1833,12 +1643,7 @@ impl<'a> Compiler<'a> {
         private_name_ids: FxHashMap<(u32, u32), u32>,
     ) -> Self {
         let atoms = CompilerAtoms::new(atom_prefix);
-        let mut source_line_starts = vec![0];
-        source_line_starts.extend(text.char_indices().filter_map(|(index, character)| {
-            let crlf_prefix = character == '\r' && text.as_bytes().get(index + 1) == Some(&b'\n');
-            (matches!(character, '\n' | '\r' | '\u{2028}' | '\u{2029}') && !crlf_prefix)
-                .then_some(index + character.len_utf8())
-        }));
+        let source_line_starts = crate::bytecode::source_line_starts(text).collect();
         let mut excess = 0;
         let source_utf16_excess = text
             .char_indices()
@@ -1923,13 +1728,18 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    /// Emits every function of `program`: all the compiler reads of its tree. `finish` makes
+    /// the residual program from what this leaves, after the caller has dropped the tree.
     fn program(
         mut self,
         program: &Program<'_>,
         module_goal: bool,
         inherited_strict: bool,
-    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+    ) -> Result<(Self, ModuleParts), Vec<Diagnostic>> {
         self.source_comments = program.comments.iter().map(|comment| comment.span).collect();
+        // One slot per source function and the root, reserved once: grown by doubling, the
+        // slots of a large script stood up to twice its functions beside its tree.
+        self.functions.reserve_exact(source_function_count(program) + 1);
         self.module_goal = module_goal;
         let module_requests = if module_goal {
             module_requests(&program.body)
@@ -1989,9 +1799,9 @@ impl<'a> Compiler<'a> {
                 class_constructor: false,
                 derived_constructor: false,
                 non_constructible: false,
-                class_field_initializer: self
+                class_initializer: self
                     .eval_context
-                    .is_some_and(|context| context.field_initializer),
+                    .is_some_and(|context| context.class_initializer),
                 instance_fields: None,
                 instance_private_methods: None,
                 super_static: false,
@@ -2177,7 +1987,27 @@ impl<'a> Compiler<'a> {
         if !self.errors.is_empty() {
             return Err(self.errors);
         }
+        Ok((
+            self,
+            ModuleParts {
+                requests: module_requests,
+                imports: module_imports,
+                link_plan: module_link_plan,
+            },
+        ))
+    }
+
+    /// The residual program of the functions `program` emitted.
+    fn finish(mut self, module: ModuleParts) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        let ModuleParts {
+            requests: module_requests,
+            imports: module_imports,
+            link_plan: module_link_plan,
+        } = module;
         let mut functions: Vec<_> = self.functions.into_iter().map(Option::unwrap).collect();
+        // Functions the compiler synthesizes (class constructors and initializers) may have
+        // grown the reservation.
+        functions.shrink_to_fit();
         capture_layout::apply(&mut functions, &self.atoms);
         for function in &mut functions {
             Self::elide_unobservable_tdz(function, &self.atoms);
@@ -2243,7 +2073,9 @@ impl<'a> Compiler<'a> {
         }
         for function in &mut functions {
             function.code.shrink_to_fit();
+            function.wide.shrink_to_fit();
             function.handlers.shrink_to_fit();
+            function.source_positions.shrink_to_fit();
         }
         let (mut method_sites, mut method_arguments) =
             Self::flatten_method_sites(self.method_sites);
@@ -2610,7 +2442,7 @@ impl<'a> Compiler<'a> {
             && !options.generator
             && !options.class_constructor
             && !options.derived_constructor
-            && !options.class_field_initializer
+            && !options.class_initializer
             && !options.implicit_super
             && options.with_depth == 0
             && self.eval_context.is_none()
@@ -2680,7 +2512,7 @@ impl<'a> Compiler<'a> {
                     .eval_context
                     .is_some_and(|context| context.super_calls));
         function.strict = root_strict;
-        function.class_field_initializer = options.class_field_initializer;
+        function.class_initializer = options.class_initializer;
         if capture_script_completion {
             let completion = function.reg();
             // Directive expressions precede the body and contribute its initial completion.
@@ -2797,7 +2629,7 @@ impl<'a> Compiler<'a> {
             constructible: !options.non_constructible
                 && !options.async_function
                 && !options.generator,
-            class_field_initializer: options.class_field_initializer,
+            class_initializer: options.class_initializer,
             parameter_eval_arguments_error: function.parameter_eval_arguments_error,
             arguments_slot,
             simple_parameters,

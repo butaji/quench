@@ -1,0 +1,80 @@
+{
+  "scope": "Complete unchanged pinned parallel inventory after real Buffer backing alignment and shared conversion pools",
+  "source_commit": "b6738fa9553fb172655d04bd27f120e7b43f9a25",
+  "node_release": "v27.0.0-nightly20260819c79868f102",
+  "fixture_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+  "counts": {
+    "timeout": 80,
+    "fail": 2155,
+    "pass": 1815,
+    "skip": 677
+  },
+  "total": 4727,
+  "inventory_hash": "1e51ca4121020d14",
+  "jobs": 4,
+  "timeout_seconds": 30,
+  "baseline_passes": 1809,
+  "gained": [
+    "test-buffer-pool-untransferable.js",
+    "test-dgram-socket-buffer-size.js",
+    "test-error-prepare-stack-trace.js",
+    "test-release-npm.js",
+    "test-stream-iter-readable-interop.js",
+    "test-stream2-read-sync-stack.js",
+    "test-stringbytes-external.js"
+  ],
+  "lost": [
+    "test-shadow-realm-prepare-stack-trace.js"
+  ],
+  "new_skips": [],
+  "removed_skips": [],
+  "memory_events_delta": {
+    "low": 0,
+    "high": 0,
+    "max": 0,
+    "oom": 0,
+    "oom_kill": 0,
+    "oom_group_kill": 0
+  },
+  "elapsed_seconds": 1524.426738456008,
+  "raw": {
+    "comparison.json": {
+      "path": "work/full-native-buffer-pool-pinned/comparison.json",
+      "bytes": 585,
+      "sha256": "d452dfc4a89071e24a34661a900419a95b5fa9729e6548155663c5040c5e04c3"
+    },
+    "receipt-before.json": {
+      "path": "work/full-native-buffer-pool-pinned/receipt-before.json",
+      "bytes": 1123,
+      "sha256": "1b602341095c1198dd0803f7c1fb532d058d8e2b786d9a317c8954545fc853c9"
+    },
+    "receipt.json": {
+      "path": "work/full-native-buffer-pool-pinned/receipt.json",
+      "bytes": 1766,
+      "sha256": "4d9a3a3bc793b11a079b7cc014713226fdab867e11edf27ab85a9a886357cd44"
+    },
+    "results.json": {
+      "path": "work/full-native-buffer-pool-pinned/results.json",
+      "bytes": 13546204,
+      "sha256": "d2bd4dfd38a39c040e88d328e7bee467d53d5f4e7dd6ce92bc723a9c2f01a2e0"
+    },
+    "runner.log": {
+      "path": "work/full-native-buffer-pool-pinned/runner.log",
+      "bytes": 391270,
+      "sha256": "6dfb4a4922a2af6b2fd9685ba3f5c72b645679eca516bc259e8bc74996ccedd5"
+    },
+    "summary.json": {
+      "path": "work/full-native-buffer-pool-pinned/summary.json",
+      "bytes": 150,
+      "sha256": "f9baf938a1797bef79d2214903ac1c3f4529c1e1f6f1c22e2b079dad977af56c"
+    }
+  },
+  "limitations": [
+    "Goal remains open:1815/4727 passes,2155failures,80timeouts,677skips.",
+    "Seven gained andone real lost pass: ShadowRealm stack default incorrectly falls back to principal user hook. Both full audits retain this regression; fix is separate.",
+    "Two earlier timeout losses(read-sync-stack,stringbytes-external) are recovered in this full run; previous isolated controls are not substituted for full outcomes.",
+    "Frozen b673 excludes later9b3 Core integration and latest28b7467 aligned unsafe/concat/isLatin1 APIs. Do not add selected gains to full totals.",
+    "Compilation/API checks overlapped part of this run; no speed claim or isolated timing attribution.",
+    "All630 source hashes and3 binary hashes unchanged; protected permission fixture restored and bytechecked. Original jobs4/deadline30 and skips unchanged."
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "status": "failed",
+  "index": 0,
+  "command": [
+    "bash",
+    "/workspace/quench/work/shadow-stack-isolation/resume.sh"
+  ],
+  "exit": 101,
+  "supervisor_pid": 2973984,
+  "session_id": 2973983,
+  "utc": "2026-10-16T07:46:15.519242+00:00"
+}

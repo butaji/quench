@@ -1,0 +1,1 @@
+const net=require('net'),out=[];const server=net.createServer();server.listen({port:0,host:'127.0.0.1'},()=>server.close(first=>{out.push(['first',first&&first.code]);server.close(second=>{out.push(['second',second&&second.code]);console.log(JSON.stringify(out))})}));

@@ -1,0 +1,41 @@
+{
+  "host": {
+    "platform": "x86_64-unknown-linux-gnu",
+    "kernel": "6.18.44-fc-v139",
+    "cpus": 4,
+    "memory_kib": 16479424,
+    "rustc": "1.99.1",
+    "valgrind": "3.22.0"
+  },
+  "node_oracle": {
+    "version": "v26.12.0",
+    "sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943"
+  },
+  "scenario_runs": {
+    "baseline": {
+      "source": "1305d2582",
+      "dirty": false,
+      "quench_sha256": "bbcce6788a3bf3af7e5c7b1ed58609ce6002a724dcbdaa6027e2b049f6853ab6",
+      "deadline_seconds": 60
+    },
+    "candidate": {
+      "source": "3e7f186de",
+      "dirty": false,
+      "quench_sha256": "755ad03eb29c294cdd148431b0e8e3a868088c2d39ef54b7b98cb787a30c8d2c",
+      "deadline_seconds": 60
+    }
+  },
+  "instruction_guard": {
+    "script": "evidence/npm-icu-2026-10-16/npm-icu-fixed-callgrind-guard.sh",
+    "profile": "iteration",
+    "base": {
+      "source": "efaa9749f",
+      "sha256": "962a09b2e2c49f6a20df5bcebd0f10cd066be92561dd8cda9c07dde4d0940181"
+    },
+    "candidate": {
+      "source": "3e7f186de",
+      "sha256": "755ad03eb29c294cdd148431b0e8e3a868088c2d39ef54b7b98cb787a30c8d2c"
+    },
+    "completions": "32/32 runs printed their done marker and exited 0"
+  }
+}

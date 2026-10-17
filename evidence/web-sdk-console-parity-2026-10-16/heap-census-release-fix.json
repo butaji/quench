@@ -1,0 +1,9 @@
+{
+  "source": "d54ffff09742df1d3c575c90ae9abc383e8c37ec",
+  "published_foundation": "78fcc1708",
+  "initial_release_host_build": "failed: SlotArena::iter still debug/test/profile gated",
+  "initial_iterator_only_correction": "failed: occupied slice helper also gated",
+  "minimal_optimized_library_check": "passed 11.00s, source differs from908a6a817 only by removing three cfg gates in heap/slots.rs",
+  "live_memory_api_stashed_and_excluded": true,
+  "public_api_checks_for_this_fix": "not repeated; helper visibility only"
+}

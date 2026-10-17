@@ -1,0 +1,15 @@
+Auto-merging crates/quench-runtime/src/vm/eval.rs
+Auto-merging crates/quench-runtime/src/vm/program_store.rs
+Merge made by the 'ort' strategy.
+ crates/quench-node/src/host/node_host.rs          |  4 ++
+ crates/quench-node/src/host/shared_vm/commonjs.rs | 26 +++++++-
+ crates/quench-runtime/src/api.rs                  |  2 +-
+ crates/quench-runtime/src/api_native.rs           | 29 +++++++++
+ crates/quench-runtime/src/api_native_tests.rs     | 78 +++++++++++++++++++++++
+ crates/quench-runtime/src/bytecode/atoms.rs       |  5 ++
+ crates/quench-runtime/src/lib.rs                  |  2 +-
+ crates/quench-runtime/src/vm.rs                   |  6 +-
+ crates/quench-runtime/src/vm/embedding.rs         | 12 ++++
+ crates/quench-runtime/src/vm/eval.rs              | 24 ++++++-
+ crates/quench-runtime/src/vm/program_store.rs     |  4 +-
+ 11 files changed, 183 insertions(+), 9 deletions(-)

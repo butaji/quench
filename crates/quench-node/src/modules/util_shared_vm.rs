@@ -54,158 +54,6 @@ const NODE_CALL_SITE_FRAME_LIMIT: usize = 200;
 
 pub(crate) const MAX_SAFE_INTEGER: f64 = ((1_u64 << f64::MANTISSA_DIGITS) - 1) as f64;
 
-const UTIL: &str = quench_js_check::checked_js!(
-    r#"((inspect, format, formatWithOptions, warnedCodes, getCallSites) => {
-  const inherits = (ctor, superCtor) => {
-    const invalidType = (kind, name, expected, received) => {
-      const error = new TypeError(
-        `The "${name}" ${kind} must be of type ${expected}. Received ${received}`
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      return error;
-    };
-    if (ctor === undefined || ctor === null) {
-      throw invalidType("argument", "ctor", "function", ctor);
-    }
-    if (superCtor === undefined || superCtor === null) {
-      throw invalidType("argument", "superCtor", "function", superCtor);
-    }
-    if (superCtor.prototype === undefined) {
-      throw invalidType(
-        "property",
-        "superCtor.prototype",
-        "object",
-        superCtor.prototype,
-      );
-    }
-    Object.defineProperty(ctor, "super_", {
-      value: superCtor,
-      writable: true,
-      configurable: true,
-    });
-    Object.setPrototypeOf(ctor.prototype, superCtor.prototype);
-  };
-  const debuglog = (section) => {
-    if (typeof section !== "string") {
-      throw new TypeError("The \"section\" argument must be of type string");
-    }
-    const debug = () => {};
-    debug.enabled = false;
-    return debug;
-  };
-  const warnedFunctions = new WeakSet();
-  const deprecate = (callback, message = "", code, options = {}) => {
-    if (typeof callback !== "function") {
-      throw new TypeError("The \"fn\" argument must be of type function");
-    }
-    if (code !== undefined && typeof code !== "string") {
-      const received = code === null
-        ? " Received null"
-        : typeof code === "object"
-        ? " Received an instance of Object"
-        : ` Received type ${typeof code} (${String(code)})`;
-      const error = new TypeError(
-        `The \"code\" argument must be of type string.${received}`
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
-    }
-
-    function deprecated(...args) {
-      const alreadyWarned = code === undefined
-        ? warnedFunctions.has(callback)
-        : warnedCodes.has(code);
-      if (!alreadyWarned) {
-        if (code === undefined) warnedFunctions.add(callback);
-        else warnedCodes.add(code);
-        if (typeof process.emitWarning === "function") {
-          process.emitWarning(message, { type: "DeprecationWarning", code });
-        }
-      }
-      if (new.target) {
-        return Reflect.construct(callback, args, new.target === deprecated ? callback : new.target);
-      }
-      return Reflect.apply(callback, this, args);
-    }
-
-    Object.defineProperty(deprecated, "length", { value: callback.length });
-    Object.defineProperty(deprecated, "name", { value: callback.name, configurable: true });
-    if (options.modifyPrototype === false) {
-      deprecated.prototype = {};
-    } else {
-      deprecated.prototype = callback.prototype;
-      Object.setPrototypeOf(deprecated, callback);
-    }
-    return deprecated;
-  };
-  const promisifyCustom = Symbol.for("nodejs.util.promisify.custom");
-  const promisifyCustomArgs = Symbol.for("nodejs.util.promisify.customArgs");
-  const promisify = (original) => {
-    if (typeof original !== "function") {
-      const received = original === null
-        ? " Received null"
-        : ` Received type ${typeof original} (${String(original)})`;
-      throw Object.assign(
-        new TypeError(`The "original" argument must be of type function.${received}`),
-        { code: "ERR_INVALID_ARG_TYPE" },
-      );
-    }
-    const custom = original[promisifyCustom];
-    if (custom !== undefined) {
-      if (typeof custom !== "function") {
-        throw Object.assign(
-          new TypeError('The "util.promisify.custom" property must be of type function'),
-          { code: "ERR_INVALID_ARG_TYPE" },
-        );
-      }
-      Object.defineProperty(custom, promisifyCustom, {
-        value: custom,
-        configurable: true,
-      });
-      return custom;
-    }
-    const argumentNames = original[promisifyCustomArgs];
-    function promisified(...args) {
-      return new Promise((resolve, reject) => {
-        args.push((error, ...values) => {
-          if (error) return reject(error);
-          if (argumentNames !== undefined && values.length > 1) {
-            const result = {};
-            for (let index = 0; index < argumentNames.length; index++) {
-              result[argumentNames[index]] = values[index];
-            }
-            resolve(result);
-          } else {
-            resolve(values[0]);
-          }
-        });
-        Reflect.apply(original, this, args);
-      });
-    }
-    Object.setPrototypeOf(promisified, Object.getPrototypeOf(original));
-    Object.defineProperty(promisified, promisifyCustom, {
-      value: promisified,
-      configurable: true,
-    });
-    Object.defineProperties(promisified, Object.getOwnPropertyDescriptors(original));
-    return promisified;
-  };
-  promisify.custom = promisifyCustom;
-  return {
-    format,
-    formatWithOptions,
-    inspect,
-    getCallSites,
-    inherits,
-    debuglog,
-    deprecate,
-    promisify,
-    TextEncoder: globalThis.TextEncoder,
-    TextDecoder: globalThis.TextDecoder,
-  };
-})"#
-);
-
 /// The public module and original inspector share one canonical function identity.
 #[derive(Clone, Copy)]
 pub(crate) struct UtilIntrinsics {
@@ -236,45 +84,48 @@ pub(crate) fn internal_inspect(
         .ok_or_else(|| RootedError::host("util intrinsics missing"))
 }
 
+/// Captures the configured call-site policy: the original Node module retains its
+/// validator imports whatever a script later does to their exports.
+pub(crate) fn initialize_call_site_policy(
+    context: &mut NativeContext<'_, NodeHost>,
+) -> Result<(), RootedError> {
+    crate::host::shared_vm::commonjs::node_library_export(
+        context, "util.js", "util.js", "getCallSites",
+    )?;
+    Ok(())
+}
+
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let cached = context.host_mut().shared_state().borrow().util_intrinsics;
     if let Some(api) = cached {
         return Ok(api.module);
     }
-    let inspect = crate::host::shared_vm::commonjs::node_library_export(context, "util.js", "internal/util/inspect.js", "inspect")?;
-    let format = crate::host::shared_vm::commonjs::node_library_export(context, "util.js", "internal/util/inspect.js", "format")?;
-    let format_with_options = crate::host::shared_vm::commonjs::node_library_export(context, "util.js", "internal/util/inspect.js", "formatWithOptions")?;
-    let get_call_sites = crate::host::shared_vm::commonjs::node_library_export(
-        context, "util.js", "util.js", "getCallSites",
-    )?;
-    let factory = context.evaluate_script_rooted(UTIL, "node:util/shared.js")?;
-    let undefined = context.undefined();
+    let module = crate::host::shared_vm::commonjs::node_library_module(context, "util.js", "util.js")?;
+    // Transfer and signal tracing still need native backends. The original
+    // aborted export now uses the native weak listener retention substrate.
     let global = context.global_root()?;
-    let set_key = context.string_rooted("Set");
-    let set = context.get_property_rooted(global, set_key)?;
-    let warned_codes = context.construct_rooted(set, set, &[])?;
-    let module = context.call_rooted(factory, undefined, &[inspect, format, format_with_options, warned_codes, get_call_sites])?;
+    let reflect = get(context, global, "Reflect")?;
+    let delete = get(context, reflect, "deleteProperty")?;
+    for name in ["transferableAbortSignal", "transferableAbortController", "setTraceSigInt"] {
+        let key = context.string_rooted(name);
+        let removed = context.call_rooted(delete, reflect, &[module, key])?;
+        if !context.truthy_rooted(removed)? {
+            return Err(RootedError::host("unimplemented utility policy is not configurable"));
+        }
+    }
+    let inspect = get(context, module, "inspect")?;
     super::util_style_shared_vm::install(context, module, inspect)?;
-    super::util_extend_shared_vm::install(context, module, warned_codes)?;
-    let compare = context.host_function(crate::host::shared_vm::operation("isDeepStrictEqual"))?;
-    let compare_key = context.string_rooted("isDeepStrictEqual");
-    context.set_property_rooted(module, compare_key, compare, module)?;
-    for name in ["stripVTControlCharacters", "parseEnv", "getSystemErrorName"] {
-        let function = context.host_function(crate::host::shared_vm::operation(name))?;
+    // Keep the already qualified native adapters while the remaining policies
+    // come directly from the unchanged SDK exports (including their accessors).
+    let parse_env = context.host_function(crate::host::shared_vm::operation("parseEnv"))?;
+    let key = context.string_rooted("parseEnv");
+    context.set_property_rooted(module, key, parse_env, module)?;
+    let callbackify = super::util_callbackify_shared_vm::function(context)?;
+    let parse_args = super::util_parse_args_shared_vm::function(context)?;
+    for (name, function) in [("callbackify", callbackify), ("parseArgs", parse_args)] {
         let key = context.string_rooted(name);
         context.set_property_rooted(module, key, function, module)?;
     }
-    let callbackify = crate::modules::util_callbackify_shared_vm::function(context)?;
-    let parse_args = super::util_parse_args_shared_vm::function(context)?;
-    let parse_args_key = context.string_rooted("parseArgs");
-    context.set_property_rooted(module, parse_args_key, parse_args, module)?;
-    let callbackify_key = context.string_rooted("callbackify");
-    context.set_property_rooted(module, callbackify_key, callbackify, module)?;
-    let types = crate::host::shared_vm::commonjs::node_library_module(
-        context, "util.js", "internal/util/types.js",
-    )?;
-    let key = context.string_rooted("types");
-    context.set_property_rooted(module, key, types, module)?;
     // Retain original identities before publishing mutable util exports. Console
     // can request these lazily without observing later public export replacement.
     let formatters = context.null_object_rooted()?;
@@ -311,25 +162,6 @@ pub(crate) fn type_check(
     let value = args.first().copied().unwrap_or_else(|| context.undefined());
     let matches = context.has_builtin_brand_rooted(value, brand)?;
     Ok(context.boolean(matches))
-}
-
-pub(crate) fn strip_vt(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let value = args.first().copied().unwrap_or_else(|| context.undefined());
-    let Some(units) = context.string_code_units(value)? else {
-        return Err(argument_type_error(context, value, "str", "string")?);
-    };
-    if !crate::modules::util_strip::has_vt_controls(&units) {
-        return Ok(value);
-    }
-    let stripped = crate::modules::util_strip::strip_vt_control_units(&units);
-    if stripped == units {
-        return Ok(value);
-    }
-    Ok(context.string_units_rooted(&stripped))
 }
 
 pub(crate) fn parse_env(
@@ -783,17 +615,47 @@ pub(crate) fn mark_promise_handled(
 pub(crate) fn key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     crate::host::shared_vm::commonjs::cached_native_binding(context, "\0binding:util", build_key_binding)
 }
+// Node src/env_properties.h: PER_ISOLATE_PRIVATE_SYMBOL_PROPERTIES.
+// Every entry is a distinct host-private primitive. The cached util binding
+// owns the table's roots for this environment; repeat consumers share identity.
+const PRIVATE_SYMBOL_PROPERTIES: &[(&str, &str)] = &[
+    ("arrow_message_private_symbol", "node:arrowMessage"),
+    ("contextify_context_private_symbol", "node:contextify:context"),
+    ("decorated_private_symbol", "node:decorated"),
+    ("empty_context_frame_sentinel_symbol", "node:empty_context_frame_sentinel"),
+    ("ffi_pointer_address_private_symbol", "node:ffi:pointer_address"),
+    ("transfer_mode_private_symbol", "node:transfer_mode"),
+    ("host_defined_option_symbol", "node:host_defined_option_symbol"),
+    ("js_transferable_wrapper_private_symbol", "node:js_transferable_wrapper"),
+    ("entry_point_module_private_symbol", "node:entry_point_module"),
+    ("entry_point_promise_private_symbol", "node:entry_point_promise"),
+    ("module_source_private_symbol", "node:module_source"),
+    ("module_export_names_private_symbol", "node:module_export_names"),
+    ("module_circular_visited_private_symbol", "node:module_circular_visited"),
+    ("module_export_private_symbol", "node:module_export"),
+    ("module_first_parent_private_symbol", "node:module_first_parent"),
+    ("module_last_parent_private_symbol", "node:module_last_parent"),
+    ("napi_type_tag", "node:napi:type_tag"),
+    ("napi_wrapper", "node:napi:wrapper"),
+    ("untransferable_object_private_symbol", "node:untransferableObject"),
+    ("exit_info_private_symbol", "node:exit_info_private_symbol"),
+    ("promise_trace_id", "node:promise_trace_id"),
+    ("source_map_data_private_symbol", "node:source_map_data_private_symbol"),
+];
+
 fn build_key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let binding = context.object_rooted()?;
     for (name, operation) in [
         ("getConstructorName", "utilConstructorName"),
         ("getCallSites", "utilGetCallSites"),
+        ("getCallerLocation", "utilGetCallerLocation"),
         ("getOwnNonIndexProperties", "utilOwnNonIndexProperties"),
         ("getPromiseDetails", "utilPromiseDetails"),
         ("getProxyDetails", "utilProxyDetails"),
         ("previewEntries", "utilPreviewEntries"),
         ("getExternalValue", "utilExternalValue"),
         ("markPromiseAsHandled", "utilMarkPromiseHandled"),
+        ("defineLazyProperties", "utilDefineLazyProperties"),
     ] {
         let operation = crate::host::shared_vm::operation(operation);
         let function = context.host_function_named(operation, name)?;
@@ -801,13 +663,9 @@ fn build_key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         context.define_data_property_rooted(binding, key, function, true, true, true)?;
     }
     let symbols = context.object_rooted()?;
-    for (name, description) in [
-        ("arrow_message_private_symbol", "node:arrowMessage"),
-        ("decorated_private_symbol", "node:decorated"),
-        ("transfer_mode_private_symbol", "node:transfer_mode"),
-    ] {
+    for &(name, description) in PRIVATE_SYMBOL_PROPERTIES {
         let key = context.string_rooted(name);
-        let symbol = context.symbol_rooted(Some(description));
+        let symbol = context.private_symbol_rooted(Some(description));
         context.define_data_property_rooted(symbols, key, symbol, true, true, true)?;
     }
     let key = context.string_rooted("privateSymbols");
@@ -970,4 +828,62 @@ pub(crate) fn get_call_sites(
         sites.push(site);
     }
     context.array_rooted(&sites)
+}
+
+/// Node's native caller capture skips the immediate JavaScript activation.
+pub(crate) fn get_caller_location(
+    context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId],
+) -> Result<RootId, RootedError> {
+    const CALLER_LOCATION_FRAME_COUNT: usize = 2;
+    let mut frames = context.source_stack_frames(CALLER_LOCATION_FRAME_COUNT);
+    let Some(frame) = (frames.len() == CALLER_LOCATION_FRAME_COUNT).then(|| frames.pop().unwrap()) else {
+        return Ok(context.undefined());
+    };
+    // An unnamed eval has no ScriptNameOrSourceURL. Do not fabricate an
+    // internal bootstrap caller or a script name when no such frame exists.
+    if frame.is_eval { return Ok(context.undefined()); }
+    let line = context.number(f64::from(frame.line_number));
+    let column = context.number(f64::from(frame.column_number));
+    let name = context.string_rooted(&frame.script_name);
+    context.array_rooted(&[line, column, name])
+}
+
+/// Node's native SetLazyDataProperty protocol, using Core's genuine lazy data slots.
+pub(crate) fn define_lazy_properties(
+    context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let [target, id, keys, ..] = args else {
+        return Err(RootedError::host("defineLazyProperties requires target, id and keys"));
+    };
+    let length = get(context, *keys, "length")?;
+    let length = context.to_number(length)? as usize;
+    let enumerable = match args.get(3) { Some(value) => context.truthy_rooted(*value)?, None => true };
+    for index in 0..length {
+        let key = get(context, *keys, &index.to_string())?;
+        let name = context.to_string(key)?;
+        let flag = context.boolean(enumerable);
+        let data = context.array_rooted(&[*target, *id, key, flag])?;
+        let initializer = context.host_function_with_data(
+            crate::host::shared_vm::operation("utilLazyPropertyInitialize"), data,
+        )?;
+        context.define_lazy_data_properties_rooted(*target, &[&name], enumerable, initializer)?;
+    }
+    Ok(context.undefined())
+}
+
+pub(crate) fn initialize_lazy_property(
+    context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let data = context.host_function_data()?;
+    let target = get(context, data, "0")?;
+    let id = get(context, data, "1")?;
+    let key = get(context, data, "2")?;
+    let flag = get(context, data, "3")?;
+    let enumerable = context.truthy_rooted(flag)?;
+    let id = context.to_string(id)?;
+    let id = if id.ends_with(".js") { id } else { format!("{id}.js") };
+    let module = crate::host::shared_vm::commonjs::node_library_module(context, "internal/util.js", &id)?;
+    let value = context.get_property_rooted(module, key)?;
+    context.define_data_property_rooted(target, key, value, true, enumerable, true)?;
+    Ok(context.undefined())
 }

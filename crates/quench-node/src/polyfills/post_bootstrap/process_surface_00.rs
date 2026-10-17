@@ -111,9 +111,6 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
     globalThis.process.argv0 ||= "node";
     globalThis.process.features ||= {};
     globalThis.process.features.inspector ??= false;
-    globalThis.process.noDeprecation ??= false;
-    globalThis.process.traceDeprecation ??= false;
-    globalThis.process.throwDeprecation ??= false;
     globalThis.process.title =
       globalThis.__quench_cli_title || globalThis.process.title || "node";
     delete globalThis.__quench_cli_title;

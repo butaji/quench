@@ -1,0 +1,14 @@
+/workspace/quench/target/iteration/node/lib/internal/vm.js:14
+} = ContextifyScript.prototype;
+                     ^
+
+TypeError: Cannot read properties of undefined (reading 'prototype')
+    at node:internal/vm:14:22
+    at node:internal/modules/cjs/loader:152:5
+    at node:internal/modules/esm/loader:24:5
+    at node:internal/test_runner/mock/mock:34:19
+    at node:internal/test_runner/test:56:25
+    at node:internal/test_runner/harness:24:45
+    at [eval]:1:9
+
+Node.js v26.12.0

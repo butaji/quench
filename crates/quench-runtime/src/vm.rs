@@ -48,6 +48,8 @@ struct RuntimeAtoms {
     /// Read by every promise resolution and species lookup.
     then: Atom,
     constructor: Atom,
+    /// Canonical key for named function-info lookup; paired with length_atom.
+    name: Atom,
 }
 pub(crate) mod activation;
 mod activation_lifecycle;
@@ -132,7 +134,8 @@ mod property_key;
 use activation::{Continuation, SuspendedEntry};
 use call_arguments::CallArguments;
 use object::AtomClass;
-use program_store::{ModuleImport, ProgramId, ProgramStore};
+pub(crate) use program_store::ProgramId;
+use program_store::{ModuleImport, ProgramStore};
 use promise::PromiseRuntime;
 use property_key::PropertyKey;
 mod operations;
@@ -499,6 +502,7 @@ struct RealmIntrinsics {
 }
 #[derive(Clone, Copy)]
 struct ErrorRealmIntrinsics {
+    host_formatter: Option<Value>,
     constructor: Value,
     stack_getter: Value,
     stack_setter: Value,
@@ -550,6 +554,8 @@ struct InheritedFieldCache {
     slot: u16,
 }
 const NO_FIELD_RECEIVER: u32 = u32::MAX;
+/// A cache site without an inherited entry (`Vm::inherited_field_indices`).
+const NO_INHERITED_FIELD: u32 = u32::MAX;
 // DeltaBlue's measured inherited writes reach three prototypes; keep the
 // residual cache bounded while covering that common constructor shape.
 const FIELD_ADD_CACHE_MAX_PROTO_DEPTH: usize = 4;
@@ -708,6 +714,7 @@ enum ShapeTransition {
     Root,
     FunctionName { name: Atom },
     FunctionNameReconfigured,
+    FunctionLengthReconfigured,
     Constructed { constructor: Value, new_target_is_base: bool },
     Add {
         key: property_key::PropertyKey,
@@ -731,6 +738,7 @@ enum ShapeTransition {
 enum ShapeTransitionKey {
     FunctionName(Atom),
     FunctionNameReconfigured,
+    FunctionLengthReconfigured,
     Constructed(Value, bool),
     AddString(Atom, DataAttributes),
     /// A descriptor without accessor functions (`ShapeAttributes::accessors` is
@@ -840,7 +848,7 @@ impl ShapeTransition {
         match self {
             Self::Add { key, .. } => key.symbol_value().is_some(),
             Self::Descriptor { attributes, .. } => attributes.accessors != NO_SHAPE_ACCESSORS,
-            Self::Root | Self::FunctionName { .. } | Self::FunctionNameReconfigured | Self::Constructed { .. } | Self::Delete { .. } | Self::Vacant | Self::Dictionary { .. } => false,
+            Self::Root | Self::FunctionName { .. } | Self::FunctionNameReconfigured | Self::FunctionLengthReconfigured | Self::Constructed { .. } | Self::Delete { .. } | Self::Vacant | Self::Dictionary { .. } => false,
         }
     }
 
@@ -848,6 +856,7 @@ impl ShapeTransition {
         match self {
             Self::FunctionName { name } => Some(ShapeTransitionKey::FunctionName(name)),
             Self::FunctionNameReconfigured => Some(ShapeTransitionKey::FunctionNameReconfigured),
+            Self::FunctionLengthReconfigured => Some(ShapeTransitionKey::FunctionLengthReconfigured),
             Self::Constructed { constructor, new_target_is_base } => Some(ShapeTransitionKey::Constructed(constructor, new_target_is_base)),
             Self::Add {
                 key: PropertyKey::String(atom),
@@ -893,15 +902,47 @@ impl DictionaryTrigger {
     }
 }
 struct ShapeLookupIndex {
+    /// The shape's live properties in definition order, with their slots.
     entries: Vec<(property_key::PropertyKey, u32)>,
-    slots: FxHashMap<property_key::PropertyKey, u32>,
+    /// Positions in `entries`, hashed by key: the pairs themselves are stored once.
+    positions: hashbrown::HashTable<u32>,
     attributes: FxHashMap<u32, ShapeAttributes>,
 }
-#[cfg(feature = "profile-memory")]
 impl ShapeLookupIndex {
+    fn key_hash(key: property_key::PropertyKey) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = rustc_hash::FxHasher::default();
+        key.hash(&mut hasher);
+        hasher.finish()
+    }
+    fn new(
+        entries: Vec<(property_key::PropertyKey, u32)>,
+        attributes: FxHashMap<u32, ShapeAttributes>,
+    ) -> Self {
+        let mut positions = hashbrown::HashTable::with_capacity(entries.len());
+        for (position, &(key, _)) in entries.iter().enumerate() {
+            let position = u32::try_from(position).expect("shape width fits u32");
+            positions.insert_unique(Self::key_hash(key), position, |&position| {
+                Self::key_hash(entries[position as usize].0)
+            });
+        }
+        Self {
+            entries,
+            positions,
+            attributes,
+        }
+    }
+    fn slot(&self, key: property_key::PropertyKey) -> Option<u32> {
+        self.positions
+            .find(Self::key_hash(key), |&position| {
+                self.entries[position as usize].0 == key
+            })
+            .map(|&position| self.entries[position as usize].1)
+    }
+    #[cfg(feature = "profile-memory")]
     fn payload_capacity_bytes(&self) -> usize {
         self.entries.capacity() * size_of::<(property_key::PropertyKey, u32)>()
-            + self.slots.capacity() * size_of::<(property_key::PropertyKey, u32)>()
+            + self.positions.capacity() * (size_of::<u32>() + 1)
             + self.attributes.capacity() * size_of::<(u32, ShapeAttributes)>()
     }
 }
@@ -1177,8 +1218,9 @@ pub(crate) struct Vm<H> {
     shape_accessors: Vec<ShapeAccessors>,
     transitions: shape_transitions::ShapeTransitionIndex,
     atom_text: AtomTable,
-    atoms: FxHashMap<u64, Atom>,
-    atom_collisions: FxHashMap<u64, Vec<Atom>>,
+    /// Every atom, hashed by its text (`atom_keys::text_hash`); equal hashes are told apart
+    /// by comparing the texts, which the atom tables hold.
+    atoms: hashbrown::HashTable<Atom>,
     /// The atoms that spell canonical array indices, by index: index-keyed lookups find
     /// them without formatting and hashing the decimal text.
     array_index_atoms: FxHashMap<u32, Atom>,
@@ -1200,7 +1242,10 @@ pub(crate) struct Vm<H> {
     field_caches: Vec<FieldCache>,
     /// Field load sites whose data property was found beyond the immediate prototype, by
     /// global site index; cleared with the field caches.
-    inherited_field_caches: FxHashMap<usize, InheritedFieldCache>,
+    /// Per cache site, the index of its `inherited_field_caches` entry, or
+    /// `NO_INHERITED_FIELD`.
+    inherited_field_indices: Vec<u32>,
+    inherited_field_caches: Vec<InheritedFieldCache>,
     field_add_indices: Vec<u32>,
     field_add_sets: Vec<FieldAddCacheSet>,
     megamorphic_field_indices: Vec<u32>,
@@ -1228,6 +1273,8 @@ pub(crate) struct Vm<H> {
     to_fixed_atom: Atom,
     to_precision_atom: Atom,
     runtime_atoms: RuntimeAtoms,
+    /// `Vm::constructed_shape` answers; cleared by every collection.
+    constructed_shapes: [provenance::ConstructedShape; provenance::CONSTRUCTED_SHAPE_ENTRIES],
     method_caches: Vec<[MethodCache; 2]>,
     megamorphic_methods: Vec<MethodCacheSet>,
     /// A filter over the atoms method caches may name: bit `atom % u64::BITS` is set when an
@@ -1755,13 +1802,7 @@ impl<H: Host> Vm<H> {
             + self.field_add_indices.capacity() * size_of::<u32>()
             + self.field_add_sets.capacity() * size_of::<FieldAddCacheSet>()
             + self.method_caches.capacity() * size_of::<[MethodCache; 2]>();
-        let atom_side_table_bytes = self.atoms.capacity() * size_of::<(u64, Atom)>()
-            + self.atom_collisions.capacity() * size_of::<(u64, Vec<Atom>)>()
-            + self
-                .atom_collisions
-                .values()
-                .map(|atoms| atoms.capacity() * size_of::<Atom>())
-                .sum::<usize>()
+        let atom_side_table_bytes = self.atoms.capacity() * (size_of::<Atom>() + 1)
             + self.dynamic_atoms.capacity() * size_of::<JsString>()
             + self
                 .dynamic_atoms
@@ -1892,7 +1933,6 @@ impl<H: Host> Vm<H> {
         self.atom_text = program.atoms.clone();
         self.atom_sequence = Rc::new(crate::bytecode::AtomSequence::new(self.atom_text.clone()));
         self.atoms.clear();
-        self.atom_collisions.clear();
         self.array_index_atoms.clear();
         self.dynamic_atoms.clear();
         self.atom_classes.clear();
@@ -1923,10 +1963,12 @@ impl<H: Host> Vm<H> {
             regexp_flag_accessors,
             then: self.intern_atom("then"),
             constructor: self.intern_atom("constructor"),
+            name: self.intern_atom("name"),
         };
         self.field_caches = vec![EMPTY_CACHE; program.cache_sites as usize];
         Self::prime_loop_decoding(program);
         self.inherited_field_caches.clear();
+        self.inherited_field_indices = vec![NO_INHERITED_FIELD; program.cache_sites as usize];
         self.field_add_indices = vec![NO_FIELD_ADD_SET; program.cache_sites as usize];
         self.field_add_sets.clear();
         self.megamorphic_field_indices = vec![NO_MEGAMORPHIC_FIELD; program.cache_sites as usize];
@@ -2013,7 +2055,11 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn store_dynamic_program(&mut self, program: ResidualProgram) -> Option<ProgramId> {
         let program = self.intern_program_atoms(program);
-        let id = self.programs.insert_reclaimable(program)?;
+        self.store_dynamic_program_shared(Rc::new(program))
+    }
+
+    fn store_dynamic_program_shared(&mut self, program: Rc<ResidualProgram>) -> Option<ProgramId> {
+        let id = self.programs.insert_reclaimable_shared(program)?;
         let residual = self.programs.get(id)?;
         self.append_program_cache_layout(id, &residual);
         self.materialize_program_constants(id, &residual);
@@ -2049,6 +2095,10 @@ impl<H: Host> Vm<H> {
         self.field_add_indices.resize(
             self.field_add_indices.len() + usize::from(program.cache_sites),
             NO_FIELD_ADD_SET,
+        );
+        self.inherited_field_indices.resize(
+            self.inherited_field_indices.len() + usize::from(program.cache_sites),
+            NO_INHERITED_FIELD,
         );
         self.method_caches.resize(
             self.method_caches.len() + program.method_sites.len(),

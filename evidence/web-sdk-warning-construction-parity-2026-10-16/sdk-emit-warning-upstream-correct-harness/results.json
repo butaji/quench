@@ -1,0 +1,18 @@
+[
+  {
+    "fixture": "test-process-emitwarning.js",
+    "exit": 0
+  },
+  {
+    "fixture": "test-process-warning.js",
+    "exit": 0
+  },
+  {
+    "fixture": "test-process-redirect-warnings.js",
+    "exit": 0
+  },
+  {
+    "fixture": "test-promises-warning-on-unhandled-rejection.js",
+    "exit": 0
+  }
+]

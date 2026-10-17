@@ -1,0 +1,485 @@
+TAP version 13
+1..17
+not ok 1 /workspace/work/node-stable-oracle-copy/test/parallel/test-net-boundsocket
+  ---
+  duration_ms: 129.06800
+  severity: fail
+  exitcode: 1
+  stack: |-
+    node:internal/assert/utils:146
+      throw error;
+      ^
+    
+    AssertionError [ERR_ASSERTION]: Missing expected exception.
+        at Object.<anonymous> (/workspace/work/node-stable-oracle-copy/test/parallel/test-net-boundsocket.js:96:10)
+        at Module._compile (node:internal/modules/cjs/loader:1968:14)
+        at Object..js (node:internal/modules/cjs/loader:2108:10)
+        at Module.load (node:internal/modules/cjs/loader:1690:32)
+        at Module._load (node:internal/modules/cjs/loader:1480:12)
+        at wrapModuleLoad (node:internal/modules/cjs/loader:261:19)
+        at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:173:5)
+        at node:internal/main/run_main_module:33:47 {
+      generatedMessage: false,
+      code: 'ERR_ASSERTION',
+      actual: undefined,
+      expected: { code: 'EACCES', syscall: 'bind' },
+      operator: 'throws',
+      diff: 'simple'
+    }
+    
+    Node.js v26.12.0
+  ...
+not ok 2 /workspace/work/node-stable-oracle-copy/test/parallel/test-repl-context
+  ---
+  duration_ms: 207.65800
+  severity: fail
+  exitcode: 1
+  stack: |-
+    node:internal/assert/utils:146
+      throw error;
+      ^
+    
+    AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:
+    
+      assert.ok(replServer.underscoreAssigned)
+    
+        at Object.<anonymous> (/workspace/work/node-stable-oracle-copy/test/parallel/test-repl-context.js:48:10)
+        at Module._compile (node:internal/modules/cjs/loader:1968:14)
+        at Object..js (node:internal/modules/cjs/loader:2108:10)
+        at Module.load (node:internal/modules/cjs/loader:1690:32)
+        at Module._load (node:internal/modules/cjs/loader:1480:12)
+        at wrapModuleLoad (node:internal/modules/cjs/loader:261:19)
+        at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:173:5)
+        at node:internal/main/run_main_module:33:47 {
+      generatedMessage: true,
+      code: 'ERR_ASSERTION',
+      actual: false,
+      expected: true,
+      operator: '==',
+      diff: 'simple'
+    }
+    
+    Node.js v26.12.0
+  ...
+not ok 3 /workspace/work/node-stable-oracle-copy/test/parallel/test-repl-custom-eval-previews
+  ---
+  duration_ms: 164.85800
+  severity: fail
+  exitcode: 1
+  stack: |-
+    Test failure: 'does show previews if `preview` is set to `true`'
+    Location: test/parallel/test-repl-custom-eval-previews.js:53:3
+    AssertionError [ERR_ASSERTION]: The "string" argument must be of type string. Received type undefined (undefined)
+        at TestContext.<anonymous> (/workspace/work/node-stable-oracle-copy/test/parallel/test-repl-custom-eval-previews.js:67:12)
+        at async Test.run (node:internal/test_runner/test:1409:7)
+        at async Suite.processPendingSubtests (node:internal/test_runner/test:974:7) {
+      generatedMessage: true,
+      code: 'ERR_ASSERTION',
+      actual: undefined,
+      expected: /'Hello custom eval World!'/,
+      operator: 'match',
+      diff: 'simple'
+    }
+    
+  ...
+not ok 4 /workspace/work/node-stable-oracle-copy/test/parallel/test-repl-empty
+  ---
+  duration_ms: 105.43800
+  severity: fail
+  exitcode: 1
+  stack: |-
+    node:internal/assert/utils:146
+      throw error;
+      ^
+    
+    AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:
+    
+      assert(evalCalledWithExpectedArgs)
+    
+        at Object.<anonymous> (/workspace/work/node-stable-oracle-copy/test/parallel/test-repl-empty.js:23:1)
+        at Module._compile (node:internal/modules/cjs/loader:1968:14)
+        at Object..js (node:internal/modules/cjs/loader:2108:10)
+        at Module.load (node:internal/modules/cjs/loader:1690:32)
+        at Module._load (node:internal/modules/cjs/loader:1480:12)
+        at wrapModuleLoad (node:internal/modules/cjs/loader:261:19)
+        at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:173:5)
+        at node:internal/main/run_main_module:33:47 {
+      generatedMessage: true,
+      code: 'ERR_ASSERTION',
+      actual: false,
+      expected: true,
+      operator: '==',
+      diff: 'simple'
+    }
+    
+    Node.js v26.12.0
+  ...
+not ok 5 /workspace/work/node-stable-oracle-copy/test/parallel/test-node-output-console
+  ---
+  duration_ms: 669.43600
+  severity: fail
+  exitcode: 1
+  stack: |-
+    Test failure: 'console/force_colors.js'
+    Location: test/parallel/test-node-output-console.mjs:20:5
+    AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+    + actual - expected
+    
+    + "\x1B[33m123\x1B[39m foo { bar: \x1B[32m'baz'\x1B[39m }\n" +
+    +   "(node:<pid>) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n" +
+    +   '(Use `<node-exe> --trace-warnings ...` to show where the warning was created)\n'
+    - "\x1B[33m123\x1B[39m foo { bar: \x1B[32m'baz'\x1B[39m }\n"
+    
+        at assertSnapshot (/workspace/work/node-stable-oracle-copy/test/common/assertSnapshot.js:173:12)
+        at async Module.spawnAndAssert (/workspace/work/node-stable-oracle-copy/test/common/assertSnapshot.js:208:3)
+        at async TestContext.<anonymous> (file:///workspace/work/node-stable-oracle-copy/test/parallel/test-node-output-console.mjs:21:7)
+        at async Test.run (node:internal/test_runner/test:1409:7)
+        at async Suite.processPendingSubtests (node:internal/test_runner/test:974:7) {
+      generatedMessage: true,
+      code: 'ERR_ASSERTION',
+      actual: "\x1B[33m123\x1B[39m foo { bar: \x1B[32m'baz'\x1B[39m }\n" +
+        "(node:<pid>) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n" +
+        '(Use `<node-exe> --trace-warnings ...` to show where the warning was created)\n',
+      expected: "\x1B[33m123\x1B[39m foo { bar: \x1B[32m'baz'\x1B[39m }\n",
+      operator: 'strictEqual',
+      diff: 'simple'
+    }
+    
+  ...
+not ok 6 /workspace/work/node-stable-oracle-copy/test/parallel/test-repl-eval-error-after-close
+  ---
+  duration_ms: 99.70800
+  severity: fail
+  exitcode: 1
+  stack: |-
+    Mismatched noop function calls. Expected exactly 1, actual 0.
+        at Proxy.mustCall (/workspace/work/node-stable-oracle-copy/test/common/index.js:470:10)
+        at Object.<anonymous> (/workspace/work/node-stable-oracle-copy/test/parallel/test-repl-eval-error-after-close.js:35:18)
+        at Module._compile (node:internal/modules/cjs/loader:1968:14)
+        at Object..js (node:internal/modules/cjs/loader:2108:10)
+        at Module.load (node:internal/modules/cjs/loader:1690:32)
+        at Module._load (node:internal/modules/cjs/loader:1480:12)
+        at wrapModuleLoad (node:internal/modules/cjs/loader:261:19)
+        at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:173:5)
+        at node:internal/main/run_main_module:33:47
+  ...
+not ok 7 /workspace/work/node-stable-oracle-copy/test/parallel/test-repl-multiline
+  ---
+  duration_ms: 112.24900
+  severity: fail
+  exitcode: 1
+  stack: |-
+    node:internal/process/promises:324
+        triggerUncaughtException(err, true /* fromPromise */);
+        ^
+    
+    AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:
+    
+      assert(actual.slice(firstStatementIdx).includes('undefined'))
+    
+        at REPLServer.<anonymous> (/workspace/work/node-stable-oracle-copy/test/parallel/test-repl-multiline.js:21:5)
+        at REPLServer.<anonymous> (/workspace/work/node-stable-oracle-copy/test/common/index.js:512:15)
+        at REPLServer.emit (node:events:526:24)
+        at REPLServer.emitExit (node:repl:745:12)
+        at REPLServer.emit (node:events:526:24)
+        at REPLServer.close (node:internal/readline/interface:570:10)
+        at node:repl:1120:58 {
+      generatedMessage: true,
+      code: 'ERR_ASSERTION',
+      actual: false,
+      expected: true,
+      operator: '==',
+      diff: 'simple'
+    }
+    
+    Node.js v26.12.0
+  ...
+not ok 8 /workspace/work/node-stable-oracle-copy/test/parallel/test-repl-pretty-stack-custom-writer
+  ---
+  duration_ms: 108.16300
+  severity: fail
+  exitcode: 1
+  stack: |-
+    node:internal/assert/utils:146
+      throw error;
+      ^
+    
+    AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+    + actual - expected
+    
+    + ''
+    - 'Uncaught Error: foo[a]'
+    
+        at Object.<anonymous> (/workspace/work/node-stable-oracle-copy/test/parallel/test-repl-pretty-stack-custom-writer.js:12:8)
+        at Module._compile (node:internal/modules/cjs/loader:1968:14)
+        at Object..js (node:internal/modules/cjs/loader:2108:10)
+        at Module.load (node:internal/modules/cjs/loader:1690:32)
+        at Module._load (node:internal/modules/cjs/loader:1480:12)
+        at wrapModuleLoad (node:internal/modules/cjs/loader:261:19)
+        at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:173:5)
+        at node:internal/main/run_main_module:33:47 {
+      generatedMessage: true,
+      code: 'ERR_ASSERTION',
+      actual: '',
+      expected: 'Uncaught Error: foo[a]',
+      operator: 'strictEqual',
+      diff: 'simple'
+    }
+    
+    Node.js v26.12.0
+  ...
+not ok 9 /workspace/work/node-stable-oracle-copy/test/parallel/test-repl-underscore
+  ---
+  duration_ms: 111.56800
+  severity: fail
+  exitcode: 1
+  stack: |-
+    node:internal/assert/utils:146
+      throw error;
+      ^
+    
+    AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+    + actual - expected
+    
+      [
+    +   '          var x = 10;  // evaluates to undefined',
+    +   '          _;           // still undefined',
+    +   '          y = 10;      // evaluates to 10',
+    +   '          _;           // 10 from last eval',
+    +   '          _ = 20;      // explicitly set to 20',
+    +   '          _;           // 20 from user input',
+    +   '          _ = 30;      // make sure we can set it twice and no prompt',
+    +   '          _;           // 30 from user input',
+    +   "          y = 40;      // make sure eval doesn't change _",
+    +   '          _;           // remains 30 from user input'
+    -   'undefined',
+    -   'undefined',
+    -   'undefined',
+    -   '10',
+    -   '10',
+    -   'Expression assignment to _ now disabled.',
+    -   '20',
+    -   '20',
+    -   '30',
+    -   '30',
+    -   '40',
+    -   '30'
+      ]
+    
+        at assertOutput (/workspace/work/node-stable-oracle-copy/test/parallel/test-repl-underscore.js:211:10)
+        at testSloppyMode (/workspace/work/node-stable-oracle-copy/test/parallel/test-repl-underscore.js:36:3)
+        at Object.<anonymous> (/workspace/work/node-stable-oracle-copy/test/parallel/test-repl-underscore.js:10:1)
+        at Module._compile (node:internal/modules/cjs/loader:1968:14)
+        at Object..js (node:internal/modules/cjs/loader:2108:10)
+        at Module.load (node:internal/modules/cjs/loader:1690:32)
+        at Module._load (node:internal/modules/cjs/loader:1480:12)
+        at wrapModuleLoad (node:internal/modules/cjs/loader:261:19)
+        at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:173:5)
+        at node:internal/main/run_main_module:33:47 {
+      generatedMessage: true,
+      code: 'ERR_ASSERTION',
+      actual: [
+        '          var x = 10;  // evaluates to undefined',
+        '          _;           // still undefined',
+        '          y = 10;      // evaluates to 10',
+        '          _;           // 10 from last eval',
+        '          _ = 20;      // explicitly set to 20',
+        '          _;           // 20 from user input',
+        '          _ = 30;      // make sure we can set it twice and no prompt',
+        '          _;           // 30 from user input',
+        "          y = 40;      // make sure eval doesn't change _",
+        '          _;           // remains 30 from user input'
+      ],
+      expected: [
+        'undefined',
+        'undefined',
+        'undefined',
+        '10',
+        '10',
+        'Expression assignment to _ now disabled.',
+        '20',
+        '20',
+        '30',
+        '30',
+        '40',
+        '30'
+      ],
+      operator: 'deepStrictEqual',
+      diff: 'simple'
+    }
+    
+    Node.js v26.12.0
+  ...
+not ok 10 /workspace/work/node-stable-oracle-copy/test/parallel/test-runner-reporters
+  ---
+  duration_ms: 1738.89900
+  severity: fail
+  exitcode: 1
+  stack: |-
+    Test failure: 'should support stdout as a destination with spec reporter'
+    Location: test/parallel/test-runner-reporters.js:176:3
+    AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+    [32m+ actual[39m [31m- expected[39m
+    
+    [32m+[39m "(node:3179285) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n" +
+    [32m+[39m   '(Use `node --trace-warnings ...` to show where the warning was created)\n'
+    [31m-[39m ''
+    
+        at TestContext.<anonymous> (/workspace/work/node-stable-oracle-copy/test/parallel/test-runner-reporters.js:181:12)
+        at Test.runInAsyncScope (node:async_hooks:226:14)
+        at Test.run (node:internal/test_runner/test:1402:25)
+        at Test.start (node:internal/test_runner/test:1262:17)
+        at node:internal/test_runner/test:1903:71
+        at node:internal/per_context/primordials:505:82
+        at new Promise (<anonymous>)
+        at new SafePromise (node:internal/per_context/primordials:479:3)
+        at node:internal/per_context/primordials:505:9
+        at Array.map (<anonymous>) {
+      generatedMessage: true,
+      code: 'ERR_ASSERTION',
+      actual: "(node:3179285) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n" +
+        '(Use `node --trace-warnings ...` to show where the warning was created)\n',
+      expected: '',
+      operator: 'strictEqual',
+      diff: 'simple'
+    }
+    
+    Test failure: 'should correctly report pass/fail for junit reporter using reporters.js'
+    Location: test/parallel/test-runner-reporters.js:195:3
+    AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+    [32m+ actual[39m [31m- expected[39m
+    
+    [32m+[39m "(node:3179305) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n" +
+    [32m+[39m   '(Use `node --trace-warnings ...` to show where the warning was created)\n'
+    [31m-[39m ''
+    
+        at TestContext.<anonymous> (/workspace/work/node-stable-oracle-copy/test/parallel/test-runner-reporters.js:199:12)
+        at Test.runInAsyncScope (node:async_hooks:226:14)
+        at Test.run (node:internal/test_runner/test:1402:25)
+        at Test.start (node:internal/test_runner/test:1262:17)
+        at node:internal/test_runner/test:1903:71
+        at node:internal/per_context/primordials:505:82
+        at new Promise (<anonymous>)
+        at new SafePromise (node:internal/per_context/primordials:479:3)
+        at node:internal/per_context/primordials:505:9
+        at Array.map (<anonymous>) {
+      generatedMessage: true,
+      code: 'ERR_ASSERTION',
+      actual: "(node:3179305) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n" +
+        '(Use `node --trace-warnings ...` to show where the warning was created)\n',
+      expected: '',
+      operator: 'strictEqual',
+      diff: 'simple'
+    }
+    
+    (node:3179025) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+    (Use `node --trace-warnings ...` to show where the warning was created)
+  ...
+ok 11 /workspace/work/node-stable-oracle-copy/test/parallel/test-sqlite-statement
+  ---
+  duration_ms: 15531.05000
+  ...
+not ok 12 /workspace/work/node-stable-oracle-copy/test/parallel/test-tls-get-ca-certificates-worker-no-use-system-ca
+  ---
+  duration_ms: 78.05800
+  severity: fail
+  exitcode: 1
+  stack: |-
+    node:internal/process/promises:324
+        triggerUncaughtException(err, true /* fromPromise */);
+        ^
+    
+    AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+    
+    122 !== 121
+    
+        at /workspace/work/node-stable-oracle-copy/test/parallel/test-tls-get-ca-certificates-worker-no-use-system-ca.js:37:10
+        at Object.<anonymous> (/workspace/work/node-stable-oracle-copy/test/parallel/test-tls-get-ca-certificates-worker-no-use-system-ca.js:60:3)
+        at Module._compile (node:internal/modules/cjs/loader:1968:14)
+        at Object..js (node:internal/modules/cjs/loader:2108:10)
+        at Module.load (node:internal/modules/cjs/loader:1690:32)
+        at Module._load (node:internal/modules/cjs/loader:1480:12)
+        at wrapModuleLoad (node:internal/modules/cjs/loader:261:19)
+        at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:173:5)
+        at node:internal/main/run_main_module:33:47 {
+      generatedMessage: true,
+      code: 'ERR_ASSERTION',
+      actual: 122,
+      expected: 121,
+      operator: 'strictEqual',
+      diff: 'simple'
+    }
+    
+    Node.js v26.12.0
+  ...
+not ok 13 /workspace/work/node-stable-oracle-copy/test/parallel/test-tls-get-ca-certificates-worker-use-system-ca
+  ---
+  duration_ms: 110.67000
+  severity: fail
+  exitcode: 1
+  stack: |-
+    node:internal/process/promises:324
+        triggerUncaughtException(err, true /* fromPromise */);
+        ^
+    
+    AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+    
+    738 !== 737
+    
+        at /workspace/work/node-stable-oracle-copy/test/parallel/test-tls-get-ca-certificates-worker-use-system-ca.js:38:10
+        at process.processTicksAndRejections (node:internal/process/task_queues:104:5) {
+      generatedMessage: true,
+      code: 'ERR_ASSERTION',
+      actual: 738,
+      expected: 737,
+      operator: 'strictEqual',
+      diff: 'simple'
+    }
+    
+    Node.js v26.12.0
+  ...
+ok 14 /workspace/work/node-stable-oracle-copy/test/parallel/test-vfs
+  ---
+  duration_ms: 46.28900
+  ...
+not ok 15 /workspace/work/node-stable-oracle-copy/test/parallel/test-cluster-primary-error
+  ---
+  duration_ms: 30010.40300
+  severity: fail
+  exitcode: -15
+  stack: |-
+    timeout
+  ...
+not ok 16 /workspace/work/node-stable-oracle-copy/test/parallel/test-cluster-primary-kill
+  ---
+  duration_ms: 30013.84200
+  severity: fail
+  exitcode: -15
+  stack: |-
+    timeout
+  ...
+not ok 17 /workspace/work/node-stable-oracle-copy/test/parallel/test-repl-custom-eval
+  ---
+  duration_ms: 30007.01000
+  severity: fail
+  exitcode: -15
+  stack: |-
+    timeout
+  ...
+
+Failed tests:
+/workspace/work/node-stable-oracle-engine/bin/node /workspace/work/node-stable-oracle-copy/test/parallel/test-net-boundsocket.js
+/workspace/work/node-stable-oracle-engine/bin/node /workspace/work/node-stable-oracle-copy/test/parallel/test-repl-context.js
+/workspace/work/node-stable-oracle-engine/bin/node --test-reporter=./test/common/test-error-reporter.js --test-reporter-destination=stdout /workspace/work/node-stable-oracle-copy/test/parallel/test-repl-custom-eval-previews.js
+/workspace/work/node-stable-oracle-engine/bin/node /workspace/work/node-stable-oracle-copy/test/parallel/test-repl-empty.js
+/workspace/work/node-stable-oracle-engine/bin/node --test-reporter=./test/common/test-error-reporter.js --test-reporter-destination=stdout /workspace/work/node-stable-oracle-copy/test/parallel/test-node-output-console.mjs
+/workspace/work/node-stable-oracle-engine/bin/node /workspace/work/node-stable-oracle-copy/test/parallel/test-repl-eval-error-after-close.js
+/workspace/work/node-stable-oracle-engine/bin/node /workspace/work/node-stable-oracle-copy/test/parallel/test-repl-multiline.js
+/workspace/work/node-stable-oracle-engine/bin/node /workspace/work/node-stable-oracle-copy/test/parallel/test-repl-pretty-stack-custom-writer.js
+/workspace/work/node-stable-oracle-engine/bin/node /workspace/work/node-stable-oracle-copy/test/parallel/test-repl-underscore.js
+/workspace/work/node-stable-oracle-engine/bin/node --test-reporter=./test/common/test-error-reporter.js --test-reporter-destination=stdout /workspace/work/node-stable-oracle-copy/test/parallel/test-runner-reporters.js
+/workspace/work/node-stable-oracle-engine/bin/node --no-use-system-ca /workspace/work/node-stable-oracle-copy/test/parallel/test-tls-get-ca-certificates-worker-no-use-system-ca.js
+/workspace/work/node-stable-oracle-engine/bin/node --no-use-system-ca /workspace/work/node-stable-oracle-copy/test/parallel/test-tls-get-ca-certificates-worker-use-system-ca.js
+/workspace/work/node-stable-oracle-engine/bin/node /workspace/work/node-stable-oracle-copy/test/parallel/test-cluster-primary-error.js
+/workspace/work/node-stable-oracle-engine/bin/node /workspace/work/node-stable-oracle-copy/test/parallel/test-cluster-primary-kill.js
+/workspace/work/node-stable-oracle-engine/bin/node --test-reporter=./test/common/test-error-reporter.js --test-reporter-destination=stdout /workspace/work/node-stable-oracle-copy/test/parallel/test-repl-custom-eval.js

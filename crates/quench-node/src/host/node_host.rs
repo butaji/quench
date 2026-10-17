@@ -60,7 +60,10 @@ pub(crate) enum CommonJsCache {
 
 /// Host-owned state and lifecycle data for the shared VM path.
 pub(crate) struct SharedNodeState {
+    pub(crate) vm_scripts: crate::modules::contextify_shared_vm::State,
     pub(crate) async_hooks: crate::modules::async_hooks_state::SharedAsyncHooksState,
+    pub(crate) native_tasks: crate::modules::native_task_pool::Pool,
+    pub(crate) dns: crate::modules::cares_binding::State,
     pub(crate) scheduler: crate::modules::shared_event_loop::SharedEventLoop,
     pub(crate) fs: crate::modules::fs_state::FsState,
     pub(crate) fs_watch: crate::modules::fs_watch_shared_vm::State,
@@ -78,6 +81,9 @@ pub(crate) struct SharedNodeState {
     pub(crate) commonjs_cache: Option<CommonJsCache>,
     /// Node's internal primordial snapshot used when loading `lib/internal/*`.
     pub(crate) primordials_module: Option<quench_runtime::RootId>,
+    pub(crate) realm_module_programs: std::collections::HashMap<
+        std::path::PathBuf, crate::host::shared_vm::commonjs::PreparedRealmModule,
+    >,
     pub(crate) crypto_handle_symbol: Option<quench_runtime::RootId>,
     pub(crate) event_targets_api: Option<quench_runtime::RootId>,
     pub(crate) trace: crate::modules::trace_state::TraceState,
@@ -90,12 +96,16 @@ pub(crate) struct SharedNodeState {
     pub(crate) stdin: crate::modules::process_stdin_shared_vm::State,
     pub(crate) process_ipc: crate::modules::child_process_ipc_shared_vm::State,
     pub(crate) zlib_streams: crate::modules::zlib_stream_shared_vm::State,
+    #[cfg(quench_openssl_provider)]
+    pub(crate) crypto_hashes: crate::modules::crypto_hash_shared_vm::State,
+    pub(crate) crypto_secret_jobs: crate::modules::crypto_secret_job_shared_vm::State,
     pub(crate) zlib_native: crate::modules::zlib_native_shared_vm::State,
     pub(crate) unhandled_rejection_mode: crate::modules::process_state::UnhandledRejectionMode,
     pub(crate) output: Option<NodeOutputSink>,
     pub(crate) net_auto_select_family_attempt_timeout: u64,
     pub(crate) net_auto_select_family: bool,
     pub(crate) process_module: Option<quench_runtime::RootId>,
+    pub(crate) process_capture_state: Option<quench_runtime::RootId>,
     pub(crate) path_module: Option<quench_runtime::RootId>,
     pub(crate) url_constructor: Option<quench_runtime::RootId>,
     pub(crate) url_state: Option<quench_runtime::RootId>,
@@ -105,7 +115,9 @@ pub(crate) struct SharedNodeState {
     /// Invocation flags supplied by the embedder for this logical process.
     pub(crate) exec_argv: Vec<String>,
     pub(crate) cli_options: crate::modules::cli_options::CliOptions,
+    pub(crate) report_config: crate::modules::report_configuration_shared_vm::State,
     initial_node_options: Option<String>,
+    initial_pending_deprecation: bool,
     pub(crate) fetch: crate::modules::fetch_shared_vm::FetchState,
     pub(crate) diagnostics: crate::modules::diagnostics_channel_shared_vm::SharedDiagnosticsState,
     pub(crate) http: crate::modules::http_shared_vm::State,
@@ -113,6 +125,8 @@ pub(crate) struct SharedNodeState {
     pub(crate) net_sockets: std::collections::HashMap<u64, NetSocket>,
     pub(crate) net_closing_sockets: std::collections::HashMap<u64, quench_runtime::RootId>,
     pub(crate) net_socket_close_completed: Option<quench_runtime::RootId>,
+    pub(crate) native_stream: crate::modules::stream_binding::State,
+    pub(crate) native_tcp_listeners: std::collections::HashMap<u64, quench_runtime::RootId>,
     pub(crate) net_servers: std::collections::HashMap<u64, NetServer>,
     pub(crate) child_process_shell_args_warning_emitted: bool,
     pub(crate) child_processes: std::collections::HashMap<u64, SharedChildProcess>,
@@ -148,6 +162,7 @@ pub(crate) enum ChildHandlePhase {
 }
 
 pub(crate) struct SharedChildProcess {
+    pub(crate) cancel: crate::modules::child_process_shared_vm::Cancellation,
     pub(crate) handle_phase: ChildHandlePhase,
     pub(crate) referenced: bool,
     pub(crate) close_dispatched: bool,
@@ -178,6 +193,7 @@ pub(crate) enum ChildProcessEvent {
 impl SharedNodeState {
     /// Forget cached guest handles before bootstrapping a replacement VM heap.
     pub(crate) fn reset_cached_vm_roots(&mut self) {
+        self.vm_scripts = Default::default();
         self.builtin_cache.clear();
         self.commonjs_cache = None;
         self.module_parent_api = None;
@@ -187,6 +203,7 @@ impl SharedNodeState {
         self.crypto_handle_symbol = None;
         self.event_targets_api = None;
         self.process_module = None;
+        self.process_capture_state = None;
         self.path_module = None;
         self.url_constructor = None;
         self.url_state = None;
@@ -198,6 +215,8 @@ impl SharedNodeState {
         self.net_server_on_connection = None;
         self.net_handle_onclose_symbol = None;
         self.net_socket_option_keys = None;
+        self.native_stream = Default::default();
+        self.native_tcp_listeners.clear();
         self.net_handle_identities.clear();
         self.net_handle_close_callbacks.clear();
         self.fs_watch = crate::modules::fs_watch_shared_vm::State::default();
@@ -217,9 +236,12 @@ impl SharedNodeState {
         async_identity: crate::modules::async_hooks_state::AsyncIdentity,
     ) -> Self {
         Self {
+            vm_scripts: Default::default(),
             async_hooks: crate::modules::async_hooks_state::SharedAsyncHooksState::new(
                 async_identity,
             ),
+            native_tasks: Default::default(),
+            dns: Default::default(),
             scheduler: crate::modules::shared_event_loop::SharedEventLoop::new(),
             fs,
             fs_watch: crate::modules::fs_watch_shared_vm::State::default(),
@@ -236,6 +258,7 @@ impl SharedNodeState {
             module_parent_api: None,
             active_esm_requires: std::collections::HashMap::new(),
             primordials_module: None,
+            realm_module_programs: std::collections::HashMap::new(),
             crypto_handle_symbol: None,
             event_targets_api: None,
             util_intrinsics: None,
@@ -247,6 +270,9 @@ impl SharedNodeState {
             stdin: crate::modules::process_stdin_shared_vm::State::default(),
             process_ipc: crate::modules::child_process_ipc_shared_vm::State::default(),
             zlib_streams: crate::modules::zlib_stream_shared_vm::State::default(),
+            #[cfg(quench_openssl_provider)]
+            crypto_hashes: crate::modules::crypto_hash_shared_vm::State::default(),
+            crypto_secret_jobs: crate::modules::crypto_secret_job_shared_vm::State::default(),
             zlib_native: crate::modules::zlib_native_shared_vm::State::default(),
             unhandled_rejection_mode: crate::modules::process_state::UnhandledRejectionMode::Throw,
             output: None,
@@ -254,6 +280,7 @@ impl SharedNodeState {
             net_auto_select_family_attempt_timeout:
                 crate::modules::net_config::DEFAULT_AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT,
             process_module: None,
+            process_capture_state: None,
             path_module: None,
             url_constructor: None,
             url_state: None,
@@ -262,7 +289,9 @@ impl SharedNodeState {
             timer_duration_warnings: Default::default(),
             exec_argv: Vec::new(),
             cli_options: Default::default(),
+            report_config: Default::default(),
             initial_node_options: std::env::var("NODE_OPTIONS").ok(),
+            initial_pending_deprecation: std::env::var("NODE_PENDING_DEPRECATION").as_deref() == Ok("1"),
             fetch: crate::modules::fetch_shared_vm::FetchState::new(),
             diagnostics:
                 crate::modules::diagnostics_channel_shared_vm::SharedDiagnosticsState::default(),
@@ -271,6 +300,8 @@ impl SharedNodeState {
             net_sockets: std::collections::HashMap::new(),
             net_closing_sockets: std::collections::HashMap::new(),
             net_socket_close_completed: None,
+            native_stream: Default::default(),
+            native_tcp_listeners: std::collections::HashMap::new(),
             net_servers: std::collections::HashMap::new(),
             child_process_shell_args_warning_emitted: false,
             child_processes: std::collections::HashMap::new(),
@@ -370,7 +401,8 @@ impl NodeHost {
             );
         let net_family = crate::modules::net_config::auto_select_family_from_exec_argv(&exec_argv);
         let mut shared = self.shared_state.borrow_mut();
-        shared.cli_options=crate::modules::cli_options::CliOptions::parse(shared.initial_node_options.as_deref(),&exec_argv)?;
+        shared.cli_options=crate::modules::cli_options::CliOptions::parse(shared.initial_node_options.as_deref(),&exec_argv,shared.initial_pending_deprecation)?;
+        shared.report_config=crate::modules::report_configuration_shared_vm::State::from_options(&shared.cli_options);
         shared.trace.configure(&exec_argv);
         shared.exec_argv = exec_argv;
         shared.unhandled_rejection_mode = mode;

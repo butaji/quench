@@ -1,0 +1,464 @@
+{
+  "scope": "Original Node stack policy belongs to each ShadowRealm, with traced host callback roots and original-source locations",
+  "source_commit": "c4f7844bd397cd702363a2ba54185e613c6d8273",
+  "incoming_commit": "e2e182a108b980a0989118282abf56e0d51e5bd7",
+  "latest_stable": "v26.12.0",
+  "checks": {
+    "core": 654,
+    "api": 363,
+    "focused_shadow": 1,
+    "restored_unchanged_originals": {
+      "stable": 1,
+      "pinned": 1
+    },
+    "framework": 43,
+    "shared": 7,
+    "workspace_all_targets": true,
+    "direct_shadow_and_buffer_differentials": 5
+  },
+  "shadow_family": {
+    "before": {
+      "fail": 7,
+      "pass": 2
+    },
+    "after": {
+      "fail": 6,
+      "pass": 3
+    },
+    "gained": [
+      "test-shadow-realm-prepare-stack-trace.js"
+    ],
+    "lost": [],
+    "total": 9
+  },
+  "stream_family": {
+    "counts": {
+      "pass": 52,
+      "timeout": 1
+    },
+    "total": 53,
+    "inventory_hash": "647b9535ab7f6745"
+  },
+  "fixed_work": {
+    "valid": 8,
+    "clean": 0,
+    "speed_claim": false
+  },
+  "design": [
+    "Core allows optional actual per-ShadowRealm host initialization and owns/traces the returned formatter value in Error realm intrinsics.",
+    "Node executes unchanged configured primordials/internal-errors modules in each ShadowRealm; the default hook, private brand, override WeakMap and internal fallback are genuinely realm local.",
+    "Private CJS process/require services are actual existing host objects, without exposing those globals. Existing ordinary CJS interop shim is byte-identical after factoring.",
+    "Original-source positions are preserved through real wrapper line/UTF16 column offsets in the target realm.",
+    "Custom prototypes/caller globals stay rooted across host initialization, collection and exceptions. Core test forces collection and checks both compiler modes."
+  ],
+  "limitations": [
+    "Goal remains open. Latest complete stable1787/5015 and pinned1815/4727 are older b673 inventories; selected restored stack cases are not added to those totals.",
+    "Six existing ShadowRealm family failures remain; one existing iterator broadcast cleanup timeout remains.",
+    "First Core link failed from disk exhaustion before tests; actual failed temporary was hashed/reclaimed and completed audit checkout sparsified without changing HEAD or630 source hashes. Fresh retry654/654 is the qualifying result.",
+    "No speed claim: fixed-work8valid/0clean.",
+    "Core initial library check caught missing std::fs qualification and was corrected before build; raw check retained.",
+    "First API run362/363 exposed incoming lazy public util initialization reading guest-replaced validators. Capturing original getCallSites policy before guest execution corrected the real regression; subsequent complete363/363 qualifies the final source. Core654 bytes unchanged after this Node-only correction."
+  ],
+  "raw": [
+    {
+      "path": "work/shadow-stack-isolation/all-api-first-validator-import-failure.log",
+      "bytes": 31068,
+      "sha256": "daa9dbc53427895fbb8529a67ea86f5945431cfaa00077c1faa52e5cb87a6f17"
+    },
+    {
+      "path": "work/shadow-stack-isolation/all-api.log",
+      "bytes": 29776,
+      "sha256": "f6c4381bdda55a0835af43778b31a7f60ba499d368059952fa60be13dda784db"
+    },
+    {
+      "path": "work/shadow-stack-isolation/buffer-concat-oracle.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/shadow-stack-isolation/buffer-concat-oracle.log",
+      "bytes": 945,
+      "sha256": "6952b631101e34ed06edc5159ea6b526493f0567d64f94710f686417c70d0b7d"
+    },
+    {
+      "path": "work/shadow-stack-isolation/buffer-latin1-oracle.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/shadow-stack-isolation/buffer-latin1-oracle.log",
+      "bytes": 1863,
+      "sha256": "09939bcf717a24a1d1193e5d2dbf4d0d6b23ecbde28bc8e551a3afaef73c562a"
+    },
+    {
+      "path": "work/shadow-stack-isolation/buffer-oracle.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/shadow-stack-isolation/buffer-oracle.log",
+      "bytes": 4169,
+      "sha256": "f9d0f3418b5812dbcd7e927283a12ea6ff35b6b736c9073a3243ad20342338ce"
+    },
+    {
+      "path": "work/shadow-stack-isolation/buffer-poison-oracle.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/shadow-stack-isolation/buffer-poison-oracle.log",
+      "bytes": 476,
+      "sha256": "13189736a66e7b1615619955feaa462064b24ed73d07b84b76bd4d5c21fd39e8"
+    },
+    {
+      "path": "work/shadow-stack-isolation/check-final.log",
+      "bytes": 135,
+      "sha256": "418a58f1be651ef1b6ac6f040f7ab3de75e5188b19a831cbcf23c27426168753"
+    },
+    {
+      "path": "work/shadow-stack-isolation/check.log",
+      "bytes": 812,
+      "sha256": "4714d53f42a1ba96ad2e740fedc13480f4e63142d070a0c88141467390065aed"
+    },
+    {
+      "path": "work/shadow-stack-isolation/completed-checkout-sparse-reclamation.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/shadow-stack-isolation/core-disk-full.log",
+      "bytes": 5764,
+      "sha256": "8cdbc61f667e4b62dd5eb0d767ac228389019644a71fed68f21a3125a4db7ff0"
+    },
+    {
+      "path": "work/shadow-stack-isolation/core.log",
+      "bytes": 57529,
+      "sha256": "b4664afacbfc6bbb72ff6897e702df3c0a9e4fe2a513dcd397bb9e4438687f8f"
+    },
+    {
+      "path": "work/shadow-stack-isolation/core654-before-node-fix.json",
+      "bytes": 28281,
+      "sha256": "400a1f0bfaafa365bf14f3f33e0ecd49891ca0699492881168dd02df254f9320"
+    },
+    {
+      "path": "work/shadow-stack-isolation/extras.sh",
+      "bytes": 3265,
+      "sha256": "2e6cce41f9b1c2860c27e7e3faa91f50cdf6110b4dbfb34c4b596de18ee4659a"
+    },
+    {
+      "path": "work/shadow-stack-isolation/failed-link-reclamation.json",
+      "bytes": 320,
+      "sha256": "49147c9b51d3ae06f390f733dcfd6722d8e6c7a492ea7c621765951f996a842f"
+    },
+    {
+      "path": "work/shadow-stack-isolation/family-before.json",
+      "bytes": 6688,
+      "sha256": "85a4d61de8a47a4174f08a95e8351e5a5c0fe16003cedbbb7bc3771aa0f61469"
+    },
+    {
+      "path": "work/shadow-stack-isolation/family-before.log",
+      "bytes": 1032,
+      "sha256": "f4829502af23ce19d31d424044a9bd10a1ddabab957af08e32f08785dbfb0d6c"
+    },
+    {
+      "path": "work/shadow-stack-isolation/family-candidate.json",
+      "bytes": 6049,
+      "sha256": "84b7ea7e162b489a8daafa8e8a93b66fb974dd6af9b6d02f71bcad37b93c80f4"
+    },
+    {
+      "path": "work/shadow-stack-isolation/family-candidate.log",
+      "bytes": 1032,
+      "sha256": "597b47fe6e6be5251f2e4811e082cdb265961c9e56536fe91ee2aaa6bcb67ab0"
+    },
+    {
+      "path": "work/shadow-stack-isolation/family-receipt.json",
+      "bytes": 1014,
+      "sha256": "5056cb5ab9a99d67983e757433878ba692efb2d07e5b923d3209e3d311030cda"
+    },
+    {
+      "path": "work/shadow-stack-isolation/family.py",
+      "bytes": 1109,
+      "sha256": "78abde14ea12058c1d2dd0b8cc769a9b8a45759334a5b4fd715be77732df05e1"
+    },
+    {
+      "path": "work/shadow-stack-isolation/final-candidate.log",
+      "bytes": 195,
+      "sha256": "5bb1c6f6a341403cc0fb9a357f431916fbbeb47d4b36b6b0a8179f599a2f7a1f"
+    },
+    {
+      "path": "work/shadow-stack-isolation/final-check.log",
+      "bytes": 284,
+      "sha256": "b17b20cec4dc90dba38a4ed655f8a5a2e83acac6604404d34d5fa6901b525826"
+    },
+    {
+      "path": "work/shadow-stack-isolation/final-focused.log",
+      "bytes": 358,
+      "sha256": "a34f01b74e5417216b5d419db06b762280b6acd415d3174c2cdee334e9b7c509"
+    },
+    {
+      "path": "work/shadow-stack-isolation/final-oracle.log",
+      "bytes": 195,
+      "sha256": "5bb1c6f6a341403cc0fb9a357f431916fbbeb47d4b36b6b0a8179f599a2f7a1f"
+    },
+    {
+      "path": "work/shadow-stack-isolation/final.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/shadow-stack-isolation/fixed-work.json",
+      "bytes": 154043,
+      "sha256": "322167ce0e8db607356dd14b29c4cc5ef0f442b567d773b305a24ed702f93fb5"
+    },
+    {
+      "path": "work/shadow-stack-isolation/fixed-work.log",
+      "bytes": 1131,
+      "sha256": "48197ce966307e3b35cfef2baf4c1299216ddfcb6ce6944a77da1498ee1af6f0"
+    },
+    {
+      "path": "work/shadow-stack-isolation/focused.log",
+      "bytes": 439,
+      "sha256": "abf13ac68d571b4fa1aeb052d0566a626f7e4587a598cdb296d38b08eb8ac9a2"
+    },
+    {
+      "path": "work/shadow-stack-isolation/framework.log",
+      "bytes": 3798,
+      "sha256": "b41881f94821125815bc87efbbbd7d26b13fd072686394014795864fa55f2ae8"
+    },
+    {
+      "path": "work/shadow-stack-isolation/fresh-policy-probe.cjs",
+      "bytes": 1162,
+      "sha256": "c25ed718dea4724614cf0c562d867e4e8e2a8f8db491cd0889e7d0e5bcde37b3"
+    },
+    {
+      "path": "work/shadow-stack-isolation/fresh-policy-probe.log",
+      "bytes": 43,
+      "sha256": "51db6c13d9d4400ccc697182c0486333ec6f7509337d22da8e4839578a088955"
+    },
+    {
+      "path": "work/shadow-stack-isolation/import-policy-control.log",
+      "bytes": 438,
+      "sha256": "2eb009d85444bef4a3f16650a2d97c941c46770f800b40828d65a809c7f8c805"
+    },
+    {
+      "path": "work/shadow-stack-isolation/incoming-commit.log",
+      "bytes": 93,
+      "sha256": "ea77a0ed6f571bf9fe0dc8491410ecd433f61a552244b48513dd881d9758f2e6"
+    },
+    {
+      "path": "work/shadow-stack-isolation/incoming-merge.log",
+      "bytes": 324,
+      "sha256": "1d4060d24178c66ab6aaade1e5b1cbefb2eddd7a9e0315b1103b37ca24007dd1"
+    },
+    {
+      "path": "work/shadow-stack-isolation/incoming-real-stack.diff",
+      "bytes": 20342,
+      "sha256": "9796e8a463b88266def1d86bd86586e227dab7a039e166a70533de1439e338f8"
+    },
+    {
+      "path": "work/shadow-stack-isolation/oracle-default-hook.log",
+      "bytes": 14,
+      "sha256": "a924460730d392ec8e1326f54a53a1d8d76534732a7af8c069cf4c8dafd540f2"
+    },
+    {
+      "path": "work/shadow-stack-isolation/oracle.cjs",
+      "bytes": 1460,
+      "sha256": "bfa4f6744c2b5d2b7f872ecc7d785b1c523842a5dd27f7b37cb91497907b66a5"
+    },
+    {
+      "path": "work/shadow-stack-isolation/oracle.log",
+      "bytes": 195,
+      "sha256": "5bb1c6f6a341403cc0fb9a357f431916fbbeb47d4b36b6b0a8179f599a2f7a1f"
+    },
+    {
+      "path": "work/shadow-stack-isolation/original-pinned.json",
+      "bytes": 703,
+      "sha256": "d77460e7131bd7d31fe95ed11498f62b2e5e929f713cfb13705ce1aac4db9d0e"
+    },
+    {
+      "path": "work/shadow-stack-isolation/original-pinned.log",
+      "bytes": 189,
+      "sha256": "396c17ac0cca69098437ce946e012f729a3d022cfb830347f4771dc5f769db86"
+    },
+    {
+      "path": "work/shadow-stack-isolation/original-stable.json",
+      "bytes": 690,
+      "sha256": "e0d1b0d1948d53d529198f15075d4efc476d3ee0a02eb2c38b47e8d9f26758a0"
+    },
+    {
+      "path": "work/shadow-stack-isolation/original-stable.log",
+      "bytes": 209,
+      "sha256": "437d6f0f282710b97d73fc0e32035ce8d29eff0e0a8f8fc8ed9ac196bc3a2348"
+    },
+    {
+      "path": "work/shadow-stack-isolation/paired-build.log",
+      "bytes": 365,
+      "sha256": "f152f7a6213fb733e5d04ea64704556f381d4c4e767af652baf7fe08b9bc0002"
+    },
+    {
+      "path": "work/shadow-stack-isolation/paired-final-build.log",
+      "bytes": 217,
+      "sha256": "a8c3b9b62cb13bf7390db21873efe2ba7cca8a10b259493da59f9ec2aca6a081"
+    },
+    {
+      "path": "work/shadow-stack-isolation/qualify-node-fix.sh",
+      "bytes": 1372,
+      "sha256": "ac3a4007a9b04af46415e97e6696b4d000bcbaadf671c8ea8dab21d1f05c83f4"
+    },
+    {
+      "path": "work/shadow-stack-isolation/qualify.sh",
+      "bytes": 1326,
+      "sha256": "652a64b6488a71448a7ecd59cbb42e45f186bc8a236a4aaee841e7d202785c1b"
+    },
+    {
+      "path": "work/shadow-stack-isolation/resume.sh",
+      "bytes": 810,
+      "sha256": "f4335ad456c21e94487fd8695b84842a1b37127228999889649ab1eb372b5ce6"
+    },
+    {
+      "path": "work/shadow-stack-isolation/shared.log",
+      "bytes": 882,
+      "sha256": "02ea29a54034983f19a5f03313f5259cba81c94352183a1d22d10c6af1bd91ae"
+    },
+    {
+      "path": "work/shadow-stack-isolation/stream-family.json",
+      "bytes": 129220,
+      "sha256": "cbf5d1af31d8cca3a2cbe5ec6b338acc307fc15aaea3bed441c55f3e0fe49392"
+    },
+    {
+      "path": "work/shadow-stack-isolation/stream-family.log",
+      "bytes": 5629,
+      "sha256": "66ab3f298037675815b7244ca3a85af74c34432c7968cc90b9eed07f0d65268e"
+    },
+    {
+      "path": "work/shadow-stack-isolation/unchanged-cjs-interop.json",
+      "bytes": 424,
+      "sha256": "db225c5a99165ebab85b9fec3ad1bea3c7c90b858479231fd4b0e3eaacaa94b8"
+    },
+    {
+      "path": "work/shadow-stack-isolation/workspace.log",
+      "bytes": 519,
+      "sha256": "765d1e5834b8782e1cb947a9fde1a400a9c438d51fccc6488cbba80593a00ff6"
+    },
+    {
+      "path": "work/shadow-stack-bin/source-commit.txt",
+      "bytes": 41,
+      "sha256": "1dfb89aff4f051a689921f46c4508237794d6e5f50e77158e3bfa16d9e757beb"
+    },
+    {
+      "path": "work/shadow-stack-bin/source-sha256.json",
+      "bytes": 77477,
+      "sha256": "8b86efb755a4b1ad63324b96050890192ee81ff53a3a2113a4784a3be5bfb296"
+    },
+    {
+      "path": "work/shadow-stack-bin/sha256.txt",
+      "bytes": 235,
+      "sha256": "8197d501303be1b45ce9260804d717db24e86963a331ece9eb9a5549d262394e"
+    },
+    {
+      "path": "work/native-buffer-unsafe/shared-merge.log",
+      "bytes": 13302,
+      "sha256": "052c054f3a282339b4876aab2bdfe23ff1fa9b5dd1ecb62b6181b305e394c226"
+    },
+    {
+      "path": "work/native-buffer-unsafe/shared-actual-source-diff.log",
+      "bytes": 927,
+      "sha256": "6a6e6e67dbd65916c601cc130c4b0742fdf46dec5043e60a022a12b975c8a62d"
+    },
+    {
+      "path": "work/native-buffer-unsafe/shared-push.log",
+      "bytes": 512,
+      "sha256": "ec49ad1d5ae05fb03ae399b0fc190d4301ac024b98c20405483e05de4a7effe4"
+    },
+    {
+      "path": "work/native-buffer-unsafe/shared-fetch.log",
+      "bytes": 94,
+      "sha256": "23752610861b7a0f11c2259c028697cb2941d483e75747fcacd3b2b7b35b0ae2"
+    },
+    {
+      "path": "work/task-supervisor/shadow-stack-state.json",
+      "bytes": 260,
+      "sha256": "dee803f74a0c4678d8aae90e2c62d82481416fda8f9e29d2d07153a9c6c8a560"
+    },
+    {
+      "path": "work/task-supervisor/shadow-stack.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/task-supervisor/shadow-extras-state.json",
+      "bytes": 250,
+      "sha256": "b94b34f8e5f8f6c481e539f16615f951ecdc5698ed1a9697cc9dc9456be2bf66"
+    },
+    {
+      "path": "work/task-supervisor/shadow-extras.log",
+      "bytes": 46,
+      "sha256": "aa2664e4de864732d654e664946693c05fe6932429fbf8fc506b822b75c9c603"
+    },
+    {
+      "path": "work/task-supervisor/shadow-family-state.json",
+      "bytes": 253,
+      "sha256": "8808de089756864c312f24c6fed175c3ddc64f5cd10a15c0036cf4c373d1ed06"
+    },
+    {
+      "path": "work/task-supervisor/shadow-family.log",
+      "bytes": 776,
+      "sha256": "317433b505e413205e06d36c5b5e8eb3becde128d9abfddffd6d01819a68eb18"
+    },
+    {
+      "path": "work/task-supervisor/shadow-stack.json",
+      "bytes": 289,
+      "sha256": "e9bf56a3ca0884f1d4e7f8e584f768e24d10a13b3b2b19ee7d2251282a44aa3d"
+    },
+    {
+      "path": "work/task-supervisor/shadow-stack-resume.json",
+      "bytes": 288,
+      "sha256": "b60e7a7e7788c31018ea967d074e77e99f189e1ee264b873df39509f00ff345f"
+    },
+    {
+      "path": "work/task-supervisor/shadow-extras.json",
+      "bytes": 290,
+      "sha256": "ae88caf340b62a0812813ab3f3dbad27b942ad2971f7eee65ab16f2cb38dc029"
+    },
+    {
+      "path": "work/task-supervisor/shadow-family.json",
+      "bytes": 293,
+      "sha256": "71ee75899f0f9a1c5f64a9754477dfd4cdd3246b9588aa19fae1fe754a629685"
+    },
+    {
+      "path": "work/task-supervisor/shadow-stack-disk-full-state.json",
+      "bytes": 248,
+      "sha256": "07afc028ee65b240e1651999f95e770006940df898b7c681fe2eed7a1c1d188f"
+    },
+    {
+      "path": "work/task-supervisor/shadow-stack-disk-full.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/task-supervisor/shadow-stack-node-fix.json",
+      "bytes": 298,
+      "sha256": "a5d63452f88b1d25092abfe761a3eb8a8ee22fca09e3f929ba180b9e70a04e69"
+    },
+    {
+      "path": "work/task-supervisor/shadow-stack-first-api-failure-state.json",
+      "bytes": 247,
+      "sha256": "d11655499310a19acc2ba3955bdd3b936c5077f5246facd6b060a65776fa288a"
+    },
+    {
+      "path": "work/task-supervisor/shadow-stack-first-api-failure.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "work/task-supervisor/shadow-extras-first-api-failure-state.json",
+      "bytes": 245,
+      "sha256": "8cce23fe5b733ec48a5c39a345996bb4acc94178fb847c28e8aaef36b5a81920"
+    },
+    {
+      "path": "work/task-supervisor/shadow-extras-first-api-failure.log",
+      "bytes": 308,
+      "sha256": "f6d6f9aeec1de9b246a26f6f0788e62a8f239d91256dd17309c569c225a584fa"
+    }
+  ]
+}

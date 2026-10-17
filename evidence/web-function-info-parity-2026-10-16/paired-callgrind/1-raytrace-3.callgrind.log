@@ -1,0 +1,17 @@
+==606009== Callgrind, a call-graph generating cache profiler
+==606009== Copyright (C) 2002-2017, and GNU GPL'd, by Josef Weidendorfer et al.
+==606009== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info
+==606009== Command: /workspace/quench/work/quench-function-info-qualified /workspace/quench/work/clone-callgrind/raytrace-3.js
+==606009== Parent PID: 605422
+==606009== 
+==606009== For interactive control, run 'callgrind_control -h'.
+--606009-- WARNING: unhandled amd64-linux syscall: 323
+--606009-- You may be able to write your own handler.
+--606009-- Read the file README_MISSING_SYSCALL_OR_IOCTL.
+--606009-- Nevertheless we consider this a bug.  Please report
+--606009-- it at http://valgrind.org/support/bug_reports.html.
+==606009== 
+==606009== Events    : Ir
+==606009== Collected : 5938069677
+==606009== 
+==606009== I   refs:      5,938,069,677
