@@ -1252,6 +1252,12 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.completion(result)
     }
 
+    /// A Uint8Array that takes ownership of `bytes` as its backing store.
+    pub fn uint8_array_from_rooted(&mut self, bytes: Vec<u8>) -> Result<RootId, RootedError> {
+        let result = self.vm.embedding_uint8_array_from(bytes);
+        self.completion(result)
+    }
+
     /// Retain a private weak reference without ECMAScript kept-object effects.
     pub fn host_weak_root(&mut self, target: RootId) -> Result<HostWeakRoot, RootedError> {
         self.vm
@@ -1310,6 +1316,11 @@ impl<'a, H: Host> NativeContext<'a, H> {
     pub fn with_buffer_bytes_mut_rooted<T>(&mut self, root: RootId, f: impl FnOnce(&mut [u8]) -> T) -> Option<T> {
         let value = self.vm.root_value(root)?;
         self.vm.embedding_with_buffer_bytes_mut(value, f)
+    }
+
+    /// Run `f` over the bytes a typed array or DataView views, without copying them.
+    pub fn with_view_bytes_rooted<T>(&self, root: RootId, f: impl FnOnce(&[u8]) -> T) -> Option<T> {
+        self.vm.root_value(root).and_then(|value| self.vm.embedding_with_view_bytes(value, f))
     }
 
     /// Snapshot at most `maximum` original bytes of an ArrayBuffer or buffer view.

@@ -191,7 +191,19 @@ impl<H: Host> Vm<H> {
                 let byte_length = length.checked_mul(width).ok_or_else(|| {
                     self.range_error(p, "typed array byte length is out of range".into())
                 })?;
-                let buffer = self.new_fixed_array_buffer(p, byte_length, false)?;
+                // A same-kind typed source is a byte copy, taken straight into the new
+                // backing store instead of zeroing it first.
+                let copied = matches!(initialization, Some(TypedArrayInitialization::TypedArray(_)))
+                    .then(|| self.heap.root_value(source_root).unwrap())
+                    .filter(|source| {
+                        matches!(self.heap.get(*source), Some(Cell::TypedArray { kind: source_kind, .. }) if *source_kind == kind)
+                    })
+                    .and_then(|source| self.embedding_with_view_bytes(source, |bytes| bytes.get(..byte_length).map(<[u8]>::to_vec))?);
+                let source_copied = copied.is_some();
+                let buffer = match copied {
+                    Some(bytes) => self.fixed_array_buffer_from(bytes.into(), false),
+                    None => self.new_fixed_array_buffer(p, byte_length, false)?,
+                };
                 let buffer_root = self.heap.root(buffer);
                 backing = Some(buffer_root);
                 let typed_array = self.heap.alloc(Cell::TypedArray {
@@ -212,8 +224,10 @@ impl<H: Host> Vm<H> {
                     initialization,
                     Some(TypedArrayInitialization::TypedArray(_))
                 ) {
-                    let source = self.heap.root_value(source_root).unwrap();
-                    self.typed_array_copy_elements(p, source, typed_array, 0, length)?;
+                    if !source_copied {
+                        let source = self.heap.root_value(source_root).unwrap();
+                        self.typed_array_copy_elements(p, source, typed_array, 0, length)?;
+                    }
                     return Ok(self.heap.root_value(target_root).unwrap());
                 }
                 for index in 0..length {
