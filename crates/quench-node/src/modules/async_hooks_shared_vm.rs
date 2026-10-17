@@ -225,11 +225,10 @@ pub(crate) fn prune_promises(
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let shared = context.host_mut().shared_state();
-    let entries = std::mem::take(&mut shared.borrow_mut().async_hooks.promise_resources);
+    let entries: Vec<_> = shared.borrow().async_hooks.promise_resources.iter().map(|(&id, &weak)| (id, weak)).collect();
     for (id, weak) in entries {
-        if context.resolve_host_weak_root(weak).is_some() {
-            shared.borrow_mut().async_hooks.promise_resources.insert(id, weak);
-        } else {
+        if context.resolve_host_weak_root(weak).is_none() {
+            shared.borrow_mut().async_hooks.promise_resources.remove(&id);
             context.release_host_weak_root(weak);
             shared.borrow_mut().async_hooks.context_triggers.remove(&id);
             queue_destroy(context, id)?;
@@ -246,12 +245,15 @@ pub(crate) fn promise_job_boundary(
     let shared = context.host_mut().shared_state();
     let resource = shared.borrow().async_hooks.job_resources.get(&snapshot.0).and_then(|job| job.resource);
     let Some(resource) = resource else { return Ok(()); };
-    let id = context.number(resource as f64);
     let kind = if before {
         super::async_hook_registry_shared_vm::HookKind::Before
     } else {
         super::async_hook_registry_shared_vm::HookKind::After
     };
+    if !super::async_hook_registry_shared_vm::has_hooks(context, kind) {
+        return Ok(());
+    }
+    let id = context.number(resource as f64);
     super::async_hook_registry_shared_vm::emit(context, kind, &[id])
 }
 
@@ -259,10 +261,12 @@ pub(crate) fn promise_settled(
     context: &mut NativeContext<'_, NodeHost>,
     resource: quench_runtime::HostExecutionContext,
 ) -> Result<(), RootedError> {
+    let kind = super::async_hook_registry_shared_vm::HookKind::PromiseResolve;
+    if !super::async_hook_registry_shared_vm::has_hooks(context, kind) {
+        return Ok(());
+    }
     let id = context.number(resource.0 as f64);
-    super::async_hook_registry_shared_vm::emit(
-        context, super::async_hook_registry_shared_vm::HookKind::PromiseResolve, &[id],
-    )
+    super::async_hook_registry_shared_vm::emit(context, kind, &[id])
 }
 
 /// Snapshot the currently visible stores under a fresh identity for one
@@ -524,6 +528,12 @@ pub(crate) fn emit_init(
             .entry(async_id)
             .or_insert(parent as i64);
     }
+    if !super::async_hook_registry_shared_vm::has_hooks(
+        context,
+        super::async_hook_registry_shared_vm::HookKind::Init,
+    ) {
+        return Ok(());
+    }
     let trigger = state.borrow().async_hooks.context_triggers[&async_id];
     let id = context.number(async_id as f64);
     let trigger = context.number(trigger as f64);
@@ -614,7 +624,7 @@ pub(crate) fn initialize_resource(
     receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    use super::event_constructor_shared_vm::{get, named_set};
+    use super::event_constructor_shared_vm::get;
     let undefined = context.undefined();
     let kind = args.first().copied().unwrap_or(undefined);
     let options = args.get(1).copied().unwrap_or(undefined);
@@ -623,7 +633,6 @@ pub(crate) fn initialize_resource(
             context, kind, "type", "string",
         )?);
     };
-    let api = context.host_function_data()?;
     let state = context.host_mut().shared_state();
     let identity = state.borrow().async_hooks.identity.clone();
     let parent = identity.store_context();
@@ -663,21 +672,18 @@ pub(crate) fn initialize_resource(
         let error =
             context.range_error_rooted(&format!("Invalid triggerAsyncId value: {received}"))?;
         let code = context.string_rooted("ERR_INVALID_ASYNC_ID");
-        named_set(context, api, error, "code", code)?;
+        context.assign_named_property_rooted(error, "code", code)?;
         return Err(context.throw(error));
     }
     let trigger = number.unwrap() as i64;
     let id = identity.allocate_async_id();
     set_number(context, receiver, ASYNC_ID, id)?;
     let trigger_value = context.number(trigger as f64);
-    named_set(
-        context,
-        api,
-        receiver,
+    context.assign_named_property_rooted(receiver,
         "\0quench:async_hooks:trigger",
         trigger_value,
     )?;
-    named_set(context, api, receiver, "\0quench:async_hooks:type", kind)?;
+    context.assign_named_property_rooted(receiver, "\0quench:async_hooks:type", kind)?;
     {
         let mut state = state.borrow_mut();
         state.async_hooks.context_triggers.insert(id, trigger);
@@ -691,7 +697,7 @@ pub(crate) fn initialize_resource(
     {
         let error = context.type_error_rooted("Invalid name for async \"type\": ")?;
         let code = context.string_rooted("ERR_ASYNC_TYPE");
-        named_set(context, api, error, "code", code)?;
+        context.assign_named_property_rooted(error, "code", code)?;
         return Err(context.throw(error));
     }
     emit_init(context, receiver, &kind_text, id)?;

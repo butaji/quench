@@ -1,0 +1,9 @@
+quench-bench/js-engine-benchmark/v8-v7/crypto.js: valid (1/1 rounds)
+quench-bench/js-engine-benchmark/v8-v7/deltablue.js: valid (1/1 rounds)
+quench-bench/js-engine-benchmark/v8-v7/earley-boyer.js: valid (1/1 rounds)
+quench-bench/js-engine-benchmark/v8-v7/navier-stokes.js: valid (1/1 rounds)
+quench-bench/js-engine-benchmark/v8-v7/raytrace.js: valid (1/1 rounds)
+quench-bench/js-engine-benchmark/v8-v7/regexp.js: valid (1/1 rounds)
+quench-bench/js-engine-benchmark/v8-v7/richards.js: valid (1/1 rounds)
+quench-bench/js-engine-benchmark/v8-v7/splay.js: valid (1/1 rounds)
+wrote /tmp/claude-0/-home-user-quench/7b48bd7e-c8b8-513f-8fda-df3008a36a8f/scratchpad/stock-base-1.json

@@ -651,6 +651,8 @@ fn rewrite_once(
         function.parameter_end_pc,
         &function.binding_sites,
     );
+    // Decoded once for the rules that record their sources.
+    let positions = function.source_positions.iter().collect::<Vec<_>>();
     let mut code = Vec::with_capacity(old.len());
     let mut map = vec![0usize; old.len() + 1];
     let mut index = 0;
@@ -678,7 +680,7 @@ fn rewrite_once(
                     .iter()
                     .filter(|rule| rule.pattern == [first.op(), second.op()])
                     .find_map(|rule| {
-                        let replacement = apply_rule(*rule, first, *second, field_sites, &function.source_positions, index)?;
+                        let replacement = apply_rule(*rule, first, *second, field_sites, &positions, index)?;
                         let removed_definitions = original_definitions
                             & !liveness::definitions(replacement.as_wide(), superinstructions);
                         (live_out & removed_definitions == 0).then_some(replacement)
@@ -746,7 +748,7 @@ pub(super) fn relocate(
     handlers: &mut [crate::bytecode::Handler],
     parameter_end_pc: &mut u32,
     binding_sites: &mut [crate::bytecode::BindingSite],
-    source_positions: &mut Vec<crate::bytecode::SourcePosition>,
+    source_positions: &mut crate::bytecode::SourcePositions,
     old_code: &[Instr],
 ) {
     for instruction in code.iter_mut() {
@@ -783,17 +785,16 @@ pub(super) fn relocate(
 
 fn relocate_source_positions(
     code_len: usize,
-    source_positions: &mut Vec<crate::bytecode::SourcePosition>,
+    source_positions: &mut crate::bytecode::SourcePositions,
     old_code: &[Instr],
     wide: &[WideInstruction],
     map: &[usize],
 ) {
     let surviving_positions = source_positions
         .iter()
-        .copied()
         .filter(|position| source_instruction_survives(position.pc as usize, old_code, map))
         .collect::<Vec<_>>();
-    let mut relocated = Vec::with_capacity(surviving_positions.len());
+    let mut relocated = crate::bytecode::SourcePositions::default();
     let mut position_index = 0;
     let mut origin_pc = 0;
     let mut effective = None;
@@ -868,7 +869,7 @@ mod tests {
                 &mut [],
                 &mut parameter_end,
                 &mut [],
-                &mut vec![],
+                &mut Default::default(),
                 &old,
             );
             assert_eq!(wide[0].jump_target(), 2);
@@ -1252,7 +1253,9 @@ mod tests {
                 line: 1,
                 column: 9,
             },
-        ];
+        ]
+        .into_iter()
+        .collect();
         let map = [0, 0, 1, 1, 2];
         let mut parameter_end_pc = 0;
         let mut handlers = vec![];
@@ -1270,7 +1273,7 @@ mod tests {
         );
 
         assert_eq!(
-            source_positions,
+            source_positions.iter().collect::<Vec<_>>(),
             vec![
                 SourcePosition {
                     pc: 0,
@@ -1296,13 +1299,15 @@ mod tests {
             SourcePosition { pc: 0, line: 1, column: 74 },
             SourcePosition { pc: 1, line: 1, column: 69 },
             SourcePosition { pc: 2, line: 1, column: 69 },
-        ];
+        ]
+        .into_iter()
+        .collect();
         let first = [load, Instr::new(Op::Move, 0, 0, 0, 0), call];
         relocate_source_positions(3, &mut positions, &first, &wide, &[0, 1, 2, 3]);
         assert_eq!(positions.last().unwrap().pc, 2);
         let second = [load, Instr::new(Op::Nop, 0, 0, 0, 0), call];
         relocate_source_positions(2, &mut positions, &second, &wide, &[0, 1, 1, 2]);
-        assert_eq!(positions, vec![
+        assert_eq!(positions.iter().collect::<Vec<_>>(), vec![
             SourcePosition { pc: 0, line: 1, column: 74 },
             SourcePosition { pc: 1, line: 1, column: 69 },
         ]);

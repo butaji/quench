@@ -104,7 +104,7 @@ fn encode(
     if encoding == "buffer" {
         super::buffer_shared_vm::from_bytes(c, &bytes)
     } else {
-        super::buffer_string_shared_vm::decode_bytes(c, &bytes, encoding)
+        super::buffer_binding_shared_vm::decode_bytes(c, &bytes, encoding)
     }
 }
 pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {

@@ -389,6 +389,7 @@ fn build_internal_binding(
         ),
         "stream_wrap" => return super::stream_binding::binding(context),
         "udp_wrap" => return super::udp_binding::binding(context),
+        "pipe_wrap" => return super::pipe_binding::binding(context),
         "tcp_wrap" => return super::tcp_binding::binding(context),
         "contextify" => return super::contextify_shared_vm::binding(context),
         "types" => return super::util_shared_vm::types_binding(context),
@@ -415,7 +416,9 @@ fn build_internal_binding(
         "symbols" => return super::util_shared_vm::symbols_binding(context),
         "cares_wrap" => return crate::host::shared_vm::commonjs::cares_binding(context),
         "http2" => return crate::host::shared_vm::commonjs::http2_binding(context),
-        "buffer" => return super::buffer_fill_shared_vm::binding(context),
+        "buffer" => return super::buffer_binding_shared_vm::binding(context),
+        "url" => return super::url_binding_shared_vm::binding(context),
+        "blob" => return super::blob_binding_shared_vm::binding(context),
         "crypto" => return super::tls_shared_vm::facade::binding(context),
         "timers" => return super::timers_shared_vm::binding(context),
         "performance" => return super::performance_binding_shared_vm::binding(context),
@@ -448,6 +451,7 @@ fn build_internal_binding(
             }
             let zlib = super::zlib_constants::constants(context)?;
             put(context, binding, "zlib", zlib)?;
+            let crypto=super::crypto_constants::binding(context)?;put(context,binding,"crypto",crypto)?;
             let trace = context.object_rooted()?;
             for (name, code) in [
                 ("TRACE_EVENT_PHASE_BEGIN", b'B'),

@@ -396,3 +396,11 @@ fn private_members_resolve_on_branded_proxy_receivers() {
         ["1 2 3"]
     );
 }
+
+#[test]
+fn shared_atomics_round_trip_negative_bigints() {
+    assert_eq!(
+        output("const view = new BigInt64Array(new SharedArrayBuffer(16)); view[0] = -5n; const old = Atomics.add(view, 0, 2n); print([old, view[0], Atomics.exchange(view, 1, -1n), view[1]].join());"),
+        ["-5,-3,0,-1"]
+    );
+}

@@ -115,6 +115,9 @@ pub(crate) fn write_sync(
         }
         let capacity = get(c, buffer, "byteLength")?;
         policy::call(c, "validateOffsetLengthWrite", &[offset, length, capacity])?;
+        if let Some(result) = policy::vfs_read(c, "writeSync", &[descriptor, buffer, offset, length, at])? {
+            return Ok(result);
+        }
         let descriptor = fd(c, descriptor)?;
         let offset = c.to_number(offset)? as usize;
         let length = c.to_number(length)? as usize;
@@ -130,6 +133,16 @@ pub(crate) fn write_sync(
         let name = c.string_rooted("buffer");
         policy::call(c, "validateStringAfterArrayBufferView", &[buffer, name])?;
         policy::call(c, "validateEncoding", &[buffer, length])?;
+        if undefined(c, offset) { offset = c.null(); }
+        if let Some(handlers) = policy::vfs_handlers(c)? {
+            let constructor = policy::export(c, "Buffer")?;
+            let from = get(c, constructor, "from")?;
+            let bytes = c.call_rooted(from, constructor, &[buffer, length])?;
+            let byte_length = get(c, bytes, "length")?;
+            if let Some(result) = policy::vfs_call(c, handlers, "writeSync", &[descriptor, bytes, zero, byte_length, offset])? {
+                return Ok(result);
+            }
+        }
         let descriptor = fd(c, descriptor)?;
         let encoding = c
             .string_text(length)?

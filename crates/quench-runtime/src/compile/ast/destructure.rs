@@ -54,7 +54,7 @@ impl FunctionCompiler<'_, '_> {
                 if Self::anonymous_function_definition(&value.right)
                     && let Some(name) = self.assignment_identifier_name(&value.left)
                 {
-                    self.emit(Op::SetFunctionName, right, 0, 0, name);
+                    self.emit_function_name(right, name);
                 }
                 self.with_source_offset(write_source, |compiler| compiler.store_assignment_reference(reference, right));
                 return right;
@@ -97,7 +97,7 @@ impl FunctionCompiler<'_, '_> {
                 if Self::anonymous_function_definition(&value.right)
                     && let Some(name) = self.assignment_identifier_name(&value.left)
                 {
-                    self.emit(Op::SetFunctionName, right, 0, 0, name);
+                    self.emit_function_name(right, name);
                 }
                 self.emit(Op::Move, old, right, 0, 0);
                 self.with_source_offset(write_source, |compiler| compiler.store_assignment_reference(reference, old));
@@ -609,7 +609,7 @@ impl FunctionCompiler<'_, '_> {
         if let Some(name) = name
             && Self::anonymous_function_definition(init)
         {
-            self.emit(Op::SetFunctionName, fallback, 0, 0, name);
+            self.emit_function_name(fallback, name);
         }
         self.emit(Op::Move, value, fallback, 0, 0);
         self.patch(skip);
@@ -705,7 +705,7 @@ impl FunctionCompiler<'_, '_> {
                     && Self::anonymous_function_definition(&assignment.right)
                 {
                     let name = self.owner.atom(identifier.name.as_str());
-                    self.emit(Op::SetFunctionName, fallback, 0, 0, name);
+                    self.emit_function_name(fallback, name);
                 }
                 self.emit(Op::Move, selected, fallback, 0, 0);
                 self.patch(skip);
