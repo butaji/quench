@@ -1,6 +1,6 @@
 //! Rust ownership of the matching Brotli encoder/decoder and dictionary lifetimes.
 use super::{Failure, Step};
-use crate::modules::zlib_shared_vm::Codec as Mode;
+use crate::modules::zlib_constants::Mode;
 use std::{
     ffi::{c_char, c_int, c_void, CStr},
     ptr::{self, NonNull},
