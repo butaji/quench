@@ -10452,7 +10452,7 @@ fn js_jit_profile_gate_uses_prespecified_exact_binomial_looks() {
     }
 
     // Each fixed look spends alpha/4 under p=0.8. Testing at these points
-    // keeps the family-wise false-promotion probability at most 5%.
+    // bounds false promotion across looks for this function at 5%.
     for (observations, minimum) in JS_JIT_PROMOTION_LOOKS {
         assert!(upper_tail(observations, minimum, 0.8) <= 0.05 / 4.0);
         assert!(upper_tail(observations, minimum - 1, 0.8) > 0.05 / 4.0);
