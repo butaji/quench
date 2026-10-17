@@ -2473,27 +2473,26 @@ impl<H: Host> Vm<H> {
         if set == NO_FIELD_ADD_SET {
             return false;
         }
-        let Some(&mut cache) =
-            unsafe { self.field_add_sets.get_unchecked_mut(set as usize) }.find_mut(shape, atom)
+        let Some(cache) =
+            unsafe { self.field_add_sets.get_unchecked(set as usize) }.find(shape, atom)
         else {
             return false;
         };
+        let (target_shape, slot) = (cache.target_shape, cache.slot);
         let epoch = crate::heap::prototype_layout_epoch();
         if cache.proved_epoch != epoch || cache.proved_prototype != proto {
+            let depth = cache.prototype_depth;
             // Entries record only non-dictionary source and prototype shapes, a shape's
             // dictionary state is fixed when it is created, and shape compaction clears these
             // caches, so a matching shape needs no dictionary probe here or along the chain.
             if !self.field_add_prototype_chain_matches(proto, cache.prototype_shapes()) {
                 return false;
             }
-            self.prove_field_add_chain(set as usize, shape, atom, proto, cache.prototype_depth, epoch);
+            self.prove_field_add_chain(set as usize, shape, atom, proto, depth, epoch);
         }
-        debug_assert_eq!(cache.slot as usize, self.shapes[shape as usize].storage_len());
-        if !self
-            .heap
-            .add_inline_property(object, usize::from(cache.slot), value, cache.target_shape)
-        {
-            self.heap.property_add(object, value, cache.target_shape);
+        debug_assert_eq!(slot as usize, self.shapes[shape as usize].storage_len());
+        if !self.heap.add_inline_property(object, usize::from(slot), value, target_shape) {
+            self.heap.property_add(object, value, target_shape);
         }
         if self.method_caches_may_name(atom) {
             self.invalidate_method_caches_for_prototype_add(object, atom);
