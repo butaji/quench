@@ -2157,7 +2157,7 @@ fn require_module_error(context: &mut Context<'_>, code: &'static str, message: 
 fn require_es_module(context: &mut Context<'_>, filename: &Path, parent: Option<RootId>) -> Result<RootId, RootedError> {
     let url = url::Url::from_file_path(filename).map_err(|_| RootedError::host("invalid ES module filename"))?;
     let module = quench_runtime::Host::resolve_dynamic_import(context.host_mut(), &filename.to_string_lossy(), url.as_str())
-        .map_err(RootedError::host)?.ok_or_else(|| RootedError::host("ES module source unavailable"))?;
+        .map_err(|error| RootedError::host(error.message))?.ok_or_else(|| RootedError::host("ES module source unavailable"))?;
     let namespace = match context.evaluate_module_sync_rooted(&module)? {
         quench_runtime::SynchronousModule::Namespace(namespace) => namespace,
         quench_runtime::SynchronousModule::AsyncGraph => {
