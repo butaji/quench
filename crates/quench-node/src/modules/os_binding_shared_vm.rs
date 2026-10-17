@@ -61,7 +61,10 @@ fn build_os_binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     Ok(result)
 }
 fn build_credentials_binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    binding(c, &[("getTempDir", "osBindingTempdir")])
+    let binding=binding(c, &[("getTempDir", "osBindingTempdir")])?;
+    let supported=c.boolean(cfg!(unix));
+    put(c,binding,"implementsPosixCredentials",supported)?;
+    Ok(binding)
 }
 fn system_error(
     c: &mut Context<'_>,

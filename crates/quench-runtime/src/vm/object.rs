@@ -186,10 +186,13 @@ impl<H: Host> Vm<H> {
             return index.slot(key).map(|slot| slot as usize);
         }
         if let Some(slot) = self.shape_slot_memo.get(shape, key) {
-            return slot;
+            return slot.map(|slot| slot as usize);
         }
         let slot = self.walked_property_shape_slot(shape, key);
-        self.shape_slot_memo.record(shape, key, slot);
+        // A slot past u32 is never memoized; it is walked again.
+        if let Some(recorded) = slot.map(u32::try_from).transpose().ok() {
+            self.shape_slot_memo.record(shape, key, recorded);
+        }
         slot
     }
     /// `property_shape_slot` of a non-dictionary shape, from its lookup index or its chain.
@@ -263,6 +266,20 @@ impl<H: Host> Vm<H> {
                     }),
             );
         }
+        let memo_slot = u32::try_from(slot).ok().filter(|_| !self.shape_is_dictionary(shape));
+        if let Some(memo_slot) = memo_slot
+            && let Some(attributes) = self.shape_attribute_memo.get(shape, memo_slot)
+        {
+            return attributes.map(|attributes| attributes.attributes(&self.shape_accessors));
+        }
+        let attributes = self.walked_shape_attribute(shape, slot);
+        if let Some(memo_slot) = memo_slot {
+            self.shape_attribute_memo.record(shape, memo_slot, attributes);
+        }
+        attributes.map(|attributes| attributes.attributes(&self.shape_accessors))
+    }
+    /// The attributes the nearest transition describing `slot` gives it, walking `shape`'s chain.
+    fn walked_shape_attribute(&self, shape: u32, slot: usize) -> Option<ShapeAttributes> {
         let mut current = Some(shape);
         while let Some(id) = current {
             let shape = &self.shapes[id as usize];
@@ -271,18 +288,18 @@ impl<H: Host> Vm<H> {
                     slot: candidate,
                     attributes,
                 } if candidate as usize == slot => {
-                    return Some(attributes.attributes(&self.shape_accessors));
+                    return Some(attributes);
                 }
                 ShapeTransition::Add {
                     slot: candidate,
                     attributes,
                     ..
                 } if candidate as usize == slot => {
-                    return Some(attributes.shape().attributes(&self.shape_accessors));
+                    return Some(attributes.shape());
                 }
                 ShapeTransition::Delete {
                     slot: candidate, ..
-                } if candidate as usize == slot => return Some(DEFAULT_PROPERTY_ATTRIBUTES),
+                } if candidate as usize == slot => return Some(DEFAULT_SHAPE_ATTRIBUTES),
                 ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured | ShapeTransition::FunctionLengthReconfigured
                 | ShapeTransition::Constructed { .. }
                 | ShapeTransition::Root
@@ -608,8 +625,10 @@ impl<H: Host> Vm<H> {
         self.accessor_field_caches.clear();
         self.instanceof_constructor_layout = None;
         self.closure_shapes = [None; 2];
+        self.regexp_object_shapes = None;
         self.regexp_last_index_layout = None;
         self.regexp_builtin_layout = None;
+        self.regexp_symbol_layouts.clear();
     }
     fn invalidate_method_caches_for_key(&mut self, key: PropertyKey) {
         match key {
@@ -1234,19 +1253,13 @@ impl<H: Host> Vm<H> {
         };
         let lookup = match legacy_cell {
             Some(Cell::String(_)) if self.specialized && p.specialized => {
-                if !self.field_cache_atom_eligible(atom) {
-                    FieldCacheRead::StringGeneric
-                } else {
-                    let prototype = self.string_proto;
-                    if let Some(receiver) = self.shape_property_lookup(prototype, atom) {
-                        let site = self.field_cache_index(site);
-                        match self.cached_field_value(site, receiver) {
-                            Some(hit) => FieldCacheRead::Hit(hit),
-                            None => FieldCacheRead::StringMiss { prototype, site },
-                        }
-                    } else {
-                        FieldCacheRead::StringGeneric
-                    }
+                match self.string_field_cache_read(atom, site) {
+                    Some(Some(hit)) => FieldCacheRead::Hit(hit),
+                    Some(None) => FieldCacheRead::StringMiss {
+                        prototype: self.string_proto,
+                        site: self.field_cache_index(site),
+                    },
+                    None => FieldCacheRead::StringGeneric,
                 }
             }
             Some(Cell::Proxy { .. }) => FieldCacheRead::Proxy,
@@ -1275,6 +1288,35 @@ impl<H: Host> Vm<H> {
                 Ok(hit.value)
             }
         }
+    }
+
+    /// The field cache's answer for a string primitive's read of `atom`, which
+    /// `String.prototype` answers: `None` when its shape cannot answer it, else the site's
+    /// hit, if any.
+    #[inline(always)]
+    fn string_field_cache_read(&self, atom: Atom, site: u16) -> Option<Option<FieldCacheHit>> {
+        if !self.field_cache_atom_eligible(atom) {
+            return None;
+        }
+        let receiver = self.shape_property_lookup(self.string_proto, atom)?;
+        Some(self.cached_field_value(self.field_cache_index(site), receiver))
+    }
+
+    /// `string_field_cache_read`'s hit for a cached site reading a string primitive `object`.
+    pub(super) fn cached_string_field_hit(
+        &self,
+        p: &ResidualProgram,
+        object: Value,
+        atom: Atom,
+        site: u16,
+    ) -> Option<Value> {
+        if !(self.specialized && p.specialized)
+            || !matches!(self.heap.get(object), Some(Cell::String(_)))
+        {
+            return None;
+        }
+        let hit = self.string_field_cache_read(atom, site)??;
+        Some(hit.value)
     }
 
     /// The field cache's answer for an object cell other than a string or a
@@ -2456,27 +2498,26 @@ impl<H: Host> Vm<H> {
         if set == NO_FIELD_ADD_SET {
             return false;
         }
-        let Some(&mut cache) =
-            unsafe { self.field_add_sets.get_unchecked_mut(set as usize) }.find_mut(shape, atom)
+        let Some(cache) =
+            unsafe { self.field_add_sets.get_unchecked(set as usize) }.find(shape, atom)
         else {
             return false;
         };
+        let (target_shape, slot) = (cache.target_shape, cache.slot);
         let epoch = crate::heap::prototype_layout_epoch();
         if cache.proved_epoch != epoch || cache.proved_prototype != proto {
+            let depth = cache.prototype_depth;
             // Entries record only non-dictionary source and prototype shapes, a shape's
             // dictionary state is fixed when it is created, and shape compaction clears these
             // caches, so a matching shape needs no dictionary probe here or along the chain.
             if !self.field_add_prototype_chain_matches(proto, cache.prototype_shapes()) {
                 return false;
             }
-            self.prove_field_add_chain(set as usize, shape, atom, proto, cache.prototype_depth, epoch);
+            self.prove_field_add_chain(set as usize, shape, atom, proto, depth, epoch);
         }
-        debug_assert_eq!(cache.slot as usize, self.shapes[shape as usize].storage_len());
-        if !self
-            .heap
-            .add_inline_property(object, usize::from(cache.slot), value, cache.target_shape)
-        {
-            self.heap.property_add(object, value, cache.target_shape);
+        debug_assert_eq!(slot as usize, self.shapes[shape as usize].storage_len());
+        if !self.heap.add_inline_property(object, usize::from(slot), value, target_shape) {
+            self.heap.property_add(object, value, target_shape);
         }
         if self.method_caches_may_name(atom) {
             self.invalidate_method_caches_for_prototype_add(object, atom);

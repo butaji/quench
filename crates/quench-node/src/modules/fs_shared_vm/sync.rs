@@ -531,6 +531,9 @@ pub(crate) fn read_sync(
         "validateOffsetLengthRead",
         &[offset, length, capacity],
     )?;
+    if let Some(result) = policy::vfs_read(context, "readSync", &[fd, buffer, offset, length, position])? {
+        return Ok(result);
+    }
     let maximum = context.number(i32::MAX as f64);
     crate::modules::util_shared_vm::validate_binding_integer(context, fd, "fd", 0.0, maximum)?;
     read_into(context, undefined, &[fd, buffer, offset, length, position])
