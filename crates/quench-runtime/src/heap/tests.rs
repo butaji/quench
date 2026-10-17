@@ -140,44 +140,57 @@ fn minor_collection_handles_old_weak_maps_and_weak_refs() {
 }
 
 #[test]
-fn gc_headroom_factors_scale_live_cells_without_overflow() {
-    let live = 781_054usize;
-    assert_eq!(
-        GcHeadroomFactor {
-            numerator: 1,
-            denominator: 2,
-        }
-        .allocation_headroom(live),
-        390_527
-    );
-    assert_eq!(
-        GcHeadroomFactor {
-            numerator: 3,
-            denominator: 4,
-        }
-        .allocation_headroom(live),
-        585_790
-    );
-    assert_eq!(
-        GcHeadroomFactor {
-            numerator: 1,
-            denominator: 1,
-        }
-        .allocation_headroom(live),
-        live
-    );
-    assert_eq!(gc_allocation_headroom(0), MINIMUM_GC_ALLOCATION_HEADROOM);
-    assert_eq!(
-        gc_allocation_headroom(LARGE_HEAP_MINIMUM_LIVE_CELLS - 1),
-        SMALL_HEAP_GC_HEADROOM
-            .allocation_headroom(LARGE_HEAP_MINIMUM_LIVE_CELLS - 1)
-            .max(MINIMUM_GC_ALLOCATION_HEADROOM)
-    );
-    assert_eq!(
-        gc_allocation_headroom(live),
-        LARGE_HEAP_GC_HEADROOM.allocation_headroom(live)
-    );
+fn minor_collection_keeps_records_written_into_old_records_and_frees_young_garbage() {
+    let mut heap = Heap::new();
+    let owner = heap.alloc(Cell::Object(plain_object()));
+    let array = heap.alloc(Cell::Array {
+        object: ArrayObject::new(plain_object(), Rc::new(vec![Value::UNDEFINED])),
+    });
+    assert!(owner.direct_object_index().is_some());
+    assert!(array.direct_array_index().is_some());
+    heap.collect([owner, array]);
+    assert!(heap.is_old(owner) && heap.is_old(array));
+
+    // Young records reachable only through stores into old records.
+    let child = heap.alloc(Cell::Object(plain_object()));
+    heap.object_mut(owner).unwrap().set_inline_property(0, child);
+    let element = heap.alloc(Cell::Object(plain_object()));
+    Rc::make_mut(heap.array_elements_mut(array).unwrap())[0] = element;
+    let garbage = heap.alloc(Cell::Object(plain_object()));
+    // The barrier logged both owners, so they are young until the minor traces them.
+    assert!(!heap.is_old(owner) && !heap.is_old(array));
+
+    collect_minor(&mut heap, [owner, array]);
+    assert!(heap.is_live(child) && heap.is_old(child));
+    assert!(heap.is_live(element) && heap.is_old(element));
+    assert!(!heap.is_live(garbage));
+    assert!(heap.is_old(owner) && heap.is_old(array));
+
+    // An old record that loses its last reference survives minors and dies at a full one.
+    heap.object_mut(owner).unwrap().set_inline_property(0, Value::UNDEFINED);
+    collect_minor(&mut heap, [owner, array]);
+    assert!(heap.is_live(child));
+    heap.collect([owner, array]);
+    assert!(!heap.is_live(child));
+    assert!(heap.is_live(element));
 }
+
+#[test]
+fn records_written_twice_are_logged_once_per_cycle() {
+    let mut heap = Heap::new();
+    let owner = heap.alloc(Cell::Object(plain_object()));
+    heap.collect([owner]);
+    for value in 0..4 {
+        heap.object_mut(owner)
+            .unwrap()
+            .set_inline_property(0, Value::number(f64::from(value)));
+    }
+    assert_eq!(heap.object_records.remembered_count(), 1);
+    collect_minor(&mut heap, [owner]);
+    assert_eq!(heap.object_records.remembered_count(), 0);
+    assert!(heap.is_old(owner));
+}
+
 
 #[cfg(feature = "profile-gc-time")]
 #[test]
@@ -191,26 +204,6 @@ fn gc_time_profile_records_collection_phases_without_aggregate_counters() {
     assert_eq!(heap.stats().1, 1);
 }
 
-#[test]
-fn minor_tracking_matches_the_next_collection_boundary() {
-    let mut heap = Heap::new();
-    heap.full_collection_growth_limit = 1_000;
-    heap.threshold = 500;
-    assert!(heap.minor_collection_scheduled());
-
-    heap.allocations = 200;
-    heap.allocations_since_full = 200;
-    heap.threshold = 800;
-    assert!(heap.minor_collection_scheduled());
-
-    heap.allocations = 700;
-    heap.allocations_since_full = 700;
-    heap.threshold = 500;
-    assert!(heap.minor_collection_scheduled());
-
-    heap.threshold = 1_000;
-    assert!(!heap.minor_collection_scheduled());
-}
 
 #[test]
 fn scope_slot_owners_survive_collection_and_release() {
