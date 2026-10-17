@@ -950,33 +950,35 @@ impl<H: Host> Vm<H> {
             return self.frames[frame].env;
         }
         let parent = self.frames[frame].env;
-        let function = self.frames[frame].function as usize;
-        let selective_capture_slots =
-            self.programs
-                .get(self.frames[frame].program)
-                .and_then(|program| {
-                    program
-                        .functions
-                        .get(function)
-                        .and_then(|function| function.selective_capture_slots.clone())
-                });
-        let slots = if let Some(captured) = selective_capture_slots {
-            let mut slots = self.frames[frame].locals.clone();
-            for slot in 0..slots.len() {
-                if u16::try_from(slot).is_ok_and(|slot| captured.binary_search(&slot).is_ok()) {
-                    self.frames[frame].locals[slot] = Value::DELETED;
-                } else {
-                    slots[slot] = Value::DELETED;
-                }
+        // The environment copies the slots it captures out of the frame's locals, whose
+        // buffer stays with the frame for its next activation; captured slots read as
+        // deleted in the frame from now on.
+        let program = self.programs.get(self.frames[frame].program);
+        let state = &mut *self.frames[frame];
+        let selective = program
+            .as_ref()
+            .and_then(|program| program.functions.get(state.function as usize))
+            .and_then(|function| function.selective_capture_slots.as_deref());
+        let slots = match selective {
+            Some(captured) => crate::heap::EnvironmentSlots::from_values(
+                state.locals.iter_mut().enumerate().map(|(slot, value)| {
+                    if u16::try_from(slot).is_ok_and(|slot| captured.binary_search(&slot).is_ok()) {
+                        std::mem::replace(value, Value::DELETED)
+                    } else {
+                        Value::DELETED
+                    }
+                }),
+            ),
+            None => {
+                let slots = crate::heap::EnvironmentSlots::from_values(state.locals.iter().copied());
+                state.locals.clear();
+                slots
             }
-            slots
-        } else {
-            std::mem::take(&mut self.frames[frame].locals)
         };
         let env = self.heap.alloc(Cell::Environment {
             parent,
             function: self.frames[frame].function,
-            slots: slots.into(),
+            slots,
             scope: Box::new(crate::heap::EnvironmentScope {
                 program: Some(self.frames[frame].program.raw()),
                 root_eval_scope: false,

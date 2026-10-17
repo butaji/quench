@@ -1938,11 +1938,18 @@ impl EnvironmentSlots {
     }
 }
 
+impl EnvironmentSlots {
+    /// Slots that own `values`, in order.
+    pub(crate) fn from_values(values: impl ExactSizeIterator<Item = Value>) -> Self {
+        Self(super::thin_slice::ThinBoxSlice::from_exact_iter(
+            values.map(EnvironmentSlot::Owned),
+        ))
+    }
+}
+
 impl From<Vec<Value>> for EnvironmentSlots {
     fn from(values: Vec<Value>) -> Self {
-        Self(super::thin_slice::ThinBoxSlice::from_exact_iter(
-            values.into_iter().map(EnvironmentSlot::Owned),
-        ))
+        Self::from_values(values.into_iter())
     }
 }
 

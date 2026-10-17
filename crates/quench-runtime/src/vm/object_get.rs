@@ -369,6 +369,11 @@ impl<H: Host> Vm<H> {
         key: Value,
         receiver: Value,
     ) -> Result<Value, JsError> {
+        if object == receiver
+            && let Some(value) = self.plain_property_get(object, PropertyKey::symbol(key))
+        {
+            return Ok(value);
+        }
         let mut owner = self.primitive_prototype(object).unwrap_or(object);
         loop {
             if let Some(Cell::Proxy {
@@ -424,7 +429,13 @@ impl<H: Host> Vm<H> {
         if atom == self.length_atom || self.atom_class(atom).intersects(GENERAL_KEYS) {
             return None;
         }
-        let key = PropertyKey::string(atom);
+        self.plain_property_get(object, PropertyKey::string(atom))
+    }
+
+    /// `plain_named_get`'s chain walk for a key it admits, or any symbol key: symbols name
+    /// no exotic, index or virtual property.
+    #[inline]
+    fn plain_property_get(&self, object: Value, key: PropertyKey) -> Option<Value> {
         let mut current = object;
         loop {
             let data = self.heap.ordinary_object(current)?;
