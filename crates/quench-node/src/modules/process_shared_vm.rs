@@ -45,6 +45,7 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     let function = context.host_function(crate::host::shared_vm::operation("uptime"))?;
     install(context, process, "uptime", function)?;
     install_exit_code(context, process)?;
+    super::process_fatal_exception_route::install(context, process)?;
     super::report_configuration_shared_vm::install(context, process)?;
     let exit = context.host_function(crate::host::shared_vm::operation("processExit"))?;
     install(context, process, "exit", exit)?;
@@ -514,7 +515,7 @@ pub(crate) fn exit_code_set(
         if string.is_empty() {
             None
         } else {
-            let number = parse_exit_code_string(&string);
+            let number = context.to_number(value_root)?;
             (!number.is_nan()).then_some(number)
         }
     } else {
@@ -535,59 +536,109 @@ pub(crate) fn exit_code_set(
     Ok(context.undefined())
 }
 
+// Rust translation of original per_thread.js:exit. Property reads/calls stay
+// observable: callers may replace emit/reallyExit or the public _exiting flag.
 pub(crate) fn exit(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let process_control = context
+    let process = context
         .host_mut()
         .shared_state()
         .borrow()
-        .process_control
-        .clone();
-    let code = match args.first().copied() {
-        None => process_control.exit_code().unwrap_or(0),
-        Some(value_root) => {
-            let value = context
-                .rooted_value(value_root)
-                .ok_or_else(|| RootedError::host("invalid process.exit code value root"))?;
-            let number = if let Some(number) = value.as_number() {
-                Some(number)
-            } else if let Some(string) = context.string_text(value_root)? {
-                let number = parse_exit_code_string(&string);
-                (!number.is_nan()).then_some(number)
-            } else {
-                None
-            };
-            let Some(number) = number else {
-                return invalid_exit_code_type(context, value_root);
-            };
-            if !number.is_finite() || number.fract() != 0.0 || number.abs() > MAX_SAFE_EXIT_CODE {
-                return exit_code_range_error(context, number);
-            }
-            number as i64 as i32
-        }
-    };
-    let emit_abort = !process_control.exit_emitting();
-    process_control.request_exit(code);
-    if emit_abort {
-        Err(RootedError::host("process.exit"))
+        .process_module
+        .ok_or_else(|| RootedError::host("process is not initialized"))?;
+    if let Some(code) = args.first() {
+        set_exit_property(context, process, "exitCode", *code)?;
+    }
+    let key = context.string_rooted("_exiting");
+    let exiting = context.get_property_rooted(process, key)?;
+    if !context.truthy_rooted(exiting)? {
+        let code = public_exit_code(context, process)?;
+        emit_exit_event_inner(context, code, ExitEventOrigin::Explicit)?;
+    }
+    let code = public_exit_code(context, process)?;
+    call_process_method(context, process, "reallyExit", &[code])?;
+    Ok(context.undefined())
+}
+fn public_exit_code(
+    context: &mut NativeContext<'_, NodeHost>,
+    process: RootId,
+) -> Result<RootId, RootedError> {
+    let key = context.string_rooted("exitCode");
+    let code = context.get_property_rooted(process, key)?;
+    if context.truthy_rooted(code)? {
+        Ok(code)
     } else {
-        Ok(context.undefined())
+        Ok(context.number(0.0))
     }
 }
-
-fn parse_exit_code_string(value: &str) -> f64 {
-    let value = value.trim();
-    if value.is_empty() {
-        return 0.0;
+fn set_exit_property(
+    context: &mut NativeContext<'_, NodeHost>,
+    process: RootId,
+    name: &str,
+    value: RootId,
+) -> Result<(), RootedError> {
+    let key = context.string_rooted(name);
+    if context.set_property_rooted(process, key, value, process)? {
+        return Ok(());
     }
-    match value {
-        "Infinity" | "+Infinity" => f64::INFINITY,
-        "-Infinity" => f64::NEG_INFINITY,
-        _ => value.parse().unwrap_or(f64::NAN),
+    let error = context.type_error_rooted(&format!(
+        "Cannot assign to read only property '{name}' of object '#<process>'"
+    ))?;
+    Err(context.throw(error))
+}
+fn call_process_method(
+    context: &mut NativeContext<'_, NodeHost>,
+    process: RootId,
+    name: &str,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let key = context.string_rooted(name);
+    let function = context.get_property_rooted(process, key)?;
+    if !context.is_callable_rooted(function)? {
+        let error = context.type_error_rooted(&format!("process.{name} is not a function"))?;
+        return Err(context.throw(error));
     }
+    context.call_rooted(function, process, args)
+}
+#[derive(Clone, Copy)]
+enum ExitEventOrigin {
+    Explicit,
+    Natural,
+}
+/// One event algorithm, with distinct explicit and natural emission stages.
+/// A replaced reallyExit or a caught listener throw leaves the event loop alive;
+/// Node emits again at eventual natural shutdown in those cases.
+pub(crate) fn emit_exit_event(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let code = args.first().copied().unwrap_or_else(|| context.number(0.0));
+    emit_exit_event_inner(context, code, ExitEventOrigin::Natural)
+}
+fn emit_exit_event_inner(
+    context: &mut NativeContext<'_, NodeHost>,
+    code: RootId,
+    origin: ExitEventOrigin,
+) -> Result<RootId, RootedError> {
+    let state = context.host_mut().shared_state();
+    let _span = crate::modules::trace_state::EnvironmentSpan::enter(&state, "AtExit");
+    if matches!(origin, ExitEventOrigin::Natural)
+        && !state.borrow_mut().scheduler.begin_shared_exit()
+    {
+        return Ok(context.undefined());
+    }
+    let Some(process) = state.borrow().process_module else {
+        return Ok(context.undefined());
+    };
+    let exiting = context.boolean(true);
+    set_exit_property(context, process, "_exiting", exiting)?;
+    let event = context.string_rooted("exit");
+    call_process_method(context, process, "emit", &[event, code])?;
+    Ok(context.undefined())
 }
 
 pub(crate) fn really_exit(
@@ -599,56 +650,74 @@ pub(crate) fn really_exit(
     let mask = context.number(-1.0);
     // Node's native Int32Value boundary exits with zero when coercion throws.
     let code = match context.arithmetic_rooted(NativeArithmetic::BitwiseAnd, value, mask) {
-        Ok(value) => context.rooted_value(value).and_then(Value::as_number).unwrap_or(0.0) as i32,
+        Ok(value) => context
+            .rooted_value(value)
+            .and_then(Value::as_number)
+            .unwrap_or(0.0) as i32,
         Err(error) => {
-            if let Some(exception) = error.exception { context.release_root(exception); }
+            if error.error.is_execution_terminated() {
+                return Err(error);
+            }
+            if let Some(exception) = error.exception {
+                context.release_root(exception);
+            }
             0
         }
     };
-    context.host_mut().shared_state().borrow().process_control.request_really_exit(code);
-    Err(RootedError::host("process.exit"))
+    context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .process_control
+        .request_really_exit(code);
+    context
+        .host_mut()
+        .shared_state()
+        .borrow_mut()
+        .scheduler
+        .begin_shared_exit();
+    context.execution_interrupt_handle().request_termination();
+    context.check_execution_interrupt()?;
+    Ok(context.undefined())
 }
 
+fn exit_code_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    name: &str,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let codes = crate::host::shared_vm::commonjs::node_library_export(
+        context,
+        "internal/process/per_thread.js",
+        "internal/errors.js",
+        "codes",
+    )?;
+    let key = context.string_rooted(name);
+    let constructor = context.get_property_rooted(codes, key)?;
+    let error = context.construct_rooted(constructor, constructor, args)?;
+    Err(context.throw(error))
+}
 fn invalid_exit_code_type(
     context: &mut NativeContext<'_, NodeHost>,
     value: RootId,
 ) -> Result<RootId, RootedError> {
-    let received = context.evaluate_script_rooted(
-        "(value) => value === null ? 'null' : value === undefined ? 'undefined' : typeof value === 'string' ? `type string ('${value}')` : typeof value === 'number' ? `type number (${String(value)})` : typeof value === 'boolean' ? `type boolean (${value})` : typeof value === 'bigint' ? `type bigint (${String(value)}n)` : Array.isArray(value) ? 'an instance of Array' : 'an instance of Object'",
-        "node:process/exit-code-error.js",
-    )?;
-    let undefined = context.undefined();
-    let received_value = context.call_rooted(received, undefined, &[value]);
-    context.release_root(received);
-    let received_value = received_value?;
-    let received = context
-        .string_text(received_value)?
-        .unwrap_or_else(|| "an unknown value".to_owned());
-    context.release_root(received_value);
-    let error = context.type_error_rooted(&format!(
-        "The \"code\" argument must be of type number. Received {received}"
-    ))?;
-    Err(throw_with_code(context, error, "ERR_INVALID_ARG_TYPE"))
+    let code = context.string_rooted("code");
+    let number = context.string_rooted("number");
+    exit_code_error(context, "ERR_INVALID_ARG_TYPE", &[code, number, value])
 }
-
 fn exit_code_range_error(
     context: &mut NativeContext<'_, NodeHost>,
     number: f64,
 ) -> Result<RootId, RootedError> {
-    let received = if number.is_nan() {
-        "NaN".to_owned()
-    } else if number == f64::INFINITY {
-        "Infinity".to_owned()
-    } else if number == f64::NEG_INFINITY {
-        "-Infinity".to_owned()
+    let code = context.string_rooted("code");
+    let range = if number.is_finite() && number.fract() == 0.0 {
+        format!(">= -{MAX_SAFE_EXIT_CODE:.0} && <= {MAX_SAFE_EXIT_CODE:.0}")
     } else {
-        number.to_string()
+        "an integer".to_owned()
     };
-    let message = format!(
-        "The value of \"code\" is out of range. It must be a safe integer. Received {received}"
-    );
-    let error = context.range_error_rooted(&message)?;
-    Err(throw_with_code(context, error, "ERR_OUT_OF_RANGE"))
+    let range = context.string_rooted(&range);
+    let value = context.number(number);
+    exit_code_error(context, "ERR_OUT_OF_RANGE", &[code, range, value])
 }
 
 fn throw_with_code(
@@ -1822,7 +1891,7 @@ pub(crate) fn finish_execution(
     })();
     if process_control.requested_exit_code().is_some() {
         let exit = finish_requested_exit(runtime, program);
-        return if process_control.fatal_exception_handler_failed() { checkpoint.and(exit) } else { exit };
+        return if process_control.fatal_exception_handler_failed() || process_control.fatal_uncaught_requested() { checkpoint.and(exit) } else { exit };
     }
     let shared_state = runtime.host_mut().shared_state();
     cleanup_environment(runtime, &shared_state);
@@ -1865,23 +1934,32 @@ fn emit_before_exit(
     result
 }
 
+// Match execution.js fatal policy: an exception while already exiting does
+// not overwrite the chosen code or emit another fatal exit event.
 pub(crate) fn finish_after_uncaught_error(
     runtime: &mut quench_runtime::Runtime<NodeHost>,
     program: &quench_runtime::ResidualProgram,
     error: &quench_runtime::JsError,
 ) -> Result<bool, String> {
-    let process_control = runtime
+    let control = runtime
         .host_mut()
         .shared_state()
         .borrow()
         .process_control
         .clone();
     let routed = emit_uncaught_exception(runtime, program, error);
-    if process_control.requested_exit_code().is_some() {
+    if control.requested_exit_code().is_some() {
         let exit = finish_requested_exit(runtime, program);
-        if process_control.fatal_exception_handler_failed() { return routed.and(exit).map(|_| true); }
+        if super::worker_threads_shared_vm::runtime_is_child(runtime) {
+            exit?;
+            return Ok(true);
+        }
+        if control.fatal_uncaught_requested() { return routed.and(exit.map(|_| false)); }
+        if control.fatal_exception_handler_failed() {
+            return routed.and(exit).map(|_| true);
+        }
         if let Err(error) = exit {
-            process_control.fail_fatal_exception_handler();
+            control.fail_fatal_exception_handler();
             return Err(error);
         }
         return Ok(true);
@@ -1891,10 +1969,10 @@ pub(crate) fn finish_after_uncaught_error(
         return Ok(true);
     }
     let handler_error = routed.err();
-    process_control.set_exit_code(Some(1));
-    let shared_state = runtime.host_mut().shared_state();
-    cleanup_environment(runtime, &shared_state);
-    emit_exit(runtime, program, 1)?;
+    let state = runtime.host_mut().shared_state();
+    cleanup_environment(runtime, &state);
+    state.borrow_mut().scheduler.begin_shared_exit();
+    cleanup_after_exit(runtime);
     handler_error.map_or(Ok(false), Err)
 }
 
@@ -1911,12 +1989,7 @@ pub(crate) fn finish_requested_exit(
     let shared_state = runtime.host_mut().shared_state();
     cleanup_environment(runtime, &shared_state);
     if process_control.exit_without_event() {
-        super::tls_shared_vm::contexts::cleanup(runtime);
-        cleanup_native_work(runtime);
-        super::zlib_native_shared_vm::cleanup(runtime);
-        #[cfg(quench_icu)]
-        super::icu_binding_shared_vm::cleanup(runtime);
-        super::buffer_shared_vm::cleanup(runtime);
+        cleanup_after_exit(runtime);
         return Ok(());
     }
     emit_exit(runtime, program, process_control.exit_code().unwrap_or(0))
@@ -1942,114 +2015,18 @@ pub(crate) fn route_uncaught_exception_value(
     exception: RootId,
     origin: &str,
 ) -> Result<bool, String> {
-    let routed = route_uncaught_exception_value_inner(runtime, program, exception, origin);
-    if routed.is_err() {
-        let control = runtime.host_mut().shared_state().borrow().process_control.clone();
-        if control.requested_exit_code().is_none() { control.fail_fatal_exception_handler(); }
-    }
-    routed
-}
-
-fn route_uncaught_exception_value_inner(
-    runtime: &mut quench_runtime::Runtime<NodeHost>,
-    program: &quench_runtime::ResidualProgram,
-    exception: RootId,
-    origin: &str,
-) -> Result<bool, String> {
-    let origin_value = runtime.string_rooted(origin);
-    let monitored = call_process_event(runtime, program, "uncaughtExceptionMonitor", &[exception, origin_value]);
-    runtime.release_root(origin_value);
-    let Some(monitored) = monitored? else { return Ok(false); };
-    runtime.release_root(monitored);
-
-    let state = runtime.host_mut().shared_state().borrow().process_capture_state
-        .ok_or_else(|| "process capture state is not initialized".to_owned())?;
-    let capture_key = runtime.string_rooted("captureFn");
-    let capture = runtime.get_property_rooted(state, capture_key);
-    runtime.release_root(capture_key);
-    let capture = match capture {
-        Ok(capture) => capture,
-        Err(error) => {
-            if let Some(exception)=error.exception { super::worker_threads_shared_vm::record_callback_exception(runtime,exception); }
-    let message = runtime.format_error(program, &error.error);
-            if let Some(exception) = error.exception {
-                runtime.release_root(exception);
-            }
-            return Err(message);
-        }
-    };
-    let has_capture = runtime
-        .rooted_value(capture)
-        .is_some_and(|value| !value.is_null());
-    if has_capture {
-        runtime.release_root(capture);
-        let capture = get_rooted_property(runtime, program, state, "captureFn")?;
-        let captured = runtime.call_rooted(capture, state, &[exception]);
-        runtime.release_root(capture);
-        return match captured {
-            Ok(result) => {
-                runtime.release_root(result);
-                Ok(true)
-            }
-            Err(error) => {
-                if let Some(exception)=error.exception { super::worker_threads_shared_vm::record_callback_exception(runtime,exception); }
-    let message = runtime.format_error(program, &error.error);
-                if let Some(exception) = error.exception {
-                    runtime.release_root(exception);
-                }
-                Err(message)
-            }
-        };
-    }
-    runtime.release_root(capture);
-    if call_auxiliary_capture(runtime, program, state, exception)? { return Ok(true); }
-    let origin = runtime.string_rooted(origin);
-    let handled = emit_process_event(runtime, program, "uncaughtException", &[exception, origin]);
-    runtime.release_root(origin);
-    handled
-}
-
-fn call_auxiliary_capture(
-    runtime: &mut quench_runtime::Runtime<NodeHost>,
-    program: &quench_runtime::ResidualProgram,
-    state: RootId,
-    exception: RootId,
-) -> Result<bool, String> {
-    let callbacks = get_rooted_property(runtime, program, state, "auxiliaryCallbacks")?;
-    let length = get_rooted_property(runtime, program, callbacks, "length");
-    runtime.release_root(callbacks);
-    let length = length?;
-    let one = runtime.root(Value::number(1.0));
-    let index = runtime.subtract_rooted(length, one);
-    runtime.release_root(length);
-    runtime.release_root(one);
-    let index = index.map_err(|error| rooted_error_message(runtime, program, error))?;
-    // A Number right operand makes a successful subtraction a Number.
-    let number = runtime.rooted_value(index).and_then(Value::as_number);
-    runtime.release_root(index);
-    let mut index = number.ok_or_else(|| "auxiliary capture index is not a number".to_owned())?;
-    while index >= 0.0 {
-        let callbacks = get_rooted_property(runtime, program, state, "auxiliaryCallbacks")?;
-        let key = runtime.root(Value::number(index));
-        let callback = runtime.get_property_rooted(callbacks, key);
-        runtime.release_root(key);
-        let callback = match callback {
-            Ok(callback) => callback,
-            Err(error) => {
-                runtime.release_root(callbacks);
-                return Err(rooted_error_message(runtime, program, error));
-            }
-        };
-        let called = runtime.call_rooted(callback, callbacks, &[exception]);
-        runtime.release_root(callback);
-        runtime.release_root(callbacks);
-        let called = called.map_err(|error| rooted_error_message(runtime, program, error))?;
-        let handled = runtime.rooted_value(called).and_then(Value::as_bool) == Some(true);
-        runtime.release_root(called);
-        if handled { return Ok(true); }
-        index -= 1.0;
-    }
-    Ok(false)
+    let operation = runtime.host_function(crate::host::shared_vm::operation("processDispatchFatalException"))
+        .map_err(|error| rooted_error_message(runtime, program, error))?;
+    let receiver = runtime.root(Value::UNDEFINED);
+    let from_promise = runtime.root(if origin == "unhandledRejection" { Value::TRUE } else { Value::FALSE });
+    let result = runtime.call_rooted(operation, receiver, &[exception, from_promise]);
+    runtime.release_root(operation);
+    runtime.release_root(receiver);
+    runtime.release_root(from_promise);
+    let result = result.map_err(|error| rooted_error_message(runtime, program, error))?;
+    let handled = runtime.rooted_value(result).and_then(Value::as_bool) == Some(true);
+    runtime.release_root(result);
+    Ok(handled)
 }
 
 fn drain_checkpoint(
@@ -2405,10 +2382,22 @@ fn call_shared_callback(
     let scope = callback.execution.as_ref().map(|execution|
         super::async_hooks_shared_vm::enter_resource_context(&shared, execution.id, execution.resource));
     let before = match &callback.execution {
-        Some(execution) => super::async_hook_registry_shared_vm::emit_runtime(runtime, super::async_hook_registry_shared_vm::HookKind::Before, execution.id),
-        None => Ok(()),
+        Some(execution) if execution.id != super::domain_trampoline::LEGACY_CALLBACK_ASYNC_ID => super::async_hook_registry_shared_vm::emit_runtime(runtime, super::async_hook_registry_shared_vm::HookKind::Before, execution.id),
+        Some(_) | None => Ok(()),
     };
-    let called = before.and_then(|()| runtime.call_rooted(actual_callback, callback.receiver, &callback.args));
+    let called = before.and_then(|()| {
+        if callback.execution.as_ref().is_some_and(|execution| execution.id == super::domain_trampoline::LEGACY_CALLBACK_ASYNC_ID) {
+            let dispatch = runtime.host_function(crate::host::shared_vm::operation("domainTrampolineCall"))?;
+            let mut arguments = Vec::with_capacity(callback.args.len() + 1);
+            arguments.push(actual_callback);
+            arguments.extend_from_slice(&callback.args);
+            let result = runtime.call_rooted(dispatch, callback.receiver, &arguments);
+            runtime.release_root(dispatch);
+            result
+        } else {
+            runtime.call_rooted(actual_callback, callback.receiver, &callback.args)
+        }
+    });
     let result = match called {
         Ok(value) => { runtime.release_root(value); Ok(()) }
         Err(mut error) => {
@@ -2421,11 +2410,11 @@ fn call_shared_callback(
         }
     };
     let result = result.and_then(|()| match &callback.execution {
-        Some(execution) => match super::async_hook_registry_shared_vm::emit_runtime(runtime, super::async_hook_registry_shared_vm::HookKind::After, execution.id) {
+        Some(execution) if execution.id != super::domain_trampoline::LEGACY_CALLBACK_ASYNC_ID => match super::async_hook_registry_shared_vm::emit_runtime(runtime, super::async_hook_registry_shared_vm::HookKind::After, execution.id) {
             Ok(()) => Ok(()),
             Err(error) => route_callback_failure(runtime, program, error),
         },
-        None => Ok(()),
+        Some(_) | None => Ok(()),
     });
     drop(scope);
     if let Some(root)=resolved {runtime.release_root(root);}
@@ -2754,13 +2743,6 @@ fn terminate_unhandled_rejection(
     program: &quench_runtime::ResidualProgram,
     exception: RootId,
 ) -> Result<(), String> {
-    let control = runtime
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .process_control
-        .clone();
-    control.set_exit_code(Some(1));
     // The caller owns the exception until fatal formatting has finished.
     let mut failure = RootedError::host("unhandled Promise rejection");
     failure.exception = Some(exception);
@@ -3090,13 +3072,16 @@ fn emit_exit(
     code: i32,
 ) -> Result<(), String> {
     let result = emit_exit_inner(runtime, program, code);
+    cleanup_after_exit(runtime);
+    result
+}
+fn cleanup_after_exit(runtime: &mut quench_runtime::Runtime<NodeHost>) {
     super::tls_shared_vm::contexts::cleanup(runtime);
-        cleanup_native_work(runtime);
-        super::zlib_native_shared_vm::cleanup(runtime);
+    cleanup_native_work(runtime);
+    super::zlib_native_shared_vm::cleanup(runtime);
     #[cfg(quench_icu)]
     super::icu_binding_shared_vm::cleanup(runtime);
     super::buffer_shared_vm::cleanup(runtime);
-    result
 }
 
 fn emit_exit_inner(
@@ -3104,18 +3089,30 @@ fn emit_exit_inner(
     program: &quench_runtime::ResidualProgram,
     code: i32,
 ) -> Result<(), String> {
-    let state = runtime.host_mut().shared_state();
-    let _span = crate::modules::trace_state::EnvironmentSpan::enter(&state, "AtExit");
-    state.borrow().process_control.begin_exit_emission();
-    if !state.borrow_mut().scheduler.begin_shared_exit() { return Ok(()); }
-    if let Some(process) = shared_process_root(runtime) {
-        set_shared_property(runtime, program, process, "_exiting", Value::TRUE)?;
+    // Never enter a terminated VM to re-emit an event already run synchronously.
+    if runtime
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .scheduler
+        .shared_is_exiting()
+    {
+        return Ok(());
     }
-    let code = runtime.root(Value::number(f64::from(code)));
-    let emitted = call_process_event(runtime, program, "exit", &[code]);
-    runtime.release_root(code);
-    if let Some(emitted) = emitted? { runtime.release_root(emitted); }
-    Ok(())
+    let function = runtime
+        .host_function(crate::host::shared_vm::operation("processEmitExitEvent"))
+        .map_err(|error| rooted_error_message(runtime, program, error))?;
+    let value = runtime.root(Value::number(code as f64));
+    let result = runtime.call_rooted(function, function, &[value]);
+    runtime.release_root(function);
+    runtime.release_root(value);
+    match result {
+        Ok(result) => {
+            runtime.release_root(result);
+            Ok(())
+        }
+        Err(error) => Err(rooted_error_message(runtime, program, error)),
+    }
 }
 
 pub(super) fn release_callback(

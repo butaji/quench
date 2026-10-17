@@ -817,7 +817,11 @@ pub(crate) fn require_for_module(
             return cached_builtin(context, BuiltinModule::Module);
         }
         Some(BuiltinModule::AsyncHooks) => {
-            return crate::modules::async_hooks_shared_vm::module(context);
+            return if specifier.strip_prefix("node:").unwrap_or(&specifier) == "internal/async_hooks" {
+                crate::modules::domain_trampoline::internal_hooks(context)
+            } else {
+                crate::modules::async_hooks_shared_vm::module(context)
+            };
         }
         Some(BuiltinModule::DiagnosticsChannel) => {
             return crate::modules::diagnostics_channel_shared_vm::module(context);

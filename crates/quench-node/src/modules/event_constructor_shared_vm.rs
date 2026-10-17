@@ -159,12 +159,6 @@ pub(crate) fn initialize(
     };
     let key = get(context, data, "captureKey")?;
     set(context, data, target, key, capture)?;
-    // Implicit domain association does not enroll an emitter in explicit members.
-    let global = context.global_root()?;
-    let domain = get(context, global, "__quench_active_domain")?;
-    if context.truthy_rooted(domain)? {
-        named_set(context, data, target, "domain", domain)?;
-    }
     Ok(undefined)
 }
 

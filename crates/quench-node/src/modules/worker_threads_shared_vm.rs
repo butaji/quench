@@ -17,6 +17,8 @@ use std::{
 };
 type Context<'a> = NativeContext<'a, NodeHost>;
 static NEXT_THREAD_ID: AtomicU64 = AtomicU64::new(1);
+const WORKER_FAILURE_EXIT_CODE: i32 =
+    super::node_protocol_constants::ExitCode::GenericUserError as i32;
 #[derive(Default)]
 pub(crate) struct State {
     thread_id: u64,
@@ -48,6 +50,7 @@ struct Worker {
     resolvers: Vec<RootId>,
 }
 struct Failure {
+    exit_code: i32,
     serialized: Option<Packet>,
     name: String,
     message: String,
@@ -55,6 +58,7 @@ struct Failure {
 impl Failure {
     fn host(message: String) -> Self {
         Self {
+            exit_code: WORKER_FAILURE_EXIT_CODE,
             serialized: None,
             name: "Error".into(),
             message,
@@ -99,15 +103,32 @@ fn completion_failure(runtime: &mut Runtime<NodeHost>, message: String) -> Failu
         .workers
         .serialized_failure
         .take();
+    let control = runtime
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .process_control
+        .clone();
+    let exit_code = if control.fatal_exception_handler_failed() {
+        WORKER_FAILURE_EXIT_CODE
+    } else {
+        control.exit_code().unwrap_or(WORKER_FAILURE_EXIT_CODE)
+    };
     match packet {
         Some(packet) => Failure {
+            exit_code,
             serialized: Some(packet),
             name: String::new(),
             message: String::new(),
         },
-        None => Failure::host(message),
+        None => {
+            let mut failure = Failure::host(message);
+            failure.exit_code = exit_code;
+            failure
+        }
     }
 }
+
 fn failure(runtime: &mut Runtime<NodeHost>, error: quench_runtime::JsError) -> Failure {
     let Some(value) = error.thrown_value() else {
         return completion_failure(runtime, error.to_string());
@@ -605,6 +626,20 @@ pub(crate) fn construct(
                             if let Some(root) = exception {
                                 runtime.release_root(root);
                             }
+                            let control = runtime
+                                .host_mut()
+                                .shared_state()
+                                .borrow()
+                                .process_control
+                                .clone();
+                            if let Some(code) = control.requested_exit_code() {
+                                super::process_shared_vm::finish_requested_exit(
+                                    &mut runtime,
+                                    &program,
+                                )
+                                .map_err(Failure::host)?;
+                                return Ok(control.exit_code().unwrap_or(code));
+                            }
                             return Ok(1);
                         }
                         let shared = runtime.host_mut().shared_state();
@@ -632,14 +667,32 @@ pub(crate) fn construct(
                             runtime.release_root(root);
                         }
                         if interrupt_handle.is_termination_requested() {
-                            return Ok(1);
+                            return Ok(runtime
+                                .host_mut()
+                                .shared_state()
+                                .borrow()
+                                .process_control
+                                .requested_exit_code()
+                                .unwrap_or(1));
                         }
                         outcome?;
                         Ok(())
                     }
                 };
                 if interrupt_handle.is_termination_requested() {
-                    return Ok(1);
+                    return Ok(runtime
+                        .host_mut()
+                        .shared_state()
+                        .borrow()
+                        .process_control
+                        .requested_exit_code()
+                        .unwrap_or(1));
+                }
+                let control = runtime.host_mut().shared_state().borrow().process_control.clone();
+                if control.fatal_uncaught_requested() || control.fatal_exception_handler_failed() {
+                    super::process_shared_vm::finish_requested_exit(&mut runtime, &program)
+                        .map_err(Failure::host)?;
+                    return Ok(control.exit_code().unwrap_or(WORKER_FAILURE_EXIT_CODE));
                 }
                 completion.map_err(|message| completion_failure(&mut runtime, message))?;
                 Ok::<_, Failure>(runtime.host_mut().exit_code().unwrap_or(0))
@@ -649,8 +702,9 @@ pub(crate) fn construct(
                     report.send(Event::Exit(code)).ok();
                 }
                 Ok(Err(e)) => {
+                    let code = e.exit_code;
                     report.send(Event::Error(e)).ok();
-                    report.send(Event::Exit(1)).ok();
+                    report.send(Event::Exit(code)).ok();
                 }
                 Err(_) => {
                     report
@@ -1077,7 +1131,9 @@ pub(crate) fn poll_native(
             .as_ref()
             .is_some_and(|c| c.interrupt.is_termination_requested())
         {
-            state.process_control.request_exit(1);
+            if state.process_control.requested_exit_code().is_none() {
+                state.process_control.request_really_exit(1);
+            }
             let child = state.workers.child.as_mut().unwrap();
             child.closed = true;
             child.listening = false;
@@ -1197,4 +1253,32 @@ impl Drop for Worker {
             }
         }
     }
+}
+
+/// Transfer an owned bounded error packet before the terminal Worker exit.
+/// No VM value or root crosses the OS-thread boundary.
+pub(crate) fn report_fatal_error(ctx: &mut Context<'_>, error: RootId) -> Result<(), RootedError> {
+    let packet = match error_packet::capture(ctx, error) {
+        Ok(packet) => Some(packet),
+        Err(error) => {
+            if error.error.is_execution_terminated() { return Err(error); }
+            if let Some(exception) = error.exception { ctx.release_root(exception); }
+            None
+        }
+    };
+    let shared = ctx.host_mut().shared_state();
+    let state = shared.borrow();
+    let Some(child) = &state.workers.child else { return Ok(()); };
+    let failure = Failure {
+        exit_code: state.process_control.exit_code().unwrap_or(WORKER_FAILURE_EXIT_CODE),
+        serialized: packet,
+        name: "Error".into(),
+        message: "Could not serialize Worker error".into(),
+    };
+    child.tx.send(Event::Error(failure)).ok();
+    Ok(())
+}
+
+pub(crate) fn runtime_is_child(runtime: &mut Runtime<NodeHost>) -> bool {
+    runtime.host_mut().shared_state().borrow().workers.child.is_some()
 }
