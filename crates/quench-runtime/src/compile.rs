@@ -24,6 +24,7 @@ mod capture_layout;
 mod capture_profile;
 mod class;
 mod early;
+mod frame_registers;
 pub(crate) mod liveness;
 mod locals;
 mod numeric;
@@ -1979,6 +1980,7 @@ impl<'a> Compiler<'a> {
                 numeric::apply(function, live.as_deref());
             }
             Self::specialize_plain_local_operations(function, &self.superinstructions);
+            frame_registers::promote(function, &self.superinstructions);
             if function
                 .code
                 .iter()
