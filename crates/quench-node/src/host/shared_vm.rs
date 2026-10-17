@@ -997,7 +997,9 @@ pub(crate) fn operation(name: &str) -> HostFunctionId {
 }
 
 impl quench_runtime::Host for NodeHost {
-    const OBSERVE_PROMISE_LIFECYCLE: bool = true;
+    fn observes_promise_lifecycle(&self) -> bool {
+        self.shared_state.borrow().async_hooks.tracks_promises()
+    }
 
     fn proper_tail_calls(&self) -> bool {
         false
