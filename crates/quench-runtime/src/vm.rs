@@ -1273,6 +1273,8 @@ pub(crate) struct Vm<H> {
     /// The strings most recently matched by a RegExp, most recent first, each prepared once
     /// for repeated matching (`Vm::regexp_subject`).
     regexp_subjects: Vec<Rc<quench_regexp::Subject>>,
+    /// The subject of the last short string matched, reused in place once no match holds it.
+    regexp_short_subject: Option<Rc<quench_regexp::Subject>>,
     regexp_matchers: regexp::RegExpMatcherCache,
     // One lazily derived class byte per atom; length tracks atom_text plus dynamic_atoms.
     atom_classes: Vec<std::cell::Cell<u8>>,
@@ -1303,6 +1305,10 @@ pub(crate) struct Vm<H> {
     /// `prototype` (`construction::ClosureShapes`); derived from shapes, so field-cache
     /// invalidation clears it.
     closure_shapes: [Option<construction::ClosureShapes>; 2],
+    /// The shape a new RegExp object starts in and the one its own `lastIndex` moves it to
+    /// (`Vm::regexp_from_matcher`), as the first one recorded; derived from shapes, so
+    /// field-cache invalidation clears it.
+    regexp_object_shapes: Option<(u32, u32)>,
     /// A RegExp receiver shape verified to hold an own writable data `lastIndex` at the paired
     /// slot; derived from shapes, so field-cache invalidation clears it.
     regexp_last_index_layout: Option<(u32, u32)>,
@@ -1987,6 +1993,7 @@ impl<H: Host> Vm<H> {
         self.dynamic_atoms.clear();
         self.atom_classes.clear();
         self.regexp_subjects.clear();
+        self.regexp_short_subject = None;
         self.regexp_matchers.clear();
         self.atom_classes
             .resize_with(self.atom_text.len(), Default::default);
@@ -2038,6 +2045,7 @@ impl<H: Host> Vm<H> {
         self.programs.reset(program.clone());
         self.instanceof_constructor_layout = None;
         self.closure_shapes = [None; 2];
+        self.regexp_object_shapes = None;
         self.regexp_last_index_layout = None;
         self.regexp_builtin_layout = None;
         self.instanceof_has_instance_holder = Value::NULL;

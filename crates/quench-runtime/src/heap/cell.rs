@@ -740,6 +740,34 @@ impl Native {
         )
     }
 
+    /// `String.prototype` methods that, for a string primitive receiver and arguments that
+    /// are not objects, run no guest code and have no effect beyond allocating their result.
+    /// The methods that look up a `Symbol.split`-like method on an argument (`split`,
+    /// `replace`, `match` and their kin) are not among them.
+    pub(crate) fn is_pure_string_method(self) -> bool {
+        matches!(
+            self,
+            Self::StringCharCodeAt
+                | Self::StringCharAt
+                | Self::StringSlice
+                | Self::StringSubstring
+                | Self::StringSubstr
+                | Self::StringIncludes
+                | Self::StringStartsWith
+                | Self::StringEndsWith
+                | Self::StringIndexOf
+                | Self::StringLastIndexOf
+                | Self::StringTrim
+                | Self::StringTrimStart
+                | Self::StringTrimEnd
+                | Self::StringAt
+                | Self::StringCodePointAt
+                | Self::StringToUpperCase
+                | Self::StringToLowerCase
+                | Self::StringConcat
+        )
+    }
+
     pub(crate) fn is_host_control_native(self) -> bool {
         matches!(
             self,
