@@ -52,3 +52,10 @@ fn advanced_ipc_contract_matches_node() {
 fn stdio_write_contract_matches_node() {
     assert_contract_matches_node("process/stdio_write_contract.cjs");
 }
+
+/// ESM loader error codes and messages, import attribute checks, CommonJS named exports
+/// through re-export helpers, modifier-like regex classes and the EventEmitter shape.
+#[test]
+fn esm_loader_contract_matches_node() {
+    assert_contract_matches_node("esm/loader_contract.mjs");
+}
