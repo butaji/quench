@@ -103,6 +103,9 @@ pub(crate) struct SharedAsyncHooksState {
     pub(super) local_stores: FxHashMap<(StoreContext, u64), RootId>,
     pub(super) store_references: FxHashMap<RootId, usize>,
     pub(super) destroyed_resources: FxHashSet<u64>,
+    /// The AsyncLocalStorage instances entered since their last `disable()`. Like Node's
+    /// storage hook, an enabled one makes promises tracked (`tracks_promises`).
+    pub(super) enabled_local_storages: FxHashSet<u64>,
 }
 
 impl SharedAsyncHooksState {
@@ -121,7 +124,14 @@ impl SharedAsyncHooksState {
             local_stores: FxHashMap::default(),
             store_references: FxHashMap::default(),
             destroyed_resources: FxHashSet::default(),
+            enabled_local_storages: FxHashSet::default(),
         }
+    }
+
+    /// Whether promises get an async-hooks identity: Node installs its promise hook only
+    /// while an async hook, or the hook an entered AsyncLocalStorage enables, is enabled.
+    pub(super) fn tracks_promises(&self) -> bool {
+        self.registry.any_enabled() || !self.enabled_local_storages.is_empty()
     }
 
     /// Node internal/async_hooks getDefaultTriggerAsyncId: a negative slot

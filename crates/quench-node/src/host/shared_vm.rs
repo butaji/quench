@@ -1300,12 +1300,7 @@ impl quench_runtime::Host for NodeHost {
         &mut self,
         parent: Option<quench_runtime::HostExecutionContext>,
     ) -> Option<quench_runtime::HostExecutionContext> {
-        Some(
-            crate::modules::async_hooks_shared_vm::create_promise_context(
-                &self.shared_state,
-                parent,
-            ),
-        )
+        crate::modules::async_hooks_shared_vm::create_promise_context(&self.shared_state, parent)
     }
 
     fn initialize_promise(
