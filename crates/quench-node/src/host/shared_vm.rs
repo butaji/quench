@@ -36,6 +36,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "contextifyRunInContext" (0) => crate::modules::contextify_shared_vm::run_in_context,
         method "contextifyCompileFunction" (0) => crate::modules::contextify_shared_vm::compile_function,
         method "nodePrintEvalScript" (1) => crate::shared_run::print_eval_script,
+        method "builtinExportValues" (2) => commonjs::builtin_export_values,
         method "callbackify" (1) => crate::modules::util_callbackify_shared_vm::callbackify,
         method "gc" (0) => crate::modules::process_shared_vm::collect_garbage,
         method "utilCallbackified" (2) => crate::modules::util_callbackify_shared_vm::callbackified,
@@ -698,6 +699,10 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "fsBindingReaddir" (0) => crate::modules::fs_directory_shared_vm::readdir,
         method "fsBindingReaddirRecursive" (0) => crate::modules::fs_directory_shared_vm::readdir_recursive,
         method "fsPromisesGlobInitialize" (0) => crate::modules::fs_shared_vm::initialize_promises_glob_policy,
+        method "fsReadStreamInitialize" (0) => crate::modules::fs_shared_vm::initialize_read_stream,
+        method "perfHooksObserversInitialize" (0) => crate::modules::perf_hooks::initialize_observers,
+        method "fsLibraryPolicyInitialize" (0) => crate::modules::fs_shared_vm::initialize_library_policy,
+        method "fsWriteStreamInitialize" (0) => crate::modules::fs_shared_vm::write_stream::initialize,
         method "fsVfsPair" (2) => crate::modules::fs_policy_shared_vm::vfs_pair,
         method "fsVfsExistsSync" (1) => crate::modules::fs_policy_shared_vm::vfs_exists_sync,
         method "fsWriteFilePublic" (3) => crate::modules::fs_shared_vm::write_public::write,
@@ -1069,12 +1074,16 @@ impl quench_runtime::Host for NodeHost {
                 "const __quenchModule = globalThis[\"\\0quench:require\"]({});\nexport default __quenchModule;\n",
                 serde_json::to_string(require_specifier).map_err(|error| error.to_string())?
             );
-            for name in exports {
-                source.push_str("export const ");
-                source.push_str(name);
-                source.push_str(" = __quenchModule[");
-                source.push_str(&serde_json::to_string(name).map_err(|error| error.to_string())?);
-                source.push_str("];\n");
+            // lib/internal/bootstrap/realm.js `syncExports`: each name is read with `getOwn`,
+            // in the order the module lists its own keys (`builtin_export_values`).
+            source.push_str(&format!(
+                "const __quenchExports = globalThis[{}](__quenchModule, {});\n",
+                serde_json::to_string(crate::host::shared_vm::commonjs::BUILTIN_EXPORT_VALUES)
+                    .map_err(|error| error.to_string())?,
+                serde_json::to_string(exports).map_err(|error| error.to_string())?
+            ));
+            for (index, name) in exports.iter().enumerate() {
+                source.push_str(&format!("export const {name} = __quenchExports[{index}];\n"));
             }
             return Ok(Some(quench_runtime::ModuleSource {
                 name: format!("node:quench-builtin/{builtin_name}"),

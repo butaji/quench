@@ -648,9 +648,18 @@ impl Regex {
     }
 }
 
-/// The text a subject matches: a string's own one-byte ASCII storage, or its UTF-16 units.
+/// The most ASCII bytes a subject holds inline (`Subject::short_ascii`): the `Wide`
+/// variant's four words, less the length byte.
+pub const INLINE_SUBJECT_BYTES: usize = 4 * size_of::<usize>() - 1;
+
+/// The text a subject matches: a string's own one-byte ASCII storage, a short ASCII copy,
+/// or its UTF-16 units.
 enum SubjectText {
     Ascii(std::rc::Rc<str>),
+    Inline {
+        length: u8,
+        bytes: [u8; INLINE_SUBJECT_BYTES],
+    },
     Wide {
         units: std::rc::Rc<[u16]>,
         /// One byte per unit, present only when every unit is ASCII.
@@ -696,9 +705,26 @@ impl Subject {
         }
     }
 
+    /// A subject over ASCII text of at most `INLINE_SUBJECT_BYTES`, copied inline, so a
+    /// short string's subject needs no storage of its own.
+    pub fn short_ascii(text: &str) -> Self {
+        debug_assert!(text.is_ascii());
+        let mut bytes = [0; INLINE_SUBJECT_BYTES];
+        bytes[..text.len()].copy_from_slice(text.as_bytes());
+        Self {
+            text: SubjectText::Inline {
+                length: u8::try_from(text.len()).expect("short text fits its length byte"),
+                bytes,
+            },
+            has_carriage_return: text.as_bytes().contains(&b'\r'),
+            decoded: Default::default(),
+        }
+    }
+
     fn len(&self) -> usize {
         match &self.text {
             SubjectText::Ascii(text) => text.len(),
+            SubjectText::Inline { length, .. } => usize::from(*length),
             SubjectText::Wide { units, .. } => units.len(),
         }
     }
@@ -706,14 +732,16 @@ impl Subject {
     fn ascii(&self) -> Option<&[u8]> {
         match &self.text {
             SubjectText::Ascii(text) => Some(text.as_bytes()),
+            SubjectText::Inline { length, bytes } => Some(&bytes[..usize::from(*length)]),
             SubjectText::Wide { ascii, .. } => ascii.as_deref(),
         }
     }
 
     fn decoded(&self, unicode: bool) -> &[Unit] {
         self.decoded[usize::from(unicode)].get_or_init(|| match &self.text {
-            SubjectText::Ascii(text) => {
-                let units = text.bytes().map(u16::from).collect::<Vec<_>>();
+            SubjectText::Ascii(_) | SubjectText::Inline { .. } => {
+                let ascii = self.ascii().expect("ASCII text has bytes");
+                let units = ascii.iter().copied().map(u16::from).collect::<Vec<_>>();
                 units_from_utf16(&units, unicode)
             }
             SubjectText::Wide { units, .. } => units_from_utf16(units, unicode),

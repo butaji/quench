@@ -1124,7 +1124,7 @@ fn finished_jobs_release_their_values_while_the_queue_keeps_draining() {
     // collectable while later jobs of the same drain still run: its cleanup is observed
     // inside the await loop instead of never. Each iteration allocates at least one cell,
     // so the bound lets the drain pass the collection headroom several times.
-    let iterations = 4 * crate::heap::MINIMUM_GC_ALLOCATION_HEADROOM;
+    let iterations = 4 * crate::heap::FULL_COLLECTION_ALLOCATION_BOUND;
     let source = format!(
         "var finalized = false, registry = new FinalizationRegistry(function () {{ finalized = true; }});\n\
          function make() {{ var o = {{}}; registry.register(o, 0); return o; }}\n\
@@ -10339,6 +10339,69 @@ fn js_jit_compiles_hot_numeric_functions_and_guards_polymorphic_inputs() {
 }
 
 #[test]
+#[cfg(not(any(
+    feature = "profile-aggregate",
+    feature = "profile-trace",
+    feature = "profile-memory",
+    feature = "profile-gc-time"
+)))]
+fn js_jit_compiles_forward_numeric_branches_to_rooted_string_returns() {
+    let source = r#"
+      const rating = price => price < 100 ? '€' : price < 1000 ? '€€' : '€€€';
+      for (let i = 0; i < 40; i++) {
+        if (rating(99.99) !== '€') throw Error('below first boundary');
+        if (rating(100) !== '€€') throw Error('first boundary');
+        if (rating(999.99) !== '€€') throw Error('below second boundary');
+        if (rating(1000) !== '€€€') throw Error('second boundary');
+      }
+      if (rating(-0) !== '€' || rating(-Infinity) !== '€') throw Error('negative number');
+      if (rating(NaN) !== '€€€' || rating(Infinity) !== '€€€') throw Error('unordered/large number');
+
+      let coercions = 0;
+      const boxed = { valueOf() { coercions++; return 150; } };
+      if (rating(boxed) !== '€€' || coercions !== 2) throw Error('guard fallback');
+
+      function constructible(price) { return price < 100 ? '€' : '€€'; }
+      for (let i = 0; i < 40; i++) constructible(i);
+      const instance = new constructible(1);
+      if (instance === '€' || !(instance instanceof constructible)) throw Error('constructor return');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest {
+        source,
+        name: "js-jit-string-branch.js",
+        kind: crate::SourceKind::Script,
+    })
+    .unwrap();
+    let function_count = program.functions.len();
+    let mut vm = Vm::new(SilentHost);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+
+    let compiled_string_functions: Vec<_> = (1..function_count)
+        .filter_map(|function| {
+            match vm
+                .programs
+                .js_tier(super::program_store::ProgramId::MAIN, function as u32)
+            {
+                Some(super::program_store::JsTierState::Compiled(compiled))
+                    if compiled.has_string_returns() =>
+                {
+                    Some(compiled)
+                }
+                _ => None,
+            }
+        })
+        .collect();
+    assert!(
+        !compiled_string_functions.is_empty(),
+        "at least one forward-branch string function should reach native code"
+    );
+    assert!(compiled_string_functions
+        .iter()
+        .all(|compiled| compiled.native_entries() > 0));
+}
+
+#[test]
 fn js_jit_tier_tracking_has_a_hard_bound() {
     let program = Engine::compile(crate::ExecutionRequest::script("void 0", "js-jit-cap.js"))
         .unwrap();
@@ -10364,6 +10427,53 @@ fn js_jit_promotion_requires_a_confident_numeric_profile() {
         Some(super::program_store::JsTierState::Hot {
             observations: 16,
             numeric: 15
+        })
+    ));
+}
+
+#[test]
+fn js_jit_profile_gate_uses_prespecified_exact_binomial_looks() {
+    use super::program_store::JS_JIT_PROMOTION_LOOKS;
+
+    fn upper_tail(n: u8, k: u8, p: f64) -> f64 {
+        let n = u32::from(n);
+        let k = u32::from(k);
+        let mut mass = (1.0 - p).powi(n as i32);
+        let mut total = 0.0;
+        for successes in 0..=n {
+            if successes >= k {
+                total += mass;
+            }
+            if successes < n {
+                mass *= (n - successes) as f64 / f64::from(successes + 1) * p / (1.0 - p);
+            }
+        }
+        total
+    }
+
+    // Each fixed look spends alpha/4 under p=0.8. Testing at these points
+    // bounds false promotion across looks for this function at 5%.
+    for (observations, minimum) in JS_JIT_PROMOTION_LOOKS {
+        assert!(upper_tail(observations, minimum, 0.8) <= 0.05 / 4.0);
+        assert!(upper_tail(observations, minimum - 1, 0.8) > 0.05 / 4.0);
+    }
+
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        "void 0",
+        "js-jit-sequential-profile-gate.js",
+    ))
+    .unwrap();
+    let mut programs = super::program_store::ProgramStore::default();
+    let id = programs.insert(program).unwrap();
+    for observation in 0..31 {
+        assert!(!programs.note_js_function_entry(id, 1, observation != 0));
+    }
+    assert!(programs.note_js_function_entry(id, 1, true));
+    assert!(matches!(
+        programs.js_tier(id, 1),
+        Some(super::program_store::JsTierState::Hot {
+            observations: 32,
+            numeric: 31
         })
     ));
 }
