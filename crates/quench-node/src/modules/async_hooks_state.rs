@@ -99,13 +99,16 @@ pub(crate) struct SharedAsyncHooksState {
     pub(super) next_job_id: u64,
     pub(super) job_stack: Vec<(u64, i64, StoreContext)>,
     pub(super) promise_resources: FxHashMap<u64, quench_runtime::HostWeakRoot>,
-    /// The collection after which `promise_resources` was last pruned; its weak roots can
-    /// only have died in a later one.
-    pub(crate) promise_prune_epoch: Option<u64>,
+    /// The collection epoch `promise_resources` was last pruned at: entries can only have
+    /// died when a collection ran since.
+    pub(crate) promise_resources_pruned_epoch: u64,
     pub(super) scoped_resource: Option<(u64, RootId)>,
     pub(super) local_stores: FxHashMap<(StoreContext, u64), RootId>,
     pub(super) store_references: FxHashMap<RootId, usize>,
     pub(super) destroyed_resources: FxHashSet<u64>,
+    /// The AsyncLocalStorage instances entered since their last `disable()`. Like Node's
+    /// storage hook, an enabled one makes promises tracked (`tracks_promises`).
+    pub(super) enabled_local_storages: FxHashSet<u64>,
 }
 
 impl SharedAsyncHooksState {
@@ -120,16 +123,22 @@ impl SharedAsyncHooksState {
             next_job_id: 0,
             job_stack: Vec::new(),
             promise_resources: FxHashMap::default(),
-            promise_prune_epoch: None,
+            promise_resources_pruned_epoch: 0,
             scoped_resource: None,
             local_stores: FxHashMap::default(),
             store_references: FxHashMap::default(),
             destroyed_resources: FxHashSet::default(),
+            enabled_local_storages: FxHashSet::default(),
         }
     }
 
     /// Node internal/async_hooks getDefaultTriggerAsyncId: a negative slot
     /// means inherit executionAsyncId; scope never changes execution or ALS.
+    /// Node gives Promises async resources only while its promise hook is installed.
+    pub(crate) fn tracks_promises(&self) -> bool {
+        self.registry.tracks_promises()
+    }
+
     pub(super) fn default_trigger_async_id(&self) -> f64 {
         self.default_trigger_async_id.filter(|id| !(*id < 0.0))
             .unwrap_or(self.identity.current_async_id() as f64)

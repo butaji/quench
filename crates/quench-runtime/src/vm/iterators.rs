@@ -54,8 +54,61 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         source: Value,
     ) -> Result<Vec<RootId>, JsError> {
+        if let Some(values) = self.intact_array_iteration(source) {
+            return Ok(values.into_iter().map(|value| self.heap.root(value)).collect());
+        }
         let iterator = self.get_iterator(p, source)?;
         self.rooted_iterator_values(p, iterator)
+    }
+
+    /// The values iterating `source` yields where no step can run guest code: an ordinary
+    /// hole-free Array whose `@@iterator` lookup reaches the realm's intrinsic
+    /// `Array.prototype.values` data property and whose iterator prototype's `next` is the
+    /// intrinsic data property. Every Get the protocol makes then reads a data property, so
+    /// copying the elements is observably the same and creates no iterator or result object.
+    fn intact_array_iteration(&self, source: Value) -> Option<Vec<Value>> {
+        let array = self.heap.array(source)?;
+        let elements = array.elements();
+        if array.is_arguments_object()
+            || array.proto() != self.array_proto
+            || self.heap.sparse_length(source).is_some()
+            || elements.iter().any(|value| value.is_deleted())
+        {
+            return None;
+        }
+        let iterator = self.well_known_symbols.get("iterator").copied()?;
+        let key = PropertyKey::symbol(iterator);
+        if self.property_shape_slot(array.shape(), key).is_some() {
+            return None;
+        }
+        let realm_native = |value: Option<Value>, native: Native| {
+            matches!(
+                value.and_then(|value| self.heap.get(value)),
+                Some(Cell::Function { kind: FunctionKind::Native(kind), object, .. })
+                    if *kind == native && object.realm == self.realm.globals
+            )
+        };
+        let next = self.lookup_atom("next")?;
+        (realm_native(self.own_data_value(self.array_proto, key), Native::ArrayValues)
+            && realm_native(
+                self.own_data_value(self.array_iterator_proto, PropertyKey::string(next)),
+                Native::ArrayIteratorNext,
+            ))
+        .then(|| elements.to_vec())
+    }
+
+    /// An own data property's value, read without running a getter; `None` when `key` is
+    /// absent or an accessor.
+    fn own_data_value(&self, object: Value, key: PropertyKey) -> Option<Value> {
+        let data = self.object_data(object)?;
+        let slot = self.property_shape_slot(data.shape(), key)?;
+        if self
+            .shape_attribute(data.shape(), slot)
+            .is_some_and(|attributes| attributes.accessor)
+        {
+            return None;
+        }
+        self.heap.property_get(data, slot)
     }
 
     pub(super) fn iterator_step_value(

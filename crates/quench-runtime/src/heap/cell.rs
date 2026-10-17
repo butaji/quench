@@ -101,7 +101,7 @@ impl WeakMapEntries {
 #[rustfmt::skip]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Native {
-    Print, HostDone, CreateRealm, IsHTMLDDA, EvalScript, CollectGarbage, RealmTypeError, Eval, ToString, Function, FunctionPrototype, FunctionPrototypeHasInstance, FunctionCaller, DynamicImport, AbstractModuleSource, AbstractModuleSourceToStringTag, ShadowRealm, ShadowRealmEvaluate, ShadowRealmImportValue, ShadowRealmImportValueFulfilled, ShadowRealmWrappedFunction,
+    Print, HostDone, CreateRealm, IsHTMLDDA, EvalScript, CollectGarbage, RealmTypeError, Eval, Function, FunctionPrototype, FunctionPrototypeHasInstance, FunctionCaller, DynamicImport, AbstractModuleSource, AbstractModuleSourceToStringTag, ShadowRealm, ShadowRealmEvaluate, ShadowRealmImportValue, ShadowRealmImportValueFulfilled, ShadowRealmWrappedFunction,
     Object,
     ObjectKeys, ForInKeys, ForInKeyIsEnumerable, ObjectValues, ObjectEntries, ObjectGetOwnPropertyNames, ObjectGetOwnPropertySymbols, ObjectGetOwnPropertyDescriptor, ObjectGetOwnPropertyDescriptors, ObjectFromEntries, ObjectIs,
     ObjectCreate, ObjectAssign, ObjectDefineProperty, ObjectDefineProperties, ObjectGetPrototypeOf, ObjectPreventExtensions, ObjectIsExtensible, ObjectSeal, ObjectIsSealed, ObjectFreeze, ObjectIsFrozen, ObjectGroupBy,
@@ -1683,12 +1683,15 @@ impl Object {
         previous
     }
 
-    pub(crate) fn copy_property_storage_from(&mut self, source: &Self) {
-        let properties = source.properties();
+    /// Takes `source`'s property values, given `properties`, the arena's duplicate of
+    /// `source.properties()`, and returns the storage this object held before.
+    pub(crate) fn copy_property_storage_from(&mut self, source: &Self, properties: ValueVec) -> ValueVec {
+        let previous = self.properties();
         self.set_properties(properties);
         if properties.has_inline_property_storage() {
             *self.inline_property_values_mut() = *source.inline_property_values();
         }
+        previous
     }
 
     /// Presence of [[ErrorData]] is the unforgeable Error brand.
@@ -2028,11 +2031,18 @@ impl EnvironmentSlots {
     }
 }
 
+impl EnvironmentSlots {
+    /// Slots that own `values`, in order.
+    pub(crate) fn from_values(values: impl ExactSizeIterator<Item = Value>) -> Self {
+        Self(super::thin_slice::ThinBoxSlice::from_exact_iter(
+            values.map(EnvironmentSlot::Owned),
+        ))
+    }
+}
+
 impl From<Vec<Value>> for EnvironmentSlots {
     fn from(values: Vec<Value>) -> Self {
-        Self(super::thin_slice::ThinBoxSlice::from_exact_iter(
-            values.into_iter().map(EnvironmentSlot::Owned),
-        ))
+        Self::from_values(values.into_iter())
     }
 }
 

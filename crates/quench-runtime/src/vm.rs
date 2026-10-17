@@ -1827,8 +1827,32 @@ impl<H: Host> Vm<H> {
         let (_, collections, _, _, _, _) = self.heap.stats();
         let gc = self.heap.gc_profile();
         eprintln!(
-            "{{\"kind\":\"quench-gc-time\",\"collections\":{collections},\"mark_nanos\":{},\"sweep_nanos\":{},\"mark_clear_nanos\":{},\"vm_owner_edges_nanos\":{},\"vm_roots_nanos\":{},\"vm_shape_setup_nanos\":{},\"vm_after_nanos\":{}}}",
+            "{{\"kind\":\"quench-gc-time\",\"collections\":{collections},\"full_collections\":{},\"full_mark_nanos\":{},\"minor_mark_nanos\":{},\"mark_nanos\":{},\"sweep_nanos\":{},\"mark_clear_nanos\":{},\"vm_owner_edges_nanos\":{},\"vm_roots_nanos\":{},\"vm_shape_setup_nanos\":{},\"vm_after_nanos\":{}}}",
+            gc.full_collections, gc.full_mark_nanos, gc.minor_mark_nanos,
             gc.mark_nanos, gc.sweep_nanos, gc.mark_clear_nanos, gc.vm_phase_nanos[0], gc.vm_phase_nanos[1], gc.vm_phase_nanos[2], gc.vm_phase_nanos[3],
+        );
+        // Sizes of the VM-side tables beside the heap: a table that grows with work done
+        // rather than with live data is retention.
+        let mut kinds: std::collections::BTreeMap<&'static str, usize> = Default::default();
+        self.heap.for_each_live_cell(|cell| *kinds.entry(cell.profile_variant_name()).or_default() += 1);
+        let mut kinds: Vec<_> = kinds.into_iter().collect();
+        kinds.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
+        eprintln!("{{\"kind\":\"quench-live-cells\",\"top\":{:?}}}", &kinds[..kinds.len().min(8)]);
+        let promise = &self.realm.promise;
+        eprintln!(
+            "{{\"kind\":\"quench-vm-tables\",\"live_slots\":{},\"suspended\":{},\"suspended_free\":{},\"promise_records\":{},\"thenable_jobs\":{},\"reaction_capabilities\":{},\"async_resume_jobs\":{},\"jobs\":{},\"descriptors\":{},\"function_values\":{},\"frames\":{},\"active_call_roots\":{}}}",
+            self.heap.live_slots(),
+            self.suspended.len(),
+            self.suspended_free.len(),
+            promise.records.len(),
+            promise.thenable_jobs.len(),
+            promise.reaction_capabilities.len(),
+            promise.async_resume_jobs.len(),
+            self.realm.jobs.len(),
+            self.descriptors.len(),
+            self.function_values.len(),
+            self.frames.len(),
+            self.active_call_roots.len(),
         );
     }
     #[cfg(feature = "profile-memory")]
@@ -1837,6 +1861,28 @@ impl<H: Host> Vm<H> {
             self.report_memory(phase);
         }
     }
+    /// `QUENCH_FUNCTION_USE`: how many compiled functions have been called (their call plan is
+    /// derived on first call), and the record and code bytes of those never called.
+    #[cfg(feature = "profile-memory")]
+    pub(crate) fn report_function_use(&self) {
+        let (mut functions, mut called, mut uncalled_bytes) = (0usize, 0usize, 0usize);
+        for program in self.programs.residuals() {
+            for function in &program.functions {
+                functions += 1;
+                if function.call_plan.get().is_some() {
+                    called += 1;
+                } else {
+                    uncalled_bytes += size_of::<crate::bytecode::Function>()
+                        + function.code.capacity() * size_of::<crate::bytecode::Instr>()
+                        + function.wide.capacity() * size_of::<crate::bytecode::WideInstruction>();
+                }
+            }
+        }
+        eprintln!(
+            "{{\"kind\":\"quench-function-use\",\"functions\":{functions},\"called\":{called},\"uncalled_record_and_code_bytes\":{uncalled_bytes}}}"
+        );
+    }
+
     #[cfg(feature = "profile-memory")]
     fn report_memory(&self, phase: &str) {
         let (
@@ -1964,6 +2010,7 @@ impl<H: Host> Vm<H> {
             + heap.free_slot_metadata_bytes
             + property_arena_bytes
             + heap.cell_payload_bytes
+            + heap.array_buffer_store_bytes
             + heap.boxed_object_header_bytes
             + heap.sparse_array_sidecar_bytes
             + vm_metadata_bytes;
