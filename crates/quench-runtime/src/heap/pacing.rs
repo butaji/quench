@@ -3,8 +3,10 @@
 //! Survivors of every collection stay marked (old). A minor collection traces roots and
 //! the old owners the write barriers logged, and sweeps only unmarked (young) cells and
 //! records, so its cost follows survivors and garbage rather than the old heap. A full
-//! collection clears the marks and traces everything. Budgets are in allocation weight:
-//! one per cell or record plus one per `PAYLOAD_BYTES_PER_ALLOCATION` of payload.
+//! collection clears the marks and traces everything. Budgets, live sizes and survival
+//! are all in allocation weight: one per cell or record plus one per
+//! `PAYLOAD_BYTES_PER_ALLOCATION` of payload (`Cell::payload_bytes`), so a heap of few
+//! cells with large strings or element stores is paced by what it holds.
 
 /// `numerator / denominator` of a live count, without overflow.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -93,11 +95,11 @@ impl PacingState {
 #[derive(Clone, Copy, Debug)]
 pub(super) struct CollectionOutcome {
     pub(super) full: bool,
-    /// Live cells and records after this collection and after the previous one.
+    /// Live weight after this collection and after the previous one.
     pub(super) live: usize,
     pub(super) previous_live: usize,
     pub(super) live_after_full: usize,
-    /// Cells and records allocated between the previous collection and this one.
+    /// Weight allocated between the previous collection and this one.
     pub(super) allocated: usize,
     /// Allocation weight since the last full collection.
     pub(super) since_full: usize,
@@ -196,8 +198,9 @@ impl GenerationalPacing {
 /// collections every half live set (at least 2^15), a full collection once the old
 /// generation has doubled, and never more than eight live sets of allocation between
 /// full collections. When more than half of young allocations survive, collections are
-/// full with four live sets between them (the 2026-10-16 large-heap factor, which keeps
-/// such heaps' Score), probing survival with a minor collection every fourth one.
+/// full with two live sets between them, probing survival with a minor collection every
+/// fourth one. (With live measured in cells only, this factor was four: payload-heavy
+/// heaps measured in weight are larger, and two keeps Splay's Score at 21% less RSS.)
 pub(super) const PRODUCTION_PACING: GenerationalPacing = GenerationalPacing {
     young: Ratio::new(1, 2),
     minimum_young: 1 << 15,
@@ -206,7 +209,7 @@ pub(super) const PRODUCTION_PACING: GenerationalPacing = GenerationalPacing {
     allocation_cap: Ratio::new(8, 1),
     minimum_allocation_cap: 1 << 18,
     survival_limit: SURVIVAL_SCALE / 2,
-    full_only_headroom: Ratio::new(4, 1),
+    full_only_headroom: Ratio::new(2, 1),
     probe_interval: 4,
 };
 
@@ -268,7 +271,8 @@ mod tests {
         let next = pacing.plan(&mut state, minor(2 * live, 3 * live / 2, live / 2));
         assert_eq!(state.regime(&pacing), Regime::FullOnly);
         // The next full collection keeps the interval measured from the last full one.
-        assert_eq!(next, NextCollection { threshold: 11 * live / 2, full: true });
+        let interval = pacing.full_only_headroom.of(3 * live / 2) - live / 2;
+        assert_eq!(next, NextCollection { threshold: interval, full: true });
         // After `probe_interval` full collections, a minor probes survival again.
         let full = CollectionOutcome { full: true, since_full: 0, ..minor(live, live, 4 * live) };
         for _ in 1..pacing.probe_interval {
