@@ -7,7 +7,8 @@ use rustc_hash::FxHashMap;
 
 /// Prespecified looks for the Number-entry profile. Critical counts are the
 /// exact one-sided Binomial( n, 0.80 ) cutoffs at alpha = 0.05 / 4 per look.
-/// A union bound caps false promotion at 5% under a stationary Bernoulli model.
+/// A union bound caps false promotion at 5% across looks for one function
+/// under a stationary Bernoulli model; it is not a VM-wide multiple-test bound.
 pub(super) const JS_JIT_PROMOTION_LOOKS: [(u8, u8); 4] =
     [(32, 31), (64, 59), (128, 113), (255, 219)];
 const JS_JIT_MAX_FUNCTIONS: usize = 8;
