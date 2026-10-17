@@ -385,24 +385,57 @@ impl Drop for CodeMemory {
 /// bytecode subset. It owns one W^X executable mapping and has no heap roots.
 pub(super) struct CompiledJsFunction {
     _code: CodeMemory,
-    entry: unsafe extern "C" fn(*const f64) -> f64,
+    entry: CompiledJsEntry,
     params: usize,
     mapped_bytes: usize,
+    return_constants: Vec<(u32, u32)>,
+    #[cfg(test)]
+    native_entries: std::cell::Cell<u64>,
+}
+
+#[derive(Clone, Copy)]
+enum CompiledJsEntry {
+    Number(unsafe extern "C" fn(*const f64) -> f64),
+    StringReturnPc(unsafe extern "C" fn(*const f64) -> u32),
+}
+
+pub(super) enum CompiledJsResult {
+    Number(f64),
+    StringReturnPc(u32),
 }
 
 impl CompiledJsFunction {
     pub(super) fn from_artifact(artifact: super::js_compiled::JsJitArtifact) -> Option<Self> {
         let code = CodeMemory::new(&artifact.code)?;
         let mapped_bytes = code.length;
-        // SAFETY: the JS compiler emits the C ABI `fn(*const f64) -> f64`.
-        let entry = unsafe {
-            std::mem::transmute::<*mut u8, unsafe extern "C" fn(*const f64) -> f64>(code.pointer)
+        let (entry, return_constants) = match artifact.result {
+            super::js_compiled::JsJitResultKind::Number => {
+                // SAFETY: the numeric JS compiler emits `fn(*const f64) -> f64`.
+                let entry = unsafe {
+                    std::mem::transmute::<*mut u8, unsafe extern "C" fn(*const f64) -> f64>(
+                        code.pointer,
+                    )
+                };
+                (CompiledJsEntry::Number(entry), Vec::new())
+            }
+            super::js_compiled::JsJitResultKind::StringReturnPc(return_constants) => {
+                // SAFETY: the static-string compiler emits `fn(*const f64) -> u32`.
+                let entry = unsafe {
+                    std::mem::transmute::<*mut u8, unsafe extern "C" fn(*const f64) -> u32>(
+                        code.pointer,
+                    )
+                };
+                (CompiledJsEntry::StringReturnPc(entry), return_constants)
+            }
         };
         Some(Self {
             _code: code,
             entry,
             params: artifact.params,
             mapped_bytes,
+            return_constants,
+            #[cfg(test)]
+            native_entries: std::cell::Cell::new(0),
         })
     }
 
@@ -410,10 +443,38 @@ impl CompiledJsFunction {
         self.params
     }
 
-    pub(super) fn call(&self, arguments: &[f64]) -> f64 {
-        // SAFETY: `arguments` has the formal count encoded into the function;
-        // the compiler emits loads only for that many values.
-        unsafe { (self.entry)(arguments.as_ptr()) }
+    pub(super) fn call(&self, arguments: &[f64]) -> CompiledJsResult {
+        #[cfg(test)]
+        self.native_entries
+            .set(self.native_entries.get().saturating_add(1));
+        // SAFETY: the artifact result kind selects the matching ABI, and
+        // `arguments` has the formal count encoded into the native function.
+        unsafe {
+            match self.entry {
+                CompiledJsEntry::Number(entry) => {
+                    CompiledJsResult::Number(entry(arguments.as_ptr()))
+                }
+                CompiledJsEntry::StringReturnPc(entry) => {
+                    CompiledJsResult::StringReturnPc(entry(arguments.as_ptr()))
+                }
+            }
+        }
+    }
+
+    pub(super) fn string_constant_for_return(&self, return_pc: u32) -> Option<u32> {
+        self.return_constants
+            .iter()
+            .find_map(|(pc, constant)| (*pc == return_pc).then_some(*constant))
+    }
+
+    #[cfg(test)]
+    pub(super) fn has_string_returns(&self) -> bool {
+        !self.return_constants.is_empty()
+    }
+
+    #[cfg(test)]
+    pub(super) fn native_entries(&self) -> u64 {
+        self.native_entries.get()
     }
 
     pub(super) fn mapped_bytes(&self) -> usize {
@@ -2868,17 +2929,26 @@ impl<H: Host> Vm<H> {
             return None;
         }
 
-        let last_pc = function.code.len().checked_sub(1)?;
-        let terminal = function.code.get(last_pc)?.as_wide();
-        if terminal.op() != Op::Return {
-            return None;
+        match compiled.call(&arguments) {
+            CompiledJsResult::Number(value) => {
+                let last_pc = function.code.len().checked_sub(1)?;
+                let terminal = function.code.get(last_pc)?.as_wide();
+                if terminal.op() != Op::Return {
+                    return None;
+                }
+                Some((last_pc, terminal.register_a(), Value::number(value)))
+            }
+            CompiledJsResult::StringReturnPc(return_pc) => {
+                let return_pc = usize::try_from(return_pc).ok()?;
+                let instruction = function.code.get(return_pc)?.as_wide();
+                if instruction.op() != Op::Return {
+                    return None;
+                }
+                let constant = compiled.string_constant_for_return(return_pc as u32)?;
+                let value = self.programs.constant(program_id, constant as usize)?;
+                Some((return_pc, instruction.register_a(), value))
+            }
         }
-        let return_register = terminal.register_a();
-        Some((
-            last_pc,
-            return_register,
-            Value::number(compiled.call(&arguments)),
-        ))
     }
 
     /// Compile every function of `program` that has a compiled denotation,
