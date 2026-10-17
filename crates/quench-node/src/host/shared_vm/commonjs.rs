@@ -2643,6 +2643,11 @@ const getLinkedBinding = () => ({});
                 } else {
                     format!("{WRAPPER_PREFIX}{internal_binding}")
                 };
+                if parent.is_none() {
+                    // The entry's compilation is the start-up peak: only the parser's and
+                    // compiler's pages, not the bootstrap's, need be resident across it.
+                    crate::host::resident_pages::release_read_only_pages();
+                }
                 let wrapper = match embedded.filter(|_| !is_primordials) {
                     // The program retains the embedded text itself, not a wrapped copy.
                     Some(body) => context
