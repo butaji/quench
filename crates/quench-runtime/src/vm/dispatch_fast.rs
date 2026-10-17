@@ -979,7 +979,12 @@ lane_handler! {
         else {
             return exit(ip);
         };
-        let Some(value) = (unsafe { vm(cx) }).dense_array_element(base, key) else {
+        let vm = unsafe { vm(cx) };
+        let Some(value) = vm
+            .dense_array_element(base, key)
+            .or_else(|| vm.plain_keyed_get(base, key))
+            .or_else(|| vm.plain_typed_element(base, key))
+        else {
             return exit(ip);
         };
         r.set(i.a, value);
@@ -1005,7 +1010,13 @@ lane_handler! {
     /// `lane_get_index_registers` past a record array.
     #[inline(never)]
     fn lane_get_index_slot<>(cx, r, ip, i, view) {
-        let Some(value) = (unsafe { vm(cx) }).dense_array_element(r.get(i.b), r.get(i.c)) else {
+        let vm = unsafe { vm(cx) };
+        let (base, key) = (r.get(i.b), r.get(i.c));
+        let Some(value) = vm
+            .dense_array_element(base, key)
+            .or_else(|| vm.plain_keyed_get(base, key))
+            .or_else(|| vm.plain_typed_element(base, key))
+        else {
             return exit(ip);
         };
         r.set(i.a, value);
