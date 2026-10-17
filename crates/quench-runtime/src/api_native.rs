@@ -1513,6 +1513,21 @@ impl<'a, H: Host> NativeContext<'a, H> {
             .map_err(|error| self.error(error))
     }
 
+    /// Defines `members` (a name and whether it is enumerable) on `holder` as one group of
+    /// lazy data properties, like `define_lazy_data_properties_rooted`, whose `initializer`
+    /// also adds keys the members do not name: listing `holder`'s keys with its symbols, or
+    /// fixing its integrity, materializes the group first.
+    pub fn define_lazy_holder_keys_rooted(
+        &mut self,
+        holder: RootId,
+        members: &[(&str, bool)],
+        initializer: RootId,
+    ) -> Result<(), RootedError> {
+        self.vm
+            .define_lazy_group_rooted(holder, members, true, initializer)
+            .map_err(|error| self.error(error))
+    }
+
     pub fn set_prototype_rooted(
         &mut self,
         object: RootId,
