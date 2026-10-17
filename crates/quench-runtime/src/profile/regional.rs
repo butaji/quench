@@ -108,8 +108,13 @@ pub(super) fn report_functions(profile: &Profile, program_id: u32, program: &Res
         let max_live = program.register_root_masks(id as u32).map(|masks| {
             masks.iter().map(|mask| mask.count_ones()).max().unwrap_or(0)
         });
+        let executed: u64 = profile
+            .site_counts
+            .get(program_id as usize)
+            .and_then(|functions| functions.get(id))
+            .map_or(0, |sites| sites.iter().sum());
         eprint!(
-            "{{\"id\":{id},\"name\":\"{name}\",\"count\":{count},\"instructions\":{},\"registers\":{},\"max_live\":{},\"dispatch\":\"{:?}\"}}",
+            "{{\"id\":{id},\"name\":\"{name}\",\"count\":{count},\"executed\":{executed},\"instructions\":{},\"registers\":{},\"max_live\":{},\"dispatch\":\"{:?}\"}}",
             function.code.len(),
             function.registers,
             max_live
