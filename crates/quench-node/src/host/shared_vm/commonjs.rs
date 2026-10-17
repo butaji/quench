@@ -131,7 +131,7 @@ fn detect_source_kind(path: &Path) -> Result<quench_runtime::SourceKind, String>
     let text = if text.starts_with("#!") {
         text.find('\n').map_or("", |newline| &text[newline..])
     } else { text };
-    let wrapper = format!("{WRAPPER_PREFIX}{text}{WRAPPER_SUFFIX}");
+    let wrapper = [WRAPPER_PREFIX, text, WRAPPER_SUFFIX].concat();
     if valid_source(&wrapper, oxc_span::SourceType::cjs()) {
         return Ok(quench_runtime::SourceKind::Script);
     }
@@ -2431,7 +2431,8 @@ const getLinkedBinding = () => ({});
                 } else {
                     format!("{WRAPPER_PREFIX}{internal_binding}")
                 };
-                let wrapper_source = format!("{prefix}{text}{WRAPPER_SUFFIX}");
+                // Sized exactly: a formatted string grows by doubling, copying the module text each time.
+                let wrapper_source = [prefix.as_str(), &text, WRAPPER_SUFFIX].concat();
                 // The wrapper holds the text now, so the file is released before compiling it.
                 drop(text);
                 drop(file_text);
@@ -2535,7 +2536,7 @@ pub(crate) fn compile_public(context: &mut Context<'_>, module: RootId, args: &[
     let name = context.string_text(filename)?.ok_or_else(|| RootedError::host("Module._compile filename must be a string"))?;
     let text = content.as_str();
     let text = if text.starts_with("#!") { text.find('\n').map_or("", |end| &text[end..]) } else { text };
-    let source = format!("{WRAPPER_PREFIX}{text}{WRAPPER_SUFFIX}");
+    let source = [WRAPPER_PREFIX, text, WRAPPER_SUFFIX].concat();
     let wrapper = evaluate_wrapper(context, WRAPPER_PREFIX, &source, &name)?;
     let exports = get(context, module, "exports")?;
     let require = context.host_function_with_data(super::operation("require"), module)?;
