@@ -2865,7 +2865,7 @@ pub(crate) fn read_stream_read(
         (result, path)
     };
     match result {
-        Ok(Some(bytes)) => crate::modules::buffer_shared_vm::from_bytes(context, &bytes),
+        Ok(Some(bytes)) => crate::modules::buffer_shared_vm::from_vec(context, bytes),
         Ok(None) => Ok(context.null()),
         Err(error) => Err(stream_io_error(context, error, "read", &path)?),
     }
