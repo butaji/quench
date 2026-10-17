@@ -10319,7 +10319,12 @@ fn private_data_fields_keep_distinct_homes_and_duplicate_values_in_both_modes() 
 class Base {constructor(object){return object}}
 function make(){return class extends Base {#x;constructor(object,value){super(object);this.#x=value}read(){return this.#x}write(value){this.#x=value}evaluate(){return eval('this.#x')}}}
 const A=make(),B=make();
-for(const object of [{},[],function(){},Object.create(null),Object.freeze({}),Object.seal({}),Object.preventExtensions({})]) {
+for(const object of [Object.freeze({}),Object.seal({}),Object.preventExtensions({})]) {
+ let rejected;
+ try{new A(object,1)}catch(error){rejected=error instanceof TypeError}
+ if(!rejected)throw Error('private field added to a non-extensible object');
+}
+for(const object of [{},[],function(){},Object.create(null)]) {
  new A(object,1);new B(object,2);
  if(A.prototype.read.call(object)!==1||B.prototype.read.call(object)!==2)throw Error('aliased class home');
  A.prototype.write.call(object,3);let duplicate;

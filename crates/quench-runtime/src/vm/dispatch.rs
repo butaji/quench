@@ -719,6 +719,12 @@ impl<H: Host> Vm<H> {
                 let atom = i.atom_index();
                 let brand = PrivateBrand { home, name: atom };
                 if object != home {
+                    if !self.object_data(object).is_some_and(Object::is_extensible) {
+                        return Err(self.type_error(
+                            p,
+                            "Cannot add private method to a non-extensible object".into(),
+                        ));
+                    }
                     let already_branded = self
                         .object_data(object)
                         .is_some_and(|object| object.has_private_name(brand));
