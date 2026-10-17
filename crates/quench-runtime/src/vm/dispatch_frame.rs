@@ -976,7 +976,7 @@ impl<H: Host> Vm<H> {
         let env = self.heap.alloc(Cell::Environment {
             parent,
             function: self.frames[frame].function,
-            slots: slots.into_boxed_slice().into(),
+            slots: slots.into(),
             scope: Box::new(crate::heap::EnvironmentScope {
                 program: Some(self.frames[frame].program.raw()),
                 root_eval_scope: false,

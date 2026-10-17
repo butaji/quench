@@ -361,6 +361,9 @@ pub(crate) struct Heap {
     allocations_since_full: usize,
     /// Payload bytes grown since the last charge, below one allocation's weight.
     uncharged_payload_bytes: usize,
+    /// The slot and record property owners the last full sweep listed, which size the next
+    /// sweep's lists so they do not regrow from empty (and reallocate) every collection.
+    property_owner_counts: (usize, usize),
     full_collection_growth_limit: usize,
     old_live: usize,
     threshold: usize,
@@ -1237,7 +1240,11 @@ impl Heap {
         } else {
             self.sweep_serial(full)
         };
-        let mut direct_property_owners = Vec::new();
+        let mut direct_property_owners = Vec::with_capacity(if full {
+            self.property_owner_counts.1
+        } else {
+            0
+        });
         if full {
             #[cfg(feature = "profile-aggregate")]
             {
@@ -1306,6 +1313,7 @@ impl Heap {
         }
         let _ = (freed_cells, swept_slots);
         if full {
+            self.property_owner_counts = (property_owners.len(), direct_property_owners.len());
             self.compact_property_arena(property_owners, direct_property_owners);
         }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
@@ -1434,7 +1442,11 @@ impl Heap {
         let mut freed_cells = 0;
         let mut swept_slots = 0;
         let properties = &mut self.properties;
-        let mut property_owners_for_sweep = Vec::new();
+        let mut property_owners_for_sweep = Vec::with_capacity(if full {
+            self.property_owner_counts.0
+        } else {
+            0
+        });
         {
             let external_bytes = &mut self.external_bytes;
             let free_by_slab = &mut self.free_by_slab;

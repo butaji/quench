@@ -22,7 +22,7 @@ impl<H: Host> Vm<H> {
         self.heap.alloc(Cell::Environment {
             parent: Value::NULL,
             function: NATIVE_ENVIRONMENT_FUNCTION,
-            slots: slots.into_boxed_slice().into(),
+            slots: slots.into(),
             scope: Box::new(crate::heap::EnvironmentScope {
                 program: None,
                 root_eval_scope: false,

@@ -3,6 +3,10 @@
 use std::alloc::{Layout, alloc, dealloc, handle_alloc_error};
 use std::ptr::NonNull;
 
+/// The header every empty slice shares: an empty slice owns no allocation, so making one and
+/// dropping it cost nothing.
+static EMPTY_HEADER: usize = 0;
+
 pub(crate) struct ThinBoxSlice<T> {
     /// Points at the header; the elements follow at `elements_offset`.
     header: NonNull<usize>,
@@ -17,7 +21,17 @@ impl<T> ThinBoxSlice<T> {
         (layout.pad_to_align(), offset)
     }
 
+    fn empty() -> Self {
+        Self {
+            header: NonNull::from(&EMPTY_HEADER),
+            marker: std::marker::PhantomData,
+        }
+    }
+
     fn elements(&self) -> *mut T {
+        if self.len() == 0 {
+            return NonNull::dangling().as_ptr();
+        }
         let (_, offset) = Self::layout(self.len());
         // SAFETY: the allocation spans the header and `len` elements from `offset`.
         unsafe { self.header.as_ptr().cast::<u8>().add(offset).cast::<T>() }
@@ -27,11 +41,43 @@ impl<T> ThinBoxSlice<T> {
         // SAFETY: the header was initialized at allocation and never changes.
         unsafe { *self.header.as_ptr() }
     }
+
+    /// The slice of `values`, written straight into its one allocation.
+    pub(crate) fn from_exact_iter(values: impl ExactSizeIterator<Item = T>) -> Self {
+        let len = values.len();
+        if len == 0 {
+            return Self::empty();
+        }
+        let (layout, offset) = Self::layout(len);
+        // SAFETY: the layout is non-zero sized, as it always holds the header.
+        let raw = unsafe { alloc(layout) };
+        let Some(header) = NonNull::new(raw.cast::<usize>()) else {
+            handle_alloc_error(layout)
+        };
+        let mut written = 0;
+        for value in values {
+            assert!(written < len, "exact-size iterator yielded more than its length");
+            // SAFETY: slot `written` lies within the `len` elements the layout reserves.
+            unsafe { raw.add(offset).cast::<T>().add(written).write(value) };
+            written += 1;
+        }
+        // A short iterator leaks the allocation rather than expose uninitialized elements.
+        assert_eq!(written, len, "exact-size iterator yielded less than its length");
+        // SAFETY: the header slot starts the allocation.
+        unsafe { header.as_ptr().write(len) };
+        Self {
+            header,
+            marker: std::marker::PhantomData,
+        }
+    }
 }
 
 impl<T> From<Box<[T]>> for ThinBoxSlice<T> {
     fn from(values: Box<[T]>) -> Self {
         let len = values.len();
+        if len == 0 {
+            return Self::empty();
+        }
         let (layout, offset) = Self::layout(len);
         // SAFETY: the layout is non-zero sized, as it always holds the header.
         let raw = unsafe { alloc(layout) };
@@ -72,6 +118,9 @@ impl<T> std::ops::DerefMut for ThinBoxSlice<T> {
 impl<T> Drop for ThinBoxSlice<T> {
     fn drop(&mut self) {
         let len = self.len();
+        if len == 0 {
+            return;
+        }
         let (layout, _) = Self::layout(len);
         // SAFETY: the elements are initialized and dropped once; the allocation came from
         // `alloc` with this layout.
@@ -84,7 +133,7 @@ impl<T> Drop for ThinBoxSlice<T> {
 
 impl<T: Clone> Clone for ThinBoxSlice<T> {
     fn clone(&self) -> Self {
-        self.iter().cloned().collect::<Box<[T]>>().into()
+        Self::from_exact_iter(self.iter().cloned())
     }
 }
 
@@ -97,6 +146,18 @@ impl<T: std::fmt::Debug> std::fmt::Debug for ThinBoxSlice<T> {
 #[cfg(test)]
 mod tests {
     use super::ThinBoxSlice;
+
+    #[test]
+    fn empty_thin_slices_share_the_static_header() {
+        let empty: ThinBoxSlice<std::rc::Rc<i32>> = Vec::new().into_boxed_slice().into();
+        let other = ThinBoxSlice::<std::rc::Rc<i32>>::from_exact_iter(std::iter::empty());
+        assert!(empty.is_empty() && other.is_empty());
+        assert_eq!(empty.header, other.header);
+        let copy = empty.clone();
+        assert_eq!(copy.len(), 0);
+        let built = ThinBoxSlice::from_exact_iter([1, 2, 3].into_iter());
+        assert_eq!(&*built, &[1, 2, 3]);
+    }
 
     #[test]
     fn thin_slices_round_trip_and_drop_their_elements() {
