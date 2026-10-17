@@ -1122,16 +1122,20 @@ fn typed_array_index_stores_convert_and_ignore_out_of_range_indices() {
 fn finished_jobs_release_their_values_while_the_queue_keeps_draining() {
     // A job leaves the queue before it runs, so a value only its arguments held is
     // collectable while later jobs of the same drain still run: its cleanup is observed
-    // inside the await loop instead of never.
-    let source = "var finalized = false, registry = new FinalizationRegistry(function () { finalized = true; });\n\
-         function make() { var o = {}; registry.register(o, 0); return o; }\n\
+    // inside the await loop instead of never. Each iteration allocates at least one cell,
+    // so the bound lets the drain pass the collection headroom several times.
+    let iterations = 4 * crate::heap::MINIMUM_GC_ALLOCATION_HEADROOM;
+    let source = format!(
+        "var finalized = false, registry = new FinalizationRegistry(function () {{ finalized = true; }});\n\
+         function make() {{ var o = {{}}; registry.register(o, 0); return o; }}\n\
          var result = 'pending';\n\
-         (async function () {\n\
+         (async function () {{\n\
            await Promise.resolve(make());\n\
-           for (var i = 0; i < 20000 && !finalized; i++) await { i: i };\n\
+           for (var i = 0; i < {iterations} && !finalized; i++) await {{ i: i }};\n\
            result = String(finalized);\n\
-         })();";
-    assert_eq!(global_text(source, "result"), "true");
+         }})();"
+    );
+    assert_eq!(global_text(&source, "result"), "true");
 }
 
 #[test]
