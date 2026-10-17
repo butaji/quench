@@ -768,6 +768,24 @@ impl Native {
         )
     }
 
+    /// Natives a lane `Call` makes in place from the running frame (`lane_call_native`):
+    /// the string and RegExp methods, which read no caller state beyond the frame's published
+    /// PC and run guest code only through ordinary nested calls.
+    pub(crate) fn runs_from_lane(self) -> bool {
+        self.is_pure_string_method()
+            || matches!(
+                self,
+                Self::RegExpExec
+                    | Self::RegExpTest
+                    | Self::StringReplace
+                    | Self::StringReplaceAll
+                    | Self::StringMatch
+                    | Self::StringMatchAll
+                    | Self::StringSearch
+                    | Self::StringSplit
+            )
+    }
+
     pub(crate) fn is_host_control_native(self) -> bool {
         matches!(
             self,
