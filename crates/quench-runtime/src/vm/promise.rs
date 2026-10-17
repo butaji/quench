@@ -1390,7 +1390,7 @@ impl<H: Host> Vm<H> {
             .copied()
             .unwrap_or(Value::NULL);
         let promise = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
-        let host_context = if H::OBSERVE_PROMISE_LIFECYCLE {
+        let host_context = if self.host.observes_promise_lifecycle() {
             self.host.create_promise_context(parent)
         } else {
             None
