@@ -35,6 +35,8 @@ pub(super) struct RecordSpace<T> {
     free_word: u64,
     free_word_base: RecordId,
     live: usize,
+    /// Old records written since the last collection, each logged once by the write barrier.
+    remembered: Vec<RecordId>,
 }
 
 impl<T> Default for RecordSpace<T> {
@@ -49,6 +51,7 @@ impl<T> Default for RecordSpace<T> {
             free_word: 0,
             free_word_base: 0,
             live: 0,
+            remembered: Vec::new(),
         }
     }
 }
@@ -221,14 +224,55 @@ impl<T> RecordSpace<T> {
     /// # Safety
     /// `id` must come from a live direct Value of this record family, and
     /// the caller must have exclusive access to the heap.
+    /// Mutable access for the mutator. This is the record write barrier: an old (marked)
+    /// record is unmarked and logged once, so the next minor collection traces it again.
+    ///
+    /// # Safety
+    /// As for `get_live_mut_unbarriered`.
     #[inline(always)]
     pub(super) unsafe fn get_live_mut(&mut self, id: RecordId) -> &mut T {
+        self.remember(id);
+        // SAFETY: the caller's contract.
+        unsafe { self.get_live_mut_unbarriered(id) }
+    }
+
+    /// Mutable access that writes no reference into the record (the collector's own
+    /// compaction and remapping). It does not pass the write barrier.
+    ///
+    /// # Safety
+    /// `id` must come from a live direct Value of this record family, and
+    /// the caller must have exclusive access to the heap.
+    #[inline(always)]
+    pub(super) unsafe fn get_live_mut_unbarriered(&mut self, id: RecordId) -> &mut T {
         debug_assert!(
             self.is_occupied(id),
             "live slot names an initialized record"
         );
         // SAFETY: guaranteed by the caller's live-slot and exclusive-access invariants.
         unsafe { (*self.base.as_ptr().add(id as usize)).assume_init_mut() }
+    }
+
+    #[inline(always)]
+    pub(super) fn remember(&mut self, id: RecordId) {
+        let (block_index, record_index) = Self::split_id(id);
+        // SAFETY: a live id belongs to an initialized block.
+        let block = unsafe { self.blocks.get_unchecked_mut(block_index) };
+        let word = &mut block.marked[record_index / OCCUPANCY_WORD_BITS];
+        let mask = 1_u64 << (record_index % OCCUPANCY_WORD_BITS);
+        if *word & mask != 0 {
+            *word &= !mask;
+            self.remembered.push(id);
+        }
+    }
+
+    /// The records the barrier logged since the last collection; each is unmarked.
+    pub(super) fn take_remembered(&mut self) -> Vec<RecordId> {
+        std::mem::take(&mut self.remembered)
+    }
+
+    #[cfg(any(test, feature = "profile-aggregate"))]
+    pub(super) fn remembered_count(&self) -> usize {
+        self.remembered.len()
     }
 
     #[cfg(test)]
@@ -267,11 +311,28 @@ impl<T> RecordSpace<T> {
             .collect()
     }
 
+    /// Visits every old (marked) record.
     #[cfg(debug_assertions)]
+    pub(super) fn for_each_marked(&self, mut visit: impl FnMut(RecordId)) {
+        for (block_index, block) in self.blocks.iter().enumerate() {
+            for (word_index, word) in block.marked.iter().copied().enumerate() {
+                let mut marked = word;
+                while marked != 0 {
+                    let bit = marked.trailing_zeros() as usize;
+                    let record_index = word_index * OCCUPANCY_WORD_BITS + bit;
+                    visit((block_index * RECORDS_PER_BLOCK + record_index) as RecordId);
+                    marked &= marked - 1;
+                }
+            }
+        }
+    }
+
+    /// Every record becomes young: a full collection's starting state.
     pub(super) fn clear_marks(&mut self) {
         for block in &mut self.blocks {
             block.marked.fill(0);
         }
+        self.remembered.clear();
     }
 
     #[cfg(debug_assertions)]
@@ -297,8 +358,8 @@ impl<T> RecordSpace<T> {
     }
 
     /// Sweeps by bitmap word. Dead occupied records are transferred to the
-    /// callback exactly once; marked records survive and have their mark bit
-    /// cleared for the next collection.
+    /// callback exactly once; marked records survive and keep their mark bit,
+    /// which makes them old for the next minor collection.
     pub(super) fn sweep(&mut self, mut visit: impl FnMut(RecordSweep<'_, T>)) -> (usize, usize) {
         let mut live_count = 0;
         let mut freed_count = 0;
@@ -332,7 +393,6 @@ impl<T> RecordSpace<T> {
                     dead &= dead - 1;
                     freed_count += 1;
                 }
-                block.marked[word_index] = 0;
             }
         }
         self.live = live_count;
@@ -548,6 +608,7 @@ mod tests {
         assert_eq!(dead_ids, [ids[0], ids[2], ids[3], ids[5]]);
 
         assert_eq!(arena.try_insert(10).unwrap(), ids[5]);
+        arena.clear_marks();
         for &live in &[ids[1], ids[4], ids[5]] {
             assert!(arena.mark(live));
         }
