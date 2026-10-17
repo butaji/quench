@@ -178,12 +178,9 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     context.scoped(crate::modules::buffer_shared_vm::install_global)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_buffer_global");
-    context.scoped(crate::modules::url_shared_vm::install_global)?;
-    #[cfg(feature = "profile-memory")]
-    context.profile_memory_checkpoint("node_url_global");
     crate::host::resident_pages::release_read_only_pages();
     context.scoped(install_shared_web_globals)?;
-    context.scoped(crate::modules::util_shared_vm::install_lazy_base64_globals)?;
+    context.scoped(crate::modules::util_shared_vm::install_lazy_globals)?;
     let global = context.global_root()?;
     // The process.getBuiltinModule bootstrap needs access to the host's
     // builtin loader in both Script and Module goals. Keep it under a private
@@ -1130,8 +1127,6 @@ pub(crate) fn is_builtin_specifier(specifier: &str) -> bool {
 
 const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("internal/process/task_queues", BuiltinModule::Internal("internal/process/task_queues")),
-    ("internal/blob", BuiltinModule::Internal("internal/blob")),
-    ("internal/file", BuiltinModule::Internal("internal/file")),
     ("internal/crypto/keys", BuiltinModule::Internal("internal/crypto/keys")),
     ("internal/abort_controller", BuiltinModule::Internal("internal/abort_controller")),
     ("internal/worker/io", BuiltinModule::Internal("internal/worker/io")),
@@ -1431,18 +1426,6 @@ pub(crate) fn events_on_initialize(
 }
 
 /// Load a real configured standard-library export over this VM's native bindings.
-/// lib/internal/blob.js `resolveObjectURL` over the host's `blob:nodedata:` registry.
-const RESOLVE_OBJECT_URL: &str = r#"(function resolveObjectURL(url) {
-  url = `${url}`;
-  try {
-    const split = new URL(url).pathname.split(":");
-    if (split.length !== 2 || split[0] !== "nodedata") return;
-    return globalThis.__nodeBlobUrls?.get(url);
-  } catch {
-    return;
-  }
-})"#;
-
 /// A library module's `require(id)`: a host builtin when the id names one, otherwise the
 /// pinned library file.
 pub(crate) fn library_require(context: &mut Context<'_>, id: &str) -> Result<RootId, RootedError> {
@@ -1554,6 +1537,10 @@ pub(crate) fn url_module(context: &mut Context<'_>) -> Result<RootId, RootedErro
     cached_builtin(context, BuiltinModule::Url)
 }
 
+pub(crate) fn internal_url_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    cached_builtin(context, BuiltinModule::InternalUrl)
+}
+
 /// Private namespaces project the same original objects as the public globals.
 fn native_global_namespace(context: &mut Context<'_>, names: &[&str]) -> Result<RootId, RootedError> {
     context.with_startup_intrinsics(|context| {
@@ -1596,13 +1583,6 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             }
             Ok(module)
         }
-        BuiltinModule::Internal("internal/blob") => {
-            let module = native_global_namespace(context, &["Blob"])?;
-            let resolve = context.evaluate_script_rooted(RESOLVE_OBJECT_URL, "node:internal/blob/resolve.js")?;
-            set(context, module, "resolveObjectURL", resolve)?;
-            Ok(module)
-        }
-        BuiltinModule::Internal("internal/file") => native_global_namespace(context, &["File"]),
         BuiltinModule::Internal("internal/worker/io") =>
             native_global_namespace(context, &["MessageChannel", "MessagePort"]),
         BuiltinModule::Internal("internal/abort_controller") => {
@@ -1626,21 +1606,14 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::Internal(_) => context.object_rooted(),
         BuiltinModule::Fs => crate::modules::fs_shared_vm::module(context),
         BuiltinModule::InternalUrl => {
-            let public = cached_builtin(context, BuiltinModule::Url)?;
-            let internal = context.object_rooted()?;
-            for key in context.enumerable_own_keys_rooted(public, true, true)? {
-                let value = context.get_property_rooted(public, key)?;
-                context.define_data_property_rooted(internal, key, value, true, true, true)?;
-            }
-            let is_url = context.host_function(crate::host::shared_vm::operation("urlIsURL"))?;
-            let key = context.string_rooted("name");
-            let name = context.string_rooted("isURL");
-            context.define_data_property_rooted(is_url, key, name, false, false, true)?;
-            set(context, internal, "isURL", is_url)?;
-            let convert = context.host_function(crate::host::shared_vm::operation("toPathIfFileURL"))?;
-            set(context, internal, "toPathIfFileURL", convert)?;
-            Ok(internal)
-        },
+            // Node's bootstrap (exposed-window-or-worker.js) installs `URL.createObjectURL`
+            // and `URL.revokeObjectURL`; the module loads on first use here, so it does then.
+            let module = node_library_module(context, "url.js", "internal/url.js")?;
+            let install = get(context, module, "installObjectURLMethods")?;
+            let undefined = context.undefined();
+            context.call_rooted(install, undefined, &[])?;
+            Ok(module)
+        }
         // lib/util/types.js re-exports internal/util/types, the object `util.types` names.
         BuiltinModule::UtilTypes => node_library_module(context, "util/types.js", "util/types.js"),
         BuiltinModule::FsPromises => {
@@ -1684,8 +1657,8 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             }
             crate::modules::worker_shared_vm::module(context, &markers)
         }
-        BuiltinModule::Url => crate::modules::url_shared_vm::module(context),
-        BuiltinModule::Querystring => crate::modules::querystring_shared_vm::module(context),
+        BuiltinModule::Url => node_library_module(context, "url.js", "url.js"),
+        BuiltinModule::Querystring => node_library_module(context, "querystring.js", "querystring.js"),
         BuiltinModule::Readline => crate::modules::readline_shared_vm::module(context),
         BuiltinModule::StreamConsumers => {
             crate::modules::web_stream_consumers_shared_vm::module(context)
@@ -2712,7 +2685,9 @@ pub(crate) fn node_internal_binding_source() -> &'static str {
     };
     case "options": return __nativeInternalBinding("options");
     case "string_decoder": return __nativeInternalBinding("string_decoder");
-    case "buffer": return __nativeInternalBinding(name);
+    case "buffer":
+    case "url":
+    case "blob": return __nativeInternalBinding(name);
     case "fs": return __nativeInternalBinding("fs");
     case "crypto": {
       const native = __nativeInternalBinding("crypto");
