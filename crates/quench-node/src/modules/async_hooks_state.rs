@@ -99,6 +99,9 @@ pub(crate) struct SharedAsyncHooksState {
     pub(super) next_job_id: u64,
     pub(super) job_stack: Vec<(u64, i64, StoreContext)>,
     pub(super) promise_resources: FxHashMap<u64, quench_runtime::HostWeakRoot>,
+    /// The collection after which `promise_resources` was last pruned; its weak roots can
+    /// only have died in a later one.
+    pub(crate) promise_prune_epoch: Option<u64>,
     pub(super) scoped_resource: Option<(u64, RootId)>,
     pub(super) local_stores: FxHashMap<(StoreContext, u64), RootId>,
     pub(super) store_references: FxHashMap<RootId, usize>,
@@ -120,6 +123,7 @@ impl SharedAsyncHooksState {
             next_job_id: 0,
             job_stack: Vec::new(),
             promise_resources: FxHashMap::default(),
+            promise_prune_epoch: None,
             scoped_resource: None,
             local_stores: FxHashMap::default(),
             store_references: FxHashMap::default(),

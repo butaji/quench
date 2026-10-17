@@ -1282,6 +1282,31 @@ impl<H: Host> Vm<H> {
                         fast_lane,
                     );
                 }
+                // A call the lane made in place failed: it throws at its instruction, as the
+                // general path's call would have.
+                if let Some(error) = self.lane_raised.take() {
+                    let mut executing = ExecutingProgram {
+                        id: executing_program,
+                        retained: current_program.take(),
+                    };
+                    let unwound = self.unwind_general_loop(
+                        p,
+                        frame,
+                        pc + 1,
+                        pc as u32,
+                        error,
+                        &mut pending_calls,
+                        &mut cursor,
+                        &mut executing,
+                        fast_lane,
+                    );
+                    executing_program = executing.id;
+                    current_program = executing.retained;
+                    executing_residual = current_program.as_deref().unwrap_or(entry_program);
+                    (frame, pc) = unwound?;
+                    published_pc = &mut self.frames[frame].pc;
+                    continue;
+                }
             }
             if STOPS && stop_pc == Some(pc) {
                 self.frames[frame].pc = pc;

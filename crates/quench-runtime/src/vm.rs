@@ -1297,6 +1297,9 @@ pub(crate) struct Vm<H> {
     program_cache_layouts: Vec<ProgramCacheLayout>,
     /// The register file of the frame the general loop dispatches; see `run_general_loop`.
     active_registers: *mut Value,
+    /// The error of a call the lane made in place (`dispatch_fast::lane_call_native`), which
+    /// the general loop raises at that call's instruction once the lane exits there.
+    lane_raised: Option<JsError>,
     /// `program_cache_layouts[active_program]`, kept by `set_active_program`.
     active_layout: ProgramCacheLayout,
     /// The active program's materialized constants, kept by `set_active_program` and by
@@ -1324,6 +1327,8 @@ pub(crate) struct Vm<H> {
     /// The strings most recently matched by a RegExp, most recent first, each prepared once
     /// for repeated matching (`Vm::regexp_subject`).
     regexp_subjects: Vec<Rc<quench_regexp::Subject>>,
+    /// The subject of the last short string matched, reused in place once no match holds it.
+    regexp_short_subject: Option<Rc<quench_regexp::Subject>>,
     regexp_matchers: regexp::RegExpMatcherCache,
     // One lazily derived class byte per atom; length tracks `atom_sequence`.
     atom_classes: Vec<std::cell::Cell<u8>>,
@@ -1357,11 +1362,17 @@ pub(crate) struct Vm<H> {
     /// `prototype` (`construction::ClosureShapes`); derived from shapes, so field-cache
     /// invalidation clears it.
     closure_shapes: [Option<construction::ClosureShapes>; 2],
+    /// The shape a new RegExp object starts in and the one its own `lastIndex` moves it to
+    /// (`Vm::regexp_from_matcher`), as the first one recorded; derived from shapes, so
+    /// field-cache invalidation clears it.
+    regexp_object_shapes: Option<(u32, u32)>,
     /// A RegExp receiver shape verified to hold an own writable data `lastIndex` at the paired
     /// slot; derived from shapes, so field-cache invalidation clears it.
     regexp_last_index_layout: Option<(u32, u32)>,
     /// Derived from shapes, so field-cache invalidation clears it.
     regexp_builtin_layout: Option<regexp::RegExpBuiltinLayout>,
+    /// Derived from shapes, so field-cache invalidation clears it.
+    regexp_symbol_layouts: Vec<regexp::RegExpSymbolLayout>,
     /// An object verified to hold the native `Function.prototype[@@hasInstance]` as a
     /// non-writable, non-configurable data property, which it then holds for its lifetime;
     /// rooted so the identity stays meaningful. `Value::NULL` when none.
@@ -1816,8 +1827,8 @@ impl<H: Host> Vm<H> {
         let (_, collections, _, _, _, _) = self.heap.stats();
         let gc = self.heap.gc_profile();
         eprintln!(
-            "{{\"kind\":\"quench-gc-time\",\"collections\":{collections},\"mark_nanos\":{},\"sweep_nanos\":{},\"mark_clear_nanos\":{}}}",
-            gc.mark_nanos, gc.sweep_nanos, gc.mark_clear_nanos,
+            "{{\"kind\":\"quench-gc-time\",\"collections\":{collections},\"mark_nanos\":{},\"sweep_nanos\":{},\"mark_clear_nanos\":{},\"vm_owner_edges_nanos\":{},\"vm_roots_nanos\":{},\"vm_shape_setup_nanos\":{},\"vm_after_nanos\":{}}}",
+            gc.mark_nanos, gc.sweep_nanos, gc.mark_clear_nanos, gc.vm_phase_nanos[0], gc.vm_phase_nanos[1], gc.vm_phase_nanos[2], gc.vm_phase_nanos[3],
         );
     }
     #[cfg(feature = "profile-memory")]
@@ -2059,6 +2070,7 @@ impl<H: Host> Vm<H> {
         self.array_index_atoms.clear();
         self.atom_classes.clear();
         self.regexp_subjects.clear();
+        self.regexp_short_subject = None;
         self.regexp_matchers.clear();
         self.atom_classes
             .resize_with(self.atom_text.len(), Default::default);
@@ -2111,8 +2123,10 @@ impl<H: Host> Vm<H> {
         self.programs.reset(program.clone());
         self.instanceof_constructor_layout = None;
         self.closure_shapes = [None; 2];
+        self.regexp_object_shapes = None;
         self.regexp_last_index_layout = None;
         self.regexp_builtin_layout = None;
+        self.regexp_symbol_layouts.clear();
         self.instanceof_has_instance_holder = Value::NULL;
         self.program_cache_layouts.clear();
         self.program_cache_layouts.push(ProgramCacheLayout {
@@ -2417,6 +2431,11 @@ impl<H: Host> Vm<H> {
                 result
             }
         }
+    }
+
+    /// Counts collections; see `Heap::collection_epoch`.
+    pub(crate) fn collection_epoch(&self) -> u64 {
+        self.heap.collection_epoch()
     }
 
     fn with_call_roots<R>(
