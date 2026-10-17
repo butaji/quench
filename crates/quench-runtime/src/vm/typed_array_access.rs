@@ -160,11 +160,14 @@ impl<H: Host> Vm<H> {
         let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get(buffer) else {
             return Some(Value::UNDEFINED);
         };
-        let bytes = bytes.clone();
+        // The element's bytes, copied out so a BigInt result can be allocated.
+        let mut element = [0; size_of::<u64>()];
         let start = offset + index * kind.width();
-        let Some(bytes) = bytes.get(start..start + kind.width()) else {
+        let Some(source) = bytes.get(start..start + kind.width()) else {
             return Some(Value::UNDEFINED);
         };
+        element[..source.len()].copy_from_slice(source);
+        let bytes = &element;
         Some(match kind {
             TypedArrayKind::BigInt64 => self.heap.alloc(Cell::BigInt(
                 i64::from_ne_bytes(bytes[..8].try_into().unwrap()).to_string(),
@@ -544,12 +547,12 @@ impl<H: Host> Vm<H> {
                 let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get(source_buffer) else {
                     unreachable!("typed copy source backing buffer was validated");
                 };
-                let source_bytes = bytes.clone();
+                let source_bytes = bytes[source_offset..source_offset + byte_length].to_vec();
                 let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(target_buffer) else {
                     unreachable!("typed copy target backing buffer was validated");
                 };
                 bytes.make_mut()[target_offset..target_offset + byte_length]
-                    .copy_from_slice(&source_bytes[source_offset..source_offset + byte_length]);
+                    .copy_from_slice(&source_bytes);
             }
             return Ok(());
         }
