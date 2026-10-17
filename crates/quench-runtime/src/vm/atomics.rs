@@ -4,6 +4,9 @@ use super::*;
 use std::time::Instant;
 
 pub(super) struct Test262AgentState {
+    /// Whether `$262.agent` is installed. Its agents run cooperatively on this runtime's
+    /// heap and thread, so this scheduler, not the shared backing, owns blocking.
+    pub(super) installed: bool,
     pub(super) active_callback: bool,
     pub(super) spin_count: u32,
     pub(super) current_waiter: Option<usize>,
@@ -36,6 +39,7 @@ pub(super) struct AgentTimer {
 impl Default for Test262AgentState {
     fn default() -> Self {
         Self {
+            installed: false,
             active_callback: false,
             spin_count: 0,
             current_waiter: None,
@@ -106,9 +110,10 @@ impl<H: Host> Vm<H> {
                 Value::FALSE
             });
         }
-        if self
-            .atomic_shared_backing(args.first().copied().unwrap_or(Value::UNDEFINED))
-            .is_some()
+        if !self.test262_agent_owns_atomic(native)
+            && self
+                .atomic_shared_backing(args.first().copied().unwrap_or(Value::UNDEFINED))
+                .is_some()
         {
             return self.atomic_shared_native(p, native, args);
         }
@@ -604,6 +609,19 @@ impl<H: Host> Vm<H> {
 }
 
 impl<H: Host> Vm<H> {
+    /// Simulated Test262 agents can never be woken through the shared backing's waiter list
+    /// or run while this thread blocks, so their scheduler serves every wait and notify. Once
+    /// agents are started it also serves every access: they make progress only when an access
+    /// yields to them.
+    fn test262_agent_owns_atomic(&self, native: Native) -> bool {
+        self.test262_agent.installed
+            && (!self.test262_agent.callbacks.is_empty()
+                || matches!(
+                    native,
+                    Native::AtomicsWait | Native::AtomicsWaitAsync | Native::AtomicsNotify
+                ))
+    }
+
     fn atomic_shared_backing(
         &self,
         view: Value,
@@ -650,9 +668,11 @@ impl<H: Host> Vm<H> {
                 "Atomics wait/notify requires Int32Array or BigInt64Array".into(),
             ));
         }
+        // ValidateAtomicAccess reads the length recorded before index coercion.
+        let length = self.typed_array_length(view).unwrap_or(0);
         let index = self.atomic_index(p, args.get(1).copied())?;
         self.atomic_array_kind(p, view)?;
-        self.atomic_validate_index(p, self.typed_array_length(view).unwrap_or(0), index)?;
+        self.atomic_validate_index(p, length, index)?;
         let big = matches!(kind, TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64);
         let mut store_result = None;
         let mut convert = |vm: &mut Self, value: Value| -> Result<u64, JsError> {
@@ -662,9 +682,8 @@ impl<H: Host> Vm<H> {
                 Ok(vm
                     .normalize_atomic_bigint(n)
                     .to_string()
-                    .parse::<i64>()
-                    .map_err(|_| vm.type_error(p, "Invalid atomic BigInt".into()))?
-                    as u64)
+                    .parse::<u64>()
+                    .map_err(|_| vm.type_error(p, "Invalid atomic BigInt".into()))?)
             } else {
                 let n = vm.to_number(p, value)?;
                 let integer = if n.is_nan() || n == 0.0 {
