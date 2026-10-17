@@ -595,6 +595,7 @@ impl<H: Host> Vm<H> {
         self.megamorphic_fields.clear();
         self.inherited_field_indices.fill(NO_INHERITED_FIELD);
         self.inherited_field_caches.clear();
+        self.accessor_field_caches.clear();
         self.instanceof_constructor_layout = None;
         self.closure_shapes = [None; 2];
         self.regexp_last_index_layout = None;
@@ -1384,8 +1385,62 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         match self.field_miss_data_value(object, atom, site) {
             Some(value) => Ok(value),
-            None => self.get_property(p, object, atom),
+            None => {
+                self.record_accessor_field_cache(object, atom, site);
+                self.get_property(p, object, atom)
+            }
         }
+    }
+
+    /// Records the accessor a field read at `site` meets on `object`'s immediate prototype,
+    /// when shapes answer both lookups and `object` holds no own `atom`.
+    fn record_accessor_field_cache(&mut self, object: Value, atom: Atom, site: usize) {
+        let Some(receiver) = self.shape_property_lookup(object, atom) else {
+            return;
+        };
+        let receiver_shape = receiver.shape();
+        if self.shape_slot(receiver_shape, atom).is_some() {
+            return;
+        }
+        let Some(holder) = self.shape_property_lookup(receiver.proto(), atom) else {
+            return;
+        };
+        let holder_shape = holder.shape();
+        let Some(slot) = self
+            .shape_slot(holder_shape, atom)
+            .filter(|slot| *slot < FIELD_CACHE_SLOT_CAPACITY)
+        else {
+            return;
+        };
+        if self
+            .shape_attribute(holder_shape, slot)
+            .is_some_and(|attributes| attributes.accessor && attributes.getter.is_some())
+        {
+            self.accessor_field_caches.insert(
+                site,
+                AccessorFieldCache {
+                    receiver: receiver_shape,
+                    holder: holder_shape,
+                    slot: slot as u16,
+                },
+            );
+        }
+    }
+
+    /// The getter a field read of `atom` at cache index `site` calls on `object`, when the
+    /// site's recorded accessor still answers it (`record_accessor_field_cache`).
+    pub(super) fn cached_field_getter(&self, object: Value, atom: Atom, site: usize) -> Option<Value> {
+        let cache = self.accessor_field_caches.get(&site)?;
+        let receiver = self.shape_property_lookup(object, atom)?;
+        if receiver.shape() != cache.receiver {
+            return None;
+        }
+        let holder = self.shape_property_lookup(receiver.proto(), atom)?;
+        if holder.shape() != cache.holder {
+            return None;
+        }
+        self.shape_attribute(cache.holder, usize::from(cache.slot))?
+            .getter
     }
 
     /// The part of `get_field_miss` that reads a data property of a shaped receiver or its
