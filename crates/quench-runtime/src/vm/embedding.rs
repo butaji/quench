@@ -1043,13 +1043,12 @@ impl<H: Host> Vm<H> {
     }
 
     pub(crate) fn string_rooted(&mut self, text: &str) -> RootId {
-        // Host strings mostly spell property keys already interned; such a string shares the
-        // atom's storage instead of copying the text.
-        let string = match self.lookup_atom(text) {
-            Some(atom) => self.atom_value(atom),
-            None => JsString::from_str(text),
+        // Host strings mostly spell property keys already interned; such a string is the
+        // atom's shared string value (strings have no identity), else a fresh copy.
+        let value = match self.lookup_atom(text) {
+            Some(atom) => self.atom_string(atom),
+            None => self.heap.alloc(Cell::String(JsString::from_str(text))),
         };
-        let value = self.heap.alloc(Cell::String(string));
         self.root(value)
     }
 

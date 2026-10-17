@@ -992,18 +992,30 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
     ]
 }
 
-/// The host function `name` registers; each name registers exactly one
-/// (`operation_names_are_unique`), as lookup takes the first.
+/// The host function registered as `name`. Hosts resolve operations per request (an
+/// incoming message's stream methods, an accepted socket's handle), so the names are
+/// indexed once rather than searched among every binding. Each name registers exactly one
+/// function (`operation_names_are_unique`).
 pub(crate) fn operation(name: &str) -> HostFunctionId {
-    let index = bindings()
-        .iter()
-        .position(|binding| binding.name == name)
-        .expect("registered Node operation");
-    HostFunctionId(u32::try_from(index).expect("Node binding index fits u32"))
+    static INDEX: std::sync::OnceLock<std::collections::HashMap<&'static str, u32>> =
+        std::sync::OnceLock::new();
+    let index = INDEX.get_or_init(|| {
+        let mut index = std::collections::HashMap::new();
+        for (position, binding) in bindings().iter().enumerate() {
+            // A repeated name resolves to its first registration.
+            index
+                .entry(binding.name)
+                .or_insert(u32::try_from(position).expect("Node binding index fits u32"));
+        }
+        index
+    });
+    HostFunctionId(*index.get(name).expect("registered Node operation"))
 }
 
 impl quench_runtime::Host for NodeHost {
-    const OBSERVE_PROMISE_LIFECYCLE: bool = true;
+    fn observes_promise_lifecycle(&self) -> bool {
+        self.shared_state.borrow().async_hooks.tracks_promises()
+    }
 
     fn proper_tail_calls(&self) -> bool {
         false
@@ -1315,12 +1327,7 @@ impl quench_runtime::Host for NodeHost {
         &mut self,
         parent: Option<quench_runtime::HostExecutionContext>,
     ) -> Option<quench_runtime::HostExecutionContext> {
-        Some(
-            crate::modules::async_hooks_shared_vm::create_promise_context(
-                &self.shared_state,
-                parent,
-            ),
-        )
+        crate::modules::async_hooks_shared_vm::create_promise_context(&self.shared_state, parent)
     }
 
     fn initialize_promise(

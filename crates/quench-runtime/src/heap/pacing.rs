@@ -3,8 +3,10 @@
 //! Survivors of every collection stay marked (old). A minor collection traces roots and
 //! the old owners the write barriers logged, and sweeps only unmarked (young) cells and
 //! records, so its cost follows survivors and garbage rather than the old heap. A full
-//! collection clears the marks and traces everything. Budgets are in allocation weight:
-//! one per cell or record plus one per `PAYLOAD_BYTES_PER_ALLOCATION` of payload.
+//! collection clears the marks and traces everything. Budgets, live sizes and survival
+//! are all in allocation weight: one per cell or record plus one per
+//! `PAYLOAD_BYTES_PER_ALLOCATION` of payload (`Cell::payload_bytes`), so a heap of few
+//! cells with large strings or element stores is paced by what it holds.
 
 /// `numerator / denominator` of a live count, without overflow.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -93,11 +95,11 @@ impl PacingState {
 #[derive(Clone, Copy, Debug)]
 pub(super) struct CollectionOutcome {
     pub(super) full: bool,
-    /// Live cells and records after this collection and after the previous one.
+    /// Live weight after this collection and after the previous one.
     pub(super) live: usize,
     pub(super) previous_live: usize,
     pub(super) live_after_full: usize,
-    /// Cells and records allocated between the previous collection and this one.
+    /// Weight allocated between the previous collection and this one.
     pub(super) allocated: usize,
     /// Allocation weight since the last full collection.
     pub(super) since_full: usize,
@@ -192,22 +194,23 @@ impl GenerationalPacing {
     }
 }
 
-/// Production pacing. Starting point for the policy table (TOD-137 stage 3): young
-/// collections every half live set (at least 2^15), a full collection once the old
-/// generation has doubled, and never more than eight live sets of allocation between
-/// full collections. When more than half of young allocations survive, collections are
-/// full with four live sets between them (the 2026-10-16 large-heap factor, which keeps
-/// such heaps' Score), probing survival with a minor collection every fourth one.
-///
-/// RSS-first values (`v2-npm` 6571735f9, the owner's direction of 2026-10-17: lowest peak
-/// RSS among Node and Bun on the npm package scenarios): at least 384 allocations between
-/// collections, one live set between full collections (at least 384) and one live set
-/// between full-only collections, from the Score-only 2^15/2^18, 8/1 and 4/1. The
-/// Score-only pacing raised npm peak RSS 10-30% (evidence/npm-rss-2026-10-17/).
 /// The smallest allocation weight between collections, and between full collections,
 /// under RSS-first pacing.
 const RSS_FIRST_MINIMUM_BUDGET: usize = 384;
 
+/// Production pacing. Starting point for the policy table (TOD-137 stage 3): young
+/// collections every half live set (at least 2^15), a full collection once the old
+/// generation has doubled, and never more than eight live sets of allocation between
+/// full collections. When more than half of young allocations survive, collections are
+/// full with two live sets between them, probing survival with a minor collection every
+/// fourth one. (With live measured in cells only, this factor was four: payload-heavy
+/// heaps measured in weight are larger, and two keeps Splay's Score at 21% less RSS.)
+///
+/// RSS-first values (`v2-npm` 6571735f9 and `v2-cloud-c2`, the owner's direction of
+/// 2026-10-17: lowest peak RSS among Node and Bun on the npm package scenarios): at least
+/// 384 allocations between collections, one live set between full collections (at least
+/// 384) and one live set between full-only collections, from the Score-only 2^15/2^18, 8/1
+/// and 2/1. The Score-only pacing raised npm peak RSS 10-30% (evidence/npm-rss-2026-10-17/).
 pub(super) const PRODUCTION_PACING: GenerationalPacing = GenerationalPacing {
     young: Ratio::new(1, 2),
     minimum_young: RSS_FIRST_MINIMUM_BUDGET,
