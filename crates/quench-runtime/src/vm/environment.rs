@@ -244,7 +244,7 @@ impl<H: Host> Vm<H> {
     fn function_environment_binding(&self, p: &ResidualProgram, function: u32, atom: Atom) -> bool {
         p.functions
             .get(function as usize)
-            .is_some_and(|metadata| metadata.environment_atoms.contains(&atom))
+            .is_some_and(|metadata| metadata.declares_environment_atom(atom))
     }
 
     pub(super) fn activation_binding_slot(&self, frame: usize, atom: Atom) -> Option<usize> {
@@ -253,7 +253,7 @@ impl<H: Host> Vm<H> {
         let metadata = program.functions.get(frame.function as usize)?;
         // Local storage also reserves slots for source names whose actual
         // binding lives in a catch scope or an enclosing environment.
-        if !metadata.environment_atoms.contains(&atom) {
+        if !metadata.declares_environment_atom(atom) {
             return None;
         }
         metadata
@@ -318,7 +318,7 @@ impl<H: Host> Vm<H> {
                             .find(|binding| binding.atom == atom)
                     })
                     .copied();
-                if scoped_binding.is_none() && metadata.environment_atoms.contains(&atom) {
+                if scoped_binding.is_none() && metadata.declares_environment_atom(atom) {
                     return None;
                 }
                 let binding = scoped_binding.or_else(|| metadata.name_bindings.get(atom));
@@ -946,7 +946,7 @@ impl<H: Host> Vm<H> {
                     metadata.declares_global_lexical(atom)
                         || self.root_local_var_binding(&environment_program, *function, atom)
                 } else {
-                    metadata.environment_atoms.contains(&atom)
+                    metadata.declares_environment_atom(atom)
                 }
                 && let Some(slot) = self.local_binding_slot(&environment_program, *function, atom)
                 && slot < slots.len()
@@ -1198,7 +1198,7 @@ impl<H: Host> Vm<H> {
         let Some(metadata) = program.functions.get(activation.function as usize) else {
             return false;
         };
-        metadata.environment_atoms.contains(&atom)
+        metadata.declares_environment_atom(atom)
             && (!self.parameter_eval
                 || activation.function == super::ROOT_FUNCTION_ID
                 || metadata.parameter_atoms.contains(&atom))
@@ -1212,7 +1212,7 @@ impl<H: Host> Vm<H> {
     ) -> Option<bool> {
         let activation = self.frames.get(frame)?;
         let metadata = p.functions.get(activation.function as usize)?;
-        if (metadata.environment_atoms.contains(&atom)
+        if (metadata.declares_environment_atom(atom)
             || metadata.declares_global_lexical(atom)
             || self.root_local_var_binding(p, activation.function, atom))
             && self
@@ -1320,7 +1320,6 @@ impl<H: Host> Vm<H> {
             .dynamic_binding(self.frames.len().saturating_sub(1), atom)
             .is_some()
             || self.realm.global_lexical_declarations.contains(&atom)
-            || self.realm.global_lexical_bindings.contains_key(&atom)
         {
             return Ok(true);
         }
@@ -1899,7 +1898,7 @@ impl<H: Host> Vm<H> {
         self.store_environment_mapped_argument(owner, function, env, slot_index, value);
         if let Some(atom) = self.root_global_lexical_atom(owner, function, slot_index) {
             if self.eval_script_context {
-                self.realm.global_lexical_bindings.insert(atom, value);
+                self.realm.bind_global_lexical(atom, value);
             }
             let owner = self.frames.iter().rposition(|active| {
                 active.function == super::ROOT_FUNCTION_ID && active.program == owner_id
@@ -1963,6 +1962,14 @@ impl<H: Host> Vm<H> {
         if !internal && self.names_resolve_to_global_object(p, atom) {
             return self.load_global_object_name(p, atom, cache, allow_unresolvable);
         }
+        // Where names resolve statically, no layer searched before the realm's global lexical
+        // bindings can hold the name, so a binding there is the one the search finds.
+        if !internal
+            && self.global_scope_names_resolve_statically(p)
+            && let Some(value) = self.realm.global_lexical_bindings.get(&atom).copied()
+        {
+            return self.checked_binding_read(p, atom, value);
+        }
         if let Some(value) = self.dynamic_binding(self.frames.len().saturating_sub(1), atom) {
             return self.checked_binding_read(p, atom, value);
         }
@@ -2016,16 +2023,21 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     fn names_resolve_to_global_object(&self, p: &ResidualProgram, atom: Atom) -> bool {
         !self.realm.global_lexical_declarations.contains(&atom)
-            && !self.realm.global_lexical_bindings.contains_key(&atom)
-            && self.frames.last().is_some_and(|frame| {
-                frame.function != super::ROOT_FUNCTION_ID
-                    && self.programs.runs_in_global_scope(frame.program)
-                    && p.functions
-                        .get(frame.function as usize)
-                        .is_some_and(|function| {
-                            function.names_resolve_statically(&p.functions, &p.atoms)
-                        })
-            })
+            && self.global_scope_names_resolve_statically(p)
+    }
+
+    /// Whether the executing activation is a nested function running in the global
+    /// environment whose names, with every enclosing function's, the compiler resolved
+    /// statically: a by-name load there can only denote a global binding.
+    #[inline(always)]
+    fn global_scope_names_resolve_statically(&self, p: &ResidualProgram) -> bool {
+        self.frames.last().is_some_and(|frame| {
+            frame.function != super::ROOT_FUNCTION_ID
+                && self.programs.runs_in_global_scope(frame.program)
+                && p.functions
+                    .get(frame.function as usize)
+                    .is_some_and(|function| function.names_resolve_statically(&p.functions, &p.atoms))
+        })
     }
 
     /// The global object step of a by-name load: the property, or a `ReferenceError` (or
@@ -2184,7 +2196,7 @@ impl<H: Host> Vm<H> {
                 if self.realm.immutable_global_lexical_bindings.contains(&atom) {
                     return Err(self.type_error(p, "assignment to constant binding".into()));
                 }
-                self.realm.global_lexical_bindings.insert(atom, value);
+                self.realm.bind_global_lexical(atom, value);
                 return Ok(());
             }
             if let Some(frame_index) = self.frames.len().checked_sub(1)

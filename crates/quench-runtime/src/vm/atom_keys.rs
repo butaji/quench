@@ -9,6 +9,10 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn atom_hash_str(text: &str) -> u64 {
+        // ASCII text is its own UTF-16: one unit per byte, hashed without transcoding.
+        if text.is_ascii() {
+            return Self::atom_hash_utf16(text.len(), text.bytes().map(u16::from));
+        }
         Self::atom_hash_utf16(text.encode_utf16().count(), text.encode_utf16())
     }
 
@@ -21,12 +25,18 @@ impl<H: Host> Vm<H> {
         hasher.finish()
     }
 
+    /// The name of `index`, an atom the VM appended after its program's (`atom_text`).
+    pub(super) fn dynamic_atom(&self, index: usize) -> &JsString {
+        self.atom_sequence.appended(index - self.atom_text.len())
+    }
+
     pub(super) fn atom_units_equal_str(&self, atom: Atom, text: &str) -> bool {
         let index = atom as usize;
         if index < self.atom_text.len() {
-            self.atom_text[index].encode_utf16().eq(text.encode_utf16())
+            // Both are UTF-8 text, whose UTF-16 forms are equal exactly when they are.
+            &self.atom_text[index] == text
         } else {
-            match self.dynamic_atoms[index - self.atom_text.len()].units() {
+            match self.dynamic_atom(index).units() {
                 Units::Ascii(bytes) => bytes == text.as_bytes(),
                 units => units.iter().eq(text.encode_utf16()),
             }
@@ -60,7 +70,7 @@ impl<H: Host> Vm<H> {
         if index < self.atom_text.len() {
             JsString::from_str(&self.atom_text[index])
         } else {
-            self.dynamic_atoms[index - self.atom_text.len()].clone()
+            self.dynamic_atom(index).clone()
         }
     }
 
@@ -72,7 +82,7 @@ impl<H: Host> Vm<H> {
                 units => self.atom_text[index].encode_utf16().eq(units.iter()),
             }
         } else {
-            self.dynamic_atoms[index - self.atom_text.len()].units() == units
+            self.dynamic_atom(index).units() == units
         }
     }
 }
@@ -81,7 +91,7 @@ impl<H: Host> Vm<H> {
 /// VM's, read through the shared sequence instead of copied.
 impl<H: Host> crate::compile::AtomPrefix for Vm<H> {
     fn len(&self) -> usize {
-        self.atom_text.len() + self.dynamic_atoms.len()
+        self.atom_sequence.len()
     }
 
     fn name(&self, atom: Atom) -> &str {

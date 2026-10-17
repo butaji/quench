@@ -90,7 +90,7 @@ impl Heap {
             array_records,
             marks,
             slots,
-            young,
+            young_weak,
             remembered,
             ..
         } = self;
@@ -118,7 +118,7 @@ impl Heap {
                 }
             }
         } else {
-            for index in young.iter().chain(remembered.iter()).copied() {
+            for index in young_weak.iter().chain(remembered.iter()).copied() {
                 if let Some(cell) = slots
                     .get_mut(index as usize)
                     .and_then(|slot| slot.cell.as_mut())
@@ -127,6 +127,7 @@ impl Heap {
                 }
             }
         }
+        young_weak.clear();
         finalization_jobs
     }
 

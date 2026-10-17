@@ -1100,11 +1100,18 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn intern_atom(&mut self, name: &str) -> Atom {
-        let hash = Self::atom_hash_str(name);
-        if let Some(atom) = self.find_atom(hash, |atom| self.atom_units_equal_str(atom, name)) {
+        if let Some(atom) = self.name_atom_memo.candidate(name)
+            && self.atom_units_equal_str(atom, name)
+        {
             return atom;
         }
-        self.insert_dynamic_atom(JsString::from_str(name), hash)
+        let hash = Self::atom_hash_str(name);
+        let atom = match self.find_atom(hash, |atom| self.atom_units_equal_str(atom, name)) {
+            Some(atom) => atom,
+            None => self.insert_dynamic_atom(JsString::from_str(name), hash),
+        };
+        self.name_atom_memo.record(name, atom);
+        atom
     }
     pub(super) fn intern_js_atom(&mut self, name: &JsString) -> Atom {
         if let Some(atom) = self.lookup_js_atom(name) {
@@ -1114,10 +1121,9 @@ impl<H: Host> Vm<H> {
         self.insert_dynamic_atom(name.clone(), hash)
     }
     pub(super) fn insert_dynamic_atom(&mut self, name: JsString, hash: u64) -> Atom {
-        let atom = (self.atom_text.len() + self.dynamic_atoms.len()) as Atom;
+        let atom = self.atom_sequence.len() as Atom;
         self.record_array_index_atom(name.host_string(), atom);
-        self.atom_sequence.append(name.clone());
-        self.dynamic_atoms.push(name);
+        self.atom_sequence.append(name);
         self.atom_classes.push(Default::default());
         self.index_atom_hash(hash, atom);
         self.profile.dynamic_atom();
@@ -1138,13 +1144,13 @@ impl<H: Host> Vm<H> {
     }
 
     fn index_atom_hash(&mut self, hash: u64, atom: Atom) {
-        let (text, dynamic) = (&self.atom_text, &self.dynamic_atoms);
+        let (text, sequence) = (&self.atom_text, &self.atom_sequence);
         self.atoms.insert_unique(hash, atom, |&atom| {
             let index = atom as usize;
             if index < text.len() {
                 Self::atom_hash_str(&text[index])
             } else {
-                Self::atom_hash_units(dynamic[index - text.len()].units())
+                Self::atom_hash_units(sequence.appended(index - text.len()).units())
             }
         });
     }
@@ -1153,7 +1159,7 @@ impl<H: Host> Vm<H> {
         if index < self.atom_text.len() {
             &self.atom_text[index]
         } else {
-            self.dynamic_atoms[index - self.atom_text.len()].host_string()
+            self.dynamic_atom(index).host_string()
         }
     }
     pub(super) fn global(

@@ -343,7 +343,7 @@ impl<H: Host> Vm<H> {
         let environment = self.heap.alloc(Cell::Environment {
             parent: Value::NULL,
             function: 0,
-            slots: values.into_boxed_slice().into(),
+            slots: values.into(),
             scope: Box::new(crate::heap::EnvironmentScope {
                 program: Some(id.raw()),
                 root_eval_scope: false,

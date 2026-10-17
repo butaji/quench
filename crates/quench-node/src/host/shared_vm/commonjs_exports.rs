@@ -1,7 +1,8 @@
 //! Node's static CJS export recognizers operate on syntax, never evaluated values.
 use oxc_ast::ast::{
-    AssignmentExpression, Expression, ObjectPropertyKind, PropertyKey, PropertyKind,
-    SimpleAssignmentTarget, Statement,
+    AssignmentExpression, BindingPattern, CallExpression, Expression, ObjectExpression,
+    ObjectPropertyKind, PropertyKey, PropertyKind, SimpleAssignmentTarget, Statement,
+    VariableDeclarator,
 };
 use oxc_ast_visit::{walk, Visit};
 use oxc_span::GetSpan;
@@ -35,6 +36,7 @@ fn collect(
         source,
         names: BTreeSet::new(),
         reexports: BTreeSet::new(),
+        required: std::collections::BTreeMap::new(),
     };
     exports.visit_program(&parsed.program);
     names.extend(exports.names);
@@ -59,6 +61,32 @@ struct Exports<'s> {
     source: &'s str,
     names: BTreeSet<String>,
     reexports: BTreeSet<String>,
+    /// `var _x = require("x")` bindings, for Babel's `Object.keys(_x).forEach` re-export.
+    required: std::collections::BTreeMap<String, String>,
+}
+/// `callee` names `object.property` or, with no object, the bare `property`.
+fn callee_is(callee: &Expression<'_>, object: Option<&str>, property: &str) -> bool {
+    match (callee, object) {
+        (Expression::StaticMemberExpression(member), Some(object)) => {
+            identifier(&member.object, object) && member.property.name == property
+        }
+        (Expression::StaticMemberExpression(member), None) => member.property.name == property,
+        (Expression::Identifier(_), None) => identifier(callee, property),
+        _ => false,
+    }
+}
+/// The descriptor shapes cjs-module-lexer accepts: a `value`, or an enumerable getter.
+fn exporting_descriptor(object: &ObjectExpression<'_>) -> bool {
+    let value = |name: &str| {
+        object.properties.iter().find_map(|property| match property {
+            ObjectPropertyKind::ObjectProperty(property) if property.key.static_name().as_deref() == Some(name) => {
+                Some(&property.value)
+            }
+            _ => None,
+        })
+    };
+    value("value").is_some()
+        || value("get").is_some() && matches!(value("enumerable"), Some(Expression::BooleanLiteral(flag)) if flag.value)
 }
 fn identifier(expression: &Expression<'_>, expected: &str) -> bool {
     matches!(expression, Expression::Identifier(reference) if reference.name == expected)
@@ -98,6 +126,60 @@ fn identifier_prefix(source: &str) -> Option<&str> {
     Some(&source[..end])
 }
 impl<'a> Visit<'a> for Exports<'_> {
+    fn visit_variable_declarator(&mut self, declarator: &VariableDeclarator<'a>) {
+        if let (BindingPattern::BindingIdentifier(binding), Some(init)) = (&declarator.id, &declarator.init) {
+            let specifier = require_specifier(init).or_else(|| match init {
+                // `_interopRequireWildcard(require("x"))` and similar helpers.
+                Expression::CallExpression(call) if call.arguments.len() == 1 => {
+                    require_specifier(call.arguments[0].as_expression()?)
+                }
+                _ => None,
+            });
+            if let Some(specifier) = specifier {
+                self.required.insert(binding.name.to_string(), specifier.to_owned());
+            }
+        }
+        walk::walk_variable_declarator(self, declarator);
+    }
+    fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
+        let argument = |index: usize| call.arguments.get(index).and_then(|argument| argument.as_expression());
+        if callee_is(&call.callee, Some("Object"), "defineProperty") {
+            // `Object.defineProperty(exports, "name", { enumerable: true, get() {...} })`.
+            if let (Some(target), Some(Expression::StringLiteral(name)), Some(Expression::ObjectExpression(descriptor))) =
+                (argument(0), argument(1), argument(2))
+            {
+                if exported_object(target) && exporting_descriptor(descriptor) {
+                    self.names.insert(name.value.to_string());
+                }
+            }
+        } else if callee_is(&call.callee, None, "__exportStar") {
+            // TypeScript's `__exportStar(require("x"), exports)`, also via `tslib.`.
+            if let (Some(specifier), Some(target)) = (argument(0).and_then(require_specifier), argument(1)) {
+                if exported_object(target) {
+                    self.reexports.insert(specifier.to_owned());
+                }
+            }
+        } else if callee_is(&call.callee, None, "__export") && call.arguments.len() == 1 {
+            // Older TypeScript's `__export(require("x"))`.
+            if let Some(specifier) = argument(0).and_then(require_specifier) {
+                self.reexports.insert(specifier.to_owned());
+            }
+        } else if callee_is(&call.callee, None, "forEach") {
+            // Babel's `Object.keys(_x).forEach(function (key) { ... exports[key] = _x[key] })`.
+            if let Expression::StaticMemberExpression(member) = &call.callee {
+                if let Expression::CallExpression(keys) = &member.object {
+                    if callee_is(&keys.callee, Some("Object"), "keys") {
+                        if let Some(Expression::Identifier(module)) = keys.arguments.first().and_then(|argument| argument.as_expression()) {
+                            if let Some(specifier) = self.required.get(module.name.as_str()) {
+                                self.reexports.insert(specifier.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        walk::walk_call_expression(self, call);
+    }
     fn visit_statement(&mut self, statement: &Statement<'a>) {
         let Ok(_guard) = quench_stack::StackGuard::enter() else {
             return;

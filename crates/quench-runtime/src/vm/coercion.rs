@@ -2,6 +2,8 @@ use super::wtf16::JsString;
 use super::*;
 use oxc_ast::ast::UnaryOperator;
 
+/// V8's TypeError for ToNumber of a BigInt, unary plus included.
+const BIGINT_TO_NUMBER: &str = "Cannot convert a BigInt value to a number";
 const UNARY_PLUS: u32 = UnaryOperator::UnaryPlus as u32;
 const UNARY_NEGATION: u32 = UnaryOperator::UnaryNegation as u32;
 pub(super) const LOGICAL_NOT: u32 = UnaryOperator::LogicalNot as u32;
@@ -175,7 +177,7 @@ impl<H: Host> Vm<H> {
         if numeric && let Some(Cell::BigInt(value)) = self.heap.get(value) {
             let value = value.clone();
             if op == UNARY_PLUS {
-                return Err(self.type_error(p, "Cannot convert BigInt value to number".into()));
+                return Err(self.type_error(p, BIGINT_TO_NUMBER.into()));
             }
             let value = value
                 .parse::<num_bigint::BigInt>()
@@ -234,7 +236,7 @@ impl<H: Host> Vm<H> {
             }
             Some(Cell::BigInt(_)) => {
                 return Err(
-                    self.type_error(program, "Cannot convert a BigInt value to a number".into())
+                    self.type_error(program, BIGINT_TO_NUMBER.into())
                 );
             }
             _ => {}

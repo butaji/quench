@@ -335,9 +335,10 @@ impl<'a, H: Host> NativeContext<'a, H> {
     pub const MAX_STRING_CODE_UNITS: usize = crate::vm::wtf16::MAX_STRING_UNITS;
 
     pub(crate) fn new(vm: &'a mut Vm<H>) -> Self {
+        let roots = vm.native_root_lists.pop().unwrap_or_default();
         Self {
             vm,
-            roots: Vec::new(),
+            roots,
             new_target: None,
         }
     }
@@ -463,6 +464,24 @@ impl<'a, H: Host> NativeContext<'a, H> {
     pub fn is_promise_rooted(&mut self, root: RootId) -> Result<bool, RootedError> {
         let result = self.vm.embedding_is_promise(root);
         result.map_err(|error| self.error(error))
+    }
+
+    /// Allocate an intrinsic pending Promise without invoking guest constructors.
+    /// The returned root belongs to this callback frame; retain it for later completion.
+    pub fn pending_promise_rooted(&mut self) -> Result<RootId, RootedError> {
+        let value = self.vm.embedding_pending_promise().map_err(|error| self.error(error))?;
+        Ok(self.scoped_value(value))
+    }
+
+    /// Resolve a genuine Promise through the intrinsic thenable assimilation algorithm.
+    /// A settled Promise is unchanged; no public constructor, resolve or then method is used.
+    pub fn resolve_promise_rooted(&mut self, promise: RootId, value: RootId) -> Result<(), RootedError> {
+        self.vm.embedding_resolve_promise(promise, value).map_err(|error| self.error(error))
+    }
+
+    /// Reject a genuine Promise with the exact rooted reason, including undefined.
+    pub fn reject_promise_rooted(&mut self, promise: RootId, reason: RootId) -> Result<(), RootedError> {
+        self.vm.embedding_reject_promise(promise, reason).map_err(|error| self.error(error))
     }
 
     /// Observe settlement without then/species access, reactions or a job checkpoint.
@@ -1233,12 +1252,39 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.completion(result)
     }
 
+    /// A Uint8Array that takes ownership of `bytes` as its backing store.
+    pub fn uint8_array_from_rooted(&mut self, bytes: Vec<u8>) -> Result<RootId, RootedError> {
+        let result = self.vm.embedding_uint8_array_from(bytes);
+        self.completion(result)
+    }
+
     /// Retain a private weak reference without ECMAScript kept-object effects.
     pub fn host_weak_root(&mut self, target: RootId) -> Result<HostWeakRoot, RootedError> {
         self.vm
             .embedding_host_weak_root(target)
             .map(HostWeakRoot)
             .map_err(|error| self.error(error))
+    }
+
+    /// Produce the same non-coercing diagnostic description as Runtime.
+    pub fn detail_string_rooted(&mut self, value: RootId) -> Result<String, RootedError> {
+        self.vm.embedding_detail_string(value).map_err(|error| self.error(error))
+    }
+
+    /// Diagnostic own-property test shared with Runtime; no accessors or Proxy traps.
+    pub fn has_own_property_rooted(&mut self, object: RootId, name: &str) -> Result<bool, RootedError> {
+        self.vm.embedding_has_own_property(object, name).map_err(|error| self.error(error))
+    }
+
+    /// The VM's unforgeable Error brand, without guest property access.
+    pub fn is_error_rooted(&mut self, value: RootId) -> Result<bool, RootedError> {
+        self.vm.embedding_is_error(value).map_err(|error| self.error(error))
+    }
+
+    /// Probe a private weak reference without creating a temporary strong root
+    /// or changing ECMAScript kept-object state, exactly as Runtime does.
+    pub fn host_weak_root_is_live(&self, reference: HostWeakRoot) -> bool {
+        self.vm.embedding_host_weak_value(reference.0).is_some()
     }
 
     /// Resolve a host weak reference into this callback's temporary root scope.
@@ -1257,6 +1303,24 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.vm
             .root_value(root)
             .and_then(|value| self.vm.embedding_view_bytes(value))
+    }
+
+    /// Run `f` over the bytes of an ArrayBuffer, SharedArrayBuffer, typed array or
+    /// DataView in place; `None` for any other value.
+    pub fn with_buffer_bytes_rooted<T>(&self, root: RootId, f: impl FnOnce(&[u8]) -> T) -> Option<T> {
+        self.vm.root_value(root).and_then(|value| self.vm.embedding_with_buffer_bytes(value, f))
+    }
+
+    /// Run `f` over those bytes for writing in place; `None` for any other value or a
+    /// detached or immutable buffer.
+    pub fn with_buffer_bytes_mut_rooted<T>(&mut self, root: RootId, f: impl FnOnce(&mut [u8]) -> T) -> Option<T> {
+        let value = self.vm.root_value(root)?;
+        self.vm.embedding_with_buffer_bytes_mut(value, f)
+    }
+
+    /// Run `f` over the bytes a typed array or DataView views, without copying them.
+    pub fn with_view_bytes_rooted<T>(&self, root: RootId, f: impl FnOnce(&[u8]) -> T) -> Option<T> {
+        self.vm.root_value(root).and_then(|value| self.vm.embedding_with_view_bytes(value, f))
     }
 
     /// Snapshot at most `maximum` original bytes of an ArrayBuffer or buffer view.
@@ -1548,6 +1612,60 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.completion(result)
     }
 
+    /// Take handled notifications from the VM's existing rejection authority.
+    /// Returned event roots are scoped to this NativeContext frame. Retain a root
+    /// explicitly to carry it beyond this callback; do not release scoped roots.
+    pub fn take_promise_rejection_handled_events_rooted(&mut self) -> Vec<crate::PromiseRejectionEvent> {
+        let events = self.vm.take_promise_rejection_handled_events();
+        self.scope_rejection_event_roots(&events);
+        events
+    }
+    /// Snapshot pending unhandled notifications only after handled dispatch. Roots
+    /// have the same scoped ownership as other NativeContext rooted operations.
+    pub fn take_promise_rejection_unhandled_events_rooted(&mut self) -> Vec<crate::PromiseRejectionEvent> {
+        let events = self.vm.take_promise_rejection_unhandled_events();
+        self.scope_rejection_event_roots(&events);
+        events
+    }
+    fn scope_rejection_event_roots(&mut self, events: &[crate::PromiseRejectionEvent]) {
+        for event in events {
+            match event {
+                crate::PromiseRejectionEvent::Handled { promise, .. } => self.roots.push(*promise),
+                crate::PromiseRejectionEvent::Unhandled { promise, reason, .. } => {
+                    self.roots.push(*promise);
+                    self.roots.push(*reason);
+                }
+            }
+        }
+    }
+    pub fn mark_promise_rejection_reported(&mut self, promise: RootId) -> Result<(), RootedError> {
+        let promise = self.vm.embedding_value(promise).map_err(|error| self.error(error))?;
+        self.vm.mark_promise_rejection_reported(promise).map_err(|error| self.error(error))
+    }
+    /// The embedder calls this once after completing the outer job's ticks,
+    /// reactions and rejection policy. Never run automatically on C reentry.
+    pub fn clear_kept_objects(&mut self) {
+        self.vm.clear_kept_objects();
+    }
+
+    /// Whether the VM is already executing/draining ECMAScript jobs. A native
+    /// embedder must defer its entire task checkpoint (including nextTick and
+    /// rejection policy) in this case, rather than only skipping microtasks.
+    /// This projects the same VM-wide guard used by run_microtask_checkpoint.
+    pub fn is_microtask_checkpoint_active(&self) -> bool {
+        self.vm.native_microtask_checkpoint_is_active()
+    }
+
+    /// Run currently queued ECMAScript jobs at a native MakeCallback boundary.
+    /// This does not run host agent tasks (for example ready waitAsync tasks).
+    /// Node owns nextTick-before-microtask ordering and callback depth. A native
+    /// checkpoint requested from an already running job is deferred to its drain.
+    pub fn run_microtask_checkpoint(&mut self) -> Result<(), RootedError> {
+        let program = self.vm.embedding_program().map_err(|error| self.error(error))?;
+        let result = self.vm.native_microtask_checkpoint(&program);
+        result.map(drop).map_err(|error| self.error(error))
+    }
+
     /// Enqueue a callable in the realm's ECMAScript job queue.
     pub fn queue_microtask_rooted(
         &mut self,
@@ -1635,10 +1753,19 @@ impl<'a, H: Host> NativeContext<'a, H> {
     }
 }
 
+/// The largest root list a finished native call returns for reuse; a call that scoped more
+/// values frees its list rather than keep that capacity alive for every later call.
+const RETAINED_NATIVE_ROOT_LIST_CAPACITY: usize = 256;
+
 impl<H: Host> Drop for NativeContext<'_, H> {
     fn drop(&mut self) {
         for root in &self.roots {
             self.vm.release_root(*root);
+        }
+        let mut roots = std::mem::take(&mut self.roots);
+        if roots.capacity() <= RETAINED_NATIVE_ROOT_LIST_CAPACITY {
+            roots.clear();
+            self.vm.native_root_lists.push(roots);
         }
     }
 }

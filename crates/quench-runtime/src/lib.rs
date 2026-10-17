@@ -31,7 +31,8 @@ pub use bytecode::ResidualProgram;
 pub use compile::{Diagnostic, Engine};
 pub use heap::{RootId, HeapMemoryComposition};
 pub use host::{
-    CapabilityId, Host, HostContext, HostExecutionContext, HostGlobal, ModuleSource, SystemHost,
+    CapabilityId, Host, HostContext, HostExecutionContext, HostGlobal, ModuleLoadError, ModuleLoadErrorKind,
+    ModuleSource, SystemHost,
     WasmHostFunctionId, WasmHostValue,
 };
 #[cfg(feature = "profile-memory")]

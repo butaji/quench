@@ -23,6 +23,14 @@ impl TcpOwned {
             referenced: true,
         })
     }
+    #[cfg(unix)]
+    pub(crate) fn from_owned_descriptor(fd: std::os::fd::OwnedFd) -> io::Result<Self> {
+        let socket=socket2::Socket::from(fd);
+        socket.set_nonblocking(true)?;
+        let address=socket.local_addr()?.as_socket().ok_or_else(||io::Error::from_raw_os_error(libc::EINVAL))?;
+        let phase=if address.port()==0 {Phase::Unbound}else{Phase::Bound};
+        Ok(Self {socket,phase,referenced:true})
+    }
     fn socket(ipv6: bool) -> io::Result<socket2::Socket> {
         let socket = socket2::Socket::new(
             if ipv6 {

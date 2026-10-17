@@ -4,7 +4,10 @@
 //! guarded compiled backend is retained for supported patterns, with the
 //! repository-owned matcher as the complete semantic fallback.
 
-use std::{cell::RefCell, ops::Range};
+use std::{
+    cell::{OnceCell, RefCell},
+    ops::Range,
+};
 
 use oxc::regular_expression::{ast, LiteralParser, Options};
 
@@ -257,12 +260,15 @@ const ASCII_MAX: u16 = 0x7F;
 const BMP_MAX: u32 = u16::MAX as u32;
 
 pub struct Regex {
-    program: Expr,
+    /// The complete matcher's program, lowered when it first runs. A pattern the byte
+    /// backend serves matches ASCII subjects without it, so it may never be needed.
+    complete: OnceCell<CompleteMatcher>,
+    /// The normalized source `complete` lowers from; empty once `complete` is lowered at
+    /// construction, for a pattern the byte backend does not serve.
+    source: Box<str>,
     flags: Flags,
     capture_names: Vec<String>,
     has_named_groups: bool,
-    /// Literal units every match consumes contiguously (`required_literal`); empty if none.
-    required_literal: Box<[u32]>,
     compiled_dot_requires_cr_guard: bool,
     /// The automata backend is a guarded fast path for ASCII patterns. Regex
     /// syntax it cannot represent (backreferences/lookaround and other
@@ -277,11 +283,44 @@ pub struct Regex {
     /// and execution is single-threaded, so this disposable physical state
     /// can live beside it without changing semantic match data.
     compiled_locations: RefCell<Option<regex::bytes::CaptureLocations>>,
+}
+
+/// The repository matcher's form of a pattern.
+struct CompleteMatcher {
+    program: Expr,
+    /// Literal units every match consumes contiguously (`required_literal`); empty if none.
+    required_literal: Box<[u32]>,
     /// The compiled backtracking matcher (`backtrack::Program`), for every pattern without
     /// lookbehind or multi-unit classes.
     backtracking: Option<backtrack::Program>,
     /// `required_literal` as bytes, when every unit is ASCII.
     required_bytes: Option<memchr::memmem::Finder<'static>>,
+}
+
+impl CompleteMatcher {
+    /// Lowers a parsed pattern whose capture names are `names`.
+    fn lower(pattern: &ast::Pattern<'_>, source: &str, names: &[String], flags: Flags) -> Self {
+        let mut lowering = Lowering {
+            source,
+            names: names.to_vec(),
+            next_capture: 0,
+        };
+        let program = lower_disjunction(&pattern.body, &mut lowering);
+        let backtracking = backtrack::Program::compile(&program, flags, lowering.names.len());
+        let required_literal = required_literal(&program, flags);
+        let required_bytes = (!required_literal.is_empty()
+            && required_literal.iter().all(|unit| *unit <= u32::from(ASCII_MAX)))
+        .then(|| {
+            let bytes = required_literal.iter().map(|unit| *unit as u8).collect::<Vec<_>>();
+            memchr::memmem::Finder::new(&bytes).into_owned()
+        });
+        Self {
+            program,
+            required_literal,
+            backtracking,
+            required_bytes,
+        }
+    }
 }
 
 /// The byte matcher that answers range-only queries (`Regex::range_matcher`).
@@ -328,15 +367,7 @@ impl Regex {
         }
         let mut names = Vec::new();
         collect_names(&parsed.body, &mut names);
-        let mut lowering = Lowering {
-            source: &normalized_source,
-            names,
-            next_capture: 0,
-        };
-        let program = lower_disjunction(&parsed.body, &mut lowering);
-        let backtracking = backtrack::Program::compile(&program, flags, lowering.names.len());
-        let required_literal = required_literal(&program, flags);
-        let has_named_groups = lowering.names.iter().any(|name| !name.is_empty());
+        let has_named_groups = names.iter().any(|name| !name.is_empty());
         // The `regex` crate is a useful literal fast path, but its capture
         // and character semantics are not ECMAScript-complete (notably
         // identity escapes, nullable quantified captures, dotAll and inline
@@ -358,27 +389,48 @@ impl Regex {
         } else {
             compile_byte_regex(source, flags).map_or(RangeBackend::None, RangeBackend::Own)
         };
-        let required_bytes = (!required_literal.is_empty()
-            && required_literal.iter().all(|unit| *unit <= u32::from(ASCII_MAX)))
-        .then(|| {
-            let bytes = required_literal.iter().map(|unit| *unit as u8).collect::<Vec<_>>();
-            memchr::memmem::Finder::new(&bytes).into_owned()
-        });
         let compiled_locations = compiled
             .as_ref()
             .map(regex::bytes::Regex::capture_locations);
+        let complete = OnceCell::new();
+        let complete_source = if compiled.is_some() {
+            normalized_source.as_ref().into()
+        } else {
+            let _ = complete.set(CompleteMatcher::lower(
+                &parsed,
+                &normalized_source,
+                &names,
+                flags,
+            ));
+            Box::default()
+        };
         Ok(Self {
-            program,
+            complete,
+            source: complete_source,
             flags,
-            capture_names: lowering.names,
+            capture_names: names,
             has_named_groups,
-            required_literal,
             compiled_dot_requires_cr_guard: !flags.dot_all && has_bare_dot(source),
             compiled,
             range_backend,
             compiled_locations: RefCell::new(compiled_locations),
-            backtracking,
-            required_bytes,
+        })
+    }
+
+    /// The repository matcher, lowered from the kept source on first use.
+    fn complete(&self) -> &CompleteMatcher {
+        self.complete.get_or_init(|| {
+            let allocator = oxc::allocator::Allocator::default();
+            let flags_text = flag_text(self.flags);
+            let parsed = LiteralParser::new(
+                &allocator,
+                &self.source,
+                Some(&flags_text),
+                Options::default(),
+            )
+            .parse()
+            .expect("a constructed pattern parses again");
+            CompleteMatcher::lower(&parsed, &self.source, &self.capture_names, self.flags)
         })
     }
 
@@ -529,7 +581,6 @@ impl Regex {
         sticky: bool,
         captures: bool,
     ) -> Option<Option<Match>> {
-        let program = self.backtracking.as_ref()?;
         if let Some(bytes) = subject.ascii() {
             // A sticky search has no automata path: the repository matcher answers it.
             let automata = !sticky
@@ -544,8 +595,10 @@ impl Regex {
             {
                 return None;
             }
+            let complete = self.complete();
+            let program = complete.backtracking.as_ref()?;
             // Every match consumes the required literal, so a subject without it has none.
-            if let Some(literal) = &self.required_bytes {
+            if let Some(literal) = &complete.required_bytes {
                 if literal.find(&bytes[start..]).is_none() {
                     return Some(None);
                 }
@@ -576,8 +629,10 @@ impl Regex {
         }
         let units = subject.decoded(unicode);
         let first = first_unit_at(units, start);
-        if !self.required_literal.is_empty()
-            && !contains_literal(&units[first..], &self.required_literal)
+        let complete = self.complete();
+        let program = complete.backtracking.as_ref()?;
+        if !complete.required_literal.is_empty()
+            && !contains_literal(&units[first..], &complete.required_literal)
         {
             return Some(None);
         }
@@ -626,8 +681,9 @@ impl Regex {
     }
 
     fn find_units(&self, input: &[Unit], first: usize) -> Option<Match> {
-        if !self.required_literal.is_empty()
-            && !contains_literal(&input[first.min(input.len())..], &self.required_literal)
+        let required_literal = &self.complete().required_literal;
+        if !required_literal.is_empty()
+            && !contains_literal(&input[first.min(input.len())..], required_literal)
         {
             return None;
         }
@@ -646,7 +702,7 @@ impl Regex {
                 position,
                 captures: std::rc::Rc::clone(&unset),
             };
-            if let Some(found) = match_expr(&self.program, input, state, self.flags) {
+            if let Some(found) = match_expr(&self.complete().program, input, state, self.flags) {
                 let captures = found.captures.iter().cloned().collect();
                 return Some(self.unit_match(input, position, found.position, captures));
             }

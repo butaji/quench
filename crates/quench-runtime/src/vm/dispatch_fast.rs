@@ -3818,6 +3818,7 @@ impl<H: Host> Vm<H> {
                 construct_this,
                 returns: result & crate::bytecode::RETURN_REGISTER != 0,
                 call_guard,
+                caller_program: None,
             });
             caller += 1;
         }
@@ -4009,9 +4010,7 @@ lane_handler! {
         let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
         let atom = i.imm();
-        if vm.realm.global_lexical_declarations.contains(&atom)
-            || vm.realm.global_lexical_bindings.contains_key(&atom)
-        {
+        if vm.realm.global_lexical_declarations.contains(&atom) {
             return exit(ip);
         }
         let super::object::FieldCacheProbe::Hit(value) =
@@ -4930,6 +4929,7 @@ fn lane_call_frame<H: Host>(ip: Ip) -> Ip {
         construct_this: None,
         returns: false,
         call_guard: Some(call_guard),
+        caller_program: None,
     });
     lane_enter_frame(cx, caller + 1, 0)
 }
@@ -5151,9 +5151,9 @@ fn lane_return_frame<H: Host>(r: Registers, ip: Ip) -> Ip {
     // An in-loop `new` substitutes its receiver for a non-object result;
     // the general path owns that [[Construct]] step.
     if !unsafe { (*cx).inline_calls }
-        || pending
-            .last()
-            .is_none_or(|call| call.construct_this.is_some())
+        || pending.last().is_none_or(|call| {
+            call.construct_this.is_some() || call.caller_program.is_some()
+        })
     {
         return exit(ip);
     }
