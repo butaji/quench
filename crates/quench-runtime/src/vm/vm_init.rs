@@ -67,6 +67,8 @@ impl<H: Host> Vm<H> {
             shared_natives: Default::default(),
             frames: vec![],
             native_stack_frames: vec![],
+            native_root_lists: vec![],
+            gc_root_count: 0,
             frame_pool: vec![],
             lane_stack: Default::default(),
             execution_mode: ExecutionMode::default(),
@@ -87,6 +89,7 @@ impl<H: Host> Vm<H> {
             #[cfg(not(feature = "profile-aggregate"))]
             profile: Profile,
             shape_slot_memo: Default::default(),
+            shape_attribute_memo: Default::default(),
             shapes: Shape::table(),
             shape_accessors: Vec::new(),
             transitions: Default::default(),
