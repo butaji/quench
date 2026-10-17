@@ -10295,6 +10295,102 @@ if(fn().getFunctionName()!=='anonymous')throw Error('deleted length layout');
 }
 
 #[test]
+#[cfg(not(any(
+    feature = "profile-aggregate",
+    feature = "profile-trace",
+    feature = "profile-memory",
+    feature = "profile-gc-time"
+)))]
+fn js_jit_compiles_hot_numeric_functions_and_guards_polymorphic_inputs() {
+    let source = r#"
+      function add(left, right) { return left + right; }
+      function divide(left, right) { return left / right; }
+      for (let index = 0; index < 40; index++) {
+        if (add(index, 2) !== index + 2) throw new Error('numeric result');
+        if (divide(index + 1, 2) !== (index + 1) / 2) throw new Error('division result');
+      }
+      if (add('value:', 2) !== 'value:2') throw new Error('guard fallback');
+      if (add(1n, 2n) !== 3n) throw new Error('BigInt fallback');
+      let coercions = 0;
+      const boxed = { valueOf() { coercions++; return 3; } };
+      if (add(boxed, 4) !== 7 || coercions !== 1) throw new Error('effectful fallback');
+      if (!(new add(1, 2) instanceof add)) throw new Error('constructor unwind');
+      if (!Object.is(divide(-0, 2), -0)) throw new Error('signed zero');
+      if (!Number.isNaN(divide(0, 0))) throw new Error('NaN');
+      if (divide(1, 0) !== Infinity) throw new Error('infinity');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest {
+        source,
+        name: "js-jit-number-guard.js",
+        kind: crate::SourceKind::Script,
+    })
+    .unwrap();
+    let mut vm = Vm::new(SilentHost);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+
+    for function in [1, 2] {
+        assert!(matches!(
+            vm.programs
+                .js_tier(super::program_store::ProgramId::MAIN, function),
+            Some(super::program_store::JsTierState::Compiled(_))
+        ));
+    }
+}
+
+#[test]
+fn js_jit_tier_tracking_has_a_hard_bound() {
+    let program = Engine::compile(crate::ExecutionRequest::script("void 0", "js-jit-cap.js"))
+        .unwrap();
+    let mut programs = super::program_store::ProgramStore::default();
+    let id = programs.insert(program).unwrap();
+    for function in 0..512 {
+        assert!(!programs.note_js_function_entry(id, function, false));
+    }
+    assert_eq!(programs.js_jit_tracked_function_count(), 256);
+}
+
+#[test]
+fn js_jit_promotion_requires_a_confident_numeric_profile() {
+    let program = Engine::compile(crate::ExecutionRequest::script("void 0", "js-jit-profile-gate.js"))
+        .unwrap();
+    let mut programs = super::program_store::ProgramStore::default();
+    let id = programs.insert(program).unwrap();
+    for observation in 0..16 {
+        assert!(!programs.note_js_function_entry(id, 1, observation < 15));
+    }
+    assert!(matches!(
+        programs.js_tier(id, 1),
+        Some(super::program_store::JsTierState::Hot {
+            observations: 16,
+            numeric: 15
+        })
+    ));
+}
+
+#[cfg(any(
+    feature = "profile-aggregate",
+    feature = "profile-trace",
+    feature = "profile-memory",
+    feature = "profile-gc-time"
+))]
+#[test]
+fn js_jit_leaves_profiling_builds_on_the_instrumented_dispatcher() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        "function add(a, b) { return a + b; } for (let i = 0; i < 40; i++) if (add(i, 2) !== i + 2) throw Error('bad result');",
+        "js-jit-profile.js",
+    ))
+    .unwrap();
+    let mut vm = Vm::new(SilentHost);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    assert!(vm
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, 1)
+        .is_none());
+}
+
+#[test]
 fn dynamic_function_canonical_source_and_wrapper_origins_match_in_both_modes() {
     let source = r#"
 Error.prepareStackTrace=(_,frames)=>frames;
