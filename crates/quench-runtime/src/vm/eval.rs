@@ -416,8 +416,8 @@ impl<H: Host> Vm<H> {
         let result = (|| {
             if !root_function.strict {
                 let global_function_atoms = residual.functions[super::ROOT_FUNCTION_ID as usize]
-                    .global_function_atoms
-                    .clone();
+                    .global_function_atoms()
+                    .to_vec();
                 for atom in &global_function_atoms {
                     if (!caller_scope && self.realm.global_lexical_declarations.contains(atom))
                         || (direct_eval
@@ -438,7 +438,7 @@ impl<H: Host> Vm<H> {
                     self.check_global_eval_declaration(p, globals, &name, true)?;
                 }
                 for atom in residual.functions[super::ROOT_FUNCTION_ID as usize]
-                    .global_var_atoms
+                    .global_var_atoms()
                     .iter()
                     .copied()
                 {
@@ -490,7 +490,7 @@ impl<H: Host> Vm<H> {
                             self.define_global_eval_binding(p, *atom, Value::UNDEFINED)?;
                         }
                     }
-                    for atom in root_function.global_var_atoms.iter().copied() {
+                    for atom in root_function.global_var_atoms().iter().copied() {
                         if global_function_atoms.contains(&atom) {
                             continue;
                         }
@@ -513,7 +513,7 @@ impl<H: Host> Vm<H> {
                 }
             }
             if caller_scope {
-                self.prepare_direct_eval_var_bindings(&root_function.global_var_atoms);
+                self.prepare_direct_eval_var_bindings(&root_function.global_var_atoms());
             }
             let parent = if direct_eval {
                 if let Some(frame) = self.frames.len().checked_sub(1) {
