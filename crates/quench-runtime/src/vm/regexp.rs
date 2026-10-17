@@ -2448,8 +2448,8 @@ impl<H: Host> Vm<H> {
             Some(Cell::RegExp { meta, .. }) => meta.legacy_constructor,
             _ => return Err(JsError("RegExp instance unavailable after match".into())),
         };
-        let intrinsic = self.regexp_intrinsic_constructor();
-        if self.same_value(owner.constructor(), intrinsic) {
+        // Constructors are objects, whose SameValue is identity.
+        if owner.constructor() == self.regexp_intrinsic_constructor() {
             let state = self
                 .realm
                 .intrinsics
