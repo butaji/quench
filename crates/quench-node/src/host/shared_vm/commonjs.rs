@@ -891,13 +891,13 @@ pub(crate) fn require_for_module(
     load_with_resolution(context, &filename, Some(parent), goal, Some((directory_cache, &specifier)))
 }
 
-/// Defines the global `console` as the SDK console.
+/// Defines the global `console` (`console_shared_vm::facade`).
 pub(crate) fn initialize_console_global(
     context: &mut Context<'_>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let console = cached_builtin(context, BuiltinModule::Console)?;
+    let console = crate::modules::console_shared_vm::facade(context)?;
     let global = context.global_root()?;
     let key = context.string_rooted("console");
     context.define_data_property_rooted(global, key, console, true, false, true)?;
@@ -1490,6 +1490,10 @@ pub(crate) fn fs_module(context: &mut Context<'_>) -> Result<RootId, RootedError
 
 pub(crate) fn buffer_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     cached_builtin(context, BuiltinModule::Buffer)
+}
+
+pub(crate) fn console_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    cached_builtin(context, BuiltinModule::Console)
 }
 
 pub(crate) fn util_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
@@ -2466,7 +2470,9 @@ const getLinkedBinding = () => ({});
             )?;
             let undefined = context.undefined();
             context.call_rooted(initialize, undefined, &[exports])?;
+            crate::modules::console_shared_vm::adopt(context, module, exports)?;
         }
+        let exports = get(context, module, "exports")?;
         let loaded = context.boolean(true);
         set(context, module, "loaded", loaded)?;
         Ok(exports)
