@@ -47,6 +47,16 @@ struct FieldCacheHit {
     depth: u16,
 }
 
+/// What a walk of an inherited entry's chain proved (`Vm::prove_inherited_chain`).
+#[derive(Clone, Copy)]
+struct InheritedChainProof {
+    index: u32,
+    prototype: Value,
+    holder: Value,
+    depth: u8,
+    epoch: u64,
+}
+
 enum FieldCacheRead {
     Proxy,
     Generic,
@@ -986,6 +996,23 @@ impl<H: Host> Vm<H> {
         Some(hit.value)
     }
 
+    /// `primary_holder_field_hit` for a receiver any heap cell holds, such as a function whose
+    /// prototype holds the method (`f.apply`), which a direct object's record lookup misses.
+    #[inline(always)]
+    pub(super) fn cell_holder_field_hit(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        site: u16,
+    ) -> Option<Value> {
+        debug_assert!(self.lane_admits(p));
+        let receiver = self.heap.object(object)?;
+        let hit = self.cached_ordinary_holder_field_value(self.field_cache_index(site), receiver)?;
+        self.profile
+            .field_cache_hit(usize::from(hit.tier), hit.depth);
+        Some(hit.value)
+    }
+
     /// The data field a direct object inherits from beyond its immediate prototype, at the
     /// site's inherited entry (`cached_inherited_field_value`): `field_miss_data_value`'s
     /// cache hit for a site that has one (`field_site_inherited`).
@@ -998,7 +1025,11 @@ impl<H: Host> Vm<H> {
     ) -> Option<Value> {
         debug_assert!(self.lane_admits(p));
         let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
-        let hit = self.cached_inherited_field_value(self.field_cache_index(site), receiver)?;
+        let (hit, proof) =
+            self.cached_inherited_field_value(self.field_cache_index(site), receiver)?;
+        if let Some(proof) = proof {
+            self.prove_inherited_chain(proof);
+        }
         self.profile
             .field_cache_hit(usize::from(hit.tier), hit.depth);
         Some(hit.value)
@@ -1453,7 +1484,10 @@ impl<H: Host> Vm<H> {
         site: usize,
     ) -> Option<Value> {
         let receiver = self.shape_property_lookup(object, atom)?;
-        if let Some(hit) = self.cached_inherited_field_value(site, receiver) {
+        if let Some((hit, proof)) = self.cached_inherited_field_value(site, receiver) {
+            if let Some(proof) = proof {
+                self.prove_inherited_chain(proof);
+            }
             self.profile
                 .field_cache_hit(usize::from(hit.tier), hit.depth);
             return Some(hit.value);
@@ -1507,14 +1541,16 @@ impl<H: Host> Vm<H> {
     }
 
     /// An inherited data field cached by `inherited_field`: the receiver keeps its shape and
-    /// each prototype up to the holder still has its recorded shape. Consulted on the miss
-    /// path, so the inline cache tiers keep their shape.
+    /// each prototype up to the holder still has its recorded shape, which an entry proved under
+    /// the current `prototype_layout_epoch` knows without the walk. Consulted on the miss path,
+    /// so the inline cache tiers keep their shape. A walk's hit comes with the proof
+    /// `prove_inherited_chain` records.
     #[inline(always)]
     fn cached_inherited_field_value(
         &self,
         site: usize,
         receiver: &Object,
-    ) -> Option<FieldCacheHit> {
+    ) -> Option<(FieldCacheHit, Option<InheritedChainProof>)> {
         // SAFETY: compiler-produced sites index exactly-sized cache vectors; every other
         // index was installed together with its entry.
         let index = unsafe { *self.inherited_field_indices.get_unchecked(site) };
@@ -1525,8 +1561,29 @@ impl<H: Host> Vm<H> {
         if cache.receiver != receiver.shape() {
             return None;
         }
-        let mut prototype = receiver.proto();
+        let hit = |value| FieldCacheHit {
+            value,
+            tier: 0,
+            depth: u16::from(cache.depth),
+        };
+        let first = receiver.proto();
+        let epoch = crate::heap::prototype_layout_epoch();
+        if cache.proved_epoch == epoch && cache.proved_prototype == first {
+            let value = match cache.answer {
+                // SAFETY: the proof keeps the holder and its recorded shape.
+                InheritedFieldAnswer::Slot(slot) => unsafe {
+                    self.heap.property_get_shaped(
+                        self.heap.ordinary_object(cache.proved_holder)?,
+                        usize::from(slot),
+                    )
+                }?,
+                InheritedFieldAnswer::Absent => Value::UNDEFINED,
+            };
+            return Some((hit(value), None));
+        }
+        let mut prototype = first;
         let mut holder = None;
+        let mut holder_value = Value::UNDEFINED;
         for &shape in &cache.prototype_shapes[..usize::from(cache.depth)] {
             let Some(data) = self.heap.ordinary_object(prototype) else {
                 return None;
@@ -1534,6 +1591,7 @@ impl<H: Host> Vm<H> {
             if data.shape() != shape || data.is_module_namespace() || data.is_arguments_object() {
                 return None;
             }
+            holder_value = prototype;
             prototype = data.proto();
             holder = Some(data);
         }
@@ -1546,11 +1604,34 @@ impl<H: Host> Vm<H> {
             InheritedFieldAnswer::Absent if prototype.is_null() => Value::UNDEFINED,
             InheritedFieldAnswer::Absent => return None,
         };
-        Some(FieldCacheHit {
-            value,
-            tier: 0,
-            depth: u16::from(cache.depth),
-        })
+        let proof = InheritedChainProof {
+            index,
+            prototype: first,
+            holder: holder_value,
+            depth: cache.depth,
+            epoch,
+        };
+        Some((hit(value), Some(proof)))
+    }
+
+    /// Records that a walk proved inherited entry `proof.index`'s chain under `proof.epoch`.
+    /// Every link becomes a prototype first, so a later change to any of them advances the
+    /// epoch and retires the proof.
+    #[cold]
+    #[inline(never)]
+    fn prove_inherited_chain(&mut self, proof: InheritedChainProof) {
+        let mut link = proof.prototype;
+        for _ in 0..proof.depth {
+            self.heap.mark_prototype(link);
+            link = self.heap.ordinary_object(link).map_or(Value::NULL, Object::proto);
+        }
+        if crate::heap::prototype_layout_epoch() != proof.epoch {
+            return;
+        }
+        let cache = &mut self.inherited_field_caches[proof.index as usize];
+        cache.proved_epoch = proof.epoch;
+        cache.proved_prototype = proof.prototype;
+        cache.proved_holder = proof.holder;
     }
 
     /// A data field of `atom` held more than one prototype above `object`, which lacks it,
@@ -1572,6 +1653,9 @@ impl<H: Host> Vm<H> {
             prototype_shapes: [NO_FIELD_HOLDER; INHERITED_FIELD_CACHE_MAX_DEPTH],
             depth: 0,
             answer: InheritedFieldAnswer::Absent,
+            proved_epoch: NO_PROVED_EPOCH,
+            proved_prototype: Value::UNDEFINED,
+            proved_holder: Value::UNDEFINED,
         };
         // Shapes alone prove a name absent only for an ordinary receiver, whose shape holds
         // every property it has; an arguments object's indices and other index names, and any
