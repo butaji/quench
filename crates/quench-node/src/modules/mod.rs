@@ -9,20 +9,9 @@ pub(crate) mod worker_shared_vm;
 pub(crate) mod async_hook_registry_shared_vm;
 pub(crate) mod async_hooks_shared_vm;
 pub(crate) mod async_hooks_state;
-pub(crate) mod base64_shared_vm;
-pub(crate) mod buffer_alloc_shared_vm;
-pub(crate) mod buffer_bigint_shared_vm;
+pub(crate) mod buffer_binding_shared_vm;
 pub(crate) mod buffer_codec;
-pub(crate) mod buffer_compare_shared_vm;
-pub(crate) mod buffer_constructor_shared_vm;
-pub(crate) mod buffer_from_shared_vm;
-pub(crate) mod buffer_latin1_shared_vm;
-pub(crate) mod buffer_policy_shared_vm;
-pub(crate) mod buffer_pool_shared_vm;
-pub(crate) mod buffer_search_shared_vm;
 pub(crate) mod buffer_shared_vm;
-pub(crate) mod buffer_string_shared_vm;
-pub(crate) mod buffer_swap_shared_vm;
 pub(crate) mod cares_binding;
 #[cfg(quench_node_cares)] pub(crate) mod cares_channel_shared_vm;
 pub(crate) mod child_process_env_shared_vm;
@@ -146,11 +135,8 @@ pub(crate) mod zlib_constants;
 pub(crate) mod trace_shared_vm;
 pub(crate) mod trace_state;
 
-pub(crate) mod buffer_write_shared_vm;
 
-pub(crate) mod buffer_fill_shared_vm;
 
-pub(crate) mod buffer_inspect_shared_vm;
 
 pub(crate) mod encoding_binding_shared_vm;
 
