@@ -179,6 +179,34 @@ fn views(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     })
 }
 
+/// `internalBinding('ipc_serdes')`, the `advanced` codec of
+/// lib/internal/child_process/serialization.js: `serialize(message, Buffer)` frames one
+/// message into a Buffer, and `deserialize(view)` reads a frame's payload.
+pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
+    crate::host::shared_vm::commonjs::cached_native_binding(c, "\0binding:ipc_serdes", |c| {
+        let module = c.object_rooted()?;
+        for (name, operation) in [("serialize", "ipcSerdesSerialize"), ("deserialize", "ipcSerdesDeserialize")] {
+            let function = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+            let key = c.string_rooted(name);
+            c.define_data_property_rooted(module, key, function, true, true, true)?;
+        }
+        Ok(module)
+    })
+}
+
+pub(crate) fn serialize_native(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let undefined = c.undefined();
+    let message = args.first().copied().unwrap_or(undefined);
+    let buffer_constructor = args.get(1).copied().unwrap_or(undefined);
+    let bytes = serialize(c, message, buffer_constructor)?;
+    super::buffer_shared_vm::from_vec(c, bytes)
+}
+
+pub(crate) fn deserialize_native(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let view = args.first().copied().unwrap_or_else(|| c.undefined());
+    deserialize(c, view)
+}
+
 /// One framed message: the length prefix, then the V8 payload.
 pub(crate) fn serialize(c: &mut Context<'_>, message: RootId, buffer_constructor: RootId) -> Result<Vec<u8>, RootedError> {
     let output = WireOutput::default();
