@@ -189,7 +189,7 @@ impl Compiler<'_> {
             static_name_scope: Default::default(),
             call_plan: Default::default(),
             handlers: function.handlers.into(),
-            register_root_offset: u32::MAX,
+            register_roots: Default::default(),
             undefined_register,
             parameter_registers: None,
             initial_register: Default::default(),

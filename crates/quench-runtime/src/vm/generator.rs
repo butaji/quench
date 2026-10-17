@@ -109,7 +109,7 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        self.initialize_frame_invocation(&p.atoms, &mut frame, function, context, args);
+        self.initialize_frame_invocation(p, &mut frame, function, context, args);
         frame.function = id;
         frame.program = self.active_program;
         frame.pc = 0;

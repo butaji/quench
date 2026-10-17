@@ -100,7 +100,7 @@ impl FunctionCompiler<'_, '_> {
                         let value = self.expression(expression);
                         if is_anonymous_function_definition(expression) {
                             let name = self.owner.atom("default");
-                            self.emit(Op::SetFunctionName, value, 0, 0, name);
+                            self.name_function_definition(value, name);
                         }
                         let binding = super::super::module_default_binding(self.owner.source);
                         let atom = self.owner.atom(&binding);
@@ -407,7 +407,7 @@ impl FunctionCompiler<'_, '_> {
             && let BindingPattern::BindingIdentifier(identifier) = binding
         {
             let name = self.owner.atom(identifier.name.as_str());
-            self.emit(Op::SetFunctionName, value, 0, 0, name);
+            self.name_function_definition(value, name);
         }
         value
     }
