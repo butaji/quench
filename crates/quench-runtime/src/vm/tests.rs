@@ -10431,6 +10431,53 @@ fn js_jit_promotion_requires_a_confident_numeric_profile() {
     ));
 }
 
+#[test]
+fn js_jit_profile_gate_uses_prespecified_exact_binomial_looks() {
+    use super::program_store::JS_JIT_PROMOTION_LOOKS;
+
+    fn upper_tail(n: u8, k: u8, p: f64) -> f64 {
+        let n = u32::from(n);
+        let k = u32::from(k);
+        let mut mass = (1.0 - p).powi(n as i32);
+        let mut total = 0.0;
+        for successes in 0..=n {
+            if successes >= k {
+                total += mass;
+            }
+            if successes < n {
+                mass *= (n - successes) as f64 / f64::from(successes + 1) * p / (1.0 - p);
+            }
+        }
+        total
+    }
+
+    // Each fixed look spends alpha/4 under p=0.8. Testing at these points
+    // keeps the family-wise false-promotion probability at most 5%.
+    for (observations, minimum) in JS_JIT_PROMOTION_LOOKS {
+        assert!(upper_tail(observations, minimum, 0.8) <= 0.05 / 4.0);
+        assert!(upper_tail(observations, minimum - 1, 0.8) > 0.05 / 4.0);
+    }
+
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        "void 0",
+        "js-jit-sequential-profile-gate.js",
+    ))
+    .unwrap();
+    let mut programs = super::program_store::ProgramStore::default();
+    let id = programs.insert(program).unwrap();
+    for observation in 0..31 {
+        assert!(!programs.note_js_function_entry(id, 1, observation != 0));
+    }
+    assert!(programs.note_js_function_entry(id, 1, true));
+    assert!(matches!(
+        programs.js_tier(id, 1),
+        Some(super::program_store::JsTierState::Hot {
+            observations: 32,
+            numeric: 31
+        })
+    ));
+}
+
 #[cfg(any(
     feature = "profile-aggregate",
     feature = "profile-trace",
