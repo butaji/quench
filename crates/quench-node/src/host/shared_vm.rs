@@ -186,6 +186,9 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "processIpcListenerReference" (1) => crate::modules::child_process_ipc_shared_vm::listener_reference,
         method "require" (1) => commonjs::require,
         method "resolve" (2) => commonjs::resolve,
+        method "resolvePaths" (1) => commonjs::resolve_paths,
+        method "ipcSerdesSerialize" (2) => crate::modules::ipc_serdes_shared_vm::serialize_native,
+        method "ipcSerdesDeserialize" (1) => crate::modules::ipc_serdes_shared_vm::deserialize_native,
         method "childProcessSyncOptions" (2) => crate::modules::child_process_options_shared_vm::sync_options,
         method "childProcessReference" (2) => crate::modules::child_process_shared_vm::reference_child,
         method "childProcessHandleReference" (0) => crate::modules::child_process_shared_vm::reference_handle,
@@ -507,8 +510,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "messagingReceive" (0) => crate::modules::worker_shared_vm::receive,
         method "messagingDrain" (0) => crate::modules::worker_shared_vm::drain,
         method "workerStart" (0) => crate::modules::worker_shared_vm::worker_start,
-        method "workerRef" (0) => crate::modules::worker_shared_vm::worker_ref,
-        method "workerTerminate" (0) => crate::modules::worker_shared_vm::worker_terminate,
+        method "messagingWorkerRef" (0) => crate::modules::worker_shared_vm::worker_ref,
+        method "messagingWorkerTerminate" (0) => crate::modules::worker_shared_vm::worker_terminate,
         method "workerExited" (0) => crate::modules::worker_shared_vm::worker_exited,
         method "workerCaptureError" (0) => crate::modules::worker_shared_vm::capture_error,
         method "eventsAddAbortListener" (2) => crate::modules::events_abort_shared_vm::add_abort_listener,
@@ -989,6 +992,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
     ]
 }
 
+/// The host function `name` registers; each name registers exactly one
+/// (`operation_names_are_unique`), as lookup takes the first.
 pub(crate) fn operation(name: &str) -> HostFunctionId {
     let index = bindings()
         .iter()
@@ -1494,4 +1499,15 @@ fn install_gc_global(context: &mut NativeContext<'_, NodeHost>) -> Result<(), Ro
         context.define_data_property_rooted(global, key, gc, true, true, false)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn operation_names_are_unique() {
+        let mut names = std::collections::HashSet::new();
+        for binding in super::bindings() {
+            assert!(names.insert(binding.name), "Node operation {} is registered twice", binding.name);
+        }
+    }
 }
