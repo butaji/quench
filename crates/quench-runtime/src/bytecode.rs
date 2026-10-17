@@ -1648,12 +1648,9 @@ impl Function {
         if !self.handlers.is_empty() {
             return false;
         }
-        let mut instructions = self.instructions().peekable();
         let mut stores = 0;
-        while let Some(store) = instructions.next_if(|instruction| {
-            matches!(instruction.op(), Op::SetThisField | Op::SetThisFieldStrict)
-        }) {
-            if store.register_a() >= self.params {
+        for store in self.this_field_stores() {
+            if store.a() >= self.params {
                 return false;
             }
             stores += 1;
@@ -1663,7 +1660,7 @@ impl Function {
                 && matches!(constants.get(load.constant_index()), Some(Constant::Undefined))
         };
         stores != 0
-            && match instructions.collect::<Vec<_>>().as_slice() {
+            && match self.instructions().skip(stores).collect::<Vec<_>>().as_slice() {
                 [completion] => {
                     (undefined_load(completion) && completion.returns_from_frame())
                         || (completion.op() == Op::Return
@@ -1680,10 +1677,13 @@ impl Function {
             }
     }
 
-    /// The `SetThisField` records a body opens with (`only_initializes_this_fields`).
-    pub(crate) fn this_field_stores(&self) -> impl Iterator<Item = WideInstruction> + '_ {
-        self.instructions()
-            .take_while(|instruction| matches!(instruction.op(), Op::SetThisField | Op::SetThisFieldStrict))
+    /// The `SetThisField` records a body opens with (`only_initializes_this_fields`), in their
+    /// packed form: each holds its value register in `a`, its cache site in `c` and its atom
+    /// in `imm`.
+    pub(crate) fn this_field_stores(&self) -> impl Iterator<Item = Instr> + '_ {
+        self.code.iter().copied().take_while(|store| {
+            !store.is_wide() && matches!(store.op(), Op::SetThisField | Op::SetThisFieldStrict)
+        })
     }
 
     /// Whether every read of the `arguments` binding loads it into the last argument of the

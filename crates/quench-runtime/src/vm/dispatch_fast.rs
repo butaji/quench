@@ -4380,16 +4380,16 @@ fn lane_initialize_fields<H: Host>(
     let this = vm.inline_construct_receiver(callee)?;
     let argc = ImmediateLayout::argument_count(i.imm());
     for store in code.functions[function as usize].this_field_stores() {
-        let atom = store.atom_index();
+        let atom = store.imm();
         // Parameter `k` of a plain activation is argument `k`, or undefined when not passed.
-        let parameter = store.register_a();
+        let parameter = store.a();
         let value = if parameter < argc {
             r.get(i.c + parameter)
         } else {
             Value::UNDEFINED
         };
         if !vm.field_cache_atom_eligible(atom)
-            || !vm.primary_field_add_hit(code, this, atom, value, store.cache_site_index())
+            || !vm.primary_field_add_hit(code, this, atom, value, store.c())
         {
             return Some((this, false));
         }
