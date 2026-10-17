@@ -58,6 +58,14 @@ const PAYLOAD_BYTES_PER_ALLOCATION: usize = 64;
 static PAYLOAD_BYTES_PER_ALLOCATION_TUNED: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
     std::env::var("QUENCH_GC_PAYLOAD_UNIT").ok().and_then(|v| v.parse().ok()).unwrap_or(64)
 });
+/// Backing-store bytes (ArrayBuffer contents) allocated since the last collection that
+/// make the next one due, at least; the budget grows to the live external bytes a
+/// collection leaves. Buffers die only with their cells, so streaming code that drops
+/// one buffer per chunk retains every chunk until a collection. Like V8's external
+/// memory limit this bounds that garbage without collecting at every chunk: on the
+/// SaltyAom video route (64 KiB chunks, Linux x86_64, 4 vCPU) one collection per
+/// 64 KiB buffer cut peak RSS 112 -> 47 MB and throughput by two thirds.
+const MINIMUM_EXTERNAL_COLLECTION_BUDGET: usize = 8 << 20;
 const PARALLEL_MARK_MINIMUM_SLOTS: usize = 50_000;
 const PARALLEL_MARK_MAX_THREADS: usize = 4;
 // Paired Splay screens on the 4-vCPU Linux host favored the collector thread;
@@ -318,8 +326,11 @@ pub(crate) struct Heap {
     /// The next collection traces the whole heap.
     full_due: bool,
     pacing_state: pacing::PacingState,
-    /// Live count after, and cells allocated before, the previous collection.
+    /// Live weight after the previous collection.
     live_weight_after_previous: usize,
+    /// Backing-store bytes allocated since the last collection, against its budget.
+    external_since_collection: usize,
+    external_collection_budget: usize,
     /// The slot and record property owners the last full sweep listed, which size the next
     /// sweep's lists so they do not regrow from empty (and reallocate) every collection.
     property_owner_counts: (usize, usize),
@@ -661,6 +672,7 @@ impl Heap {
             free_slots: 0,
             threshold: pacing().minimum_young,
             max_threshold: pacing().minimum_young,
+            external_collection_budget: MINIMUM_EXTERNAL_COLLECTION_BUDGET,
             ..Self::default()
         }
     }
@@ -784,7 +796,7 @@ impl Heap {
         self.allocations_since_full = self.allocations_since_full.saturating_add(weight);
         let track_young = self.tracks_young_cells();
         self.total_allocations += 1;
-        self.external_bytes += cell.external_bytes();
+        self.charge_external_growth(cell.external_bytes());
         let cell = match cell {
             Cell::Object(object) => match self.object_records.try_insert(object) {
                 Ok(record_id) => {
@@ -1027,6 +1039,8 @@ impl Heap {
         self.free_slabs.clear();
         self.free_slots = 0;
         self.external_bytes = 0;
+        self.external_since_collection = 0;
+        self.external_collection_budget = MINIMUM_EXTERNAL_COLLECTION_BUDGET;
         self.payload_bytes = 0;
         self.allocations = 0;
         self.allocations_since_full = 0;
@@ -1072,6 +1086,14 @@ impl Heap {
         self.uncharged_payload_bytes = pending % payload_unit();
         self.allocations += weight;
         self.allocations_since_full = self.allocations_since_full.saturating_add(weight);
+    }
+    /// Accounts new backing-store bytes; past the external budget a collection is due.
+    pub(crate) fn charge_external_growth(&mut self, bytes: usize) {
+        self.external_bytes += bytes;
+        self.external_since_collection = self.external_since_collection.saturating_add(bytes);
+        if self.external_since_collection >= self.external_collection_budget {
+            self.threshold = self.threshold.min(self.allocations);
+        }
     }
     pub fn should_collect(&self) -> bool {
         self.allocations >= self.threshold
@@ -1393,6 +1415,8 @@ impl Heap {
         // its payload.
         let live_weight = live + self.payload_bytes / payload_unit();
         let allocated = std::mem::take(&mut self.allocations);
+        self.external_since_collection = 0;
+        self.external_collection_budget = self.external_bytes.max(MINIMUM_EXTERNAL_COLLECTION_BUDGET);
         if full {
             self.allocations_since_full = 0;
             self.old_live = legacy_live;

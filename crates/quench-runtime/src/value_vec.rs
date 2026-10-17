@@ -360,6 +360,38 @@ impl ValueArena {
         );
     }
 
+    /// An independent copy of `vector`'s storage: the same shape, integrity and values in a
+    /// range or dictionary of its own, so neither owner's release, growth or writes reach the
+    /// other. Inline storage lives in its owner's header and an empty vector has no range, so
+    /// both are returned as they are.
+    pub(crate) fn duplicate(&mut self, vector: ValueVec) -> ValueVec {
+        let mut copy = vector;
+        if vector.has_inline_property_storage() {
+            return copy;
+        }
+        if vector.is_dictionary() {
+            let slots = self.dictionaries[&vector.dictionary_id()].clone();
+            copy.use_dictionary(self.insert_dictionary(slots));
+            return copy;
+        }
+        let capacity = self.capacity(vector);
+        if capacity == 0 {
+            return copy;
+        }
+        let len = self.len(vector);
+        match self.allocate(capacity, MAX_ARENA_START) {
+            Some(start) => {
+                self.values.copy_within(vector.start()..vector.start() + len, start);
+                copy.relocate(start);
+            }
+            None => {
+                let values = self.values[vector.start()..vector.start() + len].to_vec();
+                copy.use_dictionary(self.allocate_dictionary(values));
+            }
+        }
+        copy
+    }
+
     pub(crate) fn release(&mut self, vector: ValueVec) {
         if vector.has_inline_property_storage() {
             return;
@@ -526,6 +558,16 @@ impl ValueArena {
     }
 
     fn allocate_dictionary(&mut self, values: Vec<Value>) -> u32 {
+        self.insert_dictionary(
+            values
+                .into_iter()
+                .enumerate()
+                .map(|(slot, value)| (slot as u32, value))
+                .collect(),
+        )
+    }
+
+    fn insert_dictionary(&mut self, slots: FxHashMap<u32, Value>) -> u32 {
         let id = self.free_dictionaries.pop().unwrap_or_else(|| {
             let id = self.next_dictionary;
             self.next_dictionary = id
@@ -534,14 +576,7 @@ impl ValueArena {
             assert!(id <= START_MASK, "property dictionary table exhausted");
             id
         });
-        self.dictionaries.insert(
-            id,
-            values
-                .into_iter()
-                .enumerate()
-                .map(|(slot, value)| (slot as u32, value))
-                .collect(),
-        );
+        self.dictionaries.insert(id, slots);
         id
     }
 
@@ -569,6 +604,30 @@ mod tests {
         }
         assert_eq!(arena.get(values, 8).unwrap().as_number(), Some(8.0));
         assert_eq!(arena.vector_stats(values), (9, 16));
+    }
+
+    #[test]
+    fn duplicated_storage_survives_the_release_and_reuse_of_its_source() {
+        let mut arena = ValueArena::default();
+        arena.register_shape(1, 2);
+        let mut source = arena.with_values(1, &[Value::number(1.0), Value::number(2.0)]);
+        source.set_frozen(true);
+        let copy = arena.duplicate(source);
+        assert_ne!(copy.start(), source.start());
+        assert!(copy.is_frozen());
+        assert_eq!(copy.auxiliary(), source.auxiliary());
+        arena.release(source);
+        let reused = arena.with_values(1, &[Value::number(7.0), Value::number(8.0)]);
+        assert_eq!(reused.start(), source.start(), "the released range is reused");
+        assert_eq!(arena.get(copy, 0).unwrap().as_number(), Some(1.0));
+        assert_eq!(arena.get(copy, 1).unwrap().as_number(), Some(2.0));
+
+        arena.migrate_to_dictionary_for_test(&mut source);
+        arena.set(source, 0, Value::number(3.0));
+        let dictionary_copy = arena.duplicate(source);
+        assert_ne!(dictionary_copy.dictionary_id(), source.dictionary_id());
+        arena.set(source, 0, Value::number(4.0));
+        assert_eq!(arena.get(dictionary_copy, 0).unwrap().as_number(), Some(3.0));
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! Runtime-neutral identity and rooted state shared by async-hooks adapters.
 
 use std::cell::Cell;
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::rc::Rc;
 
 use quench_runtime::RootId;
@@ -92,20 +92,23 @@ pub(crate) struct SharedAsyncHooksState {
     pub(super) module: Option<RootId>,
     pub(super) registry: super::async_hook_registry_shared_vm::Registry,
     pub(super) default_trigger_async_id: Option<f64>,
-    pub(super) context_triggers: HashMap<u64, i64>,
+    pub(super) context_triggers: FxHashMap<u64, i64>,
     /// Store snapshots have private identities; async-hooks observes their
     /// actual Promise resource identity instead.
-    pub(super) job_resources: HashMap<u64, JobContext>,
+    pub(super) job_resources: FxHashMap<u64, JobContext>,
     pub(super) next_job_id: u64,
     pub(super) job_stack: Vec<(u64, i64, StoreContext)>,
-    pub(super) promise_resources: HashMap<u64, quench_runtime::HostWeakRoot>,
+    pub(super) promise_resources: FxHashMap<u64, quench_runtime::HostWeakRoot>,
     /// The collection epoch `promise_resources` was last pruned at: entries can only have
     /// died when a collection ran since.
-    pub(super) promise_resources_pruned_epoch: u64,
+    pub(crate) promise_resources_pruned_epoch: u64,
     pub(super) scoped_resource: Option<(u64, RootId)>,
-    pub(super) local_stores: HashMap<(StoreContext, u64), RootId>,
-    pub(super) store_references: HashMap<RootId, usize>,
-    pub(super) destroyed_resources: HashSet<u64>,
+    pub(super) local_stores: FxHashMap<(StoreContext, u64), RootId>,
+    pub(super) store_references: FxHashMap<RootId, usize>,
+    pub(super) destroyed_resources: FxHashSet<u64>,
+    /// The AsyncLocalStorage instances entered since their last `disable()`. Like Node's
+    /// storage hook, an enabled one makes promises tracked (`tracks_promises`).
+    pub(super) enabled_local_storages: FxHashSet<u64>,
 }
 
 impl SharedAsyncHooksState {
@@ -115,16 +118,17 @@ impl SharedAsyncHooksState {
             module: None,
             registry: super::async_hook_registry_shared_vm::Registry::new(),
             default_trigger_async_id: None,
-            context_triggers: HashMap::new(),
-            job_resources: HashMap::new(),
+            context_triggers: FxHashMap::default(),
+            job_resources: FxHashMap::default(),
             next_job_id: 0,
             job_stack: Vec::new(),
-            promise_resources: HashMap::new(),
+            promise_resources: FxHashMap::default(),
             promise_resources_pruned_epoch: 0,
             scoped_resource: None,
-            local_stores: HashMap::new(),
-            store_references: HashMap::new(),
-            destroyed_resources: HashSet::new(),
+            local_stores: FxHashMap::default(),
+            store_references: FxHashMap::default(),
+            destroyed_resources: FxHashSet::default(),
+            enabled_local_storages: FxHashSet::default(),
         }
     }
 

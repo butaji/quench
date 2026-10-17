@@ -11,6 +11,7 @@ use std::{
 
 use oxc::regular_expression::{ast, LiteralParser, Options};
 
+mod backtrack;
 mod stack;
 
 pub fn is_stack_exhaustion_message(message: &str) -> bool {
@@ -289,6 +290,11 @@ struct CompleteMatcher {
     program: Expr,
     /// Literal units every match consumes contiguously (`required_literal`); empty if none.
     required_literal: Box<[u32]>,
+    /// The compiled backtracking matcher (`backtrack::Program`), for every pattern without
+    /// lookbehind or multi-unit classes.
+    backtracking: Option<backtrack::Program>,
+    /// `required_literal` as bytes, when every unit is ASCII.
+    required_bytes: Option<memchr::memmem::Finder<'static>>,
 }
 
 impl CompleteMatcher {
@@ -300,10 +306,19 @@ impl CompleteMatcher {
             next_capture: 0,
         };
         let program = lower_disjunction(&pattern.body, &mut lowering);
+        let backtracking = backtrack::Program::compile(&program, flags, lowering.names.len());
         let required_literal = required_literal(&program, flags);
+        let required_bytes = (!required_literal.is_empty()
+            && required_literal.iter().all(|unit| *unit <= u32::from(ASCII_MAX)))
+        .then(|| {
+            let bytes = required_literal.iter().map(|unit| *unit as u8).collect::<Vec<_>>();
+            memchr::memmem::Finder::new(&bytes).into_owned()
+        });
         Self {
             program,
             required_literal,
+            backtracking,
+            required_bytes,
         }
     }
 }
@@ -500,8 +515,11 @@ impl Regex {
         if start > subject.len() {
             return Matches { item: None };
         }
+        if let Some(found) = self.backtracking_find(subject, start, false, true) {
+            return Matches { item: found };
+        }
         if let (Some(bytes), Some(compiled)) = (subject.ascii(), &self.compiled) {
-            if !self.compiled_dot_requires_cr_guard || !subject.has_carriage_return {
+            if !self.compiled_dot_requires_cr_guard || !subject.has_carriage_return() {
                 return self.find_compiled(compiled, bytes, start);
             }
         }
@@ -517,6 +535,9 @@ impl Regex {
         if start > subject.len() {
             return Matches { item: None };
         }
+        if let Some(found) = self.backtracking_find(subject, start, true, true) {
+            return Matches { item: found };
+        }
         let units = subject.decoded(self.flags.unicode || self.flags.unicode_sets);
         let first = first_unit_at(units, start);
         Matches {
@@ -530,11 +551,14 @@ impl Regex {
         if start > subject.len() {
             return None;
         }
+        if let Some(found) = self.backtracking_find(subject, start, false, false) {
+            return found.map(|matched| matched.range);
+        }
         if let (Some(bytes), Some(compiled)) = (
             subject.ascii(),
             self.range_matcher().or(self.compiled.as_ref()),
         ) {
-            if !self.compiled_dot_requires_cr_guard || !subject.has_carriage_return {
+            if !self.compiled_dot_requires_cr_guard || !subject.has_carriage_return() {
                 return compiled
                     .find_at(bytes, start)
                     .map(|matched| matched.range());
@@ -543,6 +567,83 @@ impl Regex {
         self.find_in_subject(subject, start)
             .next()
             .map(|matched| matched.range)
+    }
+
+    /// The match the compiled backtracking matcher finds from `start` (only at `start` when
+    /// `sticky`), or `None` when it does not answer: the pattern did not compile, the
+    /// search ran past the budget it has while the linear-time backend can answer instead,
+    /// or that backend answers a search for no captures, which its automata make without
+    /// backtracking.
+    fn backtracking_find(
+        &self,
+        subject: &Subject,
+        start: usize,
+        sticky: bool,
+        captures: bool,
+    ) -> Option<Option<Match>> {
+        if let Some(bytes) = subject.ascii() {
+            // A sticky search has no automata path: the repository matcher answers it.
+            let automata = !sticky
+                && if captures {
+                    self.compiled.is_some()
+                } else {
+                    self.range_matcher().or(self.compiled.as_ref()).is_some()
+                };
+            if automata
+                && (!captures || self.capture_names.is_empty())
+                && (!self.compiled_dot_requires_cr_guard || !subject.has_carriage_return())
+            {
+                return None;
+            }
+            let complete = self.complete();
+            let program = complete.backtracking.as_ref()?;
+            // Every match consumes the required literal, so a subject without it has none.
+            if let Some(literal) = &complete.required_bytes {
+                if literal.find(&bytes[start..]).is_none() {
+                    return Some(None);
+                }
+            }
+            let linear = self.compiled.is_some()
+                && (!self.compiled_dot_requires_cr_guard || !subject.has_carriage_return());
+            let budget = linear.then(|| backtrack::Program::budget(bytes.len()));
+            let found = program.find(bytes, start, sticky, budget).ok()?;
+            return Some(found.map(|found| Match {
+                range: found.start..found.end,
+                captures: found.captures,
+                named: self.names_for_match(),
+            }));
+        }
+        let unicode = self.flags.unicode || self.flags.unicode_sets;
+        let complete = self.complete();
+        let program = complete.backtracking.as_ref()?;
+        if let (false, Some(units)) = (unicode, subject.wide()) {
+            // Outside unicode mode a code unit is a pattern unit: no decoding, and
+            // positions are offsets.
+            if !contains_code_units(&units[start..], &complete.required_literal) {
+                return Some(None);
+            }
+            let found = program.find(units, start, sticky, None).ok()?;
+            return Some(found.map(|found| Match {
+                range: found.start..found.end,
+                captures: found.captures,
+                named: self.names_for_match(),
+            }));
+        }
+        let units = subject.decoded(unicode);
+        let first = first_unit_at(units, start);
+        if !complete.required_literal.is_empty()
+            && !contains_literal(&units[first..], &complete.required_literal)
+        {
+            return Some(None);
+        }
+        let found = program.find(units, first, sticky, None).ok()?;
+        Some(found.and_then(|found| {
+            // A sticky match must start at `start` itself, not inside a surrogate pair.
+            if sticky && units.get(found.start).map_or(subject.len(), |unit| unit.offset_start) != start {
+                return None;
+            }
+            Some(self.unit_match(units, found.start, found.end, found.captures))
+        }))
     }
 
     pub fn find_from_utf16(&self, input: &[u16], start: usize) -> Matches {
@@ -602,55 +703,76 @@ impl Regex {
                 captures: std::rc::Rc::clone(&unset),
             };
             if let Some(found) = match_expr(&self.complete().program, input, state, self.flags) {
-                let start = input.get(position).map_or_else(
-                    || input.last().map_or(0, |unit| unit.offset_end),
-                    |unit| unit.offset_start,
-                );
-                let end = input.get(found.position).map_or_else(
-                    || input.last().map_or(start, |unit| unit.offset_end),
-                    |unit| {
-                        if found.position > 0 {
-                            input[found.position - 1].offset_end
-                        } else {
-                            unit.offset_start
-                        }
-                    },
-                );
-                let captures = found
-                    .captures
-                    .iter()
-                    .map(|capture| {
-                        capture.clone().map(|range| {
-                            let capture_start = input.get(range.start).map_or_else(
-                                || input.last().map_or(end, |unit| unit.offset_end),
-                                |unit| unit.offset_start,
-                            );
-                            let capture_end = if range.end == 0 {
-                                capture_start
-                            } else {
-                                input.get(range.end - 1).map_or_else(
-                                    || input.last().map_or(capture_start, |unit| unit.offset_end),
-                                    |unit| unit.offset_end,
-                                )
-                            };
-                            capture_start..capture_end
-                        })
-                    })
-                    .collect();
-                return Some(Match {
-                    range: start..end,
-                    captures,
-                    named: self.names_for_match(),
-                });
+                let captures = found.captures.iter().cloned().collect();
+                return Some(self.unit_match(input, position, found.position, captures));
             }
         }
         None
     }
+
+    /// The match from unit `position` to unit `end` of `input`, with captures in units, in
+    /// UTF-16 offsets.
+    fn unit_match(
+        &self,
+        input: &[Unit],
+        position: usize,
+        end: usize,
+        captures: Vec<Option<Range<usize>>>,
+    ) -> Match {
+        let start = input.get(position).map_or_else(
+            || input.last().map_or(0, |unit| unit.offset_end),
+            |unit| unit.offset_start,
+        );
+        let end = input.get(end).map_or_else(
+            || input.last().map_or(start, |unit| unit.offset_end),
+            |unit| {
+                if end > 0 {
+                    input[end - 1].offset_end
+                } else {
+                    unit.offset_start
+                }
+            },
+        );
+        let captures = captures
+            .into_iter()
+            .map(|capture| {
+                capture.map(|range| {
+                    let capture_start = input.get(range.start).map_or_else(
+                        || input.last().map_or(end, |unit| unit.offset_end),
+                        |unit| unit.offset_start,
+                    );
+                    let capture_end = if range.end == 0 {
+                        capture_start
+                    } else {
+                        input.get(range.end - 1).map_or_else(
+                            || input.last().map_or(capture_start, |unit| unit.offset_end),
+                            |unit| unit.offset_end,
+                        )
+                    };
+                    capture_start..capture_end
+                })
+            })
+            .collect();
+        Match {
+            range: start..end,
+            captures,
+            named: self.names_for_match(),
+        }
+    }
 }
 
-/// The text a subject matches: a string's own one-byte ASCII storage, or its UTF-16 units.
+/// The most ASCII bytes a subject holds inline (`Subject::short_ascii`): the `Wide`
+/// variant's four words, less the length byte.
+pub const INLINE_SUBJECT_BYTES: usize = 4 * size_of::<usize>() - 1;
+
+/// The text a subject matches: a string's own one-byte ASCII storage, a short ASCII copy,
+/// or its UTF-16 units.
 enum SubjectText {
     Ascii(std::rc::Rc<str>),
+    Inline {
+        length: u8,
+        bytes: [u8; INLINE_SUBJECT_BYTES],
+    },
     Wide {
         units: std::rc::Rc<[u16]>,
         /// One byte per unit, present only when every unit is ASCII.
@@ -662,7 +784,9 @@ enum SubjectText {
 /// can recognize the same string again by allocation identity.
 pub struct Subject {
     text: SubjectText,
-    has_carriage_return: bool,
+    /// Whether the text holds a carriage return, found on first use: only the automata
+    /// backend's dot guard asks (`compiled_dot_requires_cr_guard`).
+    carriage_return: std::cell::OnceCell<bool>,
     /// The units decoded for the backtracking matcher, by code unit and by code point
     /// (`unicode`), each decoded on first use.
     decoded: [std::cell::OnceCell<Vec<Unit>>; 2],
@@ -680,7 +804,7 @@ impl Subject {
         let ascii = (all_bits <= ASCII_MAX).then(|| units.iter().map(|unit| *unit as u8).collect());
         Self {
             text: SubjectText::Wide { units, ascii },
-            has_carriage_return,
+            carriage_return: std::cell::OnceCell::from(has_carriage_return),
             decoded: Default::default(),
         }
     }
@@ -688,17 +812,40 @@ impl Subject {
     /// A subject over ASCII text, matched in place without a copy.
     pub fn from_ascii(text: std::rc::Rc<str>) -> Self {
         debug_assert!(text.is_ascii());
-        let has_carriage_return = text.as_bytes().contains(&b'\r');
         Self {
             text: SubjectText::Ascii(text),
-            has_carriage_return,
+            carriage_return: std::cell::OnceCell::new(),
             decoded: Default::default(),
         }
+    }
+
+    /// A subject over ASCII text of at most `INLINE_SUBJECT_BYTES`, copied inline, so a
+    /// short string's subject needs no storage of its own.
+    pub fn short_ascii(text: &str) -> Self {
+        debug_assert!(text.is_ascii());
+        let mut bytes = [0; INLINE_SUBJECT_BYTES];
+        bytes[..text.len()].copy_from_slice(text.as_bytes());
+        Self {
+            text: SubjectText::Inline {
+                length: u8::try_from(text.len()).expect("short text fits its length byte"),
+                bytes,
+            },
+            carriage_return: std::cell::OnceCell::new(),
+            decoded: Default::default(),
+        }
+    }
+
+    fn has_carriage_return(&self) -> bool {
+        *self.carriage_return.get_or_init(|| match self.ascii() {
+            Some(bytes) => bytes.contains(&b'\r'),
+            None => self.wide().is_some_and(|units| units.contains(&u16::from(b'\r'))),
+        })
     }
 
     fn len(&self) -> usize {
         match &self.text {
             SubjectText::Ascii(text) => text.len(),
+            SubjectText::Inline { length, .. } => usize::from(*length),
             SubjectText::Wide { units, .. } => units.len(),
         }
     }
@@ -706,18 +853,28 @@ impl Subject {
     fn ascii(&self) -> Option<&[u8]> {
         match &self.text {
             SubjectText::Ascii(text) => Some(text.as_bytes()),
+            SubjectText::Inline { length, bytes } => Some(&bytes[..usize::from(*length)]),
             SubjectText::Wide { ascii, .. } => ascii.as_deref(),
         }
     }
 
     fn decoded(&self, unicode: bool) -> &[Unit] {
         self.decoded[usize::from(unicode)].get_or_init(|| match &self.text {
-            SubjectText::Ascii(text) => {
-                let units = text.bytes().map(u16::from).collect::<Vec<_>>();
+            SubjectText::Ascii(_) | SubjectText::Inline { .. } => {
+                let ascii = self.ascii().expect("ASCII text has bytes");
+                let units = ascii.iter().copied().map(u16::from).collect::<Vec<_>>();
                 units_from_utf16(&units, unicode)
             }
             SubjectText::Wide { units, .. } => units_from_utf16(units, unicode),
         })
+    }
+
+    /// The UTF-16 units of a subject that is not all ASCII.
+    fn wide(&self) -> Option<&[u16]> {
+        match &self.text {
+            SubjectText::Wide { units, ascii: None } => Some(units),
+            _ => None,
+        }
     }
 
     pub fn is_text_of(&self, units: &std::rc::Rc<[u16]>) -> bool {
@@ -1252,6 +1409,29 @@ fn required_literal(program: &Expr, flags: Flags) -> Box<[u32]> {
     visit(program, &mut run, &mut best);
     end_run(&mut run, &mut best);
     best.into()
+}
+
+/// Whether `literal` occurs in UTF-16 `input`; an empty literal occurs everywhere. The search
+/// runs over the units' bytes, where an occurrence must start at a unit boundary.
+fn contains_code_units(input: &[u16], literal: &[u32]) -> bool {
+    if literal.is_empty() {
+        return true;
+    }
+    let Some(needle) = literal
+        .iter()
+        .map(|unit| u16::try_from(*unit).ok().map(u16::to_ne_bytes))
+        .collect::<Option<Vec<_>>>()
+    else {
+        // A unit past UTF-16 occurs in no code-unit text.
+        return false;
+    };
+    let needle = needle.concat();
+    // SAFETY: the bytes of initialized `u16` values, which any `u8` view may read.
+    let haystack = unsafe {
+        std::slice::from_raw_parts(input.as_ptr().cast::<u8>(), std::mem::size_of_val(input))
+    };
+    let unit = std::mem::size_of::<u16>();
+    memchr::memmem::find_iter(haystack, &needle).any(|offset| offset % unit == 0)
 }
 
 /// Whether `literal` occurs in `input`.
@@ -2849,7 +3029,22 @@ fn is_line_terminator(value: u32) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_new_unicode_scripts, Flags, Regex, NEW_UNICODE_SCRIPTS};
+    use super::{
+        contains_code_units, normalize_new_unicode_scripts, Flags, Regex, NEW_UNICODE_SCRIPTS,
+    };
+
+    #[test]
+    fn code_unit_literals_match_whole_units() {
+        let text = |text: &str| text.encode_utf16().collect::<Vec<_>>();
+        let literal = |text: &str| text.encode_utf16().map(u32::from).collect::<Vec<_>>();
+        assert!(contains_code_units(&text("aé=bc"), &literal("=b")));
+        assert!(contains_code_units(&text("aé=bc"), &literal("")));
+        assert!(!contains_code_units(&text("aé=bc"), &literal("cb")));
+        // Little-endian bytes 01 02 03 00 hold the bytes of 0x0302 across a unit boundary.
+        assert!(!contains_code_units(&[0x0201, 0x0003], &[0x0302]));
+        assert!(contains_code_units(&[0x0201, 0x0302], &[0x0302]));
+        assert!(!contains_code_units(&text("abc"), &[0x1_F600]));
+    }
 
     #[test]
     fn new_unicode_script_normalization_borrows_unrelated_patterns() {
