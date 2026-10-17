@@ -30,6 +30,7 @@ const MIN_QUALIFYING_ROUNDS: usize = 11;
 const DEFAULT_TIMEOUT_MS: u64 = 300_000;
 const MEASUREMENT_ENV: &[&str] = &["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TZ"];
 const FIXED_WORK_REPORT_SCHEMA: u32 = 5;
+const SUITE_REPORT_SCHEMA: u32 = 6;
 const FIXED_WORK_MEASUREMENT_MODE: &str = "fixed_work_diagnostic";
 const FIXED_WORK_MARKER_PREFIX: &str = "__quenchFixedWork:";
 const FIXED_WORK_SUITE_COUNT: usize = 1;
@@ -115,6 +116,15 @@ enum Suite {
     JetStream3,
 }
 
+/// Whether the benchmark run enables each engine's optimizing compiler.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+enum JitMode {
+    #[default]
+    NoJit,
+    Jit,
+}
+
 impl Suite {
     fn parse(name: &str) -> Self {
         match name {
@@ -134,7 +144,10 @@ impl Suite {
 
     fn fixtures(self) -> Vec<PathBuf> {
         match self {
-            Self::V8V7 => FIXTURES.iter().map(|name| Path::new(SUITE_DIR).join(name)).collect(),
+            Self::V8V7 => FIXTURES
+                .iter()
+                .map(|name| Path::new(SUITE_DIR).join(name))
+                .collect(),
             Self::JetStream3 => jetstream::fixtures(),
         }
     }
@@ -153,10 +166,15 @@ impl Suite {
                 .chain(FIXTURES.iter().map(|name| Path::new(SUITE_DIR).join(name)))
                 .map(|path| artifact(&path))
                 .collect(),
-            Self::JetStream3 => ["cli.js", "JetStreamDriver.js", "utils/params.js", "utils/shell-config.js"]
-                .iter()
-                .map(|name| artifact(&Path::new(jetstream::SUITE_DIR).join(name)))
-                .collect(),
+            Self::JetStream3 => [
+                "cli.js",
+                "JetStreamDriver.js",
+                "utils/params.js",
+                "utils/shell-config.js",
+            ]
+            .iter()
+            .map(|name| artifact(&Path::new(jetstream::SUITE_DIR).join(name)))
+            .collect(),
         }
     }
 
@@ -362,6 +380,8 @@ struct SuiteRecord {
     schema: u32,
     #[serde(default)]
     suite: Suite,
+    #[serde(default)]
+    jit_mode: JitMode,
     created_unix_ns: u128,
     rounds_requested: usize,
     timeout_ms: u64,
@@ -504,6 +524,7 @@ struct FixedWorkReport {
 
 struct Options {
     suite: Suite,
+    jit_mode: JitMode,
     fixture: Option<String>,
     all: bool,
     preflight_only: bool,
@@ -570,8 +591,9 @@ fn main() {
 
     let suite = options.suite;
     let mut report = SuiteRecord {
-        schema: 5,
+        schema: SUITE_REPORT_SCHEMA,
         suite,
+        jit_mode: options.jit_mode,
         created_unix_ns: now_ns(),
         rounds_requested: options.rounds,
         timeout_ms: options.timeout_ms,
@@ -727,6 +749,7 @@ fn write_new_report(path: &Path, bytes: &[u8]) {
 fn validate_resume(saved: &SuiteRecord, expected: &SuiteRecord, files: &[PathBuf]) {
     let metadata_matches = saved.schema == expected.schema
         && saved.suite == expected.suite
+        && saved.jit_mode == expected.jit_mode
         && saved.rounds_requested == expected.rounds_requested
         && saved.timeout_ms == expected.timeout_ms
         && saved.source_revision == expected.source_revision
@@ -801,6 +824,7 @@ fn parse_options() -> Options {
         .unwrap_or_else(|| usage("missing fixture or --all"));
     let mut options = Options {
         suite: Suite::V8V7,
+        jit_mode: JitMode::NoJit,
         fixture: None,
         all: first == "--all",
         preflight_only: first == "--preflight-only",
@@ -822,9 +846,12 @@ fn parse_options() -> Options {
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--suite" => {
-                let name = args.next().unwrap_or_else(|| usage("missing value for --suite"));
+                let name = args
+                    .next()
+                    .unwrap_or_else(|| usage("missing value for --suite"));
                 options.suite = Suite::parse(&name);
             }
+            "--jit" => options.jit_mode = JitMode::Jit,
             "--node" => options.node = required_path(&mut args, "--node"),
             "--bun" => options.bun = required_path(&mut args, "--bun"),
             "--qjs" => options.qjs = required_path(&mut args, "--qjs"),
@@ -867,6 +894,9 @@ fn parse_options() -> Options {
     }
     if options.fixed_work && options.suite != Suite::V8V7 {
         usage("--fixed-work measures V8-v7 fixtures only");
+    }
+    if options.jit_mode == JitMode::Jit && options.suite != Suite::JetStream3 {
+        usage("--jit is currently supported only with --suite jetstream3");
     }
     if options.quench_peer.is_some() && !options.fixed_work {
         usage("--quench-peer requires --fixed-work");
@@ -927,35 +957,59 @@ fn probe_webassembly(engine: &EngineSpec) -> bool {
 }
 
 fn node_engine(options: &Options) -> EngineSpec {
+    let no_jit = options.jit_mode == JitMode::NoJit;
     let mut node = spec(
         "node",
         &options.node,
-        vec!["--jitless".into()],
+        if no_jit {
+            vec!["--jitless".into()]
+        } else {
+            Vec::new()
+        },
         BTreeMap::new(),
     );
     node.version = version(&node.executable, &["--version"], &node.env);
-    node.jit_proof_command = vec![
-        node.executable.display().to_string(),
-        "--jitless".into(),
-        "-e".into(),
-        "console.log(process.execArgv.includes('--jitless'))".into(),
-    ];
-    let proof = capture(
-        &node.executable,
-        &[
-            "--jitless",
-            "-e",
-            "console.log(process.execArgv.includes('--jitless'))",
-        ],
-        &node.env,
-    );
-    node.jit_proof = require_proof("node --jitless", &proof, "true");
+    if no_jit {
+        node.jit_proof_command = vec![
+            node.executable.display().to_string(),
+            "--jitless".into(),
+            "-e".into(),
+            "console.log(process.execArgv.includes('--jitless'))".into(),
+        ];
+        let proof = capture(
+            &node.executable,
+            &[
+                "--jitless",
+                "-e",
+                "console.log(process.execArgv.includes('--jitless'))",
+            ],
+            &node.env,
+        );
+        node.jit_proof = require_proof("node --jitless", &proof, "true");
+    } else {
+        let source = "function hot(x) { return x + 1; } for (let i = 0; i < 100000; i++) hot(i);";
+        let arguments = ["--trace-opt", "--no-concurrent-recompilation", "-e", source];
+        node.jit_proof_command = std::iter::once(node.executable.display().to_string())
+            .chain(arguments.iter().map(|argument| (*argument).to_string()))
+            .collect();
+        let proof = capture(&node.executable, &arguments, &node.env);
+        node.jit_proof = require_proof("Node optimizing JIT", &proof, "completed compiling");
+        node.jit_mode = "enabled-and-probed";
+    }
     node
 }
 
 fn bun_engine(options: &Options) -> EngineSpec {
     let mut bun_env = BTreeMap::new();
-    bun_env.insert("BUN_JSC_useJIT".into(), "0".into());
+    bun_env.insert(
+        "BUN_JSC_useJIT".into(),
+        if options.jit_mode == JitMode::NoJit {
+            "0"
+        } else {
+            "1"
+        }
+        .into(),
+    );
     let mut bun = spec("bun", &options.bun, vec![], bun_env);
     bun.version = version(&bun.executable, &["--version"], &bun.env);
     let mut proof_env = bun.env.clone();
@@ -965,14 +1019,20 @@ fn bun_engine(options: &Options) -> EngineSpec {
         &["-e", "console.log(Bun.version)"],
         &proof_env,
     );
-    bun.jit_proof_command = vec![
-        "BUN_JSC_useJIT=0".into(),
-        "BUN_JSC_dumpOptions=1".into(),
+    bun.jit_proof_command = vec!["BUN_JSC_dumpOptions=1".into()];
+    bun.jit_proof_command.extend([
         bun.executable.display().to_string(),
         "-e".into(),
         "console.log(Bun.version)".into(),
-    ];
-    bun.jit_proof = require_proof("BUN_JSC_useJIT=0 + JSC option dump", &proof, "useJIT=false");
+    ]);
+    if options.jit_mode == JitMode::NoJit {
+        bun.jit_proof_command.insert(0, "BUN_JSC_useJIT=0".into());
+        bun.jit_proof = require_proof("BUN_JSC_useJIT=0 + JSC option dump", &proof, "useJIT=false");
+    } else {
+        bun.jit_proof_command.insert(0, "BUN_JSC_useJIT=1".into());
+        bun.jit_proof = require_proof("Bun JSC optimizing JIT", &proof, "useJIT=true");
+        bun.jit_mode = "enabled-and-probed";
+    }
     bun
 }
 
@@ -987,14 +1047,28 @@ fn quickjs_engine(options: &Options) -> EngineSpec {
 }
 
 fn quench_engine(options: &Options) -> EngineSpec {
-    let mut quench = spec("quench", &options.quench, vec![], BTreeMap::new());
+    let jit_enabled = options.jit_mode == JitMode::Jit;
+    let argv = if jit_enabled {
+        vec!["--jit".into()]
+    } else {
+        Vec::new()
+    };
+    let mut quench = spec("quench", &options.quench, argv, BTreeMap::new());
+    let execution_tier = if jit_enabled { "JIT" } else { "interpreter" };
     quench.version = format!(
-        "Quench shared-VM interpreter build; package {}",
+        "Quench shared-VM {execution_tier} build; package {}",
         env!("CARGO_PKG_VERSION")
     );
     quench.jit_proof_command = vec![quench.executable.display().to_string()];
-    quench.jit_proof =
-        "the measured shared VM executes interpreter bytecode; no guest JIT path is enabled".into();
+    if jit_enabled {
+        quench.jit_proof_command.push("--jit".into());
+        quench.jit_mode = "enabled-by-cli-flag";
+        quench.jit_proof = "the measured Quench process is launched with --jit".into();
+    } else {
+        quench.jit_proof =
+            "the measured shared VM executes interpreter bytecode; no guest JIT path is enabled"
+                .into();
+    }
     quench
 }
 
@@ -2084,7 +2158,7 @@ fn parse_load_average(text: &str) -> Option<LoadAverage> {
 
 fn capture_cpu_consumers() -> (Vec<CpuConsumer>, Option<String>) {
     let output = Command::new("ps")
-        .args(["-A", "-o", "pid=,pcpu=,comm="])
+        .args(["-A", "-o", "pid=,pcpu=,stat=,comm="])
         .output();
     match output {
         Ok(output) if output.status.success() => {
@@ -2112,8 +2186,13 @@ fn parse_cpu_consumers(text: &str) -> Vec<CpuConsumer> {
             let mut fields = line.split_whitespace();
             let pid = fields.next()?.parse().ok()?;
             let cpu_percent = fields.next()?.parse::<f64>().ok()?;
+            let state = fields.next()?;
             let command = fields.collect::<Vec<_>>().join(" ");
-            (!command.is_empty() && cpu_percent.is_finite() && cpu_percent >= 0.0).then_some(
+            (!state.starts_with('Z')
+                && !command.is_empty()
+                && cpu_percent.is_finite()
+                && cpu_percent >= 0.0)
+            .then_some(
                 CpuConsumer {
                     pid,
                     cpu_percent,
@@ -2142,8 +2221,7 @@ fn corpus_record(suite: Suite, selected: &[PathBuf]) -> CorpusRecord {
         .lines()
         .next()
         .map(str::to_string);
-    let checkout_clean =
-        command_output("git", &["-C", corpus, "status", "--porcelain"]).is_empty();
+    let checkout_clean = command_output("git", &["-C", corpus, "status", "--porcelain"]).is_empty();
     let expected = suite.fixtures().into_iter().collect::<BTreeSet<_>>();
     let actual = selected.iter().cloned().collect::<BTreeSet<_>>();
     CorpusRecord {
@@ -2275,7 +2353,7 @@ pub(crate) fn now_ns() -> u128 {
 
 fn usage(message: &str) -> ! {
     eprintln!(
-        "{message}\nusage: quench-bench <fixture.js>|--all [--fixed-work] [--quench PATH] [--quench-peer PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--checkpoint PATH|--resume PATH] [--out PATH]\n       quench-bench --preflight-only [engine options]\n       quench-bench --analyze REPORT [--out JSON]"
+        "{message}\nusage: quench-bench <fixture.js>|--all [--suite v8-v7|jetstream3] [--jit] [--fixed-work] [--quench PATH] [--quench-peer PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--checkpoint PATH|--resume PATH] [--out PATH]\n       quench-bench --preflight-only [--suite v8-v7|jetstream3] [--jit] [engine options]\n       quench-bench --analyze REPORT [--out JSON]"
     );
     std::process::exit(2)
 }
@@ -2486,13 +2564,15 @@ mod fixed_work_tests {
     fn cpu_process_parser_keeps_the_sorted_top_five() {
         let input = (1..=7)
             .rev()
-            .map(|pid| format!("{pid} {pid}.0 process-{pid}\n"))
+            .map(|pid| format!("{pid} {pid}.0 R process-{pid}\n"))
             .collect::<String>();
+        let input = format!("{input}99 999.0 Z rustc-zombie\n");
         let consumers = parse_cpu_consumers(&input);
         assert_eq!(consumers.len(), 5);
         assert_eq!(consumers[0].pid, 7);
         assert_eq!(consumers[0].cpu_percent, 7.0);
         assert_eq!(consumers[0].command, "process-7");
+        assert!(consumers.iter().all(|consumer| consumer.pid != 99));
     }
 }
 
@@ -2553,8 +2633,9 @@ mod tests {
         fs::write(&fixture_path, "// pinned fixture\n").expect("write fixture");
         let report_path = directory.join("report.json");
         let expected = SuiteRecord {
-            schema: 5,
+            schema: super::SUITE_REPORT_SCHEMA,
             suite: super::Suite::V8V7,
+            jit_mode: super::JitMode::NoJit,
             created_unix_ns: now_ns(),
             rounds_requested: 11,
             timeout_ms: 300_000,

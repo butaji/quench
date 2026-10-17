@@ -5,6 +5,20 @@ use std::rc::{Rc, Weak};
 use crate::heap::WeakHandle;
 use rustc_hash::FxHashMap;
 
+const JS_JIT_MIN_PROMOTION_SAMPLES: u8 = 16;
+const JS_JIT_PROMOTION_Z_95: f64 = 1.96;
+const JS_JIT_PROMOTION_MIN_WILSON_LOWER_BOUND: f64 = 0.80;
+const JS_JIT_MAX_FUNCTIONS: usize = 8;
+const JS_JIT_MAX_TRACKED_FUNCTIONS: usize = 256;
+const JS_JIT_MAX_MAPPED_BYTES: usize = 64 * 1024;
+
+#[derive(Clone)]
+pub(super) enum JsTierState {
+    Hot { observations: u8, numeric: u8 },
+    Unsupported,
+    Compiled(Rc<super::compiled::CompiledJsFunction>),
+}
+
 struct ProgramEntry {
     residual: Rc<ResidualProgram>,
     wasm_signatures: Option<Rc<crate::wasm::WasmSignatures>>,
@@ -21,6 +35,9 @@ struct ProgramEntry {
     /// The program's compiled functions, once the compiled mode first calls
     /// one; `Some(None)` records that none compile.
     compiled: Option<Option<Rc<super::compiled::CompiledProgram>>>,
+    /// Sparse, lazy JavaScript tiers. A program only pays for this map when
+    /// JIT mode actually enters one of its functions.
+    js_tiers: FxHashMap<u32, JsTierState>,
     /// The environment the program's root body evaluates in.
     scope: ProgramScope,
     /// Source provenance is independent of the root binding environment.
@@ -110,6 +127,10 @@ pub(crate) struct ProgramStore {
     reclaim_passes: u64,
     /// Reclaimable programs inserted since the last reclamation pass.
     unchecked_reclaimable: usize,
+    /// VM-local bounds for the optional JavaScript tier cache.
+    js_jit_tracked_functions: usize,
+    js_jit_compiled_functions: usize,
+    js_jit_mapped_bytes: usize,
 }
 
 impl ProgramStore {
@@ -177,6 +198,7 @@ impl ProgramStore {
         let previous_pass = self.reclaim_passes;
         self.reclaim_passes += 1;
         let mut reclaimed = Vec::new();
+        let mut reclaimed_tiers = (0usize, 0usize, 0usize);
         let mut pending = 0;
         for (index, slot) in self.programs.iter_mut().enumerate() {
             let Some(entry) = slot else { continue };
@@ -187,9 +209,23 @@ impl ProgramStore {
                 pending += 1;
                 continue;
             }
+            reclaimed_tiers.0 += entry.js_tiers.len();
+            for state in entry.js_tiers.values() {
+                if let JsTierState::Compiled(compiled) = state {
+                    reclaimed_tiers.1 += 1;
+                    reclaimed_tiers.2 += compiled.mapped_bytes();
+                }
+            }
             *slot = None;
             reclaimed.extend(ProgramId::from_index(index));
         }
+        self.js_jit_tracked_functions = self
+            .js_jit_tracked_functions
+            .saturating_sub(reclaimed_tiers.0);
+        self.js_jit_compiled_functions = self
+            .js_jit_compiled_functions
+            .saturating_sub(reclaimed_tiers.1);
+        self.js_jit_mapped_bytes = self.js_jit_mapped_bytes.saturating_sub(reclaimed_tiers.2);
         self.unchecked_reclaimable = pending;
         if !reclaimed.is_empty() {
             let programs = &self.programs;
@@ -204,6 +240,9 @@ impl ProgramStore {
         self.owned_scripts.clear();
         self.programs.clear();
         self.unchecked_reclaimable = 0;
+        self.js_jit_tracked_functions = 0;
+        self.js_jit_compiled_functions = 0;
+        self.js_jit_mapped_bytes = 0;
         let module = main.is_module();
         let id = self.insert_shared(main).unwrap_or(ProgramId::MAIN);
         if module && let Some(entry) = self.entry_mut(id) {
@@ -368,6 +407,7 @@ impl ProgramStore {
             module: false,
             lane_views,
             compiled: None,
+            js_tiers: FxHashMap::default(),
             scope: ProgramScope::Own,
             origin,
             script_or_module: None,
@@ -637,6 +677,103 @@ impl ProgramStore {
         }
     }
 
+    pub(super) fn js_tier(&self, id: ProgramId, function: u32) -> Option<JsTierState> {
+        self.entry(id)?.js_tiers.get(&function).cloned()
+    }
+
+    /// Record the input guard outcome and promote only when the Wilson lower
+    /// confidence bound for numeric inputs clears the stability threshold.
+    pub(super) fn note_js_function_entry(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        numeric: bool,
+    ) -> bool {
+        let compiled_functions = self.js_jit_compiled_functions;
+        let can_track = self.js_jit_tracked_functions < JS_JIT_MAX_TRACKED_FUNCTIONS;
+        let mut inserted = false;
+        let Some(entry) = self.entry_mut(id) else {
+            return false;
+        };
+        let should_compile = match entry.js_tiers.entry(function) {
+            std::collections::hash_map::Entry::Vacant(slot) => {
+                if !can_track {
+                    return false;
+                }
+                inserted = true;
+                if compiled_functions >= JS_JIT_MAX_FUNCTIONS {
+                    slot.insert(JsTierState::Unsupported);
+                } else {
+                    slot.insert(JsTierState::Hot {
+                        observations: 1,
+                        numeric: u8::from(numeric),
+                    });
+                }
+                false
+            }
+            std::collections::hash_map::Entry::Occupied(mut slot) => match slot.get_mut() {
+                JsTierState::Hot {
+                    observations,
+                    numeric: numeric_entries,
+                } => {
+                    if *observations == u8::MAX {
+                        *slot.get_mut() = JsTierState::Unsupported;
+                        return false;
+                    }
+                    *observations += 1;
+                    *numeric_entries += u8::from(numeric);
+                    let confident = numeric_promotion_confident(*numeric_entries, *observations);
+                    if confident && compiled_functions < JS_JIT_MAX_FUNCTIONS {
+                        true
+                    } else {
+                        if compiled_functions >= JS_JIT_MAX_FUNCTIONS {
+                            *slot.get_mut() = JsTierState::Unsupported;
+                        }
+                        false
+                    }
+                }
+                JsTierState::Unsupported | JsTierState::Compiled(_) => false,
+            },
+        };
+        if inserted {
+            self.js_jit_tracked_functions += 1;
+        }
+        should_compile
+    }
+
+    pub(super) fn install_js_tier(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        compiled: Option<Rc<super::compiled::CompiledJsFunction>>,
+    ) {
+        if self.entry(id).is_none() {
+            return;
+        }
+        let compiled = compiled.filter(|compiled| {
+            self.js_jit_compiled_functions < JS_JIT_MAX_FUNCTIONS
+                && self
+                    .js_jit_mapped_bytes
+                    .saturating_add(compiled.mapped_bytes())
+                    <= JS_JIT_MAX_MAPPED_BYTES
+        });
+        if let Some(compiled) = &compiled {
+            self.js_jit_compiled_functions += 1;
+            self.js_jit_mapped_bytes += compiled.mapped_bytes();
+        }
+        if let Some(entry) = self.entry_mut(id) {
+            entry.js_tiers.insert(
+                function,
+                compiled.map_or(JsTierState::Unsupported, JsTierState::Compiled),
+            );
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn js_jit_tracked_function_count(&self) -> usize {
+        self.js_jit_tracked_functions
+    }
+
     /// A program's lane views by function, derived on first use.
     pub(super) fn lane_views(
         &self,
@@ -756,4 +893,21 @@ impl ProgramStore {
             }));
         }
     }
+}
+
+fn numeric_promotion_confident(numeric: u8, observations: u8) -> bool {
+    if observations < JS_JIT_MIN_PROMOTION_SAMPLES {
+        return false;
+    }
+    let samples = f64::from(observations);
+    let proportion = f64::from(numeric) / samples;
+    let z = JS_JIT_PROMOTION_Z_95;
+    let z_squared = z * z;
+    let denominator = 1.0 + z_squared / samples;
+    let center = proportion + z_squared / (2.0 * samples);
+    let margin = z
+        * (proportion * (1.0 - proportion) / samples
+            + z_squared / (4.0 * samples * samples))
+            .sqrt();
+    (center - margin) / denominator >= JS_JIT_PROMOTION_MIN_WILSON_LOWER_BOUND
 }
