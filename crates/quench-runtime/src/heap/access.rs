@@ -210,6 +210,42 @@ impl Heap {
         self.get_mut(value)?.object_mut()
     }
 
+    /// `object_mut` for a store of `stored`: a record skips the write barrier unless `stored`
+    /// is a heap reference.
+    #[inline(always)]
+    pub(crate) fn object_store_mut(&mut self, value: Value, stored: Value) -> Option<&mut Object> {
+        if let Some(record_id) = value.direct_object_index() {
+            // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
+            return Some(unsafe { self.object_records.get_live_mut_storing(record_id, stored) });
+        }
+        if let Some(record_id) = value.direct_array_index() {
+            // SAFETY: direct-array Values name live records; `&mut self` is exclusive.
+            return Some(unsafe { self.array_records.get_live_mut_storing(record_id, stored) });
+        }
+        self.get_mut(value)?.object_mut()
+    }
+
+    /// `record_array_mut` for a store of `stored` into the array's elements.
+    #[inline(always)]
+    pub(crate) fn record_array_store_mut(
+        &mut self,
+        value: Value,
+        stored: Value,
+    ) -> Option<&mut ArrayObject> {
+        let record_id = value.direct_array_index()?;
+        // SAFETY: direct-array Values name live records; `&mut self` is exclusive.
+        Some(unsafe { self.array_records.get_live_mut_storing(record_id, stored) })
+    }
+
+    /// `array_mut` for a store of `stored` into the array's elements.
+    #[inline(always)]
+    pub(crate) fn array_store_mut(&mut self, value: Value, stored: Value) -> Option<&mut ArrayObject> {
+        if value.direct_array_index().is_some() {
+            return self.record_array_store_mut(value, stored);
+        }
+        self.array_mut(value)
+    }
+
     /// `object_mut` with the property arena, borrowed apart so a caller can grow an owner's
     /// storage in one lookup. A legacy owner passes the generational write barrier first.
     pub(crate) fn object_and_arena_mut(
