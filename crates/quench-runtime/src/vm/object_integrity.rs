@@ -494,6 +494,8 @@ impl<H: Host> Vm<H> {
             }
             return outcome;
         }
+        // An object that gains keys when its lazy members materialize gains them first.
+        self.complete_lazy_keys(p, source)?;
         if self.typed_array_length_is_variable(source) {
             return Ok(false);
         }
