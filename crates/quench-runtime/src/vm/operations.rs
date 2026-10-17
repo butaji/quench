@@ -493,11 +493,6 @@ impl<H: Host> Vm<H> {
                 self.collect_now(p);
                 Ok(Value::UNDEFINED)
             }
-            Native::ToString => {
-                let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-                let value = self.coerce_js_string(p, value)?;
-                Ok(self.heap.alloc(Cell::String(value)))
-            }
             Native::ProxyRevocable => self.proxy_revocable(p, args),
             Native::ArrayBuffer | Native::SharedArrayBuffer => {
                 Err(self.type_error(p, "constructor requires new".into()))
