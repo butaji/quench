@@ -73,47 +73,102 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let callee = self.read(f, i.register_b());
-        let (id, env) = self.in_loop_call_target(p, callee)?;
+        let target = self.in_loop_call_target(p, callee)?;
         self.profile.call_source(0);
         let window = i.call_window();
         let this = self.read(f, i.register_c());
-        self.frames[f].pc = pc;
-        self.frames[f].pc_is_resume = true;
         self.profile.call_target(1, usize::from(window.count));
         // Collection happens only at back edges, tail calls and explicit host safepoints, none
         // of which can run while a frame is pushed; afterwards the new frame itself roots the
         // callee, receiver and arguments.
         let arguments: *const [Value] = self.register_window(f, window);
         // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
+        self.push_in_loop_call(p, f, pc, target, callee, this, unsafe { &*arguments }, i.result_register())
+    }
+
+    /// A field read's `getter`, a user function the loop may push in place, run as the next
+    /// in-loop activation with receiver `this` and no arguments, writing `destination`.
+    #[inline(never)]
+    fn try_inline_getter(
+        &mut self,
+        p: &ResidualProgram,
+        f: usize,
+        pc: usize,
+        getter: Value,
+        this: Value,
+        destination: crate::bytecode::Register,
+    ) -> Option<Result<StepResult, JsError>> {
+        if self.direct_eval
+            || self.parameter_eval
+            || p.kind == crate::bytecode::ProgramKind::Wasm
+            || f + 1 != self.frames.len()
+            || self.frames[f].function == super::ROOT_FUNCTION_ID
+        {
+            return None;
+        }
+        let target = self.in_loop_call_target(p, getter)?;
+        self.push_in_loop_call(p, f, pc, target, getter, this, &[], destination)
+    }
+
+    /// Pushes `callee`, resolved by `in_loop_call_target` to `(program, function, env)`, as
+    /// the caller `f`'s next in-loop activation. A callee of another program is activated in
+    /// its program, which the loop executes from the push (`StepResult::PushFrame`) until the
+    /// return restores the caller's.
+    #[allow(clippy::too_many_arguments)]
+    fn push_in_loop_call(
+        &mut self,
+        p: &ResidualProgram,
+        f: usize,
+        pc: usize,
+        (program, id, env): (ProgramId, u32, Value),
+        callee: Value,
+        this: Value,
+        arguments: &[Value],
+        destination: crate::bytecode::Register,
+    ) -> Option<Result<StepResult, JsError>> {
+        let caller_program = self.active_program;
+        let callee_residual = if program == caller_program {
+            None
+        } else {
+            Some(self.programs.get(program)?)
+        };
+        self.frames[f].pc = pc;
+        self.frames[f].pc_is_resume = true;
+        if callee_residual.is_some() {
+            self.set_active_program(program);
+        }
         let call_guard = self.push_general_user_frame(
-            p,
+            callee_residual.as_deref().unwrap_or(p),
             id,
             env,
             this,
-            unsafe { &*arguments },
+            arguments,
             CallContext::user_function(id, callee),
         );
+        if call_guard.is_err() {
+            self.set_active_program(caller_program);
+        }
         Some(call_guard.map(|call_guard| StepResult::PushFrame {
-            destination: i.result_register(),
+            destination,
             call_guard,
             construct_this: None,
         }))
     }
 
-    /// The function and environment of `callee` when it is a user function of the active
-    /// program in the current realm that the loop may push in place: a non-root ordinary
-    /// body (`CallPlan::in_loop`). Resolved targets are cached (`InLoopCallTarget`).
+    /// The program, function and environment of `callee` when it is a user function of a
+    /// JavaScript program in the current realm that the loop may push in place: a non-root
+    /// ordinary body (`CallPlan::in_loop`). Resolved targets are cached (`InLoopCallTarget`).
     #[inline(always)]
-    fn in_loop_call_target(&mut self, p: &ResidualProgram, callee: Value) -> Option<(u32, Value)> {
+    fn in_loop_call_target(
+        &mut self,
+        p: &ResidualProgram,
+        callee: Value,
+    ) -> Option<(ProgramId, u32, Value)> {
         let index = callee.heap_index()? as usize & (super::CALL_TARGET_CACHE_SIZE - 1);
         let epoch = self.heap.collection_epoch();
         let cached = self.call_targets[index];
-        if cached.callee == callee
-            && cached.epoch == epoch
-            && cached.realm == self.realm.globals
-            && cached.program == self.active_program
-        {
-            return Some((cached.function, cached.env));
+        if cached.callee == callee && cached.epoch == epoch && cached.realm == self.realm.globals {
+            return Some((cached.program, cached.function, cached.env));
         }
         self.resolve_in_loop_call_target(p, callee, index, epoch)
     }
@@ -125,14 +180,19 @@ impl<H: Host> Vm<H> {
         callee: Value,
         index: usize,
         epoch: u64,
-    ) -> Option<(u32, Value)> {
+    ) -> Option<(ProgramId, u32, Value)> {
         let (program, function, env) = self.same_realm_user_target(callee)?;
+        let owner = if program == self.active_program {
+            p
+        } else {
+            self.programs.residual(program)?
+        };
         if function == super::ROOT_FUNCTION_ID
-            || program != self.active_program
-            || !p
+            || owner.kind == crate::bytecode::ProgramKind::Wasm
+            || !owner
                 .functions
                 .get(function as usize)
-                .is_some_and(|function| function.call_plan(&p.atoms).in_loop)
+                .is_some_and(|function| function.call_plan(&owner.atoms).in_loop)
         {
             return None;
         }
@@ -144,7 +204,7 @@ impl<H: Host> Vm<H> {
             function,
             env,
         };
-        Some((function, env))
+        Some((program, function, env))
     }
 
     /// `f.call(this, ...args)` and `f.apply(this, list)` of the intrinsic natives invoke `f`
@@ -660,6 +720,16 @@ impl<H: Host> Vm<H> {
                         cache_site,
                     } => {
                         let base = self.resolve_field_base(p, f, base)?;
+                        if allow_inline_calls
+                            && !i.returns_from_frame()
+                            && !i.writes_current_this()
+                            && let Some(getter) =
+                                self.cached_field_getter(base, atom, self.field_cache_index(cache_site))
+                            && let Some(result) =
+                                self.try_inline_getter(p, f, *pc, getter, base, i.result_register())
+                        {
+                            return result;
+                        }
                         self.get_field_cached(p, base, atom, cache_site)?
                     }
                 };
