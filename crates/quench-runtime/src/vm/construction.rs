@@ -299,20 +299,6 @@ impl<H: Host> Vm<H> {
                 }),
             });
         }
-        if function_plan.is_arrow {
-            env = self.heap.alloc(Cell::Environment {
-                parent: env,
-                function: u32::MAX,
-                slots: Vec::<Value>::new().into_boxed_slice().into(),
-                scope: Box::new(crate::heap::EnvironmentScope {
-                    program: None,
-                    root_eval_scope: false,
-                    binding_site_pc: None,
-                    dynamic_bindings: Vec::new().into(),
-                    with_objects: Box::default(),
-                }),
-            });
-        }
         let has_instance_prototype = function_plan.constructible || function_plan.is_generator;
         let prototype = if has_instance_prototype {
             let generator_prototype_parent = if function_plan.is_generator {
@@ -364,7 +350,8 @@ impl<H: Host> Vm<H> {
                     .expect("new closure is live"),
             );
         }
-        let name_atom = function_plan.name.unwrap_or(self.runtime_atoms.empty);
+        let plan_name = function_plan.name.or(function_plan.inferred_name);
+        let name_atom = plan_name.unwrap_or(self.runtime_atoms.empty);
         let name_value = self.atom_string(name_atom);
         let length_value = Value::number(function_plan.length as f64);
         // An ordinary closure's own properties and its prototype's `constructor` take the
@@ -382,7 +369,7 @@ impl<H: Host> Vm<H> {
                 self.heap.property_add(function, prototype, with_prototype);
                 self.heap.property_add(prototype, function, constructor);
             }
-            self.capture_fresh_closure_name(function, function_plan.name);
+            self.capture_fresh_closure_name(function, plan_name);
             return Ok(function);
         }
         let mut recorded = ClosureShapes {
@@ -456,7 +443,7 @@ impl<H: Host> Vm<H> {
         {
             self.closure_shapes[shapes_key] = Some(recorded);
         }
-        self.capture_fresh_closure_name(function, function_plan.name);
+        self.capture_fresh_closure_name(function, plan_name);
         Ok(function)
     }
 
