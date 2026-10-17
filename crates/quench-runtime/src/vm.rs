@@ -1861,6 +1861,28 @@ impl<H: Host> Vm<H> {
             self.report_memory(phase);
         }
     }
+    /// `QUENCH_FUNCTION_USE`: how many compiled functions have been called (their call plan is
+    /// derived on first call), and the record and code bytes of those never called.
+    #[cfg(feature = "profile-memory")]
+    pub(crate) fn report_function_use(&self) {
+        let (mut functions, mut called, mut uncalled_bytes) = (0usize, 0usize, 0usize);
+        for program in self.programs.residuals() {
+            for function in &program.functions {
+                functions += 1;
+                if function.call_plan.get().is_some() {
+                    called += 1;
+                } else {
+                    uncalled_bytes += size_of::<crate::bytecode::Function>()
+                        + function.code.capacity() * size_of::<crate::bytecode::Instr>()
+                        + function.wide.capacity() * size_of::<crate::bytecode::WideInstruction>();
+                }
+            }
+        }
+        eprintln!(
+            "{{\"kind\":\"quench-function-use\",\"functions\":{functions},\"called\":{called},\"uncalled_record_and_code_bytes\":{uncalled_bytes}}}"
+        );
+    }
+
     #[cfg(feature = "profile-memory")]
     fn report_memory(&self, phase: &str) {
         let (
