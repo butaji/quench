@@ -6,6 +6,8 @@ use std::rc::Rc;
 
 use quench_runtime::RootId;
 
+/// Native event-loop execution has no JavaScript async resource.
+pub(crate) const NATIVE_ASYNC_ID: u64 = 0;
 pub(crate) const ROOT_ASYNC_ID: u64 = 1;
 pub(crate) const ROOT_TRIGGER_ASYNC_ID: i64 = 0;
 const FIRST_ASYNC_ID: u64 = ROOT_ASYNC_ID + 1;

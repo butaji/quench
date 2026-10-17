@@ -16,7 +16,14 @@ pub(super) fn active_shape_attributes(
     shapes: &[Shape],
     shape: u32,
 ) -> Vec<Option<(property_key::PropertyKey, ShapeAttributes)>> {
-    let mut chain = Vec::new();
+    // Both vectors are sized exactly: collections call this for every rooted shape.
+    let mut depth = 0;
+    let mut current = Some(shape);
+    while let Some(id) = current {
+        depth += 1;
+        current = shapes[id as usize].parent();
+    }
+    let mut chain = Vec::with_capacity(depth);
     let mut current = Some(shape);
     while let Some(id) = current {
         chain.push(id);
@@ -24,7 +31,7 @@ pub(super) fn active_shape_attributes(
     }
     chain.reverse();
 
-    let mut entries = Vec::new();
+    let mut entries = Vec::with_capacity(shapes[shape as usize].storage_len());
     for id in chain {
         match shapes[id as usize].transition {
             ShapeTransition::Add {
@@ -349,8 +356,9 @@ impl<H: Host> Vm<H> {
                 .collect::<Vec<_>>()
         };
         // Roots are gathered source by source: a single iterator chain over
-        // every source costs each root a step through every nesting level.
-        let mut roots = Vec::new();
+        // every source costs each root a step through every nesting level. The previous
+        // collection's count sizes the vector, which otherwise regrows from empty each time.
+        let mut roots = Vec::with_capacity(self.gc_root_count);
         self.programs.extend_roots(&mut roots);
         roots.extend(self.wasm_js.roots());
         roots.extend([
@@ -586,6 +594,7 @@ impl<H: Host> Vm<H> {
                 .flat_map(|(realm, prototype)| [*realm, *prototype]),
         );
         roots.extend(self.natives.iter().map(|(_, value)| *value));
+        roots.extend(self.atom_strings.values().copied());
         roots.extend(self.realm.intrinsics.iterator_prototypes.iter().flat_map(
             |(realm, prototypes)| {
                 [
@@ -666,12 +675,13 @@ impl<H: Host> Vm<H> {
                 let function = program.functions.get(frame.function as usize)?;
                 (function.register_root_offset != crate::bytecode::NO_REGISTER_ROOT_MAP)
                     .then(|| {
-                        program
-                            .register_roots
-                            .get(function.register_root_offset as usize + frame.pc)
+                        program.register_roots.mask(
+                            function.register_root_offset,
+                            function.registers,
+                            frame.pc,
+                        )
                     })
                     .flatten()
-                    .copied()
             });
             [frame.env, frame.this]
                 .into_iter()
@@ -694,6 +704,7 @@ impl<H: Host> Vm<H> {
                 )
         }));
         roots.extend(external_roots);
+        self.gc_root_count = roots.len();
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("QUENCH_MEMORY_PEAK").is_some() {
             let phase = format!("gc_{}_before", self.heap.collection_count() + 1);
@@ -903,6 +914,7 @@ impl<H: Host> Vm<H> {
         self.shapes = shapes;
         self.transitions = transitions;
         self.shape_slot_memo.clear();
+        self.shape_attribute_memo.clear();
         self.object_shapes.fill(u32::MAX);
         self.invalidate_field_caches();
         self.method_caches.fill([EMPTY_METHOD_CACHE; 2]);
@@ -941,16 +953,42 @@ impl<H: Host> Vm<H> {
     pub(crate) fn drain_jobs(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
         self.check_execution_interrupt()?;
         loop{
-            while let Some(job)=self.realm.jobs.pop_front(){
-                self.check_execution_interrupt()?;self.run_pending_job(program,job)?;
-                self.advance_static_module_jobs(program)?;self.advance_dynamic_import_jobs(program,true)?;
-            }
+            self.drain_pending_microtasks(program)?;
             // Async futex completion is an agent task: settle only after the
             // existing microtask queue drains, then run its Promise reactions.
             self.poll_shared_async_waiters(program)?;
             if self.realm.jobs.is_empty(){break}
         }
         Ok(Value::UNDEFINED)
+    }
+
+    /// Preserve existing internal drains, including recursive promise/module
+    /// drains. Only NativeContext checkpoint admission checks the running flag.
+    fn drain_pending_microtasks(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
+        let previous = std::mem::replace(&mut self.native_microtask_running, true);
+        let result = (|| {
+            self.check_execution_interrupt()?;
+            while let Some(job) = self.realm.jobs.pop_front() {
+                self.check_execution_interrupt()?;
+                self.run_pending_job(program, job)?;
+                self.advance_static_module_jobs(program)?;
+                self.advance_dynamic_import_jobs(program, true)?;
+            }
+            Ok(Value::UNDEFINED)
+        })();
+        self.native_microtask_running = previous;
+        result
+    }
+
+    /// The VM-wide admission fact shared with native embedder task checkpoints.
+    pub(crate) fn native_microtask_checkpoint_is_active(&self) -> bool {
+        self.native_microtask_running
+    }
+
+    /// A native microtask-only checkpoint, with no native agent-task polling.
+    pub(crate) fn native_microtask_checkpoint(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
+        if self.native_microtask_running { return Ok(Value::UNDEFINED); }
+        self.drain_pending_microtasks(program)
     }
 
     /// Runs a job already taken off the queue: a finished job roots nothing, so a drain
@@ -961,14 +999,17 @@ impl<H: Host> Vm<H> {
         job: PendingJob,
     ) -> Result<(), JsError> {
         let roots = job.roots();
-        self.with_call_roots(roots, |vm| match job {
+        let previous = std::mem::replace(&mut self.native_microtask_running, true);
+        let result = self.with_call_roots(roots, |vm| match job {
             PendingJob::Call {
                 callback,
                 this,
                 args,
             } => vm.call_value(program, callback, this, &args).map(|_| ()),
             PendingJob::Reaction(reaction) => vm.run_promise_reaction(program, reaction),
-        })
+        });
+        self.native_microtask_running = previous;
+        result
     }
 
 

@@ -1,4 +1,5 @@
 mod compiled;
+mod js_compiled;
 mod shape_transitions;
 mod startup_intrinsics;
 mod wasm;
@@ -50,6 +51,8 @@ struct RuntimeAtoms {
     constructor: Atom,
     /// Canonical key for named function-info lookup; paired with length_atom.
     name: Atom,
+    /// The empty string, an anonymous function's initial name.
+    empty: Atom,
 }
 pub(crate) mod activation;
 mod activation_lifecycle;
@@ -119,7 +122,8 @@ mod method_cache;
 mod module;
 mod number;
 mod object;
-mod shape_slot_memo;
+mod shape_memo;
+mod name_atom_memo;
 mod object_assignment;
 mod object_array;
 mod object_builtins;
@@ -643,6 +647,12 @@ impl FieldAddCacheSet {
         len: 0,
         entries: [FieldAddCache::EMPTY; FIELD_ADD_CACHE_WAYS],
     };
+    #[inline(always)]
+    fn find(&self, source_shape: u32, atom: Atom) -> Option<&FieldAddCache> {
+        self.entries[..usize::from(self.len)]
+            .iter()
+            .find(|cache| cache.source_shape == source_shape && cache.atom == atom)
+    }
     #[inline(always)]
     fn find_mut(&mut self, source_shape: u32, atom: Atom) -> Option<&mut FieldAddCache> {
         self.entries[..usize::from(self.len)]
@@ -1170,6 +1180,8 @@ const DEFAULT_PROPERTY_ATTRIBUTES: PropertyAttributes = PropertyAttributes {
     setter: None,
 };
 pub(crate) struct Vm<H> {
+    /// VM-wide running-job admission for native microtask checkpoints.
+    native_microtask_running: bool,
     pub(crate) host: H,
     specialized: bool,
     heap: Heap,
@@ -1223,11 +1235,19 @@ pub(crate) struct Vm<H> {
     temporal_plain_month_day_proto: Value,
     temporal_plain_year_month_proto: Value,
     natives: Vec<(Native, Value)>,
+    /// One shared string value per program atom a function name spells (`atom_string`):
+    /// strings are immutable, so every closure of a plan can hold the same name value.
+    /// Only program atoms and the anonymous name are kept, so the loaded program bounds it.
+    atom_strings: FxHashMap<Atom, Value>,
     /// The function values in `natives`. One native serves every realm, so it runs in the
     /// realm of its caller rather than switching to the creator's.
     shared_natives: FxHashSet<Value>,
     frames: Vec<Box<Frame>>,
     native_stack_frames: Vec<(usize, String)>,
+    /// Emptied root lists of finished native calls, reused by the next `NativeContext`.
+    pub(crate) native_root_lists: Vec<Vec<RootId>>,
+    /// The roots the last collection gathered, which sizes the next one's root vector.
+    gc_root_count: usize,
     frame_pool: Vec<Box<Frame>>,
     /// Activations a running lane holds without frames.
     lane_stack: dispatch_fast::LaneStack,
@@ -1261,7 +1281,9 @@ pub(crate) struct Vm<H> {
     /// The getters and setters of shapes' accessor descriptors (`ShapeAttributes`).
     shape_accessors: Vec<ShapeAccessors>,
     transitions: shape_transitions::ShapeTransitionIndex,
-    shape_slot_memo: shape_slot_memo::ShapeSlotMemo,
+    shape_slot_memo: shape_memo::ShapeSlotMemo,
+    shape_attribute_memo: shape_memo::ShapeAttributeMemo,
+    name_atom_memo: name_atom_memo::NameAtomMemo,
     atom_text: AtomTable,
     /// Every atom, hashed by its text (`atom_keys::text_hash`); equal hashes are told apart
     /// by comparing the texts, which the atom tables hold.
@@ -1981,11 +2003,14 @@ impl<H: Host> Vm<H> {
         self.shapes.truncate(1);
         self.transitions.clear();
         self.shape_slot_memo.clear();
+        self.shape_attribute_memo.clear();
+        self.atom_strings.clear();
         // The sealed holders and their shapes belong to the discarded heap.
         self.startup_intrinsics = Default::default();
         self.atom_text = program.atoms.clone();
         self.atom_sequence = Rc::new(crate::bytecode::AtomSequence::new(self.atom_text.clone()));
         self.atoms.clear();
+        self.name_atom_memo.clear();
         self.array_index_atoms.clear();
         self.atom_classes.clear();
         self.regexp_subjects.clear();
@@ -2016,6 +2041,7 @@ impl<H: Host> Vm<H> {
             then: self.intern_atom("then"),
             constructor: self.intern_atom("constructor"),
             name: self.intern_atom("name"),
+            empty: self.intern_atom(""),
         };
         self.field_caches = vec![EMPTY_CACHE; program.cache_sites as usize];
         Self::prime_loop_decoding(program);

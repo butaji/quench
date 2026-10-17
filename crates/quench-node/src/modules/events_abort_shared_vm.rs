@@ -10,7 +10,6 @@ pub(crate) fn abort_add_event_listener(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    use super::event_constructor_shared_vm::named_set;
     let undefined = context.undefined();
     let signal = args.first().copied().unwrap_or(undefined);
     let state = args.get(1).copied().unwrap_or(undefined);
@@ -33,7 +32,7 @@ pub(crate) fn abort_add_event_listener(
     }
     let data = context.host_function_data()?;
     let entry = context.null_object_rooted()?;
-    named_set(context, data, entry, "listener", listener)?;
+    context.assign_named_property_rooted(entry, "listener", listener)?;
     let options_present = !context
         .rooted_value(options)
         .is_some_and(|v| v.is_null() || v.is_undefined());
@@ -44,7 +43,7 @@ pub(crate) fn abort_add_event_listener(
     };
     let once = context.truthy_rooted(once)?;
     let once = context.boolean(once);
-    named_set(context, data, entry, "once", once)?;
+    context.assign_named_property_rooted(entry, "once", once)?;
     let weak_key = get(context, data, "weakKey")?;
     let weak = if options_present {
         context.get_property_rooted(options, weak_key)?
@@ -59,7 +58,7 @@ pub(crate) fn abort_add_event_listener(
     };
     let resist = context.truthy_rooted(resist)?;
     let resist = context.boolean(resist);
-    named_set(context, data, entry, "resistStopPropagation", resist)?;
+    context.assign_named_property_rooted(entry, "resistStopPropagation", resist)?;
     // Option getters may synchronously register/remove listeners. Resolve the
     // authoritative list only after every getter has finished. From here to
     // append only private records and captured Core weak builtins are accessed.
@@ -78,7 +77,7 @@ pub(crate) fn abort_add_event_listener(
     }
     let key = context.string_rooted(&entries.len().to_string());
     context.define_data_property_rooted(records, key, entry, true, true, true)?;
-    update_listener_count(context, data, state, false)?;
+    update_listener_count(context, state, false)?;
     context.call_rooted(refresh, undefined, &[signal, state])?;
     Ok(undefined)
 }
@@ -351,7 +350,6 @@ pub(crate) fn abort_set_handler(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    use super::event_constructor_shared_vm::named_set;
     let undefined = context.undefined();
     let signal = args.first().copied().unwrap_or(undefined);
     let state = args.get(1).copied().unwrap_or(undefined);
@@ -376,18 +374,18 @@ pub(crate) fn abort_set_handler(
         )?;
         let factory = get(context, data, "abortHandlerFactory")?;
         wrapper = context.call_rooted(factory, undefined, &[invoke])?;
-        named_set(context, data, holder, "wrapper", wrapper)?;
-        named_set(context, data, state, "onabortWrapper", wrapper)?;
+        context.assign_named_property_rooted(holder, "wrapper", wrapper)?;
+        context.assign_named_property_rooted(state, "onabortWrapper", wrapper)?;
     }
     let records = get(context, state, "listeners")?;
     let root_exists = !listener_records(context, records)?.is_empty();
     if !new && root_exists {
         let previous = get(context, wrapper, "handler")?;
         if context.is_callable_rooted(previous)? {
-            update_listener_count(context, data, state, true)?;
+            update_listener_count(context, state, true)?;
         }
     }
-    named_set(context, data, wrapper, "handler", value)?;
+    context.assign_named_property_rooted(wrapper, "handler", value)?;
     let event = context.string_rooted("abort");
     let callable = context.is_callable_rooted(value)?;
     if new || (callable && !root_exists) {
@@ -398,7 +396,7 @@ pub(crate) fn abort_set_handler(
         )?;
     } else {
         if callable {
-            update_listener_count(context, data, state, false)?;
+            update_listener_count(context, state, false)?;
         }
         context.call_rooted(refresh, undefined, &[signal, state])?;
     }
@@ -426,13 +424,12 @@ pub(crate) fn abort_invoke_handler(
 /// Node's onabort handler activation can change size without unlinking its wrapper.
 fn update_listener_count(
     context: &mut NativeContext<'_, NodeHost>,
-    data: RootId,
     state: RootId,
     decrement: bool,
 ) -> Result<(), RootedError> {
     let count = get(context, state, "listenerCount")?;
     let next = context.numeric_update_rooted(count, decrement)?;
-    super::event_constructor_shared_vm::named_set(context, data, state, "listenerCount", next)
+    context.assign_named_property_rooted(state, "listenerCount", next)
 }
 
 pub(crate) fn abort_remove_event_listener(
@@ -472,8 +469,8 @@ pub(crate) fn remove_entry(
     if found {
         super::events_weak_shared_vm::unregister(context, data, entry)?;
         let records = context.array_rooted(&retained)?;
-        super::event_constructor_shared_vm::named_set(context, data, state, "listeners", records)?;
-        update_listener_count(context, data, state, true)?;
+        context.assign_named_property_rooted(state, "listeners", records)?;
+        update_listener_count(context, state, true)?;
         let undefined = context.undefined();
         context.call_rooted(refresh, undefined, &[signal, state])?;
     }
