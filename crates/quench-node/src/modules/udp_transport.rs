@@ -372,3 +372,27 @@ pub(crate) fn display_ip(address: SocketAddr) -> String {
     #[cfg(not(unix))]let scope=index.to_string();
     format!("{ip}%{scope}")
 }
+
+#[cfg(unix)]
+impl<T> Endpoint<T> {
+    /// Pin an admitted SCM_RIGHTS send independently of subsequent wrapper
+    /// close. This duplicates a real kernel descriptor solely for transfer.
+    pub(crate) fn duplicate_descriptor(&self) -> io::Result<std::os::fd::OwnedFd> {
+        use std::os::fd::AsFd;
+        self.socket()?.as_fd().try_clone_to_owned()
+    }
+    /// A received SCM_RIGHTS descriptor is already owned by this process;
+    /// every unsuccessful adoption drops it exactly once.
+    pub(crate) fn adopt_owned_descriptor(&mut self, fd: std::os::fd::OwnedFd) -> io::Result<()> {
+        use std::os::fd::AsRawFd;
+        if self.socket.is_some() { return Err(io::Error::from_raw_os_error(libc::EBUSY)); }
+        if super::fd_handle_type::guess(fd.as_raw_fd()) != super::fd_handle_type::Kind::Udp {
+            return Err(io::Error::from_raw_os_error(libc::EINVAL));
+        }
+        let socket = UdpSocket::from(fd);
+        socket.set_nonblocking(true)?;
+        socket2::SockRef::from(&socket).set_reuse_address(true)?;
+        self.socket = Some(Descriptor::new(socket));
+        Ok(())
+    }
+}

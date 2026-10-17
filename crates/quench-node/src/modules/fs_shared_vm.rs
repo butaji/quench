@@ -21,9 +21,13 @@ pub(crate) mod write_public;
 
 #[path = "fs_shared_vm/metadata_public.rs"]
 pub(crate) mod metadata_public;
+pub(crate) mod callback_public;
+#[path = "fs_shared_vm/file_handle_write.rs"]
+pub(crate) mod file_handle_write;
+pub(crate) mod promise_public;
 
 const PROMISES_FACTORY: &str = quench_js_check::checked_js!(
-    r#"(readFile, stat, lstat, readdir, readlink, realpath, openSync, closeSync, readSync, writeSync, fstatSync, fchmodSync, fsyncSync, fdatasyncSync, writeFileSync, appendFileSync, readvSync, writevSync, createReadStream, normalizeRead, apply) => ({
+    r#"(readFile, stat, lstat, readdir, readlink, realpath, openSync, closeSync, readSync, writeSync, fstatSync, fchmodSync, fsyncSync, fdatasyncSync, writeFileSync, appendFileSync, readvSync, writevSync, createReadStream, normalizeRead, apply, registerHandle, closeHandle) => ({
   readFile: (...args) => Promise.resolve().then(() => {
     const handle = args[0];
     if (handle && typeof handle.readFile === 'function') return handle.readFile(args[1]);
@@ -97,6 +101,7 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(
         closePromise ||= Promise.resolve().then(() => {
           fs.closeSync(fd);
           closed = true;
+          closeHandle(handle);
           handle.fd = -1;
           handle.emit("close");
         });
@@ -235,6 +240,7 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(
       sync: () => Promise.resolve().then(() => (ensureOpen("fsync"), fs.fsyncSync(fd))),
       datasync: () => Promise.resolve().then(() => (ensureOpen("fdatasync"), fs.fdatasyncSync(fd))),
     };
+    registerHandle(handle, fd);
     handle[Symbol.asyncDispose] = handle.close;
     handle[Symbol.dispose] = handle.close;
     return handle;
@@ -2101,14 +2107,15 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let statfs_host = context.host_function(crate::host::shared_vm::operation("fsStatfsSync"))?;
     let statfs_factory =
         context.evaluate_script_rooted(STATFS_SYNC_API, "node:fs/shared-statfs-sync.js")?;
-    let statfs_sync = context.call_rooted(statfs_factory, undefined, &[statfs_host])?;
+    let statfs_continuation = context.call_rooted(statfs_factory, undefined, &[statfs_host])?;
+    let statfs_sync = metadata_public::wrap(context, statfs_continuation, "statfsSync")?;
     set(context, module, "statfsSync", statfs_sync)?;
     let statfs_factory =
         context.evaluate_script_rooted(ASYNC_STATFS_API, "node:fs/shared-async-statfs.js")?;
     let statfs = context.call_rooted(
         statfs_factory,
         undefined,
-        &[statfs_sync, to_path_if_file_url],
+        &[statfs_continuation, to_path_if_file_url],
     )?;
     set(context, module, "statfs", statfs)?;
     let exists_factory = context.evaluate_script_rooted(EXISTS_API, "node:fs/shared-exists.js")?;
@@ -2135,6 +2142,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let access_sync = metadata_public::wrap(context, access_sync, "accessSync")?;
     let chmod = get(context, exists_api, "chmod")?;
     let chmod_sync = get(context, exists_api, "chmodSync")?;
+    let chmod_sync = metadata_public::wrap(context, chmod_sync, "chmodSync")?;
     let fchmod = get(context, exists_api, "fchmod")?;
     let fchmod_sync = get(context, exists_api, "fchmodSync")?;
     let fchmod_sync = metadata_public::wrap(context, fchmod_sync, "fchmodSync")?;
@@ -2178,6 +2186,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         context.evaluate_script_rooted(READLINK_SYNC_API, "node:fs/shared-readlink-sync.js")?;
     let undefined = context.undefined();
     let readlink_sync = context.call_rooted(readlink_factory, undefined, &[readlink_host])?;
+    let readlink_sync = metadata_public::wrap(context, readlink_sync, "readlinkSync")?;
     set(context, module, "readlinkSync", readlink_sync)?;
     let readlink_factory =
         context.evaluate_script_rooted(ASYNC_READLINK_API, "node:fs/shared-async-readlink.js")?;
@@ -2211,7 +2220,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let rm = context.call_rooted(factory, undefined, &[rm])?;
     set(context, module, "rm", rm)?;
     sync::install(context, module)?;
-    for name in ["fstatSync", "closeSync", "renameSync", "linkSync", "copyFileSync"] {
+    for name in ["fstatSync", "closeSync", "renameSync", "linkSync", "copyFileSync", "rmSync", "rmdirSync", "unlinkSync", "symlinkSync", "truncateSync", "mkdtempSync", "chownSync", "lchownSync", "utimesSync", "fchownSync", "ftruncateSync", "fsyncSync", "fdatasyncSync"] {
         let original = get(context, module, name)?;
         let function = metadata_public::wrap(context, original, name)?;
         set(context, module, name, function)?;
@@ -2531,6 +2540,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         context.release_root(name_root);
         context.release_root(promise);
     }
+    promise_public::install(context, promises)?;
     set(context, module, "promises", promises)?;
 
     let streams = crate::host::shared_vm::commonjs::stream_module(context)?;
@@ -2543,6 +2553,16 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     )?;
     let undefined = context.undefined();
     context.call_rooted(install_missing_fs_methods, undefined, &[module])?;
+    for name in ["lutimesSync", "futimesSync", "createReadStream", "createWriteStream"] {
+        let original = get(context, module, name)?;
+        let function = metadata_public::wrap(context, original, name)?;
+        set(context, module, name, function)?;
+    }
+    for name in ["access", "chmod", "fchmod", "statfs", "exists", "chown", "lchown", "fchown", "utimes", "lutimes", "futimes", "fsync", "fdatasync", "ftruncate", "lstat", "rm"] {
+        let original = get(context, module, name)?;
+        let function = callback_public::wrap(context, original, name)?;
+        set(context, module, name, function)?;
+    }
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_vfs_fs_fallbacks");
     let global = context.global_root()?;
@@ -2588,6 +2608,7 @@ pub(crate) fn promises_module(
     let global=context.global_root()?;
     let reflect=get(context,global,"Reflect")?;
     let apply=get(context,reflect,"apply")?;
+    let (handle_bridge, register_handle, close_handle) = file_handle_write::bridge(context)?;
     let promises = context.call_rooted(
         factory,
         undefined,
@@ -2613,8 +2634,11 @@ pub(crate) fn promises_module(
             create_read_stream,
             normalize_read,
             apply,
+            register_handle,
+            close_handle,
         ],
     )?;
+    file_handle_write::install(context, promises, handle_bridge)?;
     set(context, promises, "constants", constants)?;
     let mkdir_factory = context.evaluate_script_rooted(
         "(mkdirSync) => (...args) => Promise.resolve().then(() => mkdirSync(...args))",

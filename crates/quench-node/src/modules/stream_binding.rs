@@ -2,22 +2,33 @@
 use super::{event_constructor_shared_vm::get, net_shared_vm as net};
 use crate::host::NodeHost;
 use quench_runtime::{HostWeakRoot, NativeContext, RootId, RootedError};
-use std::collections::{HashMap, VecDeque};
+use std::{cell::Cell,collections::{HashMap, VecDeque},rc::Rc};
+use super::native_async_wrap::{Resource,Provider,View};
 type Context<'a> = NativeContext<'a, NodeHost>;
 #[derive(Default)]
 pub(crate) struct State {
     pub(crate) readers: HashMap<u64, RootId>,
     pub(crate) requests: VecDeque<(RootId, PendingRequest)>,
-    identities: Vec<(HostWeakRoot, RequestKind)>,
+    identities: Vec<RequestBrand>,
     array: Option<RootId>,
     buffer_getter: Option<RootId>,
 }
 #[derive(Clone,Copy,PartialEq,Eq)]
 pub(crate) enum RequestKind { Write, Connect, Shutdown }
+/// The brand and admitted IO token share this one request state. Callback
+/// execution metadata is a projection, not an independent resource owner.
+#[derive(Clone)]
+pub(crate) struct RequestLease(Rc<Cell<Option<Resource>>>);
+impl RequestLease {
+    pub(crate) fn resource(&self)->Option<Resource>{self.0.get()}
+}
+#[derive(Clone)]
+struct RequestBrand {weak:HostWeakRoot,kind:RequestKind,lease:RequestLease}
 pub(crate) struct PendingRequest {
     pub(crate) kind: RequestKind,
     pub(crate) socket: u64,
     pub(crate) handle: RootId,
+    pub(crate) lease: RequestLease,
 }
 pub(crate) const UV_EOF: i32 = -4095;
 const READ: usize = 0;
@@ -78,8 +89,10 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
             crate::host::shared_vm::operation("nativeStreamWriteWrap"),
             "WriteWrap",
         )?;
+        let prototype=get(c,w,"prototype")?;let base=super::native_async_wrap::prototype(c)?;c.set_prototype_rooted(prototype,base)?;
         put(c, b, "WriteWrap", w)?;
         let shutdown=c.host_constructor_named(crate::host::shared_vm::operation("nativeStreamShutdownWrap"),"ShutdownWrap")?;
+        let prototype=get(c,shutdown,"prototype")?;let base=super::native_async_wrap::prototype(c)?;c.set_prototype_rooted(prototype,base)?;
         put(c,b,"ShutdownWrap",shutdown)?;
         Ok(b)
     })
@@ -93,11 +106,11 @@ fn register_request(
     let shared = c.host_mut().shared_state();
     let entries = std::mem::take(&mut shared.borrow_mut().native_stream.identities);
     let mut live = Vec::with_capacity(entries.len() + 1);
-    for (identity, stored_kind) in entries {
-        if c.resolve_host_weak_root(identity).is_some() {
-            live.push((identity, stored_kind));
+    for brand in entries {
+        if c.resolve_host_weak_root(brand.weak).is_some() {
+            live.push(brand);
         } else {
-            c.release_host_weak_root(identity);
+            c.release_host_weak_root(brand.weak);
         }
     }
     shared.borrow_mut().native_stream.identities = live;
@@ -107,10 +120,10 @@ fn register_request(
         .borrow_mut()
         .native_stream
         .identities
-        .push((identity, kind));
+        .push(RequestBrand{weak:identity,kind,lease:RequestLease(Rc::new(Cell::new(None)))});
     Ok(receiver)
 }
-fn branded(c: &mut Context<'_>, request: RootId, kind: RequestKind) -> Result<bool, RootedError> {
+pub(crate) fn request_has_kind(c: &mut Context<'_>, request: RootId, kind: RequestKind) -> Result<bool, RootedError> {
     let ids = c
         .host_mut()
         .shared_state()
@@ -118,9 +131,9 @@ fn branded(c: &mut Context<'_>, request: RootId, kind: RequestKind) -> Result<bo
         .native_stream
         .identities
         .clone();
-    for (identity, stored_kind) in ids {
-        if stored_kind != kind { continue; }
-        if let Some(value) = c.resolve_host_weak_root(identity) {
+    for brand in ids {
+        if brand.kind != kind { continue; }
+        if let Some(value) = c.resolve_host_weak_root(brand.weak) {
             if c.strict_equal_rooted(value, request)? {
                 return Ok(true);
             }
@@ -135,7 +148,7 @@ pub(crate) fn write_buffer(
 ) -> Result<RootId, RootedError> {
     let socket = super::net_reference_shared_vm::handle_id(c, receiver)?;
     let request = args.first().copied().unwrap_or_else(|| c.undefined());
-    if !branded(c, request, RequestKind::Write)? {
+    if !request_has_kind(c, request, RequestKind::Write)? {
         let e = c.type_error_rooted("Invalid WriteWrap request")?;
         return Err(c.throw(e));
     }
@@ -144,27 +157,34 @@ pub(crate) fn write_buffer(
         .view_bytes_rooted(input)
         .ok_or_else(|| RootedError::host("writeBuffer requires an ArrayBufferView"))?;
     binding(c)?;
-    let request = c.retain(request)?;
-    let handle = c.retain(receiver)?;
     let shared = c.host_mut().shared_state();
-    let outcome = net::write_native_request(&mut shared.borrow_mut().tcp, socket, request, &bytes);
-    let (asynchronous, error) = match outcome {
-        Ok(a) => (a, 0),
-        Err(e) => (false, -e.raw_os_error().unwrap_or(libc::EIO)),
+    let admission=net::try_native_write(&mut shared.borrow_mut().tcp,socket,&bytes);
+    let (asynchronous,error)=match admission {
+        Ok(net::NativeWriteAdmission::Synchronous)=>(false,0),
+        Err(error)=>(false,-error.raw_os_error().unwrap_or(libc::EIO)),
+        Ok(net::NativeWriteAdmission::Queued {written})=>{
+            let parent=active_parent(c,receiver)?;
+            let (request,handle)=retain_request(c,receiver,request,RequestKind::Write)?;
+            let lease=match activate_request(c,request,RequestKind::Write,parent) {
+                Ok(lease)=>lease,
+                Err(error)=>{c.release_root(request);c.release_root(handle);return Err(error);},
+            };
+            let result=net::queue_native_write(&mut shared.borrow_mut().tcp,socket,request,&bytes[written..]);
+            match result {
+                Ok(())=>{
+                    shared.borrow_mut().native_stream.requests.push_back((request,
+                        PendingRequest {socket,handle,kind:RequestKind::Write,lease}));
+                    (true,0)
+                }
+                Err(error)=>{
+                    let retired=retire_unqueued_request(c,lease);
+                    c.release_root(request);c.release_root(handle);retired?;
+                    (false,-error.raw_os_error().unwrap_or(libc::EIO))
+                }
+            }
+        }
     };
-    if asynchronous {
-        shared
-            .borrow_mut()
-            .native_stream
-            .requests
-            .push_back((request, PendingRequest { socket, handle, kind:RequestKind::Write }));
-    } else {
-        c.release_root(request);
-        c.release_root(handle);
-    }
-    field(c, BYTES, bytes.len() as i32)?;
-    field(c, ASYNC, i32::from(asynchronous))?;
-    field(c, ERROR, error)?;
+    publish_write_result(c, bytes.len(), asynchronous, error)?;
     Ok(c.number(f64::from(error)))
 }
 /// Retain a raw native handle for the duration of its actual read request.
@@ -231,7 +251,14 @@ pub(crate) fn copy_read(
         .string_code_units(args[0])?
         .ok_or_else(|| RootedError::host("native bytes missing"))?;
     let bytes = units.iter().map(|u| *u as u8).collect::<Vec<_>>();
-    let array = c.uint8_array_rooted(&bytes)?;
+    intrinsic_array_buffer(c, &bytes)
+}
+
+/// Intrinsic read carrier shared by TCP, IPC Pipe and protocol-owned streams.
+pub(crate) fn intrinsic_array_buffer(
+    c: &mut Context<'_>, bytes: &[u8],
+) -> Result<RootId, RootedError> {
+    let array = c.uint8_array_rooted(bytes)?;
     let getter = c
         .host_mut()
         .shared_state()
@@ -249,10 +276,7 @@ pub(crate) fn deliver_read(
 ) -> Result<RootId, RootedError> {
     let count = c.to_number(args[1])? as i32;
     let socket = c.to_number(args[2])? as u64;
-    field(c, READ, count)?;
-    field(c, OFFSET, 0)?;
-    let callback = get(c, handle, "onread")?;
-    let result = c.call_rooted(callback, handle, &[args[0]]);
+    let result = call_onread(c, handle, args[0], count, 0);
     net::release_delivery(&mut c.host_mut().shared_state().borrow_mut().tcp, socket);
     if count <= 0 {
         release_reader(c, socket);
@@ -260,21 +284,19 @@ pub(crate) fn deliver_read(
     result
 }
 
-pub(crate) fn deliver_write(
-    c: &mut Context<'_>,
-    request: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let callback = get(c, request, "oncomplete")?;
-    if c.is_callable_rooted(callback)? {
-        let undefined = c.undefined();
-        c.call_rooted(callback, request, &[args[0], args[1], undefined])
-    } else {
-        // Node's native listener records completion for a late callback owner.
-        put(c, request, "writeStatus", args[0])?;
-        Ok(c.undefined())
+/// Native completion preparation runs before MakeCallback's resource scope.
+/// Node resolves the mutable slot here; absent write callbacks publish status
+/// without before/after hooks. The Runtime caller owns invocation/finalization.
+pub(crate) fn prepare_completion(c:&mut Context<'_>,request:RootId,args:&[RootId])->Result<RootId,RootedError>{
+    let callback=get(c,request,"oncomplete")?;
+    if c.is_callable_rooted(callback)? {return Ok(callback);}
+    if c.rooted_value(args[1]).and_then(|v|v.as_bool())==Some(true) {
+        put(c,request,"writeStatus",args[0])?;
     }
+    Ok(c.undefined())
 }
+
+
 
 pub(crate) fn connect_wrap(
     c: &mut Context<'_>,
@@ -290,13 +312,20 @@ pub(crate) fn shutdown_wrap(
 ) -> Result<RootId, RootedError> {
     register_request(c, receiver, RequestKind::Shutdown)
 }
+fn active_parent(c:&mut Context<'_>,handle:RootId)->Result<Resource,RootedError>{
+    match super::native_async_wrap::view(c,handle)? {
+        View::Active(resource)=>Ok(resource),
+        _=>{let error=c.type_error_rooted("Native stream has no active AsyncWrap resource")?;Err(c.throw(error))},
+    }
+}
+
 fn retain_request(
     c: &mut Context<'_>,
     handle: RootId,
     request: RootId,
     kind: RequestKind,
 ) -> Result<(RootId, RootId), RootedError> {
-    if !branded(c, request, kind)? {
+    if !request_has_kind(c, request, kind)? {
         let error = c.type_error_rooted("Invalid native stream request")?;
         return Err(c.throw(error));
     }
@@ -311,10 +340,13 @@ fn finish_submission(
     handle: RootId,
     kind: RequestKind,
     result: std::io::Result<()>,
-) -> RootId {
+    lease: RequestLease,
+) -> Result<RootId,RootedError> {
     let error = if let Err(error) = result {
+        let retired=retire_unqueued_request(c,lease);
         c.release_root(request);
         c.release_root(handle);
+        retired?;
         -error.raw_os_error().unwrap_or(libc::EIO)
     } else {
         c.host_mut()
@@ -328,11 +360,12 @@ fn finish_submission(
                     socket,
                     handle,
                     kind,
+                    lease,
                 },
             ));
         0
     };
-    c.number(f64::from(error))
+    Ok(c.number(f64::from(error)))
 }
 fn connect(
     c: &mut Context<'_>,
@@ -353,7 +386,12 @@ fn connect(
     if !port.is_finite() || port.fract() != 0.0 || !(0.0..=f64::from(u16::MAX)).contains(&port) {
         return Ok(c.number(-f64::from(libc::EINVAL)));
     }
+    let parent=active_parent(c,receiver)?;
     let (request, handle) = retain_request(c, receiver, request, RequestKind::Connect)?;
+    let lease=match activate_request(c,request,RequestKind::Connect,parent) {
+        Ok(lease)=>lease,
+        Err(error)=>{c.release_root(request);c.release_root(handle);return Err(error);},
+    };
     let shared = c.host_mut().shared_state();
     let result = net::native_tcp_connect(
         &mut shared.borrow_mut().tcp,
@@ -361,14 +399,7 @@ fn connect(
         request,
         std::net::SocketAddr::new(ip, port as u16),
     );
-    Ok(finish_submission(
-        c,
-        socket,
-        request,
-        handle,
-        RequestKind::Connect,
-        result,
-    ))
+    finish_submission(c,socket,request,handle,RequestKind::Connect,result,lease)
 }
 pub(crate) fn connect4(
     c: &mut Context<'_>,
@@ -391,33 +422,156 @@ pub(crate) fn shutdown(
 ) -> Result<RootId, RootedError> {
     let socket = super::net_reference_shared_vm::handle_id(c, receiver)?;
     let request = args.first().copied().unwrap_or_else(|| c.undefined());
+    let parent=active_parent(c,receiver)?;
     let (request, handle) = retain_request(c, receiver, request, RequestKind::Shutdown)?;
+    let lease=match activate_request(c,request,RequestKind::Shutdown,parent) {
+        Ok(lease)=>lease,
+        Err(error)=>{c.release_root(request);c.release_root(handle);return Err(error);},
+    };
     let shared = c.host_mut().shared_state();
     let result = net::native_shutdown_request(&mut shared.borrow_mut().tcp, socket, request);
-    Ok(finish_submission(
-        c,
-        socket,
-        request,
-        handle,
-        RequestKind::Shutdown,
-        result,
-    ))
+    finish_submission(c,socket,request,handle,RequestKind::Shutdown,result,lease)
 }
-pub(crate) fn deliver_connect(
+
+
+/// Publish canonical StreamBase fields immediately before invoking onread.
+/// The caller must admit its current consumer first, then release its own
+/// transport/protocol delivery credit even if the guest callback throws.
+/// This primitive never acquires a reader or releases TCP-specific credit.
+pub(crate) fn call_onread(
+    c: &mut Context<'_>, handle: RootId, array_buffer: RootId,
+    count: i32, offset: i32,
+) -> Result<RootId, RootedError> {
+    field(c, READ, count)?;
+    field(c, OFFSET, offset)?;
+    let callback = get(c, handle, "onread")?;
+    c.call_rooted(callback, handle, &[array_buffer])
+}
+
+/// One authority for the observable StreamBase write result fields.
+pub(crate) fn publish_write_result(
+    c: &mut Context<'_>, bytes: usize, asynchronous: bool, error: i32,
+) -> Result<(), RootedError> {
+    field(c, BYTES, bytes as i32)?;
+    field(c, ASYNC, i32::from(asynchronous))?;
+    field(c, ERROR, error)
+}
+
+fn request_lease(
     c: &mut Context<'_>,
     request: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let callback = get(c, request, "oncomplete")?;
-    let success = c.to_number(args[0])? == 0.0;
-    let readable = c.boolean(success);
-    let writable = c.boolean(success);
-    let socket = super::net_reference_shared_vm::handle_id(c, args[1])?;
-    let result = c.call_rooted(
-        callback,
-        request,
-        &[args[0], args[1], request, readable, writable],
-    );
-    net::release_delivery(&mut c.host_mut().shared_state().borrow_mut().tcp, socket);
-    result
+    kind: Option<RequestKind>,
+) -> Result<Option<RequestLease>, RootedError> {
+    let brands = c
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .native_stream
+        .identities
+        .clone();
+    for brand in brands {
+        if kind.is_some_and(|kind| kind != brand.kind) {
+            continue;
+        }
+        if let Some(object) = c.resolve_host_weak_root(brand.weak) {
+            if c.strict_equal_rooted(object, request)? {
+                return Ok(Some(brand.lease));
+            }
+        }
+    }
+    Ok(None)
+}
+/// Call only after the native try-write frontier selected a real request, and
+/// before dispatching its queued IO. Successful synchronous try-write allocates
+/// no resource. Parent is the genuine stream's existing AsyncWrap resource.
+pub(crate) fn activate_request(
+    c: &mut Context<'_>,
+    request: RootId,
+    kind: RequestKind,
+    parent: Resource,
+) -> Result<RequestLease, RootedError> {
+    let Some(lease) = request_lease(c, request, Some(kind))? else {
+        let error = c.type_error_rooted("Invalid native stream request")?;
+        return Err(c.throw(error));
+    };
+    if lease.resource().is_some() {
+        let error = c.type_error_rooted("Native stream request already dispatched")?;
+        return Err(c.throw(error));
+    }
+    let provider = match kind {
+        RequestKind::Write => Provider::Write,
+        RequestKind::Connect => Provider::TcpConnect,
+        RequestKind::Shutdown => Provider::Shutdown,
+    };
+    let shared = c.host_mut().shared_state();
+    let _scope = super::async_hooks_shared_vm::enter_default_trigger(&shared, parent.id as f64);
+    let id = super::async_hooks_shared_vm::create_context(&shared);
+    lease.0.set(Some(Resource { id, provider }));
+    if let Err(error) = super::async_hooks_shared_vm::emit_init(c, request, provider.name(), id) {
+        lease.0.set(None);
+        // No native dispatch occurred; release the admitted store snapshot.
+        let _ = super::async_hooks_shared_vm::complete_callback_context(c, id);
+        return Err(error);
+    }
+    Ok(lease)
+}
+/// A dispatch error after real request initialization disposes the request
+/// without invoking its callback; queued completion instead retires after hooks.
+pub(crate) fn retire_unqueued_request(
+    c: &mut Context<'_>,
+    lease: RequestLease,
+) -> Result<(), RootedError> {
+    if let Some(resource) = lease.0.take() {
+        super::async_hooks_shared_vm::complete_callback_context(c, resource.id)?;
+    }
+    Ok(())
+}
+pub(crate) fn resource_view(c: &mut Context<'_>, receiver: RootId) -> Result<View, RootedError> {
+    Ok(match request_lease(c, receiver, None)? {
+        None => View::NotNative,
+        Some(lease) => match lease.resource() {
+            None => View::Detached,
+            Some(resource) => View::Active(resource),
+        },
+    })
+}
+pub(crate) fn detach_resource(
+    shared: &Rc<std::cell::RefCell<crate::host::SharedNodeState>>,
+    id: u64,
+) {
+    for brand in &shared.borrow().native_stream.identities {
+        if brand
+            .lease
+            .resource()
+            .is_some_and(|resource| resource.id == id)
+        {
+            brand.lease.0.set(None);
+        }
+    }
+}
+
+/// Environment cancellation releases request/read roots without guest callbacks.
+pub(crate) fn cleanup_requests(runtime: &mut quench_runtime::Runtime<NodeHost>) {
+    let shared = runtime.host_mut().shared_state();
+    let (brands, requests, readers) = {
+        let mut state = shared.borrow_mut();
+        (
+            std::mem::take(&mut state.native_stream.identities),
+            std::mem::take(&mut state.native_stream.requests),
+            std::mem::take(&mut state.native_stream.readers),
+        )
+    };
+    for brand in brands {
+        runtime.release_host_weak_root(brand.weak);
+        if let Some(resource) = brand.lease.0.take() {
+            super::async_hooks_shared_vm::clear_context(runtime, &shared, resource.id);
+        }
+    }
+    for (request, pending) in requests {
+        runtime.release_root(request);
+        runtime.release_root(pending.handle);
+    }
+    for (_, reader) in readers {
+        runtime.release_root(reader);
+    }
 }

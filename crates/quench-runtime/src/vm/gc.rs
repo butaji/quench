@@ -942,16 +942,42 @@ impl<H: Host> Vm<H> {
     pub(crate) fn drain_jobs(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
         self.check_execution_interrupt()?;
         loop{
-            while let Some(job)=self.realm.jobs.pop_front(){
-                self.check_execution_interrupt()?;self.run_pending_job(program,job)?;
-                self.advance_static_module_jobs(program)?;self.advance_dynamic_import_jobs(program,true)?;
-            }
+            self.drain_pending_microtasks(program)?;
             // Async futex completion is an agent task: settle only after the
             // existing microtask queue drains, then run its Promise reactions.
             self.poll_shared_async_waiters(program)?;
             if self.realm.jobs.is_empty(){break}
         }
         Ok(Value::UNDEFINED)
+    }
+
+    /// Preserve existing internal drains, including recursive promise/module
+    /// drains. Only NativeContext checkpoint admission checks the running flag.
+    fn drain_pending_microtasks(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
+        let previous = std::mem::replace(&mut self.native_microtask_running, true);
+        let result = (|| {
+            self.check_execution_interrupt()?;
+            while let Some(job) = self.realm.jobs.pop_front() {
+                self.check_execution_interrupt()?;
+                self.run_pending_job(program, job)?;
+                self.advance_static_module_jobs(program)?;
+                self.advance_dynamic_import_jobs(program, true)?;
+            }
+            Ok(Value::UNDEFINED)
+        })();
+        self.native_microtask_running = previous;
+        result
+    }
+
+    /// The VM-wide admission fact shared with native embedder task checkpoints.
+    pub(crate) fn native_microtask_checkpoint_is_active(&self) -> bool {
+        self.native_microtask_running
+    }
+
+    /// A native microtask-only checkpoint, with no native agent-task polling.
+    pub(crate) fn native_microtask_checkpoint(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
+        if self.native_microtask_running { return Ok(Value::UNDEFINED); }
+        self.drain_pending_microtasks(program)
     }
 
     /// Runs a job already taken off the queue: a finished job roots nothing, so a drain
@@ -962,14 +988,17 @@ impl<H: Host> Vm<H> {
         job: PendingJob,
     ) -> Result<(), JsError> {
         let roots = job.roots();
-        self.with_call_roots(roots, |vm| match job {
+        let previous = std::mem::replace(&mut self.native_microtask_running, true);
+        let result = self.with_call_roots(roots, |vm| match job {
             PendingJob::Call {
                 callback,
                 this,
                 args,
             } => vm.call_value(program, callback, this, &args).map(|_| ()),
             PendingJob::Reaction(reaction) => vm.run_promise_reaction(program, reaction),
-        })
+        });
+        self.native_microtask_running = previous;
+        result
     }
 
 

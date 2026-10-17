@@ -8,7 +8,7 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
-    r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf2, scryptNative, Transform, cipherProcess, generateRsaKeyPairNative, rsaCryptNative, ecdhNative, setEngineNative, captureKeyBrands, handleSymbol, getWebCrypto, randomValuesSource) => {
+    r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf2, scryptNative, Transform, cipherProcess, generateRsaKeyPairNative, rsaCryptNative, ecdhNative, setEngineNative, captureKeyBrands, handleSymbol, getWebCrypto, randomValuesSource, secretMaterial, nativeConstants) => {
   const states = new WeakMap();
   const secretKeys = new WeakMap();
   let repeatedHmacDigestWarningEmitted = false;
@@ -239,7 +239,7 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
         throw error;
       }
       const keyBytes = secretKeys.has(key)
-        ? Buffer.from(secretKeys.get(key))
+        ? Buffer.from(secretMaterial(secretKeys.get(key)))
         : Buffer.from(key);
       states.set(this, { name, key: Array.from(keyBytes), chunks: [], lifecycle: "open" });
     }
@@ -516,7 +516,7 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
     constructor(name, key, iv, decrypt, options = {}) {
       super();
       this._cipherName = name;
-      this._cipherKey = Buffer.from(secretKeys.has(key) ? secretKeys.get(key) : key);
+      this._cipherKey = Buffer.from(secretKeys.has(key) ? secretMaterial(secretKeys.get(key)) : key);
       this._cipherIv = Buffer.from(iv);
       this._cipherDecrypt = decrypt;
       this._cipherChunks = [];
@@ -728,7 +728,7 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
-    const keyBytes = Buffer.from(secretKeys.has(key) ? secretKeys.get(key) : key);
+    const keyBytes = Buffer.from(secretKeys.has(key) ? secretMaterial(secretKeys.get(key)) : key);
     if (keyBytes.length !== info.keyLength) throw new TypeError("Invalid key length");
     if (iv === undefined) {
       const error = new TypeError('The "iv" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView');
@@ -768,7 +768,7 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
-    const keyBytes = Buffer.from(secretKeys.has(key) ? secretKeys.get(key) : key);
+    const keyBytes = Buffer.from(secretKeys.has(key) ? secretMaterial(secretKeys.get(key)) : key);
     if (keyBytes.length !== info.keyLength) throw new TypeError("Invalid key length");
     if (iv === undefined) {
       const error = new TypeError('The "iv" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView');
@@ -797,8 +797,8 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
     secretKeys.set(result, Array.from(bytes));
     Object.defineProperties(result, {
       type: { value: "secret", enumerable: true },
-      symmetricKeySize: { get() { return secretKeys.get(this).length; }, enumerable: true },
-      export: { value() { return Buffer.from(secretKeys.get(this)); } },
+      symmetricKeySize: { get() { return secretMaterial(secretKeys.get(this)).length; }, enumerable: true },
+      export: { value() { return Buffer.from(secretMaterial(secretKeys.get(this))); } },
     });
     return result;
   }
@@ -943,7 +943,7 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
-    return secretKeys.has(value) ? Buffer.from(secretKeys.get(value)) : cryptoBytes(value);
+    return secretKeys.has(value) ? Buffer.from(secretMaterial(secretKeys.get(value))) : cryptoBytes(value);
   };
   const scryptArgs = (password, salt, keylen, options) => {
     const pass = scryptBytes(password, "password");
@@ -1062,7 +1062,7 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
       }
-      if (secretKeys.has(value)) return Buffer.from(secretKeys.get(value));
+      if (secretKeys.has(value)) return Buffer.from(secretMaterial(secretKeys.get(value)));
       if (typeof value === "string") return Buffer.from(value);
       if (ArrayBuffer.isView(value)) return Buffer.from(new Uint8Array(value.buffer, value.byteOffset, value.byteLength));
       return Buffer.from(new Uint8Array(value));
@@ -1841,18 +1841,7 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
     randomUUIDv7,
     randomInt,
   };
-  api.constants = Object.freeze({
-    RSA_PKCS1_PADDING: 1,
-    RSA_PKCS1_OAEP_PADDING: 4,
-    RSA_PKCS1_PSS_PADDING: 6,
-    RSA_PSS_SALTLEN_DIGEST: -1,
-    RSA_PSS_SALTLEN_MAX_SIGN: -2,
-    RSA_PSS_SALTLEN_AUTO: -2,
-    DH_CHECK_P_NOT_PRIME: 1,
-    DH_CHECK_P_NOT_SAFE_PRIME: 2,
-    DH_UNABLE_TO_CHECK_GENERATOR: 4,
-    DH_NOT_SUITABLE_GENERATOR: 8,
-  });
+  Object.defineProperty(api,"constants",{value:nativeConstants,enumerable:true});
   Object.defineProperties(api, {
     webcrypto: { enumerable: true, get() { return getWebCrypto ? getWebCrypto() : webCrypto; } },
     pseudoRandomBytes: { configurable: true, writable: true, value: pseudoRandomBuffer },
@@ -1947,6 +1936,9 @@ pub(crate) fn module(
     ))?;
     let rsa_crypt = context.host_function(crate::host::shared_vm::operation("cryptoRsaCrypt"))?;
     let set_engine = context.host_function(crate::host::shared_vm::operation("cryptoSetEngine"))?;
+    let secret_material =
+        context.host_function(crate::host::shared_vm::operation("cryptoSecretMaterial"))?;
+    let native_constants = super::crypto_constants::binding(context)?;
     let capture_brands =
         context.host_function(crate::host::shared_vm::operation("cryptoCaptureKeyBrands"))?;
     let ecdh = context.host_function(crate::host::shared_vm::operation("cryptoEcdh"))?;
@@ -1977,6 +1969,8 @@ pub(crate) fn module(
             handle_symbol,
             webcrypto,
             random_values,
+            secret_material,
+            native_constants,
         ],
     )?;
     #[cfg(quench_openssl_provider)]
@@ -1986,7 +1980,9 @@ pub(crate) fn module(
         set(context, module, "getFips", get_fips)?;
         super::crypto_hash_source_shared_vm::install(context, module)?;
         let keygen = crate::host::shared_vm::commonjs::node_library_module(
-            context, "crypto.js", "internal/crypto/keygen.js",
+            context,
+            "crypto.js",
+            "internal/crypto/keygen.js",
         )?;
         for name in ["generateKey", "generateKeySync"] {
             let function = get(context, keygen, name)?;
