@@ -4,6 +4,7 @@
 // the public shape of EventEmitter.
 import { fileURLToPath } from 'node:url';
 import EventEmitter from 'node:events';
+import { createRequire } from 'node:module';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const scrub = (text) => text.split(here).join('<dir>/');
@@ -30,6 +31,17 @@ await observe('static json without attribute', './static_json.mjs');
 await observe('static unexported subpath', './static_unexported.mjs');
 await observe('typescript __exportStar', './cjs/typescript.cjs');
 await observe('babel Object.keys re-export', './cjs/babel.cjs');
+
+const require = createRequire(import.meta.url);
+for (const specifier of [
+  'quench-exports-fixture/missing', 'quench-no-main-fixture', 'quench-exports-fixture/types.d.cts',
+]) {
+  try {
+    require(specifier);
+  } catch (error) {
+    console.log('require', specifier, error.constructor.name, error.code, scrub(error.message), Object.keys(error).join());
+  }
+}
 
 console.log('regex class with modifier text', /^[(?-i)y]$/i.test('Y'), /[a(?-m)]/.test('?'));
 

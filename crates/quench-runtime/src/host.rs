@@ -284,13 +284,13 @@ pub enum ModuleLoadErrorKind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModuleLoadError {
     pub kind: ModuleLoadErrorKind,
-    pub code: Option<String>,
+    pub code: Option<&'static str>,
     pub message: String,
 }
 
 impl ModuleLoadError {
-    pub fn new(kind: ModuleLoadErrorKind, code: &str, message: impl Into<String>) -> Self {
-        Self { kind, code: Some(code.to_owned()), message: message.into() }
+    pub fn new(kind: ModuleLoadErrorKind, code: &'static str, message: impl Into<String>) -> Self {
+        Self { kind, code: Some(code), message: message.into() }
     }
 }
 
