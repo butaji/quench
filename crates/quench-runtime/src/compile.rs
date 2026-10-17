@@ -1978,7 +1978,7 @@ impl<'a> Compiler<'a> {
                 );
                 numeric::apply(function, live.as_deref());
             }
-            Self::specialize_plain_local_operations(function, &self.atoms, &self.superinstructions);
+            Self::specialize_plain_local_operations(function, &self.superinstructions);
             if function
                 .code
                 .iter()
@@ -2664,12 +2664,9 @@ impl<'a> Compiler<'a> {
 
     fn specialize_plain_local_operations(
         function: &mut BcFunction,
-        atoms: &CompilerAtoms<'_>,
         superinstructions: &[crate::bytecode::Superinstruction],
     ) {
-        let plain_slots =
-            function.plain_local_slots(|atom| atoms.get(atom as usize), superinstructions);
-
+        let plain_slots = function.plain_local_slots(superinstructions);
         for instruction in &mut function.code {
             match instruction.op() {
                 Op::LoadLocal | Op::StoreLocal
