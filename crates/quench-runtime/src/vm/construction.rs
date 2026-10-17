@@ -273,20 +273,6 @@ impl<H: Host> Vm<H> {
                 }),
             });
         }
-        if function_plan.is_arrow {
-            env = self.heap.alloc(Cell::Environment {
-                parent: env,
-                function: u32::MAX,
-                slots: Vec::<Value>::new().into_boxed_slice().into(),
-                scope: Box::new(crate::heap::EnvironmentScope {
-                    program: None,
-                    root_eval_scope: false,
-                    binding_site_pc: None,
-                    dynamic_bindings: Vec::new().into(),
-                    with_objects: Box::default(),
-                }),
-            });
-        }
         let has_instance_prototype = function_plan.constructible || function_plan.is_generator;
         let prototype = if has_instance_prototype {
             let generator_prototype_parent = if function_plan.is_generator {
