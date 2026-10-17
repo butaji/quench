@@ -1154,8 +1154,8 @@ queue, with request cancellation before handle completion.
 Configured SDK Hash/Hmac and secret-key wrappers use owned fetched OpenSSL
 digests, native incremental contexts, actual copies and provider-backed jobs.
 Digest inventory and aliases come from the selected OpenSSL 3.5.9 provider.
-This does not establish full asymmetric KeyObject or WebCrypto parity. The
-historical public KeyObject family remains in place.
+The configured SDK asymmetric KeyObject family and native provider-backed jobs
+are described below. Full asymmetric and WebCrypto parity remain open.
 
 VFS read/write/open/metadata boundaries preserve SDK validation, argument counts,
 getters and undefined-only fallthrough. existsSync falls through to its unwrapped
@@ -1175,6 +1175,22 @@ caller's execution context or async-local store. A request shell gains an async
 identity only when native work is admitted. Resource callbacks retain their
 identity through close; operation requests retire after their callback.
 
+The complete DNS resolver surface requires the optional, SDK-version-matched
+`quench-node-cares` pkg-config dependency. On Unix, the standard build script
+probes that metadata, validates its version against the native SDK ABI, and emits
+`quench_node_cares` plus its library search paths. Reusing a build-script output
+that lacks this configuration selects the reduced system-lookup module; it does
+not provide the c-ares resolver API. Isolated builds must record the selected
+configuration and equivalent native library paths. Do not repair a disabled
+native backend by adding public aliases or fabricated resolver state.
+
+With c-ares enabled, unchanged SDK `dns.js` and `internal/dns/utils.js` own
+`setServers`, bound `getServers`, server validation, default-resolver replacement,
+and promise-namespace rebinding. Their `Resolver` handles use the same native
+channel owner as RR queries. Instance server changes reject pending queries;
+default replacement preserves queries on the old channel until their own
+completion or cancellation.
+
 Configured c-ares channels poll real sockets and native deadlines. Pending
 requests keep their channel and mutable completion callback reachable; canceled
 or completed requests release those roots through the shared operation lifecycle.
@@ -1188,7 +1204,7 @@ PBKDF2 and HKDF use original SDK public functions, owned provider digest
 resolution and one native KDF context owner. Async input snapshots and cleansed
 secret buffers cross the existing native task pool; completion uses the same
 mutable job callback and async resource lifecycle as other crypto jobs. This
-does not expose the pending replacement asymmetric KeyObject family.
+does not establish complete asymmetric or WebCrypto coverage.
 
 Trace-event category and name payloads follow the configured V8 JSON trace
 writer's direct quoted-byte boundary. Original SDK timer labels already contain
@@ -1198,3 +1214,32 @@ Other event fields retain normal JSON encoding.
 Selected combined-candidate checks do not replace the full API or parallel
 inventories. The latest published full stable result and every lost pass are in
 `evidence/task20-native-backends-full-stable-2026-10-16.json`.
+
+### Native Worker, IPC and key-family ownership
+
+Workers execute in independent owned Runtime instances on real native threads.
+Message graphs retain aliases and transfer owned backing stores through the
+shared clone representation. Filename validation uses native calls into the
+canonical SDK path and URL owners. Error transport currently supports a bounded
+owned packet; unsupported exotic values do not establish complete V8 serializer
+parity. Public fatal-exception overrides and remaining lifecycle differences need
+separate qualification.
+
+IPC pipe handles own native Unix descriptors and SCM_RIGHTS transfers. Received
+TCP handles classify the actual socket and transfer sole descriptor ownership;
+stream requests use the shared AsyncWrap and completion frontier. Advanced V8
+serialization, complete public ProcessWrap/Net AsyncWrap behavior and cluster HTTP
+delegation remain open.
+
+The configured SDK asymmetric KeyObject classes and public key-generation,
+signature and RSA policies use native owned OpenSSL keys. Request input snapshots,
+provider work and callback lifetime share the native crypto job pipeline. This
+does not complete Diffie-Hellman jobs or all WebCrypto algorithms. RandomBytesJob
+uses owned native task output; asynchronous writes currently become visible on
+main-thread completion, which differs from Node while the guest thread is busy.
+
+FileHandle append/write dispatch recognizes issued handles through a private
+registry and uses their actual native descriptor and close gate. The SDK owns
+argument normalization, including input backing-store property reads and the
+constructed view length. Iterable writes still have a buffered continuation;
+this does not establish complete incremental FileHandle write semantics.

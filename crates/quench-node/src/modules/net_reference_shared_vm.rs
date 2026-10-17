@@ -89,7 +89,16 @@ pub(crate) fn create_socket_handle(
 ) -> Result<RootId, RootedError> {
     let id = context.rooted_value(args[0]).and_then(|value| value.as_number())
         .ok_or_else(|| RootedError::host("accepted endpoint missing"))? as u64;
-    create_handle(context, id, EndpointKind::Socket, None)
+    let parent=if let Some(parent)=args.get(1) {
+        super::native_async_wrap::view(context,*parent)?
+    }else{super::native_async_wrap::View::NotNative};
+    let shared=context.host_mut().shared_state();
+    let _trigger=if let super::native_async_wrap::View::Active(parent)=parent {
+        Some(super::async_hooks_shared_vm::enter_default_trigger(&shared,parent.id as f64))
+    }else{None};
+    let handle=create_handle(context,id,EndpointKind::Socket,None)?;
+    if _trigger.is_some(){super::native_async_wrap::initialize_tcp(context,handle,id,false)?;}
+    Ok(handle)
 }
 
 fn create_handle(
@@ -120,8 +129,9 @@ fn create_handle(
         }
     }
     register_identity(context, handle, id)?;
-    if matches!(kind, EndpointKind::Socket)
-        && super::net_shared_vm::socket_is_tcp(&context.host_mut().shared_state().borrow().tcp, id)
+    let tcp_listener=matches!(kind,EndpointKind::Listener) && super::net_shared_vm::listener_is_tcp(&context.host_mut().shared_state().borrow().tcp,id);
+    if tcp_listener || (matches!(kind, EndpointKind::Socket)
+        && super::net_shared_vm::socket_is_tcp(&context.host_mut().shared_state().borrow().tcp, id))
     {
         let prototype = super::tcp_binding::prototype(context)?;
         context.set_prototype_rooted(handle, prototype)?;

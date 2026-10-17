@@ -51,9 +51,9 @@ unsafe extern "C" {
     fn ERR_pop_to_mark() -> c_int;
     fn ERR_clear_error();
 }
-struct ErrorScope(bool);
+pub(crate) struct ErrorScope(bool);
 impl ErrorScope {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self(unsafe { ERR_set_mark() } == 1)
     }
 }
@@ -154,30 +154,223 @@ pub fn names(kind: Kind) -> Vec<String> {
     names.values.dedup();
     names.values
 }
+// Single SDK ncrypto KeyAlgorithm descriptor authority. Native backend probes
+// determine availability; metadata and admission derive from this same table.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum KeyFamily {
+    Other,
+    EdDSA,
+    XDH,
+    MLDSA,
+    MLKEM,
+    SLHDSA,
+}
+pub struct KeyAlgorithm {
+    name: &'static std::ffi::CStr,
+    pub family: KeyFamily,
+    has_key_type: bool,
+}
+impl KeyAlgorithm {
+    pub fn name(&self) -> &'static str {
+        self.name.to_str().expect("SDK algorithm names are ASCII")
+    }
+    pub fn public_name(&self) -> Option<String> {
+        self.has_key_type.then(|| self.name().to_ascii_lowercase())
+    }
+    pub fn is_okp(&self) -> bool {
+        matches!(self.family, KeyFamily::EdDSA | KeyFamily::XDH)
+    }
+    pub fn is_pqc(&self) -> bool {
+        matches!(
+            self.family,
+            KeyFamily::MLDSA | KeyFamily::MLKEM | KeyFamily::SLHDSA
+        )
+    }
+    pub fn is_one_shot(&self) -> bool {
+        matches!(
+            self.family,
+            KeyFamily::EdDSA | KeyFamily::MLDSA | KeyFamily::SLHDSA
+        )
+    }
+}
+const KEY_ALGORITHMS: &[KeyAlgorithm] = &[
+    KeyAlgorithm {
+        name: c"RSA",
+        family: KeyFamily::Other,
+        has_key_type: true,
+    },
+    KeyAlgorithm {
+        name: c"RSA-PSS",
+        family: KeyFamily::Other,
+        has_key_type: true,
+    },
+    KeyAlgorithm {
+        name: c"DSA",
+        family: KeyFamily::Other,
+        has_key_type: true,
+    },
+    KeyAlgorithm {
+        name: c"DH",
+        family: KeyFamily::Other,
+        has_key_type: true,
+    },
+    KeyAlgorithm {
+        name: c"EC",
+        family: KeyFamily::Other,
+        has_key_type: true,
+    },
+    KeyAlgorithm {
+        name: c"Ed25519",
+        family: KeyFamily::EdDSA,
+        has_key_type: true,
+    },
+    KeyAlgorithm {
+        name: c"Ed448",
+        family: KeyFamily::EdDSA,
+        has_key_type: true,
+    },
+    KeyAlgorithm {
+        name: c"X25519",
+        family: KeyFamily::XDH,
+        has_key_type: true,
+    },
+    KeyAlgorithm {
+        name: c"X448",
+        family: KeyFamily::XDH,
+        has_key_type: true,
+    },
+    KeyAlgorithm {
+        name: c"SM2",
+        family: KeyFamily::Other,
+        has_key_type: false,
+    },
+    KeyAlgorithm {
+        name: c"ML-DSA-44",
+        family: KeyFamily::MLDSA,
+        has_key_type: true,
+    },
+    KeyAlgorithm {
+        name: c"ML-DSA-65",
+        family: KeyFamily::MLDSA,
+        has_key_type: true,
+    },
+    KeyAlgorithm {
+        name: c"ML-DSA-87",
+        family: KeyFamily::MLDSA,
+        has_key_type: true,
+    },
+    KeyAlgorithm {
+        name: c"ML-KEM-512",
+        family: KeyFamily::MLKEM,
+        has_key_type: true,
+    },
+    KeyAlgorithm {
+        name: c"ML-KEM-768",
+        family: KeyFamily::MLKEM,
+        has_key_type: true,
+    },
+    KeyAlgorithm {
+        name: c"ML-KEM-1024",
+        family: KeyFamily::MLKEM,
+        has_key_type: true,
+    },
+    KeyAlgorithm {
+        name: c"SLH-DSA-SHA2-128f",
+        family: KeyFamily::SLHDSA,
+        has_key_type: true,
+    },
+    KeyAlgorithm {
+        name: c"SLH-DSA-SHA2-128s",
+        family: KeyFamily::SLHDSA,
+        has_key_type: true,
+    },
+    KeyAlgorithm {
+        name: c"SLH-DSA-SHA2-192f",
+        family: KeyFamily::SLHDSA,
+        has_key_type: true,
+    },
+    KeyAlgorithm {
+        name: c"SLH-DSA-SHA2-192s",
+        family: KeyFamily::SLHDSA,
+        has_key_type: true,
+    },
+    KeyAlgorithm {
+        name: c"SLH-DSA-SHA2-256f",
+        family: KeyFamily::SLHDSA,
+        has_key_type: true,
+    },
+    KeyAlgorithm {
+        name: c"SLH-DSA-SHA2-256s",
+        family: KeyFamily::SLHDSA,
+        has_key_type: true,
+    },
+    KeyAlgorithm {
+        name: c"SLH-DSA-SHAKE-128f",
+        family: KeyFamily::SLHDSA,
+        has_key_type: true,
+    },
+    KeyAlgorithm {
+        name: c"SLH-DSA-SHAKE-128s",
+        family: KeyFamily::SLHDSA,
+        has_key_type: true,
+    },
+    KeyAlgorithm {
+        name: c"SLH-DSA-SHAKE-192f",
+        family: KeyFamily::SLHDSA,
+        has_key_type: true,
+    },
+    KeyAlgorithm {
+        name: c"SLH-DSA-SHAKE-192s",
+        family: KeyFamily::SLHDSA,
+        has_key_type: true,
+    },
+    KeyAlgorithm {
+        name: c"SLH-DSA-SHAKE-256f",
+        family: KeyFamily::SLHDSA,
+        has_key_type: true,
+    },
+    KeyAlgorithm {
+        name: c"SLH-DSA-SHAKE-256s",
+        family: KeyFamily::SLHDSA,
+        has_key_type: true,
+    },
+];
+pub fn key_algorithm(name: &str) -> Option<&'static KeyAlgorithm> {
+    let name = name.split('\0').next().unwrap();
+    KEY_ALGORITHMS
+        .iter()
+        .find(|algorithm| algorithm.name().eq_ignore_ascii_case(name))
+}
+pub fn key_algorithm_for(key: *const openssl_sys::EVP_PKEY) -> Option<&'static KeyAlgorithm> {
+    if key.is_null() {
+        return None;
+    }
+    KEY_ALGORITHMS
+        .iter()
+        .find(|algorithm| unsafe { openssl_sys::EVP_PKEY_is_a(key, algorithm.name.as_ptr()) } == 1)
+}
+pub fn named_generation_algorithm(name: &str, web_crypto: bool) -> Option<&'static str> {
+    let algorithm = key_algorithm(name)?;
+    if !algorithm.is_okp() && !algorithm.is_pqc() {
+        return None;
+    }
+    if !web_crypto
+        && (algorithm.public_name().as_deref() != Some(name) || !key_available(algorithm.name()))
+    {
+        return None;
+    }
+    Some(algorithm.name())
+}
 pub fn key_available(name: &str) -> bool {
-    // SDK key algorithm names; arbitrary cipher/digest names are not key families.
-    let name = match name {
-        "Ed25519" => "ED25519",
-        "Ed448" => "ED448",
-        "X25519" => "X25519",
-        "X448" => "X448",
-        "RSA" => "RSA",
-        "RSA-PSS" => "RSA-PSS",
-        "EC" => "EC",
-        "DSA" => "DSA",
-        "DH" => "DH",
-        "ML-KEM-512" => "ML-KEM-512",
-        "ML-KEM-768" => "ML-KEM-768",
-        "ML-KEM-1024" => "ML-KEM-1024",
-        "ML-DSA-44" => "ML-DSA-44",
-        "ML-DSA-65" => "ML-DSA-65",
-        "ML-DSA-87" => "ML-DSA-87",
-        _ => return false,
+    let Some(algorithm) = KEY_ALGORITHMS
+        .iter()
+        .find(|algorithm| algorithm.name() == name)
+    else {
+        return false;
     };
-    let name = CString::new(name).unwrap();
     let _errors = ErrorScope::new();
     unsafe {
-        let ctx = EVP_PKEY_CTX_new_from_name(ptr::null_mut(), name.as_ptr(), ptr::null());
+        let ctx = EVP_PKEY_CTX_new_from_name(ptr::null_mut(), algorithm.name.as_ptr(), ptr::null());
         if ctx.is_null() {
             false
         } else {
@@ -186,6 +379,7 @@ pub fn key_available(name: &str) -> bool {
         }
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
