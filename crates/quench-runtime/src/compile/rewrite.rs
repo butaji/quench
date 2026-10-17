@@ -601,7 +601,7 @@ pub(super) fn protected_positions(
 }
 
 /// `instruction` in fixed-width form: a wide one through the function's wide table.
-fn fixed_width(instruction: Instr, wide: &[WideInstruction]) -> WideInstruction {
+pub(super) fn fixed_width(instruction: Instr, wide: &[WideInstruction]) -> WideInstruction {
     if instruction.is_wide() {
         wide[instruction.wide_index()]
     } else {
