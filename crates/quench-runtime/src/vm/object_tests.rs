@@ -114,9 +114,9 @@ fn method_cache_program(mut program: ResidualProgram) -> ResidualProgram {
         crate::bytecode::Instr::new(Op::CallMethod, 1, 0, 0, site),
         crate::bytecode::Instr::new(Op::Return, 1, 0, 0, 0),
     ];
-    function.local_registers.clear();
+    function.local_registers = Default::default();
     function.parameter_end_pc = 0;
-    function.source_positions.clear();
+    function.source_positions = Default::default();
     let methods = program
         .method_sites
         .iter()

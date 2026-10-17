@@ -1900,8 +1900,8 @@ impl<'a> Compiler<'a> {
             .filter_map(|name| self.atoms.find(name))
             .collect();
         if let Some(Some(root)) = self.functions.first_mut() {
-            root.global_lexical_atoms = global_lexical_atoms;
-            root.global_immutable_atoms = global_immutable_atoms;
+            root.global_lexical_atoms = global_lexical_atoms.into();
+            root.global_immutable_atoms = global_immutable_atoms.into();
             root.global_var_atoms = global_var_atoms;
             root.global_function_atoms = global_function_atoms;
             root.global_annex_b_var_atoms = global_annex_b_var_atoms;
@@ -2010,7 +2010,6 @@ impl<'a> Compiler<'a> {
         }
         for function in &mut functions {
             function.code.shrink_to_fit();
-            function.handlers.shrink_to_fit();
         }
         let (mut method_sites, mut method_arguments) =
             Self::flatten_method_sites(self.method_sites);
@@ -2577,7 +2576,7 @@ impl<'a> Compiler<'a> {
             } else {
                 0
             },
-            parameter_atoms,
+            parameter_atoms: parameter_atoms.into(),
             rest: options.rest_override
                 || options.defaults.is_some_and(|value| value.rest.is_some()),
             is_async: options.async_function,
@@ -2595,21 +2594,21 @@ impl<'a> Compiler<'a> {
             simple_parameters,
             strict: root_strict,
             locals: function.locals.len() as u16,
-            local_atoms: function.locals.clone(),
+            local_atoms: function.locals.clone().into(),
             environment_atoms,
             selective_capture_slots: None,
-            local_registers: function.promoted_local_layout(),
+            local_registers: function.promoted_local_layout().into(),
             inherited_with_scope: options.with_depth != 0,
-            lexical_atoms,
-            global_lexical_atoms: Vec::new(),
-            global_var_atoms: Vec::new(),
-            global_function_atoms: Vec::new(),
-            global_annex_b_var_atoms: Vec::new(),
-            global_immutable_atoms: Vec::new(),
+            lexical_atoms: lexical_atoms.into(),
+            global_lexical_atoms: Vec::new().into(),
+            global_var_atoms: Vec::new().into(),
+            global_function_atoms: Vec::new().into(),
+            global_annex_b_var_atoms: Vec::new().into(),
+            global_immutable_atoms: Vec::new().into(),
             name_bindings,
-            binding_sites: function.binding_sites,
-            source_positions: function.source_positions,
-            environment_clones,
+            binding_sites: function.binding_sites.into(),
+            source_positions: function.source_positions.into(),
+            environment_clones: environment_clones.into(),
             code: function.code,
             wide: function.wide,
             registers: function.max_reg,
@@ -2620,7 +2619,7 @@ impl<'a> Compiler<'a> {
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
             call_plan: Default::default(),
-            handlers: function.handlers,
+            handlers: function.handlers.into(),
             register_root_offset: crate::bytecode::NO_REGISTER_ROOT_MAP,
             undefined_register,
             parameter_registers: None,
