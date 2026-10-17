@@ -338,7 +338,7 @@ impl<H: Host> Vm<H> {
                         else {
                             unreachable!("validated typed array backing buffer");
                         };
-                        let bytes = bytes.make_mut();
+                        let mut bytes = bytes.make_mut();
                         // Slice copies forward even when species returns an overlapping view.
                         for index in 0..byte_count {
                             bytes[target_offset + index] = bytes[source_offset + index];
@@ -347,7 +347,7 @@ impl<H: Host> Vm<H> {
                         let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get(buffer) else {
                             unreachable!("validated typed array backing buffer");
                         };
-                        let source_bytes = bytes.clone();
+                        let source_bytes = bytes.to_vec();
                         let Some(Cell::ArrayBuffer { bytes, .. }) =
                             self.heap.get_mut(target_buffer)
                         else {

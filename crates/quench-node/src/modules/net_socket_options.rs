@@ -13,8 +13,7 @@ const FIELDS: [(&str, &str); 5] = [
 ];
 
 fn get(context: &mut NativeContext<'_, NodeHost>, object: RootId, name: &str) -> Result<RootId, RootedError> {
-    let key = context.string_rooted(name);
-    context.get_property_rooted(object, key)
+    context.get_named_property_rooted(object, name)
 }
 fn field(context: &mut NativeContext<'_, NodeHost>, data: RootId, socket: RootId, name: &str) -> Result<RootId, RootedError> {
     let key = get(context, data, name)?;

@@ -646,6 +646,7 @@ const PRIVATE_SYMBOL_PROPERTIES: &[(&str, &str)] = &[
 fn build_key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let binding = context.object_rooted()?;
     for (name, operation) in [
+        ("guessHandleType", "utilGuessHandleType"),
         ("getConstructorName", "utilConstructorName"),
         ("getCallSites", "utilGetCallSites"),
         ("getCallerLocation", "utilGetCallerLocation"),
@@ -656,6 +657,7 @@ fn build_key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         ("getExternalValue", "utilExternalValue"),
         ("markPromiseAsHandled", "utilMarkPromiseHandled"),
         ("defineLazyProperties", "utilDefineLazyProperties"),
+        ("isInsideNodeModules", "utilIsInsideNodeModules"),
     ] {
         let operation = crate::host::shared_vm::operation(operation);
         let function = context.host_function_named(operation, name)?;
@@ -694,6 +696,12 @@ pub(crate) fn symbols_binding(context: &mut NativeContext<'_, NodeHost>) -> Resu
 }
 fn build_symbols_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let binding = context.object_rooted()?;
+    let owner = super::net_reference_shared_vm::owner_symbol(context)?;
+    let key = context.string_rooted("owner_symbol");
+    context.define_data_property_rooted(binding, key, owner, true, true, true)?;
+    let key = context.string_rooted("async_id_symbol");
+    let async_id = context.symbol_rooted(Some("async_id_symbol"));
+    context.define_data_property_rooted(binding, key, async_id, true, true, true)?;
     for name in ["messaging_deserialize_symbol", "messaging_transfer_symbol", "messaging_clone_symbol", "messaging_transfer_list_symbol"] {
         let key = context.string_rooted(name);
         let symbol = context.symbol_rooted(Some(name));
@@ -860,15 +868,56 @@ pub(crate) fn define_lazy_properties(
     let enumerable = match args.get(3) { Some(value) => context.truthy_rooted(*value)?, None => true };
     for index in 0..length {
         let key = get(context, *keys, &index.to_string())?;
-        let name = context.to_string(key)?;
-        let flag = context.boolean(enumerable);
-        let data = context.array_rooted(&[*target, *id, key, flag])?;
-        let initializer = context.host_function_with_data(
-            crate::host::shared_vm::operation("utilLazyPropertyInitialize"), data,
-        )?;
-        context.define_lazy_data_properties_rooted(*target, &[&name], enumerable, initializer)?;
+        define_lazy_property(context, *target, *id, key, enumerable)?;
     }
     Ok(context.undefined())
+}
+
+/// One `defineLazyProperties` entry: `key` on `target` reads the export of library module
+/// `id` on first access.
+fn define_lazy_property(
+    context: &mut NativeContext<'_, NodeHost>, target: RootId, id: RootId, key: RootId, enumerable: bool,
+) -> Result<(), RootedError> {
+    let name = context.to_string(key)?;
+    let flag = context.boolean(enumerable);
+    let data = context.array_rooted(&[target, id, key, flag])?;
+    let initializer = context.host_function_with_data(
+        crate::host::shared_vm::operation("utilLazyPropertyInitialize"), data,
+    )?;
+    context.define_lazy_data_properties_rooted(target, &[&name], enumerable, initializer)
+}
+
+/// Node's bootstrap `defineLazyProperties(globalThis, 'buffer', ['atob', 'btoa'])`.
+pub(crate) fn install_lazy_base64_globals(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
+    let global = context.global_root()?;
+    let id = context.string_rooted("buffer");
+    for name in ["atob", "btoa"] {
+        let key = context.string_rooted(name);
+        define_lazy_property(context, global, id, key, true)?;
+    }
+    Ok(())
+}
+
+/// Frames `isInsideNodeModules` inspects without an explicit limit (node_util.cc).
+const DEFAULT_NODE_MODULES_FRAMES: usize = 10;
+
+/// `isInsideNodeModules(frameLimit)`: whether the nearest frame outside Node's own library
+/// runs from a node_modules path.
+pub(crate) fn is_inside_node_modules(
+    context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let limit = match args.first().and_then(|value| context.rooted_value(*value)).and_then(|value| value.as_number()) {
+        Some(limit) if limit.fract() == 0.0 && limit >= f64::from(i32::MIN) && limit <= f64::from(i32::MAX) => limit.max(0.0) as usize,
+        _ => DEFAULT_NODE_MODULES_FRAMES,
+    };
+    let library = context.host_mut().node_library_root.join("lib");
+    let inside = context
+        .call_stack_source_names()
+        .into_iter()
+        .take(limit)
+        .find(|name| !name.is_empty() && !name.starts_with("node:") && !name.starts_with('<') && !std::path::Path::new(name).starts_with(&library))
+        .is_some_and(|name| ["/node_modules/", "\\node_modules\\", "/node_modules\\", "\\node_modules/"].iter().any(|part| name.contains(part)));
+    Ok(context.boolean(inside))
 }
 
 pub(crate) fn initialize_lazy_property(
@@ -881,9 +930,14 @@ pub(crate) fn initialize_lazy_property(
     let flag = get(context, data, "3")?;
     let enumerable = context.truthy_rooted(flag)?;
     let id = context.to_string(id)?;
-    let id = if id.ends_with(".js") { id } else { format!("{id}.js") };
-    let module = crate::host::shared_vm::commonjs::node_library_module(context, "internal/util.js", &id)?;
+    let module = crate::host::shared_vm::commonjs::library_require(context, &id)?;
     let value = context.get_property_rooted(module, key)?;
     context.define_data_property_rooted(target, key, value, true, enumerable, true)?;
     Ok(context.undefined())
+}
+
+pub(crate) fn guess_handle_type(context: &mut NativeContext<'_, NodeHost>, _:RootId, args:&[RootId])->Result<RootId,RootedError>{
+    let missing=context.undefined();let value=context.to_number(args.first().copied().unwrap_or(missing))?;
+    let fd=super::native_number::uint32(value) as i32;
+    Ok(context.number(super::fd_handle_type::guess(fd) as u8 as f64))
 }

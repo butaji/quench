@@ -8,30 +8,27 @@ pub(super) fn get(
     object: RootId,
     name: &str,
 ) -> Result<RootId, RootedError> {
-    let key = context.string_rooted(name);
-    context.get_property_rooted(object, key)
+    context.get_named_property_rooted(object, name)
 }
+/// Strict-mode `object[key] = value`, the assignment the event configuration's guest
+/// `assign` operation performs.
 pub(super) fn set(
     context: &mut NativeContext<'_, NodeHost>,
-    data: RootId,
+    _data: RootId,
     object: RootId,
     key: RootId,
     value: RootId,
 ) -> Result<(), RootedError> {
-    let assign = get(context, data, "assign")?;
-    let undefined = context.undefined();
-    context.call_rooted(assign, undefined, &[object, key, value])?;
-    Ok(())
+    context.assign_property_rooted(object, key, value)
 }
 pub(super) fn named_set(
     context: &mut NativeContext<'_, NodeHost>,
-    data: RootId,
+    _data: RootId,
     object: RootId,
     name: &str,
     value: RootId,
 ) -> Result<(), RootedError> {
-    let key = context.string_rooted(name);
-    set(context, data, object, key, value)
+    context.assign_named_property_rooted(object, name, value)
 }
 fn nullish(context: &NativeContext<'_, NodeHost>, value: RootId) -> bool {
     context

@@ -1003,6 +1003,25 @@ pub struct SourceSpan {
     pub end: u32,
 }
 
+/// Membership views of a function's declared-name lists, which stay the authority for
+/// their order and serialization: a name's declaration kind is one lookup, not a scan.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct DeclaredAtomSets {
+    global_lexical: rustc_hash::FxHashSet<Atom>,
+    global_var: rustc_hash::FxHashSet<Atom>,
+    global_immutable: rustc_hash::FxHashSet<Atom>,
+    environment: rustc_hash::FxHashSet<Atom>,
+    /// Per local slot: whether its name is a global var or global lexical declaration.
+    slots: Box<[SlotDeclaration]>,
+}
+
+/// Whether a local slot's name is among `global_var_atoms` and `global_lexical_atoms`.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct SlotDeclaration {
+    pub(crate) global_var: bool,
+    pub(crate) global_lexical: bool,
+}
+
 #[derive(Clone, Debug)]
 pub struct Function {
     pub parent: Option<u32>,
@@ -1065,6 +1084,8 @@ pub struct Function {
     pub(crate) decoded: HotDecoding,
     /// Lazily derived `plain_local_slots`; never serialized.
     pub(crate) plain_locals: std::cell::OnceCell<Box<[bool]>>,
+    /// Lazily derived `declared_atoms`; never serialized.
+    pub(crate) declared_atom_sets: std::cell::OnceCell<Box<DeclaredAtomSets>>,
     /// Lazily derived `activation_bindings_observable`; never serialized.
     pub(crate) activation_bindings: std::cell::OnceCell<bool>,
     /// Lazily derived `reflects_live_parameters`; never serialized.
@@ -1404,6 +1425,59 @@ impl Function {
         plain
     }
 
+    fn declared_atoms(&self) -> &DeclaredAtomSets {
+        self.declared_atom_sets.get_or_init(|| {
+            let global_lexical: rustc_hash::FxHashSet<Atom> =
+                self.global_lexical_atoms.iter().copied().collect();
+            let global_var: rustc_hash::FxHashSet<Atom> =
+                self.global_var_atoms.iter().copied().collect();
+            let slots = self
+                .local_atoms
+                .iter()
+                .map(|atom| SlotDeclaration {
+                    global_var: global_var.contains(atom),
+                    global_lexical: global_lexical.contains(atom),
+                })
+                .collect();
+            Box::new(DeclaredAtomSets {
+                global_lexical,
+                global_var,
+                global_immutable: self.global_immutable_atoms.iter().copied().collect(),
+                environment: self.environment_atoms.iter().copied().collect(),
+                slots,
+            })
+        })
+    }
+
+    /// The declaration kinds of local `slot`'s name (none for a slot outside the function).
+    pub(crate) fn slot_declaration(&self, slot: usize) -> SlotDeclaration {
+        self.declared_atoms()
+            .slots
+            .get(slot)
+            .copied()
+            .unwrap_or_default()
+    }
+
+    /// Whether `atom` is among `global_lexical_atoms`.
+    pub(crate) fn declares_global_lexical(&self, atom: Atom) -> bool {
+        self.declared_atoms().global_lexical.contains(&atom)
+    }
+
+    /// Whether `atom` is among `global_var_atoms`.
+    pub(crate) fn declares_global_var(&self, atom: Atom) -> bool {
+        self.declared_atoms().global_var.contains(&atom)
+    }
+
+    /// Whether `atom` is among `global_immutable_atoms`.
+    pub(crate) fn declares_global_immutable(&self, atom: Atom) -> bool {
+        self.declared_atoms().global_immutable.contains(&atom)
+    }
+
+    /// Whether `atom` is among `environment_atoms`.
+    pub(crate) fn declares_environment_atom(&self, atom: Atom) -> bool {
+        self.declared_atoms().environment.contains(&atom)
+    }
+
     /// Slots whose uninitialized state no access can observe: in a plain-local context, each
     /// slot that is plain but for its TDZ, and whose every access other than a TDZ reset
     /// (`InitializeTdz`) or an initializing store runs, on every normal and exceptional path
@@ -1690,6 +1764,54 @@ impl Function {
                     },
             }
         })
+    }
+
+    /// Whether the body's whole effect is storing parameters into fields of `this`, then
+    /// returning `undefined`: `SetThisField` records whose values are parameter registers,
+    /// followed by the return of an undefined constant or of a register nothing writes.
+    /// `constants` is the owning program's table. In a plain activation, where parameter `k`
+    /// lives in register `k` (`CallPlan::registers_only`), the body is its stores
+    /// (`this_field_stores`) alone.
+    pub(crate) fn only_initializes_this_fields(&self, constants: &[Constant]) -> bool {
+        if !self.handlers.is_empty() {
+            return false;
+        }
+        let mut instructions = self.instructions().peekable();
+        let mut stores = 0;
+        while let Some(store) = instructions.next_if(|instruction| {
+            matches!(instruction.op(), Op::SetThisField | Op::SetThisFieldStrict)
+        }) {
+            if store.register_a() >= self.params {
+                return false;
+            }
+            stores += 1;
+        }
+        let undefined_load = |load: &WideInstruction| {
+            load.op() == Op::LoadConst
+                && matches!(constants.get(load.constant_index()), Some(Constant::Undefined))
+        };
+        stores != 0
+            && match instructions.collect::<Vec<_>>().as_slice() {
+                [completion] => {
+                    (undefined_load(completion) && completion.returns_from_frame())
+                        || (completion.op() == Op::Return
+                            && completion.register_a() >= self.params
+                            && self.initial_register == InitialRegister::Undefined)
+                }
+                [load, completion] => {
+                    undefined_load(load)
+                        && !load.returns_from_frame()
+                        && completion.op() == Op::Return
+                        && completion.register_a() == load.result_register()
+                }
+                _ => false,
+            }
+    }
+
+    /// The `SetThisField` records a body opens with (`only_initializes_this_fields`).
+    pub(crate) fn this_field_stores(&self) -> impl Iterator<Item = WideInstruction> + '_ {
+        self.instructions()
+            .take_while(|instruction| matches!(instruction.op(), Op::SetThisField | Op::SetThisFieldStrict))
     }
 
     /// Whether every read of the `arguments` binding loads it into the last argument of the

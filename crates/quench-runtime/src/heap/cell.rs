@@ -9,6 +9,25 @@ use crate::vm::program_store::ProgramId;
 use crate::vm::wtf16::JsString;
 use rustc_hash::FxHashMap;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Changes whenever the layout an object used as a prototype offers its inheritors can have
+/// changed: its shape, prototype or integrity changes, and at every collection, after which a
+/// dead prototype's record may be reused. A cache that proved a prototype chain under one value
+/// proves it again while the value holds (`FieldAddCache::proved_epoch`). One counter for the
+/// process: a change another heap made only sends caches back to the walk that re-proves them.
+static PROTOTYPE_LAYOUT_EPOCH: AtomicU64 = AtomicU64::new(0);
+
+/// The current `PROTOTYPE_LAYOUT_EPOCH`.
+#[inline(always)]
+pub(crate) fn prototype_layout_epoch() -> u64 {
+    PROTOTYPE_LAYOUT_EPOCH.load(Ordering::Relaxed)
+}
+
+/// Retires every proof made under the current `PROTOTYPE_LAYOUT_EPOCH`.
+pub(crate) fn advance_prototype_layout_epoch() {
+    PROTOTYPE_LAYOUT_EPOCH.fetch_add(1, Ordering::Relaxed);
+}
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct WeakMapEntries {
@@ -1287,7 +1306,7 @@ struct ObjectExtras {
     module_namespace: bool,
     external_address: Option<usize>,
     boxed_primitive: Option<Value>,
-    structured_clone_forbidden: bool,
+    structured_serialization: StructuredSerialization,
     structured_transfer_forbidden: bool,
     module_bindings: Vec<(Atom, ProgramId, u16)>,
     deferred_module: Option<crate::ModuleSource>,
@@ -1296,6 +1315,19 @@ struct ObjectExtras {
     /// An index-keyed property descriptor has been recorded for this object; never cleared.
     indexed_descriptors: bool,
 }
+/// How structured serialization treats an object (HTML [[Serializable]] and
+/// [[Transferable]] host objects).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum StructuredSerialization {
+    /// Serialized by its own properties or builtin data.
+    #[default]
+    Ordinary,
+    /// Never serializable (host-marked uncloneable, or an external).
+    Forbidden,
+    /// Serializable only when listed for transfer (a MessagePort).
+    TransferRequired,
+}
+
 impl ObjectExtras {
     fn allocated_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
@@ -1409,7 +1441,16 @@ impl Object {
     }
 
     pub(crate) fn set_proto(&mut self, proto: Value) {
+        self.note_prototype_layout_change();
         self.meta = (self.meta & !PROTO_INDEX_BITS) | Self::encode_proto(proto);
+    }
+
+    /// A change to what this object offers its inheritors, if it has any.
+    #[inline(always)]
+    fn note_prototype_layout_change(&self) {
+        if self.was_used_as_prototype() {
+            advance_prototype_layout_epoch();
+        }
     }
 
     /// Whether this object is an array's, whose payload holds the element backing.
@@ -1611,12 +1652,13 @@ impl Object {
         object
     }
 
-    pub(crate) fn forbid_structured_clone(&mut self) {
-        self.extras_mut().structured_clone_forbidden = true;
+    /// How structured serialization treats this object.
+    pub(crate) fn set_structured_serialization(&mut self, policy: StructuredSerialization) {
+        self.extras_mut().structured_serialization = policy;
     }
 
-    pub(crate) fn is_structured_clone_forbidden(&self) -> bool {
-        self.extras().is_some_and(|extras| extras.structured_clone_forbidden)
+    pub(crate) fn structured_serialization(&self) -> StructuredSerialization {
+        self.extras().map_or(StructuredSerialization::Ordinary, |extras| extras.structured_serialization)
     }
 
     pub(crate) fn forbid_structured_transfer(&mut self) {
@@ -1693,6 +1735,7 @@ impl Object {
         ValueVec::from_parts(0, self.auxiliary).auxiliary()
     }
     pub(crate) fn set_shape(&mut self, shape: u32) {
+        self.note_prototype_layout_change();
         let mut properties = ValueVec::from_parts(0, self.auxiliary);
         properties.set_auxiliary(shape);
         self.auxiliary = properties.into_parts().1;
@@ -1709,6 +1752,7 @@ impl Object {
         self.properties().is_frozen()
     }
     pub(crate) fn set_frozen(&mut self, value: bool) {
+        self.note_prototype_layout_change();
         let mut properties = ValueVec::from_parts(self.meta & VALUE_VEC_INTEGRITY_BITS, 0);
         properties.set_frozen(value);
         self.meta = (self.meta & !VALUE_VEC_INTEGRITY_BITS) | properties.into_parts().0;
@@ -1755,7 +1799,7 @@ impl Object {
     pub(crate) fn set_external_address(&mut self, address: usize) {
         let extras = self.extras_mut();
         extras.external_address = Some(address);
-        extras.structured_clone_forbidden = true;
+        extras.structured_serialization = StructuredSerialization::Forbidden;
     }
 
     pub(crate) fn is_module_namespace(&self) -> bool {

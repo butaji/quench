@@ -1,613 +1,33 @@
-//! Shared-VM Buffer values are realm-owned Uint8Array views.
-
+//! `node:buffer` is Node's lib/buffer.js over `internalBinding('buffer')`; this module
+//! gives host code its canonical `Buffer`, `FastBuffer` and prototype.
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
+type Context<'a> = NativeContext<'a, NodeHost>;
 
-const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
-    r#"(encode, decode, canonicalEncoding, encodeView, maxStringLength) => {
-  const codedTypeError = (message, code) => {
-    const error = new TypeError(message);
-    error.code = code;
-    return error;
-  };
-  const typedArraySet = Object.getPrototypeOf(Uint8Array.prototype).set;
-  const maxBufferLength = Number.MAX_SAFE_INTEGER;
-  const invalidArgumentDescription = (value) => {
-    if (value === null || value === undefined) return ` Received ${value}`;
-    if (typeof value === "function") return ` Received function ${value.name}`;
-    if (typeof value === "object") {
-      return ` Received an instance of ${value.constructor?.name || "Object"}`;
-    }
-    if (typeof value === "string") return ` Received type string ('${value}')`;
-    return ` Received type ${typeof value} (${String(value)})`;
-  };
-  const normalizeEncoding = (encoding) => {
-    const normalized = canonicalEncoding(String(encoding));
-    if (normalized === undefined) {
-      throw codedTypeError(`Unknown encoding: ${encoding}`, "ERR_UNKNOWN_ENCODING");
-    }
-    return normalized;
-  };
-  const invalidByteLengthArgument = (value) => {
-    let received;
-    if (value === null || value === undefined) {
-      received = ` Received ${value}`;
-    } else if (typeof value === "function") {
-      received = ` Received function ${value.name}`;
-    } else if (typeof value === "object") {
-      received = ` Received an instance of ${value.constructor?.name || "Object"}`;
-    } else {
-      received = ` Received type ${typeof value} (${String(value)})`;
-    }
-    return codedTypeError(
-      'The "string" argument must be of type string or an instance of Buffer or ArrayBuffer.' + received,
-      "ERR_INVALID_ARG_TYPE",
-    );
-  };
-  const byteLengthGetters = [
-    Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, "byteLength").get,
-    ...(typeof SharedArrayBuffer === "undefined"
-      ? []
-      : [Object.getOwnPropertyDescriptor(SharedArrayBuffer.prototype, "byteLength").get]),
-    Object.getOwnPropertyDescriptor(DataView.prototype, "byteLength").get,
-    Object.getOwnPropertyDescriptor(
-      Object.getPrototypeOf(Uint8Array.prototype),
-      "byteLength",
-    ).get,
-  ];
-  const intrinsicByteLength = (value) => {
-    for (const getter of byteLengthGetters) {
-      try {
-        return getter.call(value);
-      } catch {}
-    }
-    return undefined;
-  };
-  const makeBuffer = (bytes) => new Buffer(bytes);
-  const bytesView = (input) => {
-    if (input instanceof ArrayBuffer ||
-        (typeof SharedArrayBuffer !== "undefined" && input instanceof SharedArrayBuffer)) {
-      try { return new Uint8Array(input); } catch (_) { return new Uint8Array(0); }
-    }
-    if (ArrayBuffer.isView(input)) {
-      try { return new Uint8Array(input.buffer, input.byteOffset, input.byteLength); }
-      catch (_) { return new Uint8Array(0); }
-    }
-    throw codedTypeError("The argument must be a Buffer, TypedArray, DataView, or ArrayBuffer", "ERR_INVALID_ARG_TYPE");
-  };
-  const isAscii = (input) => {
-    const bytes = bytesView(input);
-    for (const byte of bytes) if (byte > 0x7F) return false;
-    return true;
-  };
-  const isUtf8 = (input) => {
-    const bytes = bytesView(input);
-    for (let index = 0; index < bytes.length;) {
-      const first = bytes[index++];
-      if (first <= 0x7F) continue;
-      let continuation;
-      let secondMin = 0x80;
-      let secondMax = 0xBF;
-      if (first >= 0xC2 && first <= 0xDF) continuation = 1;
-      else if (first >= 0xE0 && first <= 0xEF) {
-        continuation = 2;
-        if (first === 0xE0) secondMin = 0xA0;
-        if (first === 0xED) secondMax = 0x9F;
-      } else if (first >= 0xF0 && first <= 0xF4) {
-        continuation = 3;
-        if (first === 0xF0) secondMin = 0x90;
-        if (first === 0xF4) secondMax = 0x8F;
-      } else return false;
-      if (index + continuation > bytes.length) return false;
-      const second = bytes[index++];
-      if (second < secondMin || second > secondMax) return false;
-      for (let count = 1; count < continuation; count++) {
-        const byte = bytes[index++];
-        if (byte < 0x80 || byte > 0xBF) return false;
-      }
-    }
-    return true;
-  };
+const FAST_BUFFER_CACHE: &str = "\0builtin:buffer/FastBuffer";
 
-  class Buffer extends Uint8Array {
-    static from(value, encoding, length) {
-      if (typeof value === "string") {
-        return makeBuffer(encodeView(value, normalizeEncoding(encoding || "utf8")));
-      }
-      if (value?.type === "Buffer" && Array.isArray(value.data)) {
-        return new Buffer(value.data);
-      }
-      return new Buffer(value, encoding, length);
-    }
+fn get(c: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, RootedError> {
+    c.get_named_property_rooted(object, name)
+}
 
-    static allocUnsafe(size) {
-      return Buffer.alloc(size);
+/// Load lib/buffer.js and record the `FastBuffer` every host-created Buffer shares.
+pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
+    let module = crate::host::shared_vm::commonjs::node_library_module(c, "buffer.js", "buffer.js")?;
+    let shared = c.host_mut().shared_state();
+    if !shared.borrow().builtin_cache.contains_key(FAST_BUFFER_CACHE) {
+        let fast = crate::host::shared_vm::commonjs::node_library_export(c, "buffer.js", "internal/buffer.js", "FastBuffer")?;
+        let fast = c.retain(fast)?;
+        shared.borrow_mut().builtin_cache.insert(FAST_BUFFER_CACHE.to_owned(), fast);
     }
-
-    static allocUnsafeSlow(size) {
-      return Buffer.alloc(size);
-    }
-
-    static concat(list, totalLength) {
-      if (!Array.isArray(list)) {
-        throw codedTypeError(
-          'The "list" argument must be an instance of Array.' + invalidArgumentDescription(list),
-          "ERR_INVALID_ARG_TYPE",
-        );
-      }
-      if (list.length === 0) return new Buffer(0);
-      let byteLength = 0;
-      for (let index = 0; index < list.length; index++) {
-        const item = list[index];
-        if (!(item instanceof Uint8Array)) {
-          throw codedTypeError(
-            `The "list[${index}]" argument must be an instance of Buffer or Uint8Array.` +
-              invalidArgumentDescription(item),
-            "ERR_INVALID_ARG_TYPE",
-          );
-        }
-        byteLength += intrinsicByteLength(item);
-      }
-      let length = byteLength;
-      if (totalLength !== undefined) {
-        if (typeof totalLength !== "number") {
-          throw codedTypeError(
-            'The "length" argument must be of type number.' +
-              invalidArgumentDescription(totalLength),
-            "ERR_INVALID_ARG_TYPE",
-          );
-        }
-        if (!Number.isInteger(totalLength)) {
-          const error = new RangeError(
-            `The value of "length" is out of range. It must be an integer. Received ${totalLength}`,
-          );
-          error.code = "ERR_OUT_OF_RANGE";
-          throw error;
-        }
-        if (totalLength < 0) {
-          const error = new RangeError(
-            `The value of "length" is out of range. It must be >= 0 && <= ${maxBufferLength}. Received ${totalLength}`,
-          );
-          error.code = "ERR_OUT_OF_RANGE";
-          throw error;
-        }
-        length = totalLength;
-      }
-      const result = new Buffer(length);
-      let offset = 0;
-      for (const item of list) {
-        const count = Math.min(intrinsicByteLength(item), result.length - offset);
-        result.set(new Uint8Array(item.buffer, item.byteOffset, count), offset);
-        offset += count;
-        if (offset === result.length) break;
-      }
-      return result;
-    }
-
-    static byteLength(value, encoding = "utf8") {
-      if (typeof value === "string") {
-        const normalized = canonicalEncoding(String(encoding || "utf8")) || "utf8";
-        return encode(value, normalized).length;
-      }
-      const byteLength = intrinsicByteLength(value);
-      if (byteLength !== undefined) return byteLength;
-      throw invalidByteLengthArgument(value);
-    }
-
-    static isBuffer(value) {
-      return value instanceof Buffer;
-    }
-
-    static isEncoding(encoding) {
-      return typeof encoding === "string" && canonicalEncoding(encoding) !== undefined;
-    }
-
-    static compare(left, right) {
-      if (!(left instanceof Uint8Array)) {
-        throw codedTypeError(
-          'The "buf1" argument must be an instance of Buffer or Uint8Array.' +
-            invalidArgumentDescription(left),
-          "ERR_INVALID_ARG_TYPE",
-        );
-      }
-      if (!(right instanceof Uint8Array)) {
-        throw codedTypeError(
-          'The "buf2" argument must be an instance of Buffer or Uint8Array.' +
-            invalidArgumentDescription(right),
-          "ERR_INVALID_ARG_TYPE",
-        );
-      }
-      const leftLength = intrinsicByteLength(left);
-      const rightLength = intrinsicByteLength(right);
-      const length = Math.min(leftLength, rightLength);
-      for (let index = 0; index < length; index++) {
-        if (left[index] !== right[index]) return left[index] < right[index] ? -1 : 1;
-      }
-      return leftLength === rightLength ? 0 : leftLength < rightLength ? -1 : 1;
-    }
-
-    toJSON() {
-      return { type: "Buffer", data: Array.from(this) };
-    }
-
-    slice(start = 0, end = this.length) {
-      return this.subarray(start, end);
-    }
-
-    copy(target, targetStart = 0, sourceStart = 0, sourceEnd = this.length) {
-      if (!(this instanceof Uint8Array)) {
-        throw codedTypeError('The "this" argument must be an instance of Buffer or Uint8Array', "ERR_INVALID_ARG_TYPE");
-      }
-      if (!ArrayBuffer.isView(target) || target instanceof DataView) {
-        throw codedTypeError('The "target" argument must be an instance of Buffer or Uint8Array', "ERR_INVALID_ARG_TYPE");
-      }
-      targetStart = Math.floor(Number(targetStart));
-      sourceStart = Math.floor(Number(sourceStart));
-      sourceEnd = Math.floor(Number(sourceEnd));
-      if (Number.isNaN(targetStart)) targetStart = 0;
-      if (Number.isNaN(sourceStart)) sourceStart = 0;
-      if (Number.isNaN(sourceEnd)) sourceEnd = this.length;
-      const rangeError = (name, value, message) => {
-        const error = new RangeError(message || `The value of "${name}" is out of range. It must be >= 0. Received ${value}`);
-        error.code = "ERR_OUT_OF_RANGE";
-        throw error;
-      };
-      if (targetStart < 0) rangeError("targetStart", targetStart);
-      if (sourceStart < 0 || sourceStart > this.length) rangeError("sourceStart", sourceStart);
-      if (sourceEnd < 0) {
-        rangeError("sourceEnd", sourceEnd, `The value of "sourceEnd" is out of range. It must be >= 0. Received ${sourceEnd}`);
-      }
-      sourceEnd = Math.min(sourceEnd, this.length);
-      const targetBytes = new Uint8Array(target.buffer, target.byteOffset, target.byteLength);
-      if (sourceEnd <= sourceStart || targetStart >= targetBytes.length) return 0;
-      const length = Math.min(sourceEnd - sourceStart, targetBytes.length - targetStart);
-      try {
-        typedArraySet.call(
-          targetBytes,
-          new Uint8Array(this.buffer, this.byteOffset + sourceStart, length),
-          targetStart,
-        );
-      } catch (error) {
-        // Buffer.copy treats an immutable destination as a successful no-op.
-        // TypedArray.prototype.set is the shared runtime write boundary, so
-        // preserve every other error and translate only its immutable-store
-        // rejection here.
-        if (error instanceof TypeError && error.message === "typed array backing buffer is immutable") {
-          return 0;
-        }
-        throw error;
-      }
-      return length;
-    }
-
-    compare(
-      target,
-      targetStart = 0,
-      targetEnd = intrinsicByteLength(target) ?? 0,
-      thisStart = 0,
-      thisEnd = intrinsicByteLength(this) ?? 0,
-    ) {
-      if (!(target instanceof Uint8Array)) {
-        throw codedTypeError(
-          'The "target" argument must be an instance of Buffer or Uint8Array.' +
-            invalidArgumentDescription(target),
-          "ERR_INVALID_ARG_TYPE",
-        );
-      }
-      const index = (name, value, max = maxBufferLength) => {
-        if (typeof value !== "number") {
-          throw codedTypeError(
-            `The "${name}" argument must be of type number.` + invalidArgumentDescription(value),
-            "ERR_INVALID_ARG_TYPE",
-          );
-        }
-        if (!Number.isFinite(value) || !Number.isInteger(value)) {
-          const error = new RangeError(
-            `The value of "${name}" is out of range. It must be an integer. Received ${value}`,
-          );
-          error.code = "ERR_OUT_OF_RANGE";
-          throw error;
-        }
-        if (value < 0 || value > max) {
-          const error = new RangeError(
-            `The value of "${name}" is out of range. It must be >= 0 && <= ${max}. Received ${value}`,
-          );
-          error.code = "ERR_OUT_OF_RANGE";
-          throw error;
-        }
-        return value;
-      };
-      const toStart = index("targetStart", targetStart);
-      const toEnd = index("targetEnd", targetEnd, target.length);
-      const fromStart = index("sourceStart", thisStart);
-      const fromEnd = index("sourceEnd", thisEnd, this.length);
-      return Buffer.compare(this.subarray(fromStart, fromEnd), target.subarray(toStart, toEnd));
-    }
-  }
-
-  const numericMethods = [
-    ["UInt8", 1, "getUint8", "setUint8", false],
-    ["Int8", 1, "getInt8", "setInt8", false],
-    ["UInt16LE", 2, "getUint16", "setUint16", true],
-    ["UInt16BE", 2, "getUint16", "setUint16", false],
-    ["Int16LE", 2, "getInt16", "setInt16", true],
-    ["Int16BE", 2, "getInt16", "setInt16", false],
-    ["UInt32LE", 4, "getUint32", "setUint32", true],
-    ["UInt32BE", 4, "getUint32", "setUint32", false],
-    ["Int32LE", 4, "getInt32", "setInt32", true],
-    ["Int32BE", 4, "getInt32", "setInt32", false],
-    ["FloatLE", 4, "getFloat32", "setFloat32", true],
-    ["FloatBE", 4, "getFloat32", "setFloat32", false],
-    ["DoubleLE", 8, "getFloat64", "setFloat64", true],
-    ["DoubleBE", 8, "getFloat64", "setFloat64", false],
-  ];
-  const numericRangeError = (name, value, minimum, maximum) => {
-    const error = new RangeError(`The value of "${name}" is out of range. It must be >= ${minimum} and <= ${maximum}. Received ${value}`);
-    error.code = "ERR_OUT_OF_RANGE";
-    return error;
-  };
-  const checkNumericOffset = (buffer, offset, size) => {
-    if (typeof offset !== "number") {
-      throw codedTypeError('The "offset" argument must be of type number', "ERR_INVALID_ARG_TYPE");
-    }
-    if (size > buffer.length) {
-      const error = new RangeError("Attempt to access memory outside buffer bounds");
-      error.code = "ERR_BUFFER_OUT_OF_BOUNDS";
-      throw error;
-    }
-    if (Number.isNaN(offset) || (Number.isFinite(offset) && !Number.isInteger(offset))) {
-      const error = new RangeError(`The value of "offset" is out of range. It must be an integer. Received ${offset}`);
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
-    }
-    if (!Number.isFinite(offset) || offset < 0 || offset > buffer.length - size) {
-      throw numericRangeError("offset", offset, 0, buffer.length - size);
-    }
-    return offset;
-  };
-  for (const [suffix, size, getter, setter, littleEndian] of numericMethods) {
-    const aliases = suffix.startsWith("UInt")
-      ? [suffix, suffix.replace("UInt", "Uint")]
-      : [suffix];
-    const readMethod = function(offset = 0) {
-      offset = checkNumericOffset(this, offset, size);
-      return new DataView(this.buffer, this.byteOffset, this.byteLength)[getter](offset, littleEndian);
-    };
-    const writeMethod = function(value, offset = 0) {
-      offset = checkNumericOffset(this, offset, size);
-      if (typeof value !== "number") {
-        throw codedTypeError('The "value" argument must be of type number', "ERR_INVALID_ARG_TYPE");
-      }
-      if (getter.includes("Uint")) {
-        const maximum = size === 4 ? 0xFFFFFFFF : (2 ** (size * 8)) - 1;
-        if (value < 0 || value > maximum || !Number.isInteger(value)) {
-          throw numericRangeError("value", value, 0, maximum);
-        }
-      } else if (getter.includes("Int")) {
-        const maximum = (2 ** (size * 8 - 1)) - 1;
-        const minimum = -(2 ** (size * 8 - 1));
-        if (value < minimum || value > maximum || !Number.isInteger(value)) {
-          throw numericRangeError("value", value, minimum, maximum);
-        }
-      }
-      new DataView(this.buffer, this.byteOffset, this.byteLength)[setter](offset, value, littleEndian);
-      return offset + size;
-    };
-    for (const alias of aliases) {
-      Buffer.prototype[`read${alias}`] = readMethod;
-      Buffer.prototype[`write${alias}`] = writeMethod;
-    }
-  }
-  const variableIntegerLength = (byteLength) => {
-    if (typeof byteLength !== "number") {
-      throw codedTypeError('The "byteLength" argument must be of type number', "ERR_INVALID_ARG_TYPE");
-    }
-    if (Number.isNaN(byteLength) || (Number.isFinite(byteLength) && !Number.isInteger(byteLength))) {
-      const error = new RangeError(`The value of "byteLength" is out of range. It must be an integer. Received ${byteLength}`);
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
-    }
-    if (!Number.isFinite(byteLength) || byteLength < 1 || byteLength > 6) {
-      throw numericRangeError("byteLength", byteLength, 1, 6);
-    }
-    return byteLength;
-  };
-  const readVariableInteger = (buffer, offset, byteLength, littleEndian, signed) => {
-    byteLength = variableIntegerLength(byteLength);
-    offset = checkNumericOffset(buffer, offset, byteLength);
-    let value = 0;
-    for (let index = 0; index < byteLength; index++) {
-      const source = littleEndian ? index : byteLength - index - 1;
-      value += buffer[offset + source] * (2 ** (8 * index));
-    }
-    if (signed && value >= 2 ** (8 * byteLength - 1)) value -= 2 ** (8 * byteLength);
-    return value;
-  };
-  const writeVariableInteger = (buffer, value, offset, byteLength, littleEndian, signed) => {
-    byteLength = variableIntegerLength(byteLength);
-    offset = checkNumericOffset(buffer, offset, byteLength);
-    if (typeof value !== "number") {
-      throw codedTypeError('The "value" argument must be of type number', "ERR_INVALID_ARG_TYPE");
-    }
-    const bits = 8 * byteLength;
-    const minimum = signed ? -(2 ** (bits - 1)) : 0;
-    const maximum = signed ? (2 ** (bits - 1)) - 1 : (2 ** bits) - 1;
-    if (!Number.isInteger(value) || value < minimum || value > maximum) {
-      const format = (number) => String(number).replace(/(\d)(?=(\d{3})+(?!\d))/g, "$1_");
-      const range = signed
-        ? byteLength > 4
-          ? `>= -(2 ** ${bits - 1}) and < 2 ** ${bits - 1}`
-          : `>= ${minimum} and <= ${maximum}`
-        : byteLength > 4
-          ? `>= 0 and < 2 ** ${bits}`
-          : `>= 0 and <= ${maximum}`;
-      const received = byteLength > 4 ? format(value) : String(value);
-      const error = new RangeError(`The value of "value" is out of range. It must be ${range}. Received ${received}`);
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
-    }
-    let remaining = value < 0 ? value + 2 ** bits : value;
-    for (let index = 0; index < byteLength; index++) {
-      const target = littleEndian ? index : byteLength - index - 1;
-      buffer[offset + target] = remaining & 0xFF;
-      remaining = Math.floor(remaining / 256);
-    }
-    return offset + byteLength;
-  };
-  for (const [suffix, littleEndian, signed] of [
-    ["UIntLE", true, false], ["UIntBE", false, false],
-    ["IntLE", true, true], ["IntBE", false, true],
-  ]) {
-    const aliases = suffix.startsWith("UInt") ? [suffix, suffix.replace("UInt", "Uint")] : [suffix];
-    const readMethod = function(offset, byteLength) {
-      return readVariableInteger(this, offset, byteLength, littleEndian, signed);
-    };
-    const writeMethod = function(value, offset, byteLength) {
-      return writeVariableInteger(this, value, offset, byteLength, littleEndian, signed);
-    };
-    for (const alias of aliases) {
-      Buffer.prototype[`read${alias}`] = readMethod;
-      Buffer.prototype[`write${alias}`] = writeMethod;
-    }
-  }
-  const legacyWrite = (encoding) => function(value, offset, length) {
-    offset = offset === undefined ? 0 : offset;
-    length = length === undefined ? this.length - offset : length;
-    if (typeof offset !== "number" || typeof length !== "number" ||
-        offset < 0 || length < 0 || offset + length > this.length) {
-      const error = new RangeError("Attempt to access memory outside buffer bounds");
-      error.code = "ERR_BUFFER_OUT_OF_BOUNDS";
-      throw error;
-    }
-    return this.write(value, offset, length, encoding);
-  };
-  Buffer.prototype.asciiWrite = legacyWrite("ascii");
-  Buffer.prototype.latin1Write = legacyWrite("latin1");
-  Buffer.prototype.utf8Write = legacyWrite("utf8");
-
-  // Node's alloc is an ordinary constructible function, including its arity.
-  Buffer.alloc = function alloc(size, fill, encoding) {
-    if (typeof size !== "number") {
-      throw codedTypeError('The "size" argument must be of type number', "ERR_INVALID_ARG_TYPE");
-    }
-    if (!Number.isFinite(size) || size < 0 || size > 0x7fffffff) {
-      const error = new RangeError("The value of \"size\" is out of range");
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
-    }
-    const result = new Buffer(Math.trunc(size));
-    if (typeof fill === "string") {
-      const pattern = Buffer.from(fill, encoding);
-      if (pattern.length === 1) {
-        Uint8Array.prototype.fill.call(result, pattern[0]);
-      } else if (pattern.length > 1) {
-        for (let index = 0; index < result.length; index++) {
-          result[index] = pattern[index % pattern.length];
-        }
-      }
-    } else {
-      result.fill(fill === undefined ? 0 : fill);
-    }
-    return result;
-  };
-
-  // Node exposes Buffer's static API as enumerable own properties. Packages
-  // such as safer-buffer derive their constructor view with `for...in`.
-  for (const name of Object.getOwnPropertyNames(Buffer)) {
-    if (name === "length" || name === "name" || name === "prototype") continue;
-    Object.defineProperty(Buffer, name, { enumerable: true });
-  }
-
-  return {
-    Buffer,
-    SlowBuffer: Buffer,
-    isAscii,
-    isUtf8,
-    kMaxLength: maxBufferLength,
-    kStringMaxLength: maxStringLength,
-    constants: { MAX_LENGTH: maxBufferLength, MAX_STRING_LENGTH: maxStringLength },
-  };
-}"#
-);
-
-pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    let factory = context.evaluate_script_rooted(BUFFER_FACTORY, "node:buffer/shared.js")?;
-    let encode = context.host_function(crate::host::shared_vm::operation("bufferEncode"))?;
-    let encode_view =
-        context.host_function(crate::host::shared_vm::operation("bufferEncodeView"))?;
-    let decode = context.host_function(crate::host::shared_vm::operation("bufferDecode"))?;
-    let canonical_encoding =
-        context.host_function(crate::host::shared_vm::operation("bufferCanonicalEncoding"))?;
-    let undefined = context.undefined();
-    let maximum_string_length =
-        context.number(NativeContext::<NodeHost>::MAX_STRING_CODE_UNITS as f64);
-    let constructor = context.call_rooted(
-        factory,
-        undefined,
-        &[
-            encode,
-            decode,
-            canonical_encoding,
-            encode_view,
-            maximum_string_length,
-        ],
-    )?;
-
-    let module = context.object_rooted()?;
-    let buffer = get(context, constructor, "Buffer")?;
-    let buffer = super::buffer_constructor_shared_vm::install(context, buffer)?;
-    super::buffer_compare_shared_vm::install(context, buffer)?;
-    let prototype = get(context, buffer, "prototype")?;
-    super::buffer_search_shared_vm::install(context, prototype)?;
-    super::buffer_bigint_shared_vm::install(context, prototype)?;
-    super::buffer_swap_shared_vm::install(context, prototype)?;
-    super::buffer_write_shared_vm::install(context, prototype)?;
-    let limits = get(context, constructor, "constants")?;
-    for name in ["MAX_LENGTH", "MAX_STRING_LENGTH"] {
-        let key = context.string_rooted(name);
-        let value = get(context, limits, name)?;
-        context.define_data_property_rooted(limits, key, value, false, true, false)?;
-    }
-    super::buffer_string_shared_vm::install(context, prototype)?;
-    super::buffer_fill_shared_vm::install(context, prototype)?;
-    super::buffer_inspect_shared_vm::install(context, module, prototype)?;
-    install_backing_getters(context, buffer, prototype)?;
-    let shared = context.host_mut().shared_state();
-    let capture_prototype = shared.borrow().buffer_prototype.is_none();
-    if capture_prototype {
-        let prototype = get(context, buffer, "prototype")?;
-        let prototype = context.retain(prototype)?;
-        shared.borrow_mut().buffer_prototype = Some(prototype);
-    }
-    set(context, module, "Buffer", buffer)?;
-    let slow_buffer = get(context, constructor, "SlowBuffer")?;
-    set(context, module, "SlowBuffer", slow_buffer)?;
-    for name in [
-        "isAscii",
-        "isUtf8",
-        "kMaxLength",
-        "kStringMaxLength",
-        "constants",
-    ] {
-        let value = get(context, constructor, name)?;
-        set(context, module, name, value)?;
-    }
-    let global = context.global_root()?;
-    for name in ["atob", "btoa"] {
-        if let Some(value) = optional_get(context, global, name)? {
-            set(context, module, name, value)?;
-        }
-    }
-    super::buffer_latin1_shared_vm::install(context, module)?;
     Ok(module)
 }
 
 /// Installs `globalThis.Buffer` as Node's accessor pair (non-enumerable getter `get` and
 /// setter `set` over one binding) and the canonical `NodeBuffer` alias. The `buffer` module is
 /// built on the first read of either, not at start-up.
-pub(crate) fn install_global(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
-    let load = context.host_function(crate::host::shared_vm::operation("bufferConstructor"))?;
-    let installer = context.evaluate_script_rooted(
+pub(crate) fn install_global(c: &mut Context<'_>) -> Result<(), RootedError> {
+    let load = c.host_function(crate::host::shared_vm::operation("bufferConstructor"))?;
+    let installer = c.evaluate_script_rooted(
         r#"(load) => {
   let _Buffer;
   let assigned = false;
@@ -625,298 +45,67 @@ pub(crate) fn install_global(context: &mut NativeContext<'_, NodeHost>) -> Resul
 }"#,
         "node:buffer/install-global.js",
     )?;
-    let undefined = context.undefined();
-    context.call_rooted(installer, undefined, &[load])?;
+    let undefined = c.undefined();
+    c.call_rooted(installer, undefined, &[load])?;
     Ok(())
 }
 
 /// The `buffer` module's `Buffer`, building the module on first use.
-pub(crate) fn constructor(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    _: &[RootId],
-) -> Result<RootId, RootedError> {
-    let module = crate::host::shared_vm::commonjs::buffer_module(context)?;
-    get(context, module, "Buffer")
+pub(crate) fn constructor(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let module = crate::host::shared_vm::commonjs::buffer_module(c)?;
+    get(c, module, "Buffer")
 }
 
-pub(crate) fn install_blob_export(
-    context: &mut NativeContext<'_, NodeHost>,
-    module: RootId,
-) -> Result<(), RootedError> {
-    let global = context.global_root()?;
-    let blob = get(context, global, "Blob")?;
-    set(context, module, "Blob", blob)?;
-    let file = get(context, global, "File")?;
-    set(context, module, "File", file)
-}
-
-pub(crate) fn encode(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let bytes = encode_arguments(context, args)?;
-    number_array(context, &bytes)
-}
-
-/// The Buffer constructor consumes intrinsic typed bytes without guest iteration.
-pub(crate) fn encode_view(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let bytes = encode_arguments(context, args)?;
-    context.uint8_array_rooted(&bytes)
-}
-
-fn encode_arguments(
-    context: &mut NativeContext<'_, NodeHost>,
-    args: &[RootId],
-) -> Result<Vec<u8>, RootedError> {
-    let Some(input) = args.first().copied() else {
-        return Err(type_error(
-            context,
-            "The \"string\" argument must be of type string",
-            "ERR_INVALID_ARG_TYPE",
-        )?);
-    };
-    encode_bytes(context, input, args.get(1).copied())
-}
-
-pub(crate) fn encode_bytes(
-    context: &mut NativeContext<'_, NodeHost>,
-    input: RootId,
-    requested_encoding: Option<RootId>,
-) -> Result<Vec<u8>, RootedError> {
-    let Some(input) = context.string_code_units(input)? else {
-        return Err(type_error(
-            context,
-            "The \"string\" argument must be of type string",
-            "ERR_INVALID_ARG_TYPE",
-        )?);
-    };
-    let encoding_name = encoding(context, requested_encoding)?;
-    let Some(encoding) = crate::modules::buffer_codec::canonical_encoding(&encoding_name) else {
-        return Err(type_error(
-            context,
-            &format!("Unknown encoding: {encoding_name}"),
-            "ERR_UNKNOWN_ENCODING",
-        )?);
-    };
-    Ok(crate::modules::buffer_codec::encode_units(&input, encoding))
-}
-
-pub(crate) fn decode(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let Some(values) = args.first().copied() else {
-        return Err(type_error(
-            context,
-            "The bytes argument must be an array",
-            "ERR_INVALID_ARG_TYPE",
-        )?);
-    };
-    let encoding = encoding(context, args.get(1).copied())?;
-    let Some(canonical) = crate::modules::buffer_codec::canonical_encoding(&encoding) else {
-        return Err(type_error(
-            context,
-            &format!("Unknown encoding: {encoding}"),
-            "ERR_UNKNOWN_ENCODING",
-        )?);
-    };
-    if let Some(bytes) = context.view_bytes_rooted(values) {
-        let units = crate::modules::buffer_codec::decode_units(&bytes, canonical);
-        return Ok(context.string_units_rooted(&units));
+/// The canonical FastBuffer, loading the buffer module on first use.
+pub(crate) fn fast_buffer(c: &mut Context<'_>) -> Result<RootId, RootedError> {
+    let shared = c.host_mut().shared_state();
+    if !shared.borrow().builtin_cache.contains_key(FAST_BUFFER_CACHE) {
+        crate::host::shared_vm::commonjs::buffer_module(c)?;
     }
-    let length = get(context, values, "length")?;
-    let length = context
-        .rooted_value(length)
-        .and_then(|value| value.as_number())
-        .unwrap_or_default()
-        .max(0.0) as usize;
-    let mut bytes = Vec::with_capacity(length);
-    for index in 0..length {
-        let value = get(context, values, &index.to_string())?;
-        bytes.push(
-            context
-                .rooted_value(value)
-                .and_then(|value| value.as_number())
-                .unwrap_or_default() as u8,
-        );
-    }
-    let units = crate::modules::buffer_codec::decode_units(&bytes, canonical);
-    Ok(context.string_units_rooted(&units))
+    let fast = shared.borrow().builtin_cache.get(FAST_BUFFER_CACHE).copied();
+    fast.ok_or_else(|| RootedError::host("canonical FastBuffer missing"))
 }
 
-pub(crate) fn canonical_encoding(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let Some(input) = args.first().copied() else {
-        return Ok(context.undefined());
-    };
-    let Some(name) = context.string_text(input)? else {
-        return Ok(context.undefined());
-    };
-    Ok(
-        match crate::modules::buffer_codec::canonical_encoding(&name) {
-            Some(name) => context.string_rooted(name),
-            None => context.undefined(),
-        },
-    )
-}
-
-fn encoding(
-    context: &mut NativeContext<'_, NodeHost>,
-    root: Option<RootId>,
-) -> Result<String, RootedError> {
-    let Some(root) = root else {
-        return Ok("utf8".to_string());
-    };
-    if context
-        .rooted_value(root)
-        .is_some_and(|value| value.is_undefined())
-    {
-        return Ok("utf8".to_string());
-    }
-    context.string_text(root)?.ok_or_else(|| {
-        type_error(
-            context,
-            "The \"encoding\" argument must be of type string",
-            "ERR_INVALID_ARG_TYPE",
-        )
-        .expect_err("type_error always returns the constructed exception")
-    })
-}
-
-fn number_array(
-    context: &mut NativeContext<'_, NodeHost>,
-    bytes: &[u8],
-) -> Result<RootId, RootedError> {
-    let values = bytes
-        .iter()
-        .map(|byte| context.number(f64::from(*byte)))
-        .collect::<Vec<_>>();
-    context.array_rooted(&values)
-}
-
-fn type_error(
-    context: &mut NativeContext<'_, NodeHost>,
-    message: &str,
-    code: &str,
-) -> Result<RootedError, RootedError> {
-    let error = context.type_error_rooted(message)?;
-    let key = context.string_rooted("code");
-    let value = context.string_rooted(code);
-    context.set_property_rooted(error, key, value, error)?;
-    Ok(context.throw(error))
-}
-
-fn get(
-    context: &mut NativeContext<'_, NodeHost>,
-    object: RootId,
-    name: &str,
-) -> Result<RootId, RootedError> {
-    let key = context.string_rooted(name);
-    context.get_property_rooted(object, key)
-}
-
-fn optional_get(
-    context: &mut NativeContext<'_, NodeHost>,
-    object: RootId,
-    name: &str,
-) -> Result<Option<RootId>, RootedError> {
-    let value = get(context, object, name)?;
-    Ok(context
-        .rooted_value(value)
-        .filter(|value| !value.is_undefined())
-        .map(|_| value))
-}
-
-fn set(
-    context: &mut NativeContext<'_, NodeHost>,
-    object: RootId,
-    name: &str,
-    value: RootId,
-) -> Result<(), RootedError> {
-    let key = context.string_rooted(name);
-    if context.set_property_rooted(object, key, value, object)? {
-        Ok(())
-    } else {
-        Err(RootedError::host(format!(
-            "cannot install shared Buffer property {name}"
-        )))
-    }
-}
-
-/// Create native Buffer results without calling mutable public constructors.
-pub(crate) fn from_bytes(
-    context: &mut NativeContext<'_, NodeHost>,
-    bytes: &[u8],
-) -> Result<RootId, RootedError> {
-    let shared = context.host_mut().shared_state();
-    let prototype = shared
-        .borrow()
-        .buffer_prototype
-        .ok_or_else(|| RootedError::host("Buffer intrinsic prototype is not initialized"))?;
-    let value = context.uint8_array_rooted(bytes)?;
-    if !context.set_prototype_rooted(value, prototype)? {
-        return Err(RootedError::host(
-            "New Buffer view rejected its intrinsic prototype",
-        ));
+/// A new Buffer holding a copy of `bytes`. A class's `prototype` is non-writable and
+/// non-configurable, so FastBuffer's is read rather than stored again.
+pub(crate) fn from_bytes(c: &mut Context<'_>, bytes: &[u8]) -> Result<RootId, RootedError> {
+    let fast = fast_buffer(c)?;
+    let prototype = get(c, fast, "prototype")?;
+    let value = c.uint8_array_rooted(bytes)?;
+    if !c.set_prototype_rooted(value, prototype)? {
+        return Err(RootedError::host("New Buffer view rejected its intrinsic prototype"));
     }
     Ok(value)
 }
 
-pub(crate) fn cleanup(runtime: &mut quench_runtime::Runtime<NodeHost>) {
-    let shared = runtime.host_mut().shared_state();
-    let prototype = shared.borrow_mut().buffer_prototype.take();
-    if let Some(prototype) = prototype {
-        runtime.release_root(prototype);
+fn type_error(c: &mut Context<'_>, message: &str, code: &str) -> RootedError {
+    let error = match c.type_error_rooted(message) {
+        Ok(error) => error,
+        Err(error) => return error,
+    };
+    let key = c.string_rooted("code");
+    let value = c.string_rooted(code);
+    if let Err(error) = c.set_property_rooted(error, key, value, error) {
+        return error;
     }
+    c.throw(error)
 }
 
-/// Node's legacy backing aliases observe Buffer membership and original properties.
-fn install_backing_getters(
-    context: &mut NativeContext<'_, NodeHost>,
-    constructor: RootId,
-    prototype: RootId,
-) -> Result<(), RootedError> {
-    for (name, property) in [("parent", "buffer"), ("offset", "byteOffset")] {
-        let data = context.object_rooted()?;
-        set(context, data, "constructor", constructor)?;
-        let property = context.string_rooted(property);
-        set(context, data, "property", property)?;
-        let getter = context
-            .host_function_with_data(crate::host::shared_vm::operation("bufferBackingGet"), data)?;
-        let key = context.string_rooted("name");
-        let get_name = context.string_rooted("get");
-        context.define_data_property_rooted(getter, key, get_name, false, false, true)?;
-        let descriptor = context.null_object_rooted()?;
-        set(context, descriptor, "get", getter)?;
-        let yes = context.boolean(true);
-        set(context, descriptor, "enumerable", yes)?;
-        let key = context.string_rooted(name);
-        context.define_property_descriptor_rooted(prototype, key, descriptor)?;
-    }
-    Ok(())
-}
-
-pub(crate) fn backing_get(
-    context: &mut NativeContext<'_, NodeHost>,
-    receiver: RootId,
-    _: &[RootId],
-) -> Result<RootId, RootedError> {
-    let data = context.host_function_data()?;
-    let constructor = get(context, data, "constructor")?;
-    if context.instance_of_rooted(receiver, constructor)? {
-        let property = get(context, data, "property")?;
-        context.get_property_rooted(receiver, property)
-    } else {
-        Ok(context.undefined())
-    }
+/// A string's bytes under a requested encoding (`Buffer.from(string, encoding)`'s policy):
+/// undefined means UTF-8, and only Node's encoding names are accepted.
+pub(crate) fn encode_bytes(c: &mut Context<'_>, input: RootId, encoding: Option<RootId>) -> Result<Vec<u8>, RootedError> {
+    let Some(units) = c.string_code_units(input)? else {
+        return Err(type_error(c, "The \"string\" argument must be of type string", "ERR_INVALID_ARG_TYPE"));
+    };
+    let name = match encoding.filter(|encoding| !c.rooted_value(*encoding).is_some_and(|value| value.is_undefined())) {
+        None => "utf8".to_owned(),
+        Some(encoding) => match c.string_text(encoding)? {
+            Some(name) => name,
+            None => return Err(type_error(c, "The \"encoding\" argument must be of type string", "ERR_INVALID_ARG_TYPE")),
+        },
+    };
+    let Some(canonical) = super::buffer_codec::canonical_encoding(&name) else {
+        return Err(type_error(c, &format!("Unknown encoding: {name}"), "ERR_UNKNOWN_ENCODING"));
+    };
+    Ok(super::buffer_codec::encode_units(&units, canonical))
 }
