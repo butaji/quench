@@ -15,10 +15,12 @@ pub(crate) struct JsString {
 /// Where a string's units live.
 #[derive(Clone)]
 enum Repr {
-    /// Short ASCII text (`FlatUnits::Short`, never another variant) held in the string value
-    /// itself, and so in its heap cell: most property names, tokens and short results need no
-    /// allocation.
-    Inline(FlatUnits),
+    /// Flat ASCII text (`FlatUnits::Short` or `FlatUnits::Ascii`, never `Wide`) held by the
+    /// string value itself: short text inline, longer text in one shared allocation of its
+    /// bytes. An ASCII string is its own host text and is never a rope, so it needs nothing
+    /// a record holds.
+    Flat(FlatUnits),
+    /// A rope, or wide units, whose host text is made on demand.
     Shared(Rc<JsStringInner>),
 }
 #[cfg(target_pointer_width = "64")]
@@ -526,10 +528,8 @@ impl JsStringBuilder {
 impl JsString {
     fn from_flat(units: FlatUnits) -> Self {
         let repr = match units {
-            FlatUnits::Short(_) => Repr::Inline(units),
-            FlatUnits::Ascii(_) | FlatUnits::Wide(_) => {
-                Repr::Shared(Rc::new(JsStringInner::flat(units)))
-            }
+            FlatUnits::Short(_) | FlatUnits::Ascii(_) => Repr::Flat(units),
+            FlatUnits::Wide(_) => Repr::Shared(Rc::new(JsStringInner::flat(units))),
         };
         Self { repr }
     }
@@ -541,7 +541,7 @@ impl JsString {
     /// The string as a node a rope can hold.
     fn node(&self) -> Rc<JsStringInner> {
         match &self.repr {
-            Repr::Inline(units) => Rc::new(JsStringInner::flat(units.clone())),
+            Repr::Flat(units) => Rc::new(JsStringInner::flat(units.clone())),
             Repr::Shared(inner) => inner.clone(),
         }
     }
@@ -576,7 +576,7 @@ impl JsString {
     /// The flat units, flattening a rope on first use.
     pub(crate) fn flat(&self) -> &FlatUnits {
         let inner = match &self.repr {
-            Repr::Inline(units) => return units,
+            Repr::Flat(units) => return units,
             Repr::Shared(inner) => inner,
         };
         inner.flat.get_or_init(|| {
@@ -601,7 +601,7 @@ impl JsString {
     /// The host text a `Wide` string made, if any.
     fn existing_host(&self) -> Option<&Rc<str>> {
         match &self.repr {
-            Repr::Inline(_) => None,
+            Repr::Flat(_) => None,
             Repr::Shared(inner) => inner.existing_host(),
         }
     }
@@ -613,7 +613,7 @@ impl JsString {
             FlatUnits::Ascii(text) => text,
             FlatUnits::Wide(units) => match &self.repr {
                 Repr::Shared(inner) => inner.host(|| Rc::<str>::from(String::from_utf16_lossy(units))),
-                Repr::Inline(_) => unreachable!("an inline string is ASCII"),
+                Repr::Flat(_) => unreachable!("a flat string held by value is ASCII"),
             },
         }
     }
@@ -621,7 +621,7 @@ impl JsString {
     /// Bytes of flat units this string holds; a rope owns only its node until it flattens.
     pub(crate) fn flat_unit_bytes(&self) -> usize {
         let flat = match &self.repr {
-            Repr::Inline(units) => Some(units),
+            Repr::Flat(units) => Some(units),
             Repr::Shared(inner) => inner.flat.get(),
         };
         match flat.map(FlatUnits::view) {
@@ -633,7 +633,7 @@ impl JsString {
 
     pub(crate) fn len(&self) -> usize {
         match &self.repr {
-            Repr::Inline(units) => units.view().len(),
+            Repr::Flat(units) => units.view().len(),
             Repr::Shared(inner) => inner.length as usize,
         }
     }
