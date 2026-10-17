@@ -12,7 +12,7 @@ const DNS_ORDER_IPV6_FIRST: i32 = 2;
 enum Completion { Addresses(Result<Vec<std::net::IpAddr>, backend::ResolveError>), Name(Result<service_backend::NameInfo, backend::ResolveError>) }
 pub(crate) struct Pending { request: RootId, async_id: u64, receiver: mpsc::Receiver<Completion> }
 #[derive(Default)]
-pub(crate) struct State { array_factory: Option<RootId>, pending: Vec<Pending>, pub(crate) default_order: Option<String> }
+pub(crate) struct State { array_factory: Option<RootId>, pending: Vec<Pending> }
 impl State { pub(crate) fn has_work(&self) -> bool { !self.pending.is_empty() } }
 fn put(c: &mut Context<'_>, object: RootId, name: &str, value: RootId) -> Result<(), RootedError> {
     let key = c.string_rooted(name); c.define_data_property_rooted(object, key, value, true, true, true).map(|_| ())
@@ -38,6 +38,8 @@ pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     ] { let value = c.number(number as f64); put(c, object, name, value)?; }
     #[cfg(quench_node_cares)]
     super::cares_channel_shared_vm::install(c, object)?;
+    #[cfg(not(quench_node_cares))]
+    super::dns_shared_vm::install_channel(c, object)?;
     Ok(object)
 }
 pub(crate) fn address_array(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {

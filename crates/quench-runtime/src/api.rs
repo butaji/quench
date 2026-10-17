@@ -10,6 +10,7 @@ pub(crate) use native::CompiledScriptState;
 pub use native::{
     BufferStorage, BuiltinBrand, ValueType, BuiltinData, CollectionPreview, PromiseSnapshot, HostFunction, HostFunctionId, HostWeakRoot, PreparedScript, NativeArithmetic,
     CompiledScript, NativeContext, RootedIterator, ErrorSourcePosition, SourceStackFrame, SynchronousModule,
+    DeserializerDelegate, SerializerDelegate,
 };
 
 /// The syntax context used when compiling source. Script and Module use

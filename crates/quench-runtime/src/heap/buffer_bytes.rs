@@ -192,6 +192,15 @@ impl BufferBytes {
         }
     }
 
+    /// The bytes as one owned vector, without a copy when this is their only owner.
+    pub(crate) fn into_vec(self) -> Vec<u8> {
+        match Rc::try_unwrap(self.0) {
+            Ok(BufferStore::Owned(bytes) | BufferStore::AddressPinned(bytes)) => bytes,
+            Ok(store) => Self(Rc::new(store)).to_vec(),
+            Err(shared) => Self(shared).to_vec(),
+        }
+    }
+
     /// The owned bytes for resizing. Views are never resizable buffers.
     pub(crate) fn owned_mut(&mut self) -> &mut Vec<u8> {
         let store = Rc::make_mut(&mut self.0);

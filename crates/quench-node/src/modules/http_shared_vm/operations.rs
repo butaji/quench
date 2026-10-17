@@ -48,20 +48,93 @@ const MODULE_FACTORY: &str = r#"((initializeServer, EventEmitter, request, creat
     }
   });
   const createServer = (...args) => new Server(...args);
-  class Agent {
-    constructor(options) {
-      this._quenchSharedAgentId = createAgent(options);
+  // Node's lib/_http_agent.js public pool state; the native pool owns the sockets.
+  const DEFAULT_KEEP_ALIVE_MSECS = 1000;
+  const DEFAULT_MAX_FREE_SOCKETS = 256;
+  const DEFAULT_KEEP_ALIVE_TIMEOUT_BUFFER = 1000;
+  const MIN_TOTAL_SOCKETS = 1;
+  const SCHEDULING = ["fifo", "lifo"];
+  function Agent(options) {
+    if (!(this instanceof Agent)) return new Agent(options);
+    EventEmitter.call(this);
+    this.options = { __proto__: null, ...options };
+    this.defaultPort = this.options.defaultPort || 80;
+    this.protocol = this.options.protocol || "http:";
+    if (this.options.noDelay === undefined) this.options.noDelay = true;
+    this.options.path = null;
+    this.requests = { __proto__: null };
+    this.sockets = { __proto__: null };
+    this.freeSockets = { __proto__: null };
+    this.keepAliveMsecs = this.options.keepAliveMsecs || DEFAULT_KEEP_ALIVE_MSECS;
+    this.keepAlive = this.options.keepAlive || false;
+    this.maxSockets = this.options.maxSockets || Agent.defaultMaxSockets;
+    this.maxFreeSockets = this.options.maxFreeSockets || DEFAULT_MAX_FREE_SOCKETS;
+    this.scheduling = this.options.scheduling || "lifo";
+    this.maxTotalSockets = this.options.maxTotalSockets;
+    this.totalSocketCount = 0;
+    const buffer = this.options.agentKeepAliveTimeoutBuffer;
+    this.agentKeepAliveTimeoutBuffer =
+      typeof buffer === "number" && buffer >= 0 && Number.isFinite(buffer) ? buffer : DEFAULT_KEEP_ALIVE_TIMEOUT_BUFFER;
+    if (!SCHEDULING.includes(this.scheduling)) {
+      const error = new TypeError(`The argument 'scheduling' must be one of: 'fifo', 'lifo'. Received ${JSON.stringify(this.scheduling)}`);
+      error.code = "ERR_INVALID_ARG_VALUE";
+      throw error;
     }
-    destroy() {
-      return destroyAgent(this._quenchSharedAgentId);
+    if (this.maxTotalSockets !== undefined) {
+      if (typeof this.maxTotalSockets !== "number") throw invalidArgument("maxTotalSockets", "of type number", this.maxTotalSockets);
+      if (!(this.maxTotalSockets >= MIN_TOTAL_SOCKETS)) {
+        const error = new RangeError(`The value of "maxTotalSockets" is out of range. It must be >= ${MIN_TOTAL_SOCKETS}. Received ${this.maxTotalSockets}`);
+        error.code = "ERR_OUT_OF_RANGE";
+        throw error;
+      }
+    } else {
+      this.maxTotalSockets = Infinity;
     }
+    Object.defineProperty(this, "_quenchSharedAgentId", { value: createAgent(options) });
   }
+  Object.setPrototypeOf(Agent.prototype, EventEmitter.prototype);
+  Object.setPrototypeOf(Agent, EventEmitter);
+  Agent.defaultMaxSockets = Infinity;
+  Agent.prototype.destroy = function destroy() {
+    return destroyAgent(this._quenchSharedAgentId);
+  };
+  // Node's internal/http.js getGlobalAgent options.
+  const GLOBAL_AGENT_TIMEOUT_MSECS = 5000;
+  const globalAgent = new Agent({ keepAlive: true, scheduling: "lifo", timeout: GLOBAL_AGENT_TIMEOUT_MSECS });
   const get = (input, options, callback) => {
     const outgoing = request(input, options, callback);
     outgoing.end();
     return outgoing;
   };
-  return { Server, createServer, request, get, Agent, IncomingMessage, ServerResponse };
+  return { Server, createServer, request, get, Agent, globalAgent, IncomingMessage, ServerResponse };
+})"#;
+
+// Node's lib/https.js agent over the HTTP agent's pool state. Fastify and the AWS SDK
+// import both transports at initialization; requests need the TLS client transport.
+const HTTPS_FACTORY: &str = r#"((http) => {
+  const DEFAULT_MAX_CACHED_SESSIONS = 100;
+  function Agent(options) {
+    if (!(this instanceof Agent)) return new Agent(options);
+    options = { __proto__: null, ...options };
+    options.defaultPort ??= 443;
+    options.protocol ??= "https:";
+    http.Agent.call(this, options);
+    this.maxCachedSessions = this.options.maxCachedSessions;
+    if (this.maxCachedSessions === undefined) this.maxCachedSessions = DEFAULT_MAX_CACHED_SESSIONS;
+    this._sessionCache = { map: {}, list: [] };
+  }
+  Object.setPrototypeOf(Agent.prototype, http.Agent.prototype);
+  Object.setPrototypeOf(Agent, http.Agent);
+  // Node's internal/http.js getGlobalAgent options.
+  const GLOBAL_AGENT_TIMEOUT_MSECS = 5000;
+  const globalAgent = new Agent({ keepAlive: true, scheduling: "lifo", timeout: GLOBAL_AGENT_TIMEOUT_MSECS });
+  const unavailable = () => new Error("HTTPS transport is unavailable");
+  return {
+    Agent,
+    globalAgent,
+    request: function request() { throw unavailable(); },
+    get: function get() { throw unavailable(); },
+  };
 })"#;
 
 const SERVER_CLOSE_FACTORY: &str = r#"((closeOperation) => function(callback) {
@@ -325,6 +398,12 @@ pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
         .http
         .incoming_factory = Some(incoming_factory);
     Ok(module)
+}
+
+pub(crate) fn https_module(context: &mut Context<'_>, http: RootId) -> Result<RootId, RootedError> {
+    let factory = context.evaluate_script_rooted(HTTPS_FACTORY, "node:https.js")?;
+    let undefined = context.undefined();
+    context.call_rooted(factory, undefined, &[http])
 }
 
 pub(crate) fn create_server(
