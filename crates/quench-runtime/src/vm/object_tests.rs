@@ -232,7 +232,7 @@ fn spread_sources_stay_rooted_through_the_loop_that_reuses_them() {
         })
         .unwrap();
     for pc in head..=back_edge {
-        let root_map = program.register_roots[function.register_root_offset as usize + pc];
+        let root_map = program.register_roots.mask(function.register_root_offset, function.registers, pc).unwrap();
         assert_ne!(root_map & (1u64 << register), 0, "pc {pc} drops register {register}");
     }
 }
@@ -273,7 +273,7 @@ fn static_three_field_object_literals_share_the_shape_site() {
             .unwrap_or_else(|| panic!("{mode} compiler did not select the literal site"));
         let window = instruction.register_window();
         assert_eq!(window.count, 3, "{mode}");
-        let root_map = program.register_roots[function.register_root_offset as usize + pc];
+        let root_map = program.register_roots.mask(function.register_root_offset, function.registers, pc).unwrap();
         for register in window.base..window.base + window.count {
             assert_ne!(
                 root_map & (1u64 << register),

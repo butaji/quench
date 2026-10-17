@@ -192,7 +192,7 @@ mod tests {
             object_sites: Vec::new(),
             regexp_literal_sites: Vec::new(),
             superinstructions: Vec::new(),
-            register_roots: Vec::new(),
+            register_roots: Default::default(),
         };
         let mut pairs = vec![0; PAIRS];
         pairs[Op::LoadLocal as usize * Op::COUNT + Op::StoreLocal as usize] = 4;

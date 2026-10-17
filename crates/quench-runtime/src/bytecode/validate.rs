@@ -492,7 +492,7 @@ impl ResidualProgram {
         if self.functions.is_empty() && self.kind != super::ProgramKind::Wasm {
             return Err("program has no entry function".into());
         }
-        if self.register_roots.len() > u32::MAX as usize {
+        if self.register_roots.bytes().len() >= super::NO_REGISTER_ROOT_MAP as usize {
             return Err("register root table is too large".into());
         }
         let selective_capture_scope_unsafe =
@@ -697,28 +697,24 @@ impl ResidualProgram {
                     "function {index} undefined register is out of bounds"
                 ));
             }
-            if function.register_root_offset != u32::MAX {
-                let root_end = function
-                    .register_root_offset
-                    .checked_add(code_len.saturating_add(1))
-                    .ok_or_else(|| format!("function {index} root map overflows"))?;
-                if root_end as usize > self.register_roots.len() {
-                    return Err(format!("function {index} root map is out of bounds"));
+            if function.register_root_offset != super::NO_REGISTER_ROOT_MAP {
+                if u32::from(function.registers) > u64::BITS {
+                    return Err(format!("function {index} registers exceed a root map"));
                 }
-                if function.registers <= 64 {
-                    let mask = if function.registers == 0 {
-                        0
-                    } else {
-                        u64::MAX >> (64 - u32::from(function.registers))
-                    };
-                    let start = function.register_root_offset as usize;
-                    let end = root_end as usize;
-                    if self.register_roots[start..end]
-                        .iter()
-                        .any(|roots| roots & !mask != 0)
-                    {
-                        return Err(format!("function {index} root map has an invalid register"));
-                    }
+                let Some(mut masks) = self.register_roots.masks(
+                    function.register_root_offset,
+                    function.registers,
+                    code_len as usize + 1,
+                ) else {
+                    return Err(format!("function {index} root map is out of bounds"));
+                };
+                let mask = if function.registers == 0 {
+                    0
+                } else {
+                    u64::MAX >> (u64::BITS - u32::from(function.registers))
+                };
+                if masks.any(|roots| roots & !mask != 0) {
+                    return Err(format!("function {index} root map has an invalid register"));
                 }
             }
             for packed in &function.code {
@@ -1235,6 +1231,8 @@ mod tests {
     }
 
     fn program(function: Function, roots: Vec<u64>) -> ResidualProgram {
+        let mut register_roots = crate::bytecode::RegisterRoots::default();
+        register_roots.append(function.registers, roots);
         ResidualProgram {
             specialized: true,
             kind: crate::bytecode::ProgramKind::Script,
@@ -1253,7 +1251,7 @@ mod tests {
             object_sites: vec![],
             regexp_literal_sites: vec![],
             superinstructions: vec![],
-            register_roots: roots,
+            register_roots,
         }
     }
 
