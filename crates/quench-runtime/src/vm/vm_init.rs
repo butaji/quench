@@ -96,7 +96,6 @@ impl<H: Host> Vm<H> {
             atom_text: AtomTable::default(),
             atoms: hashbrown::HashTable::new(),
             array_index_atoms: FxHashMap::default(),
-            dynamic_atoms: vec![],
             startup_intrinsics: Default::default(),
             atom_sequence: Rc::new(crate::bytecode::AtomSequence::new(Default::default())),
             regexp_subjects: Vec::new(),
