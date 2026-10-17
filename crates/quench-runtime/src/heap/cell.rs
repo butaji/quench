@@ -9,6 +9,25 @@ use crate::vm::program_store::ProgramId;
 use crate::vm::wtf16::JsString;
 use rustc_hash::FxHashMap;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Changes whenever the layout an object used as a prototype offers its inheritors can have
+/// changed: its shape, prototype or integrity changes, and at every collection, after which a
+/// dead prototype's record may be reused. A cache that proved a prototype chain under one value
+/// proves it again while the value holds (`FieldAddCache::proved_epoch`). One counter for the
+/// process: a change another heap made only sends caches back to the walk that re-proves them.
+static PROTOTYPE_LAYOUT_EPOCH: AtomicU64 = AtomicU64::new(0);
+
+/// The current `PROTOTYPE_LAYOUT_EPOCH`.
+#[inline(always)]
+pub(crate) fn prototype_layout_epoch() -> u64 {
+    PROTOTYPE_LAYOUT_EPOCH.load(Ordering::Relaxed)
+}
+
+/// Retires every proof made under the current `PROTOTYPE_LAYOUT_EPOCH`.
+pub(crate) fn advance_prototype_layout_epoch() {
+    PROTOTYPE_LAYOUT_EPOCH.fetch_add(1, Ordering::Relaxed);
+}
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct WeakMapEntries {
@@ -1422,7 +1441,16 @@ impl Object {
     }
 
     pub(crate) fn set_proto(&mut self, proto: Value) {
+        self.note_prototype_layout_change();
         self.meta = (self.meta & !PROTO_INDEX_BITS) | Self::encode_proto(proto);
+    }
+
+    /// A change to what this object offers its inheritors, if it has any.
+    #[inline(always)]
+    fn note_prototype_layout_change(&self) {
+        if self.was_used_as_prototype() {
+            advance_prototype_layout_epoch();
+        }
     }
 
     /// Whether this object is an array's, whose payload holds the element backing.
@@ -1707,6 +1735,7 @@ impl Object {
         ValueVec::from_parts(0, self.auxiliary).auxiliary()
     }
     pub(crate) fn set_shape(&mut self, shape: u32) {
+        self.note_prototype_layout_change();
         let mut properties = ValueVec::from_parts(0, self.auxiliary);
         properties.set_auxiliary(shape);
         self.auxiliary = properties.into_parts().1;
@@ -1723,6 +1752,7 @@ impl Object {
         self.properties().is_frozen()
     }
     pub(crate) fn set_frozen(&mut self, value: bool) {
+        self.note_prototype_layout_change();
         let mut properties = ValueVec::from_parts(self.meta & VALUE_VEC_INTEGRITY_BITS, 0);
         properties.set_frozen(value);
         self.meta = (self.meta & !VALUE_VEC_INTEGRITY_BITS) | properties.into_parts().0;

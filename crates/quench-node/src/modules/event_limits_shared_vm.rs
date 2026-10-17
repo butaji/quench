@@ -14,7 +14,8 @@ const FACTORY: &str = quench_js_check::checked_js!(
   get: function getMaxListeners() { 'use strict'; return getNative(this); },
   set: function setMaxListeners(value) { 'use strict'; return setNative(this, value); },
   globalGet: function getMaxListeners(target) { return globalGetNative(target); },
-  globalSet: function setMaxListeners(value = undefined, ...targets) { return globalSetNative(value, ...targets); }
+  // Node's `EventEmitter.setMaxListeners` is an anonymous function assignment.
+  globalSet: (0, function(value = undefined, ...targets) { return globalSetNative(value, ...targets); })
 })"#
 );
 

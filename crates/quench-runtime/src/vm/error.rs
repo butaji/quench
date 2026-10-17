@@ -987,6 +987,32 @@ impl<H: Host> Vm<H> {
         JsError::thrown(object, text)
     }
 
+    /// A host's module-load failure as its error object, with the host's `code` as an
+    /// ordinary data property.
+    pub(super) fn module_load_error(&mut self, program: &ResidualProgram, error: crate::ModuleLoadError) -> JsError {
+        let native = match error.kind {
+            crate::ModuleLoadErrorKind::Error => Native::Error,
+            crate::ModuleLoadErrorKind::TypeError => Native::TypeError,
+        };
+        let message = self.heap.alloc(Cell::String(JsString::from_str(&error.message)));
+        let object = match self.construct_error_native(program, native, &[message]) {
+            Ok(object) => object,
+            Err(failure) => return failure,
+        };
+        if let Some(code) = error.code {
+            let name = self.heap.alloc(Cell::String(JsString::from_str("code")));
+            let value = self.heap.alloc(Cell::String(JsString::from_str(&code)));
+            let defined = self.to_property_key(program, name).and_then(|key| {
+                let record = super::object_descriptors::PropertyDescriptorRecord::data(value);
+                self.define_own_property_record(program, object, key, record)
+            });
+            if let Err(failure) = defined {
+                return failure;
+            }
+        }
+        JsError::thrown(object, error.message)
+    }
+
     pub(super) fn reference_error(&mut self, program: &ResidualProgram, text: String) -> JsError {
         let message = self.heap.alloc(Cell::String(JsString::from_str(&text)));
         let object = self
