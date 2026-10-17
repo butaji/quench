@@ -294,35 +294,10 @@ pub(super) fn decorate_range_error(
     decorate_coded_error(context, error, code, ErrorClass::RangeError, &[])
 }
 
-/// Fields produced by a Node error message constructor precede its message.
-pub(super) fn decorate_type_error_with_fields(
-    context: &mut NativeContext<'_, NodeHost>,
-    error: RootId,
-    code: &'static str,
-    fields: &[(&str, RootId)],
-) -> Result<(), RootedError> {
-    decorate_coded_error(context, error, code, ErrorClass::TypeError, fields)
-}
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum MessageOrder {
     BeforeCode,
     AfterConstructorFields,
-}
-
-pub(super) fn decorate_formatted_type_error(
-    context: &mut NativeContext<'_, NodeHost>,
-    error: RootId,
-    code: &'static str,
-) -> Result<(), RootedError> {
-    decorate_ordered_error(
-        context,
-        error,
-        code,
-        ErrorClass::TypeError,
-        &[],
-        MessageOrder::BeforeCode,
-    )
 }
 
 pub(super) fn decorate_formatted_range_error(
