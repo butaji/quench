@@ -89,9 +89,6 @@ pub(crate) struct State {
     pub(crate) channel: Option<IpcChannel>,
     parse: Option<RootId>,
     stringify: Option<RootId>,
-    /// The `EventEmitter` the IPC surface extends, kept until a channel needs it.
-    emitter: Option<RootId>,
-    api_factory: Option<RootId>,
 }
 
 struct Progress {
@@ -101,6 +98,13 @@ struct Progress {
 }
 
 impl IpcChannel {
+    fn take_socket(&mut self)->Option<std::os::unix::net::UnixStream>{
+        self.disconnected=true;
+        match std::mem::replace(&mut self.phase,Phase::Closed){
+            Phase::Open(transport)|Phase::Disconnecting(transport)=>Some(transport.socket),
+            Phase::Closed=>None,
+        }
+    }
     pub(crate) fn parent_has_work(&self) -> bool {
         !self.closed()
             && (!self.writes.is_empty()
@@ -348,128 +352,40 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     Ok(())
 }
 
-const API_FACTORY: &str = quench_js_check::checked_js!(
-    r#"(EventEmitter) => {
-  class Control extends EventEmitter {
-    #backend;
-    constructor(backend) { super(); this.#backend=backend; }
-    ref() { return this.#backend.reference(); }
-    unref() { return this.#backend.unreference(); }
-    refCounted() { return this.#backend.refCounted(); }
-    unrefCounted() { return this.#backend.unrefCounted(); }
-    get fd() { return this.#backend.descriptor(); }
-  }
-  return (send,disconnect,reference,unreference,descriptor,refCounted,unrefCounted) => {
-    const api={};
-    api.send=function(message,handle,options,callback) { return send(message,handle,options,callback); };
-    api.disconnect=function() { return disconnect(); };
-    Object.defineProperty(api.send,'name',{value:''});
-    Object.defineProperty(api.disconnect,'name',{value:''});
-    api.channel=new Control({reference,unreference,descriptor,refCounted,unrefCounted});
-    return api;
-  };
-}"#
-);
-
-pub(crate) fn install_process(
-    context: &mut NativeContext<'_, NodeHost>,
-    process: RootId,
-    emitter: RootId,
-) -> Result<(), RootedError> {
-    let emitter = context.retain(emitter)?;
-    let state = context.host_mut().shared_state();
-    let previous = state.borrow_mut().process_ipc.emitter.replace(emitter);
-    if let Some(previous) = previous {
-        context.release_root(previous);
+pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>, owner:u64, target:RootId) -> Result<(),RootedError> {
+    let socket={let state=context.host_mut().shared_state();let mut state=state.borrow_mut();channel(&mut state,owner).and_then(IpcChannel::take_socket)};
+    let Some(socket)=socket else {return Ok(())};
+    let constructor=super::pipe_binding::constructor(context)?;
+    let kind=context.number(2.0);
+    let pipe=context.construct_rooted(constructor,constructor,&[kind])?;
+    super::pipe_binding::adopt(context,pipe,socket)?;
+    let resource=super::pipe_binding::resource_view(context,pipe)?;
+    if let super::native_async_wrap::View::Active(resource)=resource {
+        if let Some(child)=context.host_mut().shared_state().borrow_mut().child_processes.get_mut(&owner){child.ipc_pipe=Some(resource.id);}
     }
-    install(context, PROCESS_OWNER, process)?;
-    if state.borrow().process_ipc.channel.is_some() {
-        let control = super::event_constructor_shared_vm::get(context, process, "channel")?;
-        let on = super::event_constructor_shared_vm::get(context, process, "on")?;
-        for (event, name, add) in [("newListener", "onNewListener", true), ("removeListener", "onRemoveListener", false)] {
-            let event = context.string_rooted(event);
-            let add = context.boolean(add);
-            let data = context.array_rooted(&[control, add])?;
-            let callback = context.host_constructor_named_with_data(crate::host::shared_vm::operation("processIpcListenerReference"), name, data)?;
-            context.call_rooted(on, process, &[event, callback])?;
-        }
-    }
+    let policy=crate::host::shared_vm::commonjs::node_library_module(context,"child_process.js","internal/child_process.js")?;
+    let setup=super::event_constructor_shared_vm::get(context,policy,"setupChannel")?;
+    let json=context.string_rooted("json");let undefined=context.undefined();
+    let count=context.number(2.0);set(context,target,"_closesNeeded",count)?;
+    let count=context.number(0.0);set(context,target,"_closesGot",count)?;
+    context.call_rooted(setup,undefined,&[target,pipe,json])?;
     Ok(())
 }
 
-/// The IPC surface factory, evaluated under the startup intrinsics when the
-/// first channel needs it: most processes never have one.
-fn api_factory(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    let state = context.host_mut().shared_state();
-    let (factory, emitter) = {
-        let state = state.borrow();
-        (state.process_ipc.api_factory, state.process_ipc.emitter)
-    };
-    if let Some(factory) = factory {
-        return Ok(factory);
-    }
-    let emitter = emitter.ok_or_else(|| RootedError::host("IPC event emitter missing"))?;
-    let factory = context.with_startup_intrinsics(|context| {
-        let factory =
-            context.evaluate_script_rooted(API_FACTORY, "node:child_process/ipc-surface.js")?;
-        let undefined = context.undefined();
-        context.call_rooted(factory, undefined, &[emitter])
-    })?;
-    let factory = context.retain(factory)?;
-    state.borrow_mut().process_ipc.api_factory = Some(factory);
-    Ok(factory)
+pub(crate) fn activate_process(context:&mut NativeContext<'_,NodeHost>)->Result<(),RootedError>{
+    let (process,fd)={let shared=context.host_mut().shared_state();let state=shared.borrow();(state.process_module,state.process_ipc.channel.as_ref().filter(|c|!c.closed()).map(IpcChannel::fd))};
+    let (Some(process),Some(fd))=(process,fd) else{return Ok(())};
+    let policy=crate::host::shared_vm::commonjs::node_library_module(context,"child_process.js","child_process.js")?;
+    let fork=super::event_constructor_shared_vm::get(context,policy,"_forkChild")?;
+    let fd=context.number(fd as f64);let mode=context.string_rooted("json");
+    context.call_rooted(fork,process,&[fd,mode])?;Ok(())
 }
 
-pub(crate) fn install(
-    context: &mut NativeContext<'_, NodeHost>,
-    owner: u64,
-    target: RootId,
-) -> Result<(), RootedError> {
-    let state = context.host_mut().shared_state();
-    if channel(&mut state.borrow_mut(), owner).is_none() {
-        return Ok(());
-    }
-    let factory = api_factory(context)?;
-    let owner = context.number(owner as f64);
-    let data = context.array_rooted(&[owner, target])?;
-    let send =
-        context.host_function_with_data(crate::host::shared_vm::operation("ipcSend"), data)?;
-    let disconnect = context
-        .host_function_with_data(crate::host::shared_vm::operation("ipcDisconnect"), data)?;
-    let descriptor = context
-        .host_function_with_data(crate::host::shared_vm::operation("ipcDescriptor"), data)?;
-    let mut references = Vec::new();
-    for operation in ["ipcReference", "ipcReferenceCounted"] {
-        for refed in [true, false] {
-            let refed = context.boolean(refed);
-            let data = context.array_rooted(&[owner, target, refed])?;
-            references.push(
-                context
-                    .host_function_with_data(crate::host::shared_vm::operation(operation), data)?,
-            );
-        }
-    }
-    let undefined = context.undefined();
-    let api = context.call_rooted(
-        factory,
-        undefined,
-        &[
-            send,
-            disconnect,
-            references[0],
-            references[1],
-            descriptor,
-            references[2],
-            references[3],
-        ],
-    )?;
-    for name in ["send", "disconnect", "channel"] {
-        let key = context.string_rooted(name);
-        let value = context.get_property_rooted(api, key)?;
-        set(context, target, name, value)?;
-    }
-    let connected = context.boolean(true);
-    set(context, target, "connected", connected)
+pub(crate) fn take_socket(context:&mut NativeContext<'_,NodeHost>,fd:i32)->Option<std::os::unix::net::UnixStream>{
+    let shared=context.host_mut().shared_state();let mut state=shared.borrow_mut();
+    if let Some(channel)=state.process_ipc.channel.as_mut().filter(|c|c.fd()==fd){return channel.take_socket();}
+    for child in state.child_processes.values_mut(){if let Some(channel)=child.ipc.as_mut().filter(|c|c.fd()==fd){return channel.take_socket();}}
+    None
 }
 
 pub(crate) fn descriptor(

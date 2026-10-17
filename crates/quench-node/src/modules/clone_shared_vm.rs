@@ -62,24 +62,24 @@ pub(crate) fn structured_clone(
     } else {
         Vec::new()
     };
-    match context.structured_clone_with_transfers_rooted(value, &transfers) {
-        Err(error) if error.error.data_clone_failure_message().is_some() => {
-            let message = error.error.data_clone_failure_message().unwrap().to_owned();
-            if let Some(exception) = error.exception {
-                context.release_root(exception);
-            }
-            let constructor = context.with_startup_intrinsics(|context| {
-                let global = context.global_root()?;
-                let key = context.string_rooted("DOMException");
-                context.get_property_rooted(global, key)
-            })?;
-            let message = context.string_rooted(&message);
-            let name = context.string_rooted("DataCloneError");
-            let error = context.construct_rooted(constructor, constructor, &[message, name])?;
-            Err(context.throw(error))
-        }
-        result => result,
-    }
+    context.structured_clone_with_transfers_rooted(value, &transfers)
+        .or_else(|error| Err(translate_clone_failure(context,error)?))
+}
+
+/// One Node policy boundary for clone failures from structuredClone and Workers.
+pub(crate) fn translate_clone_failure(
+    context: &mut NativeContext<'_,NodeHost>,error:RootedError,
+)->Result<RootedError,RootedError>{
+    let Some(message)=error.error.data_clone_failure_message() else {return Ok(error)};
+    let message=message.to_owned();
+    if let Some(exception)=error.exception {context.release_root(exception);}
+    let constructor=context.with_startup_intrinsics(|context| {
+        let global=context.global_root()?;let key=context.string_rooted("DOMException");
+        context.get_property_rooted(global,key)
+    })?;
+    let message=context.string_rooted(&message);let name=context.string_rooted("DataCloneError");
+    let error=context.construct_rooted(constructor,constructor,&[message,name])?;
+    Ok(context.throw(error))
 }
 
 /// Node's host marker is not a property and does not keep its object alive.

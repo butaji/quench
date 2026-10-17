@@ -216,3 +216,38 @@ pub(crate) mod native_async_wrap;
 mod crypto_kdf;
 #[cfg(quench_openssl_provider)]
 mod crypto_pbkdf2;
+
+pub(crate) mod worker_threads_shared_vm;
+pub(crate) mod worker_owned_clone;
+pub(crate) mod worker_error_packet;
+
+pub(crate) mod unix_rights;
+pub(crate) mod ipc_pipe;
+pub(crate) mod pipe_binding;
+
+
+pub(crate) mod crypto_constants;
+pub(crate) mod crypto_key_layout;
+pub(crate) mod crypto_key_material_shared_vm;
+#[cfg(quench_openssl_provider)]
+pub(crate) use crypto_provider_shared_vm::native as crypto_provider_facts;
+#[cfg(quench_openssl_provider)]
+pub(crate) mod crypto_asymmetric;
+#[cfg(quench_openssl_provider)]
+pub(crate) mod crypto_asymmetric_generate;
+#[cfg(quench_openssl_provider)]
+pub(crate) mod crypto_asymmetric_operations;
+#[cfg(quench_openssl_provider)]
+pub(crate) mod crypto_asymmetric_shared_vm;
+#[cfg(quench_openssl_provider)]
+pub(crate) mod crypto_keypair_request;
+#[cfg(quench_openssl_provider)]
+pub(crate) mod crypto_keypair_config;
+#[cfg(quench_openssl_provider)]
+pub(crate) mod crypto_signature_state;
+#[cfg(quench_openssl_provider)]
+pub(crate) mod crypto_signature_request;
+#[cfg(quench_openssl_provider)]
+pub(crate) mod crypto_signature_shared_vm;
+#[cfg(quench_openssl_provider)]
+pub(crate) mod crypto_rsa_shared_vm;

@@ -346,6 +346,10 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let key = context.string_rooted("exec");
     context.set_property_rooted(module, key, exec, module)?;
     super::child_process_exec_shared_vm::install_promisified(context, &[exec, exec_file])?;
+    let initializer=context.host_function_with_data(
+        crate::host::shared_vm::operation("childProcessForkChildProjection"),module,
+    )?;
+    context.define_lazy_data_properties_rooted(module,&["_forkChild"],true,initializer)?;
     Ok(module)
 }
 
@@ -517,6 +521,7 @@ fn spawn_child_with_stdio(
                         stdin_stream: None,
                         stdin,
                         ipc,
+                        ipc_pipe: None,
                         events: receiver,
                         stdout_terminal: !stdio[1].piped(),
                         stderr_terminal: !stdio[2].piped(),
@@ -975,6 +980,11 @@ pub(crate) fn poll(
         .collect::<Vec<_>>();
     let mut progressed = false;
     for id in ids {
+        let raw_ipc_closed = {
+            let state=shared_state.borrow();
+            state.child_processes.get(&id).and_then(|p|p.ipc_pipe)
+                .is_none_or(|pipe|super::pipe_binding::is_closed(&state,pipe))
+        };
         let (child, stdout, stderr, events, exit, close, input_progress) = {
             let mut state = shared_state.borrow_mut();
             let Some(process) = state.child_processes.get_mut(&id) else {
@@ -1022,7 +1032,7 @@ pub(crate) fn poll(
                     _ => {}
                 }
             }
-            let close = !process.close_dispatched
+            let close = raw_ipc_closed && !process.close_dispatched
                 && process.stdout_terminal
                 && process.stderr_terminal
                 && process.exit.is_some()
@@ -2315,5 +2325,14 @@ pub(crate) fn spawn_succeeded_run(
 ) -> Result<RootId, RootedError> {
     let child = context.host_function_data()?;
     emit_failure_event(context, child, "spawn", &[])?;
+    Ok(context.undefined())
+}
+
+pub(crate) fn fork_child_projection(context:&mut NativeContext<'_,NodeHost>,_:RootId,_:&[RootId])->Result<RootId,RootedError>{
+    let owner=context.host_function_data()?;
+    let policy=crate::host::shared_vm::commonjs::node_library_module(context,"child_process.js","child_process.js")?;
+    let function=property(context,policy,"_forkChild")?;
+    let key=context.string_rooted("_forkChild");
+    context.define_data_property_rooted(owner,key,function,true,true,true)?;
     Ok(context.undefined())
 }

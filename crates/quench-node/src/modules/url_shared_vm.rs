@@ -1568,3 +1568,18 @@ fn set_text(
     let value = context.string_rooted(value);
     set(context, object, name, value)
 }
+
+/// The actual URL constructor's private WeakMap is the URL-instance authority.
+/// Unlike isURL's structural contract, this never reads user properties.
+pub(crate) fn is_url_instance(c:&mut NativeContext<'_,NodeHost>,_:RootId,args:&[RootId])->Result<RootId,RootedError>{
+    let value=args.first().copied().unwrap_or_else(||c.undefined());
+    if !c.is_object_rooted(value)?{return Ok(c.boolean(false))}
+    let shared=c.host_mut().shared_state();let state=shared.borrow().url_state;
+    let valid=if let Some(state)=state{let data=c.weak_map_get_rooted(state,value)?;c.is_object_rooted(data)?}else{false};
+    Ok(c.boolean(valid))
+}
+pub(crate) fn get_url_href(c:&mut NativeContext<'_,NodeHost>,_:RootId,args:&[RootId])->Result<RootId,RootedError>{
+    let value=args.first().copied().unwrap_or_else(||c.undefined());let shared=c.host_mut().shared_state();let state=shared.borrow().url_state;
+    if let Some(state)=state{let data=c.weak_map_get_rooted(state,value)?;if c.is_object_rooted(data)?{return get(c,data,"href")}}
+    let error=c.type_error_rooted("Value must be an instance of URL")?;Err(c.throw(error))
+}

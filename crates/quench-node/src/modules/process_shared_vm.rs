@@ -169,7 +169,7 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         }
         set_text(context, process, "title", title)?;
     }
-    super::child_process_ipc_shared_vm::initialize(context)?;
+    if !super::worker_threads_shared_vm::is_child(context) { super::child_process_ipc_shared_vm::initialize(context)?; }
     let env = context.object_rooted()?;
     for (name, value) in std::env::vars() {
         if context
@@ -1794,6 +1794,13 @@ pub(crate) fn finish_execution(
         .borrow()
         .process_control
         .clone();
+    // Top-level execution has returned. Native polling and process lifecycle
+    // events run outside that JavaScript resource; queued jobs restore their
+    // own captured identity and stores while they execute.
+    let native_state = runtime.host_mut().shared_state();
+    let _native_context = super::async_hooks_shared_vm::enter_context(
+        &native_state, super::async_hooks_state::NATIVE_ASYNC_ID,
+    );
     let checkpoint = (|| loop {
         drain_checkpoint(runtime, program)?;
         if process_control.requested_exit_code().is_some() {
@@ -1963,7 +1970,8 @@ fn route_uncaught_exception_value_inner(
     let capture = match capture {
         Ok(capture) => capture,
         Err(error) => {
-            let message = runtime.format_error(program, &error.error);
+            if let Some(exception)=error.exception { super::worker_threads_shared_vm::record_callback_exception(runtime,exception); }
+    let message = runtime.format_error(program, &error.error);
             if let Some(exception) = error.exception {
                 runtime.release_root(exception);
             }
@@ -1984,7 +1992,8 @@ fn route_uncaught_exception_value_inner(
                 Ok(true)
             }
             Err(error) => {
-                let message = runtime.format_error(program, &error.error);
+                if let Some(exception)=error.exception { super::worker_threads_shared_vm::record_callback_exception(runtime,exception); }
+    let message = runtime.format_error(program, &error.error);
                 if let Some(exception) = error.exception {
                     runtime.release_root(exception);
                 }
@@ -2050,6 +2059,7 @@ fn drain_checkpoint(
     let shared_state = runtime.host_mut().shared_state();
     loop {
         drain_shared_jobs(runtime, program, &shared_state)?;
+        if crate::modules::worker_threads_shared_vm::poll(runtime,program)? { continue; }
         if crate::modules::process_stdin_shared_vm::poll(runtime)? {
             continue;
         }
@@ -2057,6 +2067,7 @@ fn drain_checkpoint(
             continue;
         }
 
+        if crate::modules::pipe_binding::poll(runtime, program)? { continue; }
         if crate::modules::child_process_ipc_shared_vm::poll(runtime, program)? {
             continue;
         }
@@ -2262,9 +2273,11 @@ fn run_and_clear_native_immediates(
 }
 
 fn has_referenced_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeState>>) -> bool {
+    if crate::modules::worker_threads_shared_vm::has_work(&shared_state.borrow().workers) { return true; }
     #[cfg(quench_node_cares)]
     if shared_state.borrow().cares.has_work() { return true; }
-    shared_state.borrow().udp.has_work() || shared_state.borrow().dns.has_work()
+    crate::modules::pipe_binding::has_work(&shared_state.borrow())
+        || shared_state.borrow().udp.has_work() || shared_state.borrow().dns.has_work()
         || crate::modules::child_process_ipc_shared_vm::has_work(&shared_state.borrow())
         || crate::modules::process_stdin_shared_vm::has_work(&shared_state.borrow().stdin)
         || crate::modules::fetch_shared_vm::has_pending(shared_state)
@@ -2443,7 +2456,7 @@ pub(super) fn route_callback_failure(
     let routed = route_uncaught_exception_value(runtime, program, exception, "uncaughtException");
     let result = match routed {
         Ok(true) => Ok(()),
-        Ok(false) => Err(format_uncaught_error(runtime, program, &mut failure)),
+        Ok(false) => { super::worker_threads_shared_vm::record_callback_exception(runtime,exception); Err(format_uncaught_error(runtime, program, &mut failure)) },
         Err(handler_error) => Err(handler_error),
     };
     runtime.release_root(exception);
@@ -2552,6 +2565,9 @@ fn drain_shared_jobs(
         if unhandled.is_empty() {
             runtime.clear_kept_objects();
             crate::modules::zlib_stream_shared_vm::prune(runtime);
+            super::crypto_key_material_shared_vm::prune(runtime);
+            #[cfg(quench_openssl_provider)]
+            super::crypto_signature_shared_vm::prune(runtime);
             super::crypto_secret_job_shared_vm::prune(runtime);
             #[cfg(quench_openssl_provider)]
             super::crypto_hash_shared_vm::prune(runtime);
@@ -2598,7 +2614,7 @@ pub(crate) fn run_host_jobs_with_uncaught(
             route_uncaught_exception_value(runtime, program, exception, "uncaughtException");
         let result = match routed {
             Ok(true) => Ok(()),
-            Ok(false) => Err(format_uncaught_error(runtime, program, &mut failure)),
+            Ok(false) => { super::worker_threads_shared_vm::record_callback_exception(runtime,exception); Err(format_uncaught_error(runtime, program, &mut failure)) },
             Err(handler_error) => Err(handler_error),
         };
         runtime.release_root(exception);
@@ -2871,6 +2887,7 @@ fn rooted_error_message(
     program: &quench_runtime::ResidualProgram,
     error: RootedError,
 ) -> String {
+    if let Some(exception)=error.exception { super::worker_threads_shared_vm::record_callback_exception(runtime,exception); }
     let message = runtime.format_error(program, &error.error);
     if let Some(exception) = error.exception {
         runtime.release_root(exception);
@@ -3040,12 +3057,17 @@ fn cleanup_native_work(runtime: &mut quench_runtime::Runtime<NodeHost>) {
     let shared = runtime.host_mut().shared_state();
     shared.borrow_mut().native_tasks.shutdown();
     super::crypto_secret_job_shared_vm::cleanup(runtime);
+    super::crypto_key_material_shared_vm::cleanup(runtime);
+    #[cfg(quench_openssl_provider)]
+    super::crypto_signature_shared_vm::cleanup(runtime);
     #[cfg(quench_openssl_provider)]
     super::crypto_hash_shared_vm::cleanup(runtime);
     #[cfg(quench_node_cares)]
     super::cares_channel_shared_vm::cleanup(runtime);
     super::cares_binding::cleanup(runtime);
     super::performance_binding_shared_vm::cleanup(runtime);
+    super::pipe_binding::cleanup(runtime);
+    super::stream_binding::cleanup_requests(runtime);
     super::udp_binding::cleanup(runtime);
     super::native_async_wrap::cleanup(runtime);
     let callbacks = shared.borrow_mut().scheduler.take_all_shared_immediates();
@@ -3096,7 +3118,7 @@ fn emit_exit_inner(
     Ok(())
 }
 
-fn release_callback(
+pub(super) fn release_callback(
     runtime: &mut quench_runtime::Runtime<NodeHost>,
     callback: crate::modules::shared_event_loop::SharedCallback,
 ) {
@@ -3141,7 +3163,8 @@ fn set_shared_property(
         Ok(true) => Ok(()),
         Ok(false) => Err(format!("cannot update process.{name}")),
         Err(error) => {
-            let message = runtime.format_error(program, &error.error);
+            if let Some(exception)=error.exception { super::worker_threads_shared_vm::record_callback_exception(runtime,exception); }
+    let message = runtime.format_error(program, &error.error);
             if let Some(exception) = error.exception {
                 runtime.release_root(exception);
             }

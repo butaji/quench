@@ -242,6 +242,10 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     }
     context.scoped(crate::modules::process_shared_vm::initialize_warning_policy)?;
     context.scoped(crate::modules::report_configuration_shared_vm::initialize_signal)?;
+    context.scoped(crate::modules::worker_threads_shared_vm::initialize_process_owner)?;
+    // IPC and cluster startup precede all user preloads and synchronous entry.
+    context.scoped(crate::modules::child_process_ipc_shared_vm::activate_process)?;
+    context.scoped(initialize_cluster_worker)?;
     context.scoped(preload_modules)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_preloads");
@@ -1551,6 +1555,8 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             let name = context.string_rooted("isURL");
             context.define_data_property_rooted(is_url, key, name, false, false, true)?;
             set(context, internal, "isURL", is_url)?;
+            for(name,operation)in[("isURLInstance","urlIsURLInstance"),("getURLHref","urlGetURLHref")]{let function=context.host_function_named(crate::host::shared_vm::operation(operation),name)?;set(context,internal,name,function)?;}
+
             let convert = context.host_function(crate::host::shared_vm::operation("toPathIfFileURL"))?;
             set(context, internal, "toPathIfFileURL", convert)?;
             Ok(internal)
@@ -1591,23 +1597,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::InternalTimers => crate::modules::timers_shared_vm::internal_module(context),
         BuiltinModule::NodeTest => crate::modules::test_shared_vm::module(context),
         BuiltinModule::Vm => crate::modules::vm_shared_vm::module(context),
-        BuiltinModule::WorkerThreads => {
-            let module = context.evaluate_script_rooted(
-                "({ isMainThread: true, MessageChannel: globalThis.MessageChannel, MessagePort: globalThis.MessagePort, Worker: class Worker { constructor() { throw Object.assign(new Error('Worker threads are unavailable in this runtime'), { code: 'ERR_WORKER_UNSUPPORTED_OPERATION' }); } } })",
-                "node:worker_threads.js",
-            )?;
-            for name in ["markAsUncloneable", "markAsUntransferable", "isMarkedAsUntransferable"] {
-                let operation = context.host_function(super::operation(name))?;
-                let factory = context.evaluate_script_rooted(
-                    &format!("(operation)=>function {name}(object){{return operation(object)}}"),
-                    "node:worker_threads/marker.js",
-                )?;
-                let undefined = context.undefined();
-                let method = context.call_rooted(factory, undefined, &[operation])?;
-                set(context, module, name, method)?;
-            }
-            Ok(module)
-        }
+        BuiltinModule::WorkerThreads => crate::modules::worker_threads_shared_vm::module(context),
         BuiltinModule::Url => crate::modules::url_shared_vm::module(context),
         BuiltinModule::Querystring => crate::modules::querystring_shared_vm::module(context),
         BuiltinModule::Readline => crate::modules::readline_shared_vm::module(context),
@@ -1672,7 +1662,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::ChildProcess => crate::modules::child_process_shared_vm::module(context),
         BuiltinModule::InternalChildProcess => {
             let public = cached_builtin(context, BuiltinModule::ChildProcess)?;
-            let module = context.object_rooted()?;
+            let module = node_library_module(context, "child_process.js", "internal/child_process.js")?;
             let constructor = get(context, public, "ChildProcess")?;
             set(context, module, "ChildProcess", constructor)?;
             Ok(module)
@@ -1714,9 +1704,9 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             set(context, module, "constants", constants)?;
             Ok(module)
         }
+        BuiltinModule::Cluster => node_library_module(context, "cluster.js", "cluster.js"),
         BuiltinModule::Inspector
         | BuiltinModule::Repl
-        | BuiltinModule::Cluster
         | BuiltinModule::Wasi => context.object_rooted(),
         BuiltinModule::Sea => context.evaluate_script_rooted(
             "({ isSea: function isSea() { return false; } })",
@@ -2297,6 +2287,17 @@ fn load_with_resolution(
             Err(error) => crate::node_sources::source(filename, &context.host_mut().node_library_root)
                 .ok_or_else(|| RootedError::host(error.to_string()))?.to_owned(),
         };
+        let file_text = match library_relative {
+            Some(path) if path == Path::new("lib/internal/child_process.js") =>
+                super::policy_projection::project(&file_text, &["setupChannel", "kChannelHandle"]).map_err(RootedError::host)?,
+            Some(path) if path == Path::new("lib/internal/child_process/serialization.js") =>
+                super::policy_projection::project(&file_text, &["json"]).map_err(RootedError::host)?,
+            Some(path) if path == Path::new("lib/net.js") =>
+                super::policy_projection::project(&file_text, &["BoundSocket"]).map_err(RootedError::host)?,
+            Some(path) if path == Path::new("lib/child_process.js") =>
+                super::policy_projection::project(&file_text, &["_forkChild"]).map_err(RootedError::host)?,
+            _ => file_text,
+        };
         let text = file_text.strip_prefix('\u{feff}').unwrap_or(&file_text);
         match filename
             .extension()
@@ -2548,6 +2549,9 @@ fn set(
 pub(crate) fn node_internal_binding_source() -> &'static str {
     r#"const internalBinding = (name) => {
   switch (String(name)) {
+    case "pipe_wrap":
+    case "tcp_wrap":
+    case "stream_wrap":
     case "udp_wrap":
     case "os":
     case "timers":
@@ -2588,7 +2592,7 @@ pub(crate) fn node_internal_binding_source() -> &'static str {
       fs: __nativeInternalBinding("constants").fs,
       zlib: __nativeInternalBinding("constants").zlib,
       os: __nativeInternalBinding("constants").os || { signals: (require("os").constants || {}).signals || {}, errno: { EISDIR: -21 } },
-      crypto: { ENGINE_METHOD_ALL: 0xffff },
+      crypto: __nativeInternalBinding("constants").crypto,
     };
     case "options": return __nativeInternalBinding("options");
     case "string_decoder": return __nativeInternalBinding("string_decoder");
@@ -2702,4 +2706,37 @@ pub(crate) fn node_library_module_in_realm(
         ],
     )?;
     get(context, module, "exports")
+}
+
+/// Run the unchanged SDK worker policy after native process IPC and require
+/// exist, matching initializeClusterIPC's startup boundary.
+pub(crate) fn initialize_cluster_worker(context: &mut Context<'_>) -> Result<(), RootedError> {
+    let shared = context.host_mut().shared_state();
+    let process = shared
+        .borrow()
+        .process_module
+        .ok_or_else(|| RootedError::host("process module owner unavailable"))?;
+    let argv = get(context, process, "argv")?;
+    let entry = get(context, argv, "1")?;
+    if !context.truthy_rooted(entry)? {
+        return Ok(());
+    }
+    let env = get(context, process, "env")?;
+    let worker_id = get(context, env, "NODE_UNIQUE_ID")?;
+    if !context.truthy_rooted(worker_id)? {
+        return Ok(());
+    }
+    let cluster = cached_builtin(context, BuiltinModule::Cluster)?;
+    let setup = get(context, cluster, "_setupWorker")?;
+    context.call_rooted(setup, cluster, &[])?;
+    context.with_startup_intrinsics(|context| {
+        let global = context.global_root()?;
+        let reflect = get(context, global, "Reflect")?;
+        let delete = get(context, reflect, "deleteProperty")?;
+        let key = context.string_rooted("NODE_UNIQUE_ID");
+        context.call_rooted(delete, reflect, &[env, key])?;
+        let undefined = context.undefined();
+        crate::modules::process_shared_vm::delete_env(context, undefined, &[key])?;
+        Ok(())
+    })
 }
