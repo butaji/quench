@@ -45,7 +45,7 @@ const MATH_FUNCTIONS: &[(&str, Native)] = &[
 ];
 #[rustfmt::skip]
 const NATIVES: &[Native] = &[
-    Native::Print, Native::HostDone, Native::CreateRealm, Native::IsHTMLDDA, Native::EvalScript, Native::CollectGarbage, Native::RealmTypeError, Native::Eval, Native::ToString, Native::Function, Native::FunctionPrototype, Native::FunctionPrototypeHasInstance, Native::WithEnter, Native::WithExit, Native::Object, Native::AbstractModuleSource, Native::AbstractModuleSourceToStringTag, Native::ShadowRealm, Native::ShadowRealmEvaluate, Native::ShadowRealmImportValue, Native::ShadowRealmImportValueFulfilled, Native::ShadowRealmWrappedFunction,
+    Native::Print, Native::HostDone, Native::CreateRealm, Native::IsHTMLDDA, Native::EvalScript, Native::CollectGarbage, Native::RealmTypeError, Native::Eval, Native::Function, Native::FunctionPrototype, Native::FunctionPrototypeHasInstance, Native::WithEnter, Native::WithExit, Native::Object, Native::AbstractModuleSource, Native::AbstractModuleSourceToStringTag, Native::ShadowRealm, Native::ShadowRealmEvaluate, Native::ShadowRealmImportValue, Native::ShadowRealmImportValueFulfilled, Native::ShadowRealmWrappedFunction,
     Native::ObjectKeys, Native::ForInKeys, Native::ForInKeyIsEnumerable, Native::ObjectValues, Native::ObjectEntries, Native::ObjectGetOwnPropertyNames, Native::ObjectGetOwnPropertySymbols, Native::ObjectGetOwnPropertyDescriptor, Native::ObjectGetOwnPropertyDescriptors,
     Native::ObjectGroupBy,
     Native::ObjectFromEntries, Native::ObjectIs,
@@ -677,11 +677,6 @@ impl<H: Host> Vm<H> {
             );
         }
         self.global(program, "print", self.native_value(Native::Print))?;
-        self.global(
-            program,
-            "\0quench:to-string",
-            self.native_value(Native::ToString),
-        )?;
         self.set_builtin_named(program, self.realm.globals, "eval", Native::Eval)?;
         self.global(
             program,

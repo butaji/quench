@@ -192,23 +192,18 @@ fn gc_time_profile_records_collection_phases_without_aggregate_counters() {
 }
 
 #[test]
-fn minor_tracking_matches_the_next_collection_boundary() {
+fn minor_tracking_follows_old_generation_growth() {
     let mut heap = Heap::new();
     heap.full_collection_growth_limit = 1_000;
-    heap.threshold = 500;
+    heap.live_after_full = 5_000;
+    heap.old_live = 5_000;
     assert!(heap.minor_collection_scheduled());
-
-    heap.allocations = 200;
-    heap.allocations_since_full = 200;
-    heap.threshold = 800;
+    heap.old_live = 5_999;
     assert!(heap.minor_collection_scheduled());
-
-    heap.allocations = 700;
-    heap.allocations_since_full = 700;
-    heap.threshold = 500;
-    assert!(heap.minor_collection_scheduled());
-
-    heap.threshold = 1_000;
+    heap.old_live = 6_000;
+    assert!(!heap.minor_collection_scheduled());
+    heap.old_live = 5_000;
+    heap.external_bytes = MINIMUM_EXTERNAL_COLLECTION_BUDGET;
     assert!(!heap.minor_collection_scheduled());
 }
 
