@@ -3380,7 +3380,7 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let body = code.functions.get(function as usize)?;
-        let plan = body.call_plan(&code.atoms);
+        let plan = body.call_plan(code);
         if !plan.registers_only {
             return None;
         }

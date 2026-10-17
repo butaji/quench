@@ -92,13 +92,7 @@ impl<H: Host> Vm<H> {
             .module_binding_value(object, atom)
             .or_else(|| self.own_property(object, atom));
         if value.is_some_and(Value::is_deleted) {
-            return Err(self.reference_error(
-                p,
-                format!(
-                    "Cannot access '{}' before initialization",
-                    self.atom_name(atom)
-                ),
-            ));
+            return Err(self.uninitialized_binding_error(p, atom));
         }
         Ok(value)
     }

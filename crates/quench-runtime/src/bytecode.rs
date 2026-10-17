@@ -14,6 +14,7 @@ pub type Register = u16;
 
 mod atoms;
 mod control_flow;
+mod initialization;
 mod instruction;
 mod name_bindings;
 pub(crate) use name_bindings::{CapturedNames, NameBindings};
@@ -31,10 +32,15 @@ pub(crate) const BLOCK_BINDING_MARKER: &str = "\0quench:block-binding:";
 /// captures: other hidden bindings (lexical `this`, `new.target`, home objects, private
 /// names, ...) are reached by name, not only through capture slots. A renamed block binding
 /// is reached only through its slot.
+/// The name a hidden renamed block binding has in source; other names are unchanged.
+pub(crate) fn source_binding_name(name: &str) -> &str {
+    name.strip_prefix(BLOCK_BINDING_MARKER).unwrap_or(name)
+}
+
 pub(crate) fn local_name_requires_environment(name: &str) -> bool {
     name.starts_with('\0') && !name.starts_with(BLOCK_BINDING_MARKER)
 }
-pub(crate) use control_flow::branch_table_entries;
+pub(crate) use control_flow::{ControlEdge, branch_table_entries};
 pub use instruction::Instr;
 pub(crate) use instruction::{ConstructArguments, RegisterWindow, WideInstruction};
 pub(crate) use numeric_ops::specialized_numeric_op;
@@ -47,7 +53,6 @@ pub(crate) const SET_THIS_REGISTER: Register = 1 << 14;
 pub(crate) const REGISTER_MASK: Register = SET_THIS_REGISTER - 1;
 pub(crate) const INLINE_OBJECT_SITE_ATOMS: usize = 2;
 pub(crate) const MAX_ARRAY_LENGTH: usize = u32::MAX as usize;
-pub(crate) const NO_REGISTER_ROOT_MAP: u32 = u32::MAX;
 pub(crate) const NO_OPTIONAL_REGISTER: Register = 0;
 pub(crate) const OPTIONAL_REGISTER_BIAS: Register = 1;
 
@@ -1016,7 +1021,7 @@ pub struct Function {
     pub params: u16,
     pub length: u16,
     pub parameter_end_pc: u32,
-    pub parameter_atoms: Vec<Atom>,
+    pub parameter_atoms: crate::heap::ThinBoxSlice<Atom>,
     pub rest: bool,
     pub is_async: bool,
     pub is_generator: bool,
@@ -1033,31 +1038,31 @@ pub struct Function {
     pub simple_parameters: bool,
     pub strict: bool,
     pub locals: u16,
-    pub local_atoms: Vec<Atom>,
+    pub local_atoms: crate::heap::ThinBoxSlice<Atom>,
     /// Names visible through this function's captured declarative environment.
-    pub environment_atoms: Vec<Atom>,
+    pub environment_atoms: crate::heap::ThinBoxSlice<Atom>,
     /// Source local slots owned by a closure environment when this activation
     /// escapes. `None` retains legacy whole-frame promotion; `Some` is the
     /// selective layout, including an empty set for closure-only activations.
     pub(crate) selective_capture_slots: Option<Vec<u16>>,
     /// Binding slots assigned stable frame registers by lowering.
-    pub(crate) local_registers: Vec<LocalRegister>,
+    pub(crate) local_registers: crate::heap::ThinBoxSlice<LocalRegister>,
     /// The function was created while an enclosing `with` scope was active,
     /// so unresolved names in descendants can still observe its outer locals.
     pub(crate) inherited_with_scope: bool,
-    pub lexical_atoms: Vec<Atom>,
-    pub global_lexical_atoms: Vec<Atom>,
-    pub global_var_atoms: Vec<Atom>,
-    pub global_function_atoms: Vec<Atom>,
-    pub global_annex_b_var_atoms: Vec<Atom>,
-    pub global_immutable_atoms: Vec<Atom>,
+    pub lexical_atoms: crate::heap::ThinBoxSlice<Atom>,
+    pub global_lexical_atoms: crate::heap::ThinBoxSlice<Atom>,
+    pub global_var_atoms: crate::heap::ThinBoxSlice<Atom>,
+    pub global_function_atoms: crate::heap::ThinBoxSlice<Atom>,
+    pub global_annex_b_var_atoms: crate::heap::ThinBoxSlice<Atom>,
+    pub global_immutable_atoms: crate::heap::ThinBoxSlice<Atom>,
     /// Bindings a dynamic name lookup in this function can see.
     pub(crate) name_bindings: NameBindings,
     /// Lexical projections at eval calls and dynamic name operations.
-    pub binding_sites: Vec<BindingSite>,
-    pub(crate) source_positions: Vec<SourcePosition>,
+    pub binding_sites: crate::heap::ThinBoxSlice<BindingSite>,
+    pub(crate) source_positions: SourcePositions,
     /// The plan of each CloneEnv instruction.
-    pub environment_clones: Vec<EnvironmentClone>,
+    pub environment_clones: crate::heap::ThinBoxSlice<EnvironmentClone>,
     pub code: Vec<Instr>,
     pub(crate) wide: Vec<WideInstruction>,
     pub registers: u16,
@@ -1074,8 +1079,8 @@ pub struct Function {
     pub(crate) static_name_scope: std::cell::OnceCell<bool>,
     /// Lazily derived `call_plan`; never serialized.
     pub(crate) call_plan: std::cell::OnceCell<CallPlan>,
-    pub(crate) handlers: Vec<Handler>,
-    pub(crate) register_root_offset: u32,
+    pub(crate) handlers: crate::heap::ThinBoxSlice<Handler>,
+    pub(crate) register_roots: RegisterRoots,
     /// A register that holds `undefined` for the whole activation, set at frame entry and
     /// never written by code: the receiver of plain calls.
     pub(crate) undefined_register: Option<Register>,
@@ -1130,14 +1135,104 @@ pub(crate) struct SourcePosition {
     pub(crate) column: u32,
 }
 
+/// Whether register liveness covers a function's register forms, so a frame may leave its
+/// dead registers stale; and the per-pc live register masks the collector scans, derived
+/// when a collection first finds the function on the stack. Most of a program's functions
+/// never run during a collection, so their masks are never built.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct RegisterRoots {
+    covered: bool,
+    masks: std::cell::OnceCell<Box<[u64]>>,
+}
+
+impl RegisterRoots {
+    pub(crate) fn new(covered: bool) -> Self {
+        Self { covered, masks: std::cell::OnceCell::new() }
+    }
+
+    pub(crate) fn covered(&self) -> bool {
+        self.covered
+    }
+}
+
+/// A function's source positions in ascending pc order, as LEB128 varints of each entry's
+/// differences from the one before: the pc, then the line and column zigzag-signed.
+/// Positions are read only when an error records a stack or a diagnostic names a
+/// location, by decoding the one function's table, so the table is kept at a few bytes
+/// an entry rather than three words.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct SourcePositions(Box<[u8]>);
+
+/// Payload bits per LEB128 byte; the high bit marks a continuation.
+const VARINT_PAYLOAD_BITS: u32 = 7;
+const VARINT_CONTINUATION: u8 = 1 << VARINT_PAYLOAD_BITS;
+
+impl SourcePositions {
+    pub(crate) fn iter(&self) -> impl Iterator<Item = SourcePosition> + '_ {
+        let mut bytes = self.0.iter().copied();
+        let mut varint = move || -> Option<u32> {
+            let mut value = 0_u32;
+            let mut shift = 0;
+            loop {
+                let byte = bytes.next()?;
+                value |= u32::from(byte & !VARINT_CONTINUATION) << shift;
+                if byte & VARINT_CONTINUATION == 0 {
+                    return Some(value);
+                }
+                shift += VARINT_PAYLOAD_BITS;
+            }
+        };
+        let unzigzag = |value: u32| ((value >> 1) as i32 ^ -((value & 1) as i32)) as u32;
+        let mut previous = SourcePosition { pc: 0, line: 0, column: 0 };
+        std::iter::from_fn(move || {
+            previous = SourcePosition {
+                pc: previous.pc.wrapping_add(varint()?),
+                line: previous.line.wrapping_add(unzigzag(varint()?)),
+                column: previous.column.wrapping_add(unzigzag(varint()?)),
+            };
+            Some(previous)
+        })
+    }
+
+    pub(crate) fn to_vec(&self) -> Vec<SourcePosition> {
+        self.iter().collect()
+    }
+
+    /// The position of the last entry at or before `pc`.
+    pub(crate) fn at(&self, pc: u32) -> Option<SourcePosition> {
+        self.iter().take_while(|position| position.pc <= pc).last()
+    }
+}
+
+impl From<Vec<SourcePosition>> for SourcePositions {
+    fn from(positions: Vec<SourcePosition>) -> Self {
+        fn push(bytes: &mut Vec<u8>, mut value: u32) {
+            loop {
+                let byte = (value & u32::from(!VARINT_CONTINUATION)) as u8;
+                value >>= VARINT_PAYLOAD_BITS;
+                if value == 0 {
+                    bytes.push(byte);
+                    return;
+                }
+                bytes.push(byte | VARINT_CONTINUATION);
+            }
+        }
+        let zigzag = |delta: u32| ((delta as i32) << 1 ^ ((delta as i32) >> (u32::BITS - 1))) as u32;
+        let mut bytes = Vec::new();
+        let mut previous = SourcePosition { pc: 0, line: 0, column: 0 };
+        for position in positions {
+            push(&mut bytes, position.pc.wrapping_sub(previous.pc));
+            push(&mut bytes, zigzag(position.line.wrapping_sub(previous.line)));
+            push(&mut bytes, zigzag(position.column.wrapping_sub(previous.column)));
+            previous = position;
+        }
+        Self(bytes.into_boxed_slice())
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PlainLocalContextIneligibility {
     RootFunction,
-    AsyncFunction,
-    GeneratorFunction,
-    ClassConstructor,
-    ClassInitializer,
-    NonSimpleParameters,
     LegacyCaptureLayout,
     DynamicNameResolution,
 }
@@ -1146,12 +1241,8 @@ pub(crate) enum PlainLocalContextIneligibility {
 pub(crate) enum PlainLocalSlotIneligibility {
     MissingAtom,
     MappedArgument,
-    Tdz,
     SelfBinding,
     Captured,
-    NotEnvironmentVisible,
-    Lexical,
-    HiddenName,
 }
 
 impl Function {
@@ -1205,21 +1296,6 @@ impl Function {
         if self.parent.is_none() {
             return Some(PlainLocalContextIneligibility::RootFunction);
         }
-        if self.is_async {
-            return Some(PlainLocalContextIneligibility::AsyncFunction);
-        }
-        if self.is_generator {
-            return Some(PlainLocalContextIneligibility::GeneratorFunction);
-        }
-        if self.is_class_constructor {
-            return Some(PlainLocalContextIneligibility::ClassConstructor);
-        }
-        if self.class_initializer {
-            return Some(PlainLocalContextIneligibility::ClassInitializer);
-        }
-        if !self.simple_parameters {
-            return Some(PlainLocalContextIneligibility::NonSimpleParameters);
-        }
         let selective = self.selective_capture_slots.is_some();
         let has_legacy_environment_access = self.code.iter().any(|instruction| {
             instruction.op() == Op::MakeClosure && !selective
@@ -1243,38 +1319,32 @@ impl Function {
     }
 
     /// Which local slots are plain: read and written only through the frame's local array,
-    /// with no environment, TDZ, mapped-argument or dynamic-scope observer. Compilation
-    /// specializes these slots' operations, validation re-derives the same proof, and the
-    /// interpreter memoizes it in `plain_locals` to read plain local operands directly.
-    pub(crate) fn plain_local_slots<'a>(
-        &self,
-        atom_name: impl Fn(Atom) -> Option<&'a str>,
-    ) -> Vec<bool> {
+    /// with no environment, mapped-argument or dynamic-scope observer, and no read inside a
+    /// temporal dead zone (`initialization`). Compilation specializes these slots'
+    /// operations, validation re-derives the same proof, and the interpreter memoizes it in
+    /// `plain_locals` to read plain local operands directly.
+    pub(crate) fn plain_local_slots(&self, superinstructions: &[Superinstruction]) -> Vec<bool> {
         let mut plain = vec![false; usize::from(self.locals)];
         if !self.plain_local_context_is_safe() {
             return plain;
         }
-        let mut tdz_slots = vec![false; usize::from(self.locals)];
-        for instruction in &self.code {
+        let mut dead_zone = vec![false; usize::from(self.locals)];
+        for instruction in self.instructions() {
             if instruction.op() == Op::InitializeTdz
-                && let Some(slot) = tdz_slots.get_mut(instruction.local_slot())
-            {
-                *slot = true;
-            }
-        }
-        for instruction in &self.wide {
-            if instruction.op() == Op::InitializeTdz
-                && let Some(slot) = tdz_slots.get_mut(instruction.local_slot())
+                && let Some(slot) = dead_zone.get_mut(instruction.local_slot())
             {
                 *slot = true;
             }
         }
         for (slot, plain) in plain.iter_mut().enumerate() {
-            *plain = self
-                .local_atoms
-                .get(slot)
-                .and_then(|atom| atom_name(*atom))
-                .is_some_and(|name| self.plain_local_slot_is_safe(slot, name, tdz_slots[slot]));
+            *plain = self.plain_local_slot_is_safe(slot);
+        }
+        for (slot, dead_zone) in dead_zone.iter_mut().enumerate() {
+            *dead_zone &= plain[slot];
+        }
+        let initialized = initialization::initialized_before_reads(self, superinstructions, &dead_zone);
+        for (slot, plain) in plain.iter_mut().enumerate() {
+            *plain &= !dead_zone[slot] || initialized[slot];
         }
         plain
     }
@@ -1353,8 +1423,9 @@ impl Function {
     /// does for parameters that live only in the frame: no code or closure uses an `arguments`
     /// binding, the parameters are simple, and each is a plain or register-promoted local.
     /// Otherwise the arguments are reflected as passed.
-    pub(crate) fn reflects_live_parameters(&self, atoms: &AtomTable) -> bool {
+    pub(crate) fn reflects_live_parameters(&self, program: &ResidualProgram) -> bool {
         *self.live_parameter_reflection.get_or_init(|| {
+            let atoms = &program.atoms;
             let arguments_used = self.local_atoms.iter().enumerate().any(|(slot, &atom)| {
                 usize::try_from(atom)
                     .is_ok_and(|atom| atom < atoms.len() && &atoms[atom] == "arguments")
@@ -1369,7 +1440,7 @@ impl Function {
                 && self.simple_parameters
                 && !self.rest
                 && (0..self.params).all(|parameter| {
-                    self.plain_local(atoms, usize::from(parameter))
+                    self.plain_local(program, usize::from(parameter))
                         || self
                             .local_registers
                             .iter()
@@ -1384,14 +1455,15 @@ impl Function {
     /// `with` scope or observable implicit bindings. Such a frame needs only its storage sized
     /// (cleared when no root map lets the collector skip stale registers), its parameters
     /// placed and its scalar state set; see `activate_plain_frame`.
-    pub(crate) fn plain_activation(&self, atoms: &AtomTable) -> bool {
-        self.call_plan(atoms).plain
+    pub(crate) fn plain_activation(&self, program: &ResidualProgram) -> bool {
+        self.call_plan(program).plain
     }
 
     /// The function's `CallPlan`, derived on first use.
     #[inline(always)]
-    pub(crate) fn call_plan(&self, atoms: &AtomTable) -> CallPlan {
+    pub(crate) fn call_plan(&self, program: &ResidualProgram) -> CallPlan {
         *self.call_plan.get_or_init(|| {
+            let atoms = &program.atoms;
             let promoted_parameters = self
                 .local_registers
                 .iter()
@@ -1416,7 +1488,7 @@ impl Function {
                 && !self.class_initializer
                 && !self.parameter_eval_arguments_error;
             let legacy_reflection = !self.has_restricted_legacy_caller_access();
-            let live_parameters = self.reflects_live_parameters(atoms);
+            let live_parameters = self.reflects_live_parameters(program);
             let forwards_arguments = self.forwards_arguments_only();
             let addresses_locals = self.instructions().any(|instruction| {
                 matches!(instruction.op(), Op::MakeClosure | Op::CloneEnv)
@@ -1537,43 +1609,27 @@ impl Function {
 
     /// The memoized `plain_local_slots` projection for this residual's atoms.
     #[inline(always)]
-    pub(crate) fn plain_local(&self, atoms: &AtomTable, slot: usize) -> bool {
+    pub(crate) fn plain_local(&self, program: &ResidualProgram, slot: usize) -> bool {
         self.plain_locals
             .get_or_init(|| {
-                self.plain_local_slots(|atom| {
-                    usize::try_from(atom)
-                        .ok()
-                        .filter(|atom| *atom < atoms.len())
-                        .map(|atom| &atoms[atom])
-                })
-                .into_boxed_slice()
+                self.plain_local_slots(&program.superinstructions)
+                    .into_boxed_slice()
             })
             .get(slot)
             .copied()
             .unwrap_or(false)
     }
 
-    pub(crate) fn plain_local_slot_is_safe(
-        &self,
-        slot: usize,
-        atom_name: &str,
-        has_tdz: bool,
-    ) -> bool {
-        self.plain_local_slot_ineligibility(slot, atom_name, has_tdz)
-            .is_none()
+    pub(crate) fn plain_local_slot_is_safe(&self, slot: usize) -> bool {
+        self.plain_local_slot_ineligibility(slot).is_none()
     }
 
     pub(crate) fn plain_local_slot_ineligibility(
         &self,
         slot: usize,
-        atom_name: &str,
-        has_tdz: bool,
     ) -> Option<PlainLocalSlotIneligibility> {
-        let Some(&atom) = self.local_atoms.get(slot) else {
+        if self.local_atoms.get(slot).is_none() {
             return Some(PlainLocalSlotIneligibility::MissingAtom);
-        };
-        if has_tdz {
-            return Some(PlainLocalSlotIneligibility::Tdz);
         }
         if self.is_self_binding_slot(slot) {
             return Some(PlainLocalSlotIneligibility::SelfBinding);
@@ -1592,15 +1648,6 @@ impl Function {
             && self.arguments_are_mapped()
         {
             return Some(PlainLocalSlotIneligibility::MappedArgument);
-        }
-        if !self.environment_atoms.contains(&atom) {
-            return Some(PlainLocalSlotIneligibility::NotEnvironmentVisible);
-        }
-        if self.lexical_atoms.contains(&atom) {
-            return Some(PlainLocalSlotIneligibility::Lexical);
-        }
-        if atom_name.starts_with('\0') {
-            return Some(PlainLocalSlotIneligibility::HiddenName);
         }
         None
     }
@@ -2139,7 +2186,6 @@ pub struct ResidualProgram {
     pub(crate) object_sites: Vec<ObjectSite>,
     pub(crate) regexp_literal_sites: Vec<RegExpLiteralSite>,
     pub(crate) superinstructions: Vec<Superinstruction>,
-    pub(crate) register_roots: Vec<u64>,
 }
 
 #[cold]
@@ -2159,13 +2205,36 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
 }
 
 impl ResidualProgram {
+    /// The registers live at `pc` in `function`, when liveness covers it.
+    pub(crate) fn register_root_mask(&self, function: u32, pc: usize) -> Option<u64> {
+        self.register_root_masks(function)?.get(pc).copied()
+    }
+
+    /// `function`'s live register masks by pc, one past its last instruction included, when
+    /// liveness covers it.
+    pub(crate) fn register_root_masks(&self, function: u32) -> Option<&[u64]> {
+        let function = self.functions.get(function as usize)?;
+        if !function.register_roots.covered {
+            return None;
+        }
+        let masks = function
+            .register_roots
+            .masks
+            .get_or_init(|| {
+                crate::compile::liveness::analyze(
+                    function,
+                    self,
+                    &self.field_sites,
+                    &self.superinstructions,
+                )
+                .expect("a covered function's liveness is derivable")
+                .into_boxed_slice()
+            });
+        Some(masks)
+    }
+
     pub(crate) fn source_position(&self, function: u32, pc: u32) -> Option<SourcePosition> {
-        let positions = &self.functions.get(function as usize)?.source_positions;
-        let position = *positions.get(
-            positions
-                .partition_point(|position| position.pc <= pc)
-                .checked_sub(1)?,
-        )?;
+        let position = self.functions.get(function as usize)?.source_positions.at(pc)?;
         self.adjust_source_position(position)
     }
 
@@ -2185,7 +2254,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 94;
+    pub const FORMAT_VERSION: u8 = 95;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

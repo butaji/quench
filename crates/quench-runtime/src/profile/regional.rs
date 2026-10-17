@@ -105,13 +105,8 @@ pub(super) fn report_functions(profile: &Profile, program_id: u32, program: &Res
             .name
             .map(|atom| program.atoms[atom as usize].as_ref())
             .unwrap_or("<script>");
-        let max_live = (function.register_root_offset != u32::MAX).then(|| {
-            let start = function.register_root_offset as usize;
-            program.register_roots[start..start + function.code.len() + 1]
-                .iter()
-                .map(|mask| mask.count_ones())
-                .max()
-                .unwrap_or(0)
+        let max_live = program.register_root_masks(id as u32).map(|masks| {
+            masks.iter().map(|mask| mask.count_ones()).max().unwrap_or(0)
         });
         eprint!(
             "{{\"id\":{id},\"name\":\"{name}\",\"count\":{count},\"instructions\":{},\"registers\":{},\"max_live\":{},\"dispatch\":\"{:?}\"}}",
