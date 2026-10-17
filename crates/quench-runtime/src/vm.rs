@@ -1300,6 +1300,10 @@ pub(crate) struct Vm<H> {
     /// The error of a call the lane made in place (`dispatch_fast::lane_call_native`), which
     /// the general loop raises at that call's instruction once the lane exits there.
     lane_raised: Option<JsError>,
+    /// The completion a frame's own call record returns, made by a lane activation
+    /// (`dispatch_fast::lane_frame_return`), which the general loop returns from the frame
+    /// at that instruction once the lane exits there.
+    lane_returned: Option<Value>,
     /// `program_cache_layouts[active_program]`, kept by `set_active_program`.
     active_layout: ProgramCacheLayout,
     /// The active program's materialized constants, kept by `set_active_program` and by
