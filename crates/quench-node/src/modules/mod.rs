@@ -5,24 +5,15 @@
 
 pub(crate) mod assert_shared_vm;
 pub(crate) mod napi;
+pub(crate) mod worker_shared_vm;
 pub(crate) mod async_hook_registry_shared_vm;
 pub(crate) mod async_hooks_shared_vm;
 pub(crate) mod async_hooks_state;
-pub(crate) mod base64_shared_vm;
-pub(crate) mod buffer_alloc_shared_vm;
-pub(crate) mod buffer_bigint_shared_vm;
+pub(crate) mod buffer_binding_shared_vm;
 pub(crate) mod buffer_codec;
-pub(crate) mod buffer_compare_shared_vm;
-pub(crate) mod buffer_constructor_shared_vm;
-pub(crate) mod buffer_from_shared_vm;
-pub(crate) mod buffer_latin1_shared_vm;
-pub(crate) mod buffer_policy_shared_vm;
-pub(crate) mod buffer_pool_shared_vm;
-pub(crate) mod buffer_search_shared_vm;
 pub(crate) mod buffer_shared_vm;
-pub(crate) mod buffer_string_shared_vm;
-pub(crate) mod buffer_swap_shared_vm;
 pub(crate) mod cares_binding;
+#[cfg(quench_node_cares)] pub(crate) mod cares_channel_shared_vm;
 pub(crate) mod child_process_env_shared_vm;
 pub(crate) mod child_process_exec_shared_vm;
 pub(crate) mod child_process_fork_shared_vm;
@@ -49,6 +40,7 @@ pub(crate) mod crypto_sha1;
 pub(crate) mod crypto_shared_vm;
 pub(crate) mod crypto_strings;
 pub(crate) mod diagnostics_channel_shared_vm;
+#[cfg(not(quench_node_cares))]
 pub(crate) mod dns_shared_vm;
 pub(crate) mod domain_shared_vm;
 pub(crate) mod emitter_async_resource_shared_vm;
@@ -98,6 +90,7 @@ pub(crate) mod os_shared_vm;
 pub(crate) mod path_algorithms;
 pub(crate) mod path_shared_vm;
 pub(crate) mod perf_hooks;
+pub(crate) mod performance_binding_shared_vm;
 pub(crate) mod perf_timeline_query;
 pub(crate) mod process_binding_shared_vm;
 pub(crate) mod process_memory_shared_vm;
@@ -132,22 +125,18 @@ pub(crate) mod util_shared_vm;
 pub mod util_strip;
 pub(crate) mod util_style_shared_vm;
 pub(crate) mod util_system_error_shared_vm;
+pub(crate) mod ipc_serdes_shared_vm;
+pub(crate) mod serdes_shared_vm;
 pub(crate) mod v8_shared_vm;
 pub(crate) mod vm_shared_vm;
 pub(crate) mod web_stream_consumers_shared_vm;
 pub(crate) mod zlib_constants;
-pub(crate) mod zlib_options_shared_vm;
-pub(crate) mod zlib_shared_vm;
-pub(crate) mod zlib_stream_shared_vm;
 
 pub(crate) mod trace_shared_vm;
 pub(crate) mod trace_state;
 
-pub(crate) mod buffer_write_shared_vm;
 
-pub(crate) mod buffer_fill_shared_vm;
 
-pub(crate) mod buffer_inspect_shared_vm;
 
 pub(crate) mod encoding_binding_shared_vm;
 
@@ -193,3 +182,24 @@ pub(crate) mod crypto_hash_source_shared_vm;
 pub(crate) mod crypto_hash_source;
 #[cfg(quench_openssl_provider)]
 pub(crate) mod crypto_digest_state;
+
+pub(crate) mod abort_dependencies_shared_vm;
+
+pub(crate) mod abort_timeout_shared_vm;
+
+pub(crate) mod crypto_secret_material;
+#[cfg(quench_openssl_provider)]
+pub(crate) mod crypto_hkdf;
+
+pub(crate) mod udp_transport;
+pub(crate) mod udp_binding;
+
+pub(crate) mod fd_handle_type;
+pub(crate) mod native_number;
+
+pub(crate) mod native_async_wrap;
+
+#[cfg(quench_openssl_provider)]
+mod crypto_kdf;
+#[cfg(quench_openssl_provider)]
+mod crypto_pbkdf2;

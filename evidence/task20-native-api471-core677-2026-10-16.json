@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "task": "TOD-20",
+  "recorded_utc": "2026-10-16T23:11:19.874729+00:00",
+  "goal_complete": false,
+  "production_source_commit": "66e8ad1c2a023f49038097e05bb824cda2d54626",
+  "core_source_commit": "79c0d3629",
+  "oracle_release": "v26.12.0",
+  "profile": "iteration opt-level=1, codegen-units=256, unwind; not production performance authority",
+  "full_api_first_run": {
+    "source_commit": "66e8ad1c2a023f49038097e05bb824cda2d54626",
+    "test_count": 471,
+    "exit": 101,
+    "seconds": 393.7496422950062,
+    "binaries_before": {
+      "quench-node": "38895ccd689d7b8068c8cf7a8abf2be3f6f79755c9cd9084fa13297265574f64",
+      "run-parallel": "0b8981e5fc2887228c1a70dde75dcaee472b63501dcf89693d78b46def74d2df",
+      "child-entry-api": "e9e7c78442c8cd552b73d4779aa3c39b889301c7f124fd743d501c69b89a49f5",
+      "libquench_node_workers.rlib": "36c17a88dfae7060aa822f9cdf12fbe918e19ed8a683ba12fb65b6d824d59df9"
+    },
+    "binaries_after": {
+      "quench-node": "38895ccd689d7b8068c8cf7a8abf2be3f6f79755c9cd9084fa13297265574f64",
+      "run-parallel": "0b8981e5fc2887228c1a70dde75dcaee472b63501dcf89693d78b46def74d2df",
+      "child-entry-api": "e9e7c78442c8cd552b73d4779aa3c39b889301c7f124fd743d501c69b89a49f5",
+      "libquench_node_workers.rlib": "36c17a88dfae7060aa822f9cdf12fbe918e19ed8a683ba12fb65b6d824d59df9"
+    },
+    "memory_before": "low 0\nhigh 0\nmax 1269299\noom 2\noom_kill 1\noom_group_kill 0\n",
+    "memory_after": "low 0\nhigh 0\nmax 1269299\noom 2\noom_kill 1\noom_group_kill 0\n",
+    "finished_utc": "2026-10-16T22:54:58.043103+00:00"
+  },
+  "full_api_first_run_result": "470 pass, 1 failure: original 300 ms child SIGTERM startup deadline",
+  "full_api_quiet_rerun": {
+    "source_commit": "66e8ad1c2a023f49038097e05bb824cda2d54626",
+    "test_count": 471,
+    "exit": 0,
+    "seconds": 271.77525503601646,
+    "binaries_before": {
+      "quench-node": "38895ccd689d7b8068c8cf7a8abf2be3f6f79755c9cd9084fa13297265574f64",
+      "run-parallel": "0b8981e5fc2887228c1a70dde75dcaee472b63501dcf89693d78b46def74d2df",
+      "child-entry-api": "e9e7c78442c8cd552b73d4779aa3c39b889301c7f124fd743d501c69b89a49f5",
+      "libquench_node_workers.rlib": "36c17a88dfae7060aa822f9cdf12fbe918e19ed8a683ba12fb65b6d824d59df9"
+    },
+    "binaries_after": {
+      "quench-node": "38895ccd689d7b8068c8cf7a8abf2be3f6f79755c9cd9084fa13297265574f64",
+      "run-parallel": "0b8981e5fc2887228c1a70dde75dcaee472b63501dcf89693d78b46def74d2df",
+      "child-entry-api": "e9e7c78442c8cd552b73d4779aa3c39b889301c7f124fd743d501c69b89a49f5",
+      "libquench_node_workers.rlib": "36c17a88dfae7060aa822f9cdf12fbe918e19ed8a683ba12fb65b6d824d59df9"
+    },
+    "memory_before": "low 0\nhigh 0\nmax 1269299\noom 2\noom_kill 1\noom_group_kill 0\n",
+    "memory_after": "low 0\nhigh 0\nmax 1269299\noom 2\noom_kill 1\noom_group_kill 0\n",
+    "finished_utc": "2026-10-16T23:10:55.252524+00:00"
+  },
+  "full_api_quiet_rerun_result": "471 pass, zero failures; original deadlines unchanged",
+  "core_full_sharded_gate": {
+    "status": "PASS",
+    "qualification": "complete original Core674 gate executed in8 registration-only shards, plus explicitly listed new tests; not a single674 run",
+    "core_commit": "79c0d3629598318021a693ea01e93ee657657ea6",
+    "production_source_digest": "76e481f46612345cbff6f0f526f580e66a14b6601fa315c1d8a0dc29288ad0d4",
+    "artifact_sha256": "76fb9f1692f5a5748661467219b0d4e67dc3290c2e88d89d07b963e639901a46",
+    "baseline_test_count": 674,
+    "total_tests": 677,
+    "new_test_ids": [
+      "execution_interrupt::tests::owned_termination_handle_stops_before_execution_and_is_send_sync",
+      "execution_interrupt::tests::termination_unwinds_both_javascript_modes_without_guest_handlers",
+      "execution_interrupt::tests::termination_wakers_are_weak_and_late_registration_wakes"
+    ],
+    "duplicates": [],
+    "ignored": 0,
+    "every_listed_test_executed_once": true,
+    "result_receipt": "/workspace/quench/work/agent-serializer-api/core-shard-results.json",
+    "subset17": "PASS17/17 against same artifact",
+    "frozen_source_and_artifact_verified": true
+  },
+  "core_opt1_focused_gate": {
+    "status": "PASS",
+    "qualification": "same frozen79 source passed original674+3 in8 registration-only shards; opt1 same-source artifact plus unchanged subset17 and4 actual native proofs PASS",
+    "artifact": "/tmp/quench-owned-core/libquench_runtime_sab_opt1.rlib",
+    "artifact_sha256": "d9586e2d8efc0daa7fe74f7c520e784df514377348b9b56d8a8d77978ae83b6d",
+    "production_source_digest": "76e481f46612345cbff6f0f526f580e66a14b6601fa315c1d8a0dc29288ad0d4",
+    "source_gate": "core-shard-gate-complete.json",
+    "proof_receipt": "frozen-opt1-proof-results.json",
+    "proofs": [
+      "latest-subset",
+      "native-owned-check",
+      "sab-two-runtime-check",
+      "sab-async-runtime-check",
+      "latest-buffer-storage-check"
+    ],
+    "full677_opt1_execution_claimed": false,
+    "source_and_artifact_reverified": true,
+    "known_promise_termination_gap": "Promise reactions currently swallow typed execution termination; preserved separate checkpoint private failure and pending genuine correction, not folded here"
+  },
+  "limitations": [
+    "Full Node parallel inventories remain 1938 stable / 1888 pinned on earlier e5 source; no extrapolation from focused fixes.",
+    "Worker, IPC, asymmetric-key, HTTP2 and corrected-checkpoint candidates remain separate and are not in this production source.",
+    "Initial API deadline failure retained; quiet rerun establishes pass on unchanged tests, not deterministic startup guarantee."
+  ]
+}

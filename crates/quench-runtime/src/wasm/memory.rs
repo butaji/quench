@@ -400,7 +400,7 @@ impl SharedMemory {
 
 /// Immutable data segments and locked linear memory share a byte-read view.
 pub(crate) enum MemoryRead<'a> {
-    Segment(&'a [u8]),
+    Buffer(crate::heap::BufferRead<'a>),
     Memory(MemoryGuard<'a>),
 }
 
@@ -408,7 +408,7 @@ impl std::ops::Deref for MemoryRead<'_> {
     type Target = [u8];
     fn deref(&self) -> &[u8] {
         match self {
-            Self::Segment(bytes) => bytes,
+            Self::Buffer(bytes)=>bytes,
             Self::Memory(bytes) => bytes,
         }
     }

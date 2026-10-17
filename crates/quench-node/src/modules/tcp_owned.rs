@@ -75,6 +75,11 @@ impl TcpOwned {
         self.phase = Phase::Bound;
         Ok(())
     }
+    #[cfg(unix)]
+    pub(crate) fn fd(&self) -> i32 {
+        use std::os::fd::AsRawFd;
+        if self.phase == Phase::Unbound { -libc::EBADF } else { self.socket.as_raw_fd() }
+    }
     pub(crate) fn address(&self) -> io::Result<SocketAddr> {
         if self.phase == Phase::Unbound {
             return Err(io::Error::from_raw_os_error(libc::EBADF));

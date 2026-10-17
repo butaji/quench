@@ -388,6 +388,7 @@ fn build_internal_binding(
             context, "\0binding:modules", module_protocol_binding,
         ),
         "stream_wrap" => return super::stream_binding::binding(context),
+        "udp_wrap" => return super::udp_binding::binding(context),
         "tcp_wrap" => return super::tcp_binding::binding(context),
         "contextify" => return super::contextify_shared_vm::binding(context),
         "types" => return super::util_shared_vm::types_binding(context),
@@ -398,6 +399,10 @@ fn build_internal_binding(
         "options" => return super::cli_options_shared_vm::binding(context),
         "string_decoder" => return super::string_decoder_shared_vm::binding(context),
         "zlib" => return super::zlib_native_shared_vm::binding(context),
+        "serdes" => return super::serdes_shared_vm::binding(context),
+        "v8" => return super::v8_shared_vm::binding(context),
+        "heap_utils" => return super::v8_shared_vm::heap_utils_binding(context),
+        "internal_only_v8" => return super::v8_shared_vm::internal_only_binding(context),
         "encoding_binding" => return super::encoding_binding_shared_vm::binding(context),
         #[cfg(quench_icu)]
         "icu" => return super::icu_binding_shared_vm::binding(context),
@@ -410,9 +415,10 @@ fn build_internal_binding(
         "symbols" => return super::util_shared_vm::symbols_binding(context),
         "cares_wrap" => return crate::host::shared_vm::commonjs::cares_binding(context),
         "http2" => return crate::host::shared_vm::commonjs::http2_binding(context),
-        "buffer" => return super::buffer_fill_shared_vm::binding(context),
+        "buffer" => return super::buffer_binding_shared_vm::binding(context),
         "crypto" => return super::tls_shared_vm::facade::binding(context),
         "timers" => return super::timers_shared_vm::binding(context),
+        "performance" => return super::performance_binding_shared_vm::binding(context),
         "uv" => return super::util_system_error_shared_vm::uv_binding(context),
         "fs_event_wrap" => return super::fs_watch_shared_vm::event_binding(context),
         "trace_events" => {
@@ -440,7 +446,7 @@ fn build_internal_binding(
                 let os = super::os_binding_shared_vm::constants(context)?;
                 put(context, binding, "os", os)?;
             }
-            let zlib = super::zlib_shared_vm::constants(context)?;
+            let zlib = super::zlib_constants::constants(context)?;
             put(context, binding, "zlib", zlib)?;
             let trace = context.object_rooted()?;
             for (name, code) in [

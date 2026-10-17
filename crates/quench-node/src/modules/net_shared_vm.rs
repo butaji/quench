@@ -323,7 +323,7 @@ pub(crate) struct Transport {
     listeners: HashMap<u64, Listener>,
     sockets: HashMap<u64, SharedSocket>,
     connecting: HashMap<u64, ConnectingSocket>,
-    closing_sockets: VecDeque<(u64, ClosingSocket)>,
+    closing_sockets: VecDeque<(CloseTarget, ClosingSocket)>,
 }
 
 pub(crate) enum RawStream {
@@ -586,6 +586,7 @@ pub(crate) enum TransportEvent {
     End {
         socket: u64,
     },
+    DatagramCloseCompleted { id:u64 },
     CloseCompleted {
         socket: u64,
     },
@@ -926,7 +927,7 @@ pub(crate) fn poll(transport: &mut Transport) -> Vec<TransportEvent> {
         .closing_sockets
         .retain_mut(|(id, socket)| match socket.phase {
             SocketClosePhase::Closing => {
-                events.push(TransportEvent::CloseCompleted { socket: *id });
+                events.push(match *id {CloseTarget::Stream(socket)=>TransportEvent::CloseCompleted{socket},CloseTarget::Datagram(id)=>TransportEvent::DatagramCloseCompleted{id}});
                 false
             }
             SocketClosePhase::Requested => {
@@ -2163,7 +2164,7 @@ pub(crate) fn socket_reference(transport: &mut Transport, id: u64, referenced: b
         socket.referenced = referenced;
     } else if let Some(socket) = transport.sockets.get_mut(&id) {
         socket.referenced = referenced;
-    } else if let Some(socket) = transport.closing_sockets.iter_mut().find_map(|(existing, socket)| (*existing == id).then_some(socket)) {
+    } else if let Some(socket) = transport.closing_sockets.iter_mut().find_map(|(existing, socket)| (*existing == CloseTarget::Stream(id)).then_some(socket)) {
         socket.referenced = referenced;
     }
 }
@@ -2177,7 +2178,7 @@ pub(crate) fn socket_has_ref(transport: &Transport, id: u64) -> Option<bool> {
             transport
                 .closing_sockets
                 .iter()
-                .find_map(|(existing, socket)| (*existing == id).then_some(socket.referenced))
+                .find_map(|(existing, socket)| (*existing == CloseTarget::Stream(id)).then_some(socket.referenced))
         })
 }
 
@@ -2570,6 +2571,22 @@ pub(crate) fn native_tcp_listen(
     transport.listeners.insert(id, listener);
     Ok(())
 }
+/// Project the descriptor owned by the current native lifecycle state.
+#[cfg(unix)]
+pub(crate) fn native_tcp_fd(transport: &Transport, id: u64) -> i32 {
+    use std::os::fd::AsRawFd;
+    if let Some(socket)=transport.native_tcp_unbound.get(&id) { return socket.fd(); }
+    if let Some(socket)=transport.native_tcp_connecting.get(&id) { return socket.socket.fd(); }
+    if let Some(listener)=transport.listeners.get(&id).and_then(Listener::socket) {
+        return match listener { ListenerSocket::Tcp(socket)=>socket.as_raw_fd(), ListenerSocket::Local{listener,..}=>listener.as_raw_fd() };
+    }
+    if let Some(socket)=transport.sockets.get(&id) {
+        return match socket.stream.raw() { RawStream::Tcp(socket)=>socket.as_raw_fd(), RawStream::Local(socket)=>socket.as_raw_fd() };
+    }
+    -libc::EBADF
+}
+#[cfg(not(unix))]
+pub(crate) fn native_tcp_fd(_: &Transport,_:u64)->i32 { -libc::EBADF }
 pub(crate) fn native_tcp_address(transport: &Transport, id: u64) -> std::io::Result<SocketAddr> {
     if let Some(socket) = transport.native_tcp_unbound.get(&id) {
         return socket.address();
@@ -2766,8 +2783,14 @@ pub(crate) fn native_shutdown_request(
 /// libuv prepends genuine close requests to its closing-handle list. Keep
 /// lifecycle metadata in that same authoritative order until completion.
 fn request_socket_close(transport: &mut Transport, id: u64, referenced: bool) {
-    transport.closing_sockets.push_front((id, ClosingSocket {
+    transport.closing_sockets.push_front((CloseTarget::Stream(id), ClosingSocket {
         referenced,
         phase: SocketClosePhase::Requested,
     }));
 }
+
+#[derive(Clone,Copy,PartialEq,Eq)]
+enum CloseTarget { Stream(u64), Datagram(u64) }
+pub(crate) fn request_udp_close(transport:&mut Transport,id:u64,referenced:bool){transport.closing_sockets.push_front((CloseTarget::Datagram(id),ClosingSocket{referenced,phase:SocketClosePhase::Requested}));}
+pub(crate) fn udp_close_reference(transport:&mut Transport,id:u64,referenced:bool){if let Some((_,owner))=transport.closing_sockets.iter_mut().find(|(key,_)|*key==CloseTarget::Datagram(id)){owner.referenced=referenced;}}
+pub(crate) fn udp_close_has_ref(transport:&Transport,id:u64)->Option<bool>{transport.closing_sockets.iter().find_map(|(key,owner)|(*key==CloseTarget::Datagram(id)).then_some(owner.referenced))}

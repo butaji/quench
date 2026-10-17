@@ -1888,7 +1888,7 @@ impl<H: Host> Vm<H> {
         })
     }
 
-    fn regexp_from_source(
+    pub(super) fn regexp_from_source(
         &mut self,
         prototype: Value,
         source: JsString,
