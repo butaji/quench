@@ -31,7 +31,9 @@ pub struct ExecutionRequest<'a> {
 }
 
 /// A host-visible Promise rejection notification produced at an execution
-/// checkpoint. Release every root in the event after dispatching it.
+/// checkpoint. Runtime event methods return owned roots: release each after
+/// dispatch. NativeContext event methods instead scope these roots to the
+/// callback frame; retain explicitly to carry one beyond that frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PromiseRejectionEvent {
     Unhandled {
@@ -80,7 +82,7 @@ impl<H: Host> Runtime<H> {
         Self { vm: Vm::new(host) }
     }
 
-    /// Choose how Wasm functions execute; see [`ExecutionMode`].
+    /// Choose how JavaScript and Wasm functions execute; see [`ExecutionMode`].
     pub fn set_execution_mode(&mut self, mode: crate::ExecutionMode) {
         self.vm.set_execution_mode(mode);
     }
@@ -130,6 +132,11 @@ impl<H: Host> Runtime<H> {
     pub fn execute_deferred_jobs(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         program.validate().map_err(JsError::validation)?;
         self.vm.execute_deferred_jobs(program).map(drop)
+    }
+
+    /// Counts collections: a host weak root can die only when this changes.
+    pub fn collection_epoch(&self) -> u64 {
+        self.vm.collection_epoch()
     }
 
     /// Release WeakRef targets after the host completes a job and its microtasks.
@@ -2053,7 +2060,7 @@ checkSources().then(()=>print('done'),e=>{print('unexpected');print(e);});
                 &mut self,
                 _: &str,
                 specifier: &str,
-            ) -> Result<Option<crate::host::ModuleSource>, String> {
+            ) -> Result<Option<crate::host::ModuleSource>, crate::ModuleLoadError> {
                 let file = specifier.rsplit('/').next().unwrap();
                 Ok(MODULES
                     .iter()
@@ -4863,7 +4870,7 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
         impl Host for ModuleCapture {
             fn write_line(&mut self, text: &str) { self.0.write_line(text); }
             fn clock_millis(&mut self) -> f64 { 0.0 }
-            fn resolve_dynamic_import(&mut self, _: &str, specifier: &str) -> Result<Option<crate::ModuleSource>, String> {
+            fn resolve_dynamic_import(&mut self, _: &str, specifier: &str) -> Result<Option<crate::ModuleSource>, crate::ModuleLoadError> {
                 let name = specifier.rsplit('/').next().unwrap();
                 Ok(MODULES.iter().find(|(candidate, _)| *candidate == name).map(|(_, source)| crate::ModuleSource {
                     name: format!("cyclic-module-graph/{name}"), source: (*source).into(), bytes: source.as_bytes().to_vec(),
@@ -4910,7 +4917,7 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
             fn globals(&self) -> &'static [crate::HostGlobal] { self.0.globals() }
             fn clock_millis(&mut self) -> f64 { 0.0 }
             fn has_module_source(&self, module: &crate::ModuleSource) -> bool { module.name == "<source>" }
-            fn resolve_dynamic_import(&mut self, _: &str, specifier: &str) -> Result<Option<crate::ModuleSource>, String> {
+            fn resolve_dynamic_import(&mut self, _: &str, specifier: &str) -> Result<Option<crate::ModuleSource>, crate::ModuleLoadError> {
                 if specifier == "<source>" {
                     return Ok(Some(crate::ModuleSource { name: specifier.into(), source: String::new(), bytes: Vec::new() }));
                 }
@@ -4973,7 +4980,7 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
                 &mut self,
                 _: &str,
                 specifier: &str,
-            ) -> Result<Option<crate::host::ModuleSource>, String> {
+            ) -> Result<Option<crate::host::ModuleSource>, crate::ModuleLoadError> {
                 assert_eq!(specifier, "./integrity-dependency.mjs");
                 Ok(Some(crate::host::ModuleSource {
                     name: "integrity-dependency.mjs".into(),
@@ -5069,7 +5076,7 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
                 &mut self,
                 _: &str,
                 specifier: &str,
-            ) -> Result<Option<crate::host::ModuleSource>, String> {
+            ) -> Result<Option<crate::host::ModuleSource>, crate::ModuleLoadError> {
                 assert_eq!(specifier, "./ordered-namespace.mjs");
                 Ok(Some(crate::host::ModuleSource {
                     name: "ordered-namespace.mjs".into(),

@@ -1124,7 +1124,7 @@ fn finished_jobs_release_their_values_while_the_queue_keeps_draining() {
     // collectable while later jobs of the same drain still run: its cleanup is observed
     // inside the await loop instead of never. Each iteration allocates at least one cell,
     // so the bound lets the drain pass the collection headroom several times.
-    let iterations = 4 * crate::heap::MINIMUM_GC_ALLOCATION_HEADROOM;
+    let iterations = 4 * crate::heap::FULL_COLLECTION_ALLOCATION_BOUND;
     let source = format!(
         "var finalized = false, registry = new FinalizationRegistry(function () {{ finalized = true; }});\n\
          function make() {{ var o = {{}}; registry.register(o, 0); return o; }}\n\
@@ -10295,6 +10295,212 @@ if(fn().getFunctionName()!=='anonymous')throw Error('deleted length layout');
 }
 
 #[test]
+#[cfg(not(any(
+    feature = "profile-aggregate",
+    feature = "profile-trace",
+    feature = "profile-memory",
+    feature = "profile-gc-time"
+)))]
+fn js_jit_compiles_hot_numeric_functions_and_guards_polymorphic_inputs() {
+    let source = r#"
+      function add(left, right) { return left + right; }
+      function divide(left, right) { return left / right; }
+      for (let index = 0; index < 40; index++) {
+        if (add(index, 2) !== index + 2) throw new Error('numeric result');
+        if (divide(index + 1, 2) !== (index + 1) / 2) throw new Error('division result');
+      }
+      if (add('value:', 2) !== 'value:2') throw new Error('guard fallback');
+      if (add(1n, 2n) !== 3n) throw new Error('BigInt fallback');
+      let coercions = 0;
+      const boxed = { valueOf() { coercions++; return 3; } };
+      if (add(boxed, 4) !== 7 || coercions !== 1) throw new Error('effectful fallback');
+      if (!(new add(1, 2) instanceof add)) throw new Error('constructor unwind');
+      if (!Object.is(divide(-0, 2), -0)) throw new Error('signed zero');
+      if (!Number.isNaN(divide(0, 0))) throw new Error('NaN');
+      if (divide(1, 0) !== Infinity) throw new Error('infinity');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest {
+        source,
+        name: "js-jit-number-guard.js",
+        kind: crate::SourceKind::Script,
+    })
+    .unwrap();
+    let mut vm = Vm::new(SilentHost);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+
+    for function in [1, 2] {
+        assert!(matches!(
+            vm.programs
+                .js_tier(super::program_store::ProgramId::MAIN, function),
+            Some(super::program_store::JsTierState::Compiled(_))
+        ));
+    }
+}
+
+#[test]
+#[cfg(not(any(
+    feature = "profile-aggregate",
+    feature = "profile-trace",
+    feature = "profile-memory",
+    feature = "profile-gc-time"
+)))]
+fn js_jit_compiles_forward_numeric_branches_to_rooted_string_returns() {
+    let source = r#"
+      const rating = price => price < 100 ? '€' : price < 1000 ? '€€' : '€€€';
+      for (let i = 0; i < 40; i++) {
+        if (rating(99.99) !== '€') throw Error('below first boundary');
+        if (rating(100) !== '€€') throw Error('first boundary');
+        if (rating(999.99) !== '€€') throw Error('below second boundary');
+        if (rating(1000) !== '€€€') throw Error('second boundary');
+      }
+      if (rating(-0) !== '€' || rating(-Infinity) !== '€') throw Error('negative number');
+      if (rating(NaN) !== '€€€' || rating(Infinity) !== '€€€') throw Error('unordered/large number');
+
+      let coercions = 0;
+      const boxed = { valueOf() { coercions++; return 150; } };
+      if (rating(boxed) !== '€€' || coercions !== 2) throw Error('guard fallback');
+
+      function constructible(price) { return price < 100 ? '€' : '€€'; }
+      for (let i = 0; i < 40; i++) constructible(i);
+      const instance = new constructible(1);
+      if (instance === '€' || !(instance instanceof constructible)) throw Error('constructor return');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest {
+        source,
+        name: "js-jit-string-branch.js",
+        kind: crate::SourceKind::Script,
+    })
+    .unwrap();
+    let function_count = program.functions.len();
+    let mut vm = Vm::new(SilentHost);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+
+    let compiled_string_functions: Vec<_> = (1..function_count)
+        .filter_map(|function| {
+            match vm
+                .programs
+                .js_tier(super::program_store::ProgramId::MAIN, function as u32)
+            {
+                Some(super::program_store::JsTierState::Compiled(compiled))
+                    if compiled.has_string_returns() =>
+                {
+                    Some(compiled)
+                }
+                _ => None,
+            }
+        })
+        .collect();
+    assert!(
+        !compiled_string_functions.is_empty(),
+        "at least one forward-branch string function should reach native code"
+    );
+    assert!(compiled_string_functions
+        .iter()
+        .all(|compiled| compiled.native_entries() > 0));
+}
+
+#[test]
+fn js_jit_tier_tracking_has_a_hard_bound() {
+    let program = Engine::compile(crate::ExecutionRequest::script("void 0", "js-jit-cap.js"))
+        .unwrap();
+    let mut programs = super::program_store::ProgramStore::default();
+    let id = programs.insert(program).unwrap();
+    for function in 0..512 {
+        assert!(!programs.note_js_function_entry(id, function, false));
+    }
+    assert_eq!(programs.js_jit_tracked_function_count(), 256);
+}
+
+#[test]
+fn js_jit_promotion_requires_a_confident_numeric_profile() {
+    let program = Engine::compile(crate::ExecutionRequest::script("void 0", "js-jit-profile-gate.js"))
+        .unwrap();
+    let mut programs = super::program_store::ProgramStore::default();
+    let id = programs.insert(program).unwrap();
+    for observation in 0..16 {
+        assert!(!programs.note_js_function_entry(id, 1, observation < 15));
+    }
+    assert!(matches!(
+        programs.js_tier(id, 1),
+        Some(super::program_store::JsTierState::Hot {
+            observations: 16,
+            numeric: 15
+        })
+    ));
+}
+
+#[test]
+fn js_jit_profile_gate_uses_prespecified_exact_binomial_looks() {
+    use super::program_store::JS_JIT_PROMOTION_LOOKS;
+
+    fn upper_tail(n: u8, k: u8, p: f64) -> f64 {
+        let n = u32::from(n);
+        let k = u32::from(k);
+        let mut mass = (1.0 - p).powi(n as i32);
+        let mut total = 0.0;
+        for successes in 0..=n {
+            if successes >= k {
+                total += mass;
+            }
+            if successes < n {
+                mass *= (n - successes) as f64 / f64::from(successes + 1) * p / (1.0 - p);
+            }
+        }
+        total
+    }
+
+    // Each fixed look spends alpha/4 under p=0.8. Testing at these points
+    // bounds false promotion across looks for this function at 5%.
+    for (observations, minimum) in JS_JIT_PROMOTION_LOOKS {
+        assert!(upper_tail(observations, minimum, 0.8) <= 0.05 / 4.0);
+        assert!(upper_tail(observations, minimum - 1, 0.8) > 0.05 / 4.0);
+    }
+
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        "void 0",
+        "js-jit-sequential-profile-gate.js",
+    ))
+    .unwrap();
+    let mut programs = super::program_store::ProgramStore::default();
+    let id = programs.insert(program).unwrap();
+    for observation in 0..31 {
+        assert!(!programs.note_js_function_entry(id, 1, observation != 0));
+    }
+    assert!(programs.note_js_function_entry(id, 1, true));
+    assert!(matches!(
+        programs.js_tier(id, 1),
+        Some(super::program_store::JsTierState::Hot {
+            observations: 32,
+            numeric: 31
+        })
+    ));
+}
+
+#[cfg(any(
+    feature = "profile-aggregate",
+    feature = "profile-trace",
+    feature = "profile-memory",
+    feature = "profile-gc-time"
+))]
+#[test]
+fn js_jit_leaves_profiling_builds_on_the_instrumented_dispatcher() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        "function add(a, b) { return a + b; } for (let i = 0; i < 40; i++) if (add(i, 2) !== i + 2) throw Error('bad result');",
+        "js-jit-profile.js",
+    ))
+    .unwrap();
+    let mut vm = Vm::new(SilentHost);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    assert!(vm
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, 1)
+        .is_none());
+}
+
+#[test]
 fn dynamic_function_canonical_source_and_wrapper_origins_match_in_both_modes() {
     let source = r#"
 Error.prepareStackTrace=(_,frames)=>frames;
@@ -10319,7 +10525,12 @@ fn private_data_fields_keep_distinct_homes_and_duplicate_values_in_both_modes() 
 class Base {constructor(object){return object}}
 function make(){return class extends Base {#x;constructor(object,value){super(object);this.#x=value}read(){return this.#x}write(value){this.#x=value}evaluate(){return eval('this.#x')}}}
 const A=make(),B=make();
-for(const object of [{},[],function(){},Object.create(null),Object.freeze({}),Object.seal({}),Object.preventExtensions({})]) {
+for(const object of [Object.freeze({}),Object.seal({}),Object.preventExtensions({})]) {
+ let rejected;
+ try{new A(object,1)}catch(error){rejected=error instanceof TypeError}
+ if(!rejected)throw Error('private field added to a non-extensible object');
+}
+for(const object of [{},[],function(){},Object.create(null)]) {
  new A(object,1);new B(object,2);
  if(A.prototype.read.call(object)!==1||B.prototype.read.call(object)!==2)throw Error('aliased class home');
  A.prototype.write.call(object,3);let duplicate;
@@ -10457,4 +10668,21 @@ class Derived extends Base {
         Vm::new(SilentHost).execute(&decoded).unwrap();
         std::fs::remove_file(path).unwrap();
     }
+}
+
+
+#[test]
+fn spread_of_a_branch_built_array_survives_collection() {
+    // The consequent's array reaches AppendArray only through the conditional's result
+    // register, which must stay a register root while the spread allocates its iterator.
+    let mut vm = Vm::new(SilentHost);
+    let script = crate::Engine::specialize(
+        "var x = 5; var out = []; for (var i = 0; i < 2000; i++) { var a = [...(x ? [x, i] : [])]; out.push(a[0] + a[1]); } var total = out[1999] * 10000 + out.length;",
+        "spread-branch-array.js",
+    )
+    .unwrap();
+    vm.execute(&script).unwrap();
+    let name = vm.intern_atom("total");
+    let total = vm.own_property(vm.realm.globals, name).unwrap();
+    assert_eq!(total.as_number(), Some(20_042_000.0));
 }

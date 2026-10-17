@@ -170,7 +170,7 @@ impl DeserializerDelegate<NodeHost> for IpcDeserializer {
 
 fn views(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     crate::host::shared_vm::commonjs::cached_native_binding(c, "\0binding:ipc_serdes:views", |c| {
-        let fast_buffer = crate::modules::buffer_constructor_shared_vm::fast_buffer(c)?;
+        let fast_buffer = crate::modules::buffer_shared_vm::fast_buffer(c)?;
         c.with_startup_intrinsics(|c| {
             let factory = c.evaluate_script_rooted(VIEWS_JS, "node:internal/ipc_serdes.js")?;
             let undefined = c.undefined();

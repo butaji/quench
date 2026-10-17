@@ -421,6 +421,44 @@ impl<H: Host> Vm<H> {
         self.get_property_with_receiver(p, object, atom, object)
     }
 
+/// `[[Get]]` of a string key along a chain of ordinary objects, decided by shape facts
+    /// alone: the nearest data property's value, or `undefined` past the chain's end. `None`
+    /// leaves accessors (lazy properties among them), exotic and namespace objects, Proxies
+    /// and private, index, `length` or legacy function keys to the general path.
+    #[inline]
+    fn plain_named_get(&self, object: Value, atom: Atom) -> Option<Value> {
+        const GENERAL_KEYS: u8 = AtomClass::PRIVATE
+            | AtomClass::ARRAY_INDEX
+            | AtomClass::TYPED_ARRAY_INDEX
+            | AtomClass::RESTRICTED_FUNCTION_PROPERTY;
+        if atom == self.length_atom || self.atom_class(atom).intersects(GENERAL_KEYS) {
+            return None;
+        }
+        let key = PropertyKey::string(atom);
+        let mut current = object;
+        loop {
+            let data = self.heap.ordinary_object(current)?;
+            if data.is_module_namespace() || data.deferred_module().is_some() {
+                return None;
+            }
+            let shape = data.shape();
+            if let Some(slot) = self.property_shape_slot(shape, key) {
+                if self.shape_attribute(shape, slot)?.accessor {
+                    return None;
+                }
+                return self.heap.property_get(data, slot);
+            }
+            if self.descriptors.contains_key(&(current, key)) {
+                return None;
+            }
+            let proto = data.proto();
+            if proto.is_null() {
+                return Some(Value::UNDEFINED);
+            }
+            current = proto;
+        }
+    }
+
     pub(super) fn get_property_with_receiver(
         &mut self,
         p: &ResidualProgram,
@@ -428,6 +466,9 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         receiver: Value,
     ) -> Result<Value, JsError> {
+        if let Some(value) = self.plain_named_get(object, atom) {
+            return Ok(value);
+        }
         let _stack = self.enter_stack()?;
         let private_name = self.is_private_name(atom);
         if object.is_null() || object.is_undefined() {
@@ -586,7 +627,8 @@ impl<H: Host> Vm<H> {
                     Some(Cell::DataView { object: x, .. }) => object = x.proto(),
                     Some(Cell::String(v)) => {
                         let length = v.len();
-                        if let Some(index) = super::object_static::array_index(self.atom_name(atom))
+                        if self.atom_class(atom).contains(AtomClass::ARRAY_INDEX)
+                            && let Some(index) = super::object_static::array_index(self.atom_name(atom))
                             && let Some(unit) = self.string_index_value(object, index as usize)
                         {
                             return Ok(unit);
@@ -684,10 +726,17 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn initialize_private_field(&mut self, p: &ResidualProgram, target: Value, home: Value, atom: Atom, value: Value) -> Result<(), JsError> {
-        let Some(object) = self.object_data_mut(target) else {
+        let Some(extensible) = self.object_data(target).map(Object::is_extensible) else {
             return Err(self.type_error(p, "Cannot add private field to a non-object".into()));
         };
-        if object.initialize_private_field(PrivateBrand { home, name: atom }, value) { return Ok(()); }
+        if !extensible {
+            return Err(self.type_error(p, "Cannot add private field to a non-extensible object".into()));
+        }
+        if let Some(object) = self.object_data_mut(target)
+            && object.initialize_private_field(PrivateBrand { home, name: atom }, value)
+        {
+            return Ok(());
+        }
         let name = crate::bytecode::private_identity_label(self.atom_name(atom)).unwrap_or_else(|| self.atom_name(atom).to_owned());
         Err(self.type_error(p, format!("Cannot initialize #{name} twice on the same object")))
     }

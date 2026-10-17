@@ -190,8 +190,14 @@ pub trait Host {
         &mut self,
         _referrer: &str,
         _specifier: &str,
-    ) -> Result<Option<ModuleSource>, String> {
+    ) -> Result<Option<ModuleSource>, ModuleLoadError> {
         Ok(None)
+    }
+
+    /// Check a resolved module against the type its import requested (`with { type }`,
+    /// `"javascript"` when absent): the host owns each module's format.
+    fn validate_module_type(&mut self, _module: &ModuleSource, _module_type: &str) -> Result<(), ModuleLoadError> {
+        Ok(())
     }
 
     /// Host-defined value for `import.meta.url`. Embeddings that use file paths
@@ -263,5 +269,49 @@ impl Host for SystemHost {
             .unwrap_or_default()
             .as_secs_f64()
             * 1000.0
+    }
+}
+
+/// The error constructor a host's module-load failure is reported with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModuleLoadErrorKind {
+    Error,
+    TypeError,
+}
+
+/// A host's failure to resolve or load a module, thrown as `kind` with `message` and,
+/// when present, a `code` property (as embedders such as Node identify their errors)
+/// followed by any further string `fields`, in order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModuleLoadError {
+    pub kind: ModuleLoadErrorKind,
+    pub code: Option<&'static str>,
+    pub message: String,
+    pub fields: Vec<(&'static str, String)>,
+}
+
+impl ModuleLoadError {
+    pub fn new(kind: ModuleLoadErrorKind, code: &'static str, message: impl Into<String>) -> Self {
+        Self { kind, code: Some(code), message: message.into(), fields: Vec::new() }
+    }
+
+    /// Add an own string property after `code`.
+    #[must_use]
+    pub fn with_field(mut self, name: &'static str, value: impl Into<String>) -> Self {
+        self.fields.push((name, value.into()));
+        self
+    }
+}
+
+/// An uncoded `TypeError`, the report of a host without its own error identities.
+impl From<String> for ModuleLoadError {
+    fn from(message: String) -> Self {
+        Self { kind: ModuleLoadErrorKind::TypeError, code: None, message, fields: Vec::new() }
+    }
+}
+
+impl From<&str> for ModuleLoadError {
+    fn from(message: &str) -> Self {
+        message.to_owned().into()
     }
 }

@@ -1213,6 +1213,7 @@ mod tests {
                     continue;
                 };
                 let program = regex
+                    .complete()
                     .backtracking
                     .as_ref()
                     .unwrap_or_else(|| panic!("/{pattern}/{flags} compiles"));

@@ -186,10 +186,13 @@ impl<H: Host> Vm<H> {
             return index.slot(key).map(|slot| slot as usize);
         }
         if let Some(slot) = self.shape_slot_memo.get(shape, key) {
-            return slot;
+            return slot.map(|slot| slot as usize);
         }
         let slot = self.walked_property_shape_slot(shape, key);
-        self.shape_slot_memo.record(shape, key, slot);
+        // A slot past u32 is never memoized; it is walked again.
+        if let Some(recorded) = slot.map(u32::try_from).transpose().ok() {
+            self.shape_slot_memo.record(shape, key, recorded);
+        }
         slot
     }
     /// `property_shape_slot` of a non-dictionary shape, from its lookup index or its chain.
@@ -263,6 +266,20 @@ impl<H: Host> Vm<H> {
                     }),
             );
         }
+        let memo_slot = u32::try_from(slot).ok().filter(|_| !self.shape_is_dictionary(shape));
+        if let Some(memo_slot) = memo_slot
+            && let Some(attributes) = self.shape_attribute_memo.get(shape, memo_slot)
+        {
+            return attributes.map(|attributes| attributes.attributes(&self.shape_accessors));
+        }
+        let attributes = self.walked_shape_attribute(shape, slot);
+        if let Some(memo_slot) = memo_slot {
+            self.shape_attribute_memo.record(shape, memo_slot, attributes);
+        }
+        attributes.map(|attributes| attributes.attributes(&self.shape_accessors))
+    }
+    /// The attributes the nearest transition describing `slot` gives it, walking `shape`'s chain.
+    fn walked_shape_attribute(&self, shape: u32, slot: usize) -> Option<ShapeAttributes> {
         let mut current = Some(shape);
         while let Some(id) = current {
             let shape = &self.shapes[id as usize];
@@ -271,18 +288,18 @@ impl<H: Host> Vm<H> {
                     slot: candidate,
                     attributes,
                 } if candidate as usize == slot => {
-                    return Some(attributes.attributes(&self.shape_accessors));
+                    return Some(attributes);
                 }
                 ShapeTransition::Add {
                     slot: candidate,
                     attributes,
                     ..
                 } if candidate as usize == slot => {
-                    return Some(attributes.shape().attributes(&self.shape_accessors));
+                    return Some(attributes.shape());
                 }
                 ShapeTransition::Delete {
                     slot: candidate, ..
-                } if candidate as usize == slot => return Some(DEFAULT_PROPERTY_ATTRIBUTES),
+                } if candidate as usize == slot => return Some(DEFAULT_SHAPE_ATTRIBUTES),
                 ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured | ShapeTransition::FunctionLengthReconfigured
                 | ShapeTransition::Constructed { .. }
                 | ShapeTransition::Root
@@ -605,6 +622,7 @@ impl<H: Host> Vm<H> {
         self.megamorphic_fields.clear();
         self.inherited_field_indices.fill(NO_INHERITED_FIELD);
         self.inherited_field_caches.clear();
+        self.accessor_field_caches.clear();
         self.instanceof_constructor_layout = None;
         self.closure_shapes = [None; 2];
         self.regexp_object_shapes = None;
@@ -1462,8 +1480,62 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         match self.field_miss_data_value(object, atom, site) {
             Some(value) => Ok(value),
-            None => self.get_property(p, object, atom),
+            None => {
+                self.record_accessor_field_cache(object, atom, site);
+                self.get_property(p, object, atom)
+            }
         }
+    }
+
+    /// Records the accessor a field read at `site` meets on `object`'s immediate prototype,
+    /// when shapes answer both lookups and `object` holds no own `atom`.
+    fn record_accessor_field_cache(&mut self, object: Value, atom: Atom, site: usize) {
+        let Some(receiver) = self.shape_property_lookup(object, atom) else {
+            return;
+        };
+        let receiver_shape = receiver.shape();
+        if self.shape_slot(receiver_shape, atom).is_some() {
+            return;
+        }
+        let Some(holder) = self.shape_property_lookup(receiver.proto(), atom) else {
+            return;
+        };
+        let holder_shape = holder.shape();
+        let Some(slot) = self
+            .shape_slot(holder_shape, atom)
+            .filter(|slot| *slot < FIELD_CACHE_SLOT_CAPACITY)
+        else {
+            return;
+        };
+        if self
+            .shape_attribute(holder_shape, slot)
+            .is_some_and(|attributes| attributes.accessor && attributes.getter.is_some())
+        {
+            self.accessor_field_caches.insert(
+                site,
+                AccessorFieldCache {
+                    receiver: receiver_shape,
+                    holder: holder_shape,
+                    slot: slot as u16,
+                },
+            );
+        }
+    }
+
+    /// The getter a field read of `atom` at cache index `site` calls on `object`, when the
+    /// site's recorded accessor still answers it (`record_accessor_field_cache`).
+    pub(super) fn cached_field_getter(&self, object: Value, atom: Atom, site: usize) -> Option<Value> {
+        let cache = self.accessor_field_caches.get(&site)?;
+        let receiver = self.shape_property_lookup(object, atom)?;
+        if receiver.shape() != cache.receiver {
+            return None;
+        }
+        let holder = self.shape_property_lookup(receiver.proto(), atom)?;
+        if holder.shape() != cache.holder {
+            return None;
+        }
+        self.shape_attribute(cache.holder, usize::from(cache.slot))?
+            .getter
     }
 
     /// The part of `get_field_miss` that reads a data property of a shaped receiver or its

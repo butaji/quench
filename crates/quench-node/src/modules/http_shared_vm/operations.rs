@@ -147,6 +147,11 @@ const SERVER_CLOSE_FACTORY: &str = r#"((closeOperation) => function(callback) {
 /// the native exchange `id` names. Methods live on the prototype and read the exchange from
 /// the instance; `end` writes and finishes synchronously, then `finish` and `close` follow on
 /// ticks, as Node's socket write completion and `emitCloseNT` deliver them.
+/// Node's `getDefaultHighWaterMark()` for byte streams outside Windows
+/// (`lib/internal/streams/state.js`); a socket write returns false once its
+/// writable length reaches it.
+pub(super) const RESPONSE_HIGH_WATER_MARK: usize = 64 * 1024;
+
 const RESPONSE_FACTORY: &str = r#"((Stream, setHeaderOperation, getHeaderOperation, removeHeaderOperation, write, finish, writeHeadOperation, destroyOperation, initializeResponse, nextTick, codes) => {
   const kExchange = Symbol("kResponseExchange");
   const kFinished = Symbol("kResponseFinished");
@@ -260,13 +265,14 @@ const RESPONSE_FACTORY: &str = r#"((Stream, setHeaderOperation, getHeaderOperati
       writeAfterEnd(this, callback);
       return false;
     }
-    writeChunk(this, chunk, encoding, true);
+    const belowMark = writeChunk(this, chunk, encoding, true);
     if (typeof callback === "function") nextTick(callback);
-    return true;
+    return belowMark;
   });
   const writeChunk = (response, chunk, encoding, more) => {
-    write(response[kExchange].id, chunk, more, response.statusCode, response.statusMessage, response, encoding);
+    const belowMark = write(response[kExchange].id, chunk, more, response.statusCode, response.statusMessage, response, encoding);
     response._headerSent = true;
+    return belowMark;
   };
   define("end", function end(chunk, encoding, callback) {
     if (typeof chunk === "function") {
@@ -1178,29 +1184,43 @@ pub(crate) fn response_write(
 ) -> Result<RootId, RootedError> {
     let id = argument_id(context, args.first().copied())?;
     let chunk_root = argument(context, args.get(1).copied());
-    let chunk = response_chunk_bytes(context, chunk_root, args.get(6).copied())?;
     let explicit = args
         .get(2)
         .and_then(|root| context.rooted_value(*root))
         .and_then(Value::as_bool)
         .unwrap_or(true);
+    let state = context.host_mut().shared_state();
+    let lifecycle = state
+        .borrow()
+        .http
+        .responses
+        .get(&id)
+        .map(|response| response.lifecycle)
+        .ok_or_else(|| RootedError::host("shared HTTP response is no longer active"))?;
+    // A view streamed after the head is framed straight into the socket's queue; other
+    // chunks are encoded first, before the lifecycle check, as Node validates them.
+    let streamed_view =
+        explicit && lifecycle != super::state::ResponseLifecycle::Open && context.with_view_bytes_rooted(chunk_root, |_| ()).is_some();
+    let chunk = if streamed_view {
+        Vec::new()
+    } else {
+        response_chunk_bytes(context, chunk_root, args.get(6).copied())?
+    };
+    if lifecycle.is_terminal() {
+        return throw_response_error(
+            context,
+            false,
+            "ERR_STREAM_WRITE_AFTER_END",
+            "write after end",
+        );
+    }
     if !explicit {
-        let state = context.host_mut().shared_state();
         let mut host = state.borrow_mut();
         let response = host
             .http
             .responses
             .get_mut(&id)
-            .ok_or_else(|| RootedError::host("shared HTTP response is no longer active"))?;
-        if response.lifecycle.is_terminal() {
-            drop(host);
-            return throw_response_error(
-                context,
-                false,
-                "ERR_STREAM_WRITE_AFTER_END",
-                "write after end",
-            );
-        }
+            .expect("response checked active above");
         response.body.push(chunk, false);
         return Ok(context.boolean(true));
     }
@@ -1212,59 +1232,60 @@ pub(crate) fn response_write(
         args.get(4).copied(),
     )?;
     response_send_date(context, id, args.get(5).copied())?;
-    let state = context.host_mut().shared_state();
-    let (socket, bytes) = {
-        let mut host = state.borrow_mut();
-        let response = host
-            .http
-            .responses
-            .get_mut(&id)
-            .ok_or_else(|| RootedError::host("shared HTTP response is no longer active"))?;
-        if response.lifecycle.is_terminal() {
+    let mut host = state.borrow_mut();
+    let response = host
+        .http
+        .responses
+        .get_mut(&id)
+        .ok_or_else(|| RootedError::host("shared HTTP response is no longer active"))?;
+    let socket = response.socket;
+    let chunked = is_chunked(&response.headers);
+    if response.lifecycle == super::state::ResponseLifecycle::Open {
+        enable_streaming_framing(&mut response.headers, response.use_chunked_encoding_by_default);
+        if invalid_trailer(&response.headers) {
             drop(host);
-            return throw_response_error(
-                context,
-                false,
-                "ERR_STREAM_WRITE_AFTER_END",
-                "write after end",
-            );
+            return throw_invalid_trailer(context);
         }
-        let first_write = response.lifecycle == super::state::ResponseLifecycle::Open;
-        let bytes = if first_write {
-            enable_streaming_framing(
-                &mut response.headers,
-                response.use_chunked_encoding_by_default,
-            );
-            if invalid_trailer(&response.headers) {
-                drop(host);
-                return throw_invalid_trailer(context);
-            }
-            response.lifecycle.send_headers();
-            crate::modules::http_protocol::compose(
-                status,
-                &status_message,
-                &response.headers,
-                &chunk,
-                &[],
-                !response.http10,
-                response.http10,
-                response.send_date,
-                std::time::SystemTime::now(),
-            )
-        } else if is_chunked(&response.headers) {
-            crate::modules::http_protocol::chunk_frame(&chunk)
-        } else {
-            chunk
+        response.lifecycle.send_headers();
+        let head = crate::modules::http_protocol::compose(
+            status,
+            &status_message,
+            &response.headers,
+            &chunk,
+            &[],
+            !response.http10,
+            response.http10,
+            response.send_date,
+            std::time::SystemTime::now(),
+        );
+        net_shared_vm::write(&mut host.tcp, socket, &head).map_err(RootedError::host)?;
+    } else {
+        let mut write = |body: &[u8]| {
+            net_shared_vm::write_with(&mut host.tcp, socket, |pending| {
+                if chunked {
+                    crate::modules::http_protocol::append_chunk_frame(pending, body);
+                } else {
+                    pending.extend_from_slice(body);
+                }
+            })
         };
-        (response.socket, bytes)
-    };
-    net_shared_vm::write(
-        &mut context.host_mut().shared_state().borrow_mut().tcp,
-        socket,
-        &bytes,
-    )
-    .map_err(RootedError::host)?;
-    Ok(context.boolean(true))
+        let written = if streamed_view {
+            context.with_view_bytes_rooted(chunk_root, &mut write).unwrap_or_else(|| write(&[]))
+        } else {
+            write(&chunk)
+        };
+        written.map_err(RootedError::host)?;
+    }
+    net_shared_vm::try_flush(&mut host.tcp, socket);
+    let below_mark = net_shared_vm::queued_bytes(&host.tcp, socket)
+        .is_none_or(|queued| queued < RESPONSE_HIGH_WATER_MARK);
+    if !below_mark && !host.http.drain_waiters.contains_key(&socket) {
+        drop(host);
+        let response = argument(context, args.get(5).copied());
+        let waiter = context.retain(response)?;
+        state.borrow_mut().http.drain_waiters.insert(socket, waiter);
+    }
+    Ok(context.boolean(below_mark))
 }
 
 pub(crate) fn response_write_head(

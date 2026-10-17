@@ -6,6 +6,8 @@ use std::collections::VecDeque;
 
 const PROMISE_CAPABILITY_RESOLVE: &str = "\0quench:promise-capability-resolve";
 const PROMISE_CAPABILITY_REJECT: &str = "\0quench:promise-capability-reject";
+/// The module type of an import without a `type` attribute.
+const JAVASCRIPT_MODULE_TYPE: &str = "javascript";
 use crate::{ModuleSource, module_identity::ModuleIdentity};
 use rustc_hash::FxHashSet;
 
@@ -1677,8 +1679,14 @@ impl<H: Host> Vm<H> {
             let referrer = vm.active_script_or_module(p);
             let resolution = vm.host.resolve_dynamic_import(&referrer, &specifier);
             match resolution {
-                Err(message) => return Err(vm.type_error(p, message)),
+                Err(error) => return Err(vm.module_load_error(p, error)),
                 Ok(Some(module)) => {
+                    if phase != crate::bytecode::ModuleRequestPhase::Source {
+                        let requested = module_type.as_deref().unwrap_or(JAVASCRIPT_MODULE_TYPE);
+                        if let Err(error) = vm.host.validate_module_type(&module, requested) {
+                            return Err(vm.module_load_error(p, error));
+                        }
+                    }
                     if phase == crate::bytecode::ModuleRequestPhase::Source {
                         let source = vm.module_source_value(p, &module)?;
                         vm.promise_resolve_value(p, promise, source)?;
@@ -2294,8 +2302,8 @@ impl<H: Host> Vm<H> {
         module: &ModuleSource,
     ) -> Result<Value, JsError> {
         self.instantiate_static_module_graph(p, module, None)?;
-        if crate::Engine::static_module_has_early_error(&module.source) {
-            return self.syntax_error_result(p, "module source has an early error");
+        if let Some(message) = crate::Engine::static_module_early_error(&module.source) {
+            return self.syntax_error_result(p, &message);
         }
         if let Some(plan) = crate::Engine::static_module_plan(&module.source, &module.name) {
             let mut active = ModuleEvaluationStack::default();
@@ -2339,10 +2347,7 @@ impl<H: Host> Vm<H> {
             .iter()
             .filter(|request| request.phase == crate::bytecode::ModuleRequestPhase::Evaluation)
         {
-            let dependency = self
-                .host
-                .resolve_dynamic_import(&module.name, &request.source)
-                .map_err(|message| self.type_error(p, message))?;
+            let dependency = self.resolve_module_request(p, &module.name, request)?;
             let Some(dependency) = dependency else {
                 return Err(self.type_error(p, "static module request was not resolved".into()));
             };
@@ -2457,6 +2462,13 @@ impl<H: Host> Vm<H> {
         namespace: Value,
         key: Option<crate::vm::property_key::PropertyKey>,
     ) -> Result<(), JsError> {
+        // Only a deferred namespace can evaluate; most objects are rejected before the key.
+        if !self
+            .object_data(namespace)
+            .is_some_and(|object| object.deferred_module().is_some())
+        {
+            return Ok(());
+        }
         let triggers_evaluation = match key {
             None => true,
             Some(crate::vm::property_key::PropertyKey::String(atom)) => {
@@ -2467,11 +2479,7 @@ impl<H: Host> Vm<H> {
                 | crate::vm::property_key::PropertyKey::Private(_),
             ) => false,
         };
-        if triggers_evaluation
-            && self
-                .object_data(namespace)
-                .is_some_and(|object| object.deferred_module().is_some())
-        {
+        if triggers_evaluation {
             self.evaluate_deferred_module_namespace(p, namespace)?;
         }
         Ok(())
@@ -2505,10 +2513,7 @@ impl<H: Host> Vm<H> {
             return Ok(false);
         }
         for request in plan.requests {
-            let dependency = self
-                .host
-                .resolve_dynamic_import(&module.name, &request.source)
-                .map_err(|message| self.type_error(p, message))?
+            let dependency = self.resolve_module_request(p, &module.name, &request)?
                 .ok_or_else(|| {
                     self.type_error(p, "static module request was not resolved".into())
                 })?;
@@ -2791,7 +2796,7 @@ impl<H: Host> Vm<H> {
         let environment = self.heap.alloc(Cell::Environment {
             parent: Value::NULL,
             function: super::ROOT_FUNCTION_ID,
-            slots: slots.into_boxed_slice().into(),
+            slots: slots.into(),
             scope: Box::new(crate::heap::EnvironmentScope {
                 program: Some(program.raw()),
                 root_eval_scope: false,
@@ -2867,7 +2872,7 @@ impl<H: Host> Vm<H> {
             let module = self
                 .host
                 .resolve_dynamic_import(referrer, &import.source)
-                .map_err(|message| self.type_error(p, message))?
+                .map_err(|error| self.module_load_error(p, error))?
                 .ok_or_else(|| self.type_error(p, "module import was not resolved".into()))?;
             let local = self
                 .lookup_atom(&import.local)
@@ -3061,9 +3066,7 @@ impl<H: Host> Vm<H> {
         let resolved = requests
             .iter()
             .map(|request| {
-                self.host
-                    .resolve_dynamic_import(referrer, &request.source)
-                    .map_err(|message| self.type_error(p, message))?
+                self.resolve_module_request(p, referrer, request)?
                     .ok_or_else(|| {
                         self.type_error(p, "static module request was not resolved".into())
                     })
@@ -3185,9 +3188,9 @@ impl<H: Host> Vm<H> {
         if record.and_then(ModuleRecord::deferred_namespace).is_some() {
             return Ok(());
         }
-        if record.is_none() && crate::Engine::static_module_has_early_error(&module.source) {
+        if record.is_none() && let Some(message) = crate::Engine::static_module_early_error(&module.source) {
             return self
-                .syntax_error_result(p, "module source has an early error")
+                .syntax_error_result(p, &message)
                 .map(|_| ());
         }
         let namespace = self.deferred_module_namespace(p, module)?;
@@ -3305,6 +3308,28 @@ impl<H: Host> Vm<H> {
         Ok(namespace)
     }
 
+    /// Resolve a static module request and, for an evaluation, validate its type.
+    fn resolve_module_request(
+        &mut self,
+        p: &ResidualProgram,
+        referrer: &str,
+        request: &crate::bytecode::ModuleRequest,
+    ) -> Result<Option<ModuleSource>, JsError> {
+        let module = self
+            .host
+            .resolve_dynamic_import(referrer, &request.source)
+            .map_err(|error| self.module_load_error(p, error))?;
+        if let Some(module) = &module
+            && request.phase == crate::bytecode::ModuleRequestPhase::Evaluation
+        {
+            let requested = request.module_type.as_deref().unwrap_or(JAVASCRIPT_MODULE_TYPE);
+            self.host
+                .validate_module_type(module, requested)
+                .map_err(|error| self.module_load_error(p, error))?;
+        }
+        Ok(module)
+    }
+
     fn evaluate_static_module_request(
         &mut self,
         p: &ResidualProgram,
@@ -3411,10 +3436,7 @@ impl<H: Host> Vm<H> {
                 {
                     continue;
                 }
-                let dependency = self
-                    .host
-                    .resolve_dynamic_import(&module.name, &request.source)
-                    .map_err(|message| self.type_error(p, message))?
+                let dependency = self.resolve_module_request(p, &module.name, request)?
                     .ok_or_else(|| {
                         self.type_error(p, "static module request was not resolved".into())
                     })?;
@@ -3476,9 +3498,9 @@ impl<H: Host> Vm<H> {
         let program = match precompiled {
             Some(program) => program,
             None => {
-                if crate::Engine::static_module_has_early_error(&module.source) {
+                if let Some(message) = crate::Engine::static_module_early_error(&module.source) {
                     return self
-                        .syntax_error_result(p, "module source has an early error")
+                        .syntax_error_result(p, &message)
                         .map(|_| ());
                 }
                 let residual = crate::Engine::specialize_module_unspecialized_with_atom_prefix(
@@ -3534,9 +3556,7 @@ impl<H: Host> Vm<H> {
             .module_requests
             .iter()
             .map(|request| {
-                self.host
-                    .resolve_dynamic_import(&module.name, &request.source)
-                    .map_err(|message| self.type_error(p, message))?
+                self.resolve_module_request(p, &module.name, request)?
                     .ok_or_else(|| {
                         self.type_error(p, "static module request was not resolved".into())
                     })
@@ -3640,9 +3660,9 @@ impl<H: Host> Vm<H> {
             }
             None => {}
         }
-        if crate::Engine::static_module_has_early_error(&module.source) {
+        if let Some(message) = crate::Engine::static_module_early_error(&module.source) {
             return self
-                .syntax_error_result(p, "module source has an early error")
+                .syntax_error_result(p, &message)
                 .map(|_| ());
         }
         let Some(plan) = crate::Engine::static_module_plan(&module.source, &module.name) else {
@@ -3765,12 +3785,12 @@ impl<H: Host> Vm<H> {
         cache_key: &str,
         error: JsError,
     ) -> Result<(), JsError> {
-        let waiters = self
-            .realm
-            .promise
-            .modules
-            .get_mut(cache_key)
-            .and_then(ModuleRecord::retry_instantiation)
+        // A source rejected before its record exists (an early error) has nothing to retry.
+        let Some(record) = self.realm.promise.modules.get_mut(cache_key) else {
+            return Err(error);
+        };
+        let waiters = record
+            .retry_instantiation()
             .ok_or_else(|| self.type_error(p, "module was not being instantiated".into()))?;
         // Queued imports own their promises outside the module record. Return
         // the transient error to that job instead of leaving it waiting on an
@@ -3823,10 +3843,7 @@ impl<H: Host> Vm<H> {
                 request.phase == crate::bytecode::ModuleRequestPhase::Evaluation
                     && request.module_type.as_deref().unwrap_or("javascript") == "javascript"
             }) {
-                let dependency = self
-                    .host
-                    .resolve_dynamic_import(&parent.name, &request.source)
-                    .map_err(|message| self.type_error(p, message))?
+                let dependency = self.resolve_module_request(p, &parent.name, request)?
                     .ok_or_else(|| {
                         self.type_error(p, "static module request was not resolved".into())
                     })?;
@@ -3954,10 +3971,7 @@ impl<H: Host> Vm<H> {
             if request.module_type.as_deref().unwrap_or("javascript") != "javascript" {
                 continue;
             }
-            let dependency = self
-                .host
-                .resolve_dynamic_import(&module.name, &request.source)
-                .map_err(|message| self.type_error(p, message))?
+            let dependency = self.resolve_module_request(p, &module.name, request)?
                 .ok_or_else(|| {
                     self.type_error(p, "static module request was not resolved".into())
                 })?;
@@ -4400,7 +4414,7 @@ impl<H: Host> Vm<H> {
         }
         self.host
             .resolve_dynamic_import(referrer, source)
-            .map_err(|message| self.type_error(p, message))
+            .map_err(|error| self.module_load_error(p, error))
     }
 
     fn resolve_static_module_export(
@@ -4783,7 +4797,7 @@ impl<H: Host> Vm<H> {
                 let dependency = self
                     .host
                     .resolve_dynamic_import(&module.name, source)
-                    .map_err(|message| self.type_error(p, message))?;
+                    .map_err(|error| self.module_load_error(p, error))?;
                 let Some(dependency) = dependency else {
                     return Ok(StaticModuleGraph::LinkError);
                 };
@@ -5079,6 +5093,9 @@ impl<H: Host> Vm<H> {
         let then_atom = self.runtime_atoms.then;
         let then = match self.get_property(p, value, then_atom) {
             Ok(then) => then,
+            // Cancellation must unwind the active job, not become a guest
+            // rejection or an allocated Error during thenable assimilation.
+            Err(error) if error.is_execution_terminated() => return Err(error),
             Err(error) => {
                 let reason = error
                     .thrown_value()

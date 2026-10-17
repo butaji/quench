@@ -2028,15 +2028,19 @@ impl EnvironmentSlots {
     }
 }
 
+impl From<Vec<Value>> for EnvironmentSlots {
+    fn from(values: Vec<Value>) -> Self {
+        Self(super::thin_slice::ThinBoxSlice::from_exact_iter(
+            values.into_iter().map(EnvironmentSlot::Owned),
+        ))
+    }
+}
+
 impl From<Box<[Value]>> for EnvironmentSlots {
     fn from(values: Box<[Value]>) -> Self {
-        Self(
-            values
-                .into_iter()
-                .map(EnvironmentSlot::Owned)
-                .collect::<Box<[_]>>()
-                .into(),
-        )
+        Self(super::thin_slice::ThinBoxSlice::from_exact_iter(
+            values.iter().copied().map(EnvironmentSlot::Owned),
+        ))
     }
 }
 
@@ -2402,6 +2406,18 @@ pub(crate) enum Cell {
 }
 
 impl Cell {
+    /// Whether a collection prunes this cell's entries by the liveness of their targets
+    /// (`Heap::prune_weak_cell`).
+    pub(crate) fn has_weak_entries(&self) -> bool {
+        matches!(
+            self,
+            Self::WeakMap { .. }
+                | Self::WeakSet { .. }
+                | Self::WeakRef { .. }
+                | Self::FinalizationRegistry { .. }
+        )
+    }
+
     pub(crate) fn profile_variant_name(&self) -> &'static str {
         match self {
             Self::Object(_) => "object",
