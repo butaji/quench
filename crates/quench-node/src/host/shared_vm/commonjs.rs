@@ -728,31 +728,8 @@ pub(crate) fn require_for_module(
                 .join("deps/undici/undici.js");
             return load(context, &filename, Some(parent), EntryGoal::CommonJs);
         }
-        Some(BuiltinModule::InternalDgram) => {
-            let dgram = cached_builtin(context, BuiltinModule::Dgram)?;
-            context.release_root(dgram);
-            return context.evaluate_script_rooted(
-                r#"(() => {
-  const dgram = globalThis["\0quench:dgram_module"];
-  const stateSymbol = Object.getOwnPropertySymbols(dgram.createSocket("udp4"))
-    .find((symbol) => symbol.description === "quench.dgram.state");
-  const internals = globalThis[Symbol.for("quench.dgram.internals")];
-  return {
-    kStateSymbol: stateSymbol,
-    _createSocketHandle(address, port, type, flags, fd) {
-      if (fd !== undefined) {
-        if (!globalThis.__quenchDgramUdpFds.has(fd)) return -9;
-        const adopted = new internals.UDP(); adopted.fd = fd; return adopted;
-      }
-      const handle = new internals.UDP();
-      if (address === null) return handle;
-      return handle.bind(address, port, flags) < 0 ? -1 : handle;
-    },
-  };
-})()"#,
-                "internal/dgram.js",
-            );
-        }
+        Some(BuiltinModule::Dgram) => { return node_library_module(context, "dgram.js", "dgram.js"); }
+        Some(BuiltinModule::InternalDgram) => {return node_library_module(context,"internal/dgram.js","internal/dgram.js");}
         Some(BuiltinModule::InternalTestBinding) => {
             // Unlike internal policy initialization, this guest-facing SDK bridge
             // must observe the current process.emitWarning and warning options.
@@ -761,10 +738,14 @@ pub(crate) fn require_for_module(
             return load(context, &root.join("lib/internal/test/binding.js"), Some(parent), EntryGoal::CommonJs);
         }
         Some(BuiltinModule::InternalBlockList) => {
-            return context.evaluate_script_rooted(
+            let module = context.evaluate_script_rooted(
                 "({ kHandle: Symbol.for('quench.internal.blocklist.handle') })",
                 "internal/blocklist.js",
-            );
+            )?;
+            let net = cached_builtin(context, BuiltinModule::Net)?;
+            let constructor = get(context, net, "BlockList")?;
+            set(context, module, "BlockList", constructor)?;
+            return Ok(module);
         }
         Some(BuiltinModule::InternalSocketAddress) => {
             let module = context.evaluate_script_rooted(
@@ -773,7 +754,8 @@ pub(crate) fn require_for_module(
             )?;
             let net = cached_builtin(context, BuiltinModule::Net)?;
             let constructor = get(context, net, "SocketAddress")?;
-            context.release_root(net);
+            // cached_builtin may return the cache's retained root: ownership
+            // remains with builtin_cache, not this projection's call frame.
             set(context, module, "SocketAddress", constructor)?;
             return Ok(module);
         }
@@ -855,7 +837,6 @@ pub(crate) fn require_for_module(
             | BuiltinModule::Vfs
             | BuiltinModule::Net
             | BuiltinModule::Http
-            | BuiltinModule::Dgram
             | BuiltinModule::Os
             | BuiltinModule::Buffer
             | BuiltinModule::Stream
@@ -1673,7 +1654,18 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::Events => crate::modules::events_shared_vm::module(context),
         BuiltinModule::Console => crate::modules::console_shared_vm::module(context),
         BuiltinModule::Tty => crate::modules::tty_shared_vm::module(context),
-        BuiltinModule::Dns => crate::modules::dns_shared_vm::module(context),
+        BuiltinModule::Dns => {
+            #[cfg(quench_node_cares)] {
+                let utils = node_library_module(context, "dns.js", "internal/dns/utils.js")?;
+                let initialize = get(context, utils, "initializeDns")?;
+                let undefined = context.undefined();
+                context.call_rooted(initialize, undefined, &[])?;
+                node_library_module(context, "dns.js", "dns.js")
+            }
+            #[cfg(not(quench_node_cares))] {
+                crate::modules::dns_shared_vm::module(context)
+            }
+        },
         BuiltinModule::Dgram => {
             let dgram_tail = crate::polyfills::bootstrap::dgram_tail::JS
                 .split("globalThis.require = (specifier) =>")
@@ -2608,6 +2600,7 @@ fn set(
 pub(crate) fn node_internal_binding_source() -> &'static str {
     r#"const internalBinding = (name) => {
   switch (String(name)) {
+    case "udp_wrap":
     case "os":
     case "timers":
     case "contextify":
@@ -2638,7 +2631,7 @@ pub(crate) fn node_internal_binding_source() -> &'static str {
       getCallerLocation: __nativeInternalBinding("util").getCallerLocation,
       getExternalValue: __nativeInternalBinding("util").getExternalValue,
       constructSharedArrayBuffer: (length) => new SharedArrayBuffer(length),
-      guessHandleType: () => "UNKNOWN",
+      guessHandleType: __nativeInternalBinding("util").guessHandleType,
       defineLazyProperties: __nativeInternalBinding("util").defineLazyProperties,
       sleep: () => undefined,
     });
@@ -2676,10 +2669,7 @@ pub(crate) fn node_internal_binding_source() -> &'static str {
       if (__nativeInternalBinding("crypto").getFipsCryptoGeneration) return __nativeInternalBinding("messaging");
       return { DOMException: globalThis.DOMException };
     }
-    case "performance": return {
-      constants: { NODE_PERFORMANCE_MILESTONE_TIME_ORIGIN: 0, NODE_PERFORMANCE_MILESTONE_TIME_ORIGIN_TIMESTAMP: 1 },
-      milestones: [0, 0], now: () => require("perf_hooks").performance.now() * 1e6,
-    };
+    case "performance": return __nativeInternalBinding("performance");
     case "uv": return __nativeInternalBinding("uv");
     default: return {};
   }

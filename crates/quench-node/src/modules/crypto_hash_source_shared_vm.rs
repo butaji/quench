@@ -52,6 +52,16 @@ pub(crate) fn install(
             let key = c.string_rooted(name);
             c.define_data_property_rooted(public, key, value, true, true, true)?;
         }
+        let hkdf=commonjs::node_library_module(c,"crypto.js","internal/crypto/hkdf.js")?;
+        for name in ["hkdf","hkdfSync"] {
+            let value=get(c,hkdf,name)?;let key=c.string_rooted(name);
+            c.define_data_property_rooted(public,key,value,true,true,true)?;
+        }
+        let pbkdf2=commonjs::node_library_module(c,"crypto.js","internal/crypto/pbkdf2.js")?;
+        for name in ["pbkdf2","pbkdf2Sync"] {
+            let value=get(c,pbkdf2,name)?; let key=c.string_rooted(name);
+            c.define_data_property_rooted(public,key,value,true,true,true)?;
+        }
         Ok(())
     })
 }

@@ -72,8 +72,12 @@ pub(crate) fn create<H: Host>(
     stack: &openssl::error::ErrorStack,
     decorate: bool,
 ) -> Result<RootId, RootedError> {
+    create_message(context,stack,decorate,None)
+}
+
+fn create_message<H:Host>(context:&mut NativeContext<'_,H>,stack:&openssl::error::ErrorStack,decorate:bool,custom:Option<&str>)->Result<RootId,RootedError> {
     let first = stack.errors().first();
-    let text = first
+    let text = custom.map(str::to_owned).unwrap_or_else(|| first
         .map(|error| {
             message(
                 error.code(),
@@ -90,10 +94,11 @@ pub(crate) fn create<H: Host>(
             } else {
                 "ok".to_owned()
             }
-        });
+        }));
     let error = context.error_rooted(&text)?;
-    if stack.errors().len() > 1 {
-        let entries = stack.errors()[1..]
+    let skip=usize::from(custom.is_none());
+    if stack.errors().len() > skip {
+        let entries = stack.errors()[skip..]
             .iter()
             .rev()
             .map(|entry| context.string_rooted(&message(entry.code(), STACK_MESSAGE_BYTES)))
@@ -148,6 +153,13 @@ pub(crate) fn list<H: Host>(
         Ok(error) => context.throw(error),
         Err(error) => error,
     }
+}
+
+/// CryptoJob failures retain their SDK operation message and the complete
+/// actual native error queue with the same shared decoration authority.
+#[cfg(quench_openssl_provider)]
+pub(crate) fn job_failure<H:Host>(context:&mut NativeContext<'_,H>,stack:&openssl::error::ErrorStack,text:&str)->RootedError {
+    match create_message(context,stack,true,Some(text)) {Ok(error)=>context.throw(error),Err(error)=>error}
 }
 
 unsafe extern "C" {

@@ -89,6 +89,7 @@ pub(crate) struct SharedAsyncHooksState {
     pub(super) identity: AsyncIdentity,
     pub(super) module: Option<RootId>,
     pub(super) registry: super::async_hook_registry_shared_vm::Registry,
+    pub(super) default_trigger_async_id: Option<f64>,
     pub(super) context_triggers: HashMap<u64, i64>,
     /// Store snapshots have private identities; async-hooks observes their
     /// actual Promise resource identity instead.
@@ -108,6 +109,7 @@ impl SharedAsyncHooksState {
             identity,
             module: None,
             registry: super::async_hook_registry_shared_vm::Registry::new(),
+            default_trigger_async_id: None,
             context_triggers: HashMap::new(),
             job_resources: HashMap::new(),
             next_job_id: 0,
@@ -118,6 +120,13 @@ impl SharedAsyncHooksState {
             store_references: HashMap::new(),
             destroyed_resources: HashSet::new(),
         }
+    }
+
+    /// Node internal/async_hooks getDefaultTriggerAsyncId: a negative slot
+    /// means inherit executionAsyncId; scope never changes execution or ALS.
+    pub(super) fn default_trigger_async_id(&self) -> f64 {
+        self.default_trigger_async_id.filter(|id| !(*id < 0.0))
+            .unwrap_or(self.identity.current_async_id() as f64)
     }
 
     pub(crate) fn retain_store(&mut self, store: RootId) {

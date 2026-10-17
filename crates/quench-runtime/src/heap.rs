@@ -22,7 +22,7 @@ mod slots;
 mod thin_slice;
 mod weak;
 pub(crate) use cell::*;
-pub(crate) use buffer_bytes::BufferBytes;
+pub(crate) use buffer_bytes::{BufferBytes,BufferRead};
 pub(crate) use collection_entries::CollectionEntries;
 use records::{ArrayRecordSpace, ObjectRecordSpace, RecordSweep};
 pub use root::RootId;
