@@ -1,152 +1,295 @@
-# Memory management design: target architecture and staged path
+# Memory management strategy
 
-Owner: GC lane (`v2-gc`), Linear TOD-137. Status: design, 2026-10-17. Inputs: a
-sweep of every memory-related Linear issue and decision, a source inventory of
-the heap, and the literature (Riptide, Immix/StickyImmix, LXR, MemBalancer, V8
-Orinoco and heap controller, Hermes Hades, SpiderMonkey, QuickJS, Lua 5.4, Go).
-Effect sizes marked *estimate* are projections, not measurements (decision 20).
+Owner: memory-management lane (`v2-gc`, Linear TOD-137), by the user's
+direction of 2026-10-17: the lane owns memory management as a whole, as a
+concept and a strategy, for every workload Quench is measured on: V8-v7,
+JetStream 3, Wasm CoreMark, the web framework benchmarks, and Node/npm
+programs in general. Effect sizes marked *estimate* are projections, not
+measurements (decision 20).
 
-## What the collector costs today (measured)
+## 1. The model
 
-Linux x86_64, 4 vCPU, `v2-gc` after merging `v2-merged` on 2026-10-17, stock
-harness, one round (screen). Pacing in force: `e14aadb13` (minimum 2^18 cells,
-4x live, full growth 4x).
+For any run, the number the benchmarks report is the peak:
 
-| Bench | Score | Max RSS | Collections | Mark | Sweep |
-|---|---:|---:|---:|---:|---:|
-| Crypto | 2047 | 21.9 MB | 2 | 0.9 ms | 17 ms |
-| DeltaBlue | 1174 | 20.2 MB | 3 | 1.2 ms | 19 ms |
-| EarleyBoyer | 1782 | 47.0 MB | 70 | 68 ms | 598 ms |
-| NavierStokes | 2437 | 5.8 MB | 0 | — | — |
-| RayTrace | 2435 | 18.1 MB | 17 | 6 ms | 36 ms |
-| RegExp | 743 | 26.9 MB | 59 | 57 ms | 603 ms |
-| Richards | 1574 | 6.1 MB | 0 | — | — |
-| Splay | 6035 | 92.4 MB | 7 | 135 ms | 134 ms |
+```
+max RSS = floor + code + Σ_kind live(kind) × overhead(kind)
+        + headroom (garbage not yet collected) + transients + retention
+```
 
-QuickJS on the same host: 3.5 to 6.8 MB on six of these, 17.5 MB EarleyBoyer.
+- **floor**: what a process holds before user code runs (binary pages,
+  libraries, host bootstrap heap).
+- **code**: bytecode, lowered Wasm, caches, source text kept for
+  `toString`.
+- **live × overhead**: reachable data times its representation cost
+  (headers, cell size rounding, malloc rounding, arena slack).
+- **headroom**: dead data waiting for the next collection; set by pacing.
+- **transients**: short-lived peaks outside the managed heap (parser
+  arenas, Wasm lowering buffers, JSON and regex compilation).
+- **retention**: data that is unreachable in intent but reachable in fact
+  (leaks: rooted finished jobs, caches without bounds, per-request state).
 
-Three facts follow:
+Time spent on memory is `allocation + collection (mark + sweep) + barrier +
+page faults`. A design is good when each term is proportional to the work the
+program asked for, never to the size of something the program did not touch.
 
-1. **Headroom, not live data, sets max RSS** on Crypto, DeltaBlue, RayTrace and
-   RegExp: 2 to 17 collections in the whole run, 15 to 20 MB above the 6 MB
-   floor. The 2^18-cell minimum alone permits roughly 16 to 24 MB of garbage.
-2. **Sweep, not mark, is the GC time** wherever garbage is plentiful: about 10x
-   mark on EarleyBoyer and RegExp (about 10% of wall each). Sweep cost is per
-   dead object: dropping a 96-byte enum cell frees its boxed payloads, `Rc`
-   element vectors and string units through malloc. Marking a small live heap
-   is cheap even with the bootstrap heap in it.
-3. **Every collection is full** once any record exists
-   (`Heap::collection_is_full`), and pacing ignores most payload growth
-   (ArrayBuffer bytes, arena, Map/Set entries, environments, rope flattening,
-   copy-on-write detaches, programs). JetStream churn (async iteration,
-   generator tokenizers) pays 42% of its instructions in these full
-   collections.
+**Principles.**
 
-The 10-16 pacing bought Score (Splay +20%, RayTrace +40% stock) by spending RSS.
-The design below aims to keep that Score with the old (384-cell, 1x) RSS or
-better, by making each collection cost proportional to what it frees and what
-survives, not to the heap.
+1. Every byte has one owner, one accounting point and one release rule. If
+   memory cannot be named in the census, it does not exist in the design.
+2. Costs are proportional to what changes: a collection pays for survivors
+   and for what it frees, not for the old heap; a dead object costs a bitmap
+   bit, not a `free()`.
+3. Max RSS is a peak (decision 26). Only reductions at the peak count:
+   floor, overhead, headroom, transients, retention. Returning pages after the
+   peak is for steady-state servers, never a benchmark lever.
+4. One memory controller decides when to collect, from one accounting of all
+   bytes. No subsystem keeps a private budget.
+5. Every mechanism is verified by an independent oracle (full trace,
+   retainer walk, census) that runs in integration.
 
-## Target architecture
+## 2. Where the memory is today, per workload
 
-**Non-moving, sticky-mark generational, size-segregated families, byte-paced.**
+Linux x86_64, 4 vCPU, `v2-gc` after merging `v2-merged` on 2026-10-17,
+one stock round per engine (a screen, not a result). Pacing in force:
+`e14aadb13` (minimum 2^18 cells, 4x live, 4x full growth).
 
-1. **One heap model.** Every collected kind lives in fixed-size families like
-   today's object and array records: a reserved range, blocks with occupancy,
-   mark and remembered side bitmaps. One macro-generated layout table is the
-   only authority for each family's size class, edge visitor, payload
-   accounting and finalizer. The 96-byte `Cell` enum slabs and the legacy
-   slot minor path are retired family by family (strings, environments,
-   functions, collections, iterators/generators).
-2. **Generations as an explicit state machine per object:**
-   `Free -> Young -> Old`, `Old <-> Remembered`, plus `Permanent` for the
-   bootstrap image. Old is the sticky mark bit; nothing new is stored per
-   object.
-   - Minor: roots + remembered owners + owner-attached VM edges of remembered
-     owners; marks young survivors (they become old); sweeps only
-     `occupied & !marked` words; clears remembered bits.
-   - Major: clears marks except Permanent, full trace, sweep, arena and shape
-     compaction, program reclamation.
-   - Weak: minors clear weak refs to young targets and prune entries in young
-     and remembered weak containers; old targets survive a minor by
-     definition. Ephemerons reach their fixed point over the same worklist.
-3. **One write-barrier gateway** at owner granularity (object-remembering, as
-   in Riptide and StickyImmix; not card marking, which rescans old objects on
-   young stores). Today every record mutation already funnels through
-   `RecordSpace::get_live_mut` and every legacy one through `Heap::get_mut`;
-   the barrier lives there: *if the owner is marked, clear its mark and log
-   it.* Clearing the mark is the dedupe; the minor re-marks and re-traces it.
-   VM-side tables that attach edges to an owner (descriptors, promise
-   reactions, async continuations) call the same gateway on the owner when
-   they add an edge, so the per-collection scan of those tables goes away.
-4. **Dead objects cost bits, not frees.** Payloads move into accounted,
-   GC-managed storage: element backings and string units in size-classed
-   families (small arrays inline in the record), boxed cold payloads in their
-   own families. A dead object is then cleared from a bitmap word instead of
-   walking `Drop` through malloc. Kinds that still own native resources
-   (regex automata, buffers, Wasm memories) register an explicit finalizer
-   list, swept separately.
-5. **Byte pacing with two budgets** (TOD-125, MemBalancer, Lua 5.4):
-   - Every allocation and payload growth is charged in bytes at one point
-     per family (derived from the layout table), including rope flattening,
-     ArrayBuffer and Wasm memory growth, and program installation.
-   - Young budget: a fraction of live bytes with a floor of a few MiB.
-   - Major limit `M = L + sqrt(L * g / (c * s))` with smoothed allocation
-     rate `g` and collection speed `s`, clamped to [1.1 L, 2 L], with a
-     4 to 8 MiB floor instead of 2^18 cells.
-6. **Allocation** into the lowest-address recyclable block of a family, so
-   fresh pages stay untouched; a fresh block is a pure bump. Lazy sweep per
-   block only for families with finalizers.
-7. **Precise roots** (handles are small integers, so conservative scanning
-   would retain falsely). Parallel marking only for majors above a live-heap
-   threshold (decision 3); no concurrent marking until a pause requirement
-   exists.
-8. **Allocation elimination** before the heap: for-of iterator results over
-   built-in iterators, unmaterialized `arguments`, destructuring temporaries,
-   per-`await` reaction reuse, all behind exact-fallback guards; then
-   allocation-site survival feedback that allocates long-lived sites as old.
+**V8-v7.**
 
-Not adopted, with reasons: a copying nursery (identity-keyed tables and
-Rust-held integer handles); card marking (rescans old objects on young
-stores); conservative stack scanning; 32-bit `Value` (boxes doubles in a
-no-JIT engine); `madvise`/trim as an RSS lever (decision 26: max RSS is a
-peak).
+| Bench | Score | Max RSS | Collections | Mark | Sweep | QuickJS RSS |
+|---|---:|---:|---:|---:|---:|---:|
+| Crypto | 2047 | 21.9 MB | 2 | 0.9 ms | 17 ms | 3.9 MB |
+| DeltaBlue | 1174 | 20.2 MB | 3 | 1.2 ms | 19 ms | 3.9 MB |
+| EarleyBoyer | 1782 | 47.0 MB | 70 | 68 ms | 598 ms | 17.5 MB |
+| NavierStokes | 2437 | 5.8 MB | 0 | — | — | 5.5 MB |
+| RayTrace | 2435 | 18.1 MB | 17 | 6 ms | 36 ms | 3.5 MB |
+| RegExp | 743 | 26.9 MB | 59 | 57 ms | 603 ms | 6.8 MB |
+| Richards | 1574 | 6.1 MB | 0 | — | — | 3.6 MB |
+| Splay | 6035 | 92.4 MB | 7 | 135 ms | 134 ms | 156.6 MB (Bun 62.0) |
 
-## Staged path
+- Headroom sets RSS on Crypto, DeltaBlue, RayTrace and RegExp.
+- Sweep, not mark, is the GC time where garbage is plentiful (about 10x mark
+  on EarleyBoyer and RegExp, about 10% of wall each): every dead 96-byte
+  `Cell` drops boxed payloads, `Rc` element vectors and string units through
+  malloc.
+- Every collection is full once any object record exists.
 
-Each stage is an experiment with a decision rule (decision 14): 11 paired
-rounds on all eight, max RSS and Score judged separately, no trade
-(decision 5), the all-eight instruction guard, the runtime suite, and a debug
-run of the full-trace verifiers.
+**JetStream 3** (from the JetStream lane's findings on Linear; the lane's
+own all-test baseline in this session is in progress):
 
-| Stage | Change | Removes | Decide by | *Estimate* |
-|---|---|---|---|---|
-| 1 | Sticky-mark minor over records and legacy cells (G-09b): barrier in the two mutable gateways, owner-attached edges logged, minor sweep of `occupied & !marked`, verifier compares every minor with a full trace with old pinned | Per-collection cost scaling with the old and bootstrap heap | Correctness first; then stage 2 decides the policy | Churn workloads −40 to −80% GC time; barrier +0.5 to 2% mutator |
-| 2 | Byte charging at one point per family; young budget in bytes; MemBalancer major limit with a small floor (G-15, G-16) | Garbage headroom at the peak | All-eight RSS lower than both the 10-16 and the 384-cell policy, Score no lower than 10-16 | Max RSS −30 to −70% on Crypto, DeltaBlue, RayTrace, RegExp; Splay toward 2x live |
-| 3 | Element backings and string units as GC-managed, accounted families; small arrays inline | Sweep cost per dead object; malloc overhead | Sweep ns per freed object; Score; RSS | GC sweep time −50 to −80% on EarleyBoyer and RegExp |
-| 4 | Remaining `Cell` kinds as families from the layout table; legacy slot path deleted | 96-byte cell waste; two collector paths | Live bytes per bench; Score | Live heap −10 to −35% |
-| 5 | Bootstrap generation: one full collection after host bootstrap marks survivors Permanent; majors skip them except through the remembered set | Major mark of the bootstrap heap | Major mark time; Node startup | Major mark −50 to −90% on small-live benches |
-| 6 | Allocation elimination and survival-feedback pretenuring | Allocation rate | Allocations per run; Score | Async/generator allocation −20 to −50% |
-| 7 | Slack-tracked inline-slot families per constructor; fewer arena indirections | Per-object overhead | Score; RSS | Property-heavy benches +3 to +10% |
-| 8 | Lazy sweep for finalizer families; parallel major marking on hosts with spare cores; idle-time collection for Node | Pause and steady-state RSS (not max RSS) | Pause tail; wall | — |
+- Async and generator churn: 42% of a `for await` step and most of
+  js-tokens is full collections over the Node bootstrap heap.
+- Large retained sources: startup benches keep about 30 copies of 0.75 to
+  2 MB source text plus bytecode; postcss marks its large live AST heap
+  every few hundred KB because payload bytes advance the trigger while
+  headroom is sized in cells.
+- Byte-blind pacing: a loop dropping 200,000-element arrays peaked at
+  163 MiB against Node's 96 MiB.
+- Wasm tests: sqlite3-wasm 80.9 MB against Bun no-JIT 57.9 MB, from a
+  ~40 MB lowering transient (all function bodies' operator vectors at once);
+  argon2 spends about a quarter of samples allocating and sweeping
+  `WasmV128` / `WasmBits64` heap cells.
+- Retention bugs found so far: finished promise jobs rooted (763 to 211 MB
+  over 12 iterations once fixed), environment chains keeping every loop
+  iteration alive (891 to 163 MiB).
+
+**Wasm CoreMark** (11 rounds, `v2-merged` `f71a0ee24`): Score 2,952 to 2,982,
+ahead of Wasmi in 11 of 11 rounds; max RSS 6.99 MB static / 8.07 MB dynamic
+against Wasm3's 4.16 MB. There is no GC in this run: the RSS is floor, code
+pages (5.2 MB resident text when the link order misses executed functions),
+linear memory and the lowered program.
+
+**Web frameworks** (web lane, TOD-133): Hono 5-second screen at 66 MB
+against Node `--jitless` 99 MB and Bun no-JIT 25 MB; after about 20,000
+requests Quench grows to 190 to 230 MB (unexplained retention). The collector
+is about 20% of a request's instructions (300 to 400 instructions per marked
+cell) and glibc malloc/free about 10%. A generational prototype for records
+was flat on Hono because per-collection fixed costs (rebuilding root tables,
+owner-edge maps and shape constructor vectors every collection) consumed the
+savings.
+
+## 3. Taxonomy: every kind of memory, its owner and its strategy
+
+### 3.1 Managed heap (JavaScript objects and everything they reach)
+
+- **Non-moving, sticky-mark generational collection.** Old is the mark bit,
+  kept across collections. Per-object states: `Free -> Young -> Old`,
+  `Old <-> Remembered`, plus `Permanent` for the bootstrap image. A minor
+  collection traces roots, remembered owners and young survivors, and sweeps
+  only `occupied & !marked`. A major clears marks (except Permanent), traces
+  everything and compacts metadata (property arena, shapes, programs).
+  Chosen over a copying nursery because handles are integers held by Rust
+  code and identity-keyed tables would need rehashing (V8's MinorMS lost to
+  its Scavenger, but that baseline has JIT-inlined bump allocation Quench
+  does not).
+- **One write barrier at owner granularity**, in the two mutable gateways that
+  already carry every write (`RecordSpace::get_live_mut`, `Heap::get_mut`):
+  if the owner is marked, clear its mark and log it. Clearing the mark is
+  the dedupe. Owner-attached VM edges (descriptors, promise reactions, async
+  continuations) call the same gateway when an edge is added. Object
+  remembering, not card marking (cards rescan old objects on young stores).
+- **Fixed per-collection cost must be near zero.** Roots and owner edges are
+  maintained incrementally (dirty sets), not rebuilt by scanning every table,
+  shape and descriptor at each collection. This is the web lane's lesson and
+  a precondition for small young budgets.
+- **Size-segregated families for every kind.** Objects and arrays are already
+  fixed-size records in reserved ranges with side bitmaps. Strings,
+  environments, functions, collections, iterators and generators move to the
+  same machinery, generated by macro from one layout table that is the only
+  authority for size class, edge visitor, byte accounting and finalizer. The
+  96-byte `Cell` enum slabs and the legacy slot path are retired.
+- **Payloads inside the managed heap.** Element backings and string units
+  become accounted, size-classed families; small arrays keep elements inline
+  in the record; copy-on-write sharing uses a shared flag, not `Rc` counts. A
+  dead object is then cleared from a bitmap word. Kinds that own native
+  resources (regex automata, buffers, Wasm memories, sockets) are on an
+  explicit finalizer list swept separately.
+- **Representation compaction** where it is measured to pay: one-byte
+  strings, bounded-depth ropes, interned atoms; slack-tracked inline-slot
+  classes per constructor; metadata as `u32` inside layouts. Not 32-bit
+  `Value` (it would box doubles in an interpreter).
+- **Allocation** into the lowest-address recyclable block of a family; a
+  fresh block is a pure bump; untouched pages stay non-resident.
+- **Precise roots.** Conservative stack scanning is unsafe with integer
+  handles.
+
+### 3.2 Allocation elimination (memory never allocated)
+
+The cheapest memory is never allocated. Bytecode-level, guarded, with exact
+fallback (AGENTS.md):
+
+- for-of over built-in iterators without iterator-result objects;
+- `arguments` not materialized; destructuring and spread temporaries reused;
+- per-`await` reaction and promise objects reused where the spec allows;
+  generator and async frames allocated once per activation;
+- Wasm scalar values (i64, v128, tagged results) never become heap cells;
+- allocation-site survival feedback: sites whose objects survive are
+  allocated old (pretenuring without copying).
+
+These serve JetStream (async, generators, tokenizers), web servers (request
+objects, promise chains) and V8-v7 (EarleyBoyer, RayTrace temporaries).
+
+### 3.3 Wasm memory
+
+- **Linear memory** is a reservation with commit-on-touch (`mmap` with no
+  prefault), grown in place, with guard regions where the address space
+  allows. Its bytes are charged to the controller as external bytes so a
+  program that drops instances triggers collection, but never traced.
+- **Tables and globals** hold references through the same barrier gateway.
+- **Compile transients** are bounded: lower one function body at a time
+  (leaf bodies first for inlining), release operator buffers per body. The
+  Wasm lane owns the decoder (decision 32); this lane owns the bound and the
+  measurement.
+- **Lowered code** is sized by a census per module (bytes per Wasm
+  instruction), with cold functions lowered on first call.
+- **CoreMark's RSS is floor and code**: the strategy for it is §3.6 and
+  §3.4, not the collector.
+
+### 3.4 Code and program memory
+
+- Source text kept for `Function.prototype.toString` is stored once per
+  program and shared by every function; large sources may be kept in a
+  compact (one-byte) form.
+- Bytecode is compiled on first call for functions that are never run at
+  startup (JetStream's large libraries).
+- Programs, their constants and caches are reclaimed when no function,
+  environment or activation can run them (exists for dynamic programs; extend
+  to every program kind).
+- Inline caches and feedback are sized by execution, not by bytecode size.
+- Parser arenas are released before execution starts.
+
+### 3.5 Host and native memory (Node APIs, servers)
+
+- Buffers, sockets, streams and timers are accounted to the controller at
+  allocation and released by explicit lifecycle state machines.
+- Per-request state is verified to be unreachable after the response: a
+  retention check runs N requests, collects, and compares the census with
+  the census after one request (tool in §5). The 190 to 230 MB Hono growth
+  is a retention bug until shown otherwise.
+- The remaining malloc traffic (outside the managed families) is measured by
+  call site. An allocator A/B (glibc with the current tcache setting,
+  mimalloc, a size-class pool for the hottest small sizes) is run once the
+  families have removed most traffic, judged on Score and max RSS together.
+
+### 3.6 The floor
+
+Owned with the RSS lane (decision 9): lazy host modules and lazy global
+properties, start-up-ordered code layout (trained on the general corpus,
+decision 13), and in reserve a read-only bootstrap image (bytecode, shapes,
+intrinsic templates) mapped and demand-paged. With generations, everything
+alive after bootstrap is marked Permanent so no collection traces it.
+
+## 4. Policy: one memory controller
+
+One component owns the decision to collect and reads one accounting of all
+bytes: managed families, payloads, external bytes (Wasm memory, buffers),
+code. It is a named state machine (`Mutating -> MinorDue -> MajorDue ->
+Collecting -> Mutating`, plus `Pressure` when a soft limit is near).
+
+- **Young budget**: a fraction of live bytes with a floor of a few MiB (Lua
+  5.4's 20% minor rule is the prior), tuned by measurement.
+- **Major limit**: `M = L + sqrt(L · g / (c · s))` (MemBalancer; V8 ships the
+  same rule as `sqrt_allocation_limits`), with `L` live bytes after the last
+  major, `g` smoothed allocation rate, `s` smoothed collection speed, `c` one
+  tuning constant; clamped to [1.1 L, 2 L], floor of a few MiB instead of
+  2^18 cells.
+- **Soft limit** for servers (Go's `GOMEMLIMIT` model): tighten pacing as
+  the limit approaches, cap collector CPU share to avoid a death spiral.
+- **Idle collection** for event-loop programs: when the loop is idle,
+  collect and decommit empty blocks (steady-state RSS for servers; not a
+  benchmark lever).
+
+The constants (`c`, young fraction, floors) are the only tuning knobs; they
+are owned here and boarded on all four suites before any change.
+
+## 5. Tooling (memory is managed only as far as it is measured)
+
+| Tool | Answers | State |
+|---|---|---|
+| Census by owner (`profile-memory`, heap census API) | What is live, by kind and payload | Exists; extend to every family, Wasm, code and host buffers |
+| Peak decomposition (smaps at the peak + census) | What the peak is made of | To build: reconcile within 5% |
+| Collection profile (`profile-gc-time`) | Mark, sweep, roots, per-collection fixed cost | Exists; add minor/major split, survivors, remembered |
+| Verifiers: minor vs full trace; barrier completeness walk; major vs serial trace | Collector correctness | Exist under `debug_assertions` only; must run in integration |
+| GC stress mode: collect at every safepoint | Rooting bugs (Rust-held Values across guest calls) | To build |
+| Retainer path ("why is this alive") | Leaks and retention | To build |
+| Request-retention check for servers | Per-request leaks | To build |
+| Allocation-site profile | Survival per site; elimination targets | To build |
+| Paired runner, all-eight instruction guard, minimal `posix_spawn` RSS helper | Decisions | Exist |
+
+## 6. Staged path
+
+Every stage is an experiment (decision 14) judged on all four suites where it
+applies, Score and max RSS separately, no trade (decision 5).
+
+| # | Stage | Serves | *Estimate* |
+|---|---|---|---|
+| 0 | Measurement: baselines on V8-v7, JetStream 3, CoreMark, web; peak decomposition; verifiers in integration; GC stress mode | All | — |
+| 1 | Incremental roots and owner edges (near-zero fixed cost per collection) | Web, JetStream churn | Per-collection floor −50 to −90% |
+| 2 | Sticky-mark generations over records and cells, barrier gateway, minor verifier | JetStream async/generators, web, EarleyBoyer, RayTrace, RegExp | Churn GC time −40 to −80%; barrier +0.5 to 2% |
+| 3 | One controller: byte accounting everywhere, young budget, sqrt major limit, MiB floor | V8-v7 headroom benches, JetStream payload-heavy, web | Max RSS −30 to −70% on Crypto, DeltaBlue, RayTrace, RegExp |
+| 4 | Payloads as accounted families; small arrays inline | EarleyBoyer, RegExp, JetStream parsers | Sweep −50 to −80% |
+| 5 | Remaining kinds as families; legacy slot path deleted; Wasm scalars off the heap | All; argon2-wasm | Live heap −10 to −35% |
+| 6 | Retention: request-retention check, retainer paths, fixes | Web, JetStream | Hono steady state toward its 5 s level |
+| 7 | Allocation elimination and survival-feedback pretenuring | JetStream, web, Splay | Allocations −20 to −50% on async/generator code |
+| 8 | Code memory: shared sources, compile on first call, program reclamation; bounded Wasm lowering transient | JetStream startup and Wasm tests, CoreMark | sqlite3-wasm −20 to −40 MB |
+| 9 | Bootstrap generation (Permanent) and, in reserve, a read-only bootstrap image | All, floor | Major mark −50 to −90% on small-live programs |
+| 10 | Allocator A/B for the remaining malloc traffic; slack-tracked inline slots | All | Measure |
+| 11 | Server policy: soft limit, idle collection and decommit | Web | Steady-state RSS |
 
 Research reserve, opened only on measured need: mature reference counting
-(LXR) for old-generation churn in Node services; concurrent SATB marking for
-pause tails.
+(LXR) for old-generation churn in long-running servers; concurrent marking
+for pause tails; parallel major marking on hosts with spare cores
+(decision 3).
 
-## Verification that ships with every stage
+Not adopted: copying nursery, card marking with sticky bits, conservative
+stack scanning, 32-bit `Value`, page return as a max-RSS lever.
 
-- Debug builds verify every minor against a full trace with old objects
-  pinned, and every major against an independent serial trace.
-- A debug heap walk after each minor asserts there is no old-to-young edge
-  whose owner is not remembered (barrier completeness).
-- The verifiers run in integration through a debug-assertions test profile,
-  not only `cargo test` with the iteration profile (which has none).
-- Weak, FinalizationRegistry and ephemeron behavior is checked across minor
-  and major collections, including old WeakMaps with young values.
+## 7. Sources
 
-## Ownership
-
-The user directed on 2026-10-17 that the GC lane owns the collector and
-memory-management design (decision 33 as amended). The RSS lane keeps the
-process floor (decision 9).
+Demers et al., POPL 1990 (sticky mark bits); WebKit Riptide; Blackburn and
+McKinley, Immix (PLDI 2008) and MMTk StickyImmix; Zhao, Blackburn and
+McKinley, LXR (PLDI 2022); Kirisame, Shenoy and Panchekha, MemBalancer
+(OOPSLA 2022); V8 heap controller, Orinoco scavenger and concurrent marking,
+slack tracking, pointer compression, snapshots; Hermes Hades; SpiderMonkey
+nursery and pretenuring; QuickJS; Lua 5.4 generational mode; Go GC guide
+and soft memory limit; Wingo on Nofl field-logging barriers, V8 MinorMS and
+pretenuring. Full notes with links: the Linear design document.
