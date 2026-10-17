@@ -10,12 +10,11 @@ pub(crate) fn derive(
     methods: &[MethodSite],
     fields: &[FieldSite],
     superinstructions: &[Superinstruction],
-) -> Vec<u64> {
-    let mut roots = Vec::new();
+) -> crate::bytecode::RegisterRoots {
+    let mut roots = crate::bytecode::RegisterRoots::default();
     for function in functions {
         if let Some(map) = analyze(function, methods, fields, superinstructions) {
-            function.register_root_offset = roots.len() as u32;
-            roots.extend(map);
+            function.register_root_offset = roots.append(function.registers, map);
         }
     }
     roots.shrink_to_fit();
@@ -335,6 +334,7 @@ mod tests {
         let function = Function {
             parent: None,
             name: None,
+            inferred_name: None,
             is_arrow: false,
             self_binding_slot: None,
             source_span: None,
@@ -369,7 +369,7 @@ mod tests {
             global_immutable_atoms: vec![],
             name_bindings: Default::default(),
             binding_sites: vec![],
-            source_positions: vec![],
+            source_positions: Default::default(),
             environment_clones: vec![],
             code: vec![
                 Instr::new(Op::LoadConst, 0, 0, 0, 0),
@@ -416,6 +416,30 @@ mod tests {
             assert_eq!(definitions(instruction.as_wide(), &[]), bit(0));
             assert_eq!(uses(Instr::new(op, 0, 0, 0, 0).as_wide(), &[], &[], &[]), 0);
         }
+    }
+
+    #[test]
+    fn optional_registers_read_or_write_by_their_layout() {
+        // An appended spread source is read: a collection while it iterates must still see it.
+        let append = Instr::new(
+            Op::AppendArray,
+            1,
+            crate::bytecode::encode_optional_register(Some(2)),
+            1,
+            0,
+        );
+        assert_eq!(uses(append.as_wide(), &[], &[], &[]), bit(1) | bit(2));
+        assert_eq!(definitions(append.as_wide(), &[]), 0);
+        // A store's optional register receives a copy of the stored value.
+        let store = Instr::new(
+            Op::StoreLocalPlain,
+            1,
+            crate::bytecode::encode_optional_register(Some(3)),
+            0,
+            0,
+        );
+        assert_eq!(uses(store.as_wide(), &[], &[], &[]), bit(1));
+        assert_eq!(definitions(store.as_wide(), &[]), bit(3));
     }
 
     #[test]

@@ -384,6 +384,42 @@ const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
 
 /// Entries of the script call cache, indexed by the callee's heap index.
 const SCRIPT_CALL_TARGETS: usize = 256;
+
+/// What a constructor's initializer body (`ScriptCallTarget::initializes`) made of a receiver
+/// whose adds all hit: a receiver of `source_shape` under `prototype` ends at `shape`, its
+/// fields the arguments for `parameters[..fields]` in order. While the prototype layout keeps
+/// `epoch` (`prototype_layout_epoch`), which every collection advances, those adds would hit
+/// again with the same transitions, so the object can be allocated finished.
+#[derive(Clone, Copy)]
+struct ConstructPlan {
+    callee: Value,
+    epoch: u64,
+    prototype: Value,
+    source_shape: u32,
+    shape: u32,
+    fields: u8,
+    parameters: [u16; CONSTRUCT_PLAN_FIELDS],
+}
+
+/// Fields a `ConstructPlan` names; an initializer storing more keeps running its adds.
+const CONSTRUCT_PLAN_FIELDS: usize = 4;
+
+/// Entries of the construct plan cache, indexed by the callee's heap index.
+const CONSTRUCT_PLANS: usize = 64;
+const _: () = assert!(CONSTRUCT_PLANS.is_power_of_two());
+
+/// A `ConstructPlan::epoch` no epoch reaches: the entry plans nothing.
+const NO_CONSTRUCT_PLAN_EPOCH: u64 = u64::MAX;
+
+const EMPTY_CONSTRUCT_PLAN: ConstructPlan = ConstructPlan {
+    callee: Value::UNDEFINED,
+    epoch: NO_CONSTRUCT_PLAN_EPOCH,
+    prototype: Value::UNDEFINED,
+    source_shape: 0,
+    shape: 0,
+    fields: 0,
+    parameters: [0; CONSTRUCT_PLAN_FIELDS],
+};
 const _: () = assert!(SCRIPT_CALL_TARGETS.is_power_of_two());
 
 /// Activations a lane runs without VM frames, innermost last, over the
@@ -397,6 +433,8 @@ pub(super) struct LaneStack {
     activations: Vec<Activation>,
     /// Resolved targets of lane `Call` records (`Vm::script_call_target`).
     script_targets: Box<[ScriptCallTarget; SCRIPT_CALL_TARGETS]>,
+    /// Initializer constructors' plans (`lane_initialize_fields`).
+    construct_plans: Box<[ConstructPlan; CONSTRUCT_PLANS]>,
     /// Names the collection epoch, realm and program of the running lane, which no lane
     /// instruction changes: a target resolved under another generation is stale.
     generation: u64,
@@ -413,6 +451,7 @@ impl Default for LaneStack {
             values: Vec::new(),
             activations: Vec::new(),
             script_targets: Box::new([EMPTY_SCRIPT_CALL_TARGET; SCRIPT_CALL_TARGETS]),
+            construct_plans: Box::new([EMPTY_CONSTRUCT_PLAN; CONSTRUCT_PLANS]),
             generation: NO_SCRIPT_GENERATION,
             generation_key: (0, Value::UNDEFINED, ProgramId::MAIN),
         }
@@ -1469,6 +1508,23 @@ lane_handler! {
 }
 
 lane_handler! {
+    /// `lane_get_field_own` for a receiver in a heap cell rather than the object records
+    /// (`Vm::cell_own_field_hit`): a function's own field, as `Strength.REQUIRED`. A miss
+    /// moves the record on as `lane_get_field_miss` decides.
+    fn lane_get_field_own_cell<>(cx, r, ip, i, view) {
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) })
+            .and_then(|object| (unsafe { vm(cx) }).cell_own_field_hit(code, object, i.c))
+        else {
+            sibling!(lane_get_field_miss::<H>, r, ip, Carried::SCRIPT)
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::SCRIPT)
+    }
+}
+
+lane_handler! {
     /// `lane_get_field_holder` for a receiver in a heap cell rather than the object records
     /// (`Vm::cell_holder_field_hit`): a method read from a function, as `f.apply`. A miss
     /// moves the record on as `lane_get_field_miss` decides.
@@ -1585,6 +1641,12 @@ lane_handler! {
                 lane_get_field_inherited::<H, false>,
                 lane_get_field::<H>,
             )),
+            FieldSiteTier::Own
+                if unsafe { lane_single_field_base(cx, r, i.b) }
+                    .is_some_and(|object| object.direct_object_index().is_none()) =>
+            {
+                Some(lane_get_field_own_cell::<H>)
+            }
             FieldSiteTier::Own => None,
         };
         if let Some(handler) = handler {
@@ -4345,7 +4407,9 @@ fn lane_activate<H: Host>(
 /// (`Vm::primary_field_add_hit`), which runs no guest code, so the body completed. After a
 /// miss the constructor activates on the receiver: its body repeats the stores made so far
 /// as stores of the same values to the own data properties they added, which leaves the
-/// object as one activation would. Out of line, so the construct keeps its tail dispatch.
+/// object as one activation would. A body whose adds all hit leaves its `ConstructPlan`,
+/// with which a later construct allocates the finished object at once. Out of line, so the
+/// construct keeps its tail dispatch.
 #[inline(never)]
 fn lane_initialize_fields<H: Host>(
     vm: &mut Vm<H>,
@@ -4355,22 +4419,68 @@ fn lane_initialize_fields<H: Host>(
     r: Registers,
     i: &LaneInstruction,
 ) -> Option<(Value, bool)> {
-    let this = vm.inline_construct_receiver(callee)?;
+    let template = vm.inline_construct_template(callee)?;
+    let (prototype, source_shape) = (template.proto(), template.shape());
     let argc = ImmediateLayout::argument_count(i.imm());
-    for store in code.functions[function as usize].this_field_stores() {
-        let atom = store.atom_index();
-        // Parameter `k` of a plain activation is argument `k`, or undefined when not passed.
-        let parameter = store.register_a();
-        let value = if parameter < argc {
+    // Parameter `k` of a plain activation is argument `k`, or undefined when not passed.
+    let argument = |parameter: u16| {
+        if parameter < argc {
             r.get(i.c + parameter)
         } else {
             Value::UNDEFINED
-        };
+        }
+    };
+    let plan_index = callee.heap_index().map(|index| index as usize & (CONSTRUCT_PLANS - 1));
+    if let Some(index) = plan_index {
+        let plan = vm.lane_stack.construct_plans[index];
+        if plan.callee == callee
+            && plan.epoch == crate::heap::prototype_layout_epoch()
+            && plan.prototype == prototype
+            && plan.source_shape == source_shape
+        {
+            let mut values = [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS];
+            for (value, parameter) in values.iter_mut().zip(&plan.parameters[..usize::from(plan.fields)]) {
+                *value = argument(*parameter);
+            }
+            let this = vm.heap.alloc_object_with_properties(
+                prototype,
+                plan.shape,
+                &values[..usize::from(plan.fields)],
+            );
+            return Some((this, true));
+        }
+    }
+    let this = vm.heap.alloc_object(template);
+    let mut plan = ConstructPlan {
+        callee,
+        epoch: NO_CONSTRUCT_PLAN_EPOCH,
+        prototype,
+        source_shape,
+        shape: source_shape,
+        fields: 0,
+        parameters: [0; CONSTRUCT_PLAN_FIELDS],
+    };
+    let mut plannable = true;
+    for store in code.functions[function as usize].this_field_stores() {
+        let atom = store.imm();
+        let parameter = store.a();
         if !vm.field_cache_atom_eligible(atom)
-            || !vm.primary_field_add_hit(code, this, atom, value, store.cache_site_index())
+            || !vm.primary_field_add_hit(code, this, atom, argument(parameter), store.c())
         {
             return Some((this, false));
         }
+        match plan.parameters.get_mut(usize::from(plan.fields)) {
+            Some(slot) => {
+                *slot = parameter;
+                plan.fields += 1;
+            }
+            None => plannable = false,
+        }
+    }
+    if plannable && let Some(index) = plan_index {
+        plan.shape = vm.object_data(this).map_or(source_shape, |object| object.shape());
+        plan.epoch = crate::heap::prototype_layout_epoch();
+        vm.lane_stack.construct_plans[index] = plan;
     }
     Some((this, true))
 }
@@ -4852,7 +4962,14 @@ lane_handler! {
     fn lane_returning_field_miss<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
+        // The single-entry tiers read the object records alone; a receiver in a heap cell
+        // keeps the general cached read.
+        let cell_receiver = unsafe { lane_single_field_base(cx, r, i.b) }
+            .is_some_and(|object| object.direct_object_index().is_none());
         let handler: Option<Handler> = match lane_field_site_tier(unsafe { vm(cx) }, code, i) {
+            FieldSiteTier::Own | FieldSiteTier::Holder | FieldSiteTier::Inherited if cell_receiver => {
+                Some(lane_returning::<H, RETURNING_FIELD>)
+            }
             FieldSiteTier::Nested => Some(lane_returning::<H, RETURNING_FIELD_NESTED>),
             FieldSiteTier::General => Some(lane_returning::<H, RETURNING_FIELD>),
             FieldSiteTier::Polymorphic => Some(lane_returning::<H, RETURNING_FIELD_POLYMORPHIC>),

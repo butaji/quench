@@ -2,18 +2,6 @@ use super::*;
 
 const STRICT_EQUAL_OPERATOR: u32 = 2;
 
-fn is_anonymous_function_definition(mut expression: &Expression<'_>) -> bool {
-    while let Expression::ParenthesizedExpression(parenthesized) = expression {
-        expression = &parenthesized.expression;
-    }
-    match expression {
-        Expression::FunctionExpression(function) => function.id.is_none(),
-        Expression::ArrowFunctionExpression(_) => true,
-        Expression::ClassExpression(class) => class.id.is_none(),
-        _ => false,
-    }
-}
-
 impl FunctionCompiler<'_, '_> {
     pub(crate) fn statements(&mut self, body: &[Statement<'_>]) {
         for statement in body {
@@ -98,9 +86,9 @@ impl FunctionCompiler<'_, '_> {
                 _ => {
                     if let Some(expression) = item.declaration.as_expression() {
                         let value = self.expression(expression);
-                        if is_anonymous_function_definition(expression) {
+                        if Self::anonymous_function_definition(expression) {
                             let name = self.owner.atom("default");
-                            self.emit(Op::SetFunctionName, value, 0, 0, name);
+                            self.emit_function_name(value, name);
                         }
                         let binding = super::super::module_default_binding(self.owner.source);
                         let atom = self.owner.atom(&binding);
@@ -397,17 +385,17 @@ impl FunctionCompiler<'_, '_> {
                 self.named_class_expression(class, identifier.name.as_str())
             }
             _ => {
-                let debug_name = if !is_anonymous_function_definition(initializer) {
+                let debug_name = if !Self::anonymous_function_definition(initializer) {
                     if let BindingPattern::BindingIdentifier(identifier) = binding { Some(self.owner.atom(identifier.name.as_str())) } else { None }
                 } else { None };
                 self.expression_with_debug_name(initializer, debug_name)
             },
         };
-        if is_anonymous_function_definition(initializer)
+        if Self::anonymous_function_definition(initializer)
             && let BindingPattern::BindingIdentifier(identifier) = binding
         {
             let name = self.owner.atom(identifier.name.as_str());
-            self.emit(Op::SetFunctionName, value, 0, 0, name);
+            self.emit_function_name(value, name);
         }
         value
     }
