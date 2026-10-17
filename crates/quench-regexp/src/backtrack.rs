@@ -60,6 +60,22 @@ impl Text for [u8] {
     }
 }
 
+impl Text for [u16] {
+    #[inline(always)]
+    fn len(&self) -> usize {
+        <[u16]>::len(self)
+    }
+
+    #[inline(always)]
+    fn unit(&self, index: usize) -> u32 {
+        u32::from(self[index])
+    }
+
+    fn bytes(&self) -> Option<&[u8]> {
+        None
+    }
+}
+
 impl Text for [Unit] {
     #[inline(always)]
     fn len(&self) -> usize {
@@ -205,6 +221,11 @@ enum Inst {
     },
     /// The start of one iteration, kept for the empty check.
     LoopIterate {
+        start: u32,
+    },
+    /// The end of the one iteration an optional atom (`max` of one, `min` of zero) makes:
+    /// it fails having consumed nothing.
+    EmptyCheck {
         start: u32,
     },
     LoopTail {
@@ -426,8 +447,38 @@ impl Compiler {
                         return Ok(());
                     }
                 }
-                let (counter, start) = (self.register(), self.register());
                 let (first, count) = self.list(captures.iter().copied())?;
+                // RepeatMatcher with a maximum of one: one iteration, or none, in the
+                // quantifier's order; once it is taken no further iteration is tried, so no
+                // counter is kept.
+                if min == 0 && max == 1 {
+                    let start = self.register();
+                    let split = self.emit(Inst::Split { alternative: 0 });
+                    let skip = (!*greedy).then(|| self.emit(Inst::Jump(0)));
+                    let body_start = self.pc();
+                    self.emit(Inst::LoopIterate { start });
+                    if count > 0 {
+                        self.emit(Inst::ResetCaptures { first, count });
+                    }
+                    self.compile(body, flags)?;
+                    self.emit(Inst::EmptyCheck { start });
+                    let exit = self.pc();
+                    match skip {
+                        // Greedy: the iteration first, the exit on backtracking.
+                        None => {
+                            self.instructions[split as usize] = Inst::Split { alternative: exit }
+                        }
+                        // Lazy: the exit first, the iteration on backtracking.
+                        Some(skip) => {
+                            self.instructions[split as usize] = Inst::Split {
+                                alternative: body_start,
+                            };
+                            self.instructions[skip as usize] = Inst::Jump(exit);
+                        }
+                    }
+                    return Ok(());
+                }
+                let (counter, start) = (self.register(), self.register());
                 self.emit(Inst::LoopInit { counter });
                 let head = self.emit(Inst::LoopHead {
                     counter,
@@ -877,6 +928,14 @@ impl Program {
                     pc += 1;
                     true
                 }
+                Inst::EmptyCheck { start } => {
+                    if position == registers[start as usize] {
+                        false
+                    } else {
+                        pc += 1;
+                        true
+                    }
+                }
                 Inst::LoopTail {
                     counter,
                     start,
@@ -1115,6 +1174,12 @@ mod tests {
             r"NQ_VQ",
             r"ab(c)?",
             r"pad",
+            r"(a?)?b",
+            r"(a)??b",
+            r"(?:(a)|b)??(a)",
+            r"((a)?)?c",
+            r"(x?)?",
+            r"(a)?\1b",
         ];
         let subjects = [
             "",
@@ -1175,6 +1240,20 @@ mod tests {
                             actual, expected,
                             "/{pattern}/{flags} on {subject:?} from {first}"
                         );
+                        if !regex.flags.unicode {
+                            // Outside unicode mode a decoded unit is a code unit.
+                            let raw = |found: Option<super::Found>| {
+                                found.map(|found| (found.start..found.end, found.captures))
+                            };
+                            let code_units = subject.encode_utf16().collect::<Vec<_>>();
+                            let wide = program.find(&code_units[..], first, false, None).ok();
+                            let decoded = program.find(&units[..], first, false, None).ok();
+                            assert_eq!(
+                                wide.map(raw),
+                                decoded.map(raw),
+                                "/{pattern}/{flags} on code units {subject:?} from {first}"
+                            );
+                        }
                         if subject.is_ascii() {
                             let bytes = program
                                 .find(subject.as_bytes(), first, false, None)
