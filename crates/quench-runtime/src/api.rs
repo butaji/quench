@@ -10098,3 +10098,13 @@ print(Object.getPrototypeOf(new A(2).transferToFixedLength(3)) === P);
 #[cfg(test)]
 #[path = "api_promise_tests.rs"]
 mod promise_tests;
+
+/// The origin a host wrapper's `prefix` gives the source after it: the prefix's line
+/// count and its last line's UTF-16 length, which compiler positions and diagnostic
+/// excerpts discount. `None` past the compiler's position range.
+pub fn wrapper_origin(prefix: &str) -> Option<(u32, u32)> {
+    let lines = u32::try_from(prefix.bytes().filter(|byte| *byte == b'\n').count()).ok()?;
+    let columns =
+        u32::try_from(prefix.rsplit('\n').next().unwrap_or("").encode_utf16().count()).ok()?;
+    Some((lines, columns))
+}

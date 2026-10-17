@@ -478,14 +478,39 @@ fn fused_field_source_locations_survive_binary_round_trip_and_validate_coordinat
 fn source_lines_share_javascript_boundaries_and_preserve_wrapper_origins() {
     let text = "a\r\nb\rc\nd\u{2028}e\u{2029}";
     assert_eq!(super::source_line_starts(text).collect::<Vec<_>>(), [0, 3, 5, 7, 11, 15]);
-    let source = super::ProgramSource { text: text.into(), line_offset: 0, column_offset: 0 };
+    let source = super::ProgramSource {
+        text: super::SourceText::Shared(text.into()),
+        base: 0,
+        line_offset: 0,
+        column_offset: 0,
+    };
     for (index, expected) in ["a", "b", "c", "d", "e", ""].into_iter().enumerate() {
         assert_eq!(source.source_line(index as u32 + 1), Some(expected));
     }
     assert_eq!(source.source_line(7), None);
     assert_eq!(source.source_line(0), None);
-    let wrapped = super::ProgramSource { text: "wrapper\r\n😀first\rsecond\u{2028}third".into(), line_offset: 1, column_offset: 2 };
+    let wrapped = super::ProgramSource {
+        text: super::SourceText::Shared("wrapper\r\n😀first\rsecond\u{2028}third".into()),
+        base: 0,
+        line_offset: 1,
+        column_offset: 2,
+    };
     assert_eq!(wrapped.source_line(1), Some("first"));
     assert_eq!(wrapped.source_line(2), Some("second"));
     assert_eq!(wrapped.source_line(3), Some("third"));
+    // A static body kept without its wrapper prefix starts at the wrapper origin.
+    let prefix = "(function () {\n  ";
+    let body = "first\nsecond";
+    let (line_offset, column_offset) = crate::wrapper_origin(prefix).unwrap();
+    let retained = super::ProgramSource {
+        text: super::SourceText::Static(body),
+        base: prefix.len() as u32,
+        line_offset,
+        column_offset,
+    };
+    assert_eq!(retained.source_line(1), Some("first"));
+    assert_eq!(retained.source_line(2), Some("second"));
+    let second = (prefix.len() + body.find("second").unwrap()) as u32;
+    assert_eq!(retained.slice(second, second + 6), Some("second"));
+    assert_eq!(retained.slice(0, second), None);
 }
