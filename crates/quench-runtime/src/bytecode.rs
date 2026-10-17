@@ -1026,6 +1026,10 @@ pub(crate) struct SlotDeclaration {
 pub struct Function {
     pub parent: Option<u32>,
     pub name: Option<Atom>,
+    /// The name NamedEvaluation gives an anonymous function definition at a statically
+    /// named position (`const f = () => {}`): its closures are made with it, as
+    /// SetFunctionName would name them right after creation.
+    pub inferred_name: Option<Atom>,
     pub is_arrow: bool,
     pub self_binding_slot: Option<u16>,
     /// The function's source text as a range of the program's `source`, which

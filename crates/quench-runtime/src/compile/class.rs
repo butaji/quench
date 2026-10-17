@@ -307,7 +307,7 @@ impl FunctionCompiler<'_, '_> {
             .or(inferred_name)
         {
             let atom = self.owner.atom(name);
-            self.emit(Op::SetFunctionName, class_value, 0, 0, atom);
+            self.emit_function_name(class_value, atom);
         }
         let prototype = self.reg();
         let prototype_atom = self.owner.atom("prototype");
@@ -459,7 +459,7 @@ impl FunctionCompiler<'_, '_> {
                             _ => name.to_owned(),
                         };
                         let atom = self.owner.atom(&format!("{kind} {visible_name}"));
-                        self.emit(Op::SetFunctionName, function, 0, 0, atom);
+                        self.emit_function_name(function, atom);
                     }
                     self.define_class_accessor(
                         target,
@@ -825,7 +825,7 @@ impl FunctionCompiler<'_, '_> {
             };
             if let Some(name) = name {
                 let atom = self.owner.atom(&name);
-                self.emit(Op::SetFunctionName, value, 0, 0, atom);
+                self.emit_function_name(value, atom);
             }
         }
     }
