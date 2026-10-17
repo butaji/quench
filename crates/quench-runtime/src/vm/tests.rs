@@ -1585,7 +1585,7 @@ fn object_method_home_survives_collection_with_precise_register_roots() {
 fn unrepresentable_register_maps_keep_the_conservative_frame_roots() {
     let mut program = Engine::specialize("print(0);", "wide-roots.js").unwrap();
     program.functions[0].registers = 65;
-    program.functions[0].register_root_offset = u32::MAX;
+    program.functions[0].register_roots = crate::bytecode::RegisterRoots::new(false);
 
     let mut vm = Vm::new(SilentHost);
     vm.initialize(&program).unwrap();
@@ -4731,7 +4731,7 @@ fn wasm_retirement_invalidates_register_reuse_after_shrinking() {
         Engine::specialize("function identity(x) { return x; }", "retired-frame.js").unwrap();
     let function = &mut program.functions[1];
     function.registers = u16::MAX;
-    function.register_root_offset = 0;
+    function.register_roots = crate::bytecode::RegisterRoots::new(true);
     frame.prepare_registers_for(function);
     assert_eq!(frame.registers.len(), usize::from(u16::MAX));
     assert!(frame.registers.capacity() >= frame.registers.len());
@@ -10470,4 +10470,74 @@ fn spread_of_a_branch_built_array_survives_collection() {
     let name = vm.intern_atom("total");
     let total = vm.own_property(vm.realm.globals, name).unwrap();
     assert_eq!(total.as_number(), Some(20_042_000.0));
+}
+
+#[test]
+fn lexical_slots_read_only_after_initialization_become_plain_and_keep_their_dead_zone() {
+    let source = r#"
+      'use strict';
+      const out = [];
+      function t(f) { try { out.push(String(f())); } catch (e) { out.push(e.constructor.name + ':' + e.message); } }
+      function proven() { let s = 0; for (let i = 0; i < 3; i++) { const y = i * 2; s += y; } return s; }
+      t(proven);
+      t(() => { const r = x; let x = 1; return r; });
+      t(() => { switch (1) { case 0: let x = 1; break; case 1: return x; } });
+      t(() => { const s = []; for (let i = 0; i < 2; i++) { if (i) s.push(z); let z = i; } return s; });
+      t(() => { let r; try { r = w; } catch (e) { r = e.name; } let w = 3; return r + w; });
+      t(() => { k = 2; let k; return k; });
+      t(() => { let v; try { v = 1; } finally { v += 1; } return v; });
+      t(() => { for (let x of [x]) {} });
+      print(out.join('|'));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    let program = Engine::specialize(source, "lexical-initialization.js").unwrap();
+    let proven = program
+        .functions
+        .iter()
+        .find(|function| function.name.is_some_and(|atom| program.atoms[atom as usize] == *"proven"))
+        .unwrap();
+    assert!(
+        proven
+            .instructions()
+            .all(|instruction| !matches!(instruction.op(), crate::bytecode::Op::LoadLocal | crate::bytecode::Op::StoreLocal)),
+        "every lexical slot of `proven` is read after its initialization"
+    );
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["6|ReferenceError:Cannot access 'x' before initialization|\
+          ReferenceError:Cannot access 'x' before initialization|\
+          ReferenceError:Cannot access 'z' before initialization|ReferenceError3|\
+          ReferenceError:Cannot access 'k' before initialization|2|\
+          ReferenceError:Cannot access 'x' before initialization"]
+    );
+}
+
+#[test]
+fn anonymous_function_definitions_are_named_by_their_plan() {
+    let source = r#"
+      const arrow = () => 1;
+      let expression = function () {};
+      const { fallback = () => 2 } = {};
+      const object = { method: () => 3, ['computed']: () => 4 };
+      class Named { static field = () => 5; }
+      const klass = class {};
+      print([arrow.name, expression.name, fallback.name, object.method.name,
+        object.computed.name, Named.field.name, klass.name].join(','));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    let program = Engine::specialize(source, "named-definitions.js").unwrap();
+    let set_names = program.functions[0]
+        .instructions()
+        .filter(|instruction| instruction.op() == crate::bytecode::Op::SetFunctionName)
+        .count();
+    // Only the class expression's name is set at run time.
+    assert_eq!(set_names, 1);
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["arrow,expression,fallback,method,computed,field,klass"]
+    );
 }
