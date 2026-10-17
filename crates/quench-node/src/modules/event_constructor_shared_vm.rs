@@ -12,37 +12,47 @@ pub(super) fn get(
 }
 /// Strict-mode `object[key] = value`, the assignment the event configuration's guest
 /// `assign` operation performs.
-pub(super) fn set(
-    context: &mut NativeContext<'_, NodeHost>,
-    _data: RootId,
-    object: RootId,
-    key: RootId,
-    value: RootId,
-) -> Result<(), RootedError> {
-    context.assign_property_rooted(object, key, value)
-}
-pub(super) fn named_set(
-    context: &mut NativeContext<'_, NodeHost>,
-    _data: RootId,
-    object: RootId,
-    name: &str,
-    value: RootId,
-) -> Result<(), RootedError> {
-    context.assign_named_property_rooted(object, name, value)
-}
 fn nullish(context: &NativeContext<'_, NodeHost>, value: RootId) -> bool {
     context
         .rooted_value(value)
         .is_some_and(|value| value.is_null() || value.is_undefined())
 }
+/// The emitter configuration's members that `install` fixes: the private shape and capture
+/// keys and the EventEmitter constructor, retained once instead of read per construction.
+#[derive(Clone, Copy)]
+pub(crate) struct EmitterKeys {
+    shape: RootId,
+    capture: RootId,
+    constructor: RootId,
+}
+
+fn emitter_keys(
+    context: &mut NativeContext<'_, NodeHost>,
+    data: RootId,
+) -> Result<EmitterKeys, RootedError> {
+    let state = context.host_mut().shared_state();
+    if let Some(keys) = state.borrow().emitter_keys {
+        return Ok(keys);
+    }
+    let shape = get(context, data, "shapeKey")?;
+    let capture = get(context, data, "captureKey")?;
+    let constructor = get(context, data, "emitterCtor")?;
+    let keys = EmitterKeys {
+        shape: context.retain(shape)?,
+        capture: context.retain(capture)?,
+        constructor: context.retain(constructor)?,
+    };
+    state.borrow_mut().emitter_keys = Some(keys);
+    Ok(keys)
+}
+
 fn capture_default(
     context: &mut NativeContext<'_, NodeHost>,
     data: RootId,
 ) -> Result<RootId, RootedError> {
-    let constructor = get(context, data, "emitterCtor")?;
-    let prototype = get(context, constructor, "prototype")?;
-    let key = get(context, data, "captureKey")?;
-    context.get_property_rooted(prototype, key)
+    let keys = emitter_keys(context, data)?;
+    let prototype = get(context, keys.constructor, "prototype")?;
+    context.get_property_rooted(prototype, keys.capture)
 }
 fn validate_boolean(
     context: &mut NativeContext<'_, NodeHost>,
@@ -69,7 +79,7 @@ pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>) -> Result<(), R
         .ok_or_else(|| RootedError::host("emitter configuration missing"))?;
     let global = context.global_root()?;
     let constructor = get(context, global, "__nodeEventEmitter")?;
-    named_set(context, data, data, "emitterCtor", constructor)?;
+    context.assign_named_property_rooted(data, "emitterCtor", constructor)?;
     let prototype = get(context, constructor, "prototype")?;
     let zero = context.number(0.0);
     let undefined = context.undefined();
@@ -97,10 +107,10 @@ pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>) -> Result<(), R
     let descriptor = context.null_object_rooted()?;
     for name in ["get", "set"] {
         let value = get(context, api, name)?;
-        named_set(context, data, descriptor, name, value)?;
+        context.assign_named_property_rooted(descriptor, name, value)?;
     }
     let yes = context.boolean(true);
-    named_set(context, data, descriptor, "enumerable", yes)?;
+    context.assign_named_property_rooted(descriptor, "enumerable", yes)?;
     let key = context.string_rooted("captureRejections");
     context.define_property_descriptor_rooted(constructor, key, descriptor)?;
     Ok(())
@@ -129,16 +139,16 @@ pub(crate) fn initialize(
     };
     if initialize {
         let events = context.null_object_rooted()?;
-        named_set(context, data, target, "_events", events)?;
+        context.assign_named_property_rooted(target, "_events", events)?;
         let zero = context.number(0.0);
-        named_set(context, data, target, "_eventsCount", zero)?;
+        context.assign_named_property_rooted(target, "_eventsCount", zero)?;
     }
     let shape = context.boolean(!initialize);
-    let shape_key = get(context, data, "shapeKey")?;
-    set(context, data, target, shape_key, shape)?;
+    let keys = emitter_keys(context, data)?;
+    context.assign_property_rooted(target, keys.shape, shape)?;
     let maximum = get(context, target, "_maxListeners")?;
     if !context.truthy_rooted(maximum)? {
-        named_set(context, data, target, "_maxListeners", undefined)?;
+        context.assign_named_property_rooted(target, "_maxListeners", undefined)?;
     }
     let first_capture = if nullish(context, options) {
         undefined
@@ -154,8 +164,13 @@ pub(crate) fn initialize(
     } else {
         capture_default(context, data)?
     };
-    let key = get(context, data, "captureKey")?;
-    set(context, data, target, key, capture)?;
+    context.assign_property_rooted(target, keys.capture, capture)?;
+    // Implicit domain association does not enroll an emitter in explicit members.
+    let global = context.global_root()?;
+    let domain = get(context, global, "__quench_active_domain")?;
+    if context.truthy_rooted(domain)? {
+        context.assign_named_property_rooted(target, "domain", domain)?;
+    }
     Ok(undefined)
 }
 
@@ -178,19 +193,18 @@ pub(crate) fn default_set(
     let constructor = get(context, data, "emitterCtor")?;
     let prototype = get(context, constructor, "prototype")?;
     let key = get(context, data, "captureKey")?;
-    set(context, data, prototype, key, value)?;
+    context.assign_property_rooted(prototype, key, value)?;
     Ok(context.undefined())
 }
 
 /// Metadata transitions follow creation/removal of the event's canonical record.
 pub(crate) fn event_added(
     context: &mut NativeContext<'_, NodeHost>,
-    data: RootId,
     target: RootId,
 ) -> Result<(), RootedError> {
     let count = get(context, target, "_eventsCount")?;
     let next = context.numeric_update_rooted(count, false)?;
-    named_set(context, data, target, "_eventsCount", next)
+    context.assign_named_property_rooted(target, "_eventsCount", next)
 }
 pub(super) fn event_removed(
     context: &mut NativeContext<'_, NodeHost>,
@@ -202,16 +216,16 @@ pub(super) fn event_removed(
     let count = get(context, target, "_eventsCount")?;
     let one = context.number(1.0);
     let next = context.subtract_rooted(count, one)?;
-    named_set(context, data, target, "_eventsCount", next)?;
+    context.assign_named_property_rooted(target, "_eventsCount", next)?;
     let key = get(context, data, "shapeKey")?;
     let shape = context.get_property_rooted(target, key)?;
     let zero = context.number(0.0);
     if context.truthy_rooted(shape)? {
         let undefined = context.undefined();
-        set(context, data, events, event, undefined)?;
+        context.assign_property_rooted(events, event, undefined)?;
     } else if context.strict_equal_rooted(next, zero)? {
         let events = context.null_object_rooted()?;
-        named_set(context, data, target, "_events", events)?;
+        context.assign_named_property_rooted(target, "_events", events)?;
     } else {
         let delete = get(context, data, "delete")?;
         let undefined = context.undefined();
@@ -309,13 +323,13 @@ pub(crate) fn capture_deliver(
     let key = get(context, data, "captureKey")?;
     let previous = context.get_property_rooted(target, key)?;
     let no = context.boolean(false);
-    set(context, data, target, key, no)?;
+    context.assign_property_rooted(target, key, no)?;
     let result: Result<RootId, RootedError> = (|| {
         let emit = get(context, target, "emit")?;
         let error_event = context.string_rooted("error");
         context.call_rooted(emit, target, &[error_event, error])
     })();
-    if let Err(cleanup) = set(context, data, target, key, previous) {
+    if let Err(cleanup) = context.assign_property_rooted(target, key, previous) {
         if let Err(error) = result {
             if let Some(exception) = error.exception {
                 context.release_root(exception);

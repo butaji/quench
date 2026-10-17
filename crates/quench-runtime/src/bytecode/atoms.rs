@@ -81,6 +81,8 @@ impl AtomTable {
         }
     }
 
+    // Every atom lookup compares an id against this count, so keep it in the caller.
+    #[inline]
     pub(crate) fn len(&self) -> usize {
         match &self.names {
             AtomNames::Packed { ends, .. } => ends.len(),

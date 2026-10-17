@@ -186,10 +186,13 @@ impl<H: Host> Vm<H> {
             return index.slot(key).map(|slot| slot as usize);
         }
         if let Some(slot) = self.shape_slot_memo.get(shape, key) {
-            return slot;
+            return slot.map(|slot| slot as usize);
         }
         let slot = self.walked_property_shape_slot(shape, key);
-        self.shape_slot_memo.record(shape, key, slot);
+        // A slot past u32 is never memoized; it is walked again.
+        if let Some(recorded) = slot.map(u32::try_from).transpose().ok() {
+            self.shape_slot_memo.record(shape, key, recorded);
+        }
         slot
     }
     /// `property_shape_slot` of a non-dictionary shape, from its lookup index or its chain.
@@ -263,6 +266,20 @@ impl<H: Host> Vm<H> {
                     }),
             );
         }
+        let memo_slot = u32::try_from(slot).ok().filter(|_| !self.shape_is_dictionary(shape));
+        if let Some(memo_slot) = memo_slot
+            && let Some(attributes) = self.shape_attribute_memo.get(shape, memo_slot)
+        {
+            return attributes.map(|attributes| attributes.attributes(&self.shape_accessors));
+        }
+        let attributes = self.walked_shape_attribute(shape, slot);
+        if let Some(memo_slot) = memo_slot {
+            self.shape_attribute_memo.record(shape, memo_slot, attributes);
+        }
+        attributes.map(|attributes| attributes.attributes(&self.shape_accessors))
+    }
+    /// The attributes the nearest transition describing `slot` gives it, walking `shape`'s chain.
+    fn walked_shape_attribute(&self, shape: u32, slot: usize) -> Option<ShapeAttributes> {
         let mut current = Some(shape);
         while let Some(id) = current {
             let shape = &self.shapes[id as usize];
@@ -271,18 +288,18 @@ impl<H: Host> Vm<H> {
                     slot: candidate,
                     attributes,
                 } if candidate as usize == slot => {
-                    return Some(attributes.attributes(&self.shape_accessors));
+                    return Some(attributes);
                 }
                 ShapeTransition::Add {
                     slot: candidate,
                     attributes,
                     ..
                 } if candidate as usize == slot => {
-                    return Some(attributes.shape().attributes(&self.shape_accessors));
+                    return Some(attributes.shape());
                 }
                 ShapeTransition::Delete {
                     slot: candidate, ..
-                } if candidate as usize == slot => return Some(DEFAULT_PROPERTY_ATTRIBUTES),
+                } if candidate as usize == slot => return Some(DEFAULT_SHAPE_ATTRIBUTES),
                 ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured | ShapeTransition::FunctionLengthReconfigured
                 | ShapeTransition::Constructed { .. }
                 | ShapeTransition::Root

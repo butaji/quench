@@ -418,6 +418,30 @@ mod tests {
     }
 
     #[test]
+    fn optional_registers_read_or_write_by_their_layout() {
+        // An appended spread source is read: a collection while it iterates must still see it.
+        let append = Instr::new(
+            Op::AppendArray,
+            1,
+            crate::bytecode::encode_optional_register(Some(2)),
+            1,
+            0,
+        );
+        assert_eq!(uses(append.as_wide(), &[], &[], &[]), bit(1) | bit(2));
+        assert_eq!(definitions(append.as_wide(), &[]), 0);
+        // A store's optional register receives a copy of the stored value.
+        let store = Instr::new(
+            Op::StoreLocalPlain,
+            1,
+            crate::bytecode::encode_optional_register(Some(3)),
+            0,
+            0,
+        );
+        assert_eq!(uses(store.as_wide(), &[], &[], &[]), bit(1));
+        assert_eq!(definitions(store.as_wide(), &[]), bit(3));
+    }
+
+    #[test]
     fn local_target_does_not_define_a_register() {
         let instruction = Instr::new(
             Op::Binary,

@@ -335,9 +335,10 @@ impl<'a, H: Host> NativeContext<'a, H> {
     pub const MAX_STRING_CODE_UNITS: usize = crate::vm::wtf16::MAX_STRING_UNITS;
 
     pub(crate) fn new(vm: &'a mut Vm<H>) -> Self {
+        let roots = vm.native_root_lists.pop().unwrap_or_default();
         Self {
             vm,
-            roots: Vec::new(),
+            roots,
             new_target: None,
         }
     }
@@ -1741,10 +1742,19 @@ impl<'a, H: Host> NativeContext<'a, H> {
     }
 }
 
+/// The largest root list a finished native call returns for reuse; a call that scoped more
+/// values frees its list rather than keep that capacity alive for every later call.
+const RETAINED_NATIVE_ROOT_LIST_CAPACITY: usize = 256;
+
 impl<H: Host> Drop for NativeContext<'_, H> {
     fn drop(&mut self) {
         for root in &self.roots {
             self.vm.release_root(*root);
+        }
+        let mut roots = std::mem::take(&mut self.roots);
+        if roots.capacity() <= RETAINED_NATIVE_ROOT_LIST_CAPACITY {
+            roots.clear();
+            self.vm.native_root_lists.push(roots);
         }
     }
 }

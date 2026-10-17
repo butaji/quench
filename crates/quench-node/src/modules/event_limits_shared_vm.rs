@@ -291,7 +291,7 @@ pub(super) fn registered(
         .rooted_value(previous)
         .is_some_and(|value| value.is_undefined())
     {
-        super::event_constructor_shared_vm::event_added(context, data, target)?;
+        super::event_constructor_shared_vm::event_added(context, target)?;
     }
     if !context.is_array_rooted(current)? {
         return Ok(undefined);

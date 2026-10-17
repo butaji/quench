@@ -1100,11 +1100,18 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn intern_atom(&mut self, name: &str) -> Atom {
-        let hash = Self::atom_hash_str(name);
-        if let Some(atom) = self.find_atom(hash, |atom| self.atom_units_equal_str(atom, name)) {
+        if let Some(atom) = self.name_atom_memo.candidate(name)
+            && self.atom_units_equal_str(atom, name)
+        {
             return atom;
         }
-        self.insert_dynamic_atom(JsString::from_str(name), hash)
+        let hash = Self::atom_hash_str(name);
+        let atom = match self.find_atom(hash, |atom| self.atom_units_equal_str(atom, name)) {
+            Some(atom) => atom,
+            None => self.insert_dynamic_atom(JsString::from_str(name), hash),
+        };
+        self.name_atom_memo.record(name, atom);
+        atom
     }
     pub(super) fn intern_js_atom(&mut self, name: &JsString) -> Atom {
         if let Some(atom) = self.lookup_js_atom(name) {
