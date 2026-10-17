@@ -1512,6 +1512,18 @@ pub(crate) fn dns_module(context: &mut Context<'_>) -> Result<RootId, RootedErro
     cached_builtin(context, BuiltinModule::Dns)
 }
 
+pub(crate) fn events_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    cached_builtin(context, BuiltinModule::Events)
+}
+
+pub(crate) fn path_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    crate::modules::path_shared_vm::module(context)
+}
+
+pub(crate) fn url_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    cached_builtin(context, BuiltinModule::Url)
+}
+
 /// Private namespaces project the same original objects as the public globals.
 fn native_global_namespace(context: &mut Context<'_>, names: &[&str]) -> Result<RootId, RootedError> {
     context.with_startup_intrinsics(|context| {
@@ -1574,6 +1586,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             let parent = module_record(context, &root.join("lib/http.js"), None, false)?;
             load(context, &root.join("lib/_http_incoming.js"), Some(parent), EntryGoal::CommonJs)
         }
+        BuiltinModule::Internal("dns/promises") => node_library_module(context, "dns.js", "dns/promises.js"),
         BuiltinModule::Internal(_) => context.object_rooted(),
         BuiltinModule::Fs => crate::modules::fs_shared_vm::module(context),
         BuiltinModule::InternalUrl => {
@@ -1629,10 +1642,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::NodeTest => crate::modules::test_shared_vm::module(context),
         BuiltinModule::Vm => crate::modules::vm_shared_vm::module(context),
         BuiltinModule::WorkerThreads => {
-            let module = context.evaluate_script_rooted(
-                "({ isMainThread: true, MessageChannel: globalThis.MessageChannel, MessagePort: globalThis.MessagePort, Worker: class Worker { constructor() { throw Object.assign(new Error('Worker threads are unavailable in this runtime'), { code: 'ERR_WORKER_UNSUPPORTED_OPERATION' }); } } })",
-                "node:worker_threads.js",
-            )?;
+            let mut markers = Vec::new();
             for name in ["markAsUncloneable", "markAsUntransferable", "isMarkedAsUntransferable"] {
                 let operation = context.host_function(super::operation(name))?;
                 let factory = context.evaluate_script_rooted(
@@ -1640,10 +1650,9 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
                     "node:worker_threads/marker.js",
                 )?;
                 let undefined = context.undefined();
-                let method = context.call_rooted(factory, undefined, &[operation])?;
-                set(context, module, name, method)?;
+                markers.push((name, context.call_rooted(factory, undefined, &[operation])?));
             }
-            Ok(module)
+            crate::modules::worker_shared_vm::module(context, &markers)
         }
         BuiltinModule::Url => crate::modules::url_shared_vm::module(context),
         BuiltinModule::Querystring => crate::modules::querystring_shared_vm::module(context),
@@ -1655,17 +1664,12 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::Console => crate::modules::console_shared_vm::module(context),
         BuiltinModule::Tty => crate::modules::tty_shared_vm::module(context),
         BuiltinModule::Dns => {
-            #[cfg(quench_node_cares)] {
-                let utils = node_library_module(context, "dns.js", "internal/dns/utils.js")?;
-                let initialize = get(context, utils, "initializeDns")?;
-                let undefined = context.undefined();
-                context.call_rooted(initialize, undefined, &[])?;
-                node_library_module(context, "dns.js", "dns.js")
-            }
-            #[cfg(not(quench_node_cares))] {
-                crate::modules::dns_shared_vm::module(context)
-            }
-        },
+            let utils = node_library_module(context, "dns.js", "internal/dns/utils.js")?;
+            let initialize = get(context, utils, "initializeDns")?;
+            let undefined = context.undefined();
+            context.call_rooted(initialize, undefined, &[])?;
+            node_library_module(context, "dns.js", "dns.js")
+        }
         BuiltinModule::Dgram => {
             let dgram_tail = crate::polyfills::bootstrap::dgram_tail::JS
                 .split("globalThis.require = (specifier) =>")
@@ -1714,12 +1718,10 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             set(context, module, "ChildProcess", constructor)?;
             Ok(module)
         }
-        // Fastify imports both alternatives at module initialization. Its
-        // selected HTTP/1 path does not access the HTTPS transport.
-        BuiltinModule::Https => context.evaluate_script_rooted(
-            "({ request: function request() { throw new Error('HTTPS transport is unavailable'); }, get: function get() { throw new Error('HTTPS transport is unavailable'); } })",
-            "node:https.js",
-        ),
+        BuiltinModule::Https => {
+            let http = cached_builtin(context, BuiltinModule::Http)?;
+            crate::modules::http_shared_vm::https_module(context, http)
+        }
         BuiltinModule::TraceEvents => crate::modules::trace_shared_vm::module(context),
         BuiltinModule::DnsPromises => { let dns = dns_module(context)?; get(context, dns, "promises") },
         BuiltinModule::CaresBinding => crate::modules::cares_binding::module(context),
@@ -2658,7 +2660,7 @@ pub(crate) fn node_internal_binding_source() -> &'static str {
       });
     }
     case "mksnapshot": return {
-      isBuildingSnapshotBuffer: [false],
+      isBuildingSnapshotBuffer: new Uint8Array(1),
       setSerializeCallback: () => {},
       setDeserializeCallback: () => {},
       setDeserializeMainFunction: () => {},
@@ -2670,6 +2672,11 @@ pub(crate) fn node_internal_binding_source() -> &'static str {
     }
     case "performance": return __nativeInternalBinding("performance");
     case "uv": return __nativeInternalBinding("uv");
+    case "cares_wrap":
+    case "serdes":
+    case "v8":
+    case "heap_utils":
+    case "internal_only_v8": return __nativeInternalBinding(name);
     default: return {};
   }
 };

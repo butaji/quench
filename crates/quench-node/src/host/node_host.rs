@@ -103,6 +103,11 @@ pub(crate) struct SharedNodeState {
     pub(crate) crypto_hashes: crate::modules::crypto_hash_shared_vm::State,
     pub(crate) crypto_secret_jobs: crate::modules::crypto_secret_job_shared_vm::State,
     pub(crate) zlib_native: crate::modules::zlib_native_shared_vm::State,
+    pub(crate) messaging: crate::modules::worker_shared_vm::State,
+    /// Pure-Rust resolver channels for `cares_wrap` when c-ares is not linked.
+    #[cfg(not(quench_node_cares))]
+    pub(crate) dns_channels: crate::modules::dns_shared_vm::State,
+    pub(crate) serdes: crate::modules::serdes_shared_vm::State,
     pub(crate) unhandled_rejection_mode: crate::modules::process_state::UnhandledRejectionMode,
     pub(crate) output: Option<NodeOutputSink>,
     pub(crate) net_auto_select_family_attempt_timeout: u64,
@@ -203,6 +208,10 @@ impl SharedNodeState {
         self.performance_native = Default::default();
         self.vm_scripts = Default::default();
         self.builtin_cache.clear();
+        self.messaging.reset();
+        #[cfg(not(quench_node_cares))]
+        self.dns_channels.reset();
+        self.serdes.reset();
         self.commonjs_cache = None;
         self.module_parent_api = None;
         self.active_esm_requires.clear();
@@ -288,6 +297,10 @@ impl SharedNodeState {
             crypto_hashes: crate::modules::crypto_hash_shared_vm::State::default(),
             crypto_secret_jobs: crate::modules::crypto_secret_job_shared_vm::State::default(),
             zlib_native: crate::modules::zlib_native_shared_vm::State::default(),
+            messaging: crate::modules::worker_shared_vm::State::default(),
+            #[cfg(not(quench_node_cares))]
+            dns_channels: crate::modules::dns_shared_vm::State::default(),
+            serdes: crate::modules::serdes_shared_vm::State::default(),
             unhandled_rejection_mode: crate::modules::process_state::UnhandledRejectionMode::Throw,
             output: None,
             net_auto_select_family: crate::modules::net_config::DEFAULT_AUTO_SELECT_FAMILY,

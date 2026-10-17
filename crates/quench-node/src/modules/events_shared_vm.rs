@@ -236,6 +236,8 @@ pub(crate) fn initialize_targets(
         data,
     )?;
     context.define_lazy_data_properties_rooted(global, EVENT_GLOBALS, false, initialize)?;
+    let messaging = context.host_function(crate::host::shared_vm::operation("messagingGlobalsInitialize"))?;
+    context.define_lazy_data_properties_rooted(global, &["MessagePort", "MessageChannel"], false, messaging)?;
     let abort_state = context.host_function(crate::host::shared_vm::operation(
         "eventAbortStateInitialize",
     ))?;
@@ -251,8 +253,6 @@ const EVENT_GLOBALS: &[&str] = &[
     "Event",
     "EventTarget",
     "MessageEvent",
-    "MessagePort",
-    "MessageChannel",
 ];
 
 /// Builds the DOM event family: the abort polyfill, `EventTarget` and its relatives.

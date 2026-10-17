@@ -399,6 +399,10 @@ fn build_internal_binding(
         "options" => return super::cli_options_shared_vm::binding(context),
         "string_decoder" => return super::string_decoder_shared_vm::binding(context),
         "zlib" => return super::zlib_native_shared_vm::binding(context),
+        "serdes" => return super::serdes_shared_vm::binding(context),
+        "v8" => return super::v8_shared_vm::binding(context),
+        "heap_utils" => return super::v8_shared_vm::heap_utils_binding(context),
+        "internal_only_v8" => return super::v8_shared_vm::internal_only_binding(context),
         "encoding_binding" => return super::encoding_binding_shared_vm::binding(context),
         #[cfg(quench_icu)]
         "icu" => return super::icu_binding_shared_vm::binding(context),
