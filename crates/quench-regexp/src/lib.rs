@@ -560,7 +560,21 @@ impl Regex {
                 named: self.names_for_match(),
             }));
         }
-        let units = subject.decoded(self.flags.unicode || self.flags.unicode_sets);
+        let unicode = self.flags.unicode || self.flags.unicode_sets;
+        if let (false, Some(units)) = (unicode, subject.wide()) {
+            // Outside unicode mode a code unit is a pattern unit: no decoding, and
+            // positions are offsets.
+            if !contains_code_units(&units[start..], &self.required_literal) {
+                return Some(None);
+            }
+            let found = program.find(units, start, sticky, None).ok()?;
+            return Some(found.map(|found| Match {
+                range: found.start..found.end,
+                captures: found.captures,
+                named: self.names_for_match(),
+            }));
+        }
+        let units = subject.decoded(unicode);
         let first = first_unit_at(units, start);
         if !self.required_literal.is_empty()
             && !contains_literal(&units[first..], &self.required_literal)
@@ -789,6 +803,14 @@ impl Subject {
             }
             SubjectText::Wide { units, .. } => units_from_utf16(units, unicode),
         })
+    }
+
+    /// The UTF-16 units of a subject that is not all ASCII.
+    fn wide(&self) -> Option<&[u16]> {
+        match &self.text {
+            SubjectText::Wide { units, ascii: None } => Some(units),
+            _ => None,
+        }
     }
 
     pub fn is_text_of(&self, units: &std::rc::Rc<[u16]>) -> bool {
@@ -1323,6 +1345,25 @@ fn required_literal(program: &Expr, flags: Flags) -> Box<[u32]> {
     visit(program, &mut run, &mut best);
     end_run(&mut run, &mut best);
     best.into()
+}
+
+/// Whether `literal` occurs in UTF-16 `input`; an empty literal occurs everywhere.
+fn contains_code_units(input: &[u16], literal: &[u32]) -> bool {
+    let Some((&first, rest)) = literal.split_first() else {
+        return true;
+    };
+    let mut from = 0;
+    while let Some(offset) = input[from..].iter().position(|unit| u32::from(*unit) == first) {
+        let at = from + offset;
+        let tail = &input[at + 1..];
+        if tail.len() >= rest.len()
+            && tail.iter().zip(rest).all(|(unit, value)| u32::from(*unit) == *value)
+        {
+            return true;
+        }
+        from = at + 1;
+    }
+    false
 }
 
 /// Whether `literal` occurs in `input`.
