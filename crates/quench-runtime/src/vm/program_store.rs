@@ -5,9 +5,11 @@ use std::rc::{Rc, Weak};
 use crate::heap::WeakHandle;
 use rustc_hash::FxHashMap;
 
-const JS_JIT_MIN_PROMOTION_SAMPLES: u8 = 16;
-const JS_JIT_PROMOTION_Z_95: f64 = 1.96;
-const JS_JIT_PROMOTION_MIN_WILSON_LOWER_BOUND: f64 = 0.80;
+/// Prespecified looks for the Number-entry profile. Critical counts are the
+/// exact one-sided Binomial( n, 0.80 ) cutoffs at alpha = 0.05 / 4 per look.
+/// A union bound caps false promotion at 5% under a stationary Bernoulli model.
+pub(super) const JS_JIT_PROMOTION_LOOKS: [(u8, u8); 4] =
+    [(32, 31), (64, 59), (128, 113), (255, 219)];
 const JS_JIT_MAX_FUNCTIONS: usize = 8;
 const JS_JIT_MAX_TRACKED_FUNCTIONS: usize = 256;
 const JS_JIT_MAX_MAPPED_BYTES: usize = 64 * 1024;
@@ -681,8 +683,8 @@ impl ProgramStore {
         self.entry(id)?.js_tiers.get(&function).cloned()
     }
 
-    /// Record the input guard outcome and promote only when the Wilson lower
-    /// confidence bound for numeric inputs clears the stability threshold.
+    /// Record the input guard outcome. Promotion checks only at prespecified
+    /// sample sizes; exact binomial cutoffs spend alpha across those looks.
     pub(super) fn note_js_function_entry(
         &mut self,
         id: ProgramId,
@@ -716,17 +718,16 @@ impl ProgramStore {
                     observations,
                     numeric: numeric_entries,
                 } => {
-                    if *observations == u8::MAX {
-                        *slot.get_mut() = JsTierState::Unsupported;
-                        return false;
-                    }
                     *observations += 1;
                     *numeric_entries += u8::from(numeric);
-                    let confident = numeric_promotion_confident(*numeric_entries, *observations);
-                    if confident && compiled_functions < JS_JIT_MAX_FUNCTIONS {
+                    let decision = numeric_promotion_decision(*numeric_entries, *observations);
+                    if compiled_functions >= JS_JIT_MAX_FUNCTIONS {
+                        *slot.get_mut() = JsTierState::Unsupported;
+                        false
+                    } else if decision == Some(true) {
                         true
                     } else {
-                        if compiled_functions >= JS_JIT_MAX_FUNCTIONS {
+                        if decision == Some(false) && *observations == u8::MAX {
                             *slot.get_mut() = JsTierState::Unsupported;
                         }
                         false
@@ -895,19 +896,9 @@ impl ProgramStore {
     }
 }
 
-fn numeric_promotion_confident(numeric: u8, observations: u8) -> bool {
-    if observations < JS_JIT_MIN_PROMOTION_SAMPLES {
-        return false;
-    }
-    let samples = f64::from(observations);
-    let proportion = f64::from(numeric) / samples;
-    let z = JS_JIT_PROMOTION_Z_95;
-    let z_squared = z * z;
-    let denominator = 1.0 + z_squared / samples;
-    let center = proportion + z_squared / (2.0 * samples);
-    let margin = z
-        * (proportion * (1.0 - proportion) / samples
-            + z_squared / (4.0 * samples * samples))
-            .sqrt();
-    (center - margin) / denominator >= JS_JIT_PROMOTION_MIN_WILSON_LOWER_BOUND
+fn numeric_promotion_decision(numeric: u8, observations: u8) -> Option<bool> {
+    let minimum = JS_JIT_PROMOTION_LOOKS
+        .iter()
+        .find_map(|(look, minimum)| (*look == observations).then_some(*minimum))?;
+    Some(numeric >= minimum)
 }
