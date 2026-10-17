@@ -90,6 +90,20 @@ impl<H: Host> Vm<H> {
         if shape_names(&self.shapes, shape).0.is_none() {
             self.constructed_shapes.fill(ConstructedShape::EMPTY);
         }
+        self.append_function_name(function, shape, name);
+    }
+
+    /// `capture_function_name` of a closure `closure_in_realm` just made, whose shape holds no
+    /// original name yet. No construction has seen its cell since the last collection, which
+    /// cleared `constructed_shapes`, so no memo entry names it.
+    pub(super) fn capture_fresh_closure_name(&mut self, function: Value, name: &JsString) {
+        let name = self.intern_js_atom(name);
+        let Some(shape) = self.object_data(function).map(Object::shape) else { return; };
+        debug_assert!(shape_names(&self.shapes, shape).0.is_none(), "a fresh closure has no original name");
+        self.append_function_name(function, shape, name);
+    }
+
+    fn append_function_name(&mut self, function: Value, shape: u32, name: Atom) {
         let shape = self.append_cached_shape_transition(shape, ShapeTransition::FunctionName { name });
         self.object_data_mut(function).expect("function object").set_shape(shape);
     }
