@@ -15,6 +15,7 @@ impl<H: Host> Vm<H> {
                 global_lexical_bindings: FxHashMap::default(),
                 immutable_global_lexical_bindings: FxHashSet::default(),
                 global_lexical_states: FxHashMap::default(),
+                parked: None,
                 intrinsics: RealmIntrinsics::default(),
                 jobs: std::collections::VecDeque::new(),
                 template_objects: FxHashMap::default(),
