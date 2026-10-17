@@ -1,4 +1,5 @@
 use super::{ArrayObject, Object};
+use crate::value::Value;
 use std::alloc::Layout;
 use std::alloc::{alloc, dealloc};
 use std::mem::MaybeUninit;
@@ -232,6 +233,20 @@ impl<T> RecordSpace<T> {
     #[inline(always)]
     pub(super) unsafe fn get_live_mut(&mut self, id: RecordId) -> &mut T {
         self.remember(id);
+        // SAFETY: the caller's contract.
+        unsafe { self.get_live_mut_unbarriered(id) }
+    }
+
+    /// Mutable access for a store of `stored` into the record. Only a heap reference can
+    /// make an old record point at a young one, so other values skip the write barrier.
+    ///
+    /// # Safety
+    /// As for `get_live_mut_unbarriered`.
+    #[inline(always)]
+    pub(super) unsafe fn get_live_mut_storing(&mut self, id: RecordId, stored: Value) -> &mut T {
+        if stored.heap_index().is_some() {
+            self.remember(id);
+        }
         // SAFETY: the caller's contract.
         unsafe { self.get_live_mut_unbarriered(id) }
     }
