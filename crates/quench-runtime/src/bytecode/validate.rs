@@ -164,7 +164,7 @@ fn promoted_local_layout_is_valid(function: &super::Function, atoms: &super::Ato
         && !function.is_generator
         && !function.is_class_constructor
         && !function.derived_constructor
-        && !function.class_field_initializer
+        && !function.class_initializer
         && function.simple_parameters
         && !function.rest
         && function.arguments_slot.is_none()
@@ -591,7 +591,7 @@ impl ResidualProgram {
                         function.derived_constructor
                             && initializer as usize != index
                             && plan.parent == function.parent
-                            && plan.class_field_initializer
+                            && plan.class_initializer
                             && !plan.constructible
                             && plan.instance_initializer.is_none()
                     });
@@ -1062,7 +1062,7 @@ fn selective_capture_layout_is_eligible(
         && !function.is_generator
         && !function.is_class_constructor
         && !function.derived_constructor
-        && !function.class_field_initializer
+        && !function.class_initializer
         && function.simple_parameters
         && local_atoms_are_static
         && mapped_arguments_are_captured
@@ -1194,7 +1194,7 @@ mod tests {
             instance_initializer: None,
             super_home_atom: None,
             constructible: true,
-            class_field_initializer: false,
+            class_initializer: false,
             parameter_eval_arguments_error: false,
             arguments_slot: None,
             simple_parameters: true,

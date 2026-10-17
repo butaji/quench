@@ -63,7 +63,7 @@
         },
         {
           "path": "built-ins/Error/prototype/stack/instance-not-enumerable.js",
-          "failure": "quench runtime: Test262Error: Error: getOwnPropertyNames does not include \"stack\" Expected SameValue(«1», «-1») to be true"
+          "failure": "quench runtime: Test262Error: Error: getOwnPropertyNames does not include \"stack\" Expected SameValue(«0», «-1») to be true"
         },
         {
           "path": "built-ins/Error/prototype/stack/prop-desc.js",
@@ -236,6 +236,29 @@
         {
           "path": "annexB/language/function-code/block-decl-func-skip-arguments.js",
           "failure": "quench runtime: Test262Error: Expected SameValue(«\"function arguments() {}\"», «\"[object Arguments]\"») to be true"
+        }
+      ]
+    },
+    {
+      "id": "nonextensible-private-fields",
+      "reason": "Node adds private fields to non-extensible objects (the nonextensible-applies-to-private rule is not in V8); Quench matches since 752c74a71. The import-defer case expects the same TypeError from a deferred namespace, which is non-extensible; the oracle cannot run module cases.",
+      "cases": [
+        {
+          "path": "language/import/import-defer/evaluation-triggers/ignore-private-name-access.js",
+          "failure": "quench runtime: Test262Error: Expected a TypeError to be thrown but no exception was thrown at all",
+          "node": "unverifiable"
+        },
+        {
+          "path": "language/statements/class/elements/private-class-field-on-nonextensible-objects.js",
+          "failure": "quench runtime: Test262Error: Expected a TypeError to be thrown but no exception was thrown at all"
+        },
+        {
+          "path": "language/statements/class/subclass/private-class-field-on-nonextensible-return-override.js",
+          "failure": "quench runtime: Test262Error: Expected a TypeError to be thrown but no exception was thrown at all"
+        },
+        {
+          "path": "staging/sm/PrivateName/modify-non-extensible.js",
+          "failure": "quench runtime: Test262Error: Expected a TypeError to be thrown but no exception was thrown at all"
         }
       ]
     }

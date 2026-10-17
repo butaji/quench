@@ -222,6 +222,7 @@ pub(crate) fn initialize_targets(
     set(context, data, "disposeFactory", dispose_factory)?;
     set(context, data, "recordsKey", records_key)?;
     set(context, data, "brandKey", brand_key)?;
+    super::events_weak_shared_vm::initialize(context, data)?;
     let retained = context.retain(data)?;
     context
         .host_mut()
@@ -471,7 +472,10 @@ pub(crate) fn get_event_listeners(
     let mut listeners = Vec::new();
     if context.truthy_rooted(records)? {
         for entry in listener_records(context, records)? {
-            listeners.push(get(context, entry, "listener")?);
+            let callback = super::events_weak_shared_vm::listener(context, data, entry)?;
+            // Node exposes an undefined element between collection and the
+            // registry's asynchronous unlink callback.
+            listeners.push(callback);
         }
     }
     context.array_rooted(&listeners)

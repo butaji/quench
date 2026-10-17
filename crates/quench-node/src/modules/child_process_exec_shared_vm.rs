@@ -244,6 +244,7 @@ pub(crate) fn exec_file(
     for (name, value) in [
         ("callback", callback),
         ("Buffer", buffer),
+        ("encoding", encoding),
         ("stdout", stdout),
         ("stderr", stderr),
         ("file", file),
@@ -371,8 +372,16 @@ pub(crate) fn event(
     let mut output = Vec::with_capacity(2);
     for stream in ["stdout", "stderr"] {
         let chunks = get(context, state, stream)?;
-        let emitter = get(context, child, stream)?;
-        let encoding = get(context, emitter, "readableEncoding")?;
+        // SDK merge policy short-circuits the configured encoding before
+        // reading a live optional stream, which user spawn hooks may replace.
+        let configured = get(context, state, "encoding")?;
+        let encoding = if context.truthy_rooted(configured)? {
+            configured
+        } else {
+            let emitter = get(context, child, stream)?;
+            if nullish(context, emitter) { undefined }
+            else { get(context, emitter, "readableEncoding")? }
+        };
         output.push(if context.truthy_rooted(encoding)? {
             let empty = context.string_rooted("");
             method(context, chunks, "join", &[empty])?

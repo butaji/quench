@@ -1164,6 +1164,12 @@ impl Host for FunctionMetadataHost {
             let key = context.string_rooted(name);
             context.define_data_property_rooted(global, key, function, true, true, true)?;
         }
+        let named_constructor = context.host_constructor_named(HostFunctionId(0), "")?;
+        let key = context.string_rooted("MetadataAnonymousCtor");
+        context.define_data_property_rooted(global, key, named_constructor, true, true, true)?;
+        let captured_constructor = context.host_constructor_named_with_data(HostFunctionId(0), "", data)?;
+        let key = context.string_rooted("MetadataAnonymousCapturedCtor");
+        context.define_data_property_rooted(global, key, captured_constructor, true, true, true)?;
         let anonymous = context.host_function_named(HostFunctionId(0), "")?;
         let key = context.string_rooted("MetadataAnonymous");
         context.define_data_property_rooted(global, key, anonymous, true, true, true)?;
@@ -1180,10 +1186,10 @@ fn empty_metadata_callback(
 #[test]
 fn native_function_metadata_preserves_standard_key_order_and_constructor_views() {
     let source = r#"
-for(const [functionValue,constructor] of [[metadataCallback,false],[MetadataCaptured,false],[MetadataCtor,true],[MetadataAnonymous,false]]) {
+for(const [functionValue,constructor] of [[metadataCallback,false],[MetadataCaptured,false],[MetadataCtor,true],[MetadataAnonymous,false],[MetadataAnonymousCtor,true],[MetadataAnonymousCapturedCtor,true]]) {
  const keys=Reflect.ownKeys(functionValue).join(',');
  if(keys!==(constructor?'length,name,prototype':'length,name'))throw Error(keys);
- if(functionValue.name!==(functionValue===MetadataAnonymous?'':'metadataCallback')||functionValue.length!==2)throw Error('metadata values');
+ if(functionValue.name!==(functionValue===MetadataAnonymous||functionValue===MetadataAnonymousCtor||functionValue===MetadataAnonymousCapturedCtor?'':'metadataCallback')||functionValue.length!==2)throw Error('metadata values');
  for(const name of ['length','name']){
   const d=Object.getOwnPropertyDescriptor(functionValue,name);
   if(d.writable||d.enumerable||!d.configurable)throw Error('metadata attributes');
@@ -1569,5 +1575,324 @@ function dropWrapper(){wrapper=null}
             let payload = runtime.host_mut().payload.unwrap();
             assert_eq!(runtime.host_weak_root_is_live(payload), alive, "{operation}");
         }
+    }
+}
+
+#[derive(Default)]
+struct PreparedScriptState {
+    script: Option<PreparedScript>,
+    invalidations: usize,
+}
+struct PreparedScriptHost(Rc<RefCell<PreparedScriptState>>);
+impl Host for PreparedScriptHost {
+    fn write_line(&mut self, _: &str) {}
+    fn clock_millis(&mut self) -> f64 { 0.0 }
+    fn functions(&self) -> &[HostFunction<Self>] { &[] }
+    fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
+        let state = context.host_mut().0.clone();
+        let first = context.create_realm_rooted()?;
+        let second = context.create_realm_rooted()?;
+        let old = state.borrow_mut().script.take();
+        if let Some(old) = old {
+            assert!(!context.prepared_script_is_current(&old));
+            assert!(context.evaluate_prepared_script_in_realm_rooted(first, &old).is_err());
+            state.borrow_mut().invalidations += 1;
+        }
+        let prepared = context.prepare_specialized_script_in_realm_with_origin(
+            first,
+            "(() => { const secret = {}; return function(value) { return { value, secret, array: [], error: new Error('prepared') }; }; })()",
+            "prepared-host.js", 0, 0,
+        )?;
+        assert!(context.prepared_script_is_current(&prepared));
+        context.collect()?;
+        let left_factory = context.evaluate_prepared_script_in_realm_rooted(first, &prepared)?;
+        let right_factory = context.evaluate_prepared_script_in_realm_rooted(second, &prepared)?;
+        context.collect()?;
+        let undefined = context.undefined();
+        let one = context.number(1.0);
+        let two = context.number(2.0);
+        let left = context.call_rooted(left_factory, undefined, &[one])?;
+        let again = context.call_rooted(left_factory, undefined, &[two])?;
+        let right = context.call_rooted(right_factory, undefined, &[two])?;
+        context.collect()?;
+        let property = |context: &mut NativeContext<'_, Self>, object, name| {
+            let key = context.string_rooted(name);
+            context.get_property_rooted(object, key)
+        };
+        let left_secret = property(context, left, "secret")?;
+        let same_secret = property(context, again, "secret")?;
+        let right_secret = property(context, right, "secret")?;
+        assert_eq!(context.rooted_value(left_secret), context.rooted_value(same_secret));
+        assert_ne!(context.rooted_value(left_secret), context.rooted_value(right_secret));
+        for name in ["array", "error"] {
+            let left = property(context, left, name)?;
+            let right = property(context, right, name)?;
+            let left = context.prototype_rooted(left)?;
+            let right = context.prototype_rooted(right)?;
+            assert_ne!(context.rooted_value(left), context.rooted_value(right));
+        }
+        for object in [left, right] {
+            let error = property(context, object, "error")?;
+            let stack = property(context, error, "stack")?;
+            assert!(context.to_string(stack)?.contains("prepared-host.js"));
+        }
+        state.borrow_mut().script = Some(prepared);
+        Ok(())
+    }
+}
+#[test]
+fn prepared_host_scripts_share_code_but_own_realm_state_and_reject_runtime_reset_handles() {
+    for program in [
+        Engine::specialize_unspecialized("void 0", "prepared-entry.js").unwrap(),
+        Engine::specialize("void 0", "prepared-entry.js").unwrap(),
+    ] {
+        let state = Rc::new(RefCell::new(PreparedScriptState::default()));
+        let mut runtime = Runtime::new(PreparedScriptHost(state.clone()));
+        runtime.execute(&program).unwrap();
+        runtime.execute(&program).unwrap();
+        let mut other = Runtime::new(PreparedScriptHost(state.clone()));
+        other.execute(&program).unwrap();
+        assert_eq!(state.borrow().invalidations, 2);
+    }
+}
+
+struct ErrorSourceHost;
+impl Host for ErrorSourceHost {
+    fn write_line(&mut self, _: &str) {}
+    fn clock_millis(&mut self) -> f64 { 0.0 }
+    fn functions(&self) -> &[HostFunction<Self>] { &[] }
+    fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
+        let first_source = "new Error('first')";
+        let second_source = "\nnew Error('second')";
+        let global = context.global_root()?;
+        let first = context.evaluate_script_in_realm_rooted(global, first_source, "same-source-name.js")?;
+        let second = context.evaluate_script_in_realm_rooted(global, second_source, "same-source-name.js")?;
+        // The metadata owns immutable source text, not a lookup by a reusable filename
+        // or a borrowed Script slot. Collection and later compilation must preserve it.
+        context.collect()?;
+        for (error, source, line) in [(first, first_source, 1), (second, second_source.trim_start(), 2)] {
+            let position = context.error_source_position_rooted(error)?.expect("captured source");
+            assert_eq!(position.source_line.as_deref(), Some(source));
+            assert_eq!(position.script_name.as_deref(), Some("same-source-name.js"));
+            assert_eq!(position.line_number, line);
+            assert_eq!(position.column_number, 1);
+        }
+        let eval = context.evaluate_script_rooted("new Error('eval')", "named-eval.js")?;
+        context.collect()?;
+        let position = context.error_source_position_rooted(eval)?.expect("captured eval source");
+        assert_eq!(position.source_line.as_deref(), Some("new Error('eval')"));
+        assert_eq!(position.script_name, None);
+        assert_eq!((position.line_number, position.column_number), (1, 1));
+        Ok(())
+    }
+}
+
+#[test]
+fn error_source_metadata_owns_original_text_across_same_named_scripts_and_collection() {
+    for program in [
+        Engine::specialize_unspecialized("void 0", "error-source-entry.js").unwrap(),
+        Engine::specialize("void 0", "error-source-entry.js").unwrap(),
+    ] {
+        let mut runtime = Runtime::new(ErrorSourceHost);
+        runtime.execute(&program).unwrap();
+    }
+}
+
+#[derive(Default)]
+struct CompiledScriptStateForTest {
+    script: Option<CompiledScript>,
+    invalidations: usize,
+}
+struct CompiledScriptHost(Rc<RefCell<CompiledScriptStateForTest>>);
+impl Host for CompiledScriptHost {
+    fn write_line(&mut self, _: &str) {}
+    fn clock_millis(&mut self) -> f64 { 0.0 }
+    fn functions(&self) -> &[HostFunction<Self>] {
+        crate::host_functions![method "scriptIdentity" (0) => compiled_script_identity]
+    }
+    fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
+        let state = context.host_mut().0.clone();
+        let previous = state.borrow().script.clone();
+        if let Some(script) = previous {
+            assert!(!context.compiled_script_is_current(&script));
+            let global = context.global_root()?;
+            assert!(context.evaluate_compiled_script_in_realm_rooted(global, &script).is_err());
+            state.borrow_mut().invalidations += 1;
+            return Ok(());
+        }
+        let first = context.create_realm_rooted()?;
+        let second = context.create_realm_rooted()?;
+        for global in [first, second] {
+            let function = context.host_function(HostFunctionId(0))?;
+            let key = context.string_rooted("scriptIdentity");
+            context.define_data_property_rooted(global, key, function, true, true, true)?;
+        }
+        let script = context.compile_script_in_realm_with_origin(first,
+            "({identity:scriptIdentity(), array:[], error:new Error('owned'), template:((x)=>x)`site`, Class:class { #value=1; read(){return this.#value} }})",
+            "owned-host-script.js", 0, 0)?;
+        context.collect()?;
+        context.collect()?;
+        let left = context.evaluate_compiled_script_in_realm_rooted(first, &script)?;
+        let again = context.evaluate_compiled_script_in_realm_rooted(first, &script)?;
+        let right = context.evaluate_compiled_script_in_realm_rooted(second, &script)?;
+        context.collect()?;
+        let get = |context: &mut NativeContext<'_, Self>, object, name| {
+            let key = context.string_rooted(name);
+            context.get_property_rooted(object, key)
+        };
+        for name in ["identity", "template"] {
+            let a = get(context, left, name)?;
+            let b = get(context, again, name)?;
+            assert!(context.strict_equal_rooted(a, b)?);
+            let c = get(context, right, name)?;
+            assert_eq!(context.strict_equal_rooted(a, c)?, name == "identity");
+        }
+        for name in ["array", "error"] {
+            let a = get(context, left, name)?;
+            let b = get(context, again, name)?;
+            assert!(!context.strict_equal_rooted(a, b)?);
+            let c = get(context, right, name)?;
+            let a = context.prototype_rooted(a)?;
+            let c = context.prototype_rooted(c)?;
+            assert!(!context.strict_equal_rooted(a, c)?);
+        }
+        let first_class = get(context, left, "Class")?;
+        let second_class = get(context, again, "Class")?;
+        assert!(!context.strict_equal_rooted(first_class, second_class)?);
+        let first_instance = context.construct_rooted(first_class, first_class, &[])?;
+        let second_instance = context.construct_rooted(second_class, second_class, &[])?;
+        let read = get(context, first_instance, "read")?;
+        let one = context.call_rooted(read, first_instance, &[])?;
+        assert_eq!(context.rooted_value(one), Some(Value::number(1.0)));
+        assert!(context.call_rooted(read, second_instance, &[]).is_err());
+        let after = context.evaluate_compiled_script_in_realm_rooted(first, &script)?;
+        let old = get(context, left, "identity")?;
+        let fresh = get(context, after, "identity")?;
+        assert!(context.strict_equal_rooted(old, fresh)?);
+        state.borrow_mut().script = Some(script);
+        Ok(())
+    }
+}
+fn compiled_script_identity(
+    context: &mut NativeContext<'_, CompiledScriptHost>, _: RootId, _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let frame = context.source_stack_frames(1).pop().expect("actual Script activation");
+    assert_eq!(frame.script_name, "owned-host-script.js");
+    assert!(!frame.is_eval);
+    Ok(context.number(frame.script_id as f64))
+}
+#[test]
+fn compiled_host_scripts_keep_source_identity_and_own_separate_realm_execution_state() {
+    for program in [
+        Engine::specialize_unspecialized("void 0", "owned-entry.js").unwrap(),
+        Engine::specialize("void 0", "owned-entry.js").unwrap(),
+    ] {
+        let state = Rc::new(RefCell::new(CompiledScriptStateForTest::default()));
+        let mut runtime = Runtime::new(CompiledScriptHost(state.clone()));
+        runtime.execute(&program).unwrap();
+        runtime.execute(&program).unwrap();
+        let mut foreign = Runtime::new(CompiledScriptHost(state.clone()));
+        foreign.execute(&program).unwrap();
+        assert_eq!(state.borrow().invalidations, 2);
+    }
+}
+
+struct HostPrivateSymbolHost;
+impl Host for HostPrivateSymbolHost {
+    fn write_line(&mut self, _: &str) {}
+    fn clock_millis(&mut self) -> f64 { 0.0 }
+    fn functions(&self) -> &[HostFunction<Self>] { &[] }
+    fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
+        let global = context.global_root()?;
+        for (name, private) in [("nativePrivate", true), ("nativePublic", false)] {
+            let symbol = if private { context.private_symbol_rooted(Some("same")) }
+                         else { context.symbol_rooted(Some("same")) };
+            let name = context.string_rooted(name);
+            context.define_data_property_rooted(global, name, symbol, true, true, true)?;
+        }
+        context.collect()?;
+        Ok(())
+    }
+}
+#[test]
+fn host_private_symbols_preserve_explicit_access_and_bypass_public_object_protocols() {
+    let source = r#"
+      function check(value) { if (!value) throw new Error('private-symbol check'); }
+      const s = nativePrivate, publicKey = nativePublic;
+      check(typeof s === 'symbol' && s !== publicKey && s.description === 'same');
+      check(String(s) === 'Symbol(same)' && Symbol.keyFor(s) === undefined);
+      const o = {}; o[s] = 2; o[publicKey] = 8;
+      check(o[s] === 2 && s in o && Object.hasOwn(o, s));
+      let d = Object.getOwnPropertyDescriptor(o,s);
+      check(d.value === 2 && d.writable && !d.enumerable && d.configurable);
+      check(Reflect.ownKeys(o).length === 1 && Reflect.ownKeys(o)[0] === publicKey);
+      check(Object.getOwnPropertySymbols(o).length === 1);
+      check(!Object.hasOwn(Object.getOwnPropertyDescriptors(o),s));
+      check(Object.assign({},o)[s] === undefined && ({...o})[s] === undefined);
+      const child = Object.create(o);
+      check(child[s] === undefined && !(s in child) && !Object.hasOwn(child,s));
+      check(child[publicKey] === 8);
+      child[s] = 3; check(child[s] === 3 && o[s] === 2);
+      Object.defineProperty(o,s,{value:4,enumerable:true,writable:false,configurable:false});
+      check(Object.getOwnPropertyDescriptor(o,s).enumerable);
+      check(Reflect.ownKeys(o).length === 1 && !Reflect.deleteProperty(o,s));
+      check(!Reflect.set(o,s,5) && o[s] === 4);
+      let called = 0;
+      const p = new Proxy(o,{
+        get(){called++;throw 1}, set(){called++;throw 1}, has(){called++;throw 1},
+        getOwnPropertyDescriptor(){called++;throw 1}, defineProperty(){called++;throw 1},
+        deleteProperty(){called++;throw 1}, ownKeys(){return [s]}
+      });
+      check(p[s] === undefined && !(s in p) && !Object.hasOwn(p,s));
+      check(!Reflect.set(p,s,6) && !Reflect.defineProperty(p,s,{value:7}));
+      check(Reflect.deleteProperty(p,s) && called === 0);
+      check(Reflect.ownKeys(p).length === 0);
+      const rev = Proxy.revocable({},{});rev.revoke();
+      check(rev.proxy[s] === undefined && !(s in rev.proxy));
+      check(Reflect.deleteProperty(rev.proxy,s) && !Reflect.set(rev.proxy,s,8));
+      const frozen = Object.freeze({});check(Reflect.set(frozen,s,9));
+      check(frozen[s] === 9 && Reflect.defineProperty(frozen,s,{value:10}));
+      check(Object.isFrozen(frozen) && Reflect.ownKeys(frozen).length === 0);
+      let receiver;
+      const access = {};
+      Object.defineProperty(access,s,{get(){receiver=this;return 12},configurable:true});
+      check(access[s] === 12 && receiver === access);
+      check(!Reflect.set(access,s,4));
+      check(Reflect.deleteProperty(access,s) && access[s] === undefined);
+      for (const base of [null, undefined]) {
+        let threw = false; try { base[s]; } catch(e) { threw = e instanceof TypeError; }
+        check(threw);
+      }
+      for (const base of [1, true, 'x', Symbol('x')]) {
+        check(base[s] === undefined);
+        let threw = false;
+        try { (function(){ 'use strict'; base[s] = 1; })(); }
+        catch(e) { threw = e instanceof TypeError; }
+        check(threw);
+      }
+      let setterReceiver, setterValue;
+      const a = {}, receiverObject = {};
+      Object.defineProperty(a,s,{get(){return this},set(v){setterReceiver=this;setterValue=v},configurable:true});
+      check(Reflect.get(a,s,receiverObject) === receiverObject);
+      check(Reflect.set(a,s,33,receiverObject));
+      check(setterReceiver === receiverObject && setterValue === 33);
+      const marker = {};
+      Object.defineProperty(a,s,{get(){throw marker},set(){throw marker}});
+      for(const operation of [()=>a[s],()=>Reflect.set(a,s,2)]) {
+        let caught; try { operation(); } catch(e) { caught=e; } check(caught===marker);
+      }
+      for(const target of [{},Object.preventExtensions({})]) {
+        let threw=false;try{Reflect.ownKeys(new Proxy(target,{ownKeys(){return [s,s]}}))}catch(e){threw=e instanceof TypeError}
+        check(threw);
+      }
+      let invariantThrew=false;
+      try{Reflect.ownKeys(new Proxy(Object.preventExtensions({}),{ownKeys(){return [s]}}))}catch(e){invariantThrew=e instanceof TypeError}
+      check(invariantThrew);
+      globalThis.privateSurvivor = child;
+    "#;
+    for program in [Engine::specialize_unspecialized(source, "native-private-symbol.js").unwrap(),
+                    Engine::specialize(source, "native-private-symbol.js").unwrap()] {
+        let mut runtime = Runtime::new(HostPrivateSymbolHost);
+        runtime.execute(&program).unwrap();
     }
 }

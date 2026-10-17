@@ -327,7 +327,7 @@ fn shape_roots_keep_symbols_and_active_accessors_alive() {
 
     let program = Engine::specialize("", "shape-roots.js").unwrap();
     let mut vm = Vm::new(SilentHost);
-    let symbol = vm.heap.alloc(Cell::Symbol(None));
+    let symbol = vm.heap.alloc(Cell::Symbol(crate::heap::SymbolData::public(None)));
     let symbol_weak = vm.heap.weak_handle(symbol).unwrap();
     let symbol_shape = vm.transition_property_shape(0, PropertyKey::symbol(symbol));
     let first =
@@ -1151,7 +1151,7 @@ fn json_parse_builds_the_same_values_with_and_without_a_reviver() {
 #[test]
 fn promise_record_edges_follow_promise_and_resolver_lifetime() {
     let mut vm = Vm::new(SilentHost);
-    let promise = vm.promise_object();
+    let promise = vm.promise_object().unwrap();
     let result = vm.object();
     let program = Engine::specialize("print(0);", "realm-promises.js").unwrap();
     let owner_atom = vm.intern_atom("owner");
@@ -4421,7 +4421,7 @@ fn dynamic_import_waiters_are_rooted_while_queued_and_during_batch_evaluation() 
         vm.execute(&program).unwrap();
         let mut promises = Vec::new();
         for index in 0..2 {
-            let promise = vm.promise_object();
+            let promise = vm.promise_object().unwrap();
             promises.push((promise, vm.heap.weak_handle(promise).unwrap()));
             let name = format!("dynamic-job-{index}.js");
             let source = "$262.gc(); export const value = 57;".to_owned();
@@ -4769,7 +4769,7 @@ fn error_data_survives_collection_without_retaining_dead_errors() {
         vm.initialize(&program).unwrap();
         let exhausted = vm.stack_exhaustion_error().thrown_value().unwrap();
         assert!(vm.error_is_error(exhausted));
-        let aggregate = vm.aggregate_error(vec![]).unwrap();
+        let aggregate = vm.aggregate_error(&program, vec![]).unwrap();
         assert!(vm.error_is_error(aggregate));
     }
 }
@@ -4808,7 +4808,7 @@ fn aggregate_error_intrinsics_and_reason_roots_follow_the_active_realm() {
             let roots = vm.heap.root_count_for_test();
             let reason = vm.object();
             let reason_weak = vm.heap.weak_handle(reason).unwrap();
-            let error = vm.aggregate_error(vec![reason]).unwrap();
+            let error = vm.aggregate_error(&program, vec![reason]).unwrap();
             assert!(vm.error_is_error(error));
             assert_eq!(vm.object_data(error).unwrap().proto(), error_prototype);
             let errors_atom = vm.intern_atom("errors");
@@ -4927,7 +4927,7 @@ fn promise_constructor_intrinsics_survive_guest_binding_and_prototype_mutation()
             .unwrap();
         vm.collect_now(&program);
         assert_eq!(vm.heap.weak_value(weak), Some(constructor));
-        let source = vm.promise_object();
+        let source = vm.promise_object().unwrap();
         vm.set_property(source, constructor_atom, Value::UNDEFINED)
             .unwrap();
         let roots = vm.heap.root_count_for_test();
@@ -5605,7 +5605,7 @@ fn proxy_reads_root_operands_and_results_through_nested_callbacks() {
                 let atom = vm.intern_atom("entry");
                 let property = if symbol {
                     super::property_key::PropertyKey::symbol(
-                        vm.heap.alloc(super::Cell::Symbol(Some("entry".into()))),
+                        vm.heap.alloc(super::Cell::Symbol(crate::heap::SymbolData::public(Some("entry".into())))),
                     )
                 } else {
                     super::property_key::PropertyKey::string(atom)
@@ -5675,7 +5675,7 @@ fn proxy_reads_root_operands_and_results_through_nested_callbacks() {
                         if symbol {
                             assert_eq!(returned_key, key);
                             assert!(
-                                matches!(vm.heap.get(returned_key), Some(super::Cell::Symbol(Some(name))) if name == "entry")
+                                matches!(vm.heap.get(returned_key), Some(super::Cell::Symbol(crate::heap::SymbolData { description: Some(name), .. })) if name.as_ref() == "entry")
                             );
                         } else {
                             assert_eq!(vm.to_string(&program, returned_key).unwrap(), "entry");
@@ -5684,7 +5684,7 @@ fn proxy_reads_root_operands_and_results_through_nested_callbacks() {
                     }
                     Ok(result) if phase == "result-symbol" => {
                         assert!(
-                            matches!(vm.heap.get(result),Some(super::Cell::Symbol(Some(name))) if name=="answer")
+                            matches!(vm.heap.get(result),Some(super::Cell::Symbol(crate::heap::SymbolData { description: Some(name), .. })) if name.as_ref()=="answer")
                         );
                         Some(vm.heap.weak_handle(result).unwrap())
                     }
@@ -6068,7 +6068,7 @@ fn proxy_presence_and_delete_root_fresh_operands_and_restore_scopes() {
                         .map(|elements| (elements[0], elements[1]))
                         .expect("operands");
                     let key = if symbol {
-                        vm.heap.alloc(super::Cell::Symbol(Some("entry".into())))
+                        vm.heap.alloc(super::Cell::Symbol(crate::heap::SymbolData::public(Some("entry".into()))))
                     } else if phase == "coercion" {
                         let atom = vm.intern_atom("keyOperand");
                         let factory = vm.own_property(vm.realm.globals, atom).unwrap();
@@ -6135,7 +6135,7 @@ fn proxy_presence_and_delete_root_fresh_operands_and_restore_scopes() {
                             );
                             assert_eq!(vm.heap.weak_value(handles[1]), Some(key));
                             assert!(if symbol {
-                                matches!(vm.heap.get(key),Some(super::Cell::Symbol(Some(name))) if name=="entry")
+                                matches!(vm.heap.get(key),Some(super::Cell::Symbol(crate::heap::SymbolData { description: Some(name), .. })) if name.as_ref()=="entry")
                             } else {
                                 matches!(vm.heap.get(key),Some(super::Cell::String(name)) if name.host_string()=="entry")
                             });
@@ -6360,7 +6360,7 @@ fn proxy_own_keys_keeps_captured_target_after_revoking_getter() {
                         assert_eq!(keys.len(), 2);
                         assert_eq!(vm.to_string(&program, keys[0]).unwrap(), "first");
                         assert!(
-                            matches!(vm.heap.get(keys[1]),Some(super::Cell::Symbol(Some(name))) if name=="entry")
+                            matches!(vm.heap.get(keys[1]),Some(super::Cell::Symbol(crate::heap::SymbolData { description: Some(name), .. })) if name.as_ref()=="entry")
                         );
                         for (handle, value) in handles.iter().zip([proxy, target, handler]) {
                             assert_eq!(
@@ -10183,5 +10183,231 @@ fn typed_array_base_methods_validate_backing_before_arguments_with_node_diagnost
         Engine::specialize(source, "typed-method-diagnostics.js").unwrap(),
     ] {
         Vm::new(SilentHost).execute(&program).unwrap();
+    }
+}
+
+#[test]
+fn owned_host_script_code_reclaims_after_owners_and_escaped_functions_drop() {
+    let mut vm = Vm::new(SilentHost);
+    let program = Engine::specialize("void 0", "owned-code-lifetime.js").unwrap();
+    vm.execute(&program).unwrap();
+    let before = vm.programs.live_count();
+    let script = vm.compile_embedding_host_script("({value:42})", "owned-object.js", (0, 0)).unwrap();
+    let owner = Rc::downgrade(&script.state);
+    vm.collect_now(&program);
+    vm.collect_now(&program);
+    let value = vm.evaluate_embedding_compiled_script(&script).unwrap();
+    let root = vm.heap.root(value);
+    vm.collect_now(&program);
+    vm.collect_now(&program);
+    assert!(vm.compiled_script_is_current(&script));
+    drop(script);
+    assert!(owner.upgrade().is_none());
+    vm.heap.release_root(root);
+    vm.collect_now(&program);
+    vm.collect_now(&program);
+    assert_eq!(vm.programs.live_count(), before);
+
+    let script = vm.compile_embedding_host_script("(()=>41)", "escaped-owned.js", (0, 0)).unwrap();
+    let function = vm.evaluate_embedding_compiled_script(&script).unwrap();
+    let root = vm.heap.root(function);
+    drop(script);
+    vm.collect_now(&program);
+    vm.collect_now(&program);
+    assert!(vm.programs.live_count() > before);
+    let function = vm.heap.root_value(root).unwrap();
+    assert_eq!(vm.call_value(&program, function, Value::UNDEFINED, &[]).unwrap(), Value::number(41.0));
+    vm.heap.release_root(root);
+    vm.collect_now(&program);
+    vm.collect_now(&program);
+    assert_eq!(vm.programs.live_count(), before);
+}
+
+#[test]
+fn function_native_info_lookup_transitions_match_in_both_execution_modes() {
+    let source = r#"
+Error.prepareStackTrace=(_,frames)=>frames;
+const changes={name:f=>f.name,length:f=>f.length,reflect:f=>Reflect.get(f,'name'),computed:(f,k)=>f[k]};
+for(const [kind,read] of Object.entries(changes)) {
+ const fn=Function('return new Error().stack[0]');Object.setPrototypeOf({},fn);
+ if(fn().getFunctionName()!=='anonymous')throw Error('setup '+kind);
+ read(fn,'name');const expected=kind==='name'||kind==='length'?'eval':'anonymous';
+ if(fn().getFunctionName()!==expected)throw Error('lookup '+kind);
+}
+const fn=Function('return new Error().stack[0]');delete fn.length;Object.setPrototypeOf({},fn);void fn.name;
+if(fn().getFunctionName()!=='anonymous')throw Error('deleted length layout');
+"#;
+    for program in [Engine::compile(crate::ExecutionRequest { source, name: "function-info-lookup.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "function-info-lookup.js").unwrap()] {
+        Vm::new(SilentHost).execute(&program).unwrap();
+    }
+}
+
+#[test]
+fn dynamic_function_canonical_source_and_wrapper_origins_match_in_both_modes() {
+    let source = r#"
+Error.prepareStackTrace=(_,frames)=>frames;
+const fn=Function(' \n return new Error().stack[0];\n '),frame=fn();
+if(frame.getLineNumber()!==4||frame.getColumnNumber()!==9)throw Error('body position');
+if(fn.toString()!=='function anonymous(\n) {\n \n return new Error().stack[0];\n \n}')throw Error('body source');
+const parameter=Function('p = new Error().stack[0]','return p;')();
+if(parameter.getLineNumber()!==1||parameter.getColumnNumber()!==25)throw Error('parameter position');
+if(Function('return typeof anonymous')()!=='undefined')throw Error('synthetic self binding');
+if(Function('anonymous=17','return anonymous')()!==17)throw Error('parameter shadow');
+let threw=false;try{Function('"use strict";return anonymous')()}catch(error){threw=error instanceof ReferenceError}
+if(!threw)throw Error('strict synthetic self binding');
+"#;
+    for program in [Engine::compile(crate::ExecutionRequest { source, name: "dynamic-function-source.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "dynamic-function-source.js").unwrap()] {
+        Vm::new(SilentHost).execute(&program).unwrap();
+    }
+}
+
+#[test]
+fn private_data_fields_keep_distinct_homes_and_duplicate_values_in_both_modes() {
+    let source = r#"
+class Base {constructor(object){return object}}
+function make(){return class extends Base {#x;constructor(object,value){super(object);this.#x=value}read(){return this.#x}write(value){this.#x=value}evaluate(){return eval('this.#x')}}}
+const A=make(),B=make();
+for(const object of [Object.freeze({}),Object.seal({}),Object.preventExtensions({})]) {
+ let rejected;
+ try{new A(object,1)}catch(error){rejected=error instanceof TypeError}
+ if(!rejected)throw Error('private field added to a non-extensible object');
+}
+for(const object of [{},[],function(){},Object.create(null)]) {
+ new A(object,1);new B(object,2);
+ if(A.prototype.read.call(object)!==1||B.prototype.read.call(object)!==2)throw Error('aliased class home');
+ A.prototype.write.call(object,3);let duplicate;
+ try{new A(object,4)}catch(error){duplicate=error.message}
+ if(duplicate!=='Cannot initialize #x twice on the same object')throw Error('duplicate error');
+ if(A.prototype.read.call(object)!==3||B.prototype.read.call(object)!==2)throw Error('duplicate overwrote data');
+ if(A.prototype.evaluate.call(object)!==3||B.prototype.evaluate.call(object)!==2)throw Error('private eval home');
+}
+"#;
+    for program in [Engine::compile(crate::ExecutionRequest { source, name: "private-field-identity.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "private-field-identity.js").unwrap()] {
+        Vm::new(SilentHost).execute(&program).unwrap();
+        let path = std::env::temp_dir().join(format!("quench-private-data-{}-{}", std::process::id(), program.specialized));
+        program.write_binary(&path).unwrap();
+        let decoded = crate::ResidualProgram::read_binary(&path).unwrap();
+        Vm::new(SilentHost).execute(&decoded).unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[test]
+fn private_data_values_survive_collection_and_release_without_their_receiver() {
+    let source = r#"
+class Base {constructor(object){return object}}
+function make(){return class extends Base {#x;constructor(object,value){super(object);this.#x=value}read(){return this.#x}}}
+globalThis.A=make();globalThis.B=make();globalThis.first={value:1};globalThis.second={value:2};globalThis.instance={};
+new A(instance,first);new B(instance,second);
+"#;
+    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
+        let program = compile(source, "private-data-roots.js").unwrap();
+        let mut vm = Vm::new(SilentHost);
+        vm.execute(&program).unwrap();
+        let mut weak = Vec::new();
+        for name in ["first", "second"] {
+            let atom = vm.intern_atom(name);
+            let value = vm.own_property(vm.realm.globals, atom).unwrap();
+            let strong = vm.heap.root(value);
+            weak.push(vm.embedding_host_weak_root(strong).unwrap());
+            vm.heap.release_root(strong);
+            vm.set_property(vm.realm.globals, atom, Value::UNDEFINED).unwrap();
+        }
+        vm.collect_now(&program);
+        for root in &weak { assert!(vm.embedding_host_weak_value(*root).is_some()); }
+        let instance = vm.intern_atom("instance");
+        vm.set_property(vm.realm.globals, instance, Value::UNDEFINED).unwrap();
+        vm.collect_now(&program);
+        for root in weak {
+            assert!(vm.embedding_host_weak_value(root).is_none());
+            vm.heap.release_root(root);
+        }
+    }
+}
+
+#[test]
+fn private_lexical_bindings_survive_ordinary_closures_and_binary_round_trips() {
+    let source = r#"
+class Mixed {
+ #instance=1;static #static=2;
+ read(){const object=this;return function(){return [eval('object.#instance'),eval('Mixed.#static')]}}
+ static read(object){return eval('#instance in object')}
+}
+const object=new Mixed(), read=object.read();
+if(read().join(',')!=='1,2'||!Mixed.read(object))throw Error('mixed private environment');
+class Outer {#outer=3; create(){const outer=this;return class {#inner=4;read(){const inner=this;return function(){return [eval('outer.#outer'),eval('inner.#inner')]}}}}}
+const Inner=new Outer().create();
+if(new Inner().read()().join(',')!=='3,4')throw Error('outer private environment');
+class Negative {#x;read(){return function(){for(const source of ['super.x','super()','return 1','#missing in {}']){let name;try{eval(source)}catch(error){name=error.name}if(name!=='SyntaxError')throw Error('accepted '+source)}}}}
+new Negative().read()();
+"#;
+    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
+        let program = compile(source, "private-lexical-bindings.js").unwrap();
+        Vm::new(SilentHost).execute(&program).unwrap();
+        let path = std::env::temp_dir().join(format!("quench-private-lexical-{}-{}", std::process::id(), program.specialized));
+        program.write_binary(&path).unwrap();
+        let decoded = crate::ResidualProgram::read_binary(&path).unwrap();
+        Vm::new(SilentHost).execute(&decoded).unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[test]
+fn private_brands_follow_field_initialization_in_original_and_decoded_programs() {
+    let source = r#"
+class Instance {#field=1;#method(){}get #accessor(){return 2}static has(object){return [#field in object,#method in object,#accessor in object]}}
+if(Instance.has(Instance.prototype).join(',')!=='false,false,false')throw Error('prototype branded');
+if(Instance.has(new Instance()).join(',')!=='true,true,true')throw Error('instance missing brand');
+class Static {static before=[#field in this,#method in this,#accessor in this];static #field=1;static #method(){}static get #accessor(){return 2}static after=[#field in this,#method in this,#accessor in this]}
+if(Static.before.join(',')!=='false,true,true'||Static.after.join(',')!=='true,true,true')throw Error('static ordering');
+class Base {constructor(object){return object}}
+class Stamp extends Base {#x=7;static has(object){return #x in object}static read(object){return object.#x}}
+if(Stamp.has(Stamp.prototype))throw Error('prototype already stamped');
+new Stamp(Stamp.prototype);
+if(!Stamp.has(Stamp.prototype)||Stamp.read(Stamp.prototype)!==7)throw Error('prototype stamp missing');
+"#;
+    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
+        let program = compile(source, "private-brand-initialization.js").unwrap();
+        Vm::new(SilentHost).execute(&program).unwrap();
+        let path = std::env::temp_dir().join(format!("quench-private-brands-{}-{}", std::process::id(), program.specialized));
+        program.write_binary(&path).unwrap();
+        let decoded = crate::ResidualProgram::read_binary(&path).unwrap();
+        Vm::new(SilentHost).execute(&decoded).unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[test]
+fn static_block_eval_inherits_strictness_and_its_actual_super_home() {
+    let source = r#"
+class Base {static value=7;static get receiver(){return this.name}static set update(value){this.updated=value}}
+class Derived extends Base {
+ static #value=3;
+ static {
+  if(eval('super.value')!==7||eval('super.receiver')!=='Derived'||eval('this.#value')!==3)throw Error('static context');
+  if((()=>eval('super.value'))()!==7)throw Error('arrow home');
+  let invalid;try{(function(){eval('super.value')})()}catch(error){invalid=error.name}
+  if(invalid!=='SyntaxError')throw Error('ordinary super accepted');
+  if(!eval('new.target === undefined'))throw Error('static new.target');
+  for(const source of ['typeof arguments','(()=>typeof arguments)()']){let error;try{eval(source)}catch(caught){error=caught.name}if(error!=='SyntaxError')throw Error('static arguments accepted')}
+  if(eval('(function(){return typeof arguments})()')!=='object')throw Error('ordinary arguments lost');
+  eval('super.update=9');if(this.updated!==9)throw Error('setter receiver');
+  let strict;try{eval('quenchStaticUnbound=1')}catch(error){strict=error.name}
+  if(strict!=='ReferenceError')throw Error('sloppy static eval');
+  Object.defineProperty(this,'locked',{value:1});let locked;try{this.locked=2}catch(error){locked=error.name}
+  if(locked!=='TypeError')throw Error('sloppy static write');
+  var local=11;if(eval('local')!==11)throw Error('local missing');
+ }
+ static {if(typeof local!=='undefined')throw Error('static scopes merged')}
+}
+"#;
+    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
+        let program = compile(source, "static-block-context.js").unwrap();
+        Vm::new(SilentHost).execute(&program).unwrap();
+        let path = std::env::temp_dir().join(format!("quench-static-context-{}-{}", std::process::id(), program.specialized));
+        program.write_binary(&path).unwrap();
+        let decoded = crate::ResidualProgram::read_binary(&path).unwrap();
+        Vm::new(SilentHost).execute(&decoded).unwrap();
+        std::fs::remove_file(path).unwrap();
     }
 }

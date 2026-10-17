@@ -1,0 +1,1 @@
+'use strict';const assert=require('assert');const {TCP}=require('internal/test/binding').internalBinding('tcp_wrap');const output=[];for(const name of ['first','second','third']){const h=new TCP(0);h.close(()=>output.push(name))}process.on('exit',()=>{console.log(JSON.stringify(output));assert.deepStrictEqual(output,['third','second','first'])});

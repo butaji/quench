@@ -56,14 +56,20 @@ fn canonical_process_root_survives_global_replacement_and_refreshes_with_the_vm(
     )
     .unwrap();
     let mut previous = None;
+    let mut previous_capture = None;
     for _ in 0..2 {
         runtime.execute(&program).unwrap();
         if let Some(previous) = previous {
             assert!(!runtime.root_is_live(previous));
         }
+        let capture = roots.borrow().process_capture_state.unwrap();
+        if let Some(previous_capture) = previous_capture {
+            assert!(!runtime.root_is_live(previous_capture));
+        }
         let cached = roots.borrow().process_module.unwrap();
         runtime.collect(&program).unwrap();
         assert!(runtime.root_is_live(cached));
+        assert!(runtime.root_is_live(capture));
         let global = runtime.global_root().unwrap();
         let original_key = runtime.string_rooted("original");
         let original = runtime.get_property_rooted(global, original_key).unwrap();
@@ -78,5 +84,6 @@ fn canonical_process_root_survives_global_replacement_and_refreshes_with_the_vm(
             assert!(runtime.release_root(root));
         }
         previous = Some(cached);
+        previous_capture = Some(capture);
     }
 }

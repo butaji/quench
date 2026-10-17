@@ -1,6 +1,26 @@
 use super::Runtime;
 use crate::{Host, JsError, RootId, RootedError, Value, vm::Vm};
 
+/// Immutable host Script code compiled for one runtime state. It retains no
+/// guest objects; each evaluation creates fresh runtime metadata and functions
+/// in the chosen realm. A reset or another runtime invalidates this handle.
+#[derive(Clone)]
+pub struct PreparedScript {
+    pub(crate) program: std::rc::Rc<crate::ResidualProgram>,
+}
+
+/// A logical host Script with one source identity and separate execution caches
+/// in each realm. The handle owns code, not guest objects or realm globals.
+#[derive(Clone)]
+pub struct CompiledScript {
+    pub(crate) state: std::rc::Rc<CompiledScriptState>,
+}
+
+pub(crate) struct CompiledScriptState {
+    pub(crate) program: std::rc::Rc<crate::ResidualProgram>,
+    pub(crate) source: crate::vm::ProgramId,
+}
+
 /// Opaque index into the embedding's stable native-operation table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HostFunctionId(pub u32);
@@ -29,6 +49,17 @@ pub struct SourceStackFrame {
     /// Positive, non-reused compiled-source identity; zero is reserved for no script.
     pub script_id: u64,
     pub script_name: String,
+    /// True when the activation belongs to an unnamed eval Script.
+    pub is_eval: bool,
+    pub line_number: u32,
+    pub column_number: u32,
+}
+
+/// Compiler-owned source for an unformatted captured error, or the current activation.
+/// Positions are one-based, as in source stack frames; hosts choose their API projection.
+pub struct ErrorSourcePosition {
+    pub source_line: Option<String>,
+    pub script_name: Option<String>,
     pub line_number: u32,
     pub column_number: u32,
 }
@@ -42,6 +73,34 @@ pub struct HostWeakRoot(pub(super) RootId);
 pub struct RootedIterator {
     iterator: RootId,
     next: RootId,
+}
+
+/// An ECMAScript language type; `Function` marks callable objects.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ValueType {
+    Undefined,
+    Null,
+    Boolean,
+    Number,
+    String,
+    Symbol,
+    BigInt,
+    Object,
+    Function,
+}
+
+/// The bytes an ArrayBuffer or view names. `kind` is the view's specific brand
+/// (`ArrayBuffer`, `SharedArrayBuffer`, `DataView` or a typed-array constructor brand).
+#[derive(Clone, Copy, Debug)]
+pub struct BufferStorage {
+    pub kind: BuiltinBrand,
+    /// The first byte of the view (the buffer's base plus `byte_offset`); null when empty.
+    pub data: *mut u8,
+    pub byte_offset: usize,
+    pub byte_length: usize,
+    /// Element count for a typed array, otherwise the byte length.
+    pub length: usize,
+    pub buffer: RootId,
 }
 
 /// Builtin internal-slot brands, independent of prototypes and guest property hooks.
@@ -171,9 +230,16 @@ macro_rules! host_functions {
 pub struct NativeContext<'a, H: Host> {
     vm: &'a mut Vm<H>,
     roots: Vec<RootId>,
+    /// `new.target` when this context runs a host constructor's [[Construct]].
+    new_target: Option<Value>,
 }
 
 impl<'a, H: Host> NativeContext<'a, H> {
+    /// Count actual heap record/arena capacities and unique live payloads without guest effects.
+    pub fn heap_memory_composition(&self) -> crate::HeapMemoryComposition {
+        self.vm.embedding_heap_memory_composition()
+    }
+
     /// The core string representation's maximum UTF-16 code-unit count.
     pub const MAX_STRING_CODE_UNITS: usize = crate::vm::wtf16::MAX_STRING_UNITS;
 
@@ -181,7 +247,69 @@ impl<'a, H: Host> NativeContext<'a, H> {
         Self {
             vm,
             roots: Vec::new(),
+            new_target: None,
         }
+    }
+
+    pub(crate) fn with_new_target(vm: &'a mut Vm<H>, new_target: Option<Value>) -> Self {
+        Self {
+            vm,
+            roots: Vec::new(),
+            new_target,
+        }
+    }
+
+    /// A root in this callback's scope naming the same value as `root`, which may be a
+    /// promoted root the host releases separately.
+    pub fn scope_root(&mut self, root: RootId) -> Option<RootId> {
+        self.vm.root_value(root).map(|value| self.scoped_value(value))
+    }
+
+    /// Classify a rooted value without coercion or guest effects.
+    pub fn value_type_rooted(&self, root: RootId) -> Option<ValueType> {
+        self.vm.root_value(root).map(|value| self.vm.value_type(value))
+    }
+
+    /// `new.target` of the running host callback: `Some` only while it is constructed.
+    pub fn new_target_rooted(&mut self) -> Option<RootId> {
+        self.new_target.map(|value| self.scoped_value(value))
+    }
+
+    /// The number of roots this callback scope holds; a later
+    /// [`release_roots_since`](Self::release_roots_since) closes a nested scope at it.
+    pub fn root_scope_mark(&self) -> usize {
+        self.roots.len()
+    }
+
+    /// Release the roots created after `mark`, except `keep`, which move to the
+    /// enclosing scope (an escaped handle).
+    pub fn release_roots_since(&mut self, mark: usize, keep: &[RootId]) {
+        if mark >= self.roots.len() {
+            return;
+        }
+        let created = self.roots.split_off(mark);
+        for root in created {
+            if keep.contains(&root) {
+                self.roots.push(root);
+            } else {
+                self.vm.release_root(root);
+            }
+        }
+    }
+
+    /// The pinned bytes of an ArrayBuffer, typed array or DataView. A fixed buffer keeps
+    /// this address for its lifetime, so native code may hold the pointer while the
+    /// buffer is reachable; a resizable buffer keeps it only until it resizes.
+    pub fn buffer_storage_rooted(
+        &mut self,
+        root: RootId,
+    ) -> Result<Option<BufferStorage>, RootedError> {
+        let result = self.vm.embedding_buffer_storage(root);
+        let storage = result.map_err(|error| self.error(error))?;
+        Ok(storage.map(|(storage, buffer)| BufferStorage {
+            buffer: self.scoped_value(buffer),
+            ..storage
+        }))
     }
 
     pub(crate) fn scoped_value(&mut self, value: Value) -> RootId {
@@ -363,6 +491,16 @@ impl<'a, H: Host> NativeContext<'a, H> {
     /// Capture actual JavaScript source frames independently of Error hooks and stack limits.
     pub fn source_stack_frames(&mut self, limit: usize) -> Vec<SourceStackFrame> {
         self.vm.embedding_source_stack_frames(limit)
+    }
+
+    /// Read captured source without invoking properties, getters or proxy traps.
+    /// With no unformatted capture, project the current genuine source activation.
+    pub fn error_source_position_rooted(
+        &mut self,
+        error: RootId,
+    ) -> Result<Option<ErrorSourcePosition>, RootedError> {
+        let result = self.vm.embedding_error_source_position(error);
+        result.map_err(|error| self.error(error))
     }
 
     /// Compiler-owned source names of live JavaScript callers, nearest first.
@@ -602,6 +740,60 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.completion(result)
     }
 
+    /// Compile a host wrapper in its target realm, retaining original-source positions.
+    pub fn evaluate_specialized_script_in_realm_with_origin_rooted(
+        &mut self, global: RootId, source: &str, name: &str,
+        line_offset: u32, column_offset: u32,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.evaluate_embedding_specialized_script_in_realm_with_origin(
+            global, source, name, (line_offset, column_offset),
+        );
+        self.completion(result)
+    }
+
+    /// Compile host Script code once, preserving its original source positions.
+    pub fn prepare_specialized_script_in_realm_with_origin(
+        &mut self, global: RootId, source: &str, name: &str, line_offset: u32, column_offset: u32,
+    ) -> Result<PreparedScript, RootedError> {
+        self.vm.prepare_embedding_specialized_script_in_realm_with_origin(
+            global, source, name, (line_offset, column_offset),
+        ).map_err(|error| self.error(error))
+    }
+
+    /// Compile one logical Script. Its source identity persists across runs;
+    /// realm-bound execution state is allocated independently on first use.
+    pub fn compile_script_in_realm_with_origin(
+        &mut self, global: RootId, source: &str, name: &str,
+        line_offset: u32, column_offset: u32,
+    ) -> Result<CompiledScript, RootedError> {
+        self.vm.compile_embedding_script_in_realm(
+            global, source, name, (line_offset, column_offset),
+        ).map_err(|error| self.error(error))
+    }
+
+    pub fn compiled_script_is_current(&self, script: &CompiledScript) -> bool {
+        self.vm.compiled_script_is_current(script)
+    }
+
+    pub fn evaluate_compiled_script_in_realm_rooted(
+        &mut self, global: RootId, script: &CompiledScript,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.evaluate_embedding_compiled_script_in_realm(global, script);
+        self.completion(result)
+    }
+
+    pub fn prepared_script_is_current(&self, prepared: &PreparedScript) -> bool {
+        self.vm.prepared_script_is_current(prepared)
+    }
+
+    /// Evaluate shared code with fresh execution state and the target's intrinsics.
+    pub fn evaluate_prepared_script_in_realm_rooted(
+        &mut self, global: RootId, prepared: &PreparedScript,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.evaluate_embedding_prepared_script_in_realm(global, prepared);
+        self.completion(result)
+    }
+
     /// Compile and evaluate host-owned Script source through the specializer.
     /// Dynamic eval remains on `evaluate_script_rooted`.
     pub fn evaluate_specialized_script_rooted(
@@ -695,6 +887,13 @@ impl<'a, H: Host> NativeContext<'a, H> {
     pub fn symbol_rooted(&mut self, description: Option<&str>) -> RootId {
         let description = description.map(str::to_owned);
         let symbol = self.vm.embedding_symbol(description);
+        self.scoped_value(symbol)
+    }
+
+    /// Create a native host-private symbol. Explicit key operations work, while
+    /// ordinary reflection and property copying never expose the key.
+    pub fn private_symbol_rooted(&mut self, description: Option<&str>) -> RootId {
+        let symbol = self.vm.embedding_private_symbol(description.map(str::to_owned));
         self.scoped_value(symbol)
     }
 
@@ -948,6 +1147,28 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.completion(result)
     }
 
+    /// Create an ordinary constructor with its immutable JavaScript creation name.
+    pub fn host_constructor_named(
+        &mut self,
+        id: HostFunctionId,
+        name: &str,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.create_named_host_constructor(id, name);
+        self.completion(result)
+    }
+
+    /// Retain traced private data on a named ordinary constructor.
+    pub fn host_constructor_named_with_data(
+        &mut self,
+        id: HostFunctionId,
+        name: &str,
+        data: RootId,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.embedding_value(data)
+            .and_then(|value| self.vm.create_named_host_constructor_with_data(id, name, value));
+        self.completion(result)
+    }
+
     pub fn host_constructor_with_data(
         &mut self,
         id: HostFunctionId,
@@ -1023,6 +1244,18 @@ impl<'a, H: Host> NativeContext<'a, H> {
     ) -> Result<bool, RootedError> {
         self.vm
             .define_data_property_rooted(object, key, value, writable, enumerable, configurable)
+            .map_err(|error| self.error(error))
+    }
+
+    /// Runs the initializer of `name`'s lazy group on `holder` if it is still lazy; otherwise
+    /// does nothing, and runs no guest code.
+    pub fn materialize_lazy_data_property_rooted(
+        &mut self,
+        holder: RootId,
+        name: &str,
+    ) -> Result<(), RootedError> {
+        self.vm
+            .materialize_lazy_data_property_rooted(holder, name)
             .map_err(|error| self.error(error))
     }
 

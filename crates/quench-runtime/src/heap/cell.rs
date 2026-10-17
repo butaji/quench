@@ -74,7 +74,6 @@ impl WeakMapEntries {
         );
     }
 
-    #[cfg(any(feature = "profile-memory", feature = "profile-aggregate"))]
     pub(crate) fn allocated_bytes(&self) -> usize {
         self.ordered.capacity() * std::mem::size_of::<(Value, Value)>()
             + self.indices.capacity() * std::mem::size_of::<(Value, usize)>()
@@ -1247,7 +1246,7 @@ pub(crate) struct CallSiteRecord {
     pub(crate) this_value: Value,
     pub(crate) hide_identity: bool,
     pub(crate) is_constructor: bool,
-    pub(crate) is_eval: bool,
+    pub(crate) eval_origin: Option<JsString>,
 }
 
 impl CallSiteRecord {
@@ -1259,14 +1258,24 @@ impl CallSiteRecord {
 
 #[derive(Clone, Debug)]
 pub(crate) enum StackData {
-    Captured(Vec<CallSiteRecord>),
+    Captured { records: Vec<CallSiteRecord>, source: Option<crate::bytecode::ProgramSource> },
     Formatted(Value),
     CallSite(CallSiteRecord),
 }
 
+/// A prototype starts in setup mode; named native-info lookup makes its
+/// accessor layout observable through getter-free diagnostic reads.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum PrototypeLookupState {
+    #[default]
+    Ordinary,
+    Setup,
+    Ready,
+}
+
 #[derive(Clone, Debug, Default)]
 struct ObjectExtras {
-    used_as_prototype: bool,
+    prototype_lookup: PrototypeLookupState,
     /// The object's inline property values, displaced from its payload by the extras pointer.
     inline_properties: DisplacedInline,
     /// An array's storage position, displaced from its first payload word.
@@ -1282,13 +1291,12 @@ struct ObjectExtras {
     structured_transfer_forbidden: bool,
     module_bindings: Vec<(Atom, ProgramId, u16)>,
     deferred_module: Option<crate::ModuleSource>,
-    private_names: Vec<PrivateBrand>,
+    private_elements: Vec<PrivateElement>,
     stack_data: Option<StackData>,
     /// An index-keyed property descriptor has been recorded for this object; never cleared.
     indexed_descriptors: bool,
 }
 impl ObjectExtras {
-    #[cfg(any(feature = "profile-memory", feature = "profile-aggregate"))]
     fn allocated_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
             + self
@@ -1299,7 +1307,7 @@ impl ObjectExtras {
             + self.deferred_module.as_ref().map_or(0, |module| {
                 module.name.capacity() + module.source.capacity() + module.bytes.capacity()
             })
-            + self.private_names.capacity() * std::mem::size_of::<PrivateBrand>()
+            + self.private_elements.capacity() * std::mem::size_of::<PrivateElement>()
             + self
                 .stack_data
                 .as_ref()
@@ -1307,7 +1315,6 @@ impl ObjectExtras {
     }
 }
 impl StackData {
-    #[cfg(any(feature = "profile-memory", feature = "profile-aggregate"))]
     fn allocated_bytes(&self) -> usize {
         fn record_bytes(record: &CallSiteRecord) -> usize {
             (match &record.location {
@@ -1316,7 +1323,7 @@ impl StackData {
             }) + match &record.name { CallSiteName::Static(name) => name.capacity(), _ => 0 }
         }
         match self {
-            Self::Captured(records) => {
+            Self::Captured { records, .. } => {
                 records.capacity() * std::mem::size_of::<CallSiteRecord>()
                     + records.iter().map(record_bytes).sum::<usize>()
             }
@@ -1330,6 +1337,14 @@ pub(crate) struct PrivateBrand {
     pub home: Value,
     pub name: Atom,
 }
+/// A name's actual class home and its data share one lifetime-owned entry.
+#[derive(Clone, Copy, Debug)]
+struct PrivateElement {
+    brand: PrivateBrand,
+    // Brand-only entries name methods/accessors or reserve a class-home declaration.
+    data: Option<Value>,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct FinalizationEntry {
     pub target: WeakHandle,
@@ -1526,8 +1541,10 @@ impl Object {
     }
 
     fn inline_property_values_mut(&mut self) -> &mut [Value; INLINE_PROPERTY_COUNT] {
-        if self.extras_pointer().is_some() {
-            &mut self.extras_mut().inline_properties.0
+        if let Some(extras) = self.extras_pointer() {
+            // SAFETY: a tagged payload owns a live `ObjectExtras` for the object's lifetime,
+            // and `&mut self` makes this its only borrow.
+            unsafe { &mut (*extras).inline_properties.0 }
         } else {
             // SAFETY: an untagged payload holds the inline values.
             unsafe { &mut self.payload.inline }
@@ -1557,7 +1574,10 @@ impl Object {
     pub(crate) fn set_inline_property(&mut self, slot: usize, value: Value) {
         debug_assert!(self.properties().has_inline_property_storage());
         debug_assert!(slot < INLINE_PROPERTY_COUNT);
-        self.inline_property_values_mut()[slot] = value;
+        // A cached slot past the inline values is a caller bug, not a reason to panic here.
+        if let Some(entry) = self.inline_property_values_mut().get_mut(slot) {
+            *entry = value;
+        }
     }
 
     pub(crate) fn replace_property_storage(
@@ -1635,11 +1655,12 @@ impl Object {
             return;
         };
         if let Some(value) = extras.boxed_primitive { visit(value); }
-        for brand in &extras.private_names {
-            visit(brand.home);
+        for element in &extras.private_elements {
+            visit(element.brand.home);
+            if let Some(value) = element.data { visit(value); }
         }
         match extras.stack_data.as_ref() {
-            Some(StackData::Captured(records)) => {
+            Some(StackData::Captured { records, .. }) => {
                 for record in records {
                     record.visit_roots(&mut visit);
                 }
@@ -1653,11 +1674,19 @@ impl Object {
     }
 
     pub(crate) fn was_used_as_prototype(&self) -> bool {
-        self.extras().is_some_and(|extras| extras.used_as_prototype)
+        self.extras().is_some_and(|extras| extras.prototype_lookup != PrototypeLookupState::Ordinary)
     }
 
     pub(crate) fn mark_as_prototype(&mut self) {
-        if !self.was_used_as_prototype() { self.extras_mut().used_as_prototype = true; }
+        if !self.was_used_as_prototype() { self.extras_mut().prototype_lookup = PrototypeLookupState::Setup; }
+    }
+
+    pub(crate) fn prototype_lookup_ready(&self) -> bool {
+        self.extras().is_some_and(|extras| extras.prototype_lookup == PrototypeLookupState::Ready)
+    }
+
+    pub(crate) fn prepare_prototype_lookup(&mut self) {
+        if self.was_used_as_prototype() { self.extras_mut().prototype_lookup = PrototypeLookupState::Ready; }
     }
 
     pub(crate) fn shape(&self) -> u32 {
@@ -1747,19 +1776,35 @@ impl Object {
     pub(crate) fn set_deferred_module(&mut self, module: Option<crate::ModuleSource>) {
         self.extras_mut().deferred_module = module;
     }
-    pub(crate) fn private_names(&self) -> &[PrivateBrand] {
-        self.extras().map_or(&[], |extras| &extras.private_names)
+    pub(crate) fn private_names(&self) -> impl Iterator<Item = PrivateBrand> + '_ {
+        self.extras().into_iter().flat_map(|extras| extras.private_elements.iter().map(|element| element.brand))
     }
     pub(crate) fn has_private_name(&self, brand: PrivateBrand) -> bool {
-        self.private_names().contains(&brand)
+        self.private_names().any(|candidate| candidate == brand)
     }
     pub(crate) fn add_private_name(&mut self, brand: PrivateBrand) {
-        let names = &mut self.extras_mut().private_names;
-        if !names.contains(&brand) {
-            names.push(brand);
+        if !self.has_private_name(brand) {
+            self.extras_mut().private_elements.push(PrivateElement { brand, data: None });
         }
     }
-    #[cfg(any(feature = "profile-memory", feature = "profile-aggregate"))]
+    pub(crate) fn private_field(&self, brand: PrivateBrand) -> Option<Value> {
+        self.extras()?.private_elements.iter().find(|element| element.brand == brand)?.data
+    }
+    pub(crate) fn set_private_field(&mut self, brand: PrivateBrand, value: Value) -> bool {
+        let Some(element) = self.extras_mut().private_elements.iter_mut().find(|element| element.brand == brand && element.data.is_some()) else { return false; };
+        element.data = Some(value);
+        true
+    }
+    pub(crate) fn initialize_private_field(&mut self, brand: PrivateBrand, value: Value) -> bool {
+        let elements = &mut self.extras_mut().private_elements;
+        if let Some(element) = elements.iter_mut().find(|element| element.brand == brand) {
+            if element.data.is_some() { return false; }
+            element.data = Some(value);
+        } else {
+            elements.push(PrivateElement { brand, data: Some(value) });
+        }
+        true
+    }
     pub(crate) fn allocated_extra_bytes(&self) -> usize {
         self.extras().map_or(0, ObjectExtras::allocated_bytes)
     }
@@ -2061,6 +2106,30 @@ impl RegExpLegacyOwner {
     }
 }
 
+/// Native host-private keys remain symbol primitives, but do not participate in
+/// ordinary property reflection, inheritance, or proxy interception.
+#[derive(Clone, Debug)]
+pub(crate) struct SymbolData {
+    // Descriptions are immutable; a slice avoids String capacity metadata so
+    // the private-kind tag fits without growing every arena cell.
+    pub(crate) description: Option<Box<str>>,
+    pub(crate) kind: SymbolKind,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SymbolKind { Public, HostPrivate }
+impl SymbolData {
+    pub(crate) fn public(description: Option<String>) -> Self {
+        Self { description: description.map(String::into_boxed_str), kind: SymbolKind::Public }
+    }
+    pub(crate) fn host_private(description: Option<String>) -> Self {
+        Self { description: description.map(String::into_boxed_str), kind: SymbolKind::HostPrivate }
+    }
+}
+impl std::ops::Deref for SymbolData {
+    type Target = Option<Box<str>>;
+    fn deref(&self) -> &Self::Target { &self.description }
+}
+
 #[derive(Clone, Debug)]
 #[rustfmt::skip]
 pub(crate) enum Cell {
@@ -2189,7 +2258,7 @@ pub(crate) enum Cell {
         declarations: Box<crate::WasmTypes>,
     },
     String(JsString), BigInt(String),
-    Symbol(Option<String>),
+    Symbol(SymbolData),
     Date { milliseconds: f64, object: Box<Object> },
     RegExp {
         object: Box<Object>,
@@ -2242,7 +2311,6 @@ pub(crate) enum Cell {
     },
 }
 
-#[cfg(feature = "profile-memory")]
 impl Cell {
     pub(crate) fn profile_variant_name(&self) -> &'static str {
         match self {

@@ -43,7 +43,7 @@ pub(super) fn active_shape_attributes(
                 }
             }
             ShapeTransition::Vacant => entries.push(None),
-            ShapeTransition::Root | ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured | ShapeTransition::Constructed { .. } | ShapeTransition::Dictionary { .. } => {}
+            ShapeTransition::Root | ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured | ShapeTransition::FunctionLengthReconfigured | ShapeTransition::Constructed { .. } | ShapeTransition::Dictionary { .. } => {}
         }
     }
     entries
@@ -187,6 +187,7 @@ fn rebuild_shape(
     for transition in [
         function_name.map(|name| ShapeTransition::FunctionName { name }),
         name_reconfigured.then_some(ShapeTransition::FunctionNameReconfigured),
+        provenance::shape_function_length_reconfigured(old_shapes, old_shape).then_some(ShapeTransition::FunctionLengthReconfigured),
         constructed_name.map(|(constructor, new_target_is_base)| ShapeTransition::Constructed { constructor, new_target_is_base }),
     ].into_iter().flatten() {
         parent = append_compacted_shape(shapes, transitions, parent, transition, 0);
@@ -277,7 +278,7 @@ impl<H: Host> Vm<H> {
             .for_each(|continuation| reference(continuation.program));
         self.heap
             .for_each_cell(|cell| cell.program_references(&mut reference));
-        let reclaimed = self.programs.reclaim_unreferenced(&referenced);
+        let reclaimed = self.programs.reclaim_unreferenced(referenced);
         if reclaimed.is_empty() {
             return;
         }
@@ -291,6 +292,7 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn collect_slow(&mut self, _program: &ResidualProgram, full: bool) {
         let full = self.heap.collection_is_full(full);
+        self.constructed_shapes.fill(super::provenance::ConstructedShape::EMPTY);
         #[cfg(feature = "profile-aggregate")]
         for (index, frame) in self.frames.iter().enumerate() {
             self.profile.gc_frame(
@@ -433,7 +435,7 @@ impl<H: Host> Vm<H> {
                     intrinsics.stack_setter,
                     intrinsics.call_site_constructor,
                     intrinsics.call_site_prototype,
-                ]
+                ].into_iter().chain(intrinsics.host_formatter)
             },
         ));
         roots.extend(self.realm.intrinsics.regexp_intrinsics.iter().flat_map(
@@ -738,6 +740,8 @@ impl<H: Host> Vm<H> {
         // Heap weak fields are pruned during collection. Prune the VM-owned
         // weak function cache before any post-collection cleanup can allocate
         // into newly freed slots.
+        let heap = &self.heap;
+        self.programs.prune_owned_script_realms(|realm| heap.weak_value(realm).is_some());
         self.prune_function_values();
         self.prune_wasm_exported_functions();
         // A home stays reachable through its environment; entries of swept environments go
@@ -1005,7 +1009,9 @@ mod tests {
             ShapeTransition::FunctionName { name: 7 }, 0);
         let reconfigured = append_compacted_shape(&mut shapes, &mut transitions, named,
             ShapeTransition::FunctionNameReconfigured, 0);
-        let created = append_compacted_shape(&mut shapes, &mut transitions, reconfigured,
+        let length_reconfigured = append_compacted_shape(&mut shapes, &mut transitions, reconfigured,
+            ShapeTransition::FunctionLengthReconfigured, 0);
+        let created = append_compacted_shape(&mut shapes, &mut transitions, length_reconfigured,
             ShapeTransition::Constructed { constructor: Value::heap(17), new_target_is_base: false }, 0);
         let with_field = append_compacted_shape(&mut shapes, &mut transitions, created,
             ShapeTransition::Add { key: PropertyKey::string(9), slot: 0, attributes: DEFAULT_DATA_ATTRIBUTES }, 1);
@@ -1013,6 +1019,7 @@ mod tests {
         let shape = rebuild_shape(&shapes, &[], with_field, &mut rebuilt,
             &mut Vec::new(), &mut crate::vm::shape_transitions::ShapeTransitionIndex::default());
         assert_eq!(provenance::shape_names(&rebuilt, shape), (Some(7), Some((Value::heap(17), false)), true));
+        assert!(provenance::shape_function_length_reconfigured(&rebuilt, shape));
         assert_eq!(rebuilt[shape as usize].storage_len(), 1);
         assert_eq!(super::active_shape_attributes(&rebuilt, shape).len(), 1);
     }

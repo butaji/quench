@@ -778,13 +778,14 @@ pub(super) fn relocate(
     for site in binding_sites {
         site.resume_pc = map[site.resume_pc as usize] as u32;
     }
-    relocate_source_positions(code.len(), source_positions, old_code, map);
+    relocate_source_positions(code.len(), source_positions, old_code, wide, map);
 }
 
 fn relocate_source_positions(
     code_len: usize,
     source_positions: &mut Vec<crate::bytecode::SourcePosition>,
     old_code: &[Instr],
+    wide: &[WideInstruction],
     map: &[usize],
 ) {
     let surviving_positions = source_positions
@@ -824,7 +825,7 @@ fn relocate_source_positions(
         // Call anchors are observable even when their location matches a
         // preceding Move that a later pass may remove.
         if previous_location == Some(location)
-            && old_code[anchor].op().control_flow_layout()
+            && fixed_width(old_code[anchor], wide).op().control_flow_layout()
                 != crate::bytecode::ControlFlowLayout::Call
         {
             continue;
@@ -1284,4 +1285,27 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn wide_call_source_anchors_survive_later_argument_move_removal() {
+        use crate::bytecode::SourcePosition;
+        let wide = [WideInstruction::new(Op::Call, 0, 0, 0, 0)];
+        let load = Instr::new(Op::LoadConst, 0, 0, 0, 0);
+        let call = Instr::wide(0).unwrap();
+        let mut positions = vec![
+            SourcePosition { pc: 0, line: 1, column: 74 },
+            SourcePosition { pc: 1, line: 1, column: 69 },
+            SourcePosition { pc: 2, line: 1, column: 69 },
+        ];
+        let first = [load, Instr::new(Op::Move, 0, 0, 0, 0), call];
+        relocate_source_positions(3, &mut positions, &first, &wide, &[0, 1, 2, 3]);
+        assert_eq!(positions.last().unwrap().pc, 2);
+        let second = [load, Instr::new(Op::Nop, 0, 0, 0, 0), call];
+        relocate_source_positions(2, &mut positions, &second, &wide, &[0, 1, 1, 2]);
+        assert_eq!(positions, vec![
+            SourcePosition { pc: 0, line: 1, column: 74 },
+            SourcePosition { pc: 1, line: 1, column: 69 },
+        ]);
+    }
+
 }

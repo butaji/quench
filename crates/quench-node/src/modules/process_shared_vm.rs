@@ -22,9 +22,6 @@ const STDOUT_FD: i32 = 1;
 const STDERR_FD: i32 = 2;
 static HRTIME_ORIGIN: OnceLock<Instant> = OnceLock::new();
 const MAX_SAFE_EXIT_CODE: f64 = 9_007_199_254_740_991.0;
-const HOST_WARNING_STACK_OPTION: &str = "\0quench:process-warning-stack";
-const HOST_WARNING_ID_OPTION: &str = "\0quench:process-warning-id";
-const HOST_CAPTURE_CALLBACK_PROPERTY: &str = "\0quench:process-capture-callback";
 const UNHANDLED_REJECTION_CLI_GUIDANCE: &str = "To terminate the node process on unhandled promise rejection, use the CLI flag `--unhandled-rejections=strict` (see https://nodejs.org/api/cli.html#cli_unhandled_rejections_mode).";
 
 pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
@@ -35,9 +32,20 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         .scheduler
         .reset_shared();
     let process = context.object_rooted()?;
+    let capture_state = context.object_rooted()?;
+    let null = context.null();
+    let auxiliary = context.array_rooted(&[])?;
+    let report_flag = context.boolean(false);
+    for (name, value) in [("captureFn", null), ("auxiliaryCallbacks", auxiliary), ("reportFlag", report_flag)] {
+        let key = context.string_rooted(name);
+        context.define_data_property_rooted(capture_state, key, value, true, true, true)?;
+    }
+    let capture_state = context.retain(capture_state)?;
+    context.host_mut().shared_state().borrow_mut().process_capture_state = Some(capture_state);
     let function = context.host_function(crate::host::shared_vm::operation("uptime"))?;
     install(context, process, "uptime", function)?;
     install_exit_code(context, process)?;
+    super::report_configuration_shared_vm::install(context, process)?;
     let exit = context.host_function(crate::host::shared_vm::operation("processExit"))?;
     install(context, process, "exit", exit)?;
     let really_exit = context.host_function(crate::host::shared_vm::operation("reallyExit"))?;
@@ -49,17 +57,20 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     install(context, process, "stderr", stderr)?;
     let event_count = context.number(0.0);
     install(context, process, "_eventsCount", event_count)?;
-    for (name, operation) in [
-        ("nextTick", "nextTick"),
-        ("cwd", "processCwd"),
-        ("chdir", "processChdir"),
-        ("getuid", "processGetuid"),
-        ("geteuid", "processGeteuid"),
-        ("getgid", "processGetgid"),
-        ("getegid", "processGetegid"),
-        ("umask", "processUmask"),
+    // Property, native operation and the function name Node reports.
+    for (name, operation, function_name) in [
+        ("nextTick", "nextTick", "nextTick"),
+        ("cwd", "processCwd", "wrappedCwd"),
+        ("chdir", "processChdir", "wrappedChdir"),
+        ("getuid", "processGetuid", "getuid"),
+        ("geteuid", "processGeteuid", "geteuid"),
+        ("getgid", "processGetgid", "getgid"),
+        ("getegid", "processGetegid", "getegid"),
+        ("umask", "processUmask", "wrappedUmask"),
+        ("dlopen", "processDlopen", "dlopen"),
     ] {
-        let function = context.host_function(crate::host::shared_vm::operation(operation))?;
+        let operation = crate::host::shared_vm::operation(operation);
+        let function = context.host_function_named(operation, function_name)?;
         install(context, process, name, function)?;
     }
     #[cfg(unix)]
@@ -71,15 +82,6 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         context.define_data_property_rooted(function, key, name, false, false, true)?;
         install(context, process, "getgroups", function)?;
     }
-    let error_instance = context.evaluate_script_rooted(
-        "((Error) => value => value instanceof Error)(Error)",
-        "node:process/warning-instance.js",
-    )?;
-    let emit_warning = context.host_function_with_data(
-        crate::host::shared_vm::operation("processEmitWarning"),
-        error_instance,
-    )?;
-    install(context, process, "emitWarning", emit_warning)?;
     #[cfg(unix)]
     for (name, operation) in [
         ("setuid", "processSetuid"),
@@ -111,24 +113,14 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
 
     let raw_debug = context.host_function(crate::host::shared_vm::operation("processRawDebug"))?;
     install(context, process, "_rawDebug", raw_debug)?;
-    let set_capture = context.host_function(crate::host::shared_vm::operation(
-        "processSetUncaughtExceptionCaptureCallback",
-    ))?;
-    install(
-        context,
-        process,
-        "setUncaughtExceptionCaptureCallback",
-        set_capture,
-    )?;
-    let has_capture = context.host_function(crate::host::shared_vm::operation(
-        "processHasUncaughtExceptionCaptureCallback",
-    ))?;
-    install(
-        context,
-        process,
-        "hasUncaughtExceptionCaptureCallback",
-        has_capture,
-    )?;
+    for (name, operation) in [
+        ("binding", "processBinding"),
+        ("setUncaughtExceptionCaptureCallback", "processSetUncaughtExceptionCaptureCallback"),
+        ("hasUncaughtExceptionCaptureCallback", "processHasUncaughtExceptionCaptureCallback"),
+    ] {
+        let function = context.host_constructor_named(crate::host::shared_vm::operation(operation), name)?;
+        install(context, process, name, function)?;
+    }
     let active_handles =
         context.host_function(crate::host::shared_vm::operation("processGetActiveHandles"))?;
     install(context, process, "_getActiveHandles", active_handles)?;
@@ -152,21 +144,6 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     let undefined = context.undefined();
     let hrtime = context.call_rooted(hrtime_factory, undefined, &[hrtime_raw])?;
     install(context, process, "hrtime", hrtime)?;
-    let on = context.host_function(crate::host::shared_vm::operation("on"))?;
-    install(context, process, "on", on)?;
-    install(context, process, "addListener", on)?;
-    let remove_listener =
-        context.host_function(crate::host::shared_vm::operation("processRemoveListener"))?;
-    install(context, process, "removeListener", remove_listener)?;
-    install(context, process, "off", remove_listener)?;
-    let remove_all_listeners = context.host_function(crate::host::shared_vm::operation(
-        "processRemoveAllListeners",
-    ))?;
-    install(context, process, "removeAllListeners", remove_all_listeners)?;
-    let once = context.host_function(crate::host::shared_vm::operation("processOnce"))?;
-    install(context, process, "once", once)?;
-    let emit = context.host_function(crate::host::shared_vm::operation("processEmit"))?;
-    install(context, process, "emit", emit)?;
     let exiting = context.boolean(false);
     install(context, process, "_exiting", exiting)?;
     let shared_state = context.host_mut().shared_state();
@@ -1472,51 +1449,71 @@ pub(crate) fn raw_debug(
     Ok(context.undefined())
 }
 
+fn capture_state(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    context.host_mut().shared_state().borrow().process_capture_state
+        .ok_or_else(|| RootedError::host("process capture state is not initialized"))
+}
+
 pub(crate) fn set_uncaught_exception_capture_callback(
     context: &mut NativeContext<'_, NodeHost>,
-    process: RootId,
+    _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let Some(callback) = args.first().copied() else {
         return Err(uncaught_capture_type_error(context, None)?);
     };
-    let current_key = context.string_rooted(HOST_CAPTURE_CALLBACK_PROPERTY);
-    let current = context.get_property_rooted(process, current_key)?;
-    if context.is_callable_rooted(current)? {
-        let error = context.error_rooted(
-            "setupUncaughtExceptionCapture() called while a capture callback is already set",
-        )?;
-        return Err(throw_with_code(
-            context,
-            error,
-            "ERR_UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET",
-        ));
-    }
     let is_null = context.rooted_value(callback).is_some_and(Value::is_null);
     if !is_null && !context.is_callable_rooted(callback)? {
         return Err(uncaught_capture_type_error(context, Some(callback))?);
     }
-    let value = if is_null {
-        context.undefined()
+    let state = capture_state(context)?;
+    if !is_null {
+        let current_key = context.string_rooted("captureFn");
+        let current = context.get_property_rooted(state, current_key)?;
+        if context.rooted_value(current).is_some_and(|value| !value.is_null()) {
+            let error = context.error_rooted(
+                "`process.setupUncaughtExceptionCapture()` was called while a capture callback was already active",
+            )?;
+            super::node_errors_shared_vm::decorate_error(context, error, "ERR_UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET")?;
+            return Err(context.throw(error));
+        }
+    }
+    context.assign_named_property_rooted(state, "captureFn", callback)?;
+    let process = context.host_mut().shared_state().borrow().process_module
+        .ok_or_else(|| RootedError::host("process is not initialized"))?;
+    use super::event_constructor_shared_vm::get;
+    if is_null {
+        let auxiliary = get(context, state, "auxiliaryCallbacks")?;
+        let length = get(context, auxiliary, "length")?;
+        let zero = context.number(0.0);
+        if context.strict_equal_rooted(length, zero)? {
+            let report = get(context, process, "report")?;
+            let flag = get(context, state, "reportFlag")?;
+            context.assign_named_property_rooted(report, "reportOnUncaughtException", flag)?;
+        }
     } else {
-        callback
-    };
-    if !context.define_data_property_rooted(process, current_key, value, true, false, true)? {
-        return Err(RootedError::host(
-            "cannot set process uncaught-exception capture callback",
-        ));
+        let report = get(context, process, "report")?;
+        let flag = get(context, report, "reportOnUncaughtException")?;
+        let yes = context.boolean(true);
+        let enabled = context.strict_equal_rooted(flag, yes)?;
+        let enabled = context.boolean(enabled);
+        context.assign_named_property_rooted(state, "reportFlag", enabled)?;
+        let report = get(context, process, "report")?;
+        let no = context.boolean(false);
+        context.assign_named_property_rooted(report, "reportOnUncaughtException", no)?;
     }
     Ok(context.undefined())
 }
 
 pub(crate) fn has_uncaught_exception_capture_callback(
     context: &mut NativeContext<'_, NodeHost>,
-    process: RootId,
+    _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let key = context.string_rooted(HOST_CAPTURE_CALLBACK_PROPERTY);
-    let callback = context.get_property_rooted(process, key)?;
-    let has_callback = context.is_callable_rooted(callback)?;
+    let state = capture_state(context)?;
+    let key = context.string_rooted("captureFn");
+    let callback = context.get_property_rooted(state, key)?;
+    let has_callback = context.rooted_value(callback).is_some_and(|value| !value.is_null());
     Ok(context.boolean(has_callback))
 }
 
@@ -1580,16 +1577,8 @@ fn uncaught_capture_type_error(
     context: &mut NativeContext<'_, NodeHost>,
     value: Option<RootId>,
 ) -> Result<RootedError, RootedError> {
-    let received = value.map_or_else(
-        || Ok("undefined".to_owned()),
-        |value| received_type(context, value),
-    )?;
-    throw_process_error(
-        context,
-        &format!("The \"fn\" argument must be of type function or null. Received {received}"),
-        "ERR_INVALID_ARG_TYPE",
-        true,
-    )
+    let value = value.unwrap_or_else(|| context.undefined());
+    super::util_shared_vm::argument_type_error(context, value, "fn", "function or null")
 }
 
 pub(crate) fn set_env(
@@ -1825,7 +1814,8 @@ pub(crate) fn finish_execution(
         }
     })();
     if process_control.requested_exit_code().is_some() {
-        return finish_requested_exit(runtime, program);
+        let exit = finish_requested_exit(runtime, program);
+        return if process_control.fatal_exception_handler_failed() { checkpoint.and(exit) } else { exit };
     }
     let shared_state = runtime.host_mut().shared_state();
     cleanup_environment(runtime, &shared_state);
@@ -1857,18 +1847,15 @@ fn emit_before_exit(
         Err(failure) => return route_callback_failure(runtime, program, failure),
     };
     let event = runtime.string_rooted("beforeExit");
-    let callback = crate::modules::shared_event_loop::SharedCallback {
+    let callback = crate::modules::shared_event_loop::SharedCallback { execution: None,
         callback: operation,
         receiver: process,
         args: vec![event, code],
     };
-    let result = call_shared_callback(runtime, &callback);
+    let result = call_shared_callback(runtime, program, &callback);
     runtime.release_root(operation);
     runtime.release_root(event);
-    match result {
-        Ok(()) => Ok(()),
-        Err(failure) => route_callback_failure(runtime, program, failure),
-    }
+    result
 }
 
 pub(crate) fn finish_after_uncaught_error(
@@ -1883,6 +1870,15 @@ pub(crate) fn finish_after_uncaught_error(
         .process_control
         .clone();
     let routed = emit_uncaught_exception(runtime, program, error);
+    if process_control.requested_exit_code().is_some() {
+        let exit = finish_requested_exit(runtime, program);
+        if process_control.fatal_exception_handler_failed() { return routed.and(exit).map(|_| true); }
+        if let Err(error) = exit {
+            process_control.fail_fatal_exception_handler();
+            return Err(error);
+        }
+        return Ok(true);
+    }
     if matches!(&routed, Ok(true)) {
         finish_execution(runtime, program)?;
         return Ok(true);
@@ -1909,6 +1905,7 @@ pub(crate) fn finish_requested_exit(
     cleanup_environment(runtime, &shared_state);
     if process_control.exit_without_event() {
         super::tls_shared_vm::contexts::cleanup(runtime);
+        cleanup_native_work(runtime);
         super::zlib_native_shared_vm::cleanup(runtime);
         #[cfg(quench_icu)]
         super::icu_binding_shared_vm::cleanup(runtime);
@@ -1938,11 +1935,30 @@ pub(crate) fn route_uncaught_exception_value(
     exception: RootId,
     origin: &str,
 ) -> Result<bool, String> {
-    let Some(process) = shared_process_root(runtime) else {
-        return Ok(false);
-    };
-    let capture_key = runtime.string_rooted(HOST_CAPTURE_CALLBACK_PROPERTY);
-    let capture = runtime.get_property_rooted(process, capture_key);
+    let routed = route_uncaught_exception_value_inner(runtime, program, exception, origin);
+    if routed.is_err() {
+        let control = runtime.host_mut().shared_state().borrow().process_control.clone();
+        if control.requested_exit_code().is_none() { control.fail_fatal_exception_handler(); }
+    }
+    routed
+}
+
+fn route_uncaught_exception_value_inner(
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
+    exception: RootId,
+    origin: &str,
+) -> Result<bool, String> {
+    let origin_value = runtime.string_rooted(origin);
+    let monitored = call_process_event(runtime, program, "uncaughtExceptionMonitor", &[exception, origin_value]);
+    runtime.release_root(origin_value);
+    let Some(monitored) = monitored? else { return Ok(false); };
+    runtime.release_root(monitored);
+
+    let state = runtime.host_mut().shared_state().borrow().process_capture_state
+        .ok_or_else(|| "process capture state is not initialized".to_owned())?;
+    let capture_key = runtime.string_rooted("captureFn");
+    let capture = runtime.get_property_rooted(state, capture_key);
     runtime.release_root(capture_key);
     let capture = match capture {
         Ok(capture) => capture,
@@ -1956,9 +1972,11 @@ pub(crate) fn route_uncaught_exception_value(
     };
     let has_capture = runtime
         .rooted_value(capture)
-        .is_some_and(|value| !value.is_undefined() && !value.is_null());
+        .is_some_and(|value| !value.is_null());
     if has_capture {
-        let captured = runtime.call_rooted(capture, process, &[exception]);
+        runtime.release_root(capture);
+        let capture = get_rooted_property(runtime, program, state, "captureFn")?;
+        let captured = runtime.call_rooted(capture, state, &[exception]);
         runtime.release_root(capture);
         return match captured {
             Ok(result) => {
@@ -1975,46 +1993,54 @@ pub(crate) fn route_uncaught_exception_value(
         };
     }
     runtime.release_root(capture);
+    if call_auxiliary_capture(runtime, program, state, exception)? { return Ok(true); }
     let origin = runtime.string_rooted(origin);
-    let event = runtime.string_rooted("uncaughtException");
-    let emit_name = runtime.string_rooted("emit");
-    let emit = runtime.get_property_rooted(process, emit_name);
-    runtime.release_root(emit_name);
-    let emit = match emit {
-        Ok(emit) => emit,
-        Err(error) => {
-            let message = runtime.format_error(program, &error.error);
-            if let Some(exception) = error.exception {
-                runtime.release_root(exception);
-            }
-            runtime.release_root(event);
-            runtime.release_root(origin);
-            return Err(message);
-        }
-    };
-    let emitted = runtime.call_rooted(emit, process, &[event, exception, origin]);
-    runtime.release_root(emit);
-    runtime.release_root(event);
+    let handled = emit_process_event(runtime, program, "uncaughtException", &[exception, origin]);
     runtime.release_root(origin);
-    let emitted = match emitted {
-        Ok(emitted) => emitted,
-        Err(error) => {
-            let message = runtime.format_error(program, &error.error);
-            if let Some(exception) = error.exception {
-                runtime.release_root(exception);
+    handled
+}
+
+fn call_auxiliary_capture(
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
+    state: RootId,
+    exception: RootId,
+) -> Result<bool, String> {
+    let callbacks = get_rooted_property(runtime, program, state, "auxiliaryCallbacks")?;
+    let length = get_rooted_property(runtime, program, callbacks, "length");
+    runtime.release_root(callbacks);
+    let length = length?;
+    let one = runtime.root(Value::number(1.0));
+    let index = runtime.subtract_rooted(length, one);
+    runtime.release_root(length);
+    runtime.release_root(one);
+    let index = index.map_err(|error| rooted_error_message(runtime, program, error))?;
+    // A Number right operand makes a successful subtraction a Number.
+    let number = runtime.rooted_value(index).and_then(Value::as_number);
+    runtime.release_root(index);
+    let mut index = number.ok_or_else(|| "auxiliary capture index is not a number".to_owned())?;
+    while index >= 0.0 {
+        let callbacks = get_rooted_property(runtime, program, state, "auxiliaryCallbacks")?;
+        let key = runtime.root(Value::number(index));
+        let callback = runtime.get_property_rooted(callbacks, key);
+        runtime.release_root(key);
+        let callback = match callback {
+            Ok(callback) => callback,
+            Err(error) => {
+                runtime.release_root(callbacks);
+                return Err(rooted_error_message(runtime, program, error));
             }
-            return Err(message);
-        }
-    };
-    let handled = runtime
-        .rooted_value(emitted)
-        .and_then(quench_runtime::Value::as_bool)
-        .ok_or_else(|| "process.emit returned a non-boolean result".to_owned());
-    runtime.release_root(emitted);
-    match handled {
-        Ok(handled) => Ok(handled),
-        Err(message) => Err(message),
+        };
+        let called = runtime.call_rooted(callback, callbacks, &[exception]);
+        runtime.release_root(callback);
+        runtime.release_root(callbacks);
+        let called = called.map_err(|error| rooted_error_message(runtime, program, error))?;
+        let handled = runtime.rooted_value(called).and_then(Value::as_bool) == Some(true);
+        runtime.release_root(called);
+        if handled { return Ok(true); }
+        index -= 1.0;
     }
+    Ok(false)
 }
 
 fn drain_checkpoint(
@@ -2037,10 +2063,16 @@ fn drain_checkpoint(
         if crate::modules::child_process_shared_vm::poll(runtime, program, &shared_state)? {
             continue;
         }
+        if crate::modules::cares_binding::poll(runtime, program)? {
+            continue;
+        }
         if crate::modules::fetch_shared_vm::poll(runtime, program, &shared_state)? {
             continue;
         }
         if crate::modules::http_shared_vm::poll(runtime, program, &shared_state)? {
+            continue;
+        }
+        if crate::modules::napi::poll(runtime, program)? {
             continue;
         }
 
@@ -2221,11 +2253,13 @@ fn run_and_clear_native_immediates(
 }
 
 fn has_referenced_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeState>>) -> bool {
-    crate::modules::child_process_ipc_shared_vm::has_work(&shared_state.borrow())
+    shared_state.borrow().dns.has_work()
+        || crate::modules::child_process_ipc_shared_vm::has_work(&shared_state.borrow())
         || crate::modules::process_stdin_shared_vm::has_work(&shared_state.borrow().stdin)
         || crate::modules::fetch_shared_vm::has_pending(shared_state)
         || crate::modules::child_process_shared_vm::has_pending(shared_state)
         || crate::modules::http_shared_vm::has_work(shared_state)
+        || crate::modules::napi::has_work()
         || super::fs_watch_shared_vm::has_work(&shared_state.borrow().fs_watch)
         || super::fs_stat_watch_shared_vm::has_work(&shared_state.borrow().fs_stat_watch)
         || shared_state.borrow().scheduler.has_refed_shared_timers()
@@ -2316,41 +2350,52 @@ fn invoke_timer_callback(
     program: &quench_runtime::ResidualProgram,
     callback: &crate::modules::shared_event_loop::SharedCallback,
 ) -> Result<(), String> {
-    match call_shared_callback(runtime, callback) {
-        Ok(()) => Ok(()),
-        Err(failure) => route_callback_failure(runtime, program, failure),
-    }
+    call_shared_callback(runtime, program, callback)
 }
 
-fn invoke_async_callback(
+pub(super) fn invoke_async_callback(
     runtime: &mut quench_runtime::Runtime<NodeHost>,
     program: &quench_runtime::ResidualProgram,
     callback: crate::modules::shared_event_loop::SharedCallback,
 ) -> Result<(), String> {
-    let result = call_shared_callback(runtime, &callback);
+    let result = call_shared_callback(runtime, program, &callback);
     release_callback(runtime, callback);
-    match result {
-        Ok(()) => Ok(()),
-        Err(failure) => route_callback_failure(runtime, program, failure),
-    }
+    result
 }
 
 fn call_shared_callback(
     runtime: &mut quench_runtime::Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
     callback: &crate::modules::shared_event_loop::SharedCallback,
-) -> Result<(), RootedError> {
-    match runtime.call_rooted(callback.callback, callback.receiver, &callback.args) {
-        Ok(result) => {
-            runtime.release_root(result);
-            Ok(())
-        }
+) -> Result<(), String> {
+    let shared = runtime.host_mut().shared_state();
+    let scope = callback.execution.as_ref().map(|execution|
+        super::async_hooks_shared_vm::enter_resource_context(&shared, execution.id, execution.resource));
+    let before = match &callback.execution {
+        Some(execution) => super::async_hook_registry_shared_vm::emit_runtime(runtime, super::async_hook_registry_shared_vm::HookKind::Before, execution.id),
+        None => Ok(()),
+    };
+    let called = before.and_then(|()| runtime.call_rooted(callback.callback, callback.receiver, &callback.args));
+    let result = match called {
+        Ok(value) => { runtime.release_root(value); Ok(()) }
         Err(mut error) => {
             if error.exception.is_none() {
                 error.exception = error.error.thrown_value().map(|value| runtime.root(value));
             }
-            Err(error)
+            // Node's uncaught handler observes the failing resource. Only
+            // after that handler completes does the after hook/pop run.
+            route_callback_failure(runtime, program, error)
         }
-    }
+    };
+    let result = result.and_then(|()| match &callback.execution {
+        Some(execution) => match super::async_hook_registry_shared_vm::emit_runtime(runtime, super::async_hook_registry_shared_vm::HookKind::After, execution.id) {
+            Ok(()) => Ok(()),
+            Err(error) => route_callback_failure(runtime, program, error),
+        },
+        None => Ok(()),
+    });
+    drop(scope);
+    result
 }
 
 pub(super) fn route_callback_failure(
@@ -2486,12 +2531,24 @@ fn drain_shared_jobs(
         if unhandled.is_empty() {
             runtime.clear_kept_objects();
             crate::modules::zlib_stream_shared_vm::prune(runtime);
+            super::crypto_secret_job_shared_vm::prune(runtime);
+            #[cfg(quench_openssl_provider)]
+            super::crypto_hash_shared_vm::prune(runtime);
             super::zlib_native_shared_vm::prune(runtime);
             super::fs_watch_shared_vm::prune(runtime);
             super::tls_shared_vm::contexts::prune(runtime);
             #[cfg(quench_icu)]
             super::icu_binding_shared_vm::prune(runtime);
             super::net_reference_shared_vm::prune(runtime);
+            super::contextify_shared_vm::prune(runtime);
+            if !runtime.host_mut().shared_state().borrow().async_hooks.promise_resources.is_empty() {
+                let prune = runtime.host_function(crate::host::shared_vm::operation("asyncPromisePrune"))
+                    .map_err(|error| rooted_error_message(runtime, program, error))?;
+                let result = runtime.call_rooted(prune, prune, &[]);
+                runtime.release_root(prune);
+                let result = result.map_err(|error| rooted_error_message(runtime, program, error))?;
+                runtime.release_root(result);
+            }
             super::fs_stat_watch_shared_vm::prune(runtime);
             return Ok(());
         }
@@ -2590,8 +2647,7 @@ fn dispatch_promise_rejection(
                     program,
                     "PromiseRejectionHandledWarning",
                     &message,
-                    None,
-                    Some(id),
+                    WarningPayload::Error { stack: None, id: Some(id) },
                 )?;
             }
             Ok(())
@@ -2801,14 +2857,14 @@ fn rooted_error_message(
     message
 }
 
-fn emit_process_event(
+fn call_process_event(
     runtime: &mut quench_runtime::Runtime<NodeHost>,
     program: &quench_runtime::ResidualProgram,
     event_name: &str,
     args: &[RootId],
-) -> Result<bool, String> {
+) -> Result<Option<RootId>, String> {
     let Some(process) = shared_process_root(runtime) else {
-        return Ok(false);
+        return Ok(None);
     };
     let event = runtime.string_rooted(event_name);
     let emit = get_rooted_property(runtime, program, process, "emit");
@@ -2826,10 +2882,17 @@ fn emit_process_event(
     runtime.release_root(emit);
     runtime.release_root(event);
     let emitted = emitted.map_err(|error| rooted_error_message(runtime, program, error))?;
-    let handled = runtime
-        .rooted_value(emitted)
-        .and_then(Value::as_bool)
-        .ok_or_else(|| "process.emit returned a non-boolean result".to_owned());
+    Ok(Some(emitted))
+}
+
+fn emit_process_event(
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
+    event_name: &str,
+    args: &[RootId],
+) -> Result<bool, String> {
+    let Some(emitted) = call_process_event(runtime, program, event_name, args)? else { return Ok(false); };
+    let handled = runtime.truthy_rooted(emitted).map_err(|error| runtime.format_error(program, &error));
     runtime.release_root(emitted);
     handled
 }
@@ -2869,8 +2932,7 @@ fn schedule_unhandled_rejection_warnings_with_message(
         program,
         "UnhandledPromiseRejectionWarning",
         message,
-        stack,
-        None,
+        WarningPayload::Message,
     )?;
     schedule_unhandled_rejection_note(runtime, program, id, stack)
 }
@@ -2889,9 +2951,13 @@ fn schedule_unhandled_rejection_note(
         program,
         "UnhandledPromiseRejectionWarning",
         &message,
-        stack,
-        None,
+        WarningPayload::Error { stack, id: None },
     )
+}
+
+enum WarningPayload<'a> {
+    Message,
+    Error { stack: Option<&'a str>, id: Option<u64> },
 }
 
 fn schedule_rejection_warning(
@@ -2899,89 +2965,42 @@ fn schedule_rejection_warning(
     program: &quench_runtime::ResidualProgram,
     name: &str,
     message: &str,
-    stack: Option<&str>,
-    warning_id: Option<u64>,
+    payload_kind: WarningPayload<'_>,
 ) -> Result<(), String> {
-    let Some(process) = shared_process_root(runtime) else {
-        return Ok(());
-    };
+    let Some(process) = shared_process_root(runtime) else { return Ok(()); };
     let emit_warning = get_rooted_property(runtime, program, process, "emitWarning")?;
-    let message = runtime.string_rooted(message);
-    let options = match runtime.object_rooted() {
-        Ok(options) => options,
-        Err(error) => {
-            runtime.release_root(emit_warning);
-            runtime.release_root(message);
-            return Err(rooted_error_message(runtime, program, error));
-        }
-    };
-    let type_key = runtime.string_rooted("type");
-    let type_value = runtime.string_rooted(name);
-    let stack_key = runtime.string_rooted(HOST_WARNING_STACK_OPTION);
-    let stack_value = stack.map(|stack| runtime.string_rooted(stack));
-    let id_key = runtime.string_rooted(HOST_WARNING_ID_OPTION);
-    let id_value = warning_id.map(|id| runtime.root(Value::number(id as f64)));
-    let set_type = runtime.set_property_rooted(options, type_key, type_value, options);
-    runtime.release_root(type_key);
-    runtime.release_root(type_value);
-    let set_stack = stack_value.map(|stack| {
-        let result = runtime.set_property_rooted(options, stack_key, stack, options);
-        runtime.release_root(stack);
-        result
-    });
-    runtime.release_root(stack_key);
-    let set_id = id_value.map(|id| {
-        let result = runtime.set_property_rooted(options, id_key, id, options);
-        runtime.release_root(id);
-        result
-    });
-    runtime.release_root(id_key);
-    if let Some(set_stack) = set_stack {
-        match set_stack {
-            Ok(true) => {}
-            Ok(false) => {
-                runtime.release_root(emit_warning);
-                runtime.release_root(message);
-                runtime.release_root(options);
-                return Err("cannot set process.emitWarning stack".into());
+    let mut roots = vec![emit_warning];
+    let result = (|| {
+        let object_warning = matches!(payload_kind, WarningPayload::Error { .. });
+        let payload = if let WarningPayload::Error { stack, id } = payload_kind {
+            let warning = runtime.error_rooted(message)
+                .map_err(|error| rooted_error_message(runtime, program, error))?;
+            roots.push(warning);
+            set_rooted_text_property(runtime, program, warning, "name", name)?;
+            if let Some(stack) = stack {
+                set_rooted_text_property(runtime, program, warning, "stack", stack)?;
             }
-            Err(error) => {
-                runtime.release_root(emit_warning);
-                runtime.release_root(message);
-                runtime.release_root(options);
-                return Err(rooted_error_message(runtime, program, error));
+            if let Some(id) = id {
+                set_shared_property(runtime, program, warning, "id", Value::number(id as f64))?;
             }
-        }
-    }
-    if !matches!(set_type, Ok(true)) {
-        runtime.release_root(emit_warning);
-        runtime.release_root(message);
-        runtime.release_root(options);
-        return match set_type {
-            Ok(false) => Err("cannot set process.emitWarning type".into()),
-            Err(error) => Err(rooted_error_message(runtime, program, error)),
-            Ok(true) => unreachable!(),
+            warning
+        } else {
+            let message = runtime.string_rooted(message);
+            roots.push(message);
+            message
         };
-    }
-    if !matches!(set_id, None | Some(Ok(true))) {
-        runtime.release_root(emit_warning);
-        runtime.release_root(message);
-        runtime.release_root(options);
-        return match set_id.expect("checked present") {
-            Ok(false) => Err("cannot set process.emitWarning id".into()),
-            Err(error) => Err(rooted_error_message(runtime, program, error)),
-            Ok(true) => unreachable!(),
+        let args = if object_warning { vec![payload] } else {
+            let name = runtime.string_rooted(name);
+            roots.push(name);
+            vec![payload, name]
         };
-    }
-    let result = runtime.call_rooted(emit_warning, process, &[message, options]);
-    runtime.release_root(emit_warning);
-    runtime.release_root(message);
-    runtime.release_root(options);
+        let result = runtime.call_rooted(emit_warning, process, &args)
+            .map_err(|error| rooted_error_message(runtime, program, error))?;
+        runtime.release_root(result);
+        Ok(())
+    })();
+    for root in roots { runtime.release_root(root); }
     result
-        .map(|result| {
-            runtime.release_root(result);
-        })
-        .map_err(|error| rooted_error_message(runtime, program, error))
 }
 
 fn cleanup_environment(
@@ -2994,6 +3013,27 @@ fn cleanup_environment(
     super::fs_stat_watch_shared_vm::cleanup(runtime);
 }
 
+// Exit listeners may submit native work. Accept it, then abandon it without
+// executing guest callbacks. Teardown also runs when an exit listener throws.
+fn cleanup_native_work(runtime: &mut quench_runtime::Runtime<NodeHost>) {
+    let shared = runtime.host_mut().shared_state();
+    shared.borrow_mut().native_tasks.shutdown();
+    super::crypto_secret_job_shared_vm::cleanup(runtime);
+    #[cfg(quench_openssl_provider)]
+    super::crypto_hash_shared_vm::cleanup(runtime);
+    super::cares_binding::cleanup(runtime);
+    let callbacks = shared.borrow_mut().scheduler.take_all_shared_immediates();
+    for immediate in callbacks {
+        let callback = immediate.callback;
+        if let Some(execution) = callback.execution {
+            // No destroy dispatch is scheduled during final cancellation.
+            super::async_hooks_shared_vm::clear_context(runtime, &shared, execution.id);
+            runtime.release_root(execution.resource);
+        }
+        release_callback_roots(runtime, callback.callback, callback.receiver, callback.args);
+    }
+}
+
 // Builtin native objects remain usable throughout synchronous exit listeners.
 fn emit_exit(
     runtime: &mut quench_runtime::Runtime<NodeHost>,
@@ -3002,6 +3042,7 @@ fn emit_exit(
 ) -> Result<(), String> {
     let result = emit_exit_inner(runtime, program, code);
     super::tls_shared_vm::contexts::cleanup(runtime);
+        cleanup_native_work(runtime);
         super::zlib_native_shared_vm::cleanup(runtime);
     #[cfg(quench_icu)]
     super::icu_binding_shared_vm::cleanup(runtime);
@@ -3014,76 +3055,28 @@ fn emit_exit_inner(
     program: &quench_runtime::ResidualProgram,
     code: i32,
 ) -> Result<(), String> {
-    let shared_state = runtime.host_mut().shared_state();
-    let _span = crate::modules::trace_state::EnvironmentSpan::enter(&shared_state, "AtExit");
-    shared_state.borrow().process_control.begin_exit_emission();
-    let listeners = shared_state.borrow_mut().scheduler.begin_shared_exit();
+    let state = runtime.host_mut().shared_state();
+    let _span = crate::modules::trace_state::EnvironmentSpan::enter(&state, "AtExit");
+    state.borrow().process_control.begin_exit_emission();
+    if !state.borrow_mut().scheduler.begin_shared_exit() { return Ok(()); }
     if let Some(process) = shared_process_root(runtime) {
-        let event_count = shared_state.borrow().scheduler.shared_listener_count();
-        let setup = set_shared_property(
-            runtime,
-            program,
-            process,
-            "_eventsCount",
-            quench_runtime::Value::number(event_count as f64),
-        )
-        .and_then(|()| {
-            set_shared_property(
-                runtime,
-                program,
-                process,
-                "_exiting",
-                quench_runtime::Value::TRUE,
-            )
-        });
-        if let Err(error) = setup {
-            for callback in listeners {
-                release_callback(runtime, callback);
-            }
-            return Err(error);
-        }
+        set_shared_property(runtime, program, process, "_exiting", Value::TRUE)?;
     }
-    let mut listeners = listeners.into_iter();
-    while let Some(mut listener) = listeners.next() {
-        listener
-            .args
-            .push(runtime.root(quench_runtime::Value::number(code as f64)));
-        if let Err(error) = invoke(runtime, program, listener) {
-            for callback in listeners {
-                release_callback(runtime, callback);
-            }
-            return Err(error);
-        }
-    }
+    let code = runtime.root(Value::number(f64::from(code)));
+    let emitted = call_process_event(runtime, program, "exit", &[code]);
+    runtime.release_root(code);
+    if let Some(emitted) = emitted? { runtime.release_root(emitted); }
     Ok(())
-}
-
-fn invoke(
-    runtime: &mut quench_runtime::Runtime<NodeHost>,
-    program: &quench_runtime::ResidualProgram,
-    callback: crate::modules::shared_event_loop::SharedCallback,
-) -> Result<(), String> {
-    let result = runtime.call_rooted(callback.callback, callback.receiver, &callback.args);
-    release_callback_roots(runtime, callback.callback, callback.receiver, callback.args);
-    match result {
-        Ok(value) => {
-            runtime.release_root(value);
-            Ok(())
-        }
-        Err(error) => {
-            let message = runtime.format_error(program, &error.error);
-            if let Some(exception) = error.exception {
-                runtime.release_root(exception);
-            }
-            Err(message)
-        }
-    }
 }
 
 fn release_callback(
     runtime: &mut quench_runtime::Runtime<NodeHost>,
     callback: crate::modules::shared_event_loop::SharedCallback,
 ) {
+    if let Some(execution) = callback.execution {
+        super::async_hooks_shared_vm::complete_runtime_context(runtime, execution.id);
+        runtime.release_root(execution.resource);
+    }
     release_callback_roots(runtime, callback.callback, callback.receiver, callback.args);
 }
 
@@ -3146,565 +3139,9 @@ pub(crate) fn next_tick(
         return Ok(context.undefined());
     }
 
-    let callback = context.retain(callback)?;
     let undefined = context.undefined();
-    let receiver = context.retain(undefined)?;
-    let retained_args = args[1..]
-        .iter()
-        .copied()
-        .map(|argument| context.retain(argument))
-        .collect::<Result<Vec<_>, _>>()?;
-    state.borrow_mut().scheduler.queue_shared_next_tick(
-        crate::modules::shared_event_loop::SharedCallback {
-            callback,
-            receiver,
-            args: retained_args,
-        },
-    );
+    super::shared_event_loop::queue_next_tick(context, callback, undefined, &args[1..])?;
     Ok(context.undefined())
-}
-
-pub(crate) fn on(
-    context: &mut NativeContext<'_, NodeHost>,
-    receiver: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    register_process_listener(context, receiver, args, false)
-}
-
-pub(crate) fn once(
-    context: &mut NativeContext<'_, NodeHost>,
-    receiver: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    register_process_listener(context, receiver, args, true)
-}
-
-pub(crate) fn remove_listener(
-    context: &mut NativeContext<'_, NodeHost>,
-    receiver: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let event_root = args.first().copied().unwrap_or_else(|| context.undefined());
-    let event = process_event_name(context, event_root)?;
-    let Some(callback) = args.get(1).copied() else {
-        return invalid_callback(context, "undefined");
-    };
-    if !context.is_callable_rooted(callback)? {
-        let received = received_type(context, callback)?;
-        return invalid_callback(context, &received);
-    }
-    let callback_value = context
-        .rooted_value(callback)
-        .ok_or_else(|| RootedError::host("invalid process listener callback root"))?;
-    let snapshots = context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .scheduler
-        .shared_listener_snapshots(&event);
-    let listener = snapshots
-        .into_iter()
-        .rev()
-        .find(|listener| context.rooted_value(listener.callback) == Some(callback_value));
-    let Some(listener) = listener else {
-        return Ok(receiver);
-    };
-    let removed = context
-        .host_mut()
-        .shared_state()
-        .borrow_mut()
-        .scheduler
-        .remove_shared_listener(&event, listener.id);
-    let Some((callback, event_root, event_removed)) = removed else {
-        return Ok(receiver);
-    };
-    release_context_callback(context, callback);
-    if let Some(event_root) = event_root {
-        context.release_root(event_root);
-    }
-    if event_removed {
-        unwatch_process_signal(context, Some(&event));
-        update_process_event_count(context, receiver)?;
-    }
-    Ok(receiver)
-}
-
-pub(crate) fn remove_all_listeners(
-    context: &mut NativeContext<'_, NodeHost>,
-    receiver: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let event = match args.first().copied() {
-        Some(value)
-            if !context
-                .rooted_value(value)
-                .is_some_and(quench_runtime::Value::is_undefined) =>
-        {
-            Some(process_event_name(context, value)?)
-        }
-        _ => None,
-    };
-    let (callbacks, event_roots) = context
-        .host_mut()
-        .shared_state()
-        .borrow_mut()
-        .scheduler
-        .remove_all_shared_listeners(event.as_ref());
-    for callback in callbacks {
-        release_context_callback(context, callback);
-    }
-    for root in event_roots {
-        context.release_root(root);
-    }
-    unwatch_process_signal(context, event.as_ref());
-    update_process_event_count(context, receiver)?;
-    Ok(receiver)
-}
-
-fn register_process_listener(
-    context: &mut NativeContext<'_, NodeHost>,
-    receiver: RootId,
-    args: &[RootId],
-    once: bool,
-) -> Result<RootId, RootedError> {
-    let event_root = args.first().copied().unwrap_or_else(|| context.undefined());
-    let event = process_event_name(context, event_root)?;
-    let Some(callback) = args.get(1).copied() else {
-        return invalid_callback(context, "undefined");
-    };
-    if !context.is_callable_rooted(callback)? {
-        let received = received_type(context, callback)?;
-        return invalid_callback(context, &received);
-    }
-    let id = context
-        .host_mut()
-        .shared_state()
-        .borrow_mut()
-        .scheduler
-        .reserve_shared_listener_id()
-        .ok_or_else(|| RootedError::host("process listener identifier space exhausted"))?;
-    if let crate::modules::shared_event_loop::SharedEventKey::String(name) = &event {
-        let result = context
-            .host_mut()
-            .shared_state()
-            .borrow_mut()
-            .process_signals
-            .watch(name);
-        if let Err(error) = result {
-            return Err(signal_start_error(context, error)?);
-        }
-    }
-    let callback = context.retain(callback)?;
-    let retained_receiver = context.retain(receiver)?;
-    let event = retain_process_event_name(context, event, event_root)?;
-    let (new_event, duplicate_root) = context
-        .host_mut()
-        .shared_state()
-        .borrow_mut()
-        .scheduler
-        .add_shared_listener(
-            event,
-            id,
-            crate::modules::shared_event_loop::SharedCallback {
-                callback,
-                receiver: retained_receiver,
-                args: Vec::new(),
-            },
-            once,
-        );
-    if let Some(root) = duplicate_root {
-        context.release_root(root);
-    }
-    if new_event {
-        let count = context
-            .host_mut()
-            .shared_state()
-            .borrow()
-            .scheduler
-            .shared_listener_count();
-        let count = context.number(count as f64);
-        install(context, receiver, "_eventsCount", count)?;
-    }
-    Ok(receiver)
-}
-
-pub(crate) fn emit(
-    context: &mut NativeContext<'_, NodeHost>,
-    receiver: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let event_root = args.first().copied().unwrap_or_else(|| context.undefined());
-    let event = process_event_name(context, event_root)?;
-    let snapshots = context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .scheduler
-        .shared_listener_snapshots(&event);
-    let had_listeners = !snapshots.is_empty();
-    let mut listeners = Vec::with_capacity(snapshots.len());
-    for snapshot in snapshots {
-        let callback = match context.retain(snapshot.callback) {
-            Ok(callback) => callback,
-            Err(error) => {
-                release_listener_snapshots(context, listeners);
-                return Err(error);
-            }
-        };
-        let retained_receiver = match context.retain(snapshot.receiver) {
-            Ok(receiver) => receiver,
-            Err(error) => {
-                context.release_root(callback);
-                release_listener_snapshots(context, listeners);
-                return Err(error);
-            }
-        };
-        listeners.push((snapshot, callback, retained_receiver));
-    }
-    let event_args = args.get(1..).unwrap_or_default();
-    let mut listeners = listeners.into_iter();
-    while let Some((listener, callback, retained_receiver)) = listeners.next() {
-        if listener.once {
-            let removed = context
-                .host_mut()
-                .shared_state()
-                .borrow_mut()
-                .scheduler
-                .take_shared_once_listener(&event, listener.id);
-            let Some((stored, event_root, event_removed)) = removed else {
-                context.release_root(callback);
-                context.release_root(retained_receiver);
-                continue;
-            };
-            release_context_callback(context, stored);
-            if let Some(event_root) = event_root {
-                context.release_root(event_root);
-            }
-            if event_removed {
-                unwatch_process_signal(context, Some(&event));
-                if let Err(error) = update_process_event_count(context, receiver) {
-                    context.release_root(callback);
-                    context.release_root(retained_receiver);
-                    release_listener_snapshots(context, listeners);
-                    return Err(error);
-                }
-            }
-        }
-        let result = context.call_rooted(callback, retained_receiver, event_args);
-        context.release_root(callback);
-        context.release_root(retained_receiver);
-        match result {
-            Ok(result) => {
-                context.release_root(result);
-            }
-            Err(error) => {
-                release_listener_snapshots(context, listeners);
-                return Err(error);
-            }
-        }
-    }
-    Ok(context.boolean(had_listeners))
-}
-
-fn release_listener_snapshots(
-    context: &mut NativeContext<'_, NodeHost>,
-    listeners: impl IntoIterator<
-        Item = (
-            crate::modules::shared_event_loop::SharedListenerSnapshot,
-            RootId,
-            RootId,
-        ),
-    >,
-) {
-    for (_, callback, receiver) in listeners {
-        context.release_root(callback);
-        context.release_root(receiver);
-    }
-}
-
-fn release_context_callback(
-    context: &mut NativeContext<'_, NodeHost>,
-    callback: crate::modules::shared_event_loop::SharedCallback,
-) {
-    context.release_root(callback.callback);
-    context.release_root(callback.receiver);
-    for argument in callback.args {
-        context.release_root(argument);
-    }
-}
-
-fn update_process_event_count(
-    context: &mut NativeContext<'_, NodeHost>,
-    process: RootId,
-) -> Result<(), RootedError> {
-    let count = context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .scheduler
-        .shared_listener_count();
-    let count = context.number(count as f64);
-    install(context, process, "_eventsCount", count)
-}
-
-fn process_event_name(
-    context: &mut NativeContext<'_, NodeHost>,
-    value: RootId,
-) -> Result<crate::modules::shared_event_loop::SharedEventKey, RootedError> {
-    if let Some(event) = context.string_text(value)? {
-        return Ok(crate::modules::shared_event_loop::SharedEventKey::String(
-            event,
-        ));
-    }
-    if context.is_symbol_rooted(value)? {
-        let identity = context
-            .rooted_value(value)
-            .ok_or_else(|| RootedError::host("invalid process event symbol root"))?;
-        return Ok(crate::modules::shared_event_loop::SharedEventKey::Symbol {
-            identity,
-            root: value,
-        });
-    }
-    let received = received_type(context, value)?;
-    let error = context.type_error_rooted(&format!(
-        "The \"type\" argument must be of type string. Received {received}"
-    ))?;
-    let code = context.string_rooted("ERR_INVALID_ARG_TYPE");
-    install(context, error, "code", code)?;
-    Err(context.throw(error))
-}
-
-fn retain_process_event_name(
-    context: &mut NativeContext<'_, NodeHost>,
-    event: crate::modules::shared_event_loop::SharedEventKey,
-    source: RootId,
-) -> Result<crate::modules::shared_event_loop::SharedEventKey, RootedError> {
-    match event {
-        crate::modules::shared_event_loop::SharedEventKey::String(name) => Ok(
-            crate::modules::shared_event_loop::SharedEventKey::String(name),
-        ),
-        crate::modules::shared_event_loop::SharedEventKey::Symbol { identity, .. } => {
-            let root = context.retain(source)?;
-            Ok(crate::modules::shared_event_loop::SharedEventKey::Symbol { identity, root })
-        }
-    }
-}
-
-pub(crate) fn emit_warning(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let undefined = context.undefined();
-    let payload = args.first().copied().unwrap_or(undefined);
-    let options = args.get(1).copied().unwrap_or(undefined);
-    let mut kind = options;
-    let mut code = args.get(2).copied().unwrap_or(undefined);
-    let mut detail = None;
-    let mut host_stack = None;
-    let mut rejection_id = None;
-    let global = context.global_root()?;
-    let process_key = context.string_rooted("process");
-    let process = context.get_property_rooted(global, process_key)?;
-    let no_deprecation_key = context.string_rooted("noDeprecation");
-    let no_deprecation = context.get_property_rooted(process, no_deprecation_key)?;
-    if context.truthy_rooted(no_deprecation)?
-        && context.string_text(kind)?.as_deref() == Some("DeprecationWarning")
-    {
-        return Ok(undefined);
-    }
-    if context.is_object_rooted(options)?
-        && !context.is_array_rooted(options)?
-        && !context.is_callable_rooted(options)?
-    {
-        // Keep the upstream property access order, including the ignored stack
-        // constructor option. Host stack/id options are private rejection plumbing.
-        let ctor_key = context.string_rooted("ctor");
-        context.get_property_rooted(options, ctor_key)?;
-        let code_key = context.string_rooted("code");
-        code = context.get_property_rooted(options, code_key)?;
-        let detail_key = context.string_rooted("detail");
-        let detail_value = context.get_property_rooted(options, detail_key)?;
-        if context.string_text(detail_value)?.is_some() {
-            // Upstream reads the detail getter again after checking its type.
-            let detail_value = context.get_property_rooted(options, detail_key)?;
-            detail = Some(detail_value);
-        }
-        let kind_key = context.string_rooted("type");
-        kind = context.get_property_rooted(options, kind_key)?;
-        if !context.truthy_rooted(kind)? {
-            kind = context.string_rooted("Warning");
-        }
-        host_stack = string_property(context, options, HOST_WARNING_STACK_OPTION)?;
-        rejection_id = number_property(context, options, HOST_WARNING_ID_OPTION)?
-            .filter(|id| id.is_finite() && *id >= 1.0 && id.fract() == 0.0);
-    } else if context.is_callable_rooted(options)? {
-        kind = context.string_rooted("Warning");
-        code = undefined;
-    }
-    if !context
-        .rooted_value(kind)
-        .is_some_and(|value| value.is_undefined())
-        && context.string_text(kind)?.is_none()
-    {
-        return Err(super::util_shared_vm::argument_type_error(
-            context, kind, "type", "string",
-        )?);
-    }
-    if context.is_callable_rooted(code)? {
-        code = undefined;
-    } else if !context
-        .rooted_value(code)
-        .is_some_and(|value| value.is_undefined())
-        && context.string_text(code)?.is_none()
-    {
-        return Err(super::util_shared_vm::argument_type_error(
-            context, code, "code", "string",
-        )?);
-    }
-    let warning = if let Some(message) = context.string_text(payload)? {
-        let warning = context.error_rooted(&message)?;
-        let name = context
-            .string_text(kind)?
-            .filter(|name| !name.is_empty())
-            .unwrap_or_else(|| "Warning".into());
-        let name = context.string_rooted(&name);
-        install(context, warning, "name", name)?;
-        if !context
-            .rooted_value(code)
-            .is_some_and(|value| value.is_undefined())
-        {
-            install(context, warning, "code", code)?;
-        }
-        if let Some(detail) = detail {
-            install(context, warning, "detail", detail)?;
-        }
-        if let Some(stack) = host_stack {
-            let stack = context.string_rooted(&stack);
-            install(context, warning, "stack", stack)?;
-        }
-        if let Some(id) = rejection_id {
-            let id = context.number(id);
-            install(context, warning, "id", id)?;
-        }
-        warning
-    } else {
-        // The syntax bridge performs ordinary instanceof, including public
-        // Symbol.hasInstance and Error prototype changes; policy stays native.
-        let check = context.host_function_data()?;
-        let result = context.call_rooted(check, undefined, &[payload])?;
-        if !context.truthy_rooted(result)? {
-            return Err(super::util_shared_vm::argument_type_error_with_expected(
-                context,
-                payload,
-                "warning",
-                "of type string or an instance of Error",
-            )?);
-        }
-        payload
-    };
-    if string_property(context, warning, "name")?.as_deref() == Some("DeprecationWarning") {
-        let no_deprecation = context.get_property_rooted(process, no_deprecation_key)?;
-        if context.truthy_rooted(no_deprecation)? {
-            return Ok(undefined);
-        }
-        let throw_key = context.string_rooted("throwDeprecation");
-        let should_throw = context.get_property_rooted(process, throw_key)?;
-        if context.truthy_rooted(should_throw)? {
-            let callback =
-                context.host_function(crate::host::shared_vm::operation("processThrowWarning"))?;
-            super::shared_event_loop::queue_next_tick(context, callback, undefined, &[warning])?;
-            return Ok(undefined);
-        }
-    }
-    queue_warning(context, warning)?;
-    Ok(undefined)
-}
-
-pub(crate) fn throw_warning(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let warning = args.first().copied().unwrap_or_else(|| context.undefined());
-    Err(context.throw(warning))
-}
-
-fn queue_warning(
-    context: &mut NativeContext<'_, NodeHost>,
-    warning: RootId,
-) -> Result<(), RootedError> {
-    let callback =
-        context.host_function(crate::host::shared_vm::operation("processDispatchWarning"))?;
-    let undefined = context.undefined();
-    crate::modules::shared_event_loop::queue_next_tick(context, callback, undefined, &[warning])
-}
-
-pub(crate) fn dispatch_warning(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let Some(warning) = args.first().copied() else {
-        return Ok(context.undefined());
-    };
-    let name = string_property(context, warning, "name")?.unwrap_or_else(|| "Warning".into());
-    let message = string_property(context, warning, "message")?.unwrap_or_default();
-    let code = string_property(context, warning, "code")?;
-    let detail = string_property(context, warning, "detail")?;
-
-    let suppress_stderr = !context.host_mut().shared_state().borrow().cli_options.enabled("--warnings");
-    if !suppress_stderr {
-        let code = code.map_or_else(String::new, |code| format!(" [{code}]"));
-        let mut output = format!("(node:{}){code} {name}: {message}\n", std::process::id());
-        if let Some(detail) = detail {
-            output.push_str(&detail);
-            output.push('\n');
-        }
-        std::io::stderr()
-            .lock()
-            .write_all(output.as_bytes())
-            .map_err(|error| RootedError::host(error.to_string()))?;
-    }
-    let global = context.global_root()?;
-    let process_key = context.string_rooted("process");
-    let process = context.get_property_rooted(global, process_key);
-    context.release_root(global);
-    context.release_root(process_key);
-    let process = process?;
-    let event = context.string_rooted("warning");
-    let emitted = emit(context, process, &[event, warning]);
-    context.release_root(event);
-    context.release_root(process);
-    let emitted = emitted?;
-    context.release_root(emitted);
-    Ok(context.undefined())
-}
-
-fn string_property(
-    context: &mut NativeContext<'_, NodeHost>,
-    object: RootId,
-    name: &str,
-) -> Result<Option<String>, RootedError> {
-    let key = context.string_rooted(name);
-    let value = context.get_property_rooted(object, key)?;
-    context.string_text(value)
-}
-
-fn number_property(
-    context: &mut NativeContext<'_, NodeHost>,
-    object: RootId,
-    name: &str,
-) -> Result<Option<f64>, RootedError> {
-    let key = context.string_rooted(name);
-    let value = context.get_property_rooted(object, key)?;
-    let number = context
-        .rooted_value(value)
-        .and_then(|value| value.as_number());
-    context.release_root(value);
-    context.release_root(key);
-    Ok(number)
 }
 
 fn invalid_callback(
@@ -3751,25 +3188,6 @@ fn received_type(
 #[path = "process/shared_vm_tests.rs"]
 mod tests;
 
-fn unwatch_process_signal(
-    context: &mut NativeContext<'_, NodeHost>,
-    event: Option<&crate::modules::shared_event_loop::SharedEventKey>,
-) {
-    let name = match event {
-        Some(crate::modules::shared_event_loop::SharedEventKey::String(name)) => {
-            Some(name.as_str())
-        }
-        Some(_) => return,
-        None => None,
-    };
-    context
-        .host_mut()
-        .shared_state()
-        .borrow_mut()
-        .process_signals
-        .unwatch(name);
-}
-
 fn signal_start_error(
     context: &mut NativeContext<'_, NodeHost>,
     error: std::io::Error,
@@ -3812,7 +3230,7 @@ fn poll_process_signals(
         let event = runtime.string_rooted(&name);
         let signal = runtime.string_rooted(&name);
         state.borrow_mut().scheduler.queue_shared_next_tick(
-            crate::modules::shared_event_loop::SharedCallback {
+            crate::modules::shared_event_loop::SharedCallback { execution: None,
                 callback,
                 receiver,
                 args: vec![event, signal],
@@ -3947,4 +3365,110 @@ pub(crate) fn getgroups(
     }
     #[cfg(not(unix))]
     context.array_rooted(&[])
+}
+
+pub(crate) fn start_listening_signal(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let value = args.first().copied().unwrap_or_else(|| context.undefined());
+    if let Some(name) = context.string_text(value)? {
+        let result = context.host_mut().shared_state().borrow_mut().process_signals.watch(&name);
+        if let Err(error) = result { return Err(signal_start_error(context, error)?); }
+    }
+    Ok(context.undefined())
+}
+
+pub(crate) fn stop_listening_signal(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let event = args.first().copied().unwrap_or_else(|| context.undefined());
+    if let Some(name) = context.string_text(event)? {
+        let process = context.host_mut().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))?;
+        let count = super::event_constructor_shared_vm::get(context, process, "listenerCount")?;
+        let count = context.call_rooted(count, process, &[event])?;
+        let zero = context.number(0.0);
+        if context.strict_equal_rooted(count, zero)? {
+            context.host_mut().shared_state().borrow_mut().process_signals.unwatch(Some(&name));
+        }
+    }
+    Ok(context.undefined())
+}
+
+/// Native startup state and the configured SDK own the warning listener together.
+pub(crate) fn initialize_warning_policy(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
+    use super::event_constructor_shared_vm::get;
+    let state = context.host_mut().shared_state();
+    let (process, options) = {
+        let state = state.borrow();
+        (state.process_module.ok_or_else(|| RootedError::host("process is not initialized"))?, state.cli_options.clone())
+    };
+    for (name, value) in [
+        ("noDeprecation", !options.enabled("--deprecation")),
+        ("noProcessWarnings", !options.enabled("--warnings")),
+        ("traceProcessWarnings", options.enabled("--trace-warnings")),
+        ("traceDeprecation", options.enabled("--trace-deprecation")),
+        ("throwDeprecation", options.enabled("--throw-deprecation")),
+    ] {
+        if value {
+            let key = context.string_rooted(name);
+            let yes = context.boolean(true);
+            context.define_data_property_rooted(process, key, yes, false, true, true)?;
+        }
+    }
+    let exposed = options.enabled("--expose-internals");
+    if exposed {
+        let emit_warning = warning_export(context, "emitWarning")?;
+        install(context, process, "emitWarning", emit_warning)?;
+    } else {
+        // Node's warning module is loaded on the first read of `process.emitWarning`.
+        let initializer = context.host_function(crate::host::shared_vm::operation("processEmitWarningInitialize"))?;
+        context.define_lazy_data_properties_rooted(process, &["emitWarning"], true, initializer)?;
+    }
+    let env = get(context, process, "env")?;
+    let disabled = get(context, env, "NODE_NO_WARNINGS")?;
+    if options.enabled("--warnings") && context.string_text(disabled)?.as_deref() != Some("1") {
+        // Node's listener, or, unless a script can reach Node's own to compare, a listener of
+        // its name and length that loads Node's on the first warning: most runs never warn.
+        let callback = if options.enabled("--expose-internals") {
+            warning_listener(context, process, &[])?
+        } else {
+            let factory = context.evaluate_script_rooted(
+                "(load) => function onWarning(warning) { return load()(warning); }",
+                "node:internal/process/warning-listener.js",
+            )?;
+            let load = context.host_function(crate::host::shared_vm::operation("processWarningListener"))?;
+            let undefined = context.undefined();
+            context.call_rooted(factory, undefined, &[load])?
+        };
+        let on = get(context, process, "on")?;
+        let event = context.string_rooted("warning");
+        context.call_rooted(on, process, &[event, callback])?;
+    }
+    if options.enabled("--pending-deprecation") {
+        let binding = get(context, process, "binding")?;
+        let deprecate = crate::host::shared_vm::commonjs::node_library_export(
+            context, "internal/process/pre_execution.js", "internal/util.js", "deprecate",
+        )?;
+        let message = context.string_rooted("process.binding() is deprecated. Please use public APIs instead.");
+        let code = context.string_rooted("DEP0111");
+        let undefined = context.undefined();
+        let binding = context.call_rooted(deprecate, undefined, &[binding, message, code])?;
+        install(context, process, "binding", binding)?;
+    }
+    Ok(())
+}
+
+fn warning_export(context: &mut NativeContext<'_, NodeHost>, name: &str) -> Result<RootId, RootedError> {
+    crate::host::shared_vm::commonjs::node_library_export(context, "internal/process/pre_execution.js", "internal/process/warning.js", name)
+}
+
+/// Defines `process.emitWarning` as Node's.
+pub(crate) fn initialize_emit_warning(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let process = context.host_mut().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))?;
+    let emit_warning = warning_export(context, "emitWarning")?;
+    let key = context.string_rooted("emitWarning");
+    context.define_data_property_rooted(process, key, emit_warning, true, true, true)?;
+    Ok(context.undefined())
+}
+
+/// The Console module owns initialization; the SDK owns this public callback.
+/// Node's `onWarning`.
+pub(crate) fn warning_listener(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    warning_export(context, "onWarning")
 }

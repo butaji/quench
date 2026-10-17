@@ -60,6 +60,8 @@ fn invalid_inputs_are_rejected_before_guest_effects() {
         for error in [
             runtime.get_property_rooted(invalid, key).unwrap_err(),
             runtime.get_property_rooted(target, invalid).unwrap_err(),
+            runtime.subtract_rooted(invalid, key).unwrap_err(),
+            runtime.subtract_rooted(key, invalid).unwrap_err(),
             runtime.call_rooted(invalid, receiver, &[]).unwrap_err(),
             runtime.call_rooted(callback, invalid, &[]).unwrap_err(),
             runtime
@@ -356,4 +358,55 @@ fn initialization_and_reset_bound_embedding_roots() {
             .exception
             .is_none()
     );
+}
+
+#[test]
+fn rooted_subtraction_uses_guest_coercion_and_retains_abrupt_completions() {
+    let (mut runtime, program, host) = initialized(
+        "var left = {valueOf(){print('left'); $262.gc(); return 7;}};
+         var right = {valueOf(){print('right'); $262.gc(); return 2;}};
+         var thrown = {marker: 42};
+         var abrupt = {valueOf(){throw thrown;}};
+         var bigint = 1n;",
+    );
+    let global = runtime.global_root().unwrap();
+    let left = property(&mut runtime, global, "left");
+    let right = property(&mut runtime, global, "right");
+    let result = runtime.subtract_rooted(left, right).unwrap();
+    assert_eq!(runtime.rooted_value(result).unwrap().as_number(), Some(5.0));
+    assert_eq!(host.0.borrow().as_slice(), ["left", "right"]);
+    let abrupt = property(&mut runtime, global, "abrupt");
+    let thrown = property(&mut runtime, global, "thrown");
+    let error = runtime.subtract_rooted(abrupt, right).unwrap_err();
+    let exception = error.exception.unwrap();
+    runtime.collect(&program).unwrap();
+    assert_eq!(runtime.rooted_value(exception), runtime.rooted_value(thrown));
+    let bigint = property(&mut runtime, global, "bigint");
+    let error = runtime.subtract_rooted(bigint, right).unwrap_err();
+    assert!(error.to_string().contains("BigInt"));
+    if let Some(exception) = error.exception { runtime.release_root(exception); }
+    for root in [global, left, right, result, abrupt, thrown, exception, bigint] { assert!(runtime.release_root(root)); }
+}
+
+#[test]
+fn heap_memory_census_tracks_rooted_records_and_collection_without_guest_hooks() {
+    let (mut runtime, program, host) = initialized(
+        "Object.prototype.toString = function() { print('guest-hook'); throw 'guest-hook'; };",
+    );
+    runtime.collect(&program).unwrap();
+    let before = runtime.heap_memory_composition();
+    let roots = (0..4096).map(|_| runtime.object_rooted().unwrap()).collect::<Vec<_>>();
+    let allocated = runtime.heap_memory_composition();
+    assert!(allocated.object_headers >= before.object_headers + roots.len());
+    assert!(allocated.object_record_reserved_bytes >= before.object_record_reserved_bytes);
+    assert_eq!(allocated.cell_counts.iter().sum::<usize>(), allocated.occupied_slots);
+    let repeated = runtime.heap_memory_composition();
+    assert_eq!(repeated.occupied_slots, allocated.occupied_slots);
+    assert_eq!(repeated.object_headers, allocated.object_headers);
+    for root in roots { assert!(runtime.release_root(root)); }
+    runtime.collect(&program).unwrap();
+    let collected = runtime.heap_memory_composition();
+    assert!(collected.object_headers < allocated.object_headers);
+    assert_eq!(collected.cell_counts.iter().sum::<usize>(), collected.occupied_slots);
+    assert!(host.0.borrow().is_empty());
 }

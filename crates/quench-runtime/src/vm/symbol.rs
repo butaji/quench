@@ -103,7 +103,7 @@ impl<H: Host> Vm<H> {
             None | Some(Value::UNDEFINED) => None,
             Some(value) => Some(self.to_string(p, value)?),
         };
-        Ok(self.heap.alloc(Cell::Symbol(description)))
+        Ok(self.heap.alloc(Cell::Symbol(crate::heap::SymbolData::public(description))))
     }
 
     pub(super) fn call_symbol_value_native(
@@ -156,10 +156,10 @@ impl<H: Host> Vm<H> {
                         })?
                 };
                 match self.heap.get(symbol) {
-                    Some(Cell::Symbol(Some(description))) => Ok(self
+                    Some(Cell::Symbol(crate::heap::SymbolData { description: Some(description), .. })) => Ok(self
                         .heap
                         .alloc(Cell::String(JsString::from_str(description)))),
-                    Some(Cell::Symbol(None)) => Ok(Value::UNDEFINED),
+                    Some(Cell::Symbol(crate::heap::SymbolData { description: None, .. })) => Ok(Value::UNDEFINED),
                     _ => unreachable!("symbol receiver was validated"),
                 }
             }
@@ -179,7 +179,7 @@ impl<H: Host> Vm<H> {
                 if let Some(value) = self.symbol_registry.get(&key).copied() {
                     return Ok(value);
                 }
-                let value = self.heap.alloc(Cell::Symbol(Some(key.clone())));
+                let value = self.heap.alloc(Cell::Symbol(crate::heap::SymbolData::public(Some(key.clone()))));
                 self.symbol_registry.insert(key, value);
                 Ok(value)
             }

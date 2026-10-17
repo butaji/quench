@@ -17,7 +17,7 @@ quench-js-check = { path = "../quench-js-check" }
 quench-runtime = { path = "../quench-runtime" }
 quench-wasm = { path = "../quench-wasm" }
 serde_json = "1"
-regex = "1.11"
+regex = { version = "1.11", default-features = false, features = ["std", "unicode-perl", "perf-literal", "perf-onepass", "perf-backtrack"] }
 sha1 = "0.10"
 base64 = "0.22"
 hex = "0.4"
@@ -47,4 +47,5 @@ zstd = { version = "0.13", features = ["zstdmt"] }
 zlib-rs = "0.6.8"
 
 [build-dependencies]
+cc = "1"
 pkg-config = "0.3"

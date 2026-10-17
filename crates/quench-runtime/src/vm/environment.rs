@@ -244,7 +244,7 @@ impl<H: Host> Vm<H> {
     fn function_environment_binding(&self, p: &ResidualProgram, function: u32, atom: Atom) -> bool {
         p.functions
             .get(function as usize)
-            .is_some_and(|metadata| metadata.environment_atoms.contains(&atom))
+            .is_some_and(|metadata| metadata.declares_environment_atom(atom))
     }
 
     pub(super) fn activation_binding_slot(&self, frame: usize, atom: Atom) -> Option<usize> {
@@ -253,7 +253,7 @@ impl<H: Host> Vm<H> {
         let metadata = program.functions.get(frame.function as usize)?;
         // Local storage also reserves slots for source names whose actual
         // binding lives in a catch scope or an enclosing environment.
-        if !metadata.environment_atoms.contains(&atom) {
+        if !metadata.declares_environment_atom(atom) {
             return None;
         }
         metadata
@@ -318,7 +318,7 @@ impl<H: Host> Vm<H> {
                             .find(|binding| binding.atom == atom)
                     })
                     .copied();
-                if scoped_binding.is_none() && metadata.environment_atoms.contains(&atom) {
+                if scoped_binding.is_none() && metadata.declares_environment_atom(atom) {
                     return None;
                 }
                 let binding = scoped_binding.or_else(|| metadata.name_bindings.get(atom));
@@ -408,7 +408,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<bool, JsError> {
         match kind {
             crate::bytecode::LexicalBindingKind::Mutable => Ok(true),
-            crate::bytecode::LexicalBindingKind::Immutable => {
+            crate::bytecode::LexicalBindingKind::Immutable | crate::bytecode::LexicalBindingKind::PrivateName => {
                 Err(self.type_error(p, "assignment to immutable binding".into()))
             }
             crate::bytecode::LexicalBindingKind::FunctionName if strict => {
@@ -498,6 +498,21 @@ impl<H: Host> Vm<H> {
             .contains(&atom)
             .then(|| frame.checked_sub(1))
             .flatten()
+            .map(|caller| self.variable_environment_frame(caller))
+    }
+
+    /// The frame owning the variable environment `frame` runs in: itself, or,
+    /// for the root of a sloppy direct eval in its caller's scope, its caller's.
+    pub(super) fn variable_environment_frame(&self, mut frame: usize) -> usize {
+        while frame > 0
+            && self.frames[frame].function == super::ROOT_FUNCTION_ID
+            && self
+                .programs
+                .runs_in_caller_scope(self.frames[frame].program)
+        {
+            frame -= 1;
+        }
+        frame
     }
 
     fn direct_eval_catch_binding(
@@ -931,7 +946,7 @@ impl<H: Host> Vm<H> {
                     metadata.declares_global_lexical(atom)
                         || self.root_local_var_binding(&environment_program, *function, atom)
                 } else {
-                    metadata.environment_atoms.contains(&atom)
+                    metadata.declares_environment_atom(atom)
                 }
                 && let Some(slot) = self.local_binding_slot(&environment_program, *function, atom)
                 && slot < slots.len()
@@ -1183,7 +1198,7 @@ impl<H: Host> Vm<H> {
         let Some(metadata) = program.functions.get(activation.function as usize) else {
             return false;
         };
-        metadata.environment_atoms.contains(&atom)
+        metadata.declares_environment_atom(atom)
             && (!self.parameter_eval
                 || activation.function == super::ROOT_FUNCTION_ID
                 || metadata.parameter_atoms.contains(&atom))
@@ -1197,7 +1212,7 @@ impl<H: Host> Vm<H> {
     ) -> Option<bool> {
         let activation = self.frames.get(frame)?;
         let metadata = p.functions.get(activation.function as usize)?;
-        if (metadata.environment_atoms.contains(&atom)
+        if (metadata.declares_environment_atom(atom)
             || metadata.declares_global_lexical(atom)
             || self.root_local_var_binding(p, activation.function, atom))
             && self
