@@ -198,15 +198,25 @@ impl GenerationalPacing {
 /// full collections. When more than half of young allocations survive, collections are
 /// full with four live sets between them (the 2026-10-16 large-heap factor, which keeps
 /// such heaps' Score), probing survival with a minor collection every fourth one.
+///
+/// RSS-first values (`v2-npm` 6571735f9, the owner's direction of 2026-10-17: lowest peak
+/// RSS among Node and Bun on the npm package scenarios): at least 384 allocations between
+/// collections, one live set between full collections (at least 384) and one live set
+/// between full-only collections, from the Score-only 2^15/2^18, 8/1 and 4/1. The
+/// Score-only pacing raised npm peak RSS 10-30% (evidence/npm-rss-2026-10-17/).
+/// The smallest allocation weight between collections, and between full collections,
+/// under RSS-first pacing.
+const RSS_FIRST_MINIMUM_BUDGET: usize = 384;
+
 pub(super) const PRODUCTION_PACING: GenerationalPacing = GenerationalPacing {
     young: Ratio::new(1, 2),
-    minimum_young: 1 << 15,
+    minimum_young: RSS_FIRST_MINIMUM_BUDGET,
     old_growth: Ratio::new(1, 1),
     minimum_old_growth: 1 << 15,
-    allocation_cap: Ratio::new(8, 1),
-    minimum_allocation_cap: 1 << 18,
+    allocation_cap: Ratio::new(1, 1),
+    minimum_allocation_cap: RSS_FIRST_MINIMUM_BUDGET,
     survival_limit: SURVIVAL_SCALE / 2,
-    full_only_headroom: Ratio::new(4, 1),
+    full_only_headroom: Ratio::new(1, 1),
     probe_interval: 4,
 };
 
