@@ -487,6 +487,7 @@ impl<H: Host> Vm<H> {
         }
         let target = self.box_object(object)?;
         self.evaluate_deferred_namespace_for_key(p, target, None)?;
+        self.complete_lazy_keys(p, target)?;
         let values = self.ordinary_own_key_values(target, true);
         Ok(self.own_keys_array(values))
     }
