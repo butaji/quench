@@ -614,10 +614,12 @@ impl Regex {
             }));
         }
         let unicode = self.flags.unicode || self.flags.unicode_sets;
+        let complete = self.complete();
+        let program = complete.backtracking.as_ref()?;
         if let (false, Some(units)) = (unicode, subject.wide()) {
             // Outside unicode mode a code unit is a pattern unit: no decoding, and
             // positions are offsets.
-            if !contains_code_units(&units[start..], &self.required_literal) {
+            if !contains_code_units(&units[start..], &complete.required_literal) {
                 return Some(None);
             }
             let found = program.find(units, start, sticky, None).ok()?;
@@ -629,8 +631,6 @@ impl Regex {
         }
         let units = subject.decoded(unicode);
         let first = first_unit_at(units, start);
-        let complete = self.complete();
-        let program = complete.backtracking.as_ref()?;
         if !complete.required_literal.is_empty()
             && !contains_literal(&units[first..], &complete.required_literal)
         {
