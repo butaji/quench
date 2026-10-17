@@ -103,18 +103,23 @@ const ACTIVATION_FILL_BLOCK: usize = 8;
 /// registers: on V8-v7, most called functions have 9 to 16.
 const SCRIPT_FILL_BLOCK: usize = 2 * ACTIVATION_FILL_BLOCK;
 
-/// The lane-stack room `fill_window::<BLOCK>` writes for a window of `count` registers.
+/// The lane-stack room `fill_window::<BLOCK>` writes for a window of `count` registers: whole
+/// blocks, at least one.
 const fn fill_room<const BLOCK: usize>(count: usize) -> usize {
-    count.next_multiple_of(BLOCK)
+    let room = count.next_multiple_of(BLOCK);
+    if room < BLOCK { BLOCK } else { room }
 }
 
-/// Writes `initial` to the `count` registers at `registers`, as whole blocks of `BLOCK`.
+/// Writes `initial` to the `count` registers at `registers`, as whole blocks of `BLOCK`: the
+/// first unconditionally, since most windows fit it.
 ///
 /// # Safety
 /// `registers` has room for `fill_room::<BLOCK>(count)` values, none of them live.
 #[inline(always)]
 unsafe fn fill_window<const BLOCK: usize>(registers: *mut Value, count: usize, initial: Value) {
-    for block in 0..count.div_ceil(BLOCK) {
+    // SAFETY: the room holds at least one block.
+    unsafe { registers.cast::<[Value; BLOCK]>().write_unaligned([initial; BLOCK]) };
+    for block in 1..count.div_ceil(BLOCK) {
         // SAFETY: the block ends within the room the caller provides.
         unsafe {
             registers
@@ -276,11 +281,35 @@ struct Activation {
     call: Ip,
     caller_base: Ip,
     caller_registers: Registers,
-    caller_memory: MemoryView,
     /// The lane-stack index of this activation's first register.
     window: usize,
+    kind: ActivationKind,
+}
+
+/// What an activation keeps beyond its registers, by the kind of function it runs.
+enum ActivationKind {
+    Script(ScriptActivation),
+    /// A Wasm activation keeps its caller's memory for the return.
+    Wasm(MemoryView),
+}
+
+impl Activation {
     /// The frame state of a JavaScript activation; `None` for Wasm.
-    script: Option<ScriptActivation>,
+    fn script(&self) -> Option<&ScriptActivation> {
+        match &self.kind {
+            ActivationKind::Script(script) => Some(script),
+            ActivationKind::Wasm(_) => None,
+        }
+    }
+
+    /// The memory its caller binds: a JavaScript activation's caller is JavaScript, whose
+    /// functions bind none (`frame_memory_view`).
+    fn caller_memory(&self) -> MemoryView {
+        match self.kind {
+            ActivationKind::Script(_) => MemoryView::NONE,
+            ActivationKind::Wasm(memory) => memory,
+        }
+    }
 }
 
 /// What a JavaScript activation's frame would hold beyond its registers
@@ -1357,14 +1386,45 @@ unsafe fn lane_fixed_this<H: Host>(cx: *mut LaneContext<H>) -> Option<Value> {
     frame.fixed_this.then_some(frame.this)
 }
 
+/// The base of a single-base record whose handler was chosen for it (`single_base_handler`):
+/// `this` when `THIS`, else the register the field names.
+///
+/// # Safety
+/// As for `lane_single_field_base`; the record's base is `this` exactly when `THIS`.
+#[inline(always)]
+unsafe fn lane_known_field_base<H: Host, const THIS: bool>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    base: u16,
+) -> Option<Value> {
+    if THIS {
+        debug_assert_eq!(base, crate::bytecode::FieldBase::THIS.0);
+        unsafe { lane_fixed_this(cx) }
+    } else {
+        debug_assert!(base < crate::bytecode::FieldBase::NESTED);
+        Some(r.get(base))
+    }
+}
+
+/// The instantiation of a single-base read handler that a record of base `base` takes: the
+/// one for `this` or the one for a register. A nested record, which names no single base,
+/// takes `nested`.
+fn single_base_handler(base: u16, this: Handler, register: Handler, nested: Handler) -> Handler {
+    match base {
+        crate::bytecode::FieldBase::NESTED => nested,
+        base if base == crate::bytecode::FieldBase::THIS.0 => this,
+        _ => register,
+    }
+}
+
 lane_handler! {
     /// `GetField` of a register or `this`: the site's primary own entry inline. Any other
     /// read goes through `lane_get_field_miss`, which may move the record to a fitting
     /// handler.
-    fn lane_get_field_own<>(cx, r, ip, i, view) {
+    fn lane_get_field_own<THIS: bool>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) })
+        let Some(value) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
             .and_then(|object| (unsafe { vm(cx) }).primary_own_field_hit(code, object, i.c))
         else {
             sibling!(lane_get_field_miss::<H>, r, ip, Carried::SCRIPT)
@@ -1378,10 +1438,10 @@ lane_handler! {
     /// `GetField` of a register or `this` at a site past one shape
     /// (`Vm::field_site_polymorphic`): its inline entries; any other read takes
     /// `lane_get_field`.
-    fn lane_get_field_polymorphic<>(cx, r, ip, i, view) {
+    fn lane_get_field_polymorphic<THIS: bool>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) })
+        let Some(value) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
             .and_then(|object| (unsafe { vm(cx) }).polymorphic_field_hit(code, object, i.c))
         else {
             sibling!(lane_get_field::<H>, r, ip, Carried::SCRIPT)
@@ -1395,11 +1455,28 @@ lane_handler! {
     /// `GetField` of a register or `this` at a site whose primary entry names a prototype
     /// holder (`Vm::field_site_holder`), a method read: that entry inline; any other read
     /// takes `lane_get_field_miss`, which moves a site gone polymorphic.
-    fn lane_get_field_holder<>(cx, r, ip, i, view) {
+    fn lane_get_field_holder<THIS: bool>(cx, r, ip, i, view) {
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let Some(value) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
+            .and_then(|object| (unsafe { vm(cx) }).primary_holder_field_hit(code, object, i.c))
+        else {
+            sibling!(lane_get_field_miss::<H>, r, ip, Carried::SCRIPT)
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::SCRIPT)
+    }
+}
+
+lane_handler! {
+    /// `lane_get_field_holder` for a receiver in a heap cell rather than the object records
+    /// (`Vm::cell_holder_field_hit`): a method read from a function, as `f.apply`. A miss
+    /// moves the record on as `lane_get_field_miss` decides.
+    fn lane_get_field_holder_cell<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) })
-            .and_then(|object| (unsafe { vm(cx) }).primary_holder_field_hit(code, object, i.c))
+            .and_then(|object| (unsafe { vm(cx) }).cell_holder_field_hit(code, object, i.c))
         else {
             sibling!(lane_get_field_miss::<H>, r, ip, Carried::SCRIPT)
         };
@@ -1412,10 +1489,10 @@ lane_handler! {
     /// `GetField` of a register or `this` at a site with an inherited entry
     /// (`Vm::field_site_inherited`), a method read beyond the immediate prototype: that entry
     /// inline; any other read takes `lane_get_field_miss`.
-    fn lane_get_field_inherited<>(cx, r, ip, i, view) {
+    fn lane_get_field_inherited<THIS: bool>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) })
+        let Some(value) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
             .and_then(|object| (unsafe { vm(cx) }).inherited_field_hit(code, object, i.c))
         else {
             sibling!(lane_get_field_miss::<H>, r, ip, Carried::SCRIPT)
@@ -1431,12 +1508,42 @@ lane_handler! {
     /// prepares, so such a site keeps it; any other takes `lane_get_field_own`.
     #[inline(never)]
     fn lane_get_field_first<>(cx, r, ip, i, view) {
-        if unsafe { vm(cx) }.reads_function_info(i.imm()) {
-            requicken(ip, lane_get_field::<H>);
-            sibling!(lane_get_field::<H>, r, ip, Carried::SCRIPT)
+        let vm = unsafe { vm(cx) };
+        if vm.reads_function_info(i.imm()) {
+            // A register's `length` is most often an array's, which no function information
+            // can answer.
+            let handler: Handler = if i.imm() == vm.length_atom
+                && crate::bytecode::FieldBase(i.b).register_index().is_some()
+                && i.b != crate::bytecode::FieldBase::NESTED
+            {
+                lane_get_length::<H>
+            } else {
+                lane_get_field::<H>
+            };
+            requicken(ip, handler);
+            sibling!(handler, r, ip, Carried::SCRIPT)
         }
-        requicken(ip, lane_get_field_own::<H>);
-        sibling!(lane_get_field_own::<H>, r, ip, Carried::SCRIPT)
+        let own = single_base_handler(
+            i.b,
+            lane_get_field_own::<H, true>,
+            lane_get_field_own::<H, false>,
+            lane_get_field_miss::<H>,
+        );
+        requicken(ip, own);
+        sibling!(own, r, ip, Carried::SCRIPT)
+    }
+}
+
+lane_handler! {
+    /// `GetField` of `length` from a register (`lane_get_field_first`): an array's own
+    /// `length` (`Vm::array_length_field`, which `lane_get_field` answers for an array
+    /// after a probe that cannot hit) inline; any other receiver takes `lane_get_field`.
+    fn lane_get_length<>(cx, r, ip, i, view) {
+        let Some(length) = (unsafe { vm(cx) }).own_array_length(r.get(i.b)) else {
+            sibling!(lane_get_field::<H>, r, ip, Carried::SCRIPT)
+        };
+        r.set(i.a, Value::number(length as f64));
+        next!(cx, r, following(ip), Carried::SCRIPT)
     }
 }
 
@@ -1453,9 +1560,31 @@ lane_handler! {
         let handler: Option<Handler> = match lane_field_site_tier(unsafe { vm(cx) }, code, i) {
             FieldSiteTier::Nested => Some(lane_get_field_nested::<H>),
             FieldSiteTier::General => Some(lane_get_field::<H>),
-            FieldSiteTier::Polymorphic => Some(lane_get_field_polymorphic::<H>),
-            FieldSiteTier::Holder => Some(lane_get_field_holder::<H>),
-            FieldSiteTier::Inherited => Some(lane_get_field_inherited::<H>),
+            FieldSiteTier::Polymorphic => Some(single_base_handler(
+                i.b,
+                lane_get_field_polymorphic::<H, true>,
+                lane_get_field_polymorphic::<H, false>,
+                lane_get_field::<H>,
+            )),
+            // A receiver outside the object records, such as a function, takes the cell lookup.
+            FieldSiteTier::Holder
+                if unsafe { lane_single_field_base(cx, r, i.b) }
+                    .is_some_and(|object| object.direct_object_index().is_none()) =>
+            {
+                Some(lane_get_field_holder_cell::<H>)
+            }
+            FieldSiteTier::Holder => Some(single_base_handler(
+                i.b,
+                lane_get_field_holder::<H, true>,
+                lane_get_field_holder::<H, false>,
+                lane_get_field::<H>,
+            )),
+            FieldSiteTier::Inherited => Some(single_base_handler(
+                i.b,
+                lane_get_field_inherited::<H, true>,
+                lane_get_field_inherited::<H, false>,
+                lane_get_field::<H>,
+            )),
             FieldSiteTier::Own => None,
         };
         if let Some(handler) = handler {
@@ -3526,11 +3655,10 @@ impl<H: Host> Vm<H> {
             let count = usize::from(code.functions[activation.function as usize].registers);
             let window = &registers[activation.window..activation.window + count];
             let construct_this = activation
-                .script
-                .as_ref()
+                .script()
                 .and_then(|script| script.constructs.then_some(script.this));
-            let call_guard = match activation.script {
-                Some(script) => {
+            let call_guard = match activation.kind {
+                ActivationKind::Script(script) => {
                     let argc = usize::from(script.argc);
                     // A forwarding activation kept the values after its registers; any other
                     // passed them all to parameter registers.
@@ -3554,7 +3682,7 @@ impl<H: Host> Vm<H> {
                     );
                     Some(script.guard)
                 }
-                None => {
+                ActivationKind::Wasm(_) => {
                     self.push_wasm_frame_with_registers(code, caller, activation.function, window);
                     // The lane admitted the activation under WASM_ACTIVATION_LIMIT; as a
                     // frame it also counts against the guest-call budget while that lasts.
@@ -4074,7 +4202,7 @@ unsafe fn lane_kept_arguments<H: Host>(cx: *mut LaneContext<H>) -> Option<Activa
         ));
     }
     let activation = vm.lane_stack.activations.last()?;
-    let script = activation.script.as_ref().filter(|script| script.forwards)?;
+    let script = activation.script().filter(|script| script.forwards)?;
     let registers = usize::from(unsafe { &*(*cx).code }.functions[activation.function as usize].registers);
     // SAFETY: the activation's window holds its registers, then its kept values.
     let values = unsafe { vm.lane_stack.values.as_ptr().add(activation.window + registers) };
@@ -4182,9 +4310,8 @@ fn lane_activate<H: Host>(
         call: ip,
         caller_base: unsafe { (*cx).base },
         caller_registers: r,
-        caller_memory: MemoryView::NONE,
         window,
-        script: Some(ScriptActivation {
+        kind: ActivationKind::Script(ScriptActivation {
             callee: target.callee,
             env: target.env,
             this,
@@ -4329,9 +4456,8 @@ fn lane_activate_keeping<H: Host>(
         call: ip,
         caller_base: unsafe { (*cx).base },
         caller_registers: r,
-        caller_memory: MemoryView::NONE,
         window,
-        script: Some(ScriptActivation {
+        kind: ActivationKind::Script(ScriptActivation {
             callee: target.callee,
             env: target.env,
             this,
@@ -4464,9 +4590,8 @@ lane_handler! {
                     call: ip,
                     caller_base: (*cx).base,
                     caller_registers: r,
-                    caller_memory: view.memory,
                     window,
-                    script: None,
+                    kind: ActivationKind::Wasm(view.memory),
                 });
                 stack.activations.set_len(length + 1);
             }
@@ -4568,12 +4693,13 @@ fn lane_complete_activation<H: Host>(
     let mut activation = vm.lane_stack.activations.pop()?;
     loop {
         vm.lane_stack.values.truncate(activation.window);
+        let caller_memory = activation.caller_memory();
         unsafe {
             (*cx).registers = activation.caller_registers;
             (*cx).base = activation.caller_base;
-            (*cx).memory = activation.caller_memory;
+            (*cx).memory = caller_memory;
         }
-        if let Some(script) = activation.script {
+        if let ActivationKind::Script(script) = activation.kind {
             unsafe {
                 (*cx).this = script.caller_this;
                 (*cx).env = script.caller_env;
@@ -4591,7 +4717,7 @@ fn lane_complete_activation<H: Host>(
         if destination & crate::bytecode::RETURN_REGISTER == 0 {
             activation.caller_registers.set(destination, value);
             let view = Carried {
-                memory: activation.caller_memory,
+                memory: caller_memory,
                 integers: crate::value::IntegerEncoding::TAG,
                 acc: Value::UNDEFINED,
             };
