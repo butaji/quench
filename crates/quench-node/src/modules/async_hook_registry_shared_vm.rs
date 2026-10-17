@@ -45,6 +45,9 @@ pub(super) struct Registry {
     counts: [u32; HookKind::ALL.len()],
     depth: usize,
     snapshot: Option<(RootId, [u32; HookKind::ALL.len()])>,
+    /// Node's promise hook: installed when the callback total leaves zero through a
+    /// hook that tracks promises, removed when the total returns to zero.
+    promise_hook: bool,
 }
 impl Registry {
     pub(super) fn new() -> Self {
@@ -53,7 +56,14 @@ impl Registry {
             counts: [0; HookKind::ALL.len()],
             depth: 0,
             snapshot: None,
+            promise_hook: false,
         }
+    }
+    pub(super) fn tracks_promises(&self) -> bool {
+        self.promise_hook
+    }
+    fn total(&self) -> u32 {
+        self.counts.iter().sum()
     }
     fn visible_counts(&self) -> [u32; HookKind::ALL.len()] {
         self.snapshot.map_or(self.counts, |(_, counts)| counts)
@@ -221,16 +231,26 @@ fn transition(
         let value = context.get_property_rooted(hook, key)?;
         changes[kind.index()] = u32::from(context.truthy_rooted(value)?);
     }
+    let no_promise_key = get(context, api, "noPromiseKey")?;
+    let no_promise = context.get_property_rooted(hook, no_promise_key)?;
+    let tracks_promises = !context.truthy_rooted(no_promise)?;
     let method = get(context, api, if enable { "add" } else { "delete" })?;
     context.call_rooted(method, hooks, &[hook])?;
     let state = context.host_mut().shared_state();
     let mut state = state.borrow_mut();
-    for (count, change) in state.async_hooks.registry.counts.iter_mut().zip(changes) {
+    let registry = &mut state.async_hooks.registry;
+    let previous_total = registry.total();
+    for (count, change) in registry.counts.iter_mut().zip(changes) {
         *count = if enable {
             count.wrapping_add(change)
         } else {
             count.wrapping_sub(change)
         };
+    }
+    match (previous_total, registry.total()) {
+        (0, total) if total != 0 && tracks_promises => registry.promise_hook = true,
+        (previous, 0) if previous != 0 => registry.promise_hook = false,
+        _ => {}
     }
     Ok(hook)
 }
