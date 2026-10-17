@@ -1522,9 +1522,14 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        slots
-            .owned(usize::from(slot))
-            .filter(|value| !value.is_deleted())
+        let value = match slots.slot(usize::from(slot))? {
+            crate::heap::EnvironmentSlot::Owned(value) => *value,
+            // A shared slot names its owner, which holds the slot itself.
+            crate::heap::EnvironmentSlot::Shared(owner) => {
+                self.heap.environment_slot(*owner, usize::from(slot))?
+            }
+        };
+        (!value.is_deleted()).then_some(value)
     }
 
     /// The slots a direct capture at `depth` reads, and the program of a root environment
