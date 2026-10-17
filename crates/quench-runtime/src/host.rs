@@ -59,6 +59,10 @@ pub trait Host {
         false
     }
 
+    /// A full collection finished: a host may return memory the process no longer needs
+    /// resident (its read-only pages), which nothing observable depends on.
+    fn after_full_collection(&mut self) {}
+
     fn write_line(&mut self, text: &str);
     fn clock_millis(&mut self) -> f64;
 
