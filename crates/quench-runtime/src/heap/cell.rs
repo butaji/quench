@@ -768,11 +768,56 @@ impl Native {
         )
     }
 
+    /// The functions of the `Math` object (`MATH_FUNCTIONS`, which its test keeps equal).
+    pub(crate) fn is_math_function(self) -> bool {
+        matches!(
+            self,
+            Self::MathAbs
+                | Self::MathAcos
+                | Self::MathAcosh
+                | Self::MathAsin
+                | Self::MathAsinh
+                | Self::MathAtan
+                | Self::MathAtan2
+                | Self::MathAtanh
+                | Self::MathCbrt
+                | Self::MathCeil
+                | Self::MathClz32
+                | Self::MathCos
+                | Self::MathCosh
+                | Self::MathExp
+                | Self::MathExpm1
+                | Self::MathF16Round
+                | Self::MathFloor
+                | Self::MathFround
+                | Self::MathHypot
+                | Self::MathImul
+                | Self::MathLog
+                | Self::MathLog10
+                | Self::MathLog1p
+                | Self::MathLog2
+                | Self::MathMax
+                | Self::MathMin
+                | Self::MathPow
+                | Self::MathRandom
+                | Self::MathRound
+                | Self::MathSign
+                | Self::MathSin
+                | Self::MathSinh
+                | Self::MathSqrt
+                | Self::MathSumPrecise
+                | Self::MathTan
+                | Self::MathTanh
+                | Self::MathTrunc
+        )
+    }
+
     /// Natives a lane `Call` makes in place from the running frame (`lane_call_native`):
-    /// the string and RegExp methods, which read no caller state beyond the frame's published
-    /// PC and run guest code only through ordinary nested calls.
+    /// the string, RegExp and `Math` functions, which read no caller state beyond the frame's
+    /// published PC and run guest code only through ordinary nested calls.
     pub(crate) fn runs_from_lane(self) -> bool {
         self.is_pure_string_method()
+            || self.is_math_function()
             || matches!(
                 self,
                 Self::RegExpExec

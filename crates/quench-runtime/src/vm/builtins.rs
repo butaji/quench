@@ -1346,3 +1346,21 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod math_function_tests {
+    use super::*;
+
+    #[test]
+    fn math_functions_are_the_math_natives() {
+        for (name, native) in MATH_FUNCTIONS {
+            assert!(native.is_math_function(), "Math.{name}");
+        }
+        for native in NATIVES.iter().filter(|native| native.is_math_function()) {
+            assert!(
+                MATH_FUNCTIONS.iter().any(|(_, listed)| listed == native),
+                "{native:?} is a Math function"
+            );
+        }
+    }
+}
