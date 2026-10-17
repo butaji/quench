@@ -420,9 +420,9 @@ pub(crate) fn poll(
                         let id = runtime.root(Value::number(response_id as f64));
                         let status = runtime.root(Value::number(200.0));
                         let undefined = runtime.root(Value::UNDEFINED);
-                        let response = match runtime.call_rooted(
+                        let response = match runtime.construct_rooted(
                             response_factory,
-                            undefined,
+                            response_factory,
                             &[id, status, readable, server_root, socket_object],
                         ) {
                             Ok(response) => response,

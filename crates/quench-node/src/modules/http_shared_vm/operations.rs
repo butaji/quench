@@ -106,7 +106,6 @@ const RESPONSE_FACTORY: &str = r#"((Stream, setHeaderOperation, getHeaderOperati
     nextTick(() => response.emit("close"));
   };
   function ServerResponse(id, statusCode, request, server, socket) {
-    // The native exchange calls the constructor as a function for each request.
     if (!(this instanceof ServerResponse)) {
       return new ServerResponse(id, statusCode, request, server, socket);
     }
