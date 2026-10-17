@@ -1124,7 +1124,7 @@ fn finished_jobs_release_their_values_while_the_queue_keeps_draining() {
     // collectable while later jobs of the same drain still run: its cleanup is observed
     // inside the await loop instead of never. Each iteration allocates at least one cell,
     // so the bound lets the drain pass the collection headroom several times.
-    let iterations = 4 * crate::heap::MINIMUM_GC_ALLOCATION_HEADROOM;
+    let iterations = 4 * crate::heap::FULL_COLLECTION_ALLOCATION_BOUND;
     let source = format!(
         "var finalized = false, registry = new FinalizationRegistry(function () {{ finalized = true; }});\n\
          function make() {{ var o = {{}}; registry.register(o, 0); return o; }}\n\
