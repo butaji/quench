@@ -1252,6 +1252,23 @@ impl<H: Host> Vm<H> {
                         fast_lane,
                     );
                 }
+                // A call the lane made in place failed: it throws at its instruction, as the
+                // general path's call would have.
+                if let Some(error) = self.lane_raised.take() {
+                    (frame, pc) = self.unwind_general_loop(
+                        p,
+                        frame,
+                        pc + 1,
+                        pc as u32,
+                        error,
+                        &mut pending_calls,
+                        &mut cursor,
+                        executing_program,
+                        fast_lane,
+                    )?;
+                    published_pc = &mut self.frames[frame].pc;
+                    continue;
+                }
             }
             if STOPS && stop_pc == Some(pc) {
                 self.frames[frame].pc = pc;
