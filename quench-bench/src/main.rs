@@ -30,7 +30,7 @@ const MIN_QUALIFYING_ROUNDS: usize = 11;
 const DEFAULT_TIMEOUT_MS: u64 = 300_000;
 const MEASUREMENT_ENV: &[&str] = &["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TZ"];
 const FIXED_WORK_REPORT_SCHEMA: u32 = 5;
-const SUITE_REPORT_SCHEMA: u32 = 6;
+const SUITE_REPORT_SCHEMA: u32 = 7;
 const FIXED_WORK_MEASUREMENT_MODE: &str = "fixed_work_diagnostic";
 const FIXED_WORK_MARKER_PREFIX: &str = "__quenchFixedWork:";
 const FIXED_WORK_SUITE_COUNT: usize = 1;
@@ -382,6 +382,10 @@ struct SuiteRecord {
     suite: Suite,
     #[serde(default)]
     jit_mode: JitMode,
+    /// Runs with JIT counters/reporting enabled are diagnostic, not score
+    /// qualification measurements.
+    #[serde(default)]
+    jit_diagnostics: bool,
     created_unix_ns: u128,
     rounds_requested: usize,
     timeout_ms: u64,
@@ -525,6 +529,7 @@ struct FixedWorkReport {
 struct Options {
     suite: Suite,
     jit_mode: JitMode,
+    jit_diagnostics: bool,
     fixture: Option<String>,
     all: bool,
     preflight_only: bool,
@@ -594,6 +599,7 @@ fn main() {
         schema: SUITE_REPORT_SCHEMA,
         suite,
         jit_mode: options.jit_mode,
+        jit_diagnostics: options.jit_diagnostics,
         created_unix_ns: now_ns(),
         rounds_requested: options.rounds,
         timeout_ms: options.timeout_ms,
@@ -666,6 +672,7 @@ fn main() {
     report.complete = complete;
     report.qualification_ready = complete
         && options.rounds >= MIN_QUALIFYING_ROUNDS
+        && !options.jit_diagnostics
         && report.corpus.fixture_set_matches
         && report.corpus.checkout_clean
         && report.corpus.pinned_revision == report.corpus.checkout_revision
@@ -750,6 +757,7 @@ fn validate_resume(saved: &SuiteRecord, expected: &SuiteRecord, files: &[PathBuf
     let metadata_matches = saved.schema == expected.schema
         && saved.suite == expected.suite
         && saved.jit_mode == expected.jit_mode
+        && saved.jit_diagnostics == expected.jit_diagnostics
         && saved.rounds_requested == expected.rounds_requested
         && saved.timeout_ms == expected.timeout_ms
         && saved.source_revision == expected.source_revision
@@ -825,6 +833,7 @@ fn parse_options() -> Options {
     let mut options = Options {
         suite: Suite::V8V7,
         jit_mode: JitMode::NoJit,
+        jit_diagnostics: false,
         fixture: None,
         all: first == "--all",
         preflight_only: first == "--preflight-only",
@@ -852,6 +861,7 @@ fn parse_options() -> Options {
                 options.suite = Suite::parse(&name);
             }
             "--jit" => options.jit_mode = JitMode::Jit,
+            "--jit-diagnostics" => options.jit_diagnostics = true,
             "--node" => options.node = required_path(&mut args, "--node"),
             "--bun" => options.bun = required_path(&mut args, "--bun"),
             "--qjs" => options.qjs = required_path(&mut args, "--qjs"),
@@ -897,6 +907,9 @@ fn parse_options() -> Options {
     }
     if options.jit_mode == JitMode::Jit && options.suite != Suite::JetStream3 {
         usage("--jit is currently supported only with --suite jetstream3");
+    }
+    if options.jit_diagnostics && options.jit_mode != JitMode::Jit {
+        usage("--jit-diagnostics requires --suite jetstream3 --jit");
     }
     if options.quench_peer.is_some() && !options.fixed_work {
         usage("--quench-peer requires --fixed-work");
@@ -1053,7 +1066,11 @@ fn quench_engine(options: &Options) -> EngineSpec {
     } else {
         Vec::new()
     };
-    let mut quench = spec("quench", &options.quench, argv, BTreeMap::new());
+    let mut environment = BTreeMap::new();
+    if options.jit_diagnostics {
+        environment.insert("QUENCH_WASM_JIT_STATS".into(), "1".into());
+    }
+    let mut quench = spec("quench", &options.quench, argv, environment);
     let execution_tier = if jit_enabled { "JIT" } else { "interpreter" };
     quench.version = format!(
         "Quench shared-VM {execution_tier} build; package {}",
@@ -1063,7 +1080,11 @@ fn quench_engine(options: &Options) -> EngineSpec {
     if jit_enabled {
         quench.jit_proof_command.push("--jit".into());
         quench.jit_mode = "enabled-by-cli-flag";
-        quench.jit_proof = "the measured Quench process is launched with --jit".into();
+        quench.jit_proof = if options.jit_diagnostics {
+            "the measured Quench process is launched with --jit and QUENCH_WASM_JIT_STATS=1; diagnostic-only, not for qualification".into()
+        } else {
+            "the measured Quench process is launched with --jit".into()
+        };
     } else {
         quench.jit_proof =
             "the measured shared VM executes interpreter bytecode; no guest JIT path is enabled"
@@ -2353,7 +2374,7 @@ pub(crate) fn now_ns() -> u128 {
 
 fn usage(message: &str) -> ! {
     eprintln!(
-        "{message}\nusage: quench-bench <fixture.js>|--all [--suite v8-v7|jetstream3] [--jit] [--fixed-work] [--quench PATH] [--quench-peer PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--checkpoint PATH|--resume PATH] [--out PATH]\n       quench-bench --preflight-only [--suite v8-v7|jetstream3] [--jit] [engine options]\n       quench-bench --analyze REPORT [--out JSON]"
+        "{message}\nusage: quench-bench <fixture.js>|--all [--suite v8-v7|jetstream3] [--jit] [--jit-diagnostics] [--fixed-work] [--quench PATH] [--quench-peer PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--checkpoint PATH|--resume PATH] [--out PATH]\n       quench-bench --preflight-only [--suite v8-v7|jetstream3] [--jit] [--jit-diagnostics] [engine options]\n       quench-bench --analyze REPORT [--out JSON]"
     );
     std::process::exit(2)
 }
@@ -2636,6 +2657,7 @@ mod tests {
             schema: super::SUITE_REPORT_SCHEMA,
             suite: super::Suite::V8V7,
             jit_mode: super::JitMode::NoJit,
+            jit_diagnostics: false,
             created_unix_ns: now_ns(),
             rounds_requested: 11,
             timeout_ms: 300_000,

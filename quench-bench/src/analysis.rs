@@ -20,6 +20,8 @@ struct SuiteInput {
     suite: crate::Suite,
     #[serde(default)]
     jit_mode: crate::JitMode,
+    #[serde(default)]
+    jit_diagnostics: bool,
     rounds_requested: usize,
     timeout_ms: u64,
     source_revision: String,
@@ -328,11 +330,14 @@ fn parse_args(args: &[String]) -> Result<(PathBuf, Option<PathBuf>), String> {
 }
 
 fn validate_suite(input: &SuiteInput) -> Result<(), String> {
-    if input.schema != 5 && input.schema != crate::SUITE_REPORT_SCHEMA {
+    if !matches!(input.schema, 5 | 6) && input.schema != crate::SUITE_REPORT_SCHEMA {
         return Err(format!(
             "unsupported benchmark report schema {}",
             input.schema
         ));
+    }
+    if input.jit_diagnostics {
+        return Err("JIT-diagnostic reports cannot be used for qualification analysis".into());
     }
     if !input.qualification_ready || !input.complete {
         return Err("benchmark report is incomplete or not qualification_ready".to_string());

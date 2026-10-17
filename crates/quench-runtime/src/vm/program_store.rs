@@ -670,6 +670,16 @@ impl ProgramStore {
         self.entry(id)?.compiled.clone()
     }
 
+    pub(super) fn has_compiled_function_or_note_fallback(
+        &self,
+        id: ProgramId,
+        function: usize,
+    ) -> bool {
+        self.entry(id)
+            .and_then(|entry| entry.compiled.as_ref()?.as_ref())
+            .is_some_and(|program| program.has_function_or_note_fallback(function))
+    }
+
     pub(super) fn set_compiled(
         &mut self,
         id: ProgramId,
