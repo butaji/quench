@@ -1,4 +1,4 @@
-//! Default Node IPC serialization and duplex channel lifecycle.
+//! Node IPC serialization (`json` and `advanced`) and duplex channel lifecycle.
 use crate::host::{NodeHost, SharedNodeState};
 use quench_runtime::{NativeContext, RootId, RootedError, Value};
 use std::{
@@ -14,7 +14,48 @@ const SEND_QUEUE_HIGH_WATER_MARK: usize = 128 * 1024;
 const IMMEDIATE_STRING_STORAGE_BYTES: usize = 16 * 1024;
 const UTF8_BYTES_PER_UTF16_UNIT: usize = 3;
 const PROCESS_OWNER: u64 = 0;
+/// The child bootstrap variable naming the channel's serialization mode.
+pub(crate) const SERIALIZATION_MODE_VARIABLE: &str = "NODE_CHANNEL_SERIALIZATION_MODE";
 const INTERNAL_MESSAGE_PREFIX: &str = "NODE_";
+
+/// `options.serialization`: how messages are framed and encoded on the channel.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Serialization {
+    /// JSON text frames, each ended by a newline.
+    #[default]
+    Json,
+    /// Length-prefixed V8 value payloads (`internalBinding('ipc_serdes')`).
+    Advanced,
+}
+
+impl Serialization {
+    pub(crate) fn from_mode(mode: &str) -> Option<Self> {
+        [Self::Json, Self::Advanced].into_iter().find(|serialization| serialization.mode() == mode)
+    }
+
+    pub(crate) fn mode(self) -> &'static str {
+        match self {
+            Self::Json => "json",
+            Self::Advanced => "advanced",
+        }
+    }
+
+    /// The length of the next complete frame in `input` and its payload range.
+    fn frame(self, input: &[u8]) -> Option<(usize, std::ops::Range<usize>)> {
+        match self {
+            Self::Json => input
+                .iter()
+                .position(|byte| *byte == JSON_FRAME_DELIMITER)
+                .map(|end| (end + 1, 0..end)),
+            Self::Advanced => {
+                let header = input.get(..super::ipc_serdes_shared_vm::FRAME_HEADER_BYTES)?;
+                let payload = u32::from_be_bytes(header.try_into().ok()?) as usize;
+                let size = super::ipc_serdes_shared_vm::FRAME_HEADER_BYTES + payload;
+                (input.len() >= size).then_some((size, super::ipc_serdes_shared_vm::FRAME_HEADER_BYTES..size))
+            }
+        }
+    }
+}
 
 struct Transport {
     #[cfg(unix)]
@@ -76,6 +117,7 @@ impl CountedReferences {
 
 pub(crate) struct IpcChannel {
     phase: Phase,
+    serialization: Serialization,
     input: Vec<u8>,
     writes: VecDeque<PendingWrite>,
     completed: VecDeque<(RootId, bool)>,
@@ -92,6 +134,8 @@ pub(crate) struct State {
     /// The `EventEmitter` the IPC surface extends, kept until a channel needs it.
     emitter: Option<RootId>,
     api_factory: Option<RootId>,
+    /// Received payloads, consumed in order by `ipcDecode`.
+    received: VecDeque<(Serialization, Vec<u8>)>,
 }
 
 struct Progress {
@@ -112,9 +156,10 @@ impl IpcChannel {
     }
 
     #[cfg(unix)]
-    pub(crate) fn new(socket: std::os::unix::net::UnixStream) -> Self {
+    pub(crate) fn new(socket: std::os::unix::net::UnixStream, serialization: Serialization) -> Self {
         Self {
             phase: Phase::Open(Transport { socket }),
+            serialization,
             input: Vec::new(),
             writes: VecDeque::new(),
             completed: VecDeque::new(),
@@ -245,11 +290,9 @@ impl IpcChannel {
             self.close();
         }
         let mut start = 0;
-        for (index, byte) in self.input.iter().enumerate() {
-            if *byte == JSON_FRAME_DELIMITER {
-                result.frames.push(self.input[start..index].to_vec());
-                start = index + 1;
-            }
+        while let Some((size, payload)) = self.serialization.frame(&self.input[start..]) {
+            result.frames.push(self.input[start + payload.start..start + payload.end].to_vec());
+            start += size;
         }
         if start != 0 {
             self.input.drain(..start);
@@ -340,7 +383,11 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
             socket
                 .set_nonblocking(true)
                 .map_err(|error| RootedError::host(error.to_string()))?;
-            let mut channel = IpcChannel::new(socket);
+            let serialization = std::env::var(SERIALIZATION_MODE_VARIABLE)
+                .ok()
+                .and_then(|mode| Serialization::from_mode(&mode))
+                .unwrap_or_default();
+            let mut channel = IpcChannel::new(socket, serialization);
             channel.counted_references = CountedReferences::Process { count: 0.0 };
             state.borrow_mut().process_ipc.channel = Some(channel);
         }
@@ -581,18 +628,31 @@ pub(crate) fn send(
             return Err(context.throw(error));
         }
     }
-    let stringify = state
-        .borrow()
-        .process_ipc
-        .stringify
-        .ok_or_else(|| RootedError::host("IPC JSON serializer is missing"))?;
-    let undefined = context.undefined();
-    let serialized = context.call_rooted(stringify, undefined, &[message])?;
-    let text = context.to_string(serialized)?;
-    let immediate = (text.encode_utf16().count() + 1).saturating_mul(UTF8_BYTES_PER_UTF16_UNIT)
-        <= IMMEDIATE_STRING_STORAGE_BYTES;
-    let mut bytes = text.into_bytes();
-    bytes.push(JSON_FRAME_DELIMITER);
+    let serialization = channel(&mut state.borrow_mut(), owner)
+        .map_or(Serialization::Json, |channel| channel.serialization);
+    let (bytes, immediate) = match serialization {
+        Serialization::Json => {
+            let stringify = state
+                .borrow()
+                .process_ipc
+                .stringify
+                .ok_or_else(|| RootedError::host("IPC JSON serializer is missing"))?;
+            let undefined = context.undefined();
+            let serialized = context.call_rooted(stringify, undefined, &[message])?;
+            let text = context.to_string(serialized)?;
+            let immediate = (text.encode_utf16().count() + 1).saturating_mul(UTF8_BYTES_PER_UTF16_UNIT)
+                <= IMMEDIATE_STRING_STORAGE_BYTES;
+            let mut bytes = text.into_bytes();
+            bytes.push(JSON_FRAME_DELIMITER);
+            (bytes, immediate)
+        }
+        // Buffer writes always attempt a synchronous write first.
+        Serialization::Advanced => {
+            let undefined = context.undefined();
+            let buffer = super::buffer_shared_vm::constructor(context, undefined, &[])?;
+            (super::ipc_serdes_shared_vm::serialize(context, message, buffer)?, true)
+        }
+    };
     let callback = callback
         .map(|callback| context.retain(callback))
         .transpose()?;
@@ -740,9 +800,11 @@ pub(crate) fn poll(
     };
     let mut progressed = false;
     for (owner, target) in owners {
-        let progress = channel(&mut state.borrow_mut(), owner)
-            .expect("IPC owner snapshot")
-            .progress();
+        let (progress, serialization) = {
+            let mut state = state.borrow_mut();
+            let channel = channel(&mut state, owner).expect("IPC owner snapshot");
+            (channel.progress(), channel.serialization)
+        };
         progressed |=
             !progress.frames.is_empty() || !progress.callbacks.is_empty() || progress.disconnected;
         for (callback, failed) in progress.callbacks {
@@ -769,12 +831,13 @@ pub(crate) fn poll(
                     .rooted_value(target)
                     .ok_or("IPC message target missing")?,
             );
-            let text = runtime.string_rooted(&String::from_utf8_lossy(&bytes));
-            state.borrow_mut().scheduler.queue_shared_next_tick(
+            let mut state = state.borrow_mut();
+            state.process_ipc.received.push_back((serialization, bytes));
+            state.scheduler.queue_shared_next_tick(
                 super::shared_event_loop::SharedCallback { execution: None,
                     callback: decode,
                     receiver,
-                    args: vec![target, text],
+                    args: vec![target],
                 },
             );
         }
@@ -868,19 +931,29 @@ pub(crate) fn decode(
         .first()
         .copied()
         .ok_or_else(|| RootedError::host("IPC decode target missing"))?;
-    let text = args
-        .get(1)
-        .copied()
-        .ok_or_else(|| RootedError::host("IPC decode frame missing"))?;
-    let parse = context
-        .host_mut()
-        .shared_state()
-        .borrow()
+    let state = context.host_mut().shared_state();
+    let (serialization, bytes) = state
+        .borrow_mut()
         .process_ipc
-        .parse
-        .ok_or_else(|| RootedError::host("IPC JSON parser missing"))?;
+        .received
+        .pop_front()
+        .ok_or_else(|| RootedError::host("IPC decode frame missing"))?;
     let undefined = context.undefined();
-    let message = context.call_rooted(parse, undefined, &[text])?;
+    let message = match serialization {
+        Serialization::Json => {
+            let parse = state
+                .borrow()
+                .process_ipc
+                .parse
+                .ok_or_else(|| RootedError::host("IPC JSON parser missing"))?;
+            let text = context.string_rooted(&String::from_utf8_lossy(&bytes));
+            context.call_rooted(parse, undefined, &[text])?
+        }
+        Serialization::Advanced => {
+            let payload = super::buffer_shared_vm::from_bytes(context, &bytes)?;
+            super::ipc_serdes_shared_vm::deserialize(context, payload)?
+        }
+    };
     let mut event = "message";
     if context.is_object_rooted(message)? {
         let key = context.string_rooted("cmd");

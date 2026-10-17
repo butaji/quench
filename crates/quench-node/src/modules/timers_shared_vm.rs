@@ -668,7 +668,7 @@ fn schedule_timer(
     crate::modules::async_hooks_shared_vm::emit_init(context, handle, "Timeout", async_id)?;
     // The public callback/argument slots are canonical; the scheduler retains
     // only an invocation view and the original handle.
-    let callback = SharedCallback { execution: Some(crate::modules::shared_event_loop::CallbackExecution {
+    let callback = SharedCallback { execution: Some(crate::modules::shared_event_loop::CallbackExecution { lifetime: crate::modules::shared_event_loop::CallbackLifetime::Operation, optional_callback: None,
         id: async_id, resource: context.retain(handle)?,
     }),
         callback: context.retain(api.timer_callback)?,
@@ -1097,7 +1097,7 @@ pub(crate) fn set_immediate(
         .queue_shared_immediate(
             id,
             crate::modules::shared_event_loop::SharedImmediateOwner::Guest,
-            SharedCallback { execution: Some(crate::modules::shared_event_loop::CallbackExecution {
+            SharedCallback { execution: Some(crate::modules::shared_event_loop::CallbackExecution { lifetime: crate::modules::shared_event_loop::CallbackLifetime::Operation, optional_callback: None,
                 id: async_id, resource: context.retain(handle)?,
             }),
                 callback,
@@ -1442,7 +1442,7 @@ pub(crate) fn refresh(context: &mut NativeContext<'_, NodeHost>, receiver: RootI
         // The slot can have an observable getter/setter. Retain the identity
         // from the required read or initialization; do not read it again.
         let async_id = execution_id.ok_or_else(|| RootedError::host("timer async identity"))?;
-        let callback = SharedCallback { execution: Some(crate::modules::shared_event_loop::CallbackExecution {
+        let callback = SharedCallback { execution: Some(crate::modules::shared_event_loop::CallbackExecution { lifetime: crate::modules::shared_event_loop::CallbackLifetime::Operation, optional_callback: None,
             id: async_id, resource: context.retain(receiver)?,
         }), callback: context.retain(api.timer_callback)?, receiver: context.retain(receiver)?, args: Vec::new() };
         state.borrow_mut().scheduler.queue_shared_timer(id, delay, None, callback);

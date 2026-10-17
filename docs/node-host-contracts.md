@@ -1166,3 +1166,35 @@ outside ordinary integrity and reflection queries.
 Qualification and retained failures appear in
 `evidence/task20-native-backends-qualified-2026-10-16.json`. Full parallel counts
 remain separate from selected API and upstream proof inventories.
+
+Native UDP handles own real socket descriptors. SDK dgram policy uses the same
+native AsyncWrap identity, callback queue, descriptor classifier and close queue
+as TCP. Retained constructor/prototype roots preserve branding across guest
+mutation; queued send admission changes the default trigger without changing the
+caller's execution context or async-local store. A request shell gains an async
+identity only when native work is admitted. Resource callbacks retain their
+identity through close; operation requests retire after their callback.
+
+Configured c-ares channels poll real sockets and native deadlines. Pending
+requests keep their channel and mutable completion callback reachable; canceled
+or completed requests release those roots through the shared operation lifecycle.
+The SDK-selected native parsers own aliases, TTL minima and address filtering.
+Reverse lookup uses c-ares host-file/DNS policy. Performance observer counts,
+monotonic milestones and DNS-entry delivery have native owners. GC performance
+events remain explicitly unsupported, and this does not complete user-timing
+observer integration.
+
+PBKDF2 and HKDF use original SDK public functions, owned provider digest
+resolution and one native KDF context owner. Async input snapshots and cleansed
+secret buffers cross the existing native task pool; completion uses the same
+mutable job callback and async resource lifecycle as other crypto jobs. This
+does not expose the pending replacement asymmetric KeyObject family.
+
+Trace-event category and name payloads follow the configured V8 JSON trace
+writer's direct quoted-byte boundary. Original SDK timer labels already contain
+trace escaping; encoding them a second time changes the names read from the file.
+Other event fields retain normal JSON encoding.
+
+Selected combined-candidate checks do not replace the full API or parallel
+inventories. The latest published full stable result and every lost pass are in
+`evidence/task20-native-backends-full-stable-2026-10-16.json`.

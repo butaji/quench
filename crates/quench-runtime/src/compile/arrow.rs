@@ -58,6 +58,35 @@ impl Compiler<'_> {
             .copied()
             .filter(|atom| function_scope.contains(atom))
             .collect();
+        let dynamic_eval = early::parameters_contain_direct_eval(&value.params)
+            || match &value.body {
+                oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) => {
+                    early::body_contains_direct_eval(&body.statements)
+                }
+                body => early::expression_contains_direct_eval(
+                    body.as_expression().expect("arrow expression body"),
+                ),
+            };
+        let simple_parameters = !FunctionCompiler::has_non_simple_parameters(&value.params);
+        let (body_statements, expression_body) = match &value.body {
+            oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) => (&body.statements[..], None),
+            body => (&[][..], body.as_expression()),
+        };
+        let (promoted_local_slots, clobbered_local_slots) = self.promoted_local_plan(
+            parent.is_some()
+                && simple_parameters
+                && !value.r#async
+                && !class_initializer
+                && with_depth == 0
+                && self.eval_context.is_none()
+                && !dynamic_eval,
+            body_statements,
+            expression_body,
+            &locals,
+            &function_scope,
+            &lexical_atoms,
+            None,
+        );
         let mut function = FunctionCompiler::new(
             self,
             locals,
@@ -71,8 +100,8 @@ impl Compiler<'_> {
             None,
             parameter_local_count,
             with_depth,
-            &[],
-            &[],
+            &promoted_local_slots,
+            &clobbered_local_slots,
         );
         function.strict = strict;
         function.super_static = super_static;
@@ -81,15 +110,7 @@ impl Compiler<'_> {
         function.class_initializer = class_initializer;
         function.super_call_binds_this = super_call_binds_this;
         function.this_override = lexical_this_atom.map(|atom| function.load_atom(atom));
-        function.dynamic_eval = early::parameters_contain_direct_eval(&value.params)
-            || match &value.body {
-                oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) => {
-                    early::body_contains_direct_eval(&body.statements)
-                }
-                body => early::expression_contains_direct_eval(
-                    body.as_expression().expect("arrow expression body"),
-                ),
-            };
+        function.dynamic_eval = dynamic_eval;
         let lexical_slots = lexical_atoms
             .iter()
             .filter_map(|atom| function.local_slots.get(atom).copied())
@@ -139,13 +160,13 @@ impl Compiler<'_> {
             class_initializer,
             parameter_eval_arguments_error: false,
             arguments_slot: None,
-            simple_parameters: !FunctionCompiler::has_non_simple_parameters(&value.params),
+            simple_parameters,
             strict,
             locals: function.locals.len() as u16,
             local_atoms: function.locals.clone(),
             environment_atoms,
             selective_capture_slots: None,
-            local_registers: Vec::new(),
+            local_registers: function.promoted_local_layout(),
             inherited_with_scope: with_depth != 0,
             lexical_atoms,
             global_lexical_atoms: Vec::new(),

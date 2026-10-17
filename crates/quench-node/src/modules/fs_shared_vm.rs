@@ -2132,6 +2132,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     context.define_data_property_rooted(exists_sync, name_key, name_value, false, false, true)?;
     let access = get(context, exists_api, "access")?;
     let access_sync = get(context, exists_api, "accessSync")?;
+    let access_sync = metadata_public::wrap(context, access_sync, "accessSync")?;
     let chmod = get(context, exists_api, "chmod")?;
     let chmod_sync = get(context, exists_api, "chmodSync")?;
     let fchmod = get(context, exists_api, "fchmod")?;
@@ -2210,7 +2211,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let rm = context.call_rooted(factory, undefined, &[rm])?;
     set(context, module, "rm", rm)?;
     sync::install(context, module)?;
-    for name in ["fstatSync", "closeSync"] {
+    for name in ["fstatSync", "closeSync", "renameSync", "linkSync", "copyFileSync"] {
         let original = get(context, module, name)?;
         let function = metadata_public::wrap(context, original, name)?;
         set(context, module, name, function)?;
@@ -2661,8 +2662,7 @@ fn get(
     object: RootId,
     name: &str,
 ) -> Result<RootId, RootedError> {
-    let key = context.string_rooted(name);
-    context.get_property_rooted(object, key)
+    context.get_named_property_rooted(object, name)
 }
 
 pub(crate) fn resolve_shared_path(

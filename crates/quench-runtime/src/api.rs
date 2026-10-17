@@ -10,6 +10,7 @@ pub(crate) use native::CompiledScriptState;
 pub use native::{
     BufferStorage, BuiltinBrand, ValueType, BuiltinData, CollectionPreview, PromiseSnapshot, HostFunction, HostFunctionId, HostWeakRoot, PreparedScript, NativeArithmetic,
     CompiledScript, NativeContext, RootedIterator, ErrorSourcePosition, SourceStackFrame, SynchronousModule,
+    DeserializerDelegate, SerializerDelegate,
 };
 
 /// The syntax context used when compiling source. Script and Module use
@@ -83,6 +84,11 @@ impl<H: Host> Runtime<H> {
     pub fn set_execution_mode(&mut self, mode: crate::ExecutionMode) {
         self.vm.set_execution_mode(mode);
     }
+
+    /// Construct the Vm on this thread with an owned cancellation authority.
+    pub fn new_with_execution_interrupt(host:H,interrupt:crate::ExecutionInterrupt)->Self { Self { vm:Vm::new_with_execution_interrupt(host,interrupt) } }
+
+    pub fn execution_interrupt_handle(&self)->crate::ExecutionInterrupt { self.vm.execution_interrupt_handle() }
 
     pub fn execution_mode(&self) -> crate::ExecutionMode {
         self.vm.execution_mode()
