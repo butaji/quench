@@ -3004,11 +3004,15 @@ pub(crate) fn initialize_cluster_worker(context: &mut Context<'_>) -> Result<(),
     if !context.truthy_rooted(entry)? {
         return Ok(());
     }
-    let env = get(context, process, "env")?;
-    let worker_id = get(context, env, "NODE_UNIQUE_ID")?;
-    if !context.truthy_rooted(worker_id)? {
+    // The environment as `process.env` starts from: reading `process.env` itself would copy
+    // every variable on each run that is no cluster worker.
+    if !crate::modules::process_shared_vm::environment(context)
+        .iter()
+        .any(|(name, value)| name == "NODE_UNIQUE_ID" && !value.is_empty())
+    {
         return Ok(());
     }
+    let env = get(context, process, "env")?;
     let cluster = cached_builtin(context, BuiltinModule::Cluster)?;
     let setup = get(context, cluster, "_setupWorker")?;
     context.call_rooted(setup, cluster, &[])?;
