@@ -66,6 +66,10 @@ impl<H: Host> Vm<H> {
         Ok(self.heap.root(reference))
     }
 
+    pub(crate) fn embedding_collection_epoch(&self) -> u64 {
+        self.heap.collection_epoch()
+    }
+
     pub(crate) fn embedding_host_weak_value(&self, reference: RootId) -> Option<Value> {
         let value = self.heap.root_value(reference)?;
         match self.heap.get(value)? {

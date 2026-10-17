@@ -3951,8 +3951,21 @@ lane_handler! {
     fn lane_script_call_resolve<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        if unsafe { vm(cx) }.resolve_script_call_target(code, r.get(i.b)).is_some() {
+        let vm = unsafe { vm(cx) };
+        let callee = r.get(i.b);
+        if vm.resolve_script_call_target(code, callee).is_some() {
             sibling!(lane_script_call::<H>, r, ip, Carried::SCRIPT)
+        }
+        // A site calling a native takes the native handler from now on, which hands any other
+        // callee back.
+        if matches!(
+            vm.heap.get(callee),
+            Some(Cell::Function {
+                kind: FunctionKind::Native(_),
+                ..
+            })
+        ) {
+            requicken(ip, lane_native_call::<H>);
         }
         sibling!(lane_native_call::<H>, r, ip, Carried::SCRIPT)
     }
@@ -4101,6 +4114,17 @@ lane_handler! {
     #[inline(never)]
     fn lane_native_call<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
+        if !matches!(
+            vm.heap.get(r.get(i.b)),
+            Some(Cell::Function {
+                kind: FunctionKind::Native(_),
+                ..
+            })
+        ) {
+            // The general path makes this call; the record's next run resolves anew.
+            requicken(ip, lane_script_call::<H>);
+            return exit(ip);
+        }
         if matches!(
             vm.heap.get(r.get(i.b)),
             Some(Cell::Function {
