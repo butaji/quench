@@ -995,6 +995,28 @@ impl<H: Host> Vm<H> {
         Some(hit.value)
     }
 
+    /// `primary_own_field_hit` for a receiver any heap cell holds, such as a function's own
+    /// static field (`Strength.REQUIRED`), which a direct object's record lookup misses.
+    #[inline(always)]
+    pub(super) fn cell_own_field_hit(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        site: u16,
+    ) -> Option<Value> {
+        debug_assert!(self.lane_admits(p));
+        let receiver = self.heap.object(object)?;
+        // SAFETY: the active program's layout reserves every compiler-emitted site.
+        let cache = unsafe { *self.field_caches.get_unchecked(self.field_cache_index(site)) };
+        if cache.receiver != receiver.shape() || cache.holder != NO_FIELD_HOLDER {
+            return None;
+        }
+        // SAFETY: as for `cached_field_hit`.
+        let value = unsafe { self.heap.property_get_shaped(receiver, cache.slot as usize) }?;
+        self.profile.field_cache_hit(0, 0);
+        Some(value)
+    }
+
     /// `primary_holder_field_hit` for a receiver any heap cell holds, such as a function whose
     /// prototype holds the method (`f.apply`), which a direct object's record lookup misses.
     #[inline(always)]

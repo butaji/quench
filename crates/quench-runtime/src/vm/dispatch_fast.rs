@@ -1469,6 +1469,23 @@ lane_handler! {
 }
 
 lane_handler! {
+    /// `lane_get_field_own` for a receiver in a heap cell rather than the object records
+    /// (`Vm::cell_own_field_hit`): a function's own field, as `Strength.REQUIRED`. A miss
+    /// moves the record on as `lane_get_field_miss` decides.
+    fn lane_get_field_own_cell<>(cx, r, ip, i, view) {
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) })
+            .and_then(|object| (unsafe { vm(cx) }).cell_own_field_hit(code, object, i.c))
+        else {
+            sibling!(lane_get_field_miss::<H>, r, ip, Carried::SCRIPT)
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::SCRIPT)
+    }
+}
+
+lane_handler! {
     /// `lane_get_field_holder` for a receiver in a heap cell rather than the object records
     /// (`Vm::cell_holder_field_hit`): a method read from a function, as `f.apply`. A miss
     /// moves the record on as `lane_get_field_miss` decides.
@@ -1585,6 +1602,12 @@ lane_handler! {
                 lane_get_field_inherited::<H, false>,
                 lane_get_field::<H>,
             )),
+            FieldSiteTier::Own
+                if unsafe { lane_single_field_base(cx, r, i.b) }
+                    .is_some_and(|object| object.direct_object_index().is_none()) =>
+            {
+                Some(lane_get_field_own_cell::<H>)
+            }
             FieldSiteTier::Own => None,
         };
         if let Some(handler) = handler {
@@ -4850,7 +4873,14 @@ lane_handler! {
     fn lane_returning_field_miss<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
+        // The single-entry tiers read the object records alone; a receiver in a heap cell
+        // keeps the general cached read.
+        let cell_receiver = unsafe { lane_single_field_base(cx, r, i.b) }
+            .is_some_and(|object| object.direct_object_index().is_none());
         let handler: Option<Handler> = match lane_field_site_tier(unsafe { vm(cx) }, code, i) {
+            FieldSiteTier::Own | FieldSiteTier::Holder | FieldSiteTier::Inherited if cell_receiver => {
+                Some(lane_returning::<H, RETURNING_FIELD>)
+            }
             FieldSiteTier::Nested => Some(lane_returning::<H, RETURNING_FIELD_NESTED>),
             FieldSiteTier::General => Some(lane_returning::<H, RETURNING_FIELD>),
             FieldSiteTier::Polymorphic => Some(lane_returning::<H, RETURNING_FIELD_POLYMORPHIC>),
