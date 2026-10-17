@@ -70,22 +70,11 @@ pub(super) fn unresolved(error: oxc_resolver::ResolveError, specifier: &str, bas
                 ),
             }
         }
-        R::PackagePathNotExported(subpath, package_json) if subpath == "." => ModuleLoadError::new(
-            Kind::Error,
-            "ERR_PACKAGE_PATH_NOT_EXPORTED",
-            format!("No \"exports\" main defined in {} imported from {from}", package_json.display()),
-        ),
-        R::PackagePathNotExported(subpath, package_json) => ModuleLoadError::new(
-            Kind::Error,
-            "ERR_PACKAGE_PATH_NOT_EXPORTED",
-            format!("Package subpath '{subpath}' is not defined by \"exports\" in {} imported from {from}", package_json.display()),
-        ),
-        R::PackageImportNotDefined(import, package_json) => ModuleLoadError::new(
-            Kind::TypeError,
-            "ERR_PACKAGE_IMPORT_NOT_DEFINED",
-            format!("Package import specifier \"{import}\" is not defined in package {} imported from {from}", package_json.display()),
-        ),
-        other => other.to_string().into(),
+        other => match require_unresolved(&other) {
+            // The ESM loader also names the importer.
+            Some(error) => ModuleLoadError { message: format!("{} imported from {from}", error.message), ..error },
+            None => other.to_string().into(),
+        },
     }
 }
 
@@ -93,15 +82,8 @@ pub(super) fn unresolved(error: oxc_resolver::ResolveError, specifier: &str, bas
 pub(super) fn unloadable(path: &Path) -> Option<ModuleLoadError> {
     let extension = path.extension().and_then(|extension| extension.to_str())?;
     if TYPESCRIPT_EXTENSIONS.contains(&extension) {
-        if !path.components().any(|component| component.as_os_str() == NODE_MODULES) {
-            return None;
-        }
         let url = url::Url::from_file_path(path).map(String::from).unwrap_or_else(|_| path.display().to_string());
-        return Some(ModuleLoadError::new(
-            Kind::Error,
-            "ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING",
-            format!("Stripping types is currently unsupported for files under node_modules, for \"{url}\""),
-        ));
+        return node_modules_typescript(path).then(|| type_stripping_unsupported(&url));
     }
     if LOADABLE_EXTENSIONS.contains(&extension) {
         return None;
@@ -141,6 +123,44 @@ pub(super) fn validate_type(url: &str, requested: &str) -> Result<(), ModuleLoad
             "ERR_IMPORT_ATTRIBUTE_TYPE_INCOMPATIBLE",
             format!("Module \"{url}\" is not of type \"{requested}\""),
         )
+    })
+}
+
+/// A TypeScript file Node will not strip: one under node_modules.
+pub(super) fn node_modules_typescript(path: &Path) -> bool {
+    path.extension().and_then(|extension| extension.to_str()).is_some_and(|extension| TYPESCRIPT_EXTENSIONS.contains(&extension))
+        && path.components().any(|component| component.as_os_str() == NODE_MODULES)
+}
+
+/// `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`; the ESM loader names a URL, `require` a path.
+pub(super) fn type_stripping_unsupported(location: &str) -> ModuleLoadError {
+    ModuleLoadError::new(
+        Kind::Error,
+        "ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING",
+        format!("Stripping types is currently unsupported for files under node_modules, for \"{location}\""),
+    )
+}
+
+/// `require`'s report of a package exports failure, which names no importer.
+pub(super) fn require_unresolved(error: &oxc_resolver::ResolveError) -> Option<ModuleLoadError> {
+    use oxc_resolver::ResolveError as R;
+    Some(match error {
+        R::PackagePathNotExported(subpath, package_json) if subpath == "." => ModuleLoadError::new(
+            Kind::Error,
+            "ERR_PACKAGE_PATH_NOT_EXPORTED",
+            format!("No \"exports\" main defined in {}", package_json.display()),
+        ),
+        R::PackagePathNotExported(subpath, package_json) => ModuleLoadError::new(
+            Kind::Error,
+            "ERR_PACKAGE_PATH_NOT_EXPORTED",
+            format!("Package subpath '{subpath}' is not defined by \"exports\" in {}", package_json.display()),
+        ),
+        R::PackageImportNotDefined(import, package_json) => ModuleLoadError::new(
+            Kind::TypeError,
+            "ERR_PACKAGE_IMPORT_NOT_DEFINED",
+            format!("Package import specifier \"{import}\" is not defined in package {}", package_json.display()),
+        ),
+        _ => return None,
     })
 }
 
