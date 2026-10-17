@@ -888,6 +888,7 @@ impl Engine {
             let function = Function {
                 parent: None,
                 name: None,
+                inferred_name: None,
                 is_arrow: false,
                 self_binding_slot: None,
                 source_span: None,
@@ -922,7 +923,7 @@ impl Engine {
                 global_immutable_atoms: vec![],
                 name_bindings: Default::default(),
                 binding_sites: vec![],
-                source_positions: vec![],
+                source_positions: Default::default(),
                 environment_clones: vec![],
                 code: lowering.code,
                 wide: lowering.wide,

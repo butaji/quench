@@ -1241,6 +1241,9 @@ fn connect_with_timeout(host: &str, port: u16) -> Result<TcpStream, TcpConnectFa
 
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let module = context.object_rooted()?;
+    let initialize=context.host_function_with_data(crate::host::shared_vm::operation("netBoundSocketProjection"),module)?;
+    context.define_lazy_data_properties_rooted(module,&["BoundSocket"],true,initialize)?;
+
     for (name, operation) in [
         ("isIP", "netIsIP"),
         ("isIPv4", "netIsIPv4"),
@@ -2644,59 +2647,49 @@ pub(crate) fn native_tcp_has_ref(transport: &Transport, id: u64) -> bool {
         .unwrap_or(false)
 }
 
-/// Request identity is the actual retained guest WriteWrap root, never a fake fd.
-pub(crate) fn write_native_request(
-    transport: &mut Transport,
-    socket: u64,
-    request: RootId,
-    bytes: &[u8],
-) -> std::io::Result<bool> {
-    let stream = transport
-        .sockets
-        .get_mut(&socket)
-        .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EBADF))?;
-    // TLSWrap needs its own encrypted-stream submission contract.
-    if !matches!(&stream.stream, SocketStream::Plain(_)) {
+/// The synchronous syscall frontier precedes request construction. Queued
+/// bytes stay with the caller until init hooks have completed, so reentrant
+/// native writes/close observe the same submission order as libuv.
+pub(crate) enum NativeWriteAdmission { Synchronous, Queued { written: usize } }
+pub(crate) fn try_native_write(
+    transport: &mut Transport, socket: u64, bytes: &[u8],
+) -> std::io::Result<NativeWriteAdmission> {
+    let stream=transport.sockets.get_mut(&socket)
+        .ok_or_else(||std::io::Error::from_raw_os_error(libc::EBADF))?;
+    if !matches!(&stream.stream,SocketStream::Plain(_)) {
         return Err(std::io::Error::from_raw_os_error(libc::ENOTSUP));
     }
-    if let Some(error) = &stream.write_failure {
-        return Err(std::io::Error::from_raw_os_error(
-            error.raw_os_error().unwrap_or(libc::EPIPE),
-        ));
+    if let Some(error)=&stream.write_failure {
+        return Err(std::io::Error::from_raw_os_error(error.raw_os_error().unwrap_or(libc::EPIPE)));
     }
-    let previous_end = stream.pending_write.len();
-    let queued_before = stream.write_offset < previous_end;
+    if stream.write_offset<stream.pending_write.len() {
+        return Ok(NativeWriteAdmission::Queued {written:0});
+    }
+    if bytes.is_empty() {return Ok(NativeWriteAdmission::Synchronous);}
+    let written=match stream.stream.write(bytes,0) {
+        Ok(0)=>return Err(std::io::ErrorKind::WriteZero.into()),
+        Ok(written)=>written,
+        Err(error) if matches!(error.kind(),std::io::ErrorKind::WouldBlock|std::io::ErrorKind::Interrupted)=>0,
+        Err(error)=>return Err(error),
+    };
+    Ok(if written==bytes.len(){NativeWriteAdmission::Synchronous}
+       else {NativeWriteAdmission::Queued {written}})
+}
+/// Admit only the remaining real bytes after the request's init hooks. This
+/// revalidates the stream because an init hook may close it or queue a write.
+pub(crate) fn queue_native_write(
+    transport:&mut Transport,socket:u64,request:RootId,bytes:&[u8],
+)->std::io::Result<()> {
+    let stream=transport.sockets.get_mut(&socket)
+        .ok_or_else(||std::io::Error::from_raw_os_error(libc::EBADF))?;
+    if let Some(error)=&stream.write_failure {
+        return Err(std::io::Error::from_raw_os_error(error.raw_os_error().unwrap_or(libc::EPIPE)));
+    }
     stream.pending_write.extend_from_slice(bytes);
-    // libuv cannot try-write past an already outstanding write request.
-    if !queued_before && !bytes.is_empty() {
-        match stream
-            .stream
-            .write(&stream.pending_write, stream.write_offset)
-        {
-            Ok(0) => {
-                stream.pending_write.truncate(previous_end);
-                return Err(std::io::ErrorKind::WriteZero.into());
-            }
-            Ok(written) => stream.write_offset += written,
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
-                ) => {}
-            Err(error) => {
-                stream.pending_write.truncate(previous_end);
-                return Err(error);
-            }
-        }
-    }
-    let asynchronous = stream.write_offset < stream.pending_write.len();
-    if asynchronous {
-        stream.completions.push_back(WriteBoundary {
-            end: stream.pending_write.len(),
-            owner: WriteOwner::Native(request),
-        });
-    }
-    Ok(asynchronous)
+    stream.completions.push_back(WriteBoundary {
+        end:stream.pending_write.len(),owner:WriteOwner::Native(request),
+    });
+    Ok(())
 }
 
 struct NativeConnecting {
@@ -2794,3 +2787,44 @@ enum CloseTarget { Stream(u64), Datagram(u64) }
 pub(crate) fn request_udp_close(transport:&mut Transport,id:u64,referenced:bool){transport.closing_sockets.push_front((CloseTarget::Datagram(id),ClosingSocket{referenced,phase:SocketClosePhase::Requested}));}
 pub(crate) fn udp_close_reference(transport:&mut Transport,id:u64,referenced:bool){if let Some((_,owner))=transport.closing_sockets.iter_mut().find(|(key,_)|*key==CloseTarget::Datagram(id)){owner.referenced=referenced;}}
 pub(crate) fn udp_close_has_ref(transport:&Transport,id:u64)->Option<bool>{transport.closing_sockets.iter().find_map(|(key,owner)|(*key==CloseTarget::Datagram(id)).then_some(owner.referenced))}
+
+/// Load the unchanged SDK owner of BoundSocket's private handle and bind policy.
+pub(crate) fn bound_socket_projection(context:&mut NativeContext<'_,NodeHost>,_:RootId,_:&[RootId])->Result<RootId,RootedError>{
+    let owner=context.host_function_data()?;
+    let policy=crate::host::shared_vm::commonjs::node_library_module(context,"net.js","net.js")?;
+    let key=context.string_rooted("BoundSocket");
+    let constructor=context.get_property_rooted(policy,key)?;
+    context.define_data_property_rooted(owner,key,constructor,true,true,true)?;
+    Ok(context.undefined())
+}
+
+/// New kernel descriptor received over SCM_RIGHTS becomes this endpoint's sole
+/// physical owner. The sender's endpoint/consumer metadata is never copied.
+#[cfg(unix)]
+pub(crate) fn native_tcp_receive(transport:&mut Transport,id:u64,fd:std::os::fd::OwnedFd)->std::io::Result<()> {
+    use std::os::fd::AsRawFd;
+    let raw=fd.as_raw_fd();
+    let mut accepts:libc::c_int=0;let mut length=std::mem::size_of_val(&accepts) as libc::socklen_t;
+    if unsafe {libc::getsockopt(raw,libc::SOL_SOCKET,libc::SO_ACCEPTCONN,(&mut accepts as *mut libc::c_int).cast(),&mut length)}<0 {return Err(std::io::Error::last_os_error());}
+    let socket=socket2::Socket::from(fd);socket.set_nonblocking(true)?;
+    if socket.local_addr()?.as_socket().is_none() {return Err(std::io::Error::from_raw_os_error(libc::EINVAL));}
+    enum Received {Listener(TcpListener),Stream(std::net::TcpStream),Bound(super::tcp_owned::TcpOwned)}
+    let received=if accepts!=0 {Received::Listener(socket.into())}
+        else if socket.peer_addr().is_ok() {Received::Stream(socket.into())}
+        else {Received::Bound(super::tcp_owned::TcpOwned::from_owned_descriptor(socket.into())?)};
+    // Prepare all fallible ownership transitions before replacing the constructor
+    // socket; import failure leaves the real shell closeable for retirement.
+    transport.native_tcp_unbound.remove(&id).ok_or_else(||std::io::Error::from_raw_os_error(libc::EINVAL))?;
+    match received {
+        Received::Listener(listener)=>{transport.listeners.insert(id,Listener::new(ListenerSocket::Tcp(listener)));}
+        Received::Stream(socket)=>{
+            let mut stream=SharedSocket::new(SocketStream::Plain(RawStream::Tcp(socket)),ReadDemand::Idle,true);
+            stream.delivery=DeliveryPhase::Delivered;transport.sockets.insert(id,stream);
+        }
+        Received::Bound(socket)=>{transport.native_tcp_unbound.insert(id,socket);}
+    }
+    Ok(())
+}
+pub(crate) fn listener_is_tcp(transport:&Transport,id:u64)->bool {
+    matches!(transport.listeners.get(&id).and_then(Listener::socket),Some(ListenerSocket::Tcp(_)))
+}

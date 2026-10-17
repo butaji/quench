@@ -18,6 +18,8 @@ struct SuiteInput {
     schema: u32,
     #[serde(default)]
     suite: crate::Suite,
+    #[serde(default)]
+    jit_mode: crate::JitMode,
     rounds_requested: usize,
     timeout_ms: u64,
     source_revision: String,
@@ -105,6 +107,8 @@ struct AnalysisReport {
     created_unix_ns: u128,
     input_report_path: String,
     input_report_sha256: String,
+    suite: crate::Suite,
+    jit_mode: crate::JitMode,
     quench_bench_binary: ArtifactInput,
     source_revision: String,
     source_dirty: bool,
@@ -174,8 +178,8 @@ struct PairAnalysis {
 struct MetricAnalysis {
     quench_median: f64,
     comparator_median: f64,
-    median_delta: f64,
-    paired_interval_95: [f64; 2],
+    median_ratio: f64,
+    paired_ratio_interval_95: [f64; 2],
     interval_excludes_tie: bool,
     seed: String,
 }
@@ -243,10 +247,12 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let host = input.host;
     let analysis_runtime = format!("quench-bench Rust analyzer; {}", host.rustc);
     let report = AnalysisReport {
-        schema: 1,
+        schema: 2,
         created_unix_ns: now_ns(),
         input_report_path: input_path.display().to_string(),
         input_report_sha256,
+        suite: input.suite,
+        jit_mode: input.jit_mode,
         quench_bench_binary,
         source_revision: input.source_revision,
         source_dirty: input.source_dirty,
@@ -258,13 +264,13 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         analysis_runtime,
         suite_inputs: input.suite_inputs,
         bootstrap: BootstrapMethod {
-            name: "paired percentile bootstrap of the difference between medians",
+            name: "paired percentile bootstrap of median log-ratios, reported as ratios",
             interval_level: BOOTSTRAP_INTERVAL_LEVEL,
             replicates: BOOTSTRAP_REPLICATES,
             base_seed: format!("0x{BOOTSTRAP_BASE_SEED:016x}"),
             resampling: "resample round indices jointly for Quench and comparator",
-            statistic: "median(Quench) - median(comparator)",
-            interval: "linear-interpolated 2.5th and 97.5th percentiles",
+            statistic: "exp(median(log(Quench / comparator)))",
+            interval: "exponentiated linear-interpolated log-ratio percentiles",
         },
         fixtures,
         qualified,
@@ -288,7 +294,16 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         eprintln!("qualification: failed; see per-fixture comparisons");
         std::process::exit(1);
     }
-    eprintln!("qualification: passed for all eight fixtures and three comparators");
+    let comparison_count = report
+        .fixtures
+        .values()
+        .map(|fixture| fixture.comparisons.len())
+        .sum::<usize>();
+    eprintln!(
+        "qualification: passed all {} fixtures and {comparison_count} fixture-engine comparisons for {:?}",
+        report.fixtures.len(),
+        report.suite
+    );
     Ok(())
 }
 
@@ -313,7 +328,7 @@ fn parse_args(args: &[String]) -> Result<(PathBuf, Option<PathBuf>), String> {
 }
 
 fn validate_suite(input: &SuiteInput) -> Result<(), String> {
-    if input.schema != 5 {
+    if input.schema != 5 && input.schema != crate::SUITE_REPORT_SCHEMA {
         return Err(format!(
             "unsupported benchmark report schema {}",
             input.schema
@@ -360,7 +375,7 @@ fn validate_suite(input: &SuiteInput) -> Result<(), String> {
         ));
     }
     for engine in &input.engines {
-        validate_engine(engine)?;
+        validate_engine(engine, input.suite, input.jit_mode)?;
     }
     if input.fixtures.len() != input.suite.fixture_names().len() {
         return Err(format!(
@@ -393,7 +408,11 @@ fn validate_suite(input: &SuiteInput) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_engine(engine: &EngineInput) -> Result<(), String> {
+fn validate_engine(
+    engine: &EngineInput,
+    suite: crate::Suite,
+    jit_mode: crate::JitMode,
+) -> Result<(), String> {
     if engine.executable.is_empty()
         || engine.version.trim().is_empty()
         || engine.executable_sha256.len() != 64
@@ -403,12 +422,14 @@ fn validate_engine(engine: &EngineInput) -> Result<(), String> {
     {
         return Err(format!("{} is missing executable provenance", engine.name));
     }
-    let proof_valid = match engine.name.as_str() {
-        "quench" => {
+    let proof_valid = match (engine.name.as_str(), suite, jit_mode) {
+        ("quench", _, crate::JitMode::NoJit) => {
             engine.jit_mode == "interpreter" && engine.jit_proof.contains("no guest JIT path")
         }
-        "quickjs" => engine.jit_mode == "interpreter" && engine.jit_proof.contains("interpreter"),
-        "bun" => {
+        ("quickjs", _, crate::JitMode::NoJit) => {
+            engine.jit_mode == "interpreter" && engine.jit_proof.contains("interpreter")
+        }
+        ("bun", _, crate::JitMode::NoJit) => {
             engine.jit_mode == "disabled-and-probed"
                 && engine
                     .environment
@@ -416,16 +437,34 @@ fn validate_engine(engine: &EngineInput) -> Result<(), String> {
                     .is_some_and(|v| v == "0")
                 && engine.jit_proof.contains("useJIT=false")
         }
-        "node" => {
+        ("node", _, crate::JitMode::NoJit) => {
             engine.jit_mode == "disabled-and-probed"
                 && engine.argv.iter().any(|arg| arg == "--jitless")
                 && engine.jit_proof.contains("true")
+        }
+        ("quench", crate::Suite::JetStream3, crate::JitMode::Jit) => {
+            engine.jit_mode == "enabled-by-cli-flag"
+                && engine.argv.iter().any(|arg| arg == "--jit")
+                && engine.jit_proof.contains("--jit")
+        }
+        ("bun", crate::Suite::JetStream3, crate::JitMode::Jit) => {
+            engine.jit_mode == "enabled-and-probed"
+                && engine
+                    .environment
+                    .get("BUN_JSC_useJIT")
+                    .is_some_and(|value| value == "1")
+                && engine.jit_proof.contains("useJIT=true")
+        }
+        ("node", crate::Suite::JetStream3, crate::JitMode::Jit) => {
+            engine.jit_mode == "enabled-and-probed"
+                && !engine.argv.iter().any(|arg| arg == "--jitless")
+                && engine.jit_proof.contains("completed compiling")
         }
         _ => false,
     };
     if !proof_valid {
         return Err(format!(
-            "{} lacks valid no-JIT/interpreter proof",
+            "{} lacks valid JIT-mode proof for this suite",
             engine.name
         ));
     }
@@ -586,10 +625,10 @@ fn analyze_fixture(
             &quench.rss_bytes,
             &reference.rss_bytes,
         );
-        let qualified = score.median_delta > 0.0
-            && score.paired_interval_95[0] > 0.0
-            && max_rss.median_delta < 0.0
-            && max_rss.paired_interval_95[1] < 0.0;
+        let qualified = score.median_ratio > 1.0
+            && score.paired_ratio_interval_95[0] > 1.0
+            && max_rss.median_ratio < 1.0
+            && max_rss.paired_ratio_interval_95[1] < 1.0;
         comparisons.insert(
             (*comparator).to_string(),
             PairAnalysis {
@@ -619,43 +658,52 @@ fn analyze_metric(
 ) -> MetricAnalysis {
     let quench_median = median(quench);
     let comparator_median = median(reference);
-    let median_delta = quench_median - comparator_median;
     let seed = derive_seed(path, comparator, metric);
-    let paired_interval_95 =
-        paired_bootstrap_interval(quench, reference, BOOTSTRAP_REPLICATES, seed);
+    let median_ratio = median_log_ratio(quench, reference).exp();
+    let paired_ratio_interval_95 =
+        paired_bootstrap_log_ratio_interval(quench, reference, BOOTSTRAP_REPLICATES, seed);
     MetricAnalysis {
         quench_median,
         comparator_median,
-        median_delta,
-        interval_excludes_tie: paired_interval_95[0] > 0.0 || paired_interval_95[1] < 0.0,
-        paired_interval_95,
+        median_ratio,
+        interval_excludes_tie: paired_ratio_interval_95[0] > 1.0
+            || paired_ratio_interval_95[1] < 1.0,
+        paired_ratio_interval_95,
         seed: format!("0x{seed:016x}"),
     }
 }
 
-fn paired_bootstrap_interval(
+fn median_log_ratio(quench: &[f64], reference: &[f64]) -> f64 {
+    median(
+        &quench
+            .iter()
+            .zip(reference)
+            .map(|(quench, reference)| (quench / reference).ln())
+            .collect::<Vec<_>>(),
+    )
+}
+
+fn paired_bootstrap_log_ratio_interval(
     quench: &[f64],
     reference: &[f64],
     replicates: usize,
     seed: u64,
 ) -> [f64; 2] {
     let mut random = XorShift64::new(seed);
-    let mut quench_resample = vec![0.0; quench.len()];
-    let mut reference_resample = vec![0.0; reference.len()];
-    let mut differences = Vec::with_capacity(replicates);
+    let mut log_ratios = vec![0.0; quench.len()];
+    let mut log_ratios_by_replicate = Vec::with_capacity(replicates);
     for _ in 0..replicates {
-        for index in 0..quench.len() {
+        for slot in &mut log_ratios {
             let round = random.index(quench.len());
-            quench_resample[index] = quench[round];
-            reference_resample[index] = reference[round];
+            *slot = (quench[round] / reference[round]).ln();
         }
-        differences.push(median(&quench_resample) - median(&reference_resample));
+        log_ratios_by_replicate.push(median(&log_ratios));
     }
-    differences.sort_by(f64::total_cmp);
+    log_ratios_by_replicate.sort_by(f64::total_cmp);
     let tail = (1.0 - BOOTSTRAP_INTERVAL_LEVEL) / 2.0;
     [
-        quantile(&differences, tail),
-        quantile(&differences, 1.0 - tail),
+        quantile(&log_ratios_by_replicate, tail).exp(),
+        quantile(&log_ratios_by_replicate, 1.0 - tail).exp(),
     ]
 }
 
@@ -724,7 +772,35 @@ impl XorShift64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{median, paired_bootstrap_interval};
+    use super::{
+        EngineInput, median, median_log_ratio, paired_bootstrap_log_ratio_interval, validate_engine,
+    };
+    use crate::{JitMode, Suite};
+    use std::collections::BTreeMap;
+
+    fn engine(
+        name: &str,
+        jit_mode: &str,
+        argv: &[&str],
+        environment: &[(&str, &str)],
+        jit_proof: &str,
+    ) -> EngineInput {
+        EngineInput {
+            name: name.into(),
+            executable: format!("/{name}"),
+            executable_sha256: "a".repeat(64),
+            version: "test".into(),
+            argv: argv.iter().map(|value| (*value).into()).collect(),
+            environment: environment
+                .iter()
+                .map(|(key, value)| ((*key).into(), (*value).into()))
+                .collect::<BTreeMap<_, _>>(),
+            inherits_environment: false,
+            jit_mode: jit_mode.into(),
+            jit_proof_command: vec!["probe".into()],
+            jit_proof: jit_proof.into(),
+        }
+    }
 
     #[test]
     fn median_handles_odd_and_even_samples() {
@@ -733,13 +809,55 @@ mod tests {
     }
 
     #[test]
-    fn paired_bootstrap_preserves_a_constant_positive_effect() {
+    fn paired_bootstrap_preserves_a_constant_ratio() {
         let reference = (0..11).map(f64::from).collect::<Vec<_>>();
         let quench = reference
             .iter()
-            .map(|value| value + 7.0)
+            .map(|value| value * 1.75)
             .collect::<Vec<_>>();
-        let interval = paired_bootstrap_interval(&quench, &reference, 2_000, 0xabc);
-        assert_eq!(interval, [7.0, 7.0]);
+        let interval = paired_bootstrap_log_ratio_interval(&quench, &reference, 2_000, 0xabc);
+        assert!((interval[0] - 1.75).abs() < 1e-12);
+        assert!((interval[1] - 1.75).abs() < 1e-12);
+    }
+
+    #[test]
+    fn paired_log_ratio_uses_matched_rounds_not_a_ratio_of_medians() {
+        let quench = [2.0, 20.0, 30.0];
+        let reference = [1.0, 2.0, 10.0];
+        assert!((median_log_ratio(&quench, &reference).exp() - 3.0).abs() < 1e-12);
+        assert_ne!(median(&quench) / median(&reference), 3.0);
+    }
+
+    #[test]
+    fn jetstream_jit_engines_require_enabled_mode_proofs() {
+        let engines = [
+            engine(
+                "quench",
+                "enabled-by-cli-flag",
+                &["--jit"],
+                &[],
+                "process launched with --jit",
+            ),
+            engine(
+                "bun",
+                "enabled-and-probed",
+                &[],
+                &[("BUN_JSC_useJIT", "1")],
+                "reported useJIT=true",
+            ),
+            engine(
+                "node",
+                "enabled-and-probed",
+                &[],
+                &[],
+                "completed compiling hot function",
+            ),
+        ];
+        for engine in &engines {
+            validate_engine(engine, Suite::JetStream3, JitMode::Jit).unwrap();
+        }
+
+        let no_jit = engine("node", "disabled-and-probed", &["--jitless"], &[], "true");
+        assert!(validate_engine(&no_jit, Suite::JetStream3, JitMode::Jit).is_err());
     }
 }
