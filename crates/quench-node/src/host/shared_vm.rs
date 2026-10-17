@@ -124,6 +124,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "errorStackFormat" (3) => crate::modules::node_errors_shared_vm::format_stack,
         method "errorPrepareStackTraceInitialize" (0) => crate::modules::node_errors_shared_vm::initialize_prepare_stack_trace,
         method "consoleGlobalInitialize" (0) => commonjs::initialize_console_global,
+        method "consoleLog" (0) => crate::modules::console_shared_vm::log,
+        method "consoleLoad" (0) => crate::modules::console_shared_vm::load,
         method "processWarningListener" (0) => crate::modules::process_shared_vm::warning_listener,
         method "processMethodsInitialize" (0) => crate::modules::process_metrics_shared_vm::initialize_methods,
         method "processEmitWarningInitialize" (0) => crate::modules::process_shared_vm::initialize_emit_warning,
