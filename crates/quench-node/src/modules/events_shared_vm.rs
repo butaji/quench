@@ -152,8 +152,7 @@ fn get(
     object: RootId,
     name: &str,
 ) -> Result<RootId, RootedError> {
-    let key = context.string_rooted(name);
-    context.get_property_rooted(object, key)
+    context.get_named_property_rooted(object, name)
 }
 
 pub(crate) fn initialize_targets(
@@ -222,6 +221,8 @@ pub(crate) fn initialize_targets(
     set(context, data, "disposeFactory", dispose_factory)?;
     set(context, data, "recordsKey", records_key)?;
     set(context, data, "brandKey", brand_key)?;
+    super::events_weak_shared_vm::initialize(context, data)?;
+    super::abort_dependencies_shared_vm::initialize(context, data)?;
     let retained = context.retain(data)?;
     context
         .host_mut()
@@ -302,6 +303,11 @@ pub(crate) fn initialize_event_globals(
         "node:bootstrap/shared-vm/abort.js",
     )?;
     let abort_max = context.number(super::event_limits_shared_vm::ABORT_SIGNAL_MAX_LISTENERS);
+    let any_convert = context.host_function_with_data(crate::host::shared_vm::operation("abortAnyConvert"), data)?;
+    let dependencies_link = context.host_function_with_data(crate::host::shared_vm::operation("abortDependenciesLink"), data)?;
+    let dependencies_refresh = context.host_function_with_data(crate::host::shared_vm::operation("abortDependenciesRefresh"), data)?;
+    let dependencies_settle = context.host_function_with_data(crate::host::shared_vm::operation("abortDependenciesSettle"), data)?;
+    let abort_timeout = context.host_function_with_data(crate::host::shared_vm::operation("abortTimeout"), data)?;
     let abort_state = context.call_rooted(
         abort_factory,
         undefined,
@@ -314,6 +320,7 @@ pub(crate) fn initialize_event_globals(
             abort_get_handler,
             abort_set_handler,
             abort_remove,
+            any_convert, dependencies_link, dependencies_refresh, dependencies_settle, abort_timeout,
         ],
     )?;
     #[cfg(feature = "profile-memory")]
@@ -471,7 +478,10 @@ pub(crate) fn get_event_listeners(
     let mut listeners = Vec::new();
     if context.truthy_rooted(records)? {
         for entry in listener_records(context, records)? {
-            listeners.push(get(context, entry, "listener")?);
+            let callback = super::events_weak_shared_vm::listener(context, data, entry)?;
+            // Node exposes an undefined element between collection and the
+            // registry's asynchronous unlink callback.
+            listeners.push(callback);
         }
     }
     context.array_rooted(&listeners)

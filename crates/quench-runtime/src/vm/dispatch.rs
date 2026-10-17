@@ -353,7 +353,7 @@ impl<H: Host> Vm<H> {
                     if function
                         .local_atoms
                         .get(slot)
-                        .is_some_and(|atom| function.global_immutable_atoms.contains(atom))
+                        .is_some_and(|atom| function.declares_global_immutable(*atom))
                         && i.boolean_field(crate::bytecode::InstructionField::C) == Some(false)
                     {
                         return Err(self.type_error(p, "assignment to constant binding".into()));
@@ -398,7 +398,7 @@ impl<H: Host> Vm<H> {
                         .unwrap_or(false),
                 )?;
                 if let Some(atom) = atom
-                    && function.global_immutable_atoms.contains(&atom)
+                    && function.declares_global_immutable(atom)
                     && !i
                         .boolean_field(crate::bytecode::InstructionField::C)
                         .unwrap_or(false)

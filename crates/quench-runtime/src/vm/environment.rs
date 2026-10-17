@@ -55,8 +55,9 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let root = program.functions.first()?;
-        let atom = *root.local_atoms.get(slot)?;
-        root.global_var_atoms.contains(&atom).then_some(atom)
+        root.slot_declaration(slot)
+            .global_var
+            .then(|| root.local_atoms[slot])
     }
 
     pub(super) fn global_object_var_atom(&self, frame: usize, slot: usize) -> Option<Atom> {
@@ -80,8 +81,9 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let root = program.functions.first()?;
-        let atom = *root.local_atoms.get(slot)?;
-        root.global_lexical_atoms.contains(&atom).then_some(atom)
+        root.slot_declaration(slot)
+            .global_lexical
+            .then(|| root.local_atoms[slot])
     }
 
     pub(super) fn root_global_lexical_value(
@@ -107,7 +109,7 @@ impl<H: Host> Vm<H> {
                 return None;
             }
             let root = program.functions.first()?;
-            if !root.global_lexical_atoms.contains(&atom) {
+            if !root.declares_global_lexical(atom) {
                 return None;
             }
             let slot = root
@@ -124,7 +126,7 @@ impl<H: Host> Vm<H> {
 
     fn root_declares_binding(&self, program: &ResidualProgram, atom: Atom) -> bool {
         program.functions.first().is_some_and(|root| {
-            root.global_var_atoms.contains(&atom) || root.global_lexical_atoms.contains(&atom)
+            root.declares_global_var(atom) || root.declares_global_lexical(atom)
         })
     }
 
@@ -282,7 +284,7 @@ impl<H: Host> Vm<H> {
         if let Some(binding) = metadata.name_bindings.get(atom) {
             return Some(binding);
         }
-        if metadata.environment_atoms.contains(&atom) {
+        if metadata.declares_environment_atom(atom) {
             return None;
         }
         // An eval-capable parent deliberately prevents static source captures.
@@ -941,7 +943,7 @@ impl<H: Host> Vm<H> {
                 })
                 && let Some(metadata) = environment_program.functions.get(*function as usize)
                 && if *function == super::ROOT_FUNCTION_ID {
-                    metadata.global_lexical_atoms.contains(&atom)
+                    metadata.declares_global_lexical(atom)
                         || self.root_local_var_binding(&environment_program, *function, atom)
                 } else {
                     metadata.environment_atoms.contains(&atom)
@@ -1211,7 +1213,7 @@ impl<H: Host> Vm<H> {
         let activation = self.frames.get(frame)?;
         let metadata = p.functions.get(activation.function as usize)?;
         if (metadata.environment_atoms.contains(&atom)
-            || metadata.global_lexical_atoms.contains(&atom)
+            || metadata.declares_global_lexical(atom)
             || self.root_local_var_binding(p, activation.function, atom))
             && self
                 .local_binding_slot(p, activation.function, atom)
@@ -1701,13 +1703,12 @@ impl<H: Host> Vm<H> {
         let owner_id = program
             .map(super::ProgramId::from_raw)
             .unwrap_or(self.active_program);
-        let owner_program = self.programs.get(owner_id);
-        let owner = owner_program.as_deref().unwrap_or(p);
+        let owner = self.programs.residual(owner_id).unwrap_or(p);
         let atom = self.root_global_var_atom(owner, owner_id, *function, slot);
+        let lexical_atom = self.root_global_lexical_atom(owner, *function, slot);
         if let Some(atom) = atom {
             return self.get_property(p, self.realm.globals, atom);
         }
-        let lexical_atom = self.root_global_lexical_atom(owner, *function, slot);
         if self.eval_script_context
             && let Some(atom) = lexical_atom
             && let Some(value) = self.realm.global_lexical_bindings.get(&atom).copied()
@@ -1918,7 +1919,7 @@ impl<H: Host> Vm<H> {
         }
         if function == 0
             && let Some(atom) = atom
-            && !owner.functions[0].global_lexical_atoms.contains(&atom)
+            && !owner.functions[0].declares_global_lexical(atom)
             && !self.root_local_var_binding(owner, function, atom)
         {
             self.set_property_with_program_mode(
@@ -2297,7 +2298,7 @@ impl<H: Host> Vm<H> {
             }
             let program = self.programs.get(frame.program)?;
             let function = program.functions.first()?;
-            (!program.root_variables_are_local() && function.global_var_atoms.contains(&atom))
+            (!program.root_variables_are_local() && function.declares_global_var(atom))
                 .then_some(())
         }) else {
             return Ok(false);
@@ -2344,7 +2345,7 @@ impl<H: Host> Vm<H> {
             let Some(function) = program.functions.first() else {
                 continue;
             };
-            if program.root_variables_are_local() || !function.global_var_atoms.contains(&atom) {
+            if program.root_variables_are_local() || !function.declares_global_var(atom) {
                 continue;
             }
             let Some(slot) = function

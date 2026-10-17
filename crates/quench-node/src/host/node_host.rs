@@ -62,6 +62,11 @@ pub(crate) enum CommonJsCache {
 pub(crate) struct SharedNodeState {
     pub(crate) vm_scripts: crate::modules::contextify_shared_vm::State,
     pub(crate) async_hooks: crate::modules::async_hooks_state::SharedAsyncHooksState,
+    pub(crate) native_tasks: crate::modules::native_task_pool::Pool,
+    #[cfg(quench_node_cares)]
+    pub(crate) cares: crate::modules::cares_channel_shared_vm::State,
+    pub(crate) dns: crate::modules::cares_binding::State,
+    pub(crate) performance_native: crate::modules::performance_binding_shared_vm::State,
     pub(crate) scheduler: crate::modules::shared_event_loop::SharedEventLoop,
     pub(crate) fs: crate::modules::fs_state::FsState,
     pub(crate) fs_watch: crate::modules::fs_watch_shared_vm::State,
@@ -94,9 +99,14 @@ pub(crate) struct SharedNodeState {
     pub(crate) stdin: crate::modules::process_stdin_shared_vm::State,
     pub(crate) process_ipc: crate::modules::child_process_ipc_shared_vm::State,
     pub(crate) zlib_streams: crate::modules::zlib_stream_shared_vm::State,
+    #[cfg(quench_openssl_provider)]
+    pub(crate) crypto_hashes: crate::modules::crypto_hash_shared_vm::State,
+    pub(crate) crypto_secret_jobs: crate::modules::crypto_secret_job_shared_vm::State,
     pub(crate) zlib_native: crate::modules::zlib_native_shared_vm::State,
     pub(crate) messaging: crate::modules::worker_shared_vm::State,
-    pub(crate) dns: crate::modules::dns_shared_vm::State,
+    /// Pure-Rust resolver channels for `cares_wrap` when c-ares is not linked.
+    #[cfg(not(quench_node_cares))]
+    pub(crate) dns_channels: crate::modules::dns_shared_vm::State,
     pub(crate) serdes: crate::modules::serdes_shared_vm::State,
     pub(crate) unhandled_rejection_mode: crate::modules::process_state::UnhandledRejectionMode,
     pub(crate) output: Option<NodeOutputSink>,
@@ -109,6 +119,8 @@ pub(crate) struct SharedNodeState {
     pub(crate) url_state: Option<quench_runtime::RootId>,
     pub(crate) url_search_params_constructor: Option<quench_runtime::RootId>,
     pub(crate) timer_handle_api: Option<crate::modules::timers_shared_vm::TimerHandleApi>,
+    /// The internal invocation every receiverless next tick shares (`queue_next_tick`).
+    pub(crate) tick_invocation: Option<quench_runtime::RootId>,
     pub(crate) timer_duration_warnings: crate::modules::timers_shared_vm::TimerDurationWarnings,
     /// Invocation flags supplied by the embedder for this logical process.
     pub(crate) exec_argv: Vec<String>,
@@ -123,6 +135,10 @@ pub(crate) struct SharedNodeState {
     pub(crate) net_sockets: std::collections::HashMap<u64, NetSocket>,
     pub(crate) net_closing_sockets: std::collections::HashMap<u64, quench_runtime::RootId>,
     pub(crate) net_socket_close_completed: Option<quench_runtime::RootId>,
+    pub(crate) udp: crate::modules::udp_binding::State,
+    pub(crate) native_async_wrap: crate::modules::native_async_wrap::State,
+    pub(crate) native_stream: crate::modules::stream_binding::State,
+    pub(crate) native_tcp_listeners: std::collections::HashMap<u64, quench_runtime::RootId>,
     pub(crate) net_servers: std::collections::HashMap<u64, NetServer>,
     pub(crate) child_process_shell_args_warning_emitted: bool,
     pub(crate) child_processes: std::collections::HashMap<u64, SharedChildProcess>,
@@ -158,6 +174,7 @@ pub(crate) enum ChildHandlePhase {
 }
 
 pub(crate) struct SharedChildProcess {
+    pub(crate) cancel: crate::modules::child_process_shared_vm::Cancellation,
     pub(crate) handle_phase: ChildHandlePhase,
     pub(crate) referenced: bool,
     pub(crate) close_dispatched: bool,
@@ -188,10 +205,12 @@ pub(crate) enum ChildProcessEvent {
 impl SharedNodeState {
     /// Forget cached guest handles before bootstrapping a replacement VM heap.
     pub(crate) fn reset_cached_vm_roots(&mut self) {
+        self.performance_native = Default::default();
         self.vm_scripts = Default::default();
         self.builtin_cache.clear();
         self.messaging.reset();
-        self.dns.reset();
+        #[cfg(not(quench_node_cares))]
+        self.dns_channels.reset();
         self.serdes.reset();
         self.commonjs_cache = None;
         self.module_parent_api = None;
@@ -207,12 +226,17 @@ impl SharedNodeState {
         self.url_state = None;
         self.url_search_params_constructor = None;
         self.timer_handle_api = None;
+        self.tick_invocation = None;
         self.timer_duration_warnings = Default::default();
         self.net_socket_constructor = None;
         self.net_handle_owner_symbol = None;
         self.net_server_on_connection = None;
         self.net_handle_onclose_symbol = None;
         self.net_socket_option_keys = None;
+        self.udp = Default::default();
+        self.native_async_wrap = Default::default();
+        self.native_stream = Default::default();
+        self.native_tcp_listeners.clear();
         self.net_handle_identities.clear();
         self.net_handle_close_callbacks.clear();
         self.fs_watch = crate::modules::fs_watch_shared_vm::State::default();
@@ -236,6 +260,11 @@ impl SharedNodeState {
             async_hooks: crate::modules::async_hooks_state::SharedAsyncHooksState::new(
                 async_identity,
             ),
+            native_tasks: Default::default(),
+            #[cfg(quench_node_cares)]
+            cares: Default::default(),
+            dns: Default::default(),
+            performance_native: Default::default(),
             scheduler: crate::modules::shared_event_loop::SharedEventLoop::new(),
             fs,
             fs_watch: crate::modules::fs_watch_shared_vm::State::default(),
@@ -264,9 +293,13 @@ impl SharedNodeState {
             stdin: crate::modules::process_stdin_shared_vm::State::default(),
             process_ipc: crate::modules::child_process_ipc_shared_vm::State::default(),
             zlib_streams: crate::modules::zlib_stream_shared_vm::State::default(),
+            #[cfg(quench_openssl_provider)]
+            crypto_hashes: crate::modules::crypto_hash_shared_vm::State::default(),
+            crypto_secret_jobs: crate::modules::crypto_secret_job_shared_vm::State::default(),
             zlib_native: crate::modules::zlib_native_shared_vm::State::default(),
             messaging: crate::modules::worker_shared_vm::State::default(),
-            dns: crate::modules::dns_shared_vm::State::default(),
+            #[cfg(not(quench_node_cares))]
+            dns_channels: crate::modules::dns_shared_vm::State::default(),
             serdes: crate::modules::serdes_shared_vm::State::default(),
             unhandled_rejection_mode: crate::modules::process_state::UnhandledRejectionMode::Throw,
             output: None,
@@ -280,6 +313,7 @@ impl SharedNodeState {
             url_state: None,
             url_search_params_constructor: None,
             timer_handle_api: None,
+            tick_invocation: None,
             timer_duration_warnings: Default::default(),
             exec_argv: Vec::new(),
             cli_options: Default::default(),
@@ -294,6 +328,10 @@ impl SharedNodeState {
             net_sockets: std::collections::HashMap::new(),
             net_closing_sockets: std::collections::HashMap::new(),
             net_socket_close_completed: None,
+            udp: Default::default(),
+            native_async_wrap: Default::default(),
+            native_stream: Default::default(),
+            native_tcp_listeners: std::collections::HashMap::new(),
             net_servers: std::collections::HashMap::new(),
             child_process_shell_args_warning_emitted: false,
             child_processes: std::collections::HashMap::new(),

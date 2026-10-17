@@ -208,6 +208,7 @@ fn field_uses(instruction: WideInstruction, field: InstructionField, fields: &[F
             operand(input_operand.0, fields)
         }
         FieldLayout::FieldBase => field_base(instruction, fields),
+        FieldLayout::OptionalReadRegister => instruction.optional_register_b().map_or(0, bit),
         FieldLayout::ConstructArguments => match instruction.construct_arguments() {
             crate::bytecode::ConstructArguments::Registers(window) => {
                 range(window.base, window.count)
@@ -381,6 +382,7 @@ mod tests {
             dispatch: crate::bytecode::DispatchClass::General,
             decoded: Default::default(),
             plain_locals: Default::default(),
+            declared_atom_sets: Default::default(),
             activation_bindings: Default::default(),
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),

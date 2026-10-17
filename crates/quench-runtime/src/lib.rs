@@ -1,5 +1,7 @@
 #![deny(warnings)]
 
+mod execution_interrupt;
+pub use execution_interrupt::ExecutionInterrupt;
 mod bigint;
 mod bytecode;
 mod compile;
@@ -57,3 +59,7 @@ pub use api::{
 
 #[cfg(test)]
 mod host_stack_tests;
+
+pub mod owned_clone;
+
+pub mod shared_backing;

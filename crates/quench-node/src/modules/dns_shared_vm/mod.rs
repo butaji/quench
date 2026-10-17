@@ -1,8 +1,8 @@
-//! `node:dns` is Node's own lib/dns.js over a native `cares_wrap` binding
-//! (src/cares_wrap.cc). Address lookups run on the libuv-style work pool; resolver queries
-//! run the DNS exchange on their own threads, as c-ares runs them beside the event loop.
-//! Completions return through a queue the event loop drains, calling each request's
-//! `oncomplete` like Node's `ReqWrap::MakeCallback`.
+//! `cares_wrap`'s resolver half (src/cares_wrap.cc `ChannelWrap`/`QueryReqWrap`) for hosts
+//! without the linked c-ares: queries run the DNS exchange on their own threads, as c-ares
+//! runs them beside the event loop. Completions return through a queue the event loop
+//! drains, calling each request's `oncomplete` like Node's `ReqWrap::MakeCallback`.
+//! `cares_binding` owns the binding object and its address lookups.
 
 mod answers;
 mod system;
@@ -13,21 +13,15 @@ use crate::host::NodeHost;
 use answers::{Answer, Field, Item, QueryKind, Reply, Status, QUERIES};
 use quench_runtime::{NativeContext, RootId, RootedError, Value};
 use std::collections::{HashMap, VecDeque};
-use std::net::{IpAddr, SocketAddr};
+use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 use system::Source;
 use transport::Config;
 
 type Context<'a> = NativeContext<'a, NodeHost>;
 
-/// Address result orders (src/cares_wrap.h `DNS_ORDER_*`).
-const DNS_ORDER_VERBATIM: u32 = 0;
-const DNS_ORDER_IPV4_FIRST: u32 = 1;
-const DNS_ORDER_IPV6_FIRST: u32 = 2;
-/// `getaddrinfo` families JavaScript passes.
-const FAMILY_ANY: i32 = 0;
+/// The address family a `setServers` entry names.
 const FAMILY_IPV4: i32 = 4;
-const FAMILY_IPV6: i32 = 6;
 /// ada's IDNA input limit (`max_domain_input_bytes`).
 const MAX_DOMAIN_INPUT_BYTES: usize = 16384;
 
@@ -35,8 +29,6 @@ const MAX_DOMAIN_INPUT_BYTES: usize = 16384;
 const BINDING_JS: &str = quench_js_check::checked_js!(
     r#"(native, queries) => {
   'use strict';
-  function GetAddrInfoReqWrap() {}
-  function GetNameInfoReqWrap() {}
   function QueryReqWrap() {}
   const channels = new WeakMap();
   const released = new FinalizationRegistry((id) => native.release(id));
@@ -54,19 +46,13 @@ const BINDING_JS: &str = quench_js_check::checked_js!(
   methods.setLocalAddress = function setLocalAddress(...args) { return native.setLocalAddress(channels.get(this), ...args); };
   methods.cancel = function cancel(...args) { return native.cancel(channels.get(this), ...args); };
   Object.assign(ChannelWrap.prototype, methods);
-  return { GetAddrInfoReqWrap, GetNameInfoReqWrap, QueryReqWrap, ChannelWrap };
+  return { QueryReqWrap, ChannelWrap };
 }"#
 );
 
-enum Outcome {
-    AddrInfo(Result<Vec<String>, i32>),
-    NameInfo(Result<(String, String), i32>),
-    Query(Result<Reply, Status>),
-}
-
 struct Completion {
     request: u64,
-    outcome: Outcome,
+    outcome: Result<Reply, Status>,
 }
 
 type Completions = Arc<Mutex<VecDeque<Completion>>>;
@@ -78,8 +64,8 @@ fn push(completions: &Completions, completion: Completion) {
 struct Pending {
     /// The retained request object whose `oncomplete` receives the outcome.
     request: RootId,
-    /// The channel of a resolver query; address lookups have none.
-    channel: Option<u64>,
+    /// The query's channel.
+    channel: u64,
 }
 
 /// This VM's in-flight requests and resolver channels.
@@ -108,10 +94,10 @@ fn state(c: &mut Context<'_>) -> std::rc::Rc<std::cell::RefCell<crate::host::Sha
 }
 
 pub(crate) fn has_work(shared_state: &std::rc::Rc<std::cell::RefCell<crate::host::SharedNodeState>>) -> bool {
-    !shared_state.borrow().dns.pending.is_empty()
+    !shared_state.borrow().dns_channels.pending.is_empty()
 }
 
-/// Event-loop source: deliver finished lookups and queries.
+/// Event-loop source: deliver finished queries.
 pub(crate) fn poll(
     runtime: &mut quench_runtime::Runtime<NodeHost>,
     program: &quench_runtime::ResidualProgram,
@@ -119,8 +105,8 @@ pub(crate) fn poll(
 ) -> Result<bool, String> {
     let ready = {
         let state = shared_state.borrow();
-        !state.dns.pending.is_empty()
-            && !state.dns.completions.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).is_empty()
+        !state.dns_channels.pending.is_empty()
+            && !state.dns_channels.completions.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).is_empty()
     };
     if !ready {
         return Ok(false);
@@ -132,26 +118,16 @@ pub(crate) fn poll(
 pub(crate) fn drain(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     let shared = state(c);
     let (pending, outcome) = loop {
-        let next = shared.borrow().dns.completions.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).pop_front();
+        let next = shared.borrow().dns_channels.completions.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).pop_front();
         let Some(completion) = next else { return Ok(c.boolean(false)) };
         // A cancelled query's late result finds its request already completed.
-        if let Some(pending) = shared.borrow_mut().dns.pending.remove(&completion.request) {
+        if let Some(pending) = shared.borrow_mut().dns_channels.pending.remove(&completion.request) {
             break (pending, completion.outcome);
         }
     };
     let request = pending.request;
     let args = match outcome {
-        Outcome::AddrInfo(Ok(addresses)) => {
-            let addresses = addresses.iter().map(|address| c.string_rooted(address)).collect::<Vec<_>>();
-            let status = if addresses.is_empty() { system::uv_code("EAI_NODATA") } else { 0 };
-            vec![c.number(f64::from(status)), c.array_rooted(&addresses)?]
-        }
-        Outcome::AddrInfo(Err(code)) => vec![c.number(f64::from(code)), c.null()],
-        Outcome::NameInfo(Ok((host, service))) => {
-            vec![c.number(0.0), c.string_rooted(&host), c.string_rooted(&service)]
-        }
-        Outcome::NameInfo(Err(code)) => vec![c.number(f64::from(code)), c.null(), c.null()],
-        Outcome::Query(Ok(reply)) => {
+        Ok(reply) => {
             let mut args = vec![c.number(0.0), answer(c, reply.answer)?];
             if let Some(ttls) = reply.ttls {
                 let ttls = ttls.into_iter().map(|ttl| c.number(f64::from(ttl))).collect::<Vec<_>>();
@@ -159,7 +135,7 @@ pub(crate) fn drain(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<Root
             }
             args
         }
-        Outcome::Query(Err(status)) => vec![c.string_rooted(status.code())],
+        Err(status) => vec![c.string_rooted(status.code())],
     };
     let key = c.string_rooted("oncomplete");
     let result = c.get_property_rooted(request, key).and_then(|callback| c.call_rooted(callback, request, &args));
@@ -236,32 +212,15 @@ fn text(c: &mut Context<'_>, args: &[RootId], index: usize) -> Result<String, Ro
     c.to_string(value)
 }
 
-/// `internalBinding('cares_wrap')`.
-pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    let binding = c.object_rooted()?;
+/// Add the resolver half to `cares_binding`'s `internalBinding('cares_wrap')`.
+pub(crate) fn install_channel(c: &mut Context<'_>, binding: RootId) -> Result<(), RootedError> {
     for (name, operation) in [
-        ("getaddrinfo", "caresGetAddrInfo"),
-        ("getnameinfo", "caresGetNameInfo"),
         ("canonicalizeIP", "caresCanonicalizeIp"),
         ("convertIpv6StringToBuffer", "caresIpv6Buffer"),
         ("strerror", "caresStrerror"),
     ] {
         let function = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
         put(c, binding, name, function)?;
-    }
-    for (name, value) in [
-        ("AF_INET", libc::AF_INET),
-        ("AF_INET6", libc::AF_INET6),
-        ("AF_UNSPEC", libc::AF_UNSPEC),
-        ("AI_ADDRCONFIG", libc::AI_ADDRCONFIG),
-        ("AI_ALL", libc::AI_ALL),
-        ("AI_V4MAPPED", libc::AI_V4MAPPED),
-        ("DNS_ORDER_VERBATIM", DNS_ORDER_VERBATIM as i32),
-        ("DNS_ORDER_IPV4_FIRST", DNS_ORDER_IPV4_FIRST as i32),
-        ("DNS_ORDER_IPV6_FIRST", DNS_ORDER_IPV6_FIRST as i32),
-    ] {
-        let value = c.number(f64::from(value));
-        put(c, binding, name, value)?;
     }
     let native = c.object_rooted()?;
     for (name, operation) in [
@@ -281,17 +240,12 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let factory = c.evaluate_script_rooted(BINDING_JS, "node:internal/cares_wrap.js")?;
     let undefined = c.undefined();
     let classes = c.call_rooted(factory, undefined, &[native, names])?;
-    for name in ["GetAddrInfoReqWrap", "GetNameInfoReqWrap", "QueryReqWrap", "ChannelWrap"] {
+    for name in ["QueryReqWrap", "ChannelWrap"] {
         let key = c.string_rooted(name);
         let class = c.get_property_rooted(classes, key)?;
         put(c, binding, name, class)?;
     }
-    Ok(binding)
-}
-
-/// `node:dns`, Node's own library module.
-pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    crate::host::shared_vm::commonjs::node_library_module(c, "dns.js", "dns.js")
+    Ok(())
 }
 
 /// Node's `ada::idna::to_ascii`: ASCII input lowercases; other input maps through UTS 46;
@@ -307,62 +261,13 @@ fn to_ascii(name: &str) -> String {
 }
 
 /// Track `request` until its outcome arrives.
-fn register(c: &mut Context<'_>, request: RootId, channel: Option<u64>) -> Result<(u64, Completions), RootedError> {
+fn register(c: &mut Context<'_>, request: RootId, channel: u64) -> Result<(u64, Completions), RootedError> {
     let request = c.retain(request)?;
     let shared = state(c);
     let mut shared = shared.borrow_mut();
-    let id = shared.dns.allocate();
-    shared.dns.pending.insert(id, Pending { request, channel });
-    Ok((id, shared.dns.completions.clone()))
-}
-
-/// `getaddrinfo(req, hostname, family, hints, order)`.
-pub(crate) fn getaddrinfo(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    let request = argument(args, 0, c);
-    let hostname = to_ascii(&text(c, args, 1)?);
-    let family = match int32(c, args, 2)? {
-        FAMILY_IPV4 => libc::AF_INET,
-        FAMILY_IPV6 => libc::AF_INET6,
-        FAMILY_ANY => libc::AF_UNSPEC,
-        _ => return Err(RootedError::host("bad address family")),
-    };
-    let hints = int32(c, args, 3)?;
-    let order = int32(c, args, 4)? as u32;
-    let (id, completions) = register(c, request, None)?;
-    crate::modules::native_work::submit(move || {
-        let outcome = system::getaddrinfo(&hostname, family, hints).map(|addresses| ordered(addresses, order));
-        push(&completions, Completion { request: id, outcome: Outcome::AddrInfo(outcome) });
-    })
-    .map_err(RootedError::host)?;
-    Ok(c.number(0.0))
-}
-
-/// `AfterGetAddrInfo`: verbatim keeps the system's order; the others list one family first.
-fn ordered(addresses: Vec<IpAddr>, order: u32) -> Vec<String> {
-    let (v4, v6): (Vec<IpAddr>, Vec<IpAddr>) = addresses.iter().partition(|address| address.is_ipv4());
-    let addresses = match order {
-        DNS_ORDER_IPV4_FIRST => [v4, v6].concat(),
-        DNS_ORDER_IPV6_FIRST => [v6, v4].concat(),
-        _ => addresses,
-    };
-    addresses.into_iter().map(system::ip_text).collect()
-}
-
-/// `getnameinfo(req, ip, port)`.
-pub(crate) fn getnameinfo(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    let request = argument(args, 0, c);
-    let ip = text(c, args, 1)?;
-    let port = int32(c, args, 2)? as u16;
-    let Some(address) = system::parse_ip(&ip) else {
-        return Err(RootedError::host("getnameinfo address"));
-    };
-    let (id, completions) = register(c, request, None)?;
-    crate::modules::native_work::submit(move || {
-        let outcome = system::getnameinfo(SocketAddr::new(address, port));
-        push(&completions, Completion { request: id, outcome: Outcome::NameInfo(outcome) });
-    })
-    .map_err(RootedError::host)?;
-    Ok(c.number(0.0))
+    let id = shared.dns_channels.allocate();
+    shared.dns_channels.pending.insert(id, Pending { request, channel });
+    Ok((id, shared.dns_channels.completions.clone()))
 }
 
 /// `canonicalizeIP(ip)`: libuv's text for a parsed address, otherwise undefined.
@@ -399,8 +304,8 @@ pub(crate) fn channel(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result
     let config = Config::new(int32(c, args, 0)?, int32(c, args, 1)?, int32(c, args, 2)?);
     let shared = state(c);
     let mut shared = shared.borrow_mut();
-    let id = shared.dns.allocate();
-    shared.dns.channels.insert(id, config);
+    let id = shared.dns_channels.allocate();
+    shared.dns_channels.channels.insert(id, config);
     Ok(c.number(id as f64))
 }
 
@@ -416,14 +321,14 @@ fn with_channel<T>(c: &mut Context<'_>, args: &[RootId], use_config: impl FnOnce
     let id = channel_id(c, args)?;
     let shared = state(c);
     let mut shared = shared.borrow_mut();
-    let config = shared.dns.channels.get_mut(&id).ok_or_else(|| RootedError::host("released DNS channel"))?;
+    let config = shared.dns_channels.channels.get_mut(&id).ok_or_else(|| RootedError::host("released DNS channel"))?;
     Ok(use_config(config))
 }
 
 /// `native.release(id)`: the channel object was collected.
 pub(crate) fn channel_release(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let id = channel_id(c, args)?;
-    state(c).borrow_mut().dns.channels.remove(&id);
+    state(c).borrow_mut().dns_channels.channels.remove(&id);
     Ok(c.undefined())
 }
 
@@ -448,10 +353,10 @@ pub(crate) fn query(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<R
         let name = to_ascii(&name);
         Box::new(move || resolve(&config, &name, kind))
     };
-    let (id, completions) = register(c, request, Some(channel))?;
+    let (id, completions) = register(c, request, channel)?;
     std::thread::Builder::new()
         .name("quench-dns".to_owned())
-        .spawn(move || push(&completions, Completion { request: id, outcome: Outcome::Query(job()) }))
+        .spawn(move || push(&completions, Completion { request: id, outcome: job() }))
         .map_err(|error| RootedError::host(error.to_string()))?;
     Ok(c.number(0.0))
 }
@@ -500,7 +405,7 @@ pub(crate) fn get_servers(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Re
 /// c-ares' bad-string status.
 pub(crate) fn set_servers(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let id = channel_id(c, args)?;
-    let busy = state(c).borrow().dns.pending.values().any(|pending| pending.channel == Some(id));
+    let busy = state(c).borrow().dns_channels.pending.values().any(|pending| pending.channel == id);
     if busy {
         return Ok(c.number(f64::from(answers::SET_SERVERS_PENDING)));
     }
@@ -591,15 +496,15 @@ pub(crate) fn cancel(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<
     let shared = state(c);
     let shared = shared.borrow();
     let mut requests: Vec<u64> = shared
-        .dns
+        .dns_channels
         .pending
         .iter()
-        .filter(|(_, pending)| pending.channel == Some(id))
+        .filter(|(_, pending)| pending.channel == id)
         .map(|(request, _)| *request)
         .collect();
     requests.sort_unstable();
     for request in requests {
-        push(&shared.dns.completions, Completion { request, outcome: Outcome::Query(Err(Status::Cancelled)) });
+        push(&shared.dns_channels.completions, Completion { request, outcome: Err(Status::Cancelled) });
     }
     Ok(c.undefined())
 }

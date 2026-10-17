@@ -1,6 +1,6 @@
 //! Runtime-neutral filesystem operations used by the shared Node adapters.
 
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Copy, Default)]
@@ -13,13 +13,6 @@ pub(crate) struct MkdirOptions {
 pub(crate) struct RmOptions {
     pub recursive: bool,
     pub force: bool,
-}
-
-#[derive(Clone, Default)]
-pub(crate) struct WriteOptions {
-    pub flag: Option<String>,
-    pub mode: Option<u32>,
-    pub flush: bool,
 }
 
 pub(crate) enum OperationError {
@@ -76,23 +69,6 @@ pub(crate) fn rm(path: &str, options: RmOptions) -> Result<(), OperationError> {
         Err(error) if options.force && error.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(io_error("rm", path, error)),
     }
-}
-
-pub(crate) fn write_file(
-    path: &str,
-    bytes: &[u8],
-    options: WriteOptions,
-) -> Result<(), OperationError> {
-    let mut file =
-        open_write(path, options.flag.as_deref()).map_err(|error| io_error("open", path, error))?;
-    file.write_all(bytes)
-        .map_err(|error| io_error("write", path, error))?;
-    if options.flush {
-        file.sync_all()
-            .map_err(|error| io_error("fsync", path, error))?;
-    }
-    apply_mode(path, options.mode);
-    Ok(())
 }
 
 pub(crate) fn valid_write_flag(flag: Option<&str>) -> bool {

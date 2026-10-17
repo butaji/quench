@@ -175,6 +175,15 @@ impl<H: Host> Vm<H> {
                 .get_or_init(|| Box::new(derive_shape_lookup_index(&self.shapes, shape)));
             return index.slot(key).map(|slot| slot as usize);
         }
+        if let Some(slot) = self.shape_slot_memo.get(shape, key) {
+            return slot;
+        }
+        let slot = self.walked_property_shape_slot(shape, key);
+        self.shape_slot_memo.record(shape, key, slot);
+        slot
+    }
+    /// `property_shape_slot` of a non-dictionary shape, from its lookup index or its chain.
+    fn walked_property_shape_slot(&self, shape: u32, key: PropertyKey) -> Option<usize> {
         if let Some(index) = self.shapes[shape as usize].lookup_index.get() {
             return index.slot(key).map(|slot| slot as usize);
         }
@@ -584,6 +593,7 @@ impl<H: Host> Vm<H> {
         self.field_add_sets.clear();
         self.megamorphic_field_indices.fill(NO_MEGAMORPHIC_FIELD);
         self.megamorphic_fields.clear();
+        self.inherited_field_indices.fill(NO_INHERITED_FIELD);
         self.inherited_field_caches.clear();
         self.instanceof_constructor_layout = None;
         self.closure_shapes = [None; 2];
@@ -928,6 +938,30 @@ impl<H: Host> Vm<H> {
         true
     }
 
+    /// The add `cached_field_add_hit` makes for a lane: an ordinary record's cached add,
+    /// without the specialization test (`Vm::lane_admits`) or the store probe before it. The
+    /// caller proved `atom` eligible (`field_cache_atom_eligible`) for the site.
+    #[inline(always)]
+    pub(super) fn primary_field_add_hit(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        atom: Atom,
+        value: Value,
+        site: u16,
+    ) -> bool {
+        debug_assert!(self.lane_admits(p) && self.field_cache_atom_eligible(atom));
+        let Some(data) = self.heap.object_record(object) else {
+            return false;
+        };
+        if data.is_module_namespace() || data.is_arguments_object() || !data.is_extensible() {
+            return false;
+        }
+        let (shape, proto) = (data.shape(), data.proto());
+        let site = self.field_cache_index(site);
+        self.try_cached_field_add(object, atom, shape, proto, value, site)
+    }
+
     /// Whether the site has recorded a cached property add (`try_cached_field_add`).
     pub(super) fn field_site_adds(&self, site: u16) -> bool {
         self.field_add_indices[self.field_cache_index(site)] != NO_FIELD_ADD_SET
@@ -971,8 +1005,7 @@ impl<H: Host> Vm<H> {
 
     /// Whether the site has an inherited entry (`inherited_field_hit`).
     pub(super) fn field_site_inherited(&self, site: u16) -> bool {
-        self.inherited_field_caches
-            .contains_key(&self.field_cache_index(site))
+        self.inherited_field_indices[self.field_cache_index(site)] != NO_INHERITED_FIELD
     }
 
     /// Whether the site's primary entry names a prototype holder (`primary_holder_field_hit`).
@@ -1404,9 +1437,16 @@ impl<H: Host> Vm<H> {
             );
             return Some(value);
         }
-        let (cache, value) = self.inherited_field(receiver, atom)?;
+        let ordinary = self.heap.ordinary_object(object).is_some();
+        let (cache, value) = self.inherited_field(receiver, ordinary, atom)?;
         if self.field_cache_records(site) {
-            self.inherited_field_caches.insert(site, cache);
+            match self.inherited_field_indices[site] {
+                NO_INHERITED_FIELD => {
+                    self.inherited_field_indices[site] = self.inherited_field_caches.len() as u32;
+                    self.inherited_field_caches.push(cache);
+                }
+                index => self.inherited_field_caches[index as usize] = cache,
+            }
         }
         Some(value)
     }
@@ -1420,7 +1460,13 @@ impl<H: Host> Vm<H> {
         site: usize,
         receiver: &Object,
     ) -> Option<FieldCacheHit> {
-        let cache = self.inherited_field_caches.get(&site)?;
+        // SAFETY: compiler-produced sites index exactly-sized cache vectors; every other
+        // index was installed together with its entry.
+        let index = unsafe { *self.inherited_field_indices.get_unchecked(site) };
+        if index == NO_INHERITED_FIELD {
+            return None;
+        }
+        let cache = unsafe { self.inherited_field_caches.get_unchecked(index as usize) };
         if cache.receiver != receiver.shape() {
             return None;
         }
@@ -1436,8 +1482,15 @@ impl<H: Host> Vm<H> {
             prototype = data.proto();
             holder = Some(data);
         }
-        // SAFETY: the holder's shape was recorded together with this data slot.
-        let value = unsafe { self.heap.property_get_shaped(holder?, usize::from(cache.slot)) }?;
+        let value = match cache.answer {
+            // SAFETY: the holder's shape was recorded together with this data slot.
+            InheritedFieldAnswer::Slot(slot) => unsafe {
+                self.heap.property_get_shaped(holder?, usize::from(slot))
+            }?,
+            // Every recorded shape lacks the name, and the chain still ends here.
+            InheritedFieldAnswer::Absent if prototype.is_null() => Value::UNDEFINED,
+            InheritedFieldAnswer::Absent => return None,
+        };
         Some(FieldCacheHit {
             value,
             tier: 0,
@@ -1450,7 +1503,12 @@ impl<H: Host> Vm<H> {
     /// answers the load again, and the value.
     #[cold]
     #[inline(never)]
-    fn inherited_field(&self, object: &Object, atom: Atom) -> Option<(InheritedFieldCache, Value)> {
+    fn inherited_field(
+        &self,
+        object: &Object,
+        ordinary: bool,
+        atom: Atom,
+    ) -> Option<(InheritedFieldCache, Value)> {
         if self.shape_slot(object.shape(), atom).is_some() {
             return None;
         }
@@ -1458,10 +1516,19 @@ impl<H: Host> Vm<H> {
             receiver: object.shape(),
             prototype_shapes: [NO_FIELD_HOLDER; INHERITED_FIELD_CACHE_MAX_DEPTH],
             depth: 0,
-            slot: 0,
+            answer: InheritedFieldAnswer::Absent,
         };
+        // Shapes alone prove a name absent only for an ordinary receiver, whose shape holds
+        // every property it has; an arguments object's indices and other index names, and any
+        // exotic receiver's own answers, stay uncached.
+        let absence_cacheable = ordinary
+            && !object.is_arguments_object()
+            && !self.atom_class(atom).contains(AtomClass::ARRAY_INDEX);
         let mut prototype = object.proto();
         for depth in 0..INHERITED_FIELD_CACHE_MAX_DEPTH {
+            if prototype.is_null() {
+                return absence_cacheable.then_some((cache, Value::UNDEFINED));
+            }
             let Some(data) = self.heap.ordinary_object(prototype) else {
                 return None;
             };
@@ -1473,6 +1540,7 @@ impl<H: Host> Vm<H> {
                 return None;
             }
             cache.prototype_shapes[depth] = shape;
+            cache.depth = (depth + 1) as u8;
             if let Some(slot) = self.shape_slot(shape, atom) {
                 // The immediate prototype is the regular field cache's holder tier.
                 if depth == 0
@@ -1483,13 +1551,12 @@ impl<H: Host> Vm<H> {
                 {
                     return None;
                 }
-                cache.depth = (depth + 1) as u8;
-                cache.slot = slot as u16;
+                cache.answer = InheritedFieldAnswer::Slot(slot as u16);
                 return Some((cache, self.heap.property_get(data, slot)?));
             }
             prototype = data.proto();
         }
-        None
+        (prototype.is_null() && absence_cacheable).then_some((cache, Value::UNDEFINED))
     }
 
     #[cold]
