@@ -1830,6 +1830,29 @@ impl<H: Host> Vm<H> {
             "{{\"kind\":\"quench-gc-time\",\"collections\":{collections},\"mark_nanos\":{},\"sweep_nanos\":{},\"mark_clear_nanos\":{},\"vm_owner_edges_nanos\":{},\"vm_roots_nanos\":{},\"vm_shape_setup_nanos\":{},\"vm_after_nanos\":{}}}",
             gc.mark_nanos, gc.sweep_nanos, gc.mark_clear_nanos, gc.vm_phase_nanos[0], gc.vm_phase_nanos[1], gc.vm_phase_nanos[2], gc.vm_phase_nanos[3],
         );
+        // Sizes of the VM-side tables beside the heap: a table that grows with work done
+        // rather than with live data is retention.
+        let mut kinds: std::collections::BTreeMap<&'static str, usize> = Default::default();
+        self.heap.for_each_live_cell(|cell| *kinds.entry(cell.profile_variant_name()).or_default() += 1);
+        let mut kinds: Vec<_> = kinds.into_iter().collect();
+        kinds.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
+        eprintln!("{{\"kind\":\"quench-live-cells\",\"top\":{:?}}}", &kinds[..kinds.len().min(8)]);
+        let promise = &self.realm.promise;
+        eprintln!(
+            "{{\"kind\":\"quench-vm-tables\",\"live_slots\":{},\"suspended\":{},\"suspended_free\":{},\"promise_records\":{},\"thenable_jobs\":{},\"reaction_capabilities\":{},\"async_resume_jobs\":{},\"jobs\":{},\"descriptors\":{},\"function_values\":{},\"frames\":{},\"active_call_roots\":{}}}",
+            self.heap.live_slots(),
+            self.suspended.len(),
+            self.suspended_free.len(),
+            promise.records.len(),
+            promise.thenable_jobs.len(),
+            promise.reaction_capabilities.len(),
+            promise.async_resume_jobs.len(),
+            self.realm.jobs.len(),
+            self.descriptors.len(),
+            self.function_values.len(),
+            self.frames.len(),
+            self.active_call_roots.len(),
+        );
     }
     #[cfg(feature = "profile-memory")]
     pub(crate) fn report_memory_if_enabled(&self, phase: &str) {

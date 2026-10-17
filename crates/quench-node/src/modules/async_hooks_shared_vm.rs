@@ -224,7 +224,15 @@ pub(crate) fn prune_promises(
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
+    prune_promise_resources(context)?;
+    Ok(context.undefined())
+}
+
+/// Releases the weak references of collected promises and queues their destroy hooks.
+fn prune_promise_resources(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
+    let epoch = context.collection_epoch();
     let shared = context.host_mut().shared_state();
+    shared.borrow_mut().async_hooks.promise_resources_pruned_epoch = epoch;
     let entries: Vec<_> = shared.borrow().async_hooks.promise_resources.iter().map(|(&id, &weak)| (id, weak)).collect();
     for (id, weak) in entries {
         if context.resolve_host_weak_root(weak).is_none() {
@@ -234,7 +242,7 @@ pub(crate) fn prune_promises(
             queue_destroy(context, id)?;
         }
     }
-    Ok(context.undefined())
+    Ok(())
 }
 
 pub(crate) fn promise_job_boundary(
@@ -243,6 +251,17 @@ pub(crate) fn promise_job_boundary(
     before: bool,
 ) -> Result<(), RootedError> {
     let shared = context.host_mut().shared_state();
+    // A long run of promise jobs can stay within one event-loop turn, where the turn-end
+    // prune never comes: prune here once a collection has run since the last prune, so the
+    // table holds only promises that may still be live.
+    let prune_due = {
+        let state = shared.borrow();
+        !state.async_hooks.promise_resources.is_empty()
+            && state.async_hooks.promise_resources_pruned_epoch != context.collection_epoch()
+    };
+    if before && prune_due {
+        prune_promise_resources(context)?;
+    }
     let resource = shared.borrow().async_hooks.job_resources.get(&snapshot.0).and_then(|job| job.resource);
     let Some(resource) = resource else { return Ok(()); };
     let kind = if before {

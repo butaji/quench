@@ -1,0 +1,8 @@
+[package]
+name = "quench-alloc"
+version = "0.1.0"
+edition = "2021"
+description = "Size-classed small-object allocator for the Quench runtime"
+
+[dependencies]
+libc = "0.2"
