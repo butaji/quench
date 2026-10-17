@@ -278,7 +278,8 @@ mod tests {
         let next = pacing.plan(&mut state, minor(2 * live, 3 * live / 2, live / 2));
         assert_eq!(state.regime(&pacing), Regime::FullOnly);
         // The next full collection keeps the interval measured from the last full one.
-        assert_eq!(next, NextCollection { threshold: 11 * live / 2, full: true });
+        let interval = pacing.full_only_headroom.of(3 * live / 2) - live / 2;
+        assert_eq!(next, NextCollection { threshold: interval.max(pacing.minimum_young), full: true });
         // After `probe_interval` full collections, a minor probes survival again.
         let full = CollectionOutcome { full: true, since_full: 0, ..minor(live, live, 4 * live) };
         for _ in 1..pacing.probe_interval {
