@@ -2488,10 +2488,32 @@ impl ProgramKind {
     }
 }
 
+/// The source text a program retains for diagnostics and `Function.prototype.toString`: its
+/// own copy, or static host text (an embedded library) the compiled source wrapped.
+#[derive(Clone, Debug)]
+pub(crate) enum SourceText {
+    Shared(std::sync::Arc<str>),
+    Static(&'static str),
+}
+
+impl std::ops::Deref for SourceText {
+    type Target = str;
+    fn deref(&self) -> &str {
+        match self {
+            Self::Shared(text) => text,
+            Self::Static(text) => text,
+        }
+    }
+}
+
 /// Compiler source snapshot and wrapper origin, retained for diagnostics.
 #[derive(Clone, Debug)]
 pub(crate) struct ProgramSource {
-    pub(crate) text: std::sync::Arc<str>,
+    pub(crate) text: SourceText,
+    /// Bytes of compiled source before `text` that the program keeps no copy of: a host
+    /// wrapper's prefix. With any, `text` starts at the wrapper origin, compiled line
+    /// `line_offset + 1` and UTF-16 column `column_offset`.
+    pub(crate) base: u32,
     pub(crate) line_offset: u32,
     pub(crate) column_offset: u32,
 }
@@ -2506,8 +2528,21 @@ pub(crate) fn source_line_starts(text: &str) -> impl Iterator<Item = usize> + '_
 }
 
 impl ProgramSource {
+    /// The retained text of compiled source bytes `start..end`, if it holds them.
+    pub(crate) fn slice(&self, start: u32, end: u32) -> Option<&str> {
+        let start = start.checked_sub(self.base)? as usize;
+        let end = end.checked_sub(self.base)? as usize;
+        self.text.get(start..end)
+    }
+
     pub(crate) fn source_line(&self, line: u32) -> Option<&str> {
-        let compiled_line = line.checked_add(self.line_offset)?.checked_sub(1)?;
+        // Text that starts at the wrapper origin holds no wrapper lines or columns to skip.
+        let (line_offset, column_offset) = if self.base == 0 {
+            (self.line_offset, self.column_offset)
+        } else {
+            (0, 0)
+        };
+        let compiled_line = line.checked_add(line_offset)?.checked_sub(1)?;
         let mut starts = source_line_starts(&self.text);
         let start = starts.nth(compiled_line as usize)?;
         let end = starts.next().unwrap_or(self.text.len());
@@ -2518,12 +2553,12 @@ impl ProgramSource {
         }
         let mut offset = 0;
         for (byte, character) in text.char_indices() {
-            if offset == self.column_offset {
+            if offset == column_offset {
                 return Some(&text[byte..]);
             }
             offset += character.len_utf16() as u32;
         }
-        (offset == self.column_offset).then_some("")
+        (offset == column_offset).then_some("")
     }
 }
 
@@ -2660,7 +2695,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 95;
+    pub const FORMAT_VERSION: u8 = 96;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;
