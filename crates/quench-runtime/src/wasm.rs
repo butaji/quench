@@ -930,7 +930,7 @@ impl Engine {
                 static_name_scope: Default::default(),
                 call_plan: Default::default(),
                 handlers: lowering.handlers.into(),
-                register_root_offset: crate::bytecode::NO_REGISTER_ROOT_MAP,
+                register_roots: Default::default(),
                 undefined_register: None,
                 parameter_registers: lowering.local_base,
                 initial_register: crate::bytecode::InitialRegister::I32Zero,
@@ -938,7 +938,8 @@ impl Engine {
             functions.push(function);
             constants = lowering.constants;
         }
-        let register_roots = crate::compile::liveness::derive(&mut functions, &[], &[], &[]);
+        let no_method_sites: &[crate::compile::liveness::MethodSite] = &[];
+        crate::compile::liveness::mark_register_roots(&mut functions, no_method_sites, &[], &[]);
         let program = ResidualProgram {
             specialized: false,
             kind: ProgramKind::Wasm,
@@ -957,7 +958,6 @@ impl Engine {
             object_sites: vec![],
             regexp_literal_sites: vec![],
             superinstructions: vec![],
-            register_roots,
         };
         program
             .validate()

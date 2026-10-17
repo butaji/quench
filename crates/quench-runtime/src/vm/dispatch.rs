@@ -132,7 +132,7 @@ impl<H: Host> Vm<H> {
             || !p
                 .functions
                 .get(function as usize)
-                .is_some_and(|function| function.call_plan(&p.atoms).in_loop)
+                .is_some_and(|function| function.call_plan(p).in_loop)
         {
             return None;
         }
@@ -206,7 +206,7 @@ impl<H: Host> Vm<H> {
             || !p
                 .functions
                 .get(id as usize)
-                .is_some_and(|function| function.call_plan(&p.atoms).in_loop)
+                .is_some_and(|function| function.call_plan(p).in_loop)
         {
             return None;
         }
@@ -1532,7 +1532,7 @@ impl<H: Host> Vm<H> {
             Some(crate::bytecode::OperandKind::Local) => {
                 let slot = operand.payload() as usize;
                 // A plain slot is exactly what `LoadLocalPlain` reads.
-                if p.functions[self.frames[frame].function as usize].plain_local(&p.atoms, slot) {
+                if p.functions[self.frames[frame].function as usize].plain_local(p, slot) {
                     return Ok(self.frames[frame].locals[slot]);
                 }
                 self.load_local_binding(p, frame, slot, None)

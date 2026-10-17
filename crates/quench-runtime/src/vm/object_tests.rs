@@ -122,9 +122,9 @@ fn method_cache_program(mut program: ResidualProgram) -> ResidualProgram {
         .iter()
         .map(|site| (site.atom, site.cache, Vec::new(), site.receiver_path))
         .collect::<Vec<_>>();
-    program.register_roots = crate::compile::liveness::derive(
+    crate::compile::liveness::mark_register_roots(
         &mut program.functions,
-        &methods,
+        methods.as_slice(),
         &program.field_sites,
         &program.superinstructions,
     );
@@ -216,10 +216,11 @@ fn static_three_field_object_literals_share_the_shape_site() {
         ("unspecialized", Engine::specialize_unspecialized),
     ] {
         let program = compile(source, "static-object-literal.js").unwrap();
-        let function = program
+        let (function_id, function) = program
             .functions
             .iter()
-            .find(|function| {
+            .enumerate()
+            .find(|(_, function)| {
                 function
                     .name
                     .is_some_and(|name| &program.atoms[name as usize] == "make")
@@ -234,7 +235,7 @@ fn static_three_field_object_literals_share_the_shape_site() {
             .unwrap_or_else(|| panic!("{mode} compiler did not select the literal site"));
         let window = instruction.register_window();
         assert_eq!(window.count, 3, "{mode}");
-        let root_map = program.register_roots[function.register_root_offset as usize + pc];
+        let root_map = program.register_root_mask(function_id as u32, pc).unwrap();
         for register in window.base..window.base + window.count {
             assert_ne!(
                 root_map & (1u64 << register),

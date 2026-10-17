@@ -1972,13 +1972,13 @@ impl<'a> Compiler<'a> {
             if function.dispatch == DispatchClass::Numeric {
                 let live = liveness::analyze(
                     function,
-                    &self.method_sites,
+                    self.method_sites.as_slice(),
                     &self.field_sites,
                     &self.superinstructions,
                 );
                 numeric::apply(function, live.as_deref());
             }
-            Self::specialize_plain_local_operations(function, &self.atoms);
+            Self::specialize_plain_local_operations(function, &self.atoms, &self.superinstructions);
             if function
                 .code
                 .iter()
@@ -1986,16 +1986,16 @@ impl<'a> Compiler<'a> {
             {
                 let live = liveness::analyze(
                     function,
-                    &self.method_sites,
+                    self.method_sites.as_slice(),
                     &self.field_sites,
                     &self.superinstructions,
                 );
                 numeric::apply_plain_local_stores(function, live.as_deref());
             }
         }
-        let register_roots = liveness::derive(
+        liveness::mark_register_roots(
             &mut functions,
-            &self.method_sites,
+            self.method_sites.as_slice(),
             &self.field_sites,
             &self.superinstructions,
         );
@@ -2049,7 +2049,6 @@ impl<'a> Compiler<'a> {
             object_sites: self.object_sites,
             regexp_literal_sites: self.regexp_literal_sites,
             superinstructions: self.superinstructions,
-            register_roots,
         };
         #[cfg(feature = "profile-aggregate")]
         debug_assert!(crate::profile::instruction_word_domains_fit(&program));
@@ -2620,7 +2619,7 @@ impl<'a> Compiler<'a> {
             static_name_scope: Default::default(),
             call_plan: Default::default(),
             handlers: function.handlers.into(),
-            register_root_offset: crate::bytecode::NO_REGISTER_ROOT_MAP,
+            register_roots: Default::default(),
             undefined_register,
             parameter_registers: None,
             initial_register: Default::default(),
@@ -2663,8 +2662,13 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn specialize_plain_local_operations(function: &mut BcFunction, atoms: &CompilerAtoms<'_>) {
-        let plain_slots = function.plain_local_slots(|atom| atoms.get(atom as usize));
+    fn specialize_plain_local_operations(
+        function: &mut BcFunction,
+        atoms: &CompilerAtoms<'_>,
+        superinstructions: &[crate::bytecode::Superinstruction],
+    ) {
+        let plain_slots =
+            function.plain_local_slots(|atom| atoms.get(atom as usize), superinstructions);
 
         for instruction in &mut function.code {
             match instruction.op() {
