@@ -289,7 +289,7 @@ pub(crate) fn ipv6_buffer(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Re
     let view = c.uint8_array_rooted(&address.octets())?;
     let key = c.string_rooted("buffer");
     let buffer = c.get_property_rooted(view, key)?;
-    let constructor = crate::modules::buffer_constructor_shared_vm::fast_buffer(c)?;
+    let constructor = crate::modules::buffer_shared_vm::fast_buffer(c)?;
     c.construct_rooted(constructor, constructor, &[buffer])
 }
 

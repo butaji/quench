@@ -1529,6 +1529,7 @@ dependencies = [
  "idna",
  "libc",
  "libz-rs-sys",
+ "memchr",
  "openssl",
  "openssl-sys",
  "oxc_allocator",
