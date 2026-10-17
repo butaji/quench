@@ -1346,12 +1346,23 @@ impl<H: Host> Vm<H> {
         enumerable: bool,
         initializer: RootId,
     ) -> Result<(), JsError> {
+        let members = names.iter().map(|name| (*name, enumerable)).collect::<Vec<_>>();
+        self.define_lazy_group_rooted(holder, &members, false, initializer)
+    }
+
+    pub(crate) fn define_lazy_group_rooted(
+        &mut self,
+        holder: RootId,
+        members: &[(&str, bool)],
+        completes_keys: bool,
+        initializer: RootId,
+    ) -> Result<(), JsError> {
         let holder = self.embedding_value(holder)?;
         let initializer = self.embedding_value(initializer)?;
         let program = self.embedding_program()?;
-        let keys = names
+        let keys = members
             .iter()
-            .map(|name| {
+            .map(|(name, _)| {
                 // The key shares the atom table's text.
                 let atom = self.intern_atom(name);
                 let name = self.heap.alloc(Cell::String(self.atom_value(atom)));
@@ -1360,10 +1371,16 @@ impl<H: Host> Vm<H> {
             .collect::<Vec<_>>();
         let values = keys
             .iter()
-            .map(|&key| self.heap.root_value(key).unwrap())
+            .zip(members)
+            .map(|(&key, &(_, enumerable))| (self.heap.root_value(key).unwrap(), enumerable))
             .collect::<Vec<_>>();
-        let defined =
-            self.define_lazy_data_properties(&program, holder, &values, enumerable, initializer);
+        let defined = self.define_lazy_data_properties(
+            &program,
+            holder,
+            &values,
+            completes_keys,
+            initializer,
+        );
         for key in keys {
             self.heap.release_root(key);
         }
