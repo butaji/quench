@@ -383,10 +383,17 @@ pub(crate) fn spawn_child(
         super::child_process_env_shared_vm::configure(context, &mut command, env)?;
     }
 
+    let serialization = options
+        .map(|root| property_string(context, root, "serialization"))
+        .transpose()?
+        .flatten()
+        .and_then(|mode| super::child_process_ipc_shared_vm::Serialization::from_mode(&mode))
+        .unwrap_or_default();
     let identity =
         super::child_process_options_shared_vm::Identity::from_options(context, options)?;
-    let configured = child_cwd(context, &mut command, cwd.as_deref())
-        .and_then(|_| super::child_process_stdio_shared_vm::configure(&mut command, &stdio));
+    let configured = child_cwd(context, &mut command, cwd.as_deref()).and_then(|_| {
+        super::child_process_stdio_shared_vm::configure(&mut command, &stdio, serialization)
+    });
     identity.configure(&mut command);
     let start = match configured
         .and_then(|configured| command.spawn().map(|child| (child, configured)))

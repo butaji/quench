@@ -2611,7 +2611,7 @@ pub(crate) fn node_internal_binding_source() -> &'static str {
       });
     }
     case "mksnapshot": return {
-      isBuildingSnapshotBuffer: [false],
+      isBuildingSnapshotBuffer: new Uint8Array(1),
       setSerializeCallback: () => {},
       setDeserializeCallback: () => {},
       setDeserializeMainFunction: () => {},
@@ -2633,7 +2633,11 @@ pub(crate) fn node_internal_binding_source() -> &'static str {
       };
     }
     case "uv": return __nativeInternalBinding("uv");
-    case "cares_wrap": return __nativeInternalBinding("cares_wrap");
+    case "cares_wrap":
+    case "serdes":
+    case "v8":
+    case "heap_utils":
+    case "internal_only_v8": return __nativeInternalBinding(name);
     default: return {};
   }
 };
