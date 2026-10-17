@@ -1638,6 +1638,54 @@ impl Function {
         })
     }
 
+    /// Whether the body's whole effect is storing parameters into fields of `this`, then
+    /// returning `undefined`: `SetThisField` records whose values are parameter registers,
+    /// followed by the return of an undefined constant or of a register nothing writes.
+    /// `constants` is the owning program's table. In a plain activation, where parameter `k`
+    /// lives in register `k` (`CallPlan::registers_only`), the body is its stores
+    /// (`this_field_stores`) alone.
+    pub(crate) fn only_initializes_this_fields(&self, constants: &[Constant]) -> bool {
+        if !self.handlers.is_empty() {
+            return false;
+        }
+        let mut instructions = self.instructions().peekable();
+        let mut stores = 0;
+        while let Some(store) = instructions.next_if(|instruction| {
+            matches!(instruction.op(), Op::SetThisField | Op::SetThisFieldStrict)
+        }) {
+            if store.register_a() >= self.params {
+                return false;
+            }
+            stores += 1;
+        }
+        let undefined_load = |load: &WideInstruction| {
+            load.op() == Op::LoadConst
+                && matches!(constants.get(load.constant_index()), Some(Constant::Undefined))
+        };
+        stores != 0
+            && match instructions.collect::<Vec<_>>().as_slice() {
+                [completion] => {
+                    (undefined_load(completion) && completion.returns_from_frame())
+                        || (completion.op() == Op::Return
+                            && completion.register_a() >= self.params
+                            && self.initial_register == InitialRegister::Undefined)
+                }
+                [load, completion] => {
+                    undefined_load(load)
+                        && !load.returns_from_frame()
+                        && completion.op() == Op::Return
+                        && completion.register_a() == load.result_register()
+                }
+                _ => false,
+            }
+    }
+
+    /// The `SetThisField` records a body opens with (`only_initializes_this_fields`).
+    pub(crate) fn this_field_stores(&self) -> impl Iterator<Item = WideInstruction> + '_ {
+        self.instructions()
+            .take_while(|instruction| matches!(instruction.op(), Op::SetThisField | Op::SetThisFieldStrict))
+    }
+
     /// Whether every read of the `arguments` binding loads it into the last argument of the
     /// `CallForwardingArguments` right after, and nothing else can reach the binding: no
     /// closure, environment clone, dynamic scope access or promoted register, and no

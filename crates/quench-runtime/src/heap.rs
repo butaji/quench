@@ -1119,6 +1119,8 @@ impl Heap {
         full: bool,
     ) -> Vec<(Value, Value)> {
         let full = self.collection_is_full(full);
+        // The sweep may free a prototype whose record a later object reuses.
+        advance_prototype_layout_epoch();
         debug_assert_eq!(self.collection_state, CollectionState::Idle);
         self.collection_state = if full {
             CollectionState::FullMarking
@@ -2123,6 +2125,27 @@ impl Heap {
         unsafe { self.properties.set_flat_unchecked(vector, slot, value) };
         true
     }
+    /// `property_add` of the next property of a direct object that keeps inline storage, at
+    /// inline `slot`, the object's storage length that its shape records. `false`, changing
+    /// nothing, for any other owner or slot, which `property_add` takes.
+    #[inline(always)]
+    pub(crate) fn add_inline_property(&mut self, object: Value, slot: usize, value: Value, shape: u32) -> bool {
+        let Some(record_id) = object.direct_object_index() else {
+            return false;
+        };
+        // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
+        let data = unsafe { self.object_records.get_live_mut(record_id) };
+        if slot >= INLINE_PROPERTY_COUNT || data.inline_properties().is_none() {
+            return false;
+        }
+        debug_assert_eq!(slot, self.properties.len(data.properties()));
+        data.set_inline_property(slot, value);
+        data.set_shape(shape);
+        #[cfg(feature = "profile-memory")]
+        self.note_object_slots(object, slot + 1);
+        true
+    }
+
     /// One cached property add: appends `value` at `slot`, the object's current storage
     /// length, and moves the object to `shape`, whose storage length is `slot + 1`.
     #[inline(always)]
