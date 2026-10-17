@@ -326,7 +326,7 @@ pub(crate) struct Heap {
     /// The next collection traces the whole heap.
     full_due: bool,
     pacing_state: pacing::PacingState,
-    /// Live count after, and cells allocated before, the previous collection.
+    /// Live weight after the previous collection.
     live_weight_after_previous: usize,
     /// Backing-store bytes allocated since the last collection, against its budget.
     external_since_collection: usize,
