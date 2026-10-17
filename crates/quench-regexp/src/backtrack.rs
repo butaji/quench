@@ -60,6 +60,22 @@ impl Text for [u8] {
     }
 }
 
+impl Text for [u16] {
+    #[inline(always)]
+    fn len(&self) -> usize {
+        <[u16]>::len(self)
+    }
+
+    #[inline(always)]
+    fn unit(&self, index: usize) -> u32 {
+        u32::from(self[index])
+    }
+
+    fn bytes(&self) -> Option<&[u8]> {
+        None
+    }
+}
+
 impl Text for [Unit] {
     #[inline(always)]
     fn len(&self) -> usize {
@@ -1174,6 +1190,20 @@ mod tests {
                             actual, expected,
                             "/{pattern}/{flags} on {subject:?} from {first}"
                         );
+                        if !regex.flags.unicode {
+                            // Outside unicode mode a decoded unit is a code unit.
+                            let raw = |found: Option<super::Found>| {
+                                found.map(|found| (found.start..found.end, found.captures))
+                            };
+                            let code_units = subject.encode_utf16().collect::<Vec<_>>();
+                            let wide = program.find(&code_units[..], first, false, None).ok();
+                            let decoded = program.find(&units[..], first, false, None).ok();
+                            assert_eq!(
+                                wide.map(raw),
+                                decoded.map(raw),
+                                "/{pattern}/{flags} on code units {subject:?} from {first}"
+                            );
+                        }
                         if subject.is_ascii() {
                             let bytes = program
                                 .find(subject.as_bytes(), first, false, None)
