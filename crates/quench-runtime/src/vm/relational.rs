@@ -213,7 +213,10 @@ impl<H: Host> Vm<H> {
             && let Some((shape, slot)) = self.instanceof_constructor_layout
             && shape == object.shape()
             && object.proto() == self.instanceof_has_instance_holder
-            && let Some(prototype) = self.heap.property_get(object, slot)
+            // SAFETY: the memo names the slot of `prototype` in the shape it holds, which is
+            // never a dictionary's, so the slot exists.
+            && let Some(prototype) = unsafe { self.heap.property_get_shaped(object, slot) }
+                .filter(|prototype| !prototype.is_deleted())
             && prototype.direct_object_index().is_some()
         {
             let Some(record) = value.direct_object_index() else {
