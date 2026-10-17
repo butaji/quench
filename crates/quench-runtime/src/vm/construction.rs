@@ -338,8 +338,8 @@ impl<H: Host> Vm<H> {
                     .expect("new closure is live"),
             );
         }
-        let name_value = function_plan
-            .name
+        let plan_name = function_plan.name.or(function_plan.inferred_name);
+        let name_value = plan_name
             .map(|atom| {
                 self.heap
                     .alloc(Cell::String(JsString::from_str(self.atom_name(atom))))
@@ -361,7 +361,7 @@ impl<H: Host> Vm<H> {
                 self.heap.property_add(function, prototype, with_prototype);
                 self.heap.property_add(prototype, function, constructor);
             }
-            self.capture_fresh_closure_name(function, function_plan.name);
+            self.capture_fresh_closure_name(function, plan_name);
             return Ok(function);
         }
         let mut recorded = ClosureShapes {
@@ -435,7 +435,7 @@ impl<H: Host> Vm<H> {
         {
             self.closure_shapes[shapes_key] = Some(recorded);
         }
-        self.capture_fresh_closure_name(function, function_plan.name);
+        self.capture_fresh_closure_name(function, plan_name);
         Ok(function)
     }
 

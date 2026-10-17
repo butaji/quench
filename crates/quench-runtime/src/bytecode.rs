@@ -1026,6 +1026,10 @@ pub(crate) struct SlotDeclaration {
 pub struct Function {
     pub parent: Option<u32>,
     pub name: Option<Atom>,
+    /// The name NamedEvaluation gives an anonymous function definition at a statically
+    /// named position (`const f = () => {}`): its closures are made with it, as
+    /// SetFunctionName would name them right after creation.
+    pub inferred_name: Option<Atom>,
     pub is_arrow: bool,
     pub self_binding_slot: Option<u16>,
     /// The function's source text as a range of the program's `source`, which
@@ -2383,7 +2387,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 93;
+    pub const FORMAT_VERSION: u8 = 94;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;
