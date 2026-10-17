@@ -471,6 +471,8 @@ impl PendingJob {
 }
 struct Realm {
     globals: Value,
+    /// Every global lexical name of the realm, including every bound one
+    /// (`Realm::bind_global_lexical`), so it alone answers whether a name is one.
     global_lexical_declarations: FxHashSet<Atom>,
     global_lexical_bindings: FxHashMap<Atom, Value>,
     immutable_global_lexical_bindings: FxHashSet<Atom>,
@@ -480,6 +482,15 @@ struct Realm {
     template_objects: FxHashMap<(ProgramId, u32, u32), Value>,
     promise: PromiseRuntime,
 }
+impl Realm {
+    /// Binds global lexical `atom` to `value`, declaring a name bound for the first time.
+    fn bind_global_lexical(&mut self, atom: Atom, value: Value) {
+        if self.global_lexical_bindings.insert(atom, value).is_none() {
+            self.global_lexical_declarations.insert(atom);
+        }
+    }
+}
+
 #[derive(Default)]
 struct RealmIntrinsics {
     arguments_objects: FxHashMap<(Value, bool), ArgumentsObjectTemplate>,
@@ -1508,9 +1519,7 @@ impl<H: Host> Vm<H> {
                     .map(|_| ());
             }
             if self.eval_script_context {
-                self.realm
-                    .global_lexical_bindings
-                    .insert(atom, Value::DELETED);
+                self.realm.bind_global_lexical(atom, Value::DELETED);
             }
         }
         self.realm
@@ -1630,7 +1639,7 @@ impl<H: Host> Vm<H> {
             .global_lexical_atoms
             .contains(&atom)
         {
-            self.realm.global_lexical_bindings.insert(atom, value);
+            self.realm.bind_global_lexical(atom, value);
         }
     }
     /// Publishes a finished script root's global lexical bindings; every other activation
@@ -1675,7 +1684,9 @@ impl<H: Host> Vm<H> {
                 )
             })
             .collect::<Vec<_>>();
-        self.realm.global_lexical_bindings.extend(bindings);
+        for (atom, value) in bindings {
+            self.realm.bind_global_lexical(atom, value);
+        }
     }
     pub(crate) fn execute(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
         self.execute_with_job_drain(program, &[], true)
