@@ -21,6 +21,7 @@ regex = { version = "1.11", default-features = false, features = ["std", "unicod
 sha1 = "0.10"
 base64 = "0.22"
 hex = "0.4"
+memchr = "2"
 sysinfo = "0.32"
 openssl = "0.10"
 openssl-sys = "0.9"

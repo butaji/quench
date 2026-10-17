@@ -69,6 +69,7 @@ impl<H: Host> Vm<H> {
             self.set_named(p, timeouts, name, Value::number(timeout))?;
         }
         self.set_builtin_value_named(agent, "timeouts", timeouts)?;
+        self.test262_agent.installed = true;
         self.set_builtin_value_named(global, "agent", agent)
     }
 
