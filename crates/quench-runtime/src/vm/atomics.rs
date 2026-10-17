@@ -4,6 +4,9 @@ use super::*;
 use std::time::Instant;
 
 pub(super) struct Test262AgentState {
+    /// Whether `$262.agent` is installed. Its agents run cooperatively on this runtime's
+    /// heap and thread, so this scheduler, not the shared backing, owns blocking.
+    pub(super) installed: bool,
     pub(super) active_callback: bool,
     pub(super) spin_count: u32,
     pub(super) current_waiter: Option<usize>,
@@ -43,6 +46,7 @@ pub(super) struct AgentTimer {
 impl Default for Test262AgentState {
     fn default() -> Self {
         Self {
+            installed: false,
             active_callback: false,
             spin_count: 0,
             current_waiter: None,
@@ -113,9 +117,7 @@ impl<H: Host> Vm<H> {
                 Value::FALSE
             });
         }
-        // Agents started in this VM share its heap and wait/notify through its emulated
-        // waiter list, so a real shared backing synchronizes only when none run here.
-        if !self.test262_agent.emulates_agents()
+        if !self.test262_agent_owns_atomic(native)
             && self
                 .atomic_shared_backing(args.first().copied().unwrap_or(Value::UNDEFINED))
                 .is_some()
@@ -614,6 +616,19 @@ impl<H: Host> Vm<H> {
 }
 
 impl<H: Host> Vm<H> {
+    /// Simulated Test262 agents can never be woken through the shared backing's waiter list
+    /// or run while this thread blocks, so their scheduler serves every wait and notify. Once
+    /// agents are started it also serves every access: they make progress only when an access
+    /// yields to them.
+    fn test262_agent_owns_atomic(&self, native: Native) -> bool {
+        self.test262_agent.installed
+            && (self.test262_agent.emulates_agents()
+                || matches!(
+                    native,
+                    Native::AtomicsWait | Native::AtomicsWaitAsync | Native::AtomicsNotify
+                ))
+    }
+
     fn atomic_shared_backing(
         &self,
         view: Value,

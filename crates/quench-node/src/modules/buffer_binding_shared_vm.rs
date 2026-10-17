@@ -29,44 +29,53 @@ const BTOA_INVALID_CHARACTER: f64 = -1.0;
 const BASE64_QUANTUM: usize = 4;
 const BASE64_PADDING: u8 = b'=';
 
-/// The natives, by binding key and private operation.
-const NATIVES: &[(&str, &str)] = &[
-    ("atob", "bufferBindingAtob"),
-    ("btoa", "bufferBindingBtoa"),
-    ("byteLengthUtf8", "bufferBindingByteLengthUtf8"),
-    ("copy", "bufferBindingCopy"),
-    ("compare", "bufferBindingCompare"),
-    ("compareOffset", "bufferBindingCompareOffset"),
-    ("fill", "bufferBindingFill"),
-    ("indexOfBuffer", "bufferBindingIndexOfBuffer"),
-    ("indexOfNumber", "bufferBindingIndexOfNumber"),
-    ("indexOfString", "bufferBindingIndexOfString"),
-    ("copyArrayBuffer", "bufferBindingCopyArrayBuffer"),
-    ("createUnsafeArrayBuffer", "bufferBindingCreateUnsafeArrayBuffer"),
-    ("arrayBufferAlignedOffset", "bufferBindingArrayBufferAlignedOffset"),
-    ("swap16", "bufferBindingSwap16"),
-    ("swap32", "bufferBindingSwap32"),
-    ("swap64", "bufferBindingSwap64"),
-    ("isUtf8", "bufferBindingIsUtf8"),
-    ("isAscii", "bufferBindingIsAscii"),
-    ("isLatin1", "bufferBindingIsLatin1"),
-    ("mask", "bufferBindingMask"),
-    ("stringLengthUtf8", "bufferBindingStringLengthUtf8"),
-    ("asciiSlice", "bufferBindingAsciiSlice"),
-    ("base64Slice", "bufferBindingBase64Slice"),
-    ("base64urlSlice", "bufferBindingBase64urlSlice"),
-    ("latin1Slice", "bufferBindingLatin1Slice"),
-    ("hexSlice", "bufferBindingHexSlice"),
-    ("ucs2Slice", "bufferBindingUcs2Slice"),
-    ("utf8Slice", "bufferBindingUtf8Slice"),
-    ("base64Write", "bufferBindingBase64Write"),
-    ("base64urlWrite", "bufferBindingBase64urlWrite"),
-    ("hexWrite", "bufferBindingHexWrite"),
-    ("ucs2Write", "bufferBindingUcs2Write"),
-    ("asciiWriteStatic", "bufferBindingAsciiWrite"),
-    ("latin1WriteStatic", "bufferBindingLatin1Write"),
-    ("utf8WriteStatic", "bufferBindingUtf8Write"),
-    ("setDetachKey", "bufferBindingSetDetachKey"),
+/// How node_buffer.cc's `Initialize` registers a native, which decides its `name`.
+#[derive(Clone, Copy)]
+enum Registration {
+    /// `SetMethod`: named after its binding key.
+    Method,
+    /// `SetFastMethod`: a V8 fast-API function, which is anonymous.
+    Fast,
+}
+
+/// The natives, by binding key, private operation and registration.
+const NATIVES: &[(&str, &str, Registration)] = &[
+    ("atob", "bufferBindingAtob", Registration::Method),
+    ("btoa", "bufferBindingBtoa", Registration::Method),
+    ("byteLengthUtf8", "bufferBindingByteLengthUtf8", Registration::Fast),
+    ("copy", "bufferBindingCopy", Registration::Fast),
+    ("compare", "bufferBindingCompare", Registration::Fast),
+    ("compareOffset", "bufferBindingCompareOffset", Registration::Method),
+    ("fill", "bufferBindingFill", Registration::Method),
+    ("indexOfBuffer", "bufferBindingIndexOfBuffer", Registration::Method),
+    ("indexOfNumber", "bufferBindingIndexOfNumber", Registration::Fast),
+    ("indexOfString", "bufferBindingIndexOfString", Registration::Method),
+    ("copyArrayBuffer", "bufferBindingCopyArrayBuffer", Registration::Fast),
+    ("createUnsafeArrayBuffer", "bufferBindingCreateUnsafeArrayBuffer", Registration::Method),
+    ("arrayBufferAlignedOffset", "bufferBindingArrayBufferAlignedOffset", Registration::Method),
+    ("swap16", "bufferBindingSwap16", Registration::Fast),
+    ("swap32", "bufferBindingSwap32", Registration::Fast),
+    ("swap64", "bufferBindingSwap64", Registration::Fast),
+    ("isUtf8", "bufferBindingIsUtf8", Registration::Fast),
+    ("isAscii", "bufferBindingIsAscii", Registration::Fast),
+    ("isLatin1", "bufferBindingIsLatin1", Registration::Fast),
+    ("mask", "bufferBindingMask", Registration::Fast),
+    ("stringLengthUtf8", "bufferBindingStringLengthUtf8", Registration::Fast),
+    ("asciiSlice", "bufferBindingAsciiSlice", Registration::Method),
+    ("base64Slice", "bufferBindingBase64Slice", Registration::Method),
+    ("base64urlSlice", "bufferBindingBase64urlSlice", Registration::Method),
+    ("latin1Slice", "bufferBindingLatin1Slice", Registration::Method),
+    ("hexSlice", "bufferBindingHexSlice", Registration::Method),
+    ("ucs2Slice", "bufferBindingUcs2Slice", Registration::Method),
+    ("utf8Slice", "bufferBindingUtf8Slice", Registration::Method),
+    ("base64Write", "bufferBindingBase64Write", Registration::Method),
+    ("base64urlWrite", "bufferBindingBase64urlWrite", Registration::Method),
+    ("hexWrite", "bufferBindingHexWrite", Registration::Method),
+    ("ucs2Write", "bufferBindingUcs2Write", Registration::Method),
+    ("asciiWriteStatic", "bufferBindingAsciiWrite", Registration::Fast),
+    ("latin1WriteStatic", "bufferBindingLatin1Write", Registration::Fast),
+    ("utf8WriteStatic", "bufferBindingUtf8Write", Registration::Fast),
+    ("setDetachKey", "bufferBindingSetDetachKey", Registration::Method),
 ];
 
 pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
@@ -75,9 +84,13 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
             let binding = c.object_rooted()?;
             let global = c.global_root()?;
             let array_buffer = c.get_named_property_rooted(global, "ArrayBuffer")?;
-            for &(name, operation) in NATIVES {
+            for &(name, operation, registration) in NATIVES {
                 let operation = crate::host::shared_vm::operation(operation);
-                let function = c.host_function_named_with_data(operation, name, array_buffer)?;
+                let display = match registration {
+                    Registration::Method => name,
+                    Registration::Fast => "",
+                };
+                let function = c.host_function_named_with_data(operation, display, array_buffer)?;
                 put(c, binding, name, function)?;
             }
             let max_length = c.number(MAX_LENGTH as f64);
@@ -484,10 +497,20 @@ fn search(haystack: &[u8], needle: &[u8], start: usize, forward: bool, width: us
     found.map(|unit| unit * width)
 }
 
+/// How node_buffer.cc's two searches treat UCS-2 alignment, which they do differently.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Needle {
+    /// `IndexOfString`: the haystack is cut to whole code units and a forward search
+    /// starts at the next unit boundary.
+    String,
+    /// `IndexOfBuffer`: only the search end is cut to whole units.
+    Buffer,
+}
+
 /// `IndexOfString` and `IndexOfBuffer` after the needle is encoded: Node's clamping of the
 /// start and `end` around `search`.
-fn index_of(haystack: &[u8], needle: &[u8], offset: i64, end: i64, forward: bool, width: usize) -> f64 {
-    let length = haystack.len() / width * width;
+fn index_of(haystack: &[u8], needle: &[u8], offset: i64, end: i64, forward: bool, width: usize, kind: Needle) -> f64 {
+    let length = if kind == Needle::String { haystack.len() / width * width } else { haystack.len() };
     let search_end = (end.max(0) as usize).min(length) / width * width;
     let start = index_of_offset(length, offset, needle.len(), forward);
     if needle.is_empty() {
@@ -502,7 +525,7 @@ fn index_of(haystack: &[u8], needle: &[u8], offset: i64, end: i64, forward: bool
         }
         start = search_end - 1;
     }
-    if width == UCS2_WIDTH && forward {
+    if kind == Needle::String && width == UCS2_WIDTH && forward {
         start += start % UCS2_WIDTH;
         if start >= search_end {
             return -1.0;
@@ -532,7 +555,7 @@ pub(crate) fn index_of_string(c: &mut Context<'_>, _: RootId, args: &[RootId]) -
     view_length(c, view)?;
     let needle = codec::encode_units(&needle, encoding);
     let width = search_width(encoding);
-    let found = c.with_buffer_bytes_rooted(view, |haystack| index_of(haystack, &needle, offset, end, forward, width));
+    let found = c.with_buffer_bytes_rooted(view, |haystack| index_of(haystack, &needle, offset, end, forward, width, Needle::String));
     Ok(c.number(found.unwrap_or(-1.0)))
 }
 
@@ -549,7 +572,7 @@ pub(crate) fn index_of_buffer(c: &mut Context<'_>, _: RootId, args: &[RootId]) -
     view_length(c, needle)?;
     let needle = view_bytes(c, needle);
     let width = search_width(encoding);
-    let found = c.with_buffer_bytes_rooted(view, |haystack| index_of(haystack, &needle, offset, end, forward, width));
+    let found = c.with_buffer_bytes_rooted(view, |haystack| index_of(haystack, &needle, offset, end, forward, width, Needle::Buffer));
     Ok(c.number(found.unwrap_or(-1.0)))
 }
 
@@ -740,14 +763,15 @@ mod tests {
     #[test]
     fn index_of_follows_node_clamping() {
         let haystack = b"abcabc";
-        assert_eq!(index_of(haystack, b"bc", 0, 6, true, 1), 1.0);
-        assert_eq!(index_of(haystack, b"bc", 2, 6, true, 1), 4.0);
-        assert_eq!(index_of(haystack, b"bc", -1, 6, false, 1), 4.0);
-        assert_eq!(index_of(haystack, b"bc", 3, 6, false, 1), 1.0);
-        assert_eq!(index_of(haystack, b"bc", 0, 4, true, 1), 1.0);
-        assert_eq!(index_of(haystack, b"bc", 2, 5, true, 1), -1.0);
-        assert_eq!(index_of(haystack, b"", 10, 6, true, 1), 6.0);
-        assert_eq!(index_of(b"a\0b\0a\0", b"a\0", 1, 6, true, UCS2_WIDTH), 4.0);
+        assert_eq!(index_of(haystack, b"bc", 0, 6, true, 1, Needle::String), 1.0);
+        assert_eq!(index_of(haystack, b"bc", 2, 6, true, 1, Needle::String), 4.0);
+        assert_eq!(index_of(haystack, b"bc", -1, 6, false, 1, Needle::String), 4.0);
+        assert_eq!(index_of(haystack, b"bc", 3, 6, false, 1, Needle::String), 1.0);
+        assert_eq!(index_of(haystack, b"bc", 0, 4, true, 1, Needle::String), 1.0);
+        assert_eq!(index_of(haystack, b"bc", 2, 5, true, 1, Needle::String), -1.0);
+        assert_eq!(index_of(haystack, b"", 10, 6, true, 1, Needle::String), 6.0);
+        assert_eq!(index_of(b"a\0b\0a\0", b"a\0", 1, 6, true, UCS2_WIDTH, Needle::String), 4.0);
+        assert_eq!(index_of(b"a\0b\0a\0", b"a\0", 1, 6, true, UCS2_WIDTH, Needle::Buffer), 0.0);
     }
 
     #[test]
