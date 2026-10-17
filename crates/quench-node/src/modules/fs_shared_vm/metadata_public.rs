@@ -16,7 +16,7 @@ impl Method {
             "copyFileSync" | "symlinkSync" => Self::RawVoid(3),
             "rmSync" => Self::RawVoid(2),
             "unlinkSync" | "fsyncSync" | "fdatasyncSync" => Self::RawVoid(1),
-            "mkdtempSync" | "readlinkSync" => Self::RawValue(2),
+            "mkdtempSync" | "readlinkSync" | "createReadStream" | "createWriteStream" => Self::RawValue(2),
             "chmodSync" => Self::Chmod,
             "chownSync" | "lchownSync" => Self::Owner,
             "utimesSync" | "lutimesSync" => Self::Times,

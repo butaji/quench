@@ -5079,6 +5079,9 @@ impl<H: Host> Vm<H> {
         let then_atom = self.runtime_atoms.then;
         let then = match self.get_property(p, value, then_atom) {
             Ok(then) => then,
+            // Cancellation must unwind the active job, not become a guest
+            // rejection or an allocated Error during thenable assimilation.
+            Err(error) if error.is_execution_terminated() => return Err(error),
             Err(error) => {
                 let reason = error
                     .thrown_value()

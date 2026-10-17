@@ -1127,6 +1127,8 @@ const DEFAULT_PROPERTY_ATTRIBUTES: PropertyAttributes = PropertyAttributes {
     setter: None,
 };
 pub(crate) struct Vm<H> {
+    /// VM-wide running-job admission for native microtask checkpoints.
+    native_microtask_running: bool,
     pub(crate) host: H,
     specialized: bool,
     heap: Heap,

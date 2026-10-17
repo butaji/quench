@@ -2553,12 +2553,12 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     )?;
     let undefined = context.undefined();
     context.call_rooted(install_missing_fs_methods, undefined, &[module])?;
-    for name in ["lutimesSync", "futimesSync"] {
+    for name in ["lutimesSync", "futimesSync", "createReadStream", "createWriteStream"] {
         let original = get(context, module, name)?;
         let function = metadata_public::wrap(context, original, name)?;
         set(context, module, name, function)?;
     }
-    for name in ["access", "chmod", "fchmod", "statfs", "exists", "chown", "lchown", "fchown", "utimes", "lutimes", "futimes", "fsync", "fdatasync", "ftruncate"] {
+    for name in ["access", "chmod", "fchmod", "statfs", "exists", "chown", "lchown", "fchown", "utimes", "lutimes", "futimes", "fsync", "fdatasync", "ftruncate", "lstat", "rm"] {
         let original = get(context, module, name)?;
         let function = callback_public::wrap(context, original, name)?;
         set(context, module, name, function)?;
