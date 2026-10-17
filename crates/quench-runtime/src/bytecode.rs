@@ -984,6 +984,61 @@ impl HotDecoding {
     }
 }
 
+/// The basic blocks of decoded code: a block starts at the entry, at each jump, branch and
+/// handler target, at each handler bound, and after every instruction that does not fall
+/// through alone, so control enters a block only at its start and each block lies wholly
+/// inside or outside each handler range.
+struct BasicBlocks {
+    /// Sorted, distinct block starts; the first is 0.
+    starts: Vec<usize>,
+}
+
+impl BasicBlocks {
+    fn of(code: &[WideInstruction], handlers: &[Handler]) -> Self {
+        let mut starts = vec![0];
+        for (pc, instruction) in code.iter().enumerate() {
+            match instruction.op().control_flow_layout() {
+                ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump => {
+                    starts.extend([instruction.jump_target() as usize, pc + 1]);
+                }
+                ControlFlowLayout::BranchTable => {
+                    starts.extend(branch_table_entries(pc, *instruction));
+                    starts.push(pc + 1);
+                }
+                ControlFlowLayout::Terminal => starts.push(pc + 1),
+                ControlFlowLayout::Call | ControlFlowLayout::Fallthrough
+                    if instruction.returns_from_frame() =>
+                {
+                    starts.push(pc + 1);
+                }
+                ControlFlowLayout::Call | ControlFlowLayout::Fallthrough => {}
+            }
+        }
+        for handler in handlers {
+            starts.extend([handler.start, handler.end, handler.target].map(|pc| pc as usize));
+            starts.extend(handler.return_target.map(|pc| pc as usize));
+        }
+        starts.retain(|start| *start < code.len());
+        starts.sort_unstable();
+        starts.dedup();
+        Self { starts }
+    }
+
+    fn len(&self) -> usize {
+        self.starts.len()
+    }
+
+    /// The block that starts at `pc`, if one does.
+    fn containing(&self, pc: usize) -> Option<usize> {
+        self.starts.binary_search(&pc).ok()
+    }
+
+    /// The instructions of `block` in code of length `len`.
+    fn range(&self, block: usize, len: usize) -> std::ops::Range<usize> {
+        self.starts[block]..self.starts.get(block + 1).copied().unwrap_or(len)
+    }
+}
+
 /// Whether some jump in `code` targets its own or an earlier instruction: a loop.
 fn has_backward_branch(code: &[Instr], wide: &[WideInstruction]) -> bool {
     code.iter().enumerate().any(|(pc, packed)| {
@@ -1527,35 +1582,37 @@ impl Function {
             matches!(instruction.op(), Op::StoreLocal | Op::StoreLocalPlain)
                 && instruction.boolean_field(InstructionField::C) == Some(true)
         };
-        // Must-initialized slots on entry to each instruction. An instruction no path reaches
-        // keeps every slot (it never runs); `visited` makes each reached one transfer once.
-        let words = locals.div_ceil(u64::BITS as usize);
-        let len = decoded.len();
-        let mut entry = vec![vec![u64::MAX; words]; len + 1];
-        entry[0].fill(0);
-        let mut visited = vec![false; len + 1];
-        let mut work = vec![0];
-        while let Some(pc) = work.pop() {
-            if pc >= len {
-                continue;
-            }
-            visited[pc] = true;
-            let instruction = decoded[pc];
-            let before = entry[pc].clone();
-            let mut after = before.clone();
+        let slot_bit = |slot: usize| (slot / u64::BITS as usize, 1u64 << (slot % u64::BITS as usize));
+        let transfer = |state: &mut [u64], instruction: WideInstruction| {
             if instruction.op() == Op::InitializeTdz || initializing(instruction) {
-                let slot = instruction.local_slot();
-                let (word, bit) = (slot / u64::BITS as usize, 1u64 << (slot % u64::BITS as usize));
+                let (word, bit) = slot_bit(instruction.local_slot());
                 if instruction.op() == Op::InitializeTdz {
-                    after[word] &= !bit;
+                    state[word] &= !bit;
                 } else {
-                    after[word] |= bit;
+                    state[word] |= bit;
                 }
             }
+        };
+        // Must-initialized slots on entry to each basic block, one row of `words` per block:
+        // a state per instruction would cost the code length times the locals. A block no
+        // path reaches keeps every slot (it never runs).
+        let words = locals.div_ceil(u64::BITS as usize);
+        let len = decoded.len();
+        let blocks = BasicBlocks::of(&decoded, &self.handlers);
+        let mut entry = vec![u64::MAX; blocks.len() * words];
+        entry[..words].fill(0);
+        let mut visited = vec![false; blocks.len()];
+        visited[0] = true;
+        let mut work = vec![0];
+        let mut state = vec![0u64; words];
+        while let Some(block) = work.pop() {
+            state.copy_from_slice(&entry[block * words..(block + 1) * words]);
             let mut meet = |target: usize, state: &[u64]| {
-                let Some(current) = entry.get_mut(target) else {
+                // Control reaches only block starts; past the code nothing runs.
+                let Some(target) = blocks.containing(target).filter(|_| target < len) else {
                     return;
                 };
+                let current = &mut entry[target * words..(target + 1) * words];
                 let mut changed = false;
                 for (word, incoming) in current.iter_mut().zip(state) {
                     let next = *word & incoming;
@@ -1567,44 +1624,56 @@ impl Function {
                     work.push(target);
                 }
             };
-            match instruction.op().control_flow_layout() {
-                ControlFlowLayout::Jump => meet(instruction.jump_target() as usize, &after),
-                ControlFlowLayout::ConditionalJump => {
-                    meet(pc + 1, &after);
-                    meet(instruction.jump_target() as usize, &after);
-                }
-                ControlFlowLayout::BranchTable => {
-                    for target in branch_table_entries(pc, instruction) {
-                        meet(target, &after);
+            let range = blocks.range(block, len);
+            for pc in range.clone() {
+                let instruction = decoded[pc];
+                for handler in &self.handlers {
+                    if pc as u32 >= handler.start && (pc as u32) < handler.end {
+                        meet(handler.target as usize, &state);
+                        if let Some(target) = handler.return_target {
+                            meet(target as usize, &state);
+                        }
                     }
                 }
-                ControlFlowLayout::Terminal => {}
-                ControlFlowLayout::Call | ControlFlowLayout::Fallthrough
-                    if instruction.returns_from_frame() => {}
-                ControlFlowLayout::Call | ControlFlowLayout::Fallthrough => meet(pc + 1, &after),
-            }
-            for handler in &self.handlers {
-                if pc as u32 >= handler.start && (pc as u32) < handler.end {
-                    meet(handler.target as usize, &before);
-                    if let Some(target) = handler.return_target {
-                        meet(target as usize, &before);
+                transfer(&mut state, instruction);
+                if pc + 1 < range.end {
+                    continue;
+                }
+                match instruction.op().control_flow_layout() {
+                    ControlFlowLayout::Jump => meet(instruction.jump_target() as usize, &state),
+                    ControlFlowLayout::ConditionalJump => {
+                        meet(pc + 1, &state);
+                        meet(instruction.jump_target() as usize, &state);
                     }
+                    ControlFlowLayout::BranchTable => {
+                        for target in branch_table_entries(pc, instruction) {
+                            meet(target, &state);
+                        }
+                    }
+                    ControlFlowLayout::Terminal => {}
+                    ControlFlowLayout::Call | ControlFlowLayout::Fallthrough
+                        if instruction.returns_from_frame() => {}
+                    ControlFlowLayout::Call | ControlFlowLayout::Fallthrough => meet(pc + 1, &state),
                 }
             }
         }
-        for (pc, instruction) in decoded.iter().enumerate() {
-            if instruction.op().immediate_role() != ImmediateRole::LocalSlot
-                || instruction.op() == Op::InitializeTdz
-                || initializing(*instruction)
-            {
-                continue;
-            }
-            let slot = instruction.local_slot();
-            let (word, bit) = (slot / u64::BITS as usize, 1u64 << (slot % u64::BITS as usize));
-            if entry[pc][word] & bit == 0
-                && let Some(candidate) = candidates.get_mut(slot)
-            {
-                *candidate = false;
+        for block in (0..blocks.len()).filter(|block| visited[*block]) {
+            state.copy_from_slice(&entry[block * words..(block + 1) * words]);
+            for pc in blocks.range(block, len) {
+                let instruction = decoded[pc];
+                if instruction.op().immediate_role() == ImmediateRole::LocalSlot
+                    && instruction.op() != Op::InitializeTdz
+                    && !initializing(instruction)
+                {
+                    let slot = instruction.local_slot();
+                    let (word, bit) = slot_bit(slot);
+                    if state[word] & bit == 0
+                        && let Some(candidate) = candidates.get_mut(slot)
+                    {
+                        *candidate = false;
+                    }
+                }
+                transfer(&mut state, instruction);
             }
         }
         candidates
