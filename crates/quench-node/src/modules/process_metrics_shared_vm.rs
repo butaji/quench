@@ -50,6 +50,10 @@ fn create_binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
                 c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
             put(c, module, name, function)?;
         }
+        for (name,operation) in [("cwd","processCwd"),("umask","workerRawUmask")] {
+            let function=c.host_function_named(crate::host::shared_vm::operation(operation),name)?;
+            put(c,module,name,function)?;
+        }
         Ok(module)
     })
 }
