@@ -124,14 +124,20 @@ impl Index<usize> for AtomTable {
     }
 }
 
-/// A VM's atom names in id order, shared by every program whose atoms are a prefix of them.
-/// The base never changes and appended names are never removed or replaced, so a name
-/// borrowed from the sequence stays valid as long as the sequence does.
+/// Names an `AtomSequence` chunk holds. A chunk is allocated at this capacity and never
+/// grows, so its names never move.
+const ATOM_SEQUENCE_CHUNK: usize = 256;
+
+/// A VM's atom names in id order, shared by every program whose atoms are a prefix of them,
+/// and the VM's only record of the names it appends. The base never changes and appended
+/// names are never removed or replaced, so a name borrowed from the sequence stays valid as
+/// long as the sequence does.
 pub(crate) struct AtomSequence {
     base: AtomTable,
-    /// Names after `base`. Only `append` mutates it, and no reference into the vector
-    /// itself escapes: `name` returns text owned by an element's shared allocation.
-    appended: UnsafeCell<Vec<JsString>>,
+    /// Names after `base`, in chunks of `ATOM_SEQUENCE_CHUNK`. Only `append` mutates it, and
+    /// only by pushing into the last chunk below its capacity or adding a chunk, so no name
+    /// moves: a short name's text lives inside its `JsString`.
+    appended: UnsafeCell<Vec<Vec<JsString>>>,
 }
 
 impl AtomSequence {
@@ -143,26 +149,55 @@ impl AtomSequence {
     }
 
     pub(crate) fn len(&self) -> usize {
+        self.base.len() + self.appended_len()
+    }
+
+    /// The number of names after the base.
+    pub(crate) fn appended_len(&self) -> usize {
         // SAFETY: `appended` is borrowed only within this sequence's methods, none of which
         // re-enters another, so no mutable borrow is live here.
-        self.base.len() + unsafe { (*self.appended.get()).len() }
+        let chunks = unsafe { &*self.appended.get() };
+        chunks.last().map_or(0, |last| (chunks.len() - 1) * ATOM_SEQUENCE_CHUNK + last.len())
     }
 
     pub(crate) fn append(&self, name: JsString) {
-        // SAFETY: as in `len`; the vector may reallocate, but names handed out point into
-        // the elements' `Rc` allocations, which never move.
-        unsafe { (*self.appended.get()).push(name) };
+        // SAFETY: as in `appended_len`. The outer vector may reallocate, which moves only the
+        // chunk headers; a chunk never grows past its capacity, so its names stay in place.
+        let chunks = unsafe { &mut *self.appended.get() };
+        match chunks.last_mut() {
+            Some(last) if last.len() < ATOM_SEQUENCE_CHUNK => last.push(name),
+            _ => {
+                let mut chunk = Vec::with_capacity(ATOM_SEQUENCE_CHUNK);
+                chunk.push(name);
+                chunks.push(chunk);
+            }
+        }
+    }
+
+    /// The `offset`th name after the base.
+    pub(crate) fn appended(&self, offset: usize) -> &JsString {
+        // SAFETY: as in `appended_len`. The name is never removed and never moves (`append`),
+        // so the reference lives as long as `self`.
+        let chunks = unsafe { &*self.appended.get() };
+        let name: *const JsString =
+            &chunks[offset / ATOM_SEQUENCE_CHUNK][offset % ATOM_SEQUENCE_CHUNK];
+        unsafe { &*name }
+    }
+
+    /// The bytes the appended names' records occupy, beside the text they own.
+    #[cfg(feature = "profile-memory")]
+    pub(crate) fn appended_record_bytes(&self) -> usize {
+        // SAFETY: as in `appended_len`.
+        let chunks = unsafe { &*self.appended.get() };
+        chunks.capacity() * size_of::<Vec<JsString>>()
+            + chunks.iter().map(Vec::capacity).sum::<usize>() * size_of::<JsString>()
     }
 
     fn name(&self, index: usize) -> &str {
-        let Some(appended) = index.checked_sub(self.base.len()) else {
-            return &self.base[index];
-        };
-        // SAFETY: as in `len`. The element is never removed, so its allocation, and the text
-        // returned from it, lives as long as `self`.
-        let appended_names: &Vec<JsString> = unsafe { &*self.appended.get() };
-        let name: *const str = appended_names[appended].host_string();
-        unsafe { &*name }
+        match index.checked_sub(self.base.len()) {
+            None => &self.base[index],
+            Some(offset) => self.appended(offset).host_string(),
+        }
     }
 }
 
