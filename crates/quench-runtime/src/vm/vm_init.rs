@@ -89,6 +89,7 @@ impl<H: Host> Vm<H> {
             profile: Profile::default(),
             #[cfg(not(feature = "profile-aggregate"))]
             profile: Profile,
+            shape_slot_memo: Default::default(),
             shapes: Shape::table(),
             shape_accessors: Vec::new(),
             transitions: Default::default(),

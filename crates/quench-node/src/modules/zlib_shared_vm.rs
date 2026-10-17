@@ -327,8 +327,7 @@ fn get(
     object: RootId,
     name: &str,
 ) -> Result<RootId, RootedError> {
-    let key = context.string_rooted(name);
-    context.get_property_rooted(object, key)
+    context.get_named_property_rooted(object, name)
 }
 
 pub(super) fn stream_reader(

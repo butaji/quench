@@ -1238,6 +1238,17 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.completion(result)
     }
 
+    /// `object[name]` for a key given as Rust text; equivalent to `get_property_rooted` with
+    /// a string key, without allocating the key.
+    pub fn get_named_property_rooted(
+        &mut self,
+        object: RootId,
+        name: &str,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.get_named_property_rooted(object, name);
+        self.completion(result)
+    }
+
     /// Perform the same strict named assignment as guest JavaScript.
     pub fn assign_named_property_rooted(
         &mut self,
@@ -1246,6 +1257,18 @@ impl<'a, H: Host> NativeContext<'a, H> {
         value: RootId,
     ) -> Result<(), RootedError> {
         self.vm.assign_named_property_rooted(object, name, value)
+            .map_err(|error| self.error(error))
+    }
+
+    /// Perform the same strict keyed assignment as guest JavaScript.
+    pub fn assign_property_rooted(
+        &mut self,
+        object: RootId,
+        key: RootId,
+        value: RootId,
+    ) -> Result<(), RootedError> {
+        self.vm
+            .assign_property_rooted(object, key, value)
             .map_err(|error| self.error(error))
     }
 

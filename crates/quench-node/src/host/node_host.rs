@@ -114,6 +114,8 @@ pub(crate) struct SharedNodeState {
     pub(crate) url_state: Option<quench_runtime::RootId>,
     pub(crate) url_search_params_constructor: Option<quench_runtime::RootId>,
     pub(crate) timer_handle_api: Option<crate::modules::timers_shared_vm::TimerHandleApi>,
+    /// The internal invocation every receiverless next tick shares (`queue_next_tick`).
+    pub(crate) tick_invocation: Option<quench_runtime::RootId>,
     pub(crate) timer_duration_warnings: crate::modules::timers_shared_vm::TimerDurationWarnings,
     /// Invocation flags supplied by the embedder for this logical process.
     pub(crate) exec_argv: Vec<String>,
@@ -215,6 +217,7 @@ impl SharedNodeState {
         self.url_state = None;
         self.url_search_params_constructor = None;
         self.timer_handle_api = None;
+        self.tick_invocation = None;
         self.timer_duration_warnings = Default::default();
         self.net_socket_constructor = None;
         self.net_handle_owner_symbol = None;
@@ -297,6 +300,7 @@ impl SharedNodeState {
             url_state: None,
             url_search_params_constructor: None,
             timer_handle_api: None,
+            tick_invocation: None,
             timer_duration_warnings: Default::default(),
             exec_argv: Vec::new(),
             cli_options: Default::default(),

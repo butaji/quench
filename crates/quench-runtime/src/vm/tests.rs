@@ -1387,6 +1387,7 @@ fn dictionary_shapes_fall_back_after_deletion_and_prototype_use() {
         getAnswer: function() { return this.answer; }
       };
       var inherited = {};
+      var inheritor = Object.create(inherited);
       Object.setPrototypeOf(inherited, prototype);
       print(inherited.answer);
       print(inherited.getAnswer());
@@ -1481,6 +1482,53 @@ fn dictionary_shapes_fall_back_after_deletion_and_prototype_use() {
         ] {
             assert!(vm.profile.dictionary_transitions[trigger.index()] > 0);
         }
+    }
+}
+
+#[test]
+fn prototype_change_on_a_non_prototype_keeps_shape_and_caches_sound() {
+    // Two receivers share a shape while their prototypes differ and then swap: every
+    // cached load, store, add and method call must follow each receiver's actual chain.
+    let source = r#"
+      function A() {} A.prototype.kind = "a"; A.prototype.who = function() { return "A" + this.n; };
+      function B() {} B.prototype.kind = "b"; B.prototype.who = function() { return "B" + this.n; };
+      Object.defineProperty(B.prototype, "late", { set(v) { this.seen = v; }, configurable: true });
+      function read(o) { return o.kind + o.who() + o.n; }
+      function add(o) { o.late = 1; return Object.prototype.hasOwnProperty.call(o, "late"); }
+      var out = [];
+      for (var i = 0; i < 3; i++) {
+        var x = { n: i }, y = { n: i };
+        Object.setPrototypeOf(x, A.prototype);
+        Object.setPrototypeOf(y, B.prototype);
+        out.push(read(x), read(y), add(x), add(y));
+        Object.setPrototypeOf(x, B.prototype);
+        Object.setPrototypeOf(y, A.prototype);
+        out.push(read(x), read(y));
+      }
+      var array = [];
+      Object.setPrototypeOf(array, { length: "inherited" });
+      out.push(read2(array));
+      print(out.join(","));
+      function read2(o) { return o.length; }
+    "#;
+    let expected = (0..3)
+        .map(|i| format!("aA{i}{i},bB{i}{i},true,false,bB{i}{i},aA{i}{i}"))
+        .chain(["0".to_owned()])
+        .collect::<Vec<_>>()
+        .join(",");
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let program = compile(source, "prototype-change.js").unwrap();
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), [expected.as_str()], "{mode}");
+        let atom = vm.intern_atom("x");
+        let x = vm.own_property(vm.realm.globals, atom).unwrap();
+        let shape = vm.object_data(x).unwrap().shape();
+        assert!(!vm.shape_is_dictionary(shape), "{mode}: receiver keeps a cacheable shape");
     }
 }
 

@@ -3,8 +3,7 @@ use crate::host::NodeHost;
 use quench_runtime::{BuiltinBrand, NativeContext, RootId, RootedError, Value};
 type Context<'a> = NativeContext<'a, NodeHost>;
 fn get(c: &mut Context<'_>, o: RootId, n: &str) -> Result<RootId, RootedError> {
-    let k = c.string_rooted(n);
-    c.get_property_rooted(o, k)
+    c.get_named_property_rooted(o, n)
 }
 fn put(c: &mut Context<'_>, o: RootId, n: &str, v: RootId) -> Result<(), RootedError> {
     let k = c.string_rooted(n);
