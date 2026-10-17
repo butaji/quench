@@ -200,21 +200,28 @@ impl GenerationalPacing {
     }
 }
 
-/// Production pacing. Starting point for the policy table (TOD-137 stage 3): young
-/// collections every half live set (at least 2^15), a full collection once the old
-/// generation has doubled, and never more than eight live sets of allocation between
-/// full collections. When more than half of young allocations survive, collections are
-/// full with three live sets between them, probing survival with a minor collection every
-/// fourth one. (Three keeps Splay's Score of four at 19% less RSS; two costs 12% of it.)
+/// The smallest allocation weight between collections, and between full collections,
+/// under RSS-first pacing.
+const RSS_FIRST_MINIMUM_BUDGET: usize = 384;
+
+/// Production pacing, RSS-first (`v2-npm` 6571735f9 and `v2-cloud-c2`, the owner's
+/// direction of 2026-10-17: lowest peak RSS among Node and Bun on the npm package
+/// scenarios). Young collections every half live set (at least
+/// `RSS_FIRST_MINIMUM_BUDGET`), a full collection once the old generation has doubled or
+/// one live set has been allocated since the last full one. When more than half of young
+/// allocations survive, collections are full with one live set between them, probing
+/// survival with a minor collection every fourth one. The Score-only table (2^15/2^18
+/// minimums, 8/1 cap, 2/1 full-only headroom) raised npm peak RSS 10-30%
+/// (evidence/npm-rss-2026-10-17/).
 pub(super) const PRODUCTION_PACING: GenerationalPacing = GenerationalPacing {
     young: Ratio::new(1, 2),
-    minimum_young: 1 << 15,
+    minimum_young: RSS_FIRST_MINIMUM_BUDGET,
     old_growth: Ratio::new(1, 1),
     minimum_old_growth: 1 << 15,
-    allocation_cap: Ratio::new(8, 1),
-    minimum_allocation_cap: 1 << 18,
+    allocation_cap: Ratio::new(1, 1),
+    minimum_allocation_cap: RSS_FIRST_MINIMUM_BUDGET,
     survival_limit: SURVIVAL_SCALE / 2,
-    full_only_headroom: Ratio::new(3, 1),
+    full_only_headroom: Ratio::new(1, 1),
     probe_interval: 4,
 };
 
@@ -278,7 +285,7 @@ mod tests {
         assert_eq!(state.regime(&pacing), Regime::FullOnly);
         // The next full collection keeps the interval measured from the last full one.
         let interval = pacing.full_only_headroom.of(3 * live / 2) - live / 2;
-        assert_eq!(next, NextCollection { threshold: interval, full: true });
+        assert_eq!(next, NextCollection { threshold: interval.max(pacing.minimum_young), full: true });
         // After `probe_interval` full collections, a minor probes survival again.
         let full = CollectionOutcome { full: true, since_full: 0, ..minor(live, live, 4 * live) };
         for _ in 1..pacing.probe_interval {

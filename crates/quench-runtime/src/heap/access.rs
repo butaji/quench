@@ -286,6 +286,18 @@ impl Heap {
         Some((object, properties))
     }
 
+    /// Gives `target` its own copy of `source`'s properties and releases the storage it held.
+    /// Two objects never share arena storage: sweeping either would free the other's values.
+    pub(crate) fn copy_property_storage(&mut self, source: &Object, target: Value) -> bool {
+        let Some((object, properties)) = self.object_and_arena_mut(target) else {
+            return false;
+        };
+        let storage = properties.duplicate(source.properties());
+        let previous = object.copy_property_storage_from(source, storage);
+        properties.release(previous);
+        true
+    }
+
     pub(crate) fn array(&self, value: Value) -> Option<&ArrayObject> {
         if let Some(object) = self.record_array(value) {
             return Some(object);

@@ -1320,7 +1320,6 @@ impl<H: Host> Vm<H> {
             .dynamic_binding(self.frames.len().saturating_sub(1), atom)
             .is_some()
             || self.realm.global_lexical_declarations.contains(&atom)
-            || self.realm.global_lexical_bindings.contains_key(&atom)
         {
             return Ok(true);
         }
@@ -1899,7 +1898,7 @@ impl<H: Host> Vm<H> {
         self.store_environment_mapped_argument(owner, function, env, slot_index, value);
         if let Some(atom) = self.root_global_lexical_atom(owner, function, slot_index) {
             if self.eval_script_context {
-                self.realm.global_lexical_bindings.insert(atom, value);
+                self.realm.bind_global_lexical(atom, value);
             }
             let owner = self.frames.iter().rposition(|active| {
                 active.function == super::ROOT_FUNCTION_ID && active.program == owner_id
@@ -2024,7 +2023,6 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     fn names_resolve_to_global_object(&self, p: &ResidualProgram, atom: Atom) -> bool {
         !self.realm.global_lexical_declarations.contains(&atom)
-            && !self.realm.global_lexical_bindings.contains_key(&atom)
             && self.global_scope_names_resolve_statically(p)
     }
 
@@ -2198,7 +2196,7 @@ impl<H: Host> Vm<H> {
                 if self.realm.immutable_global_lexical_bindings.contains(&atom) {
                     return Err(self.type_error(p, "assignment to constant binding".into()));
                 }
-                self.realm.global_lexical_bindings.insert(atom, value);
+                self.realm.bind_global_lexical(atom, value);
                 return Ok(());
             }
             if let Some(frame_index) = self.frames.len().checked_sub(1)
