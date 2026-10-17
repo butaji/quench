@@ -3517,8 +3517,8 @@ pub(crate) fn initialize_warning_policy(context: &mut NativeContext<'_, NodeHost
         context.define_lazy_data_properties_rooted(process, &["emitWarning"], true, initializer)?;
     }
     // The bootstrap reads the environment before any script can change `process.env`.
-    let disabled = std::env::var("NODE_NO_WARNINGS").ok();
-    if options.enabled("--warnings") && disabled.as_deref() != Some("1") {
+    let disabled = environment(context).into_iter().any(|(name, value)| name == "NODE_NO_WARNINGS" && value == "1");
+    if options.enabled("--warnings") && !disabled {
         // Node's listener, or, unless a script can reach Node's own to compare, a listener of
         // its name and length that loads Node's on the first warning: most runs never warn.
         let callback = if options.enabled("--expose-internals") {
@@ -3554,14 +3554,18 @@ fn warning_export(context: &mut NativeContext<'_, NodeHost>, name: &str) -> Resu
     crate::host::shared_vm::commonjs::node_library_export(context, "internal/process/pre_execution.js", "internal/process/warning.js", name)
 }
 
-/// `process.env`: the OS environment as Node's bootstrap reads it, less an IPC channel's own
+/// The environment `process.env` starts from: a worker's own, else the OS environment.
+fn environment(context: &mut NativeContext<'_, NodeHost>) -> Vec<(String, String)> {
+    let worker_env = context.host_mut().shared_state().borrow().messaging.context.as_ref().map(|worker| worker.env.clone());
+    worker_env.unwrap_or_else(|| std::env::vars().collect())
+}
+
+/// `process.env`: the environment as Node's bootstrap reads it, less an IPC channel's own
 /// variables.
 pub(crate) fn initialize_env(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     let process = context.host_mut().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))?;
     let env = context.object_rooted()?;
-    // A Worker reads the environment its parent gave it; the main thread reads the OS.
-    let worker_env = context.host_mut().shared_state().borrow().messaging.context.as_ref().map(|worker| worker.env.clone());
-    for (name, value) in worker_env.unwrap_or_else(|| std::env::vars().collect()) {
+    for (name, value) in environment(context) {
         if context
             .host_mut()
             .shared_state()
