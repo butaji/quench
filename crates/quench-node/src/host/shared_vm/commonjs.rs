@@ -1696,10 +1696,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             get(context, global, "\0quench:dgram_module")
         }
         BuiltinModule::PerfHooks => crate::modules::perf_hooks::module(context),
-        BuiltinModule::Zlib => {
-            let stream = cached_builtin(context, BuiltinModule::Stream)?;
-            crate::modules::zlib_shared_vm::module(context, stream)
-        }
+        BuiltinModule::Zlib => node_library_module(context, "zlib.js", "zlib.js"),
         BuiltinModule::Crypto => {
             let stream = cached_builtin(context, BuiltinModule::Stream)?;
             let transform_key = context.string_rooted("Transform");
