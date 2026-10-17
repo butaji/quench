@@ -109,6 +109,7 @@ impl<H: Host> Vm<H> {
             call_targets: Box::new([EMPTY_CALL_TARGET; CALL_TARGET_CACHE_SIZE]),
             field_caches: vec![],
             inherited_field_indices: vec![],
+            accessor_field_caches: FxHashMap::default(),
             inherited_field_caches: vec![],
             field_add_indices: vec![],
             field_add_sets: vec![],
