@@ -350,14 +350,17 @@ pub(crate) fn register_identity(context: &mut NativeContext<'_, NodeHost>, handl
     Ok(())
 }
 
-pub(crate) fn handle_id(context: &mut NativeContext<'_, NodeHost>, handle: RootId) -> Result<u64, RootedError> {
+pub(crate) fn optional_handle_id(context: &mut NativeContext<'_, NodeHost>, handle: RootId) -> Result<Option<u64>, RootedError> {
     let entries = context.host_mut().shared_state().borrow().net_handle_identities.clone();
     for (identity, id) in entries {
         if let Some(original) = context.resolve_host_weak_root(identity) {
-            if context.strict_equal_rooted(original, handle)? { return Ok(id); }
+            if context.strict_equal_rooted(original, handle)? { return Ok(Some(id)); }
         }
     }
-    Err(RootedError::host("native endpoint identity missing"))
+    Ok(None)
+}
+pub(crate) fn handle_id(context:&mut NativeContext<'_,NodeHost>,handle:RootId)->Result<u64,RootedError>{
+    optional_handle_id(context,handle)?.ok_or_else(||RootedError::host("native endpoint identity missing"))
 }
 
 pub(crate) fn get_sock_name(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
@@ -437,6 +440,7 @@ pub(crate) fn prune(runtime: &mut quench_runtime::Runtime<NodeHost>) {
     for id in dead {
         if !live.iter().any(|(_, existing)| *existing == id) {
             super::net_shared_vm::native_tcp_close(&mut shared.borrow_mut().tcp, id);
+            super::native_async_wrap::collect_tcp(runtime,id);
         }
     }
     shared.borrow_mut().net_handle_identities = live;

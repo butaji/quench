@@ -646,6 +646,7 @@ const PRIVATE_SYMBOL_PROPERTIES: &[(&str, &str)] = &[
 fn build_key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let binding = context.object_rooted()?;
     for (name, operation) in [
+        ("guessHandleType", "utilGuessHandleType"),
         ("getConstructorName", "utilConstructorName"),
         ("getCallSites", "utilGetCallSites"),
         ("getCallerLocation", "utilGetCallerLocation"),
@@ -694,6 +695,12 @@ pub(crate) fn symbols_binding(context: &mut NativeContext<'_, NodeHost>) -> Resu
 }
 fn build_symbols_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let binding = context.object_rooted()?;
+    let owner = super::net_reference_shared_vm::owner_symbol(context)?;
+    let key = context.string_rooted("owner_symbol");
+    context.define_data_property_rooted(binding, key, owner, true, true, true)?;
+    let key = context.string_rooted("async_id_symbol");
+    let async_id = context.symbol_rooted(Some("async_id_symbol"));
+    context.define_data_property_rooted(binding, key, async_id, true, true, true)?;
     for name in ["messaging_deserialize_symbol", "messaging_transfer_symbol", "messaging_clone_symbol", "messaging_transfer_list_symbol"] {
         let key = context.string_rooted(name);
         let symbol = context.symbol_rooted(Some(name));
@@ -886,4 +893,10 @@ pub(crate) fn initialize_lazy_property(
     let value = context.get_property_rooted(module, key)?;
     context.define_data_property_rooted(target, key, value, true, enumerable, true)?;
     Ok(context.undefined())
+}
+
+pub(crate) fn guess_handle_type(context: &mut NativeContext<'_, NodeHost>, _:RootId, args:&[RootId])->Result<RootId,RootedError>{
+    let missing=context.undefined();let value=context.to_number(args.first().copied().unwrap_or(missing))?;
+    let fd=super::native_number::uint32(value) as i32;
+    Ok(context.number(super::fd_handle_type::guess(fd) as u8 as f64))
 }
