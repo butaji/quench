@@ -138,7 +138,7 @@ mod tests {
             global_immutable_atoms: vec![],
             name_bindings: Default::default(),
             binding_sites: vec![],
-            source_positions: vec![],
+            source_positions: Default::default(),
             environment_clones: vec![],
             constructible: true,
             parameter_eval_arguments_error: false,
@@ -193,7 +193,7 @@ mod tests {
             object_sites: Vec::new(),
             regexp_literal_sites: Vec::new(),
             superinstructions: Vec::new(),
-            register_roots: Vec::new(),
+            register_roots: Default::default(),
         };
         let mut pairs = vec![0; PAIRS];
         pairs[Op::LoadLocal as usize * Op::COUNT + Op::StoreLocal as usize] = 4;
