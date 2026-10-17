@@ -223,6 +223,11 @@ enum Inst {
     LoopIterate {
         start: u32,
     },
+    /// The end of the one iteration an optional atom (`max` of one, `min` of zero) makes:
+    /// it fails having consumed nothing.
+    EmptyCheck {
+        start: u32,
+    },
     LoopTail {
         counter: u32,
         start: u32,
@@ -442,8 +447,38 @@ impl Compiler {
                         return Ok(());
                     }
                 }
-                let (counter, start) = (self.register(), self.register());
                 let (first, count) = self.list(captures.iter().copied())?;
+                // RepeatMatcher with a maximum of one: one iteration, or none, in the
+                // quantifier's order; once it is taken no further iteration is tried, so no
+                // counter is kept.
+                if min == 0 && max == 1 {
+                    let start = self.register();
+                    let split = self.emit(Inst::Split { alternative: 0 });
+                    let skip = (!*greedy).then(|| self.emit(Inst::Jump(0)));
+                    let body_start = self.pc();
+                    self.emit(Inst::LoopIterate { start });
+                    if count > 0 {
+                        self.emit(Inst::ResetCaptures { first, count });
+                    }
+                    self.compile(body, flags)?;
+                    self.emit(Inst::EmptyCheck { start });
+                    let exit = self.pc();
+                    match skip {
+                        // Greedy: the iteration first, the exit on backtracking.
+                        None => {
+                            self.instructions[split as usize] = Inst::Split { alternative: exit }
+                        }
+                        // Lazy: the exit first, the iteration on backtracking.
+                        Some(skip) => {
+                            self.instructions[split as usize] = Inst::Split {
+                                alternative: body_start,
+                            };
+                            self.instructions[skip as usize] = Inst::Jump(exit);
+                        }
+                    }
+                    return Ok(());
+                }
+                let (counter, start) = (self.register(), self.register());
                 self.emit(Inst::LoopInit { counter });
                 let head = self.emit(Inst::LoopHead {
                     counter,
@@ -893,6 +928,14 @@ impl Program {
                     pc += 1;
                     true
                 }
+                Inst::EmptyCheck { start } => {
+                    if position == registers[start as usize] {
+                        false
+                    } else {
+                        pc += 1;
+                        true
+                    }
+                }
                 Inst::LoopTail {
                     counter,
                     start,
@@ -1131,6 +1174,12 @@ mod tests {
             r"NQ_VQ",
             r"ab(c)?",
             r"pad",
+            r"(a?)?b",
+            r"(a)??b",
+            r"(?:(a)|b)??(a)",
+            r"((a)?)?c",
+            r"(x?)?",
+            r"(a)?\1b",
         ];
         let subjects = [
             "",
