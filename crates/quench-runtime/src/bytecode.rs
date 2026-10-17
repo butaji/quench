@@ -1080,6 +1080,30 @@ pub(crate) struct SlotDeclaration {
     pub(crate) global_lexical: bool,
 }
 
+/// The names a Script's or eval's GlobalDeclarationInstantiation (EvalDeclarationInstantiation)
+/// creates: lexical bindings, var-scoped names, hoisted functions, Annex B function vars and
+/// the immutable (const and class) lexical names.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GlobalDeclarations {
+    pub lexical: Vec<Atom>,
+    pub var: Vec<Atom>,
+    pub function: Vec<Atom>,
+    pub annex_b_var: Vec<Atom>,
+    pub immutable: Vec<Atom>,
+}
+
+impl GlobalDeclarations {
+    /// The declarations, boxed only when there are any.
+    pub fn boxed(self) -> Option<Box<Self>> {
+        let empty = self.lexical.is_empty()
+            && self.var.is_empty()
+            && self.function.is_empty()
+            && self.annex_b_var.is_empty()
+            && self.immutable.is_empty();
+        (!empty).then(|| Box::new(self))
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Function {
     pub parent: Option<u32>,
@@ -1126,11 +1150,9 @@ pub struct Function {
     /// so unresolved names in descendants can still observe its outer locals.
     pub(crate) inherited_with_scope: bool,
     pub lexical_atoms: Vec<Atom>,
-    pub global_lexical_atoms: Vec<Atom>,
-    pub global_var_atoms: Vec<Atom>,
-    pub global_function_atoms: Vec<Atom>,
-    pub global_annex_b_var_atoms: Vec<Atom>,
-    pub global_immutable_atoms: Vec<Atom>,
+    /// What a Script or eval body declares in the global scope; `None` for every other
+    /// function, which declares nothing there.
+    pub global_declarations: Option<Box<GlobalDeclarations>>,
     /// Bindings a dynamic name lookup in this function can see.
     pub(crate) name_bindings: NameBindings,
     /// Lexical projections at eval calls and dynamic name operations.
@@ -1368,6 +1390,30 @@ pub(crate) enum PlainLocalSlotIneligibility {
 }
 
 impl Function {
+    fn global_declarations_or_none(&self) -> Option<&GlobalDeclarations> {
+        self.global_declarations.as_deref()
+    }
+
+    pub fn global_lexical_atoms(&self) -> &[Atom] {
+        self.global_declarations_or_none().map_or(&[], |declarations| &declarations.lexical)
+    }
+
+    pub fn global_var_atoms(&self) -> &[Atom] {
+        self.global_declarations_or_none().map_or(&[], |declarations| &declarations.var)
+    }
+
+    pub fn global_function_atoms(&self) -> &[Atom] {
+        self.global_declarations_or_none().map_or(&[], |declarations| &declarations.function)
+    }
+
+    pub fn global_annex_b_var_atoms(&self) -> &[Atom] {
+        self.global_declarations_or_none().map_or(&[], |declarations| &declarations.annex_b_var)
+    }
+
+    pub fn global_immutable_atoms(&self) -> &[Atom] {
+        self.global_declarations_or_none().map_or(&[], |declarations| &declarations.immutable)
+    }
+
     /// Reusing an activation is observable while its call is protected by a handler.
     /// A terminal return may skip its following Return instruction without being a
     /// proper tail call: the caller must still catch the callee's abrupt completion.
@@ -1495,9 +1541,9 @@ impl Function {
     fn declared_atoms(&self) -> &DeclaredAtomSets {
         self.declared_atom_sets.get_or_init(|| {
             let global_lexical: rustc_hash::FxHashSet<Atom> =
-                self.global_lexical_atoms.iter().copied().collect();
+                self.global_lexical_atoms().iter().copied().collect();
             let global_var: rustc_hash::FxHashSet<Atom> =
-                self.global_var_atoms.iter().copied().collect();
+                self.global_var_atoms().iter().copied().collect();
             let slots = self
                 .local_atoms
                 .iter()
@@ -1509,7 +1555,7 @@ impl Function {
             Box::new(DeclaredAtomSets {
                 global_lexical,
                 global_var,
-                global_immutable: self.global_immutable_atoms.iter().copied().collect(),
+                global_immutable: self.global_immutable_atoms().iter().copied().collect(),
                 environment: self.environment_atoms.iter().copied().collect(),
                 slots,
             })
@@ -2716,8 +2762,8 @@ impl ResidualProgram {
     /// slot of its environment is the binding itself.
     pub(crate) fn root_slots_are_bindings(&self) -> bool {
         self.functions.first().is_some_and(|root| {
-            (self.root_variables_are_local() || root.global_var_atoms.is_empty())
-                && (self.kind != ProgramKind::Script || root.global_lexical_atoms.is_empty())
+            (self.root_variables_are_local() || root.global_var_atoms().is_empty())
+                && (self.kind != ProgramKind::Script || root.global_lexical_atoms().is_empty())
         })
     }
 
