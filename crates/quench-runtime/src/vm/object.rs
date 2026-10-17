@@ -628,6 +628,7 @@ impl<H: Host> Vm<H> {
         self.regexp_object_shapes = None;
         self.regexp_last_index_layout = None;
         self.regexp_builtin_layout = None;
+        self.regexp_symbol_layouts.clear();
     }
     fn invalidate_method_caches_for_key(&mut self, key: PropertyKey) {
         match key {
