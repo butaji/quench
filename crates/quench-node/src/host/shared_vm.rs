@@ -164,6 +164,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "processWarningListener" (0) => crate::modules::process_shared_vm::warning_listener,
         method "processMethodsInitialize" (0) => crate::modules::process_metrics_shared_vm::initialize_methods,
         method "processEmitWarningInitialize" (0) => crate::modules::process_shared_vm::initialize_emit_warning,
+        method "processEnvInitialize" (0) => crate::modules::process_shared_vm::initialize_env,
         method "nodeErrorBrand" (0) => crate::modules::node_errors_shared_vm::brand,
         method "asyncHookInit" (7) => crate::modules::async_hook_registry_shared_vm::initialize_hook,
         method "asyncHookEnable" (1) => crate::modules::async_hook_registry_shared_vm::enable,

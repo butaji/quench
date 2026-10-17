@@ -666,12 +666,13 @@ impl<H: Host> Vm<H> {
                 let function = program.functions.get(frame.function as usize)?;
                 (function.register_root_offset != crate::bytecode::NO_REGISTER_ROOT_MAP)
                     .then(|| {
-                        program
-                            .register_roots
-                            .get(function.register_root_offset as usize + frame.pc)
+                        program.register_roots.mask(
+                            function.register_root_offset,
+                            function.registers,
+                            frame.pc,
+                        )
                     })
                     .flatten()
-                    .copied()
             });
             [frame.env, frame.this]
                 .into_iter()

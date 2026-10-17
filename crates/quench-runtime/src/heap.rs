@@ -834,6 +834,34 @@ impl Heap {
             },
             cell => cell,
         };
+        self.alloc_in_slot(cell, track_young)
+    }
+
+    /// `alloc(Cell::Object(object))` without the dispatch on the cell's kind, which an
+    /// ordinary object's construction knows: a direct record while one is free.
+    #[inline(always)]
+    pub(crate) fn alloc_object(&mut self, object: Object) -> Value {
+        if cfg!(feature = "profile-aggregate") {
+            return self.alloc(Cell::Object(object));
+        }
+        self.mark_prototype(object.proto());
+        // An object's weight is one allocation, and it holds no external bytes.
+        self.allocations += 1;
+        self.allocations_since_full = self.allocations_since_full.saturating_add(1);
+        self.total_allocations += 1;
+        match self.object_records.try_insert(object) {
+            Ok(record_id) => {
+                let value = Value::direct_object(record_id);
+                #[cfg(feature = "profile-memory")]
+                self.profile_allocation(value);
+                value
+            }
+            Err(object) => self.alloc_in_slot(Cell::Object(object), self.tracks_young_cells()),
+        }
+    }
+
+    /// The slot part of `alloc`, for a cell no record space takes.
+    fn alloc_in_slot(&mut self, cell: Cell, track_young: bool) -> Value {
         while let Some(slab) = self.free_slabs.last().copied() {
             let slab_index = slab as usize;
             let Some(offset) = self.free_by_slab[slab_index].pop() else {
@@ -887,11 +915,7 @@ impl Heap {
         values: &[Value],
     ) -> Value {
         let (properties, inline_properties) = self.initial_object_storage(shape, values, true);
-        self.alloc(Cell::Object(Object::with_property_storage(
-            proto,
-            properties,
-            inline_properties,
-        )))
+        self.alloc_object(Object::with_property_storage(proto, properties, inline_properties))
     }
     pub(crate) fn initialize_object_properties(
         &mut self,
