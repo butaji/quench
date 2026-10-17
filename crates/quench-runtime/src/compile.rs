@@ -2013,11 +2013,14 @@ impl<'a> Compiler<'a> {
             .filter_map(|name| self.atoms.find(name))
             .collect();
         if let Some(Some(root)) = self.functions.first_mut() {
-            root.global_lexical_atoms = global_lexical_atoms;
-            root.global_immutable_atoms = global_immutable_atoms;
-            root.global_var_atoms = global_var_atoms;
-            root.global_function_atoms = global_function_atoms;
-            root.global_annex_b_var_atoms = global_annex_b_var_atoms;
+            root.global_declarations = crate::bytecode::GlobalDeclarations {
+                lexical: global_lexical_atoms,
+                var: global_var_atoms,
+                function: global_function_atoms,
+                annex_b_var: global_annex_b_var_atoms,
+                immutable: global_immutable_atoms,
+            }
+            .boxed();
             if !self.module_goal {
                 fn lower_global_var(
                     op: Op,
@@ -2035,12 +2038,13 @@ impl<'a> Compiler<'a> {
                         .is_some_and(|atom| global_var_atoms.contains(atom))
                         .then_some(replacement)
                 }
+                let global_var_atoms = root.global_var_atoms().to_vec();
                 for instruction in &mut root.code {
                     if let Some(op) = lower_global_var(
                         instruction.op(),
                         || instruction.local_slot(),
                         &root.local_atoms,
-                        &root.global_var_atoms,
+                        &global_var_atoms,
                     ) {
                         instruction.set_op(op);
                     }
@@ -2050,7 +2054,7 @@ impl<'a> Compiler<'a> {
                         instruction.op(),
                         || instruction.local_slot(),
                         &root.local_atoms,
-                        &root.global_var_atoms,
+                        &global_var_atoms,
                     ) {
                         instruction.set_op(op);
                     }
@@ -2766,11 +2770,7 @@ impl<'a> Compiler<'a> {
             local_registers: function.promoted_local_layout(),
             inherited_with_scope: options.with_depth != 0,
             lexical_atoms,
-            global_lexical_atoms: Vec::new(),
-            global_var_atoms: Vec::new(),
-            global_function_atoms: Vec::new(),
-            global_annex_b_var_atoms: Vec::new(),
-            global_immutable_atoms: Vec::new(),
+            global_declarations: None,
             name_bindings,
             binding_sites: function.binding_sites,
             source_positions: function.source_positions,

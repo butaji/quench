@@ -1537,7 +1537,7 @@ impl<H: Host> Vm<H> {
         let Some(root) = program.functions.first() else {
             return Ok(());
         };
-        for atom in root.global_lexical_atoms.iter().copied() {
+        for atom in root.global_lexical_atoms().iter().copied() {
             if self.realm.global_lexical_declarations.contains(&atom) {
                 return self
                     .syntax_error_result(program, "global lexical declaration already exists")
@@ -1562,17 +1562,17 @@ impl<H: Host> Vm<H> {
         }
         self.realm
             .global_lexical_declarations
-            .extend(root.global_lexical_atoms.iter().copied());
+            .extend(root.global_lexical_atoms().iter().copied());
         if self.eval_script_context {
             self.realm.immutable_global_lexical_bindings.extend(
-                root.global_immutable_atoms
+                root.global_immutable_atoms()
                     .iter()
                     .copied()
-                    .filter(|atom| root.global_lexical_atoms.contains(atom)),
+                    .filter(|atom| root.global_lexical_atoms().contains(atom)),
             );
         }
         if root
-            .global_var_atoms
+            .global_var_atoms()
             .iter()
             .any(|atom| self.realm.global_lexical_declarations.contains(atom))
         {
@@ -1583,7 +1583,7 @@ impl<H: Host> Vm<H> {
                 )
                 .map(|_| ());
         }
-        for atom in root.global_function_atoms.iter().copied() {
+        for atom in root.global_function_atoms().iter().copied() {
             let key = PropertyKey::string(atom);
             let Some(attributes) = self.property_attributes(self.realm.globals, key) else {
                 if self
@@ -1624,7 +1624,7 @@ impl<H: Host> Vm<H> {
                 return Err(self.type_error(program, "cannot declare global function".into()));
             }
         }
-        for atom in root.global_var_atoms.iter().copied() {
+        for atom in root.global_var_atoms().iter().copied() {
             if self.own_property(self.realm.globals, atom).is_some() {
                 continue;
             }
@@ -1674,7 +1674,7 @@ impl<H: Host> Vm<H> {
             return;
         };
         if program.functions[ROOT_FUNCTION_ID as usize]
-            .global_lexical_atoms
+            .global_lexical_atoms()
             .contains(&atom)
         {
             self.realm.bind_global_lexical(atom, value);
@@ -1697,7 +1697,7 @@ impl<H: Host> Vm<H> {
     fn persist_root_global_lexical_bindings(&mut self, program: &ResidualProgram, frame: &Frame) {
         let metadata = &program.functions[ROOT_FUNCTION_ID as usize];
         let bindings = metadata
-            .global_lexical_atoms
+            .global_lexical_atoms()
             .iter()
             .map(|atom| {
                 let value = metadata
