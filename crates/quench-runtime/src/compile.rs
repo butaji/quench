@@ -1391,6 +1391,9 @@ struct Compiler<'a> {
     eval_context: Option<EvalContext>,
     eval_annex_b_collisions: FxHashSet<u32>,
     atoms: CompilerAtoms<'a>,
+    /// The capture markers made so far by binding kind (`None` for a catch parameter's) and
+    /// source atom (`capture_marker`).
+    capture_markers: FxHashMap<(Option<crate::bytecode::LexicalBindingKind>, Atom), Atom>,
     /// Private names resolved so far (`private_name_atom`): private member access resolves
     /// through name bindings, so functions resolving one keep theirs.
     private_name_references: u64,
@@ -1424,6 +1427,9 @@ struct Compiler<'a> {
 }
 
 type MethodSiteSpec = (Atom, u16, Vec<Register>, Option<(Atom, u16)>);
+
+/// The name prefix of a catch parameter's capture marker (`Compiler::capture_marker`).
+const CATCH_CAPTURE_PREFIX: &str = "\0quench:catch-capture:";
 
 /// A function's name bindings before its captured names are resolved: its direct bindings,
 /// the scopes it closes over and the names it declares.
@@ -1658,7 +1664,7 @@ impl<'a> Compiler<'a> {
             if !visible.insert(atom) {
                 continue;
             }
-            let catch_marker = format!("\0quench:catch-capture:{name}");
+            let catch_marker = format!("{CATCH_CAPTURE_PREFIX}{name}");
             bindings.push(crate::bytecode::EvalBinding {
                 atom,
                 location: capture(*slot),
@@ -1728,6 +1734,7 @@ impl<'a> Compiler<'a> {
             eval_context: None,
             eval_annex_b_collisions: FxHashSet::default(),
             atoms,
+            capture_markers: FxHashMap::default(),
             private_name_references: 0,
             private_name_ids,
             private_name_labels: FxHashMap::default(),
@@ -2192,6 +2199,22 @@ impl<'a> Compiler<'a> {
 
     fn atom(&mut self, text: &str) -> Atom {
         self.atoms.intern(text)
+    }
+
+    /// The atom marking a captured binding of `source` with `kind` (`None` for a catch
+    /// parameter's), recorded so the capture scope finds it without spelling it again.
+    fn capture_marker(
+        &mut self,
+        kind: Option<crate::bytecode::LexicalBindingKind>,
+        source: Atom,
+    ) -> Atom {
+        if let Some(marker) = self.capture_markers.get(&(kind, source)) {
+            return *marker;
+        }
+        let prefix = kind.map_or(CATCH_CAPTURE_PREFIX, |kind| kind.capture_prefix());
+        let marker = self.atom(&format!("{prefix}{}", &self.atoms[source as usize]));
+        self.capture_markers.insert((kind, source), marker);
+        marker
     }
 
     fn private_name_atom(&mut self, span: Span) -> Atom {
