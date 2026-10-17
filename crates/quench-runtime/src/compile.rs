@@ -2171,7 +2171,8 @@ impl<'a> Compiler<'a> {
             module_link_plan,
             source_name: self.source.to_owned(),
             source: Some(crate::bytecode::ProgramSource {
-                text: std::sync::Arc::from(self.text),
+                text: crate::bytecode::SourceText::Shared(std::sync::Arc::from(self.text)),
+                base: 0,
                 line_offset: 0,
                 column_offset: 0,
             }),
