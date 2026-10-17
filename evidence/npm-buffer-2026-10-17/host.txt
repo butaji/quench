@@ -1,0 +1,4 @@
+Linux vm 6.18.44-fc-v139 #1 SMP PREEMPT_DYNAMIC @0 x86_64 x86_64 x86_64 GNU/Linux
+4
+               total        used        free      shared  buff/cache   available
+Mem:     16874930176  7347408896  4538466304    15032320  5350219776  9527521280
