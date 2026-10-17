@@ -994,8 +994,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
 
 /// The host function registered as `name`. Hosts resolve operations per request (an
 /// incoming message's stream methods, an accepted socket's handle), so the names are
-/// indexed once rather than searched among every binding; each name registers exactly
-/// one (`operation_names_are_unique`).
+/// indexed once rather than searched among every binding. Each name registers exactly one
+/// function (`operation_names_are_unique`).
 pub(crate) fn operation(name: &str) -> HostFunctionId {
     static INDEX: std::sync::OnceLock<std::collections::HashMap<&'static str, u32>> =
         std::sync::OnceLock::new();

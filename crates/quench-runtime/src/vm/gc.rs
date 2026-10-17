@@ -299,6 +299,10 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn collect_slow(&mut self, _program: &ResidualProgram, full: bool) {
         let full = self.heap.collection_is_full(full);
+        #[cfg(feature = "profile-memory")]
+        if std::env::var_os("QUENCH_FUNCTION_USE").is_some() {
+            self.report_function_use();
+        }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         let mut phase_started = std::time::Instant::now();
         self.constructed_shapes.fill(super::provenance::ConstructedShape::EMPTY);
