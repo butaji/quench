@@ -33,6 +33,10 @@ struct ProgramEntry {
     reclaimable: bool,
     /// The reclamation pass current at insertion.
     pass: u64,
+    /// Its root values changed since a collection last traced them. A minor collection
+    /// traces only such programs: what an earlier collection reached stays marked until
+    /// the next full collection, which traces every program.
+    roots_pending: bool,
 }
 
 pub(super) const ANONYMOUS_EVAL_ORIGIN: &str = "eval at <anonymous>";
@@ -130,8 +134,11 @@ impl ProgramStore {
         self.programs.get(id.index())?.as_ref()
     }
 
+    /// Every mutation goes through here, so it also marks the program's roots pending.
     fn entry_mut(&mut self, id: ProgramId) -> Option<&mut ProgramEntry> {
-        self.programs.get_mut(id.index())?.as_mut()
+        let entry = self.programs.get_mut(id.index())?.as_mut()?;
+        entry.roots_pending = true;
+        Some(entry)
     }
 
     /// Inserts dynamic code that `reclaim_unreferenced` may later drop.
@@ -373,6 +380,7 @@ impl ProgramStore {
             script_or_module: None,
             reclaimable: false,
             pass: self.reclaim_passes,
+            roots_pending: true,
         }));
         Some(id)
     }
@@ -743,9 +751,15 @@ impl ProgramStore {
         })
     }
 
-    /// Appends every value the stored programs keep alive to `roots`.
-    pub(crate) fn extend_roots(&self, roots: &mut Vec<Value>) {
-        for entry in self.programs.iter().flatten() {
+    /// Appends the values the stored programs keep alive to `roots`: every program's for a
+    /// full collection, only those of programs whose roots changed since the last
+    /// collection for a minor one.
+    pub(crate) fn extend_roots(&mut self, roots: &mut Vec<Value>, full: bool) {
+        for entry in self.programs.iter_mut().flatten() {
+            if !full && !entry.roots_pending {
+                continue;
+            }
+            entry.roots_pending = false;
             roots.extend_from_slice(&entry.constants);
             roots.extend(entry.function_sources.iter().flatten());
             roots.extend(entry.module_environment);

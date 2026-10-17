@@ -292,6 +292,8 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn collect_slow(&mut self, _program: &ResidualProgram, full: bool) {
         let full = self.heap.collection_is_full(full);
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        let mut phase_started = std::time::Instant::now();
         self.constructed_shapes.fill(super::provenance::ConstructedShape::EMPTY);
         #[cfg(feature = "profile-aggregate")]
         for (index, frame) in self.frames.iter().enumerate() {
@@ -348,10 +350,15 @@ impl<H: Host> Vm<H> {
                 .flat_map(|(_, edges)| edges.iter().copied())
                 .collect::<Vec<_>>()
         };
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        {
+            self.heap.record_vm_gc_phase(0, phase_started);
+            phase_started = std::time::Instant::now();
+        }
         // Roots are gathered source by source: a single iterator chain over
         // every source costs each root a step through every nesting level.
         let mut roots = Vec::new();
-        self.programs.extend_roots(&mut roots);
+        self.programs.extend_roots(&mut roots, full);
         roots.extend(self.wasm_js.roots());
         roots.extend([
             self.realm.globals,
@@ -657,7 +664,7 @@ impl<H: Host> Vm<H> {
         );
         roots.extend(self.symbol_registry.values().copied());
         roots.extend(self.well_known_symbols.values().copied());
-        roots.extend(self.startup_intrinsic_roots());
+        self.extend_startup_intrinsic_roots(&mut roots);
         roots.extend(self.frames.iter().flat_map(|frame| {
             // A missing map means the function uses a register form
             // the liveness pass cannot represent; keep the safe
@@ -699,6 +706,11 @@ impl<H: Host> Vm<H> {
             let phase = format!("gc_{}_before", self.heap.collection_count() + 1);
             self.report_memory_snapshot(&phase);
         }
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        {
+            self.heap.record_vm_gc_phase(1, phase_started);
+            phase_started = std::time::Instant::now();
+        }
         let shape_count = self.shapes.len();
         let shape_word_count = shape_count.div_ceil(u64::BITS as usize);
         let marked_shape_bits = (0..shape_word_count)
@@ -727,6 +739,8 @@ impl<H: Host> Vm<H> {
             |trace_kind: GcTraceKind, owner: Value, shape: u32, prototype: bool, roots: &mut Vec<Value>| {
                 shape_trace.append(trace_kind, owner, shape, prototype, roots);
             };
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        self.heap.record_vm_gc_phase(2, phase_started);
         let finalization_jobs = self.heap.collect_with_object_roots(
             roots,
             |trace_kind, owner, shape, prototype, roots| {
@@ -735,6 +749,8 @@ impl<H: Host> Vm<H> {
             Some(&parallel_object_roots),
             full,
         );
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        let after_collection_started = std::time::Instant::now();
         let mut live_shapes = shape_trace.live_shapes();
         // The startup snapshot reads its holders' sealed shapes, which no object may hold now.
         live_shapes.extend(self.startup_intrinsics.sealed_shapes());
@@ -840,6 +856,8 @@ impl<H: Host> Vm<H> {
         if let Some(concats) = &mut self.string_concats {
             concats.fill(EMPTY_STRING_CONCAT_CACHE);
         }
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        self.heap.record_vm_gc_phase(3, after_collection_started);
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("QUENCH_MEMORY_PEAK").is_some() {
             let phase = format!("gc_{}_after", self.heap.collection_count());
