@@ -3,10 +3,13 @@
 //! Survivors of every collection stay marked (old). A minor collection traces roots and
 //! the old owners the write barriers logged, and sweeps only unmarked (young) cells and
 //! records, so its cost follows survivors and garbage rather than the old heap. A full
-//! collection clears the marks and traces everything. Budgets, live sizes and survival
-//! are all in allocation weight: one per cell or record plus one per
-//! `PAYLOAD_BYTES_PER_ALLOCATION` of payload (`Cell::payload_bytes`), so a heap of few
-//! cells with large strings or element stores is paced by what it holds.
+//! collection clears the marks and traces everything. Allocation is charged in weight:
+//! one per cell or record plus one per `PAYLOAD_BYTES_PER_ALLOCATION` of payload
+//! (`Cell::payload_bytes`). Survival compares live weight with allocated weight, so
+//! payload growth of old arrays is not mistaken for young cells surviving. Budgets stay
+//! proportional to live cells and records: memory the weight does not see (compiled
+//! code, the property arena) is held by cells, and sizing budgets by live weight let it
+//! grow (web-ssr: 123 -> 307 MB).
 
 /// `numerator / denominator` of a live count, without overflow.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -95,9 +98,12 @@ impl PacingState {
 #[derive(Clone, Copy, Debug)]
 pub(super) struct CollectionOutcome {
     pub(super) full: bool,
-    /// Live weight after this collection and after the previous one.
+    /// Live cells and records after this collection, which size the budgets.
     pub(super) live: usize,
-    pub(super) previous_live: usize,
+    /// Live weight (cells, records and their payload) after this collection and the
+    /// previous one, which measures survival in the unit allocation is charged in.
+    pub(super) live_weight: usize,
+    pub(super) previous_live_weight: usize,
     pub(super) live_after_full: usize,
     /// Weight allocated between the previous collection and this one.
     pub(super) allocated: usize,
@@ -116,7 +122,7 @@ impl GenerationalPacing {
     /// The state transition after each collection, and the plan for the next one.
     pub(super) fn plan(&self, state: &mut PacingState, outcome: CollectionOutcome) -> NextCollection {
         if !outcome.full && outcome.allocated > 0 {
-            let promoted = outcome.live.saturating_sub(outcome.previous_live);
+            let promoted = outcome.live_weight.saturating_sub(outcome.previous_live_weight);
             let survival = (promoted.min(outcome.allocated) as u64 * u64::from(SURVIVAL_SCALE)
                 / outcome.allocated as u64) as u32;
             state.survival = (state.survival + survival) / 2;
@@ -198,9 +204,8 @@ impl GenerationalPacing {
 /// collections every half live set (at least 2^15), a full collection once the old
 /// generation has doubled, and never more than eight live sets of allocation between
 /// full collections. When more than half of young allocations survive, collections are
-/// full with two live sets between them, probing survival with a minor collection every
-/// fourth one. (With live measured in cells only, this factor was four: payload-heavy
-/// heaps measured in weight are larger, and two keeps Splay's Score at 21% less RSS.)
+/// full with three live sets between them, probing survival with a minor collection every
+/// fourth one. (Three keeps Splay's Score of four at 19% less RSS; two costs 12% of it.)
 pub(super) const PRODUCTION_PACING: GenerationalPacing = GenerationalPacing {
     young: Ratio::new(1, 2),
     minimum_young: 1 << 15,
@@ -209,7 +214,7 @@ pub(super) const PRODUCTION_PACING: GenerationalPacing = GenerationalPacing {
     allocation_cap: Ratio::new(8, 1),
     minimum_allocation_cap: 1 << 18,
     survival_limit: SURVIVAL_SCALE / 2,
-    full_only_headroom: Ratio::new(2, 1),
+    full_only_headroom: Ratio::new(3, 1),
     probe_interval: 4,
 };
 
@@ -250,7 +255,8 @@ mod tests {
         CollectionOutcome {
             full: false,
             live,
-            previous_live,
+            live_weight: live,
+            previous_live_weight: previous_live,
             live_after_full: previous_live,
             allocated,
             since_full: allocated,
