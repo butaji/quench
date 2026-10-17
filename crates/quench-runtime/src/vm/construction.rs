@@ -361,11 +361,7 @@ impl<H: Host> Vm<H> {
                 self.heap.property_add(function, prototype, with_prototype);
                 self.heap.property_add(prototype, function, constructor);
             }
-            match function_plan.name {
-                // The plan's atom is the name the string spells, so no interning is needed.
-                Some(name) => self.capture_function_name_for_atom(function, name),
-                None => self.capture_function_name(function, name_value),
-            }
+            self.capture_fresh_closure_name(function, function_plan.name);
             return Ok(function);
         }
         let mut recorded = ClosureShapes {
@@ -439,7 +435,7 @@ impl<H: Host> Vm<H> {
         {
             self.closure_shapes[shapes_key] = Some(recorded);
         }
-        self.capture_function_name(function, name_value);
+        self.capture_fresh_closure_name(function, function_plan.name);
         Ok(function)
     }
 

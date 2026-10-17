@@ -278,7 +278,7 @@ pub(crate) fn decorate_error(
     decorate_coded_error(context, error, code, ErrorClass::Error, &[])
 }
 
-pub(super) fn decorate_type_error(
+pub(crate) fn decorate_type_error(
     context: &mut NativeContext<'_, NodeHost>,
     error: RootId,
     code: &'static str,
