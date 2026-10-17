@@ -386,16 +386,19 @@ const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
 const SCRIPT_CALL_TARGETS: usize = 256;
 
 /// What a constructor's initializer body (`ScriptCallTarget::initializes`) made of a receiver
-/// whose adds all hit: a receiver of `source_shape` under `prototype` ends at `shape`, its
-/// fields the arguments for `parameters[..fields]` in order. While the prototype layout keeps
+/// whose adds all hit: the callee's receiver template under `prototype`, which the callee and
+/// that prototype alone determine, ends at `shape`, its fields the arguments for
+/// `parameters[..fields]` in order. While the prototype layout keeps
 /// `epoch` (`prototype_layout_epoch`), which every collection advances, those adds would hit
 /// again with the same transitions, so the object can be allocated finished.
 #[derive(Clone, Copy)]
 struct ConstructPlan {
     callee: Value,
     epoch: u64,
+    /// The callee's own layout that fixes where its `prototype` lives
+    /// (`Vm::function_prototype_layout`), which a construct reads it through.
+    callee_layout: (u32, usize),
     prototype: Value,
-    source_shape: u32,
     shape: u32,
     fields: u8,
     parameters: [u16; CONSTRUCT_PLAN_FIELDS],
@@ -414,8 +417,8 @@ const NO_CONSTRUCT_PLAN_EPOCH: u64 = u64::MAX;
 const EMPTY_CONSTRUCT_PLAN: ConstructPlan = ConstructPlan {
     callee: Value::UNDEFINED,
     epoch: NO_CONSTRUCT_PLAN_EPOCH,
+    callee_layout: (0, 0),
     prototype: Value::UNDEFINED,
-    source_shape: 0,
     shape: 0,
     fields: 0,
     parameters: [0; CONSTRUCT_PLAN_FIELDS],
@@ -4607,8 +4610,6 @@ fn lane_initialize_fields<H: Host>(
     r: Registers,
     i: &LaneInstruction,
 ) -> Option<(Value, bool)> {
-    let template = vm.inline_construct_template(callee)?;
-    let (prototype, source_shape) = (template.proto(), template.shape());
     let argc = ImmediateLayout::argument_count(i.imm());
     // Parameter `k` of a plain activation is argument `k`, or undefined when not passed.
     let argument = |parameter: u16| {
@@ -4618,32 +4619,35 @@ fn lane_initialize_fields<H: Host>(
             Value::UNDEFINED
         }
     };
+    // A plan holds while its callee's layout and `prototype` do: the receiver's template is
+    // derived from those alone, and the epoch keeps the adds it planned free of setters.
     let plan_index = callee.heap_index().map(|index| index as usize & (CONSTRUCT_PLANS - 1));
     if let Some(index) = plan_index {
         let plan = vm.lane_stack.construct_plans[index];
         if plan.callee == callee
             && plan.epoch == crate::heap::prototype_layout_epoch()
-            && plan.prototype == prototype
-            && plan.source_shape == source_shape
+            && vm.function_prototype_in_layout(callee, plan.callee_layout) == Some(plan.prototype)
         {
             let mut values = [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS];
             for (value, parameter) in values.iter_mut().zip(&plan.parameters[..usize::from(plan.fields)]) {
                 *value = argument(*parameter);
             }
             let this = vm.heap.alloc_object_with_properties(
-                prototype,
+                plan.prototype,
                 plan.shape,
                 &values[..usize::from(plan.fields)],
             );
             return Some((this, true));
         }
     }
+    let template = vm.inline_construct_template(callee)?;
+    let (prototype, source_shape) = (template.proto(), template.shape());
     let this = vm.heap.alloc_object(template);
     let mut plan = ConstructPlan {
         callee,
         epoch: NO_CONSTRUCT_PLAN_EPOCH,
+        callee_layout: (0, 0),
         prototype,
-        source_shape,
         shape: source_shape,
         fields: 0,
         parameters: [0; CONSTRUCT_PLAN_FIELDS],
@@ -4665,7 +4669,11 @@ fn lane_initialize_fields<H: Host>(
             None => plannable = false,
         }
     }
-    if plannable && let Some(index) = plan_index {
+    if plannable
+        && let Some(index) = plan_index
+        && let Some(layout) = vm.function_prototype_layout(callee)
+    {
+        plan.callee_layout = layout;
         plan.shape = vm.object_data(this).map_or(source_shape, |object| object.shape());
         plan.epoch = crate::heap::prototype_layout_epoch();
         vm.lane_stack.construct_plans[index] = plan;
