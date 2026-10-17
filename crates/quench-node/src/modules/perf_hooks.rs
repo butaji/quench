@@ -94,6 +94,13 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     context.define_data_property_rooted(performance, brand, yes, true, true, true)?;
     let key = context.string_rooted("brand");
     context.define_data_property_rooted(data, key, brand, false, false, false)?;
+    // Actual configured SDK policy owns observer registration, buffering and dispatch.
+    let observe = crate::host::shared_vm::commonjs::node_library_module(context, "perf_hooks.js", "internal/perf/observe.js")?;
+    for name in ["PerformanceObserver", "PerformanceObserverEntryList"] {
+        let key = context.string_rooted(name);
+        let value = context.get_property_rooted(observe, key)?;
+        context.define_data_property_rooted(module, key, value, true, true, true)?;
+    }
     Ok(module)
 }
 

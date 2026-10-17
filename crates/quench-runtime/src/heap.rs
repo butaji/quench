@@ -22,7 +22,7 @@ mod slots;
 mod thin_slice;
 mod weak;
 pub(crate) use cell::*;
-pub(crate) use buffer_bytes::BufferBytes;
+pub(crate) use buffer_bytes::{BufferBytes,BufferRead};
 pub(crate) use collection_entries::CollectionEntries;
 use records::{ArrayRecordSpace, ObjectRecordSpace, RecordSweep};
 pub use root::RootId;
@@ -37,12 +37,13 @@ const DENSE_ARRAY_HOLE_BUDGET_BYTES: usize = 256 * 1024;
 const MAX_DENSE_ARRAY_HOLE_LENGTH: usize = DENSE_ARRAY_HOLE_BUDGET_BYTES / size_of::<Value>();
 const LARGE_HEAP_MINIMUM_LIVE_CELLS: usize = 1 << 16;
 /// Allocations a collection allows at least, whatever survived. The trunk owns this
-/// headroom with the factors below (decision 21), and it stays at 384 cells until a change
-/// wins one bar without losing the other (decision 5). The Score lane measured 2^16 cells
-/// (2 MB of 32-byte cells): RayTrace +20% Score, the others even or better, 2^17 and 2^18 no
-/// further gain (Linux x86_64, 4 vCPU, paired non-PGO rounds); at that minimum, fixed-work
-/// max RSS rose 22% to 36% on DeltaBlue, EarleyBoyer and RayTrace.
-const MINIMUM_GC_ALLOCATION_HEADROOM: usize = 384;
+/// headroom with the factors below (decision 21). Under the Score-only direction of
+/// 2026-10-16, which sets max RSS aside, the Score lane raised it from 384 cells with the
+/// factors below: with all four, fixed-work instructions fell 16% on Splay, 13% on
+/// EarleyBoyer, 19% on RayTrace, 12% on RegExp and 4% on DeltaBlue (Linux x86_64, 4 vCPU),
+/// and paired stock rounds rose Splay about 20%, EarleyBoyer 15% and RayTrace 40%. Max
+/// RSS rises with it.
+pub(crate) const MINIMUM_GC_ALLOCATION_HEADROOM: usize = 1 << 18;
 /// Payload bytes beside a cell (string units, array elements) that weigh as one more
 /// allocation toward the next collection.
 const PAYLOAD_BYTES_PER_ALLOCATION: usize = 64;
@@ -81,22 +82,21 @@ impl GcHeadroomFactor {
     }
 }
 
-// Half a live set of new cells before the next collection on small heaps. The Score lane
-// measured 1/1 with the 2^16 minimum at RayTrace +20% Score, for more max RSS (above).
+// Two live sets of new cells before the next collection on small heaps (Score-only
+// direction, above; 1/2 before).
 const SMALL_HEAP_GC_HEADROOM: GcHeadroomFactor = GcHeadroomFactor {
-    numerator: 1,
-    denominator: 2,
+    numerator: 2,
+    denominator: 1,
 };
 // This is the sweep variable for large-heap RSS/Score measurements. A factor
 // of 1/1 allows one live set's worth of new cells before collection (2x total
-// occupied high-water); 3/4 targets 1.75x and 1/2 targets 1.5x. The trunk
-// owns this factor (decision 21) and it stays 1/1 until a change wins one bar
-// without losing the other (decision 5). Lane measurements on Linux x86_64:
-// RSS lane 1/2, stock Splay max RSS 66.3 -> 54.5 MB for -14% Score (one run);
-// Score lane, Splay paired non-PGO rounds: 1/1 3542, 2/1 3638, 4/1 4023, 8/1
-// below 4/1, at a higher max RSS.
+// occupied high-water); 4/1 allows four (5x). The trunk owns this factor
+// (decision 21); the Score-only direction (above) moved it from 1/1. Lane
+// measurements on Linux x86_64: RSS lane 1/2, stock Splay max RSS 66.3 -> 54.5 MB
+// for -14% Score (one run); Score lane, Splay paired non-PGO rounds: 1/1 3542,
+// 2/1 3638, 4/1 4023, 8/1 below 4/1.
 const LARGE_HEAP_GC_HEADROOM: GcHeadroomFactor = GcHeadroomFactor {
-    numerator: 1,
+    numerator: 4,
     denominator: 1,
 };
 
@@ -117,10 +117,11 @@ impl FullCollectionGrowthFactor {
     }
 }
 
-// Bound total allocations between full collections. Minor collections may
-// run earlier to sweep the young cells.
+// Bound total allocations between full collections, at four live sets under the
+// Score-only direction (above; one before). Minor collections may run earlier to
+// sweep the young cells.
 const FULL_COLLECTION_GROWTH: FullCollectionGrowthFactor = FullCollectionGrowthFactor {
-    numerator: 1,
+    numerator: 4,
     denominator: 1,
 };
 
@@ -366,6 +367,10 @@ pub(crate) struct Heap {
     threshold: usize,
     total_allocations: u64,
     collections: u64,
+    /// The prototype `mark_prototype` marked last, which keeps its mark for life: an
+    /// allocation with the same prototype needs no lookup. A collection may free it and
+    /// reuse its handle, so each one forgets it.
+    marked_prototype: Option<Value>,
     peak_live: usize,
     peak_survivors: usize,
     max_threshold: usize,
@@ -777,7 +782,13 @@ impl Heap {
     }
 
     pub(crate) fn mark_prototype(&mut self, prototype: Value) {
-        if let Some(object) = self.object_mut(prototype) { object.mark_as_prototype(); }
+        if self.marked_prototype == Some(prototype) {
+            return;
+        }
+        if let Some(object) = self.object_mut(prototype) {
+            object.mark_as_prototype();
+            self.marked_prototype = Some(prototype);
+        }
     }
 
     pub fn alloc(&mut self, cell: Cell) -> Value {
@@ -1108,6 +1119,8 @@ impl Heap {
         full: bool,
     ) -> Vec<(Value, Value)> {
         let full = self.collection_is_full(full);
+        // The sweep may free a prototype whose record a later object reuses.
+        advance_prototype_layout_epoch();
         debug_assert_eq!(self.collection_state, CollectionState::Idle);
         self.collection_state = if full {
             CollectionState::FullMarking
@@ -1118,6 +1131,7 @@ impl Heap {
         // observed here and when it is reported rather than on every allocation.
         self.peak_live = self.peak_live.max(self.live_slots());
         self.collections += 1;
+        self.marked_prototype = None;
         #[cfg(feature = "profile-aggregate")]
         let allocations_between_collections = self.allocations as u64;
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
@@ -2111,6 +2125,27 @@ impl Heap {
         unsafe { self.properties.set_flat_unchecked(vector, slot, value) };
         true
     }
+    /// `property_add` of the next property of a direct object that keeps inline storage, at
+    /// inline `slot`, the object's storage length that its shape records. `false`, changing
+    /// nothing, for any other owner or slot, which `property_add` takes.
+    #[inline(always)]
+    pub(crate) fn add_inline_property(&mut self, object: Value, slot: usize, value: Value, shape: u32) -> bool {
+        let Some(record_id) = object.direct_object_index() else {
+            return false;
+        };
+        // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
+        let data = unsafe { self.object_records.get_live_mut(record_id) };
+        if slot >= INLINE_PROPERTY_COUNT || data.inline_properties().is_none() {
+            return false;
+        }
+        debug_assert_eq!(slot, self.properties.len(data.properties()));
+        data.set_inline_property(slot, value);
+        data.set_shape(shape);
+        #[cfg(feature = "profile-memory")]
+        self.note_object_slots(object, slot + 1);
+        true
+    }
+
     /// One cached property add: appends `value` at `slot`, the object's current storage
     /// length, and moves the object to `shape`, whose storage length is `slot + 1`.
     #[inline(always)]

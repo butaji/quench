@@ -24,7 +24,7 @@ pub(crate) fn create(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<
     let raw = get(c, message, "rawHeaders")?;
     let length = get(c, raw, "length")?;
     call(c, stream, "_addHeaderLines", &[raw, length])?;
-    for key in c.enumerable_own_keys_rooted(message, false, true)? {
+    for key in c.enumerable_own_keys_rooted(message, false, false)? {
         let Some(name) = c.string_text(key)? else { continue; };
         if name == "headers" { continue; }
         let value = c.get_property_rooted(message, key)?;

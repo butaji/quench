@@ -1,8 +1,7 @@
 //! Shared guest bridge for Node's EventEmitter listener semantics.
 
 pub const JS: &str = quench_js_check::checked_js!(
-    r#"(initialize, dispatch) => {
-const ERROR_INSPECT = Symbol.for("quench.internal.eventEmitter.inspect");
+    r#"(initialize, dispatch, errorInspector) => {
 const STREAM_OWNER = Symbol.for("quench.internal.streamOwner");
 class EventEmitterBridge {
   emit(event, args, listeners) {
@@ -27,8 +26,7 @@ class EventEmitterBridge {
       if (error instanceof Error) throw error;
       let detail;
       try {
-        const inspect = EventEmitter[ERROR_INSPECT];
-        detail = typeof inspect === "function" ? inspect(error) : String(error);
+        detail = errorInspector()(error);
       } catch {
         detail = String(error);
       }
@@ -48,11 +46,13 @@ const EventEmitter = function EventEmitter(options) {
 };
 EventEmitter.prototype = prototype;
 Object.defineProperty(prototype, 'constructor', {value: EventEmitter, writable: true, configurable: true});
-EventEmitter.init = function init(options) {
+// Node assigns these anonymous functions, so they have no name.
+EventEmitter.init = function(options) {
   'use strict';
   return initialize(this, options);
 };
 EventEmitter.captureRejectionSymbol = Symbol.for("nodejs.rejection");
+EventEmitter.usingDomains = false;
 Object.defineProperty(globalThis, "__nodeEventEmitter", {
   value: EventEmitter,
   configurable: true,

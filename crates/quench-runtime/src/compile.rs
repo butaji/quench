@@ -2331,6 +2331,61 @@ impl<'a> Compiler<'a> {
         }
         bindings
     }
+    /// The local slots a function body keeps in registers, and the promoted slots a nested
+    /// function may write (clobbered). `eligible` states the activation's own conditions;
+    /// the body's fixed-register facts and the register budget decide the rest. Ordinary
+    /// functions and arrows share this plan.
+    #[allow(clippy::too_many_arguments)]
+    fn promoted_local_plan(
+        &mut self,
+        eligible: bool,
+        body: &[Statement<'_>],
+        expression_body: Option<&Expression<'_>>,
+        locals: &[Atom],
+        function_scope: &FxHashSet<Atom>,
+        lexical_atoms: &[Atom],
+        self_binding_slot: Option<u16>,
+    ) -> (Vec<u16>, Vec<u16>) {
+        let register_local_facts = early::fixed_register_local_facts(body, expression_body);
+        if !eligible || !register_local_facts.safe {
+            return (Vec::new(), Vec::new());
+        }
+        let arguments_atom = self.atom("arguments");
+        let mut latest_local_slot = FxHashMap::default();
+        for (slot, atom) in locals.iter().copied().enumerate() {
+            if let Ok(slot) = u16::try_from(slot) {
+                latest_local_slot.insert(atom, slot);
+            }
+        }
+        let mut promoted_local_slots = latest_local_slot
+            .into_iter()
+            .filter_map(|(atom, slot)| {
+                (function_scope.contains(&atom)
+                    && !lexical_atoms.contains(&atom)
+                    && atom != arguments_atom
+                    && self_binding_slot != Some(slot)
+                    && !self.atoms[atom as usize].starts_with('\0'))
+                .then_some(slot)
+            })
+            .collect::<Vec<_>>();
+        // Promoted locals take the lowest registers; past half the register domain a
+        // function keeps its locals in frame slots so its temporaries still fit.
+        if promoted_local_slots.len() > usize::from(PROMOTED_LOCAL_REGISTER_BUDGET) {
+            promoted_local_slots.clear();
+        }
+        promoted_local_slots.sort_unstable();
+        let clobbered_local_slots = promoted_local_slots
+            .iter()
+            .copied()
+            .filter(|&slot| {
+                register_local_facts
+                    .nested_written_names
+                    .contains(&self.atoms[locals[usize::from(slot)] as usize])
+            })
+            .collect::<Vec<_>>();
+        (promoted_local_slots, clobbered_local_slots)
+    }
+
     fn compile_function(
         &mut self,
         name: Option<&str>,
@@ -2435,7 +2490,6 @@ impl<'a> Compiler<'a> {
             && options
                 .defaults
                 .is_none_or(|formal| !FunctionCompiler::has_non_simple_parameters(formal));
-        let register_local_facts = early::fixed_register_local_facts(body, expression_body);
         let promote_plain_locals = parent.is_some()
             && simple_parameters
             && !options.async_function
@@ -2446,45 +2500,16 @@ impl<'a> Compiler<'a> {
             && !options.implicit_super
             && options.with_depth == 0
             && self.eval_context.is_none()
-            && !dynamic_eval
-            && register_local_facts.safe;
-        let arguments_atom = self.atom("arguments");
-        let mut latest_local_slot = FxHashMap::default();
-        for (slot, atom) in locals.iter().copied().enumerate() {
-            if let Ok(slot) = u16::try_from(slot) {
-                latest_local_slot.insert(atom, slot);
-            }
-        }
-        let mut promoted_local_slots = if promote_plain_locals {
-            latest_local_slot
-                .into_iter()
-                .filter_map(|(atom, slot)| {
-                    (function_scope.contains(&atom)
-                        && !lexical_atoms.contains(&atom)
-                        && atom != arguments_atom
-                        && self_binding_slot != Some(slot)
-                        && !self.atoms[atom as usize].starts_with('\0'))
-                    .then_some(slot)
-                })
-                .collect::<Vec<_>>()
-        } else {
-            Vec::new()
-        };
-        // Promoted locals take the lowest registers; past half the register domain a
-        // function keeps its locals in frame slots so its temporaries still fit.
-        if promoted_local_slots.len() > usize::from(PROMOTED_LOCAL_REGISTER_BUDGET) {
-            promoted_local_slots.clear();
-        }
-        promoted_local_slots.sort_unstable();
-        let clobbered_local_slots = promoted_local_slots
-            .iter()
-            .copied()
-            .filter(|&slot| {
-                register_local_facts
-                    .nested_written_names
-                    .contains(&self.atoms[locals[usize::from(slot)] as usize])
-            })
-            .collect::<Vec<_>>();
+            && !dynamic_eval;
+        let (promoted_local_slots, clobbered_local_slots) = self.promoted_local_plan(
+            promote_plain_locals,
+            body,
+            expression_body,
+            &locals,
+            &function_scope,
+            &lexical_atoms,
+            self_binding_slot,
+        );
         let mut function = FunctionCompiler::new(
             self,
             locals,
@@ -2581,7 +2606,7 @@ impl<'a> Compiler<'a> {
                 .iter()
                 .any(|instruction| instruction.op() == Op::MakeClosure);
         let arguments_slot = arguments_slot.filter(|slot| {
-            captures_locals
+            (captures_locals && function.owner.arrows_reach_arguments(id, *slot))
                 || function.dynamic_eval
                 || function.code.iter().any(|instruction| {
                     instruction.op() == Op::LoadLocal
@@ -2656,6 +2681,7 @@ impl<'a> Compiler<'a> {
             dispatch: DispatchClass::General,
             decoded: Default::default(),
             plain_locals: Default::default(),
+            declared_atom_sets: Default::default(),
             activation_bindings: Default::default(),
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
@@ -2668,6 +2694,41 @@ impl<'a> Compiler<'a> {
         };
         self.functions[id as usize] = Some(result);
         id
+    }
+
+    /// Whether code nested in function `owner` can reach its `arguments` binding in local
+    /// `slot`. Only an arrow shares its enclosing function's `arguments`; every other function
+    /// binds its own. So the binding is reachable exactly where a function nested in `owner`
+    /// through arrows alone captures the slot, or resolves names at run time (direct eval, a
+    /// `with` statement or an enclosing one), which may denote it.
+    fn arrows_reach_arguments(&self, owner: u32, slot: u16) -> bool {
+        let is_with_enter = |atom: usize| self.atoms.get(atom) == Some(crate::bytecode::WITH_ENTER_BINDING);
+        self.functions.iter().flatten().any(|function| {
+            // The function levels between `function` and `owner`, along arrows alone.
+            let mut distance = 0;
+            let mut current = function;
+            loop {
+                if !current.is_arrow {
+                    return false;
+                }
+                distance += 1;
+                match current.parent {
+                    Some(parent) if parent == owner => break,
+                    Some(parent) => match self.functions.get(parent as usize) {
+                        Some(Some(parent)) => current = parent,
+                        _ => return false,
+                    },
+                    None => return false,
+                }
+            }
+            function.has_dynamic_scope_access()
+                || function.contains_with_statement(is_with_enter)
+                || function.instructions().any(|instruction| {
+                    matches!(instruction.op(), Op::LoadCapture | Op::StoreCapture)
+                        && usize::from(instruction.capture_depth()) + 1 == distance
+                        && instruction.capture_slot() == slot
+                })
+        })
     }
 
     fn formal_length(params: &oxc_ast::ast::FormalParameters<'_>) -> usize {

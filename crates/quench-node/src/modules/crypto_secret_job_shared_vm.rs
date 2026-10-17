@@ -1,4 +1,5 @@
 //! Draft native SecretKeyGenJob. Uses the configured SDK's key policy and classes.
+use super::crypto_secret_material::Material;
 use crate::host::NodeHost;
 use quench_runtime::{HostWeakRoot, NativeContext, RootId, RootedError, Runtime};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
@@ -13,7 +14,7 @@ pub(crate) struct State {
     running: Vec<Running>,
     resources: Vec<Resource>,
     #[cfg(quench_openssl_provider)]
-    hashes: Vec<ConfiguredHash>,
+    configured: Vec<Configured>,
     #[cfg(quench_openssl_provider)]
     pub(crate) digests: super::crypto_digest_cache::Registry,
 }
@@ -22,9 +23,9 @@ struct Resource {
     id: u64,
 }
 #[cfg(quench_openssl_provider)]
-struct ConfiguredHash {
+struct Configured {
     identity: HostWeakRoot,
-    request: HashRequest,
+    request: NativeRequest,
 }
 #[cfg(quench_openssl_provider)]
 struct HashRequest {
@@ -32,16 +33,44 @@ struct HashRequest {
     input: Option<Vec<u8>>,
     output_length: Option<usize>,
 }
+#[cfg(quench_openssl_provider)]
+enum NativeRequest {
+    Hash(HashRequest),
+    Hkdf(HkdfRequest),
+    Pbkdf2(Pbkdf2Request),
+}
+#[cfg(quench_openssl_provider)]
+struct HkdfRequest {
+    digest: std::sync::Arc<super::crypto_digest::Digest>,
+    key: Option<Material>,
+    salt: Option<Vec<u8>>,
+    info: Option<Vec<u8>>,
+    length: usize,
+}
+#[cfg(quench_openssl_provider)]
+struct Pbkdf2Request {
+    digest: std::sync::Arc<super::crypto_digest::Digest>,
+    password: Option<Material>,
+    salt: Option<Vec<u8>>,
+    iterations: u32,
+    length: usize,
+}
 enum Output {
     Key(Material),
     #[cfg(quench_openssl_provider)]
     Digest(Vec<u8>),
+    #[cfg(quench_openssl_provider)]
+    Derived(Material),
 }
 enum Failure {
     Crypto(openssl::error::ErrorStack),
     WorkerDisconnected,
     #[cfg(quench_openssl_provider)]
     Digest(super::crypto_digest::DigestError),
+    #[cfg(quench_openssl_provider)]
+    Hkdf(openssl::error::ErrorStack),
+    #[cfg(quench_openssl_provider)]
+    Pbkdf2(openssl::error::ErrorStack),
 }
 type Outcome = Result<Output, Failure>;
 enum Delivery {
@@ -52,26 +81,16 @@ struct Running {
     identity: HostWeakRoot,
     result: Delivery,
 }
-struct Material(Vec<u8>);
-impl Drop for Material {
-    fn drop(&mut self) {
-        // Production already links OpenSSL through openssl-sys.
-        unsafe extern "C" {
-            fn OPENSSL_cleanse(p: *mut std::ffi::c_void, n: usize);
-        }
-        unsafe { OPENSSL_cleanse(self.0.as_mut_ptr().cast(), self.0.len()) }
-    }
-}
 fn generate(bits: u32, mode: u32) -> Outcome {
     let bytes = if mode == WEBCRYPTO {
         u64::from(bits).div_ceil(u64::from(BITS_PER_BYTE))
     } else {
         u64::from(bits) / u64::from(BITS_PER_BYTE)
     };
-    let mut material = Material(vec![0; bytes as usize]);
-    openssl::rand::rand_priv_bytes(&mut material.0).map_err(Failure::Crypto)?;
+    let mut material = Material::new(vec![0; bytes as usize]);
+    openssl::rand::rand_priv_bytes(&mut material).map_err(Failure::Crypto)?;
     if mode == WEBCRYPTO && bits % BITS_PER_BYTE != 0 {
-        if let Some(last) = material.0.last_mut() {
+        if let Some(last) = material.last_mut() {
             *last &= u8::MAX << (BITS_PER_BYTE - bits % BITS_PER_BYTE);
         }
     }
@@ -136,6 +155,10 @@ pub(crate) fn install(c: &mut Context<'_>, binding: RootId) -> Result<(), Rooted
     install_job_class(c, binding, "SecretKeyGenJob", "cryptoSecretJobNew")?;
     #[cfg(quench_openssl_provider)]
     install_job_class(c, binding, "HashJob", "cryptoHashJobNew")?;
+    #[cfg(quench_openssl_provider)]
+    install_job_class(c, binding, "HKDFJob", "cryptoHkdfJobNew")?;
+    #[cfg(quench_openssl_provider)]
+    install_job_class(c, binding, "PBKDF2Job", "cryptoPbkdf2JobNew")?;
     for (name, value) in [
         ("kCryptoJobAsync", ASYNC),
         ("kCryptoJobSync", SYNC),
@@ -211,7 +234,7 @@ fn register(
     job: RootId,
     fields: &[(&str, RootId)],
     resource_type: &str,
-    #[cfg(quench_openssl_provider)] hash: Option<HashRequest>,
+    #[cfg(quench_openssl_provider)] request: Option<NativeRequest>,
 ) -> Result<RootId, RootedError> {
     let api = api(c)?;
     let record = c.null_object_rooted()?;
@@ -234,13 +257,13 @@ fn register(
         .resources
         .push(Resource { identity, id });
     #[cfg(quench_openssl_provider)]
-    if let Some(request) = hash {
+    if let Some(request) = request {
         let identity = c.host_weak_root(job)?;
         shared
             .borrow_mut()
             .crypto_secret_jobs
-            .hashes
-            .push(ConfiguredHash { identity, request });
+            .configured
+            .push(Configured { identity, request });
     }
     super::async_hooks_shared_vm::emit_init(c, job, resource_type, id)?;
     Ok(job)
@@ -275,13 +298,11 @@ pub(crate) fn create_hash(
     let Some(name) = c.string_text(arg(1))? else {
         return Err(fail(c, "Hash algorithm must be a string"));
     };
-    let shared = c.host_mut().shared_state();
-    let fetched = shared
-        .borrow_mut()
-        .crypto_secret_jobs
-        .digests
-        .resolve(&name, super::crypto_provider_shared_vm::fips_generation);
-    let digest = fetched.map_err(|_| invalid_digest(c, &format!("Invalid digest: {name}")))?;
+    // Native jobs use ncrypto::Digest::FromName, not the public Hash cache.
+    // A known legacy descriptor resolves its provider at actual execution;
+    // a provider-only algorithm retains the fetched Md it genuinely owns.
+    let digest=super::crypto_digest::Digest::from_sdk_name(&name).map(std::sync::Arc::new)
+        .map_err(|_|invalid_digest(c,&format!("Invalid digest: {}",super::crypto_strings::null_terminated_prefix(&name))))?;
     let Some(bytes) = c.bytes_prefix_rooted(arg(2), usize::MAX) else {
         return Err(fail(c, "Hash input must be a BufferSource"));
     };
@@ -319,22 +340,28 @@ pub(crate) fn create_hash(
     if mode == SYNC {
         fields.push(("data", arg(2)));
     }
-    register(c, job, &fields, "HASHREQUEST", Some(request))
+    register(
+        c,
+        job,
+        &fields,
+        "HASHREQUEST",
+        Some(NativeRequest::Hash(request)),
+    )
 }
 #[cfg(quench_openssl_provider)]
-fn take_hash(c: &mut Context<'_>, job: RootId) -> Result<Option<HashRequest>, RootedError> {
+fn take_request(c: &mut Context<'_>, job: RootId) -> Result<Option<NativeRequest>, RootedError> {
     let shared = c.host_mut().shared_state();
     let identities = shared
         .borrow()
         .crypto_secret_jobs
-        .hashes
+        .configured
         .iter()
         .map(|job| job.identity)
         .collect::<Vec<_>>();
     for (i, identity) in identities.into_iter().enumerate() {
         if let Some(value) = c.resolve_host_weak_root(identity) {
             if c.strict_equal_rooted(value, job)? {
-                let configured = shared.borrow_mut().crypto_secret_jobs.hashes.remove(i);
+                let configured = shared.borrow_mut().crypto_secret_jobs.configured.remove(i);
                 c.release_host_weak_root(configured.identity);
                 return Ok(Some(configured.request));
             }
@@ -416,21 +443,28 @@ fn encode_output(
     mode: u32,
 ) -> Result<RootId, RootedError> {
     match output {
-        Output::Key(material) => encode(c, record, &material.0, mode),
+        Output::Key(material) => encode(c, record, &material, mode),
         #[cfg(quench_openssl_provider)]
-        Output::Digest(bytes) => c.with_startup_intrinsics(|c| {
-            let global = c.global_root()?;
-            let ctor = get(c, global, "Uint8Array")?;
-            let proto = get(c, ctor, "prototype")?;
-            let proto = c.prototype_rooted(proto)?;
-            let key = c.string_rooted("buffer");
-            let descriptor = c.own_property_descriptor_rooted(proto, key)?;
-            let getter = get(c, descriptor, "get")?;
-            let bytes = c.uint8_array_rooted(&bytes)?;
-            c.call_rooted(getter, bytes, &[])
-        }),
+        Output::Digest(bytes) => encode_bytes(c, &bytes),
+        #[cfg(quench_openssl_provider)]
+        Output::Derived(material) => encode_bytes(c, &material),
     }
 }
+#[cfg(quench_openssl_provider)]
+fn encode_bytes(c: &mut Context<'_>, bytes: &[u8]) -> Result<RootId, RootedError> {
+    c.with_startup_intrinsics(|c| {
+        let global = c.global_root()?;
+        let ctor = get(c, global, "Uint8Array")?;
+        let proto = get(c, ctor, "prototype")?;
+        let proto = c.prototype_rooted(proto)?;
+        let key = c.string_rooted("buffer");
+        let descriptor = c.own_property_descriptor_rooted(proto, key)?;
+        let getter = get(c, descriptor, "get")?;
+        let bytes = c.uint8_array_rooted(bytes)?;
+        c.call_rooted(getter, bytes, &[])
+    })
+}
+
 fn native_error(c: &mut Context<'_>, failure: Failure) -> RootedError {
     match failure {
         Failure::Crypto(stack) => super::crypto_error_shared_vm::decorated(c, stack),
@@ -443,6 +477,12 @@ fn native_error(c: &mut Context<'_>, failure: Failure) -> RootedError {
             Ok(error) => c.throw(error),
             Err(error) => error,
         },
+        #[cfg(quench_openssl_provider)]
+        Failure::Hkdf(stack) => {
+            super::crypto_error_shared_vm::job_failure(c, &stack, "HKDF derivation failed")
+        }
+        #[cfg(quench_openssl_provider)]
+        Failure::Pbkdf2(stack) => super::crypto_error_shared_vm::job_failure(c, &stack, "PBKDF2 derivation failed"),
         Failure::WorkerDisconnected => match c.error_rooted("Secret key worker disconnected") {
             Ok(error) => c.throw(error),
             Err(error) => error,
@@ -498,7 +538,7 @@ fn queue(c: &mut Context<'_>, data: RootId, completion: bool) -> Result<(), Root
                 return Err(error);
             }
         };
-        Some(super::shared_event_loop::CallbackExecution { id, resource })
+        Some(super::shared_event_loop::CallbackExecution { lifetime: crate::modules::shared_event_loop::CallbackLifetime::Operation, optional_callback: None, id, resource })
     } else {
         None
     };
@@ -542,27 +582,56 @@ pub(crate) fn run(c: &mut Context<'_>, job: RootId, _: &[RootId]) -> Result<Root
     let mode = get(c, record, "mode")?;
     let mode = uint(c, mode)?;
     #[cfg(quench_openssl_provider)]
-    let hash = take_hash(c, job)?;
+    let request = take_request(c, job)?;
     #[cfg(quench_openssl_provider)]
-    let work: Box<dyn FnOnce() -> Outcome + Send> = if let Some(mut hash) = hash {
-        let input = match hash.input.take() {
-            Some(input) => input,
-            None => {
-                let value = get(c, record, "data")?;
-                c.bytes_prefix_rooted(value, usize::MAX)
-                    .ok_or_else(|| fail(c, "Hash input is detached"))?
-            }
-        };
-        Box::new(move || {
-            hash.digest
-                .hash(&input, hash.output_length)
-                .map(Output::Digest)
-                .map_err(Failure::Digest)
-        })
-    } else {
-        let bits = get(c, record, "bits")?;
-        let bits = uint(c, bits)?;
-        Box::new(move || generate(bits, mode))
+    let work: Box<dyn FnOnce() -> Outcome + Send> = match request {
+        Some(NativeRequest::Hash(mut hash)) => {
+            let input = match hash.input.take() {
+                Some(input) => input,
+                None => request_bytes(c, record, "data")?,
+            };
+            Box::new(move || {
+                hash.digest
+                    .hash(&input, hash.output_length)
+                    .map(Output::Digest)
+                    .map_err(Failure::Digest)
+            })
+        }
+        Some(NativeRequest::Pbkdf2(mut request)) => {
+            let password = match request.password.take() {
+                Some(bytes) => bytes,
+                None => Material::new(request_bytes(c, record, "password")?),
+            };
+            let salt = match request.salt.take() {
+                Some(bytes) => bytes,
+                None => request_bytes(c, record, "salt")?,
+            };
+            Box::new(move || super::crypto_pbkdf2::derive(&request.digest, &password, &salt, request.iterations, request.length).map(Output::Derived).map_err(Failure::Pbkdf2))
+        }
+        Some(NativeRequest::Hkdf(mut hkdf)) => {
+            let key = match hkdf.key.take() {
+                Some(key) => key,
+                None => Material::new(request_bytes(c, record, "key")?),
+            };
+            let salt = match hkdf.salt.take() {
+                Some(salt) => salt,
+                None => request_bytes(c, record, "salt")?,
+            };
+            let info = match hkdf.info.take() {
+                Some(info) => info,
+                None => request_bytes(c, record, "info")?,
+            };
+            Box::new(move || {
+                super::crypto_hkdf::derive(&hkdf.digest, &key, &salt, &info, hkdf.length)
+                    .map(Output::Derived)
+                    .map_err(Failure::Hkdf)
+            })
+        }
+        None => {
+            let bits = get(c, record, "bits")?;
+            let bits = uint(c, bits)?;
+            Box::new(move || generate(bits, mode))
+        }
     };
     #[cfg(not(quench_openssl_provider))]
     let work: Box<dyn FnOnce() -> Outcome + Send> = {
@@ -767,13 +836,17 @@ pub(crate) fn prune(runtime: &mut Runtime<NodeHost>) {
         let dead = shared
             .borrow()
             .crypto_secret_jobs
-            .hashes
+            .configured
             .iter()
             .enumerate()
             .filter_map(|(i, job)| (!runtime.host_weak_root_is_live(job.identity)).then_some(i))
             .collect::<Vec<_>>();
         for index in dead.into_iter().rev() {
-            let job = shared.borrow_mut().crypto_secret_jobs.hashes.remove(index);
+            let job = shared
+                .borrow_mut()
+                .crypto_secret_jobs
+                .configured
+                .remove(index);
             runtime.release_host_weak_root(job.identity);
         }
     }
@@ -811,7 +884,7 @@ pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
     let shared = runtime.host_mut().shared_state();
     #[cfg(quench_openssl_provider)]
     {
-        let hashes = std::mem::take(&mut shared.borrow_mut().crypto_secret_jobs.hashes);
+        let hashes = std::mem::take(&mut shared.borrow_mut().crypto_secret_jobs.configured);
         for job in hashes {
             runtime.release_host_weak_root(job.identity);
         }
@@ -827,4 +900,116 @@ pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
         super::async_hooks_shared_vm::clear_context(runtime, &shared, resource.id);
     }
     // Dropping receivers causes late worker results to be dropped and cleansed.
+}
+
+#[cfg(quench_openssl_provider)]
+fn request_bytes(c: &mut Context<'_>, record: RootId, name: &str) -> Result<Vec<u8>, RootedError> {
+    let value = get(c, record, name)?;
+    c.bytes_prefix_rooted(value, usize::MAX)
+        .ok_or_else(|| fail(c, "Crypto job input is detached"))
+}
+#[cfg(quench_openssl_provider)]
+pub(crate) fn create_hkdf(
+    c: &mut Context<'_>,
+    job: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let missing = c.undefined();
+    let arg = |index: usize| args.get(index).copied().unwrap_or(missing);
+    let mode = uint(c, arg(0))?;
+    if mode > WEBCRYPTO {
+        return Err(fail(c, "Invalid crypto job mode"));
+    }
+    let name = c
+        .string_text(arg(1))?
+        .ok_or_else(|| fail(c, "HKDF digest must be a string"))?;
+    let digest = super::crypto_digest::Digest::from_sdk_name(&name).map(std::sync::Arc::new).map_err(|_| {
+        invalid_digest(c, &format!("Invalid digest: {}", super::crypto_strings::null_terminated_prefix(&name)))
+    })?;
+    let (key, is_key_handle) = match c.bytes_prefix_rooted(arg(2), usize::MAX) {
+        Some(bytes) => (Material::new(bytes), false),
+        None => (super::crypto_key_shared_vm::secret_bytes(c, arg(2))?, true),
+    };
+    let salt = c
+        .bytes_prefix_rooted(arg(3), usize::MAX)
+        .ok_or_else(|| fail(c, "HKDF salt must be a BufferSource"))?;
+    let info = c
+        .bytes_prefix_rooted(arg(4), usize::MAX)
+        .ok_or_else(|| fail(c, "HKDF info must be a BufferSource"))?;
+    for (name, length) in [
+        ("key", key.len()),
+        ("salt", salt.len()),
+        ("info", info.len()),
+    ] {
+        if length > i32::MAX as usize {
+            let error = c.range_error_rooted(&format!("{name} is too big"))?;
+            let code = c.string_rooted("ERR_OUT_OF_RANGE");
+            put(c, error, "code", code)?;
+            return Err(c.throw(error));
+        }
+    }
+    let length = uint(c, arg(5))? as usize;
+    if length > super::crypto_hkdf::maximum(&digest) {
+        let error = c.range_error_rooted("Invalid key length")?;
+        let code = c.string_rooted("ERR_CRYPTO_INVALID_KEYLEN");
+        put(c, error, "code", code)?;
+        return Err(c.throw(error));
+    }
+    let request = HkdfRequest {
+        digest,
+        key: (mode != SYNC || is_key_handle).then_some(key),
+        salt: (mode != SYNC).then_some(salt),
+        info: (mode != SYNC).then_some(info),
+        length,
+    };
+    let mut fields = vec![("mode", arg(0))];
+    if mode == SYNC {
+        if !is_key_handle {
+            fields.push(("key", arg(2)));
+        }
+        fields.push(("salt", arg(3)));
+        fields.push(("info", arg(4)));
+    }
+    register(
+        c,
+        job,
+        &fields,
+        "DERIVEBITSREQUEST",
+        Some(NativeRequest::Hkdf(request)),
+    )
+}
+
+#[cfg(quench_openssl_provider)]
+pub(crate) fn create_pbkdf2(c: &mut Context<'_>, job: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let missing = c.undefined();
+    let arg = |index:usize| args.get(index).copied().unwrap_or(missing);
+    let mode = uint(c,arg(0))?;
+    if mode > WEBCRYPTO { return Err(fail(c,"Invalid crypto job mode")); }
+    let (password, handle) = match c.bytes_prefix_rooted(arg(1),usize::MAX) {
+        Some(bytes) => (Material::new(bytes),false),
+        None => (super::crypto_key_shared_vm::secret_bytes(c,arg(1))?,true),
+    };
+    let salt = c.bytes_prefix_rooted(arg(2),usize::MAX).ok_or_else(||fail(c,"PBKDF2 salt must be a BufferSource"))?;
+    for (name,length) in [("pass",password.len()),("salt",salt.len())] {
+        if length > i32::MAX as usize {
+            let error = c.range_error_rooted(&format!("{name} is too large"))?;
+            let code = c.string_rooted("ERR_OUT_OF_RANGE");put(c,error,"code",code)?;
+            return Err(c.throw(error));
+        }
+    }
+    let iterations = uint(c,arg(3))?;
+    let length = uint(c,arg(4))?;
+    for (name,value) in [("iterations",iterations),("length",length)] {
+        if value > i32::MAX as u32 {
+            let error = c.range_error_rooted(&format!("{name} must be <= {}",i32::MAX))?;
+            let code=c.string_rooted("ERR_OUT_OF_RANGE");put(c,error,"code",code)?;
+            return Err(c.throw(error));
+        }
+    }
+    let name = c.string_text(arg(5))?.ok_or_else(||fail(c,"PBKDF2 digest must be a string"))?;
+    let digest=super::crypto_digest::Digest::from_sdk_name(&name).map(std::sync::Arc::new).map_err(|_|invalid_digest(c,&format!("Invalid digest: {}",super::crypto_strings::null_terminated_prefix(&name))))?;
+    let request=Pbkdf2Request{digest,password:(mode != SYNC || handle).then_some(password),salt:(mode != SYNC).then_some(salt),iterations,length:length as usize};
+    let mut fields=vec![("mode",arg(0))];
+    if mode==SYNC { if !handle {fields.push(("password",arg(1)));} fields.push(("salt",arg(2))); }
+    register(c,job,&fields,"PBKDF2REQUEST",Some(NativeRequest::Pbkdf2(request)))
 }

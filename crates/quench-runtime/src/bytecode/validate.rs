@@ -1047,10 +1047,12 @@ fn selective_capture_layout_is_eligible(
         });
     let mapped_parameter_is_captured =
         function.arguments_are_mapped() && captured.iter().any(|slot| *slot < function.params);
+    // A mapped `arguments` object shares the captured parameters, so it lives in the
+    // environment with them; a body that keeps no `arguments` binding maps nothing.
     let mapped_arguments_are_captured = !mapped_parameter_is_captured
         || function
             .arguments_slot
-            .is_some_and(|slot| captured.binary_search(&slot).is_ok());
+            .is_none_or(|slot| captured.binary_search(&slot).is_ok());
 
     index != 0
         && function.parent.is_some()
@@ -1218,6 +1220,7 @@ mod tests {
             dispatch: DispatchClass::General,
             decoded: Default::default(),
             plain_locals: Default::default(),
+            declared_atom_sets: Default::default(),
             activation_bindings: Default::default(),
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),

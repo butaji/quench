@@ -93,8 +93,7 @@ fn bytes(path: &std::ffi::OsStr) -> Vec<u8> {
     }
 }
 fn get(c: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, RootedError> {
-    let key = c.string_rooted(name);
-    c.get_property_rooted(object, key)
+    c.get_named_property_rooted(object, name)
 }
 fn encode(
     c: &mut Context<'_>,
@@ -105,7 +104,7 @@ fn encode(
     if encoding == "buffer" {
         super::buffer_shared_vm::from_bytes(c, &bytes)
     } else {
-        super::buffer_string_shared_vm::decode_bytes(c, &bytes, encoding)
+        super::buffer_binding_shared_vm::decode_bytes(c, &bytes, encoding)
     }
 }
 pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {

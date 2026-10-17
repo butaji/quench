@@ -11,20 +11,21 @@ const EVENTS_API: &str = quench_js_check::checked_js!(
     return error;
   };
 
-  const once = (emitter, event, options) => {
+  // lib/events.js `async function once(emitter, name, options = kEmptyObject)`.
+  async function once(emitter, event, options = undefined) {
     if (options !== undefined && (options === null || typeof options !== "object")) {
-      return Promise.reject(invalid("The options argument must be an object"));
+      throw invalid("The options argument must be an object");
     }
     options ||= {};
     const signal = options.signal;
     if (signal !== undefined &&
         (signal === null || typeof signal !== "object" ||
          typeof signal.addEventListener !== "function")) {
-      return Promise.reject(invalid("The signal option must be an AbortSignal"));
+      throw invalid("The signal option must be an AbortSignal");
     }
     const isEmitter = typeof emitter?.once === "function";
     if (!isEmitter && typeof emitter?.addEventListener !== "function") {
-      return Promise.reject(invalid("The emitter must be an EventEmitter or EventTarget"));
+      throw invalid("The emitter must be an EventEmitter or EventTarget");
     }
     return new Promise((resolve, reject) => {
       const remove = () => {
@@ -55,7 +56,7 @@ const EVENTS_API: &str = quench_js_check::checked_js!(
       else signal?.addEventListener?.("abort", onAbort, { once: true });
       queueMicrotask(() => { if (signal?.aborted) onAbort(); });
     });
-  };
+  }
 
   return { once };
 })()"#
@@ -67,17 +68,6 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let module = context.get_property_rooted(global, class_key)?;
     set(context, module, "EventEmitter", module)?;
     super::emitter_async_resource_shared_vm::install(context, module)?;
-
-    let inspect = crate::modules::util_shared_vm::internal_inspect(context)?;
-    let internal_inspect = context.evaluate_script_rooted(
-        "Symbol.for('quench.internal.eventEmitter.inspect')",
-        "node:events/internal-inspect-symbol",
-    )?;
-    if !context.set_property_rooted(module, internal_inspect, inspect, module)? {
-        return Err(RootedError::host(
-            "cannot install the EventEmitter error inspector",
-        ));
-    }
 
     let api = context.evaluate_script_rooted(EVENTS_API, "node:events/shared-api.js")?;
     let once = get(context, api, "once")?;
@@ -131,6 +121,11 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     Ok(module)
 }
 
+/// The `util.inspect` an unhandled `'error'` event formats a non-Error value with.
+pub(crate) fn error_inspector(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    crate::modules::util_shared_vm::internal_inspect(context)
+}
+
 fn set(
     context: &mut NativeContext<'_, NodeHost>,
     object: RootId,
@@ -152,8 +147,7 @@ fn get(
     object: RootId,
     name: &str,
 ) -> Result<RootId, RootedError> {
-    let key = context.string_rooted(name);
-    context.get_property_rooted(object, key)
+    context.get_named_property_rooted(object, name)
 }
 
 pub(crate) fn initialize_targets(
@@ -223,6 +217,7 @@ pub(crate) fn initialize_targets(
     set(context, data, "recordsKey", records_key)?;
     set(context, data, "brandKey", brand_key)?;
     super::events_weak_shared_vm::initialize(context, data)?;
+    super::abort_dependencies_shared_vm::initialize(context, data)?;
     let retained = context.retain(data)?;
     context
         .host_mut()
@@ -236,6 +231,8 @@ pub(crate) fn initialize_targets(
         data,
     )?;
     context.define_lazy_data_properties_rooted(global, EVENT_GLOBALS, false, initialize)?;
+    let messaging = context.host_function(crate::host::shared_vm::operation("messagingGlobalsInitialize"))?;
+    context.define_lazy_data_properties_rooted(global, &["MessagePort", "MessageChannel"], false, messaging)?;
     let abort_state = context.host_function(crate::host::shared_vm::operation(
         "eventAbortStateInitialize",
     ))?;
@@ -251,8 +248,6 @@ const EVENT_GLOBALS: &[&str] = &[
     "Event",
     "EventTarget",
     "MessageEvent",
-    "MessagePort",
-    "MessageChannel",
 ];
 
 /// Builds the DOM event family: the abort polyfill, `EventTarget` and its relatives.
@@ -303,6 +298,11 @@ pub(crate) fn initialize_event_globals(
         "node:bootstrap/shared-vm/abort.js",
     )?;
     let abort_max = context.number(super::event_limits_shared_vm::ABORT_SIGNAL_MAX_LISTENERS);
+    let any_convert = context.host_function_with_data(crate::host::shared_vm::operation("abortAnyConvert"), data)?;
+    let dependencies_link = context.host_function_with_data(crate::host::shared_vm::operation("abortDependenciesLink"), data)?;
+    let dependencies_refresh = context.host_function_with_data(crate::host::shared_vm::operation("abortDependenciesRefresh"), data)?;
+    let dependencies_settle = context.host_function_with_data(crate::host::shared_vm::operation("abortDependenciesSettle"), data)?;
+    let abort_timeout = context.host_function_with_data(crate::host::shared_vm::operation("abortTimeout"), data)?;
     let abort_state = context.call_rooted(
         abort_factory,
         undefined,
@@ -315,6 +315,7 @@ pub(crate) fn initialize_event_globals(
             abort_get_handler,
             abort_set_handler,
             abort_remove,
+            any_convert, dependencies_link, dependencies_refresh, dependencies_settle, abort_timeout,
         ],
     )?;
     #[cfg(feature = "profile-memory")]
