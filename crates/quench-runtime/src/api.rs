@@ -2053,7 +2053,7 @@ checkSources().then(()=>print('done'),e=>{print('unexpected');print(e);});
                 &mut self,
                 _: &str,
                 specifier: &str,
-            ) -> Result<Option<crate::host::ModuleSource>, String> {
+            ) -> Result<Option<crate::host::ModuleSource>, crate::ModuleLoadError> {
                 let file = specifier.rsplit('/').next().unwrap();
                 Ok(MODULES
                     .iter()
@@ -4863,7 +4863,7 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
         impl Host for ModuleCapture {
             fn write_line(&mut self, text: &str) { self.0.write_line(text); }
             fn clock_millis(&mut self) -> f64 { 0.0 }
-            fn resolve_dynamic_import(&mut self, _: &str, specifier: &str) -> Result<Option<crate::ModuleSource>, String> {
+            fn resolve_dynamic_import(&mut self, _: &str, specifier: &str) -> Result<Option<crate::ModuleSource>, crate::ModuleLoadError> {
                 let name = specifier.rsplit('/').next().unwrap();
                 Ok(MODULES.iter().find(|(candidate, _)| *candidate == name).map(|(_, source)| crate::ModuleSource {
                     name: format!("cyclic-module-graph/{name}"), source: (*source).into(), bytes: source.as_bytes().to_vec(),
@@ -4910,7 +4910,7 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
             fn globals(&self) -> &'static [crate::HostGlobal] { self.0.globals() }
             fn clock_millis(&mut self) -> f64 { 0.0 }
             fn has_module_source(&self, module: &crate::ModuleSource) -> bool { module.name == "<source>" }
-            fn resolve_dynamic_import(&mut self, _: &str, specifier: &str) -> Result<Option<crate::ModuleSource>, String> {
+            fn resolve_dynamic_import(&mut self, _: &str, specifier: &str) -> Result<Option<crate::ModuleSource>, crate::ModuleLoadError> {
                 if specifier == "<source>" {
                     return Ok(Some(crate::ModuleSource { name: specifier.into(), source: String::new(), bytes: Vec::new() }));
                 }
@@ -4973,7 +4973,7 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
                 &mut self,
                 _: &str,
                 specifier: &str,
-            ) -> Result<Option<crate::host::ModuleSource>, String> {
+            ) -> Result<Option<crate::host::ModuleSource>, crate::ModuleLoadError> {
                 assert_eq!(specifier, "./integrity-dependency.mjs");
                 Ok(Some(crate::host::ModuleSource {
                     name: "integrity-dependency.mjs".into(),
@@ -5069,7 +5069,7 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
                 &mut self,
                 _: &str,
                 specifier: &str,
-            ) -> Result<Option<crate::host::ModuleSource>, String> {
+            ) -> Result<Option<crate::host::ModuleSource>, crate::ModuleLoadError> {
                 assert_eq!(specifier, "./ordered-namespace.mjs");
                 Ok(Some(crate::host::ModuleSource {
                     name: "ordered-namespace.mjs".into(),
