@@ -999,9 +999,10 @@ impl<H: Host> Vm<H> {
             Ok(object) => object,
             Err(failure) => return failure,
         };
-        if let Some(code) = error.code {
-            let name = self.heap.alloc(Cell::String(JsString::from_str("code")));
-            let value = self.heap.alloc(Cell::String(JsString::from_str(code)));
+        let code = error.code.map(|code| ("code", code.to_owned()));
+        for (name, value) in code.into_iter().chain(error.fields) {
+            let name = self.heap.alloc(Cell::String(JsString::from_str(name)));
+            let value = self.heap.alloc(Cell::String(JsString::from_str(&value)));
             let defined = self.to_property_key(program, name).and_then(|key| {
                 let record = super::object_descriptors::PropertyDescriptorRecord::data(value);
                 self.define_own_property_record(program, object, key, record)
@@ -1411,7 +1412,7 @@ impl<H: Host> Vm<H> {
             }
             let message = diagnostics
                 .first()
-                .map_or("invalid Function source".to_owned(), ToString::to_string);
+                .map_or("invalid Function source".to_owned(), |diagnostic| diagnostic.syntax_message().to_owned());
             self.syntax_error_result(program, &message)
                 .expect_err("dynamic Function syntax errors must throw")
         })?;

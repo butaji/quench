@@ -117,9 +117,6 @@ pub(crate) struct SharedNodeState {
     pub(crate) process_module: Option<quench_runtime::RootId>,
     pub(crate) process_capture_state: Option<quench_runtime::RootId>,
     pub(crate) path_module: Option<quench_runtime::RootId>,
-    pub(crate) url_constructor: Option<quench_runtime::RootId>,
-    pub(crate) url_state: Option<quench_runtime::RootId>,
-    pub(crate) url_search_params_constructor: Option<quench_runtime::RootId>,
     pub(crate) timer_handle_api: Option<crate::modules::timers_shared_vm::TimerHandleApi>,
     /// The emitter configuration's fixed keys and constructor (`event_constructor_shared_vm`).
     pub(crate) emitter_keys: Option<crate::modules::event_constructor_shared_vm::EmitterKeys>,
@@ -228,9 +225,6 @@ impl SharedNodeState {
         self.process_module = None;
         self.process_capture_state = None;
         self.path_module = None;
-        self.url_constructor = None;
-        self.url_state = None;
-        self.url_search_params_constructor = None;
         self.timer_handle_api = None;
         self.tick_invocation = None;
         self.emitter_keys = None;
@@ -319,9 +313,6 @@ impl SharedNodeState {
             process_module: None,
             process_capture_state: None,
             path_module: None,
-            url_constructor: None,
-            url_state: None,
-            url_search_params_constructor: None,
             timer_handle_api: None,
             tick_invocation: None,
             emitter_keys: None,

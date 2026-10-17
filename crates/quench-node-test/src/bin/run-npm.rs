@@ -27,6 +27,9 @@ struct Record {
     node: CaseObservation,
     #[serde(serialize_with = "serialize_observation")]
     quench: CaseObservation,
+    /// Bun's run of the same scenario, observed for resident memory (`--rss`).
+    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "serialize_optional_observation")]
+    bun: Option<CaseObservation>,
     node_function_checks: Option<serde_json::Value>,
     quench_function_checks: Option<serde_json::Value>,
 }
@@ -46,14 +49,25 @@ fn serialize_observation<S: serde::Serializer>(
         Err(_) => Output::Bytes(bytes),
     };
     use serde::ser::SerializeStruct;
-    let mut record = serializer.serialize_struct("Observation", 6)?;
+    let mut record = serializer.serialize_struct("Observation", 7)?;
     record.serialize_field("exit_code", &observation.exit_code)?;
     record.serialize_field("signal", &observation.signal)?;
     record.serialize_field("timed_out", &observation.timed_out)?;
     record.serialize_field("worker", &observation.worker)?;
     record.serialize_field("stdout", &output(&observation.stdout))?;
     record.serialize_field("stderr", &output(&observation.stderr))?;
+    record.serialize_field("peak_rss_bytes", &observation.peak_rss_bytes)?;
     record.end()
+}
+
+fn serialize_optional_observation<S: serde::Serializer>(
+    observation: &Option<CaseObservation>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    match observation {
+        Some(observation) => serialize_observation(observation, serializer),
+        None => serializer.serialize_none(),
+    }
 }
 
 #[derive(Serialize)]
@@ -67,6 +81,10 @@ struct Report {
     quench_executable: PathBuf,
     quench_sha256: String,
     node_sha256: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bun_executable: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bun_version: Option<String>,
     timeout_seconds: u64,
     inventory_sha256: String,
     lock_sha256: String,
@@ -91,11 +109,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     let [node, quench, output, timeout, rest @ ..] = args.as_slice() else {
         return Err(
-            "usage: run-npm NODE QUENCH REPORT TIMEOUT_SECONDS [--surface] [PACKAGE]".into(),
+            "usage: run-npm NODE QUENCH REPORT TIMEOUT_SECONDS [--surface | --rss BUN] [PACKAGE]".into(),
         );
     };
     let surface = rest.first().is_some_and(|arg| arg == "--surface");
-    let filters = if surface { &rest[1..] } else { rest };
+    let bun = match rest {
+        [flag, bun, ..] if flag == "--rss" => Some(fs::canonicalize(bun)?),
+        _ => None,
+    };
+    let filters = match (surface, &bun) {
+        (true, _) => &rest[1..],
+        (false, Some(_)) => &rest[2..],
+        (false, None) => rest,
+    };
     if filters.len() > 1 {
         return Err("at most one package filter is allowed".into());
     }
@@ -143,6 +169,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         host: format!("{}-{}", std::env::consts::ARCH, std::env::consts::OS),
         quench_sha256: digest(&fs::read(&quench_executable)?),
         node_sha256: digest(&fs::read(&node_executable)?),
+        bun_version: match &bun {
+            Some(bun) => Some(String::from_utf8(Command::new(bun).arg("--version").output()?.stdout)?.trim().into()),
+            None => None,
+        },
+        bun_executable: bun.clone(),
         node_executable,
         node_version: String::from_utf8(node_output.stdout)?.trim().into(),
         quench_executable,
@@ -193,6 +224,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             let (node, node_function_checks) = observe(&report.node_executable)?;
             let (quench, quench_function_checks) = observe(&report.quench_executable)?;
+            let bun = match &report.bun_executable {
+                Some(bun) => Some(observe(bun)?.0),
+                None => None,
+            };
             let marker = format!("npm-behavior-ok:{}\n", package.name);
             let verdict = if surface {
                 let valid = |o: &CaseObservation| {
@@ -229,6 +264,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 verdict,
                 node,
                 quench,
+                bun,
                 node_function_checks,
                 quench_function_checks,
             }
