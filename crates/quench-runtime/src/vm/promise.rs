@@ -6,6 +6,8 @@ use std::collections::VecDeque;
 
 const PROMISE_CAPABILITY_RESOLVE: &str = "\0quench:promise-capability-resolve";
 const PROMISE_CAPABILITY_REJECT: &str = "\0quench:promise-capability-reject";
+/// The module type of an import without a `type` attribute.
+const JAVASCRIPT_MODULE_TYPE: &str = "javascript";
 use crate::{ModuleSource, module_identity::ModuleIdentity};
 use rustc_hash::FxHashSet;
 
@@ -1677,8 +1679,14 @@ impl<H: Host> Vm<H> {
             let referrer = vm.active_script_or_module(p);
             let resolution = vm.host.resolve_dynamic_import(&referrer, &specifier);
             match resolution {
-                Err(message) => return Err(vm.type_error(p, message)),
+                Err(error) => return Err(vm.module_load_error(p, error)),
                 Ok(Some(module)) => {
+                    if phase != crate::bytecode::ModuleRequestPhase::Source {
+                        let requested = module_type.as_deref().unwrap_or(JAVASCRIPT_MODULE_TYPE);
+                        if let Err(error) = vm.host.validate_module_type(&module, requested) {
+                            return Err(vm.module_load_error(p, error));
+                        }
+                    }
                     if phase == crate::bytecode::ModuleRequestPhase::Source {
                         let source = vm.module_source_value(p, &module)?;
                         vm.promise_resolve_value(p, promise, source)?;
@@ -2339,10 +2347,7 @@ impl<H: Host> Vm<H> {
             .iter()
             .filter(|request| request.phase == crate::bytecode::ModuleRequestPhase::Evaluation)
         {
-            let dependency = self
-                .host
-                .resolve_dynamic_import(&module.name, &request.source)
-                .map_err(|message| self.type_error(p, message))?;
+            let dependency = self.resolve_module_request(p, &module.name, request)?;
             let Some(dependency) = dependency else {
                 return Err(self.type_error(p, "static module request was not resolved".into()));
             };
@@ -2505,10 +2510,7 @@ impl<H: Host> Vm<H> {
             return Ok(false);
         }
         for request in plan.requests {
-            let dependency = self
-                .host
-                .resolve_dynamic_import(&module.name, &request.source)
-                .map_err(|message| self.type_error(p, message))?
+            let dependency = self.resolve_module_request(p, &module.name, &request)?
                 .ok_or_else(|| {
                     self.type_error(p, "static module request was not resolved".into())
                 })?;
@@ -2867,7 +2869,7 @@ impl<H: Host> Vm<H> {
             let module = self
                 .host
                 .resolve_dynamic_import(referrer, &import.source)
-                .map_err(|message| self.type_error(p, message))?
+                .map_err(|error| self.module_load_error(p, error))?
                 .ok_or_else(|| self.type_error(p, "module import was not resolved".into()))?;
             let local = self
                 .lookup_atom(&import.local)
@@ -3061,9 +3063,7 @@ impl<H: Host> Vm<H> {
         let resolved = requests
             .iter()
             .map(|request| {
-                self.host
-                    .resolve_dynamic_import(referrer, &request.source)
-                    .map_err(|message| self.type_error(p, message))?
+                self.resolve_module_request(p, referrer, request)?
                     .ok_or_else(|| {
                         self.type_error(p, "static module request was not resolved".into())
                     })
@@ -3305,6 +3305,28 @@ impl<H: Host> Vm<H> {
         Ok(namespace)
     }
 
+    /// Resolve a static module request and, for an evaluation, validate its type.
+    fn resolve_module_request(
+        &mut self,
+        p: &ResidualProgram,
+        referrer: &str,
+        request: &crate::bytecode::ModuleRequest,
+    ) -> Result<Option<ModuleSource>, JsError> {
+        let module = self
+            .host
+            .resolve_dynamic_import(referrer, &request.source)
+            .map_err(|error| self.module_load_error(p, error))?;
+        if let Some(module) = &module
+            && request.phase == crate::bytecode::ModuleRequestPhase::Evaluation
+        {
+            let requested = request.module_type.as_deref().unwrap_or(JAVASCRIPT_MODULE_TYPE);
+            self.host
+                .validate_module_type(module, requested)
+                .map_err(|error| self.module_load_error(p, error))?;
+        }
+        Ok(module)
+    }
+
     fn evaluate_static_module_request(
         &mut self,
         p: &ResidualProgram,
@@ -3411,10 +3433,7 @@ impl<H: Host> Vm<H> {
                 {
                     continue;
                 }
-                let dependency = self
-                    .host
-                    .resolve_dynamic_import(&module.name, &request.source)
-                    .map_err(|message| self.type_error(p, message))?
+                let dependency = self.resolve_module_request(p, &module.name, request)?
                     .ok_or_else(|| {
                         self.type_error(p, "static module request was not resolved".into())
                     })?;
@@ -3534,9 +3553,7 @@ impl<H: Host> Vm<H> {
             .module_requests
             .iter()
             .map(|request| {
-                self.host
-                    .resolve_dynamic_import(&module.name, &request.source)
-                    .map_err(|message| self.type_error(p, message))?
+                self.resolve_module_request(p, &module.name, request)?
                     .ok_or_else(|| {
                         self.type_error(p, "static module request was not resolved".into())
                     })
@@ -3823,10 +3840,7 @@ impl<H: Host> Vm<H> {
                 request.phase == crate::bytecode::ModuleRequestPhase::Evaluation
                     && request.module_type.as_deref().unwrap_or("javascript") == "javascript"
             }) {
-                let dependency = self
-                    .host
-                    .resolve_dynamic_import(&parent.name, &request.source)
-                    .map_err(|message| self.type_error(p, message))?
+                let dependency = self.resolve_module_request(p, &parent.name, request)?
                     .ok_or_else(|| {
                         self.type_error(p, "static module request was not resolved".into())
                     })?;
@@ -3954,10 +3968,7 @@ impl<H: Host> Vm<H> {
             if request.module_type.as_deref().unwrap_or("javascript") != "javascript" {
                 continue;
             }
-            let dependency = self
-                .host
-                .resolve_dynamic_import(&module.name, &request.source)
-                .map_err(|message| self.type_error(p, message))?
+            let dependency = self.resolve_module_request(p, &module.name, request)?
                 .ok_or_else(|| {
                     self.type_error(p, "static module request was not resolved".into())
                 })?;
@@ -4400,7 +4411,7 @@ impl<H: Host> Vm<H> {
         }
         self.host
             .resolve_dynamic_import(referrer, source)
-            .map_err(|message| self.type_error(p, message))
+            .map_err(|error| self.module_load_error(p, error))
     }
 
     fn resolve_static_module_export(
@@ -4783,7 +4794,7 @@ impl<H: Host> Vm<H> {
                 let dependency = self
                     .host
                     .resolve_dynamic_import(&module.name, source)
-                    .map_err(|message| self.type_error(p, message))?;
+                    .map_err(|error| self.module_load_error(p, error))?;
                 let Some(dependency) = dependency else {
                     return Ok(StaticModuleGraph::LinkError);
                 };
