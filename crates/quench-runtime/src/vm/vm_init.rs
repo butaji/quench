@@ -90,6 +90,7 @@ impl<H: Host> Vm<H> {
             profile: Profile,
             shape_slot_memo: Default::default(),
             shape_attribute_memo: Default::default(),
+            name_atom_memo: Default::default(),
             shapes: Shape::table(),
             shape_accessors: Vec::new(),
             transitions: Default::default(),
