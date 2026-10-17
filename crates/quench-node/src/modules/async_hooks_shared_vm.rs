@@ -198,15 +198,21 @@ fn visible_async_id(state: &super::async_hooks_state::SharedAsyncHooksState) -> 
     state.identity.current_async_id()
 }
 
+/// A promise's async-hooks identity, made only while promises are tracked
+/// (`SharedAsyncHooksState::tracks_promises`): an untracked promise holds no id, trigger or
+/// resource entry for a later destroy.
 pub(crate) fn create_promise_context(
     shared: &Rc<RefCell<crate::host::SharedNodeState>>,
     parent: Option<quench_runtime::HostExecutionContext>,
-) -> quench_runtime::HostExecutionContext {
+) -> Option<quench_runtime::HostExecutionContext> {
     let mut state = shared.borrow_mut();
+    if !state.async_hooks.tracks_promises() {
+        return None;
+    }
     let trigger = parent.map_or_else(|| state.async_hooks.default_trigger_async_id(), |id| id.0 as f64);
     let id = state.async_hooks.identity.allocate_async_id();
     state.async_hooks.context_triggers.insert(id, trigger as i64);
-    quench_runtime::HostExecutionContext(id)
+    Some(quench_runtime::HostExecutionContext(id))
 }
 
 pub(crate) fn initialize_promise(
@@ -246,11 +252,10 @@ fn prune_promise_resources(context: &mut NativeContext<'_, NodeHost>) -> Result<
     let epoch = context.collection_epoch();
     let shared = context.host_mut().shared_state();
     shared.borrow_mut().async_hooks.promise_resources_pruned_epoch = epoch;
-    let entries = std::mem::take(&mut shared.borrow_mut().async_hooks.promise_resources);
+    let entries: Vec<_> = shared.borrow().async_hooks.promise_resources.iter().map(|(&id, &weak)| (id, weak)).collect();
     for (id, weak) in entries {
-        if context.resolve_host_weak_root(weak).is_some() {
-            shared.borrow_mut().async_hooks.promise_resources.insert(id, weak);
-        } else {
+        if context.resolve_host_weak_root(weak).is_none() {
+            shared.borrow_mut().async_hooks.promise_resources.remove(&id);
             context.release_host_weak_root(weak);
             shared.borrow_mut().async_hooks.context_triggers.remove(&id);
             queue_destroy(context, id)?;
@@ -265,14 +270,28 @@ pub(crate) fn promise_job_boundary(
     before: bool,
 ) -> Result<(), RootedError> {
     let shared = context.host_mut().shared_state();
+    // A long run of promise jobs can stay within one event-loop turn, where the turn-end
+    // prune never comes: prune here once a collection has run since the last prune, so the
+    // table holds only promises that may still be live.
+    let prune_due = {
+        let state = shared.borrow();
+        !state.async_hooks.promise_resources.is_empty()
+            && state.async_hooks.promise_resources_pruned_epoch != context.collection_epoch()
+    };
+    if before && prune_due {
+        prune_promise_resources(context)?;
+    }
     let resource = tracked_job(&mut shared.borrow_mut().async_hooks, snapshot.0).resource;
     let Some(resource) = resource else { return Ok(()); };
-    let id = context.number(resource as f64);
     let kind = if before {
         super::async_hook_registry_shared_vm::HookKind::Before
     } else {
         super::async_hook_registry_shared_vm::HookKind::After
     };
+    if !super::async_hook_registry_shared_vm::has_hooks(context, kind) {
+        return Ok(());
+    }
+    let id = context.number(resource as f64);
     super::async_hook_registry_shared_vm::emit(context, kind, &[id])
 }
 
@@ -280,10 +299,12 @@ pub(crate) fn promise_settled(
     context: &mut NativeContext<'_, NodeHost>,
     resource: quench_runtime::HostExecutionContext,
 ) -> Result<(), RootedError> {
+    let kind = super::async_hook_registry_shared_vm::HookKind::PromiseResolve;
+    if !super::async_hook_registry_shared_vm::has_hooks(context, kind) {
+        return Ok(());
+    }
     let id = context.number(resource.0 as f64);
-    super::async_hook_registry_shared_vm::emit(
-        context, super::async_hook_registry_shared_vm::HookKind::PromiseResolve, &[id],
-    )
+    super::async_hook_registry_shared_vm::emit(context, kind, &[id])
 }
 
 /// Snapshot the currently visible stores under a fresh identity for one
@@ -559,6 +580,12 @@ pub(crate) fn emit_init(
             .context_triggers
             .entry(async_id)
             .or_insert(parent as i64);
+    }
+    if !super::async_hook_registry_shared_vm::has_hooks(
+        context,
+        super::async_hook_registry_shared_vm::HookKind::Init,
+    ) {
+        return Ok(());
     }
     let trigger = state.borrow().async_hooks.context_triggers[&async_id];
     let id = context.number(async_id as f64);
@@ -885,6 +912,7 @@ pub(crate) fn enter_with(
             .identity
             .store_context();
         let mut shared = shared_state.borrow_mut();
+        shared.async_hooks.enabled_local_storages.insert(local_id);
         let previous = shared
             .async_hooks
             .local_stores
@@ -928,6 +956,7 @@ pub(crate) fn disable_storage(
     let released = {
         let shared_state = context.host_mut().shared_state();
         let mut shared = shared_state.borrow_mut();
+        shared.async_hooks.enabled_local_storages.remove(&local_id);
         let keys = shared
             .async_hooks
             .local_stores

@@ -351,10 +351,15 @@ impl<H: Host> Vm<H> {
         if target == self.object_proto || !data.is_extensible() {
             return Ok(false);
         }
-        // Only an ordinary object answers every property from its shape; an exotic receiver
-        // (an array's `length`, a String object's indices) shares shapes with ordinary objects
-        // and relies on the dictionary transition below to keep its own cache entries apart.
-        let keeps_shape = !data.was_used_as_prototype() && self.heap.ordinary_object(target).is_some();
+        // An ordinary object answers every property from its shape, and so does a typed array
+        // for every key a field cache holds: its exotic own keys are integer indices, never
+        // cached, and `length` is an inherited accessor. Other exotic receivers (an array's
+        // `length`, a String object's indices) share shapes with ordinary objects and rely on
+        // the dictionary transition below to keep their own cache entries apart. Node gives
+        // every new Buffer its prototype this way (`FastBuffer`).
+        let keeps_shape = !data.was_used_as_prototype()
+            && (self.heap.ordinary_object(target).is_some()
+                || matches!(self.heap.get(target), Some(Cell::TypedArray { .. })));
         let mut cursor = proto;
         while !cursor.is_null() {
             if self.same_value(cursor, target) {

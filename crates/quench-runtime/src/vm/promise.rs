@@ -775,7 +775,6 @@ fn native_length(kind: Native) -> Option<f64> {
         | Native::SetIsSupersetOf => 1.0,
         Native::SetSpeciesGetter => 0.0,
         Native::SetClear | Native::SetKeys | Native::SetValues | Native::SetEntries => 0.0,
-        Native::ToString => 1.0,
         Native::ArrayFrom | Native::ArrayFromAsync | Native::ArrayIsArray => 1.0,
         Native::TypedArrayFrom => 1.0,
         Native::Uint8Array
@@ -2536,9 +2535,10 @@ impl<H: Host> Vm<H> {
         let Some(source) = self.object_data(source).cloned() else {
             return Err(self.type_error(p, "evaluated module namespace is invalid".into()));
         };
-        if let Some(target) = self.object_data_mut(target) {
+        if self.heap.copy_property_storage(&source, target)
+            && let Some(target) = self.object_data_mut(target)
+        {
             target.set_proto(source.proto());
-            target.copy_property_storage_from(&source);
             if source.is_module_namespace() {
                 target.set_module_namespace();
             }

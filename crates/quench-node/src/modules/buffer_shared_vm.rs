@@ -69,9 +69,14 @@ pub(crate) fn fast_buffer(c: &mut Context<'_>) -> Result<RootId, RootedError> {
 /// A new Buffer holding a copy of `bytes`. A class's `prototype` is non-writable and
 /// non-configurable, so FastBuffer's is read rather than stored again.
 pub(crate) fn from_bytes(c: &mut Context<'_>, bytes: &[u8]) -> Result<RootId, RootedError> {
+    from_vec(c, bytes.to_vec())
+}
+
+/// A Buffer whose backing store takes ownership of `bytes`.
+pub(crate) fn from_vec(c: &mut Context<'_>, bytes: Vec<u8>) -> Result<RootId, RootedError> {
     let fast = fast_buffer(c)?;
     let prototype = get(c, fast, "prototype")?;
-    let value = c.uint8_array_rooted(bytes)?;
+    let value = c.uint8_array_from_rooted(bytes)?;
     if !c.set_prototype_rooted(value, prototype)? {
         return Err(RootedError::host("New Buffer view rejected its intrinsic prototype"));
     }
