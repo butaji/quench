@@ -2629,6 +2629,7 @@ impl<'a> Compiler<'a> {
         let result = BcFunction {
             parent,
             name: name.map(|value| function.owner.atom(value)),
+            inferred_name: None,
             is_arrow: false,
             self_binding_slot,
             source_span: options.source_span,
