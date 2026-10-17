@@ -351,8 +351,7 @@ impl<H: Host> Vm<H> {
             );
         }
         let plan_name = function_plan.name.or(function_plan.inferred_name);
-        let name_atom = plan_name.unwrap_or(self.runtime_atoms.empty);
-        let name_value = self.atom_string(name_atom);
+        let name_value = self.atom_string(plan_name.unwrap_or(self.runtime_atoms.empty));
         let length_value = Value::number(function_plan.length as f64);
         // An ordinary closure's own properties and its prototype's `constructor` take the
         // shapes the first one recorded; every other closure defines them one by one.
