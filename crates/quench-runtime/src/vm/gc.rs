@@ -409,6 +409,7 @@ impl<H: Host> Vm<H> {
             self.realm
                 .global_lexical_states
                 .iter()
+                .chain(self.realm.parked.iter().map(|parked| (&parked.global, &parked.state)))
                 .flat_map(|(global, state)| {
                     std::iter::once(*global).chain(state.bindings.values().copied())
                 }),

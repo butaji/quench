@@ -476,7 +476,12 @@ struct Realm {
     global_lexical_declarations: FxHashSet<Atom>,
     global_lexical_bindings: FxHashMap<Atom, Value>,
     immutable_global_lexical_bindings: FxHashSet<Atom>,
+    /// Every inactive realm's global lexical state, keyed by its global, except the realm
+    /// last switched away from, which `parked` holds.
     global_lexical_states: FxHashMap<Value, GlobalLexicalState>,
+    /// The realm last switched away from, so switching back to it, which jobs and calls
+    /// across two realms do on every turn, moves its state without hashing.
+    parked: Option<ParkedRealm>,
     intrinsics: RealmIntrinsics,
     jobs: std::collections::VecDeque<PendingJob>,
     template_objects: FxHashMap<(ProgramId, u32, u32), Value>,
@@ -555,6 +560,17 @@ struct GlobalLexicalState {
     bindings: FxHashMap<Atom, Value>,
     immutable_bindings: FxHashSet<Atom>,
 }
+/// An inactive realm with its global lexical state and the prototypes the realm-following
+/// VM fields held while it was active (`REALM_FOLLOWING_PROTOTYPES`).
+struct ParkedRealm {
+    global: Value,
+    state: GlobalLexicalState,
+    prototypes: [Value; REALM_FOLLOWING_PROTOTYPES.len()],
+}
+/// The natives whose prototypes VM fields follow from the active realm
+/// (`Vm::realm_prototype_field`).
+const REALM_FOLLOWING_PROTOTYPES: [Native; 4] =
+    [Native::Object, Native::Function, Native::Array, Native::String];
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct FieldCache {
     receiver: u32,
@@ -1410,42 +1426,60 @@ impl<H: Host> Vm<H> {
     #[cold]
     #[inline(never)]
     fn swap_realm_global(&mut self, previous: Value, global: Value) {
-        self.realm.global_lexical_states.insert(
-            previous,
-            GlobalLexicalState {
+        let leaving = ParkedRealm {
+            global: previous,
+            state: GlobalLexicalState {
                 declarations: std::mem::take(&mut self.realm.global_lexical_declarations),
                 bindings: std::mem::take(&mut self.realm.global_lexical_bindings),
                 immutable_bindings: std::mem::take(
                     &mut self.realm.immutable_global_lexical_bindings,
                 ),
             },
-        );
-        let state = self
-            .realm
-            .global_lexical_states
-            .remove(&global)
-            .unwrap_or_default();
+            prototypes: REALM_FOLLOWING_PROTOTYPES.map(|native| *self.realm_prototype_field(native)),
+        };
+        let parked = match self.realm.parked.replace(leaving) {
+            Some(parked) if parked.global == global => Some(parked),
+            parked => {
+                if let Some(parked) = parked {
+                    self.realm.global_lexical_states.insert(parked.global, parked.state);
+                }
+                None
+            }
+        };
         self.realm.globals = global;
+        let state = match parked {
+            Some(parked) => {
+                // Natives are shared by every realm and allocate from these fields, so the
+                // fields follow the active realm: a native called from a realm builds that
+                // realm's objects.
+                for (native, prototype) in REALM_FOLLOWING_PROTOTYPES.into_iter().zip(parked.prototypes) {
+                    debug_assert!(self
+                        .realm
+                        .intrinsics
+                        .builtin_prototypes
+                        .get(&(global, native))
+                        .is_none_or(|intrinsic| *intrinsic == prototype));
+                    *self.realm_prototype_field(native) = prototype;
+                }
+                parked.state
+            }
+            None => {
+                for native in REALM_FOLLOWING_PROTOTYPES {
+                    if let Some(&prototype) = self
+                        .realm
+                        .intrinsics
+                        .builtin_prototypes
+                        .get(&(global, native))
+                    {
+                        *self.realm_prototype_field(native) = prototype;
+                    }
+                }
+                self.realm.global_lexical_states.remove(&global).unwrap_or_default()
+            }
+        };
         self.realm.global_lexical_declarations = state.declarations;
         self.realm.global_lexical_bindings = state.bindings;
         self.realm.immutable_global_lexical_bindings = state.immutable_bindings;
-        // Natives are shared by every realm and allocate from these fields, so the fields
-        // follow the active realm: a native called from a realm builds that realm's objects.
-        for native in [
-            Native::Object,
-            Native::Function,
-            Native::Array,
-            Native::String,
-        ] {
-            if let Some(&prototype) = self
-                .realm
-                .intrinsics
-                .builtin_prototypes
-                .get(&(global, native))
-            {
-                *self.realm_prototype_field(native) = prototype;
-            }
-        }
     }
 
     /// The VM field holding the active realm's `native.prototype`.
