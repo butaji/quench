@@ -4066,6 +4066,9 @@ lane_handler! {
             let Some((registers, next, view)) = lane_complete_activation(cx, array) else {
                 unreachable!("a returning lane construction has an activation caller");
             };
+            if is_exit(next) {
+                return next;
+            }
             next!(cx, registers, next, view)
         }
         r.set(i.a, array);
@@ -4180,6 +4183,9 @@ lane_handler! {
             let Some((registers, next, view)) = lane_complete_activation(cx, value) else {
                 unreachable!("a returning lane call has an activation caller");
             };
+            if is_exit(next) {
+                return next;
+            }
             next!(cx, registers, next, view)
         }
         r.set(i.a, value);
@@ -4284,9 +4290,16 @@ lane_handler! {
                 next!(cx, r, following(ip), Carried::SCRIPT)
             }
             if let Some((registers, next, view)) = lane_complete_activation(cx, this) {
+                if is_exit(next) {
+                    return next;
+                }
                 next!(cx, registers, next, view)
             }
-            // A frame completes in the general loop, which the activation below leaves for.
+            // The frame's own construct: the general loop returns the receiver from it, unless
+            // proper tail calls send it to the activation below, which leaves for that loop.
+            if lane_returning_call_admitted(cx) {
+                return lane_frame_return(vm, ip, this);
+            }
         }
         match lane_activate(cx, r, ip, target, i.c, this, true) {
             Ok((registers, base)) => next!(cx, registers, base, Carried::SCRIPT),
@@ -4483,12 +4496,7 @@ fn lane_activate<H: Host>(
     // activation's return does in the lane. A host permitting proper tail calls
     // sends strict terminal calls to the general dispatch path instead.
     let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
-    if returns
-        && vm.lane_stack.activations.last().is_none_or(|caller| {
-            vm.host.proper_tail_calls()
-                && unsafe { &*(*cx).code }.functions[caller.function as usize].strict
-        })
-    {
+    if returns && !lane_returning_call_admitted(cx) {
         return Err(exit(ip));
     }
     if argc > target.params
@@ -4668,12 +4676,7 @@ fn lane_activate_keeping<H: Host>(
     // activation's return does in the lane. A host permitting proper tail calls
     // sends strict terminal calls to the general dispatch path instead.
     let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
-    if returns
-        && vm.lane_stack.activations.last().is_none_or(|caller| {
-            vm.host.proper_tail_calls()
-                && unsafe { &*(*cx).code }.functions[caller.function as usize].strict
-        })
-    {
+    if returns && !lane_returning_call_admitted(cx) {
         return Err(exit(ip));
     }
     if (argc > usize::from(target.params) && !target.forwards)
@@ -4940,10 +4943,44 @@ lane_handler! {
     fn lane_return<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         if let Some((registers, next, view)) = lane_complete_activation(cx, r.get(i.a)) {
+            if is_exit(next) {
+                return next;
+            }
             next!(cx, registers, next, view)
         }
         lane_return_frame::<H>(r, ip)
     }
+}
+
+/// Whether a call record that returns its callee's completion runs in the lane: from an
+/// activation, which completes in turn, or from the frame, which the general loop then
+/// completes with the value (`lane_frame_return`). A host permitting proper tail calls sends
+/// a strict caller's terminal calls to the general dispatch path instead.
+#[inline(always)]
+fn lane_returning_call_admitted<H: Host>(cx: *mut LaneContext<H>) -> bool {
+    let vm = unsafe { vm(cx) };
+    if !vm.host.proper_tail_calls() {
+        return true;
+    }
+    let function = match vm.lane_stack.activations.last() {
+        Some(caller) => caller.function,
+        None => vm.frames[unsafe { (*cx).frame }].function,
+    };
+    !unsafe { &*(*cx).code }.functions[function as usize].strict
+}
+
+/// The frame's own call record at `call` returns `value`, its callee's completion: the
+/// general loop returns it from the frame at that instruction (`Vm::lane_returned`).
+#[inline(always)]
+fn lane_frame_return<H: Host>(vm: &mut Vm<H>, call: Ip, value: Value) -> Ip {
+    vm.lane_returned = Some(value);
+    exit(call)
+}
+
+/// Whether a handler's successor is a lane exit rather than a record.
+#[inline(always)]
+fn is_exit(ip: Ip) -> bool {
+    ip.addr() & EXIT_TAG != 0
 }
 
 /// Complete the innermost lane activation with `value`, as a return from it does: its
@@ -4989,13 +5026,21 @@ fn lane_complete_activation<H: Host>(
             };
             return Some((activation.caller_registers, following(activation.call), view));
         }
-        // The call returns its callee's completion, and `lane_script_call` makes such a call
-        // only from an activation, which completes in turn.
-        activation = vm
-            .lane_stack
-            .activations
-            .pop()
-            .expect("a returning lane call has an activation caller");
+        // The call returns its callee's completion: its caller completes in turn, an
+        // activation here or the frame in the general loop, which the exit hands it to.
+        let Some(caller) = vm.lane_stack.activations.pop() else {
+            let view = Carried {
+                memory: caller_memory,
+                integers: crate::value::IntegerEncoding::TAG,
+                acc: Value::UNDEFINED,
+            };
+            return Some((
+                activation.caller_registers,
+                lane_frame_return(vm, activation.call, value),
+                view,
+            ));
+        };
+        activation = caller;
     }
 }
 
@@ -5080,6 +5125,9 @@ lane_handler! {
             return exit(ip);
         };
         if let Some((registers, next, view)) = lane_complete_activation(cx, value) {
+            if is_exit(next) {
+                return next;
+            }
             next!(cx, registers, next, view)
         }
         exit(ip)

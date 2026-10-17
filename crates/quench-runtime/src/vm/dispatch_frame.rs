@@ -1576,6 +1576,8 @@ impl<H: Host> Vm<H> {
             // Returns and inline calls produce their step result here rather than through the
             // general `step` dispatch.
             let step = match ins.op() {
+                // A call the lane made returned its callee's completion from this frame.
+                _ if let Some(value) = self.lane_returned.take() => Ok(StepResult::Return(value)),
                 Op::Return => Ok(StepResult::Return(self.read(frame, ins.register_a()))),
                 Op::Call if allow_inline_calls => {
                     match self.try_inline_user_call(p, frame, ins, pc) {
