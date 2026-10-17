@@ -170,7 +170,7 @@ fn decoder_rejects_out_of_range_local_load() {
             static_name_scope: Default::default(),
             call_plan: Default::default(),
             handlers: vec![].into(),
-            register_root_offset: 0,
+            register_roots: Default::default(),
             undefined_register: None,
             parameter_registers: None,
             initial_register: Default::default(),
@@ -182,7 +182,6 @@ fn decoder_rejects_out_of_range_local_load() {
         object_sites: vec![],
         regexp_literal_sites: vec![],
         superinstructions: vec![],
-        register_roots: vec![],
     };
     let path = std::env::temp_dir().join(format!("quench-invalid-local-{}", std::process::id()));
     program.write_binary(&path).unwrap();
@@ -253,7 +252,7 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             static_name_scope: Default::default(),
             call_plan: Default::default(),
             handlers: vec![].into(),
-            register_root_offset: u32::MAX,
+            register_roots: Default::default(),
             undefined_register: None,
             parameter_registers: None,
             initial_register: Default::default(),
@@ -265,7 +264,6 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
         object_sites: vec![],
         regexp_literal_sites: vec![],
         superinstructions: vec![],
-        register_roots: vec![],
     };
     let path = std::env::temp_dir().join(format!("quench-invalid-abi-{}", std::process::id()));
     program.write_binary(&path).unwrap();

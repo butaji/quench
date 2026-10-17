@@ -968,6 +968,17 @@ impl<H: Host> Vm<H> {
         JsError::thrown(object, text)
     }
 
+    /// The ReferenceError for reading `atom` in its temporal dead zone, naming the binding as
+    /// the source spells it.
+    pub(super) fn uninitialized_binding_error(
+        &mut self,
+        program: &ResidualProgram,
+        atom: Atom,
+    ) -> JsError {
+        let name = crate::bytecode::source_binding_name(self.atom_name(atom)).to_owned();
+        self.reference_error(program, format!("Cannot access '{name}' before initialization"))
+    }
+
     pub(super) fn reference_error(&mut self, program: &ResidualProgram, text: String) -> JsError {
         let message = self.heap.alloc(Cell::String(JsString::from_str(&text)));
         let object = self

@@ -12,12 +12,14 @@ impl Profile {
 }
 
 pub(super) fn report(profile: &Profile, program_id: u32, program: &ResidualProgram) {
-    let distinct: FxHashSet<_> = program.register_roots.iter().copied().collect();
-    let runs = program
-        .functions
+    let maps = (0..program.functions.len() as u32)
+        .filter_map(|function| program.register_root_masks(function))
+        .collect::<Vec<_>>();
+    let entries = maps.iter().map(|masks| masks.len()).sum::<usize>();
+    let distinct: FxHashSet<_> = maps.iter().flat_map(|masks| masks.iter().copied()).collect();
+    let runs = maps
         .iter()
-        .filter(|function| function.register_root_offset != u32::MAX)
-        .map(|function| function_runs(function, program))
+        .map(|masks| masks.windows(2).filter(|pair| pair[0] != pair[1]).count() + 1)
         .sum::<usize>();
     let observed_masks: FxHashSet<_> = profile
         .gc_frame_pcs
@@ -42,8 +44,8 @@ pub(super) fn report(profile: &Profile, program_id: u32, program: &ResidualProgr
         .sum::<u64>();
     eprint!(
         ",\"root_maps\":{{\"full_entries\":{},\"full_bytes\":{},\"distinct_masks\":{},\"mask_runs\":{runs},\"observed_sites\":{},\"observed_masks\":{},\"frame_observations\":{observations},\"active_observations\":{active},\"suspended_observations\":{}}}",
-        program.register_roots.len(),
-        program.register_roots.len() * size_of::<u64>(),
+        entries,
+        entries * size_of::<u64>(),
         distinct.len(),
         profile
             .gc_frame_pcs
@@ -55,17 +57,6 @@ pub(super) fn report(profile: &Profile, program_id: u32, program: &ResidualProgr
     );
 }
 
-fn function_runs(function: &crate::bytecode::Function, program: &ResidualProgram) -> usize {
-    let start = function.register_root_offset as usize;
-    program.register_roots[start..start + function.code.len() + 1]
-        .windows(2)
-        .filter(|pair| pair[0] != pair[1])
-        .count()
-        + 1
-}
-
 fn root_mask(program: &ResidualProgram, function: u32, pc: u32) -> Option<u64> {
-    let function = program.functions.get(function as usize)?;
-    (function.register_root_offset != u32::MAX)
-        .then(|| program.register_roots[function.register_root_offset as usize + pc as usize])
+    program.register_root_mask(function, pc as usize)
 }

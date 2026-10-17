@@ -1744,13 +1744,7 @@ impl<H: Host> Vm<H> {
                         .copied()
                 })
                 .unwrap_or_default();
-            return Err(self.reference_error(
-                p,
-                format!(
-                    "Cannot access '{}' before initialization",
-                    self.atom_name(atom)
-                ),
-            ));
+            return Err(self.uninitialized_binding_error(p, atom));
         }
         Ok(value)
     }
@@ -1855,13 +1849,7 @@ impl<H: Host> Vm<H> {
                 .and_then(|metadata| metadata.local_atoms.get(usize::from(slot)))
                 .copied()
                 .unwrap_or_default();
-            return Err(self.reference_error(
-                p,
-                format!(
-                    "Cannot access '{}' before initialization",
-                    self.atom_name(atom)
-                ),
-            ));
+            return Err(self.uninitialized_binding_error(p, atom));
         }
         if atom.is_some_and(|atom| self.is_self_binding(atom)) {
             if p.functions[self.frames[frame].function as usize].strict {
@@ -2089,13 +2077,7 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<Value, JsError> {
         if value.is_deleted() {
-            return Err(self.reference_error(
-                p,
-                format!(
-                    "Cannot access '{}' before initialization",
-                    self.atom_name(atom)
-                ),
-            ));
+            return Err(self.uninitialized_binding_error(p, atom));
         }
         Ok(value)
     }

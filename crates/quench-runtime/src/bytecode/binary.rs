@@ -276,7 +276,7 @@ pub(super) fn write_program(
         }
         out.u16(function.registers);
         out.u8(function.dispatch as u8);
-        out.u32(function.register_root_offset);
+        out.u8(u8::from(function.register_roots.covered()));
         out.u16(function.undefined_register.unwrap_or(NO_UNDEFINED_REGISTER));
         out.u16(
             function
@@ -360,10 +360,6 @@ pub(super) fn write_program(
             out.u16(instruction.c());
             out.u32(instruction.imm());
         }
-    }
-    out.u32(program.register_roots.len() as u32);
-    for value in &program.register_roots {
-        out.u64(*value);
     }
     std::fs::write(path, out.bytes).map_err(|error| error.to_string())
 }
@@ -593,7 +589,11 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             1 => DispatchClass::Numeric,
             _ => return Err("invalid residual dispatch class".into()),
         };
-        let register_root_offset = input.u32()?;
+        let register_roots = match input.u8()? {
+            0 => super::RegisterRoots::new(false),
+            1 => super::RegisterRoots::new(true),
+            _ => return Err("invalid residual register root coverage".into()),
+        };
         let undefined_register =
             Some(input.u16()?).filter(|register| *register != NO_UNDEFINED_REGISTER);
         let parameter_registers = Some(input.u16()?).filter(|base| *base != NO_PARAMETER_REGISTERS);
@@ -710,7 +710,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             static_name_scope: Default::default(),
             call_plan: Default::default(),
             handlers: handlers.into(),
-            register_root_offset,
+            register_roots,
             undefined_register,
             parameter_registers,
             initial_register,
@@ -773,7 +773,6 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         }
         Ok(Superinstruction::new(code))
     })?;
-    let register_roots = input.list(|input| input.u64())?;
     input.finish()?;
     let program = super::ResidualProgram {
         specialized,
@@ -793,7 +792,6 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         object_sites,
         regexp_literal_sites,
         superinstructions,
-        register_roots,
     };
     program.validate()?;
     Ok(program)
