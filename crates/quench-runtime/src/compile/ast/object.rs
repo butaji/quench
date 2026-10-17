@@ -133,7 +133,7 @@ impl FunctionCompiler<'_, '_> {
                     );
                 } else if let Some(name) = Self::static_key(&property.key) {
                     let name = self.owner.atom(&format!("{accessor} {name}"));
-                    self.emit(Op::SetFunctionName, item, 0, 0, name);
+                    self.emit_function_name(item, name);
                 } else {
                     self.emit(
                         Op::SetFunctionNameKey,
@@ -222,7 +222,7 @@ impl FunctionCompiler<'_, '_> {
             );
             let atom = self.owner.atom(key);
             if Self::anonymous_function_definition(&property.value) {
-                self.emit(Op::SetFunctionName, item, 0, 0, atom);
+                self.emit_function_name(item, atom);
             }
             self.emit(Op::DefineField, item, dst, 0, atom);
         }

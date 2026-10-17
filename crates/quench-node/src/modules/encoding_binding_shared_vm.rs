@@ -38,6 +38,8 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
             ("encodeUtf8String", "encodingUtf8"),
             ("encodeInto", "encodingInto"),
             ("decodeUTF8", "encodingDecodeUtf8"),
+            ("toASCII", "encodingToAscii"),
+            ("toUnicode", "encodingToUnicode"),
         ] {
             let function =
                 c.host_function_with_data(crate::host::shared_vm::operation(operation), data)?;
@@ -143,4 +145,23 @@ pub(crate) fn decode(
         String::from_utf8_lossy(bytes)
     };
     Ok(c.string_rooted(&text))
+}
+
+/// `toASCII(domain)`: UTS #46 ToASCII, or the empty string on failure (`ada::idna::to_ascii`).
+pub(crate) fn to_ascii(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let input = match args.first() {
+        Some(value) => c.to_string(*value)?,
+        None => String::new(),
+    };
+    let ascii = idna::domain_to_ascii(&input).unwrap_or_default();
+    Ok(c.string_rooted(&ascii))
+}
+
+/// `toUnicode(domain)`: UTS #46 ToUnicode (`ada::idna::to_unicode`).
+pub(crate) fn to_unicode(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let input = match args.first() {
+        Some(value) => c.to_string(*value)?,
+        None => String::new(),
+    };
+    Ok(c.string_rooted(&idna::domain_to_unicode(&input).0))
 }

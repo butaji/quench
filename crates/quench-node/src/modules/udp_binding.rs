@@ -93,6 +93,7 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         let b = c.object_rooted()?;
         let constructor =
             c.host_constructor_named(crate::host::shared_vm::operation("udpConstruct"), "UDP")?;
+        crate::host::shared_vm::commonjs::cached_native_binding(c,"\0native:UDPConstructor", |_|Ok(constructor))?;
         let prototype = get(c, constructor, "prototype")?;
         let handle = super::tcp_binding::handle_prototype(c)?;
         c.set_prototype_rooted(prototype, handle)?;
@@ -921,4 +922,38 @@ pub(crate) fn cleanup(runtime:&mut Runtime<NodeHost>){
     }
     for root in roots {runtime.release_root(root);}
     for id in contexts {super::async_hooks_shared_vm::clear_context(runtime,&shared,id);}
+}
+
+/// Native IPC uses this branded authority, never a mutable guest `fd` property.
+#[cfg(unix)]
+pub(crate) fn duplicate_descriptor(
+    c: &mut Context<'_>, handle: RootId,
+) -> Result<std::os::fd::OwnedFd, RootedError> {
+    let id = id(c, handle)?;
+    let shared = c.host_mut().shared_state();
+    let result = shared.borrow().udp.endpoints.get(&id)
+        .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EBADF))
+        .and_then(|socket| socket.io.duplicate_descriptor());
+    result.map_err(|error| RootedError::host(format!("IPC UDP descriptor duplication failed: {error}")))
+}
+
+/// Construct a genuine native wrapper (including real init/ALS identity),
+/// then transfer the received descriptor into its authoritative endpoint.
+#[cfg(unix)]
+pub(crate) fn from_owned_descriptor(
+    c: &mut Context<'_>, fd: std::os::fd::OwnedFd,
+) -> Result<RootId, RootedError> {
+    binding(c)?;
+    let constructor=crate::host::shared_vm::commonjs::cached_native_binding(c,"\0native:UDPConstructor", |_|Err(RootedError::host("native UDP constructor authority missing")))?;
+    let handle = c.construct_rooted(constructor, constructor, &[])?;
+    let id = id(c, handle)?;
+    let shared = c.host_mut().shared_state();
+    let result = shared.borrow_mut().udp.endpoints.get_mut(&id)
+        .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EBADF))
+        .and_then(|socket| socket.io.adopt_owned_descriptor(fd));
+    if let Err(error) = result {
+        close(c, handle, &[])?;
+        return Err(RootedError::host(format!("IPC UDP descriptor adoption failed: {error}")));
+    }
+    Ok(handle)
 }
