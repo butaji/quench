@@ -925,6 +925,7 @@ impl Engine {
                 dispatch: DispatchClass::General,
                 decoded: Default::default(),
                 plain_locals: Default::default(),
+                declared_atom_sets: Default::default(),
                 activation_bindings: Default::default(),
                 live_parameter_reflection: Default::default(),
                 static_name_scope: Default::default(),
