@@ -746,7 +746,6 @@ fn native_length(kind: Native) -> Option<f64> {
         | Native::SetIsSupersetOf => 1.0,
         Native::SetSpeciesGetter => 0.0,
         Native::SetClear | Native::SetKeys | Native::SetValues | Native::SetEntries => 0.0,
-        Native::ToString => 1.0,
         Native::ArrayFrom | Native::ArrayFromAsync | Native::ArrayIsArray => 1.0,
         Native::TypedArrayFrom => 1.0,
         Native::Uint8Array

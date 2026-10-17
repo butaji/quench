@@ -4,6 +4,9 @@ pub(crate) const INTRINSIC_REGEXP_BINDING: &str = "\0quench:intrinsic-regexp";
 /// The engine-internal global a `with` statement calls to enter its object scope.
 pub(crate) const WITH_ENTER_BINDING: &str = "\0quench:with-enter";
 pub(crate) const LEXICAL_THIS_BINDING: &str = "\0quench:lexical-this";
+/// The `Unary` operator a template literal substitution compiles to: ToString (ECMA-262
+/// 13.15.5.1 step 5), which no source operator spells. It extends oxc's operator numbering.
+pub(crate) const UNARY_TO_STRING: u32 = oxc_ast::ast::UnaryOperator::Delete as u32 + 1;
 pub(crate) const NEW_TARGET_BINDING: &str = "\0quench:new-target";
 
 pub type Atom = u32;

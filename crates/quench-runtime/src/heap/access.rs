@@ -200,10 +200,12 @@ impl Heap {
     #[inline(always)]
     pub(crate) fn object_mut(&mut self, value: Value) -> Option<&mut Object> {
         if let Some(record_id) = value.direct_object_index() {
+            self.remember_record(HeapReference::ObjectRecord(record_id));
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
             return Some(unsafe { self.object_records.get_live_mut(record_id) });
         }
         if let Some(record_id) = value.direct_array_index() {
+            self.remember_record(HeapReference::ArrayRecord(record_id));
             // SAFETY: direct-array Values name live records; `&mut self` is exclusive.
             return Some(unsafe { self.array_records.get_live_mut(record_id) });
         }
@@ -217,8 +219,9 @@ impl Heap {
         value: Value,
     ) -> Option<(&mut Object, &mut ValueArena)> {
         let reference = value.heap_reference()?;
-        if let HeapReference::LegacySlot(index) = reference {
-            self.remember(index as usize);
+        match reference {
+            HeapReference::LegacySlot(index) => self.remember(index as usize),
+            record => self.remember_record(record),
         }
         let Self {
             object_records,
@@ -278,6 +281,7 @@ impl Heap {
     #[inline(always)]
     pub(crate) fn record_array_mut(&mut self, value: Value) -> Option<&mut ArrayObject> {
         let record_id = value.direct_array_index()?;
+        self.remember_record(HeapReference::ArrayRecord(record_id));
         // SAFETY: direct-array Values name live records; `&mut self` is exclusive.
         Some(unsafe { self.array_records.get_live_mut(record_id) })
     }
@@ -328,6 +332,7 @@ impl Heap {
     #[cfg(test)]
     pub(crate) fn object_record_mut(&mut self, value: Value) -> Option<&mut Object> {
         let record_id = value.direct_object_index()?;
+        self.remember_record(HeapReference::ObjectRecord(record_id));
         // SAFETY: direct-object Values name live records and `&mut self` is exclusive.
         Some(unsafe { self.object_records.get_live_mut(record_id) })
     }

@@ -14,6 +14,11 @@ const MIN_CAPACITY: usize = 2;
 const BUCKETS: usize = 32;
 const DENSE_ARENA_RESERVE_THRESHOLD: usize = 65_536;
 const DENSE_ARENA_GROWTH_DIVISOR: usize = 3;
+/// Compaction waits until half the arena is released ranges, bounding the arena at
+/// twice its live values plus the bucket rounding of each vector. Free buckets reuse
+/// released ranges in between; a quarter still compacted on every collection of a
+/// steady request loop (SaltyAom hono, one sort and slide of all live vectors each).
+const RELEASED_FRACTION_FOR_COMPACTION: usize = 2;
 
 /// Compact per-object shape, integrity, and property-storage metadata.
 #[derive(Clone, Copy, Debug)]
@@ -378,6 +383,19 @@ impl ValueArena {
 
     pub(crate) fn has_released_ranges(&self) -> bool {
         self.free.iter().any(|bucket| !bucket.is_empty())
+    }
+
+    /// Whether released ranges hold at least `1 / RELEASED_FRACTION_FOR_COMPACTION` of the
+    /// arena. Below that, free buckets serve new vectors and sliding every live range down
+    /// costs more than the space it returns.
+    pub(crate) fn fragmented(&self) -> bool {
+        let released = self
+            .free
+            .iter()
+            .enumerate()
+            .map(|(bucket, starts)| starts.len() * (MIN_CAPACITY << bucket))
+            .sum::<usize>();
+        released * RELEASED_FRACTION_FOR_COMPACTION >= self.values.len()
     }
 
     pub(crate) fn has_compact_range(&self, vector: ValueVec) -> bool {
