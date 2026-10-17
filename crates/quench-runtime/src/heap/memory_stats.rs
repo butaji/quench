@@ -258,3 +258,30 @@ impl Heap {
     }
 
 }
+
+impl HeapMemoryComposition {
+    /// Bytes the heap holds for live values: their slots, object headers, used property
+    /// values and payloads.
+    pub fn used_bytes(&self) -> usize {
+        self.occupied_slots * self.slot_size_bytes
+            + self.embedded_object_headers * self.object_header_size_bytes
+            + self.boxed_object_header_bytes
+            + self.live_property_used_values * size_of::<crate::Value>()
+            + self.cell_payload_bytes
+            + self.sparse_array_sidecar_bytes
+    }
+
+    /// Bytes the heap has reserved: arenas and records at capacity, plus payloads.
+    pub fn reserved_bytes(&self) -> usize {
+        self.slot_arena_reserved_bytes
+            + self.object_record_reserved_bytes
+            + self.array_record_reserved_bytes
+            + self.legacy_cell_record_reserved_bytes
+            + self.free_slot_metadata_bytes
+            + self.boxed_object_header_bytes
+            + self.property_arena_values_bytes
+            + self.property_arena_metadata_bytes
+            + self.cell_payload_bytes
+            + self.sparse_array_sidecar_bytes
+    }
+}

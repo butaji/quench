@@ -5,6 +5,7 @@
 
 pub(crate) mod assert_shared_vm;
 pub(crate) mod napi;
+pub(crate) mod worker_shared_vm;
 pub(crate) mod async_hook_registry_shared_vm;
 pub(crate) mod async_hooks_shared_vm;
 pub(crate) mod async_hooks_state;
@@ -50,6 +51,7 @@ pub(crate) mod crypto_sha1;
 pub(crate) mod crypto_shared_vm;
 pub(crate) mod crypto_strings;
 pub(crate) mod diagnostics_channel_shared_vm;
+#[cfg(not(quench_node_cares))]
 pub(crate) mod dns_shared_vm;
 pub(crate) mod domain_shared_vm;
 pub(crate) mod emitter_async_resource_shared_vm;
@@ -134,6 +136,8 @@ pub(crate) mod util_shared_vm;
 pub mod util_strip;
 pub(crate) mod util_style_shared_vm;
 pub(crate) mod util_system_error_shared_vm;
+pub(crate) mod ipc_serdes_shared_vm;
+pub(crate) mod serdes_shared_vm;
 pub(crate) mod v8_shared_vm;
 pub(crate) mod vm_shared_vm;
 pub(crate) mod web_stream_consumers_shared_vm;

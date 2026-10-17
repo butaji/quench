@@ -409,6 +409,20 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "napiCallback" (0) => crate::modules::napi::invoke,
         method "napiDrain" (0) => crate::modules::napi::drain,
         method "napiPromiseExecutor" (2) => crate::modules::napi::promise_executor,
+        method "messagingGlobalsInitialize" (0) => crate::modules::worker_shared_vm::initialize_globals,
+        method "messagingChannel" (0) => crate::modules::worker_shared_vm::channel,
+        method "messagingPost" (0) => crate::modules::worker_shared_vm::post,
+        method "messagingStart" (0) => crate::modules::worker_shared_vm::start,
+        method "messagingClose" (0) => crate::modules::worker_shared_vm::close,
+        method "messagingRef" (0) => crate::modules::worker_shared_vm::reference,
+        method "messagingHasRef" (0) => crate::modules::worker_shared_vm::has_ref,
+        method "messagingReceive" (0) => crate::modules::worker_shared_vm::receive,
+        method "messagingDrain" (0) => crate::modules::worker_shared_vm::drain,
+        method "workerStart" (0) => crate::modules::worker_shared_vm::worker_start,
+        method "workerRef" (0) => crate::modules::worker_shared_vm::worker_ref,
+        method "workerTerminate" (0) => crate::modules::worker_shared_vm::worker_terminate,
+        method "workerExited" (0) => crate::modules::worker_shared_vm::worker_exited,
+        method "workerCaptureError" (0) => crate::modules::worker_shared_vm::capture_error,
         method "eventsAddAbortListener" (2) => crate::modules::events_abort_shared_vm::add_abort_listener,
         method "abortListenerDispose" (0) => crate::modules::events_abort_shared_vm::abort_listener_dispose,
         method "eventWeakListenerCollected" (1) => crate::modules::events_weak_shared_vm::collected,
@@ -697,10 +711,54 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "performanceNotify" (0) => crate::modules::performance_binding_shared_vm::notify,
         method "performanceBootstrapMark" (0) => crate::modules::performance_binding_shared_vm::bootstrap_mark,
         method "perfHooksNow" (0) => crate::modules::perf_hooks::now,
-        method "dnsGetDefaultOrder" (0) => crate::modules::dns_shared_vm::get_default_order,
-        method "dnsSetDefaultOrder" (1) => crate::modules::dns_shared_vm::set_default_order,
-        method "dnsPromiseLookup" (2) => crate::modules::dns_shared_vm::promise_lookup,
-        method "dnsPromiseComplete" (3) => crate::modules::dns_shared_vm::promise_complete,
+        method "serdesSerializer" (0) => crate::modules::serdes_shared_vm::serializer,
+        method "serdesDeserializer" (0) => crate::modules::serdes_shared_vm::deserializer,
+        method "serdesRelease" (0) => crate::modules::serdes_shared_vm::release,
+        method "serdesWriteHeader" (0) => crate::modules::serdes_shared_vm::write_header,
+        method "serdesWriteValue" (0) => crate::modules::serdes_shared_vm::write_value,
+        method "serdesReleaseBuffer" (0) => crate::modules::serdes_shared_vm::release_buffer,
+        method "serdesTransferArrayBuffer" (0) => crate::modules::serdes_shared_vm::transfer_array_buffer,
+        method "serdesWriteUint32" (0) => crate::modules::serdes_shared_vm::write_uint32,
+        method "serdesWriteUint64" (0) => crate::modules::serdes_shared_vm::write_uint64,
+        method "serdesWriteDouble" (0) => crate::modules::serdes_shared_vm::write_double,
+        method "serdesWriteRawBytes" (0) => crate::modules::serdes_shared_vm::write_raw_bytes,
+        method "serdesTreatViewsAsHostObjects" (0) => crate::modules::serdes_shared_vm::treat_views_as_host_objects,
+        method "serdesReadHeader" (0) => crate::modules::serdes_shared_vm::read_header,
+        method "serdesReadValue" (0) => crate::modules::serdes_shared_vm::read_value,
+        method "serdesReceiveArrayBuffer" (0) => crate::modules::serdes_shared_vm::receive_array_buffer,
+        method "serdesWireFormatVersion" (0) => crate::modules::serdes_shared_vm::wire_format_version,
+        method "serdesReadUint32" (0) => crate::modules::serdes_shared_vm::read_uint32,
+        method "serdesReadUint64" (0) => crate::modules::serdes_shared_vm::read_uint64,
+        method "serdesReadDouble" (0) => crate::modules::serdes_shared_vm::read_double,
+        method "serdesReadRawBytes" (0) => crate::modules::serdes_shared_vm::read_raw_bytes,
+        method "v8HeapSpaces" (0) => crate::modules::v8_shared_vm::heap_spaces,
+        method "v8HeapStatistics" (0) => crate::modules::v8_shared_vm::heap_statistics,
+        method "v8HeapSpaceStatistics" (0) => crate::modules::v8_shared_vm::heap_space_statistics,
+        method "v8CachedDataVersionTag" (0) => crate::modules::v8_shared_vm::cached_data_version_tag,
+        method "v8IsStringOneByteRepresentation" (0) => crate::modules::v8_shared_vm::is_string_one_byte_representation,
+        method "v8HashSeed" (0) => crate::modules::v8_shared_vm::hash_seed,
+        #[cfg(not(quench_node_cares))]
+        method "caresCanonicalizeIp" (0) => crate::modules::dns_shared_vm::canonicalize_ip,
+        #[cfg(not(quench_node_cares))]
+        method "caresIpv6Buffer" (0) => crate::modules::dns_shared_vm::ipv6_buffer,
+        #[cfg(not(quench_node_cares))]
+        method "caresStrerror" (0) => crate::modules::dns_shared_vm::strerror,
+        #[cfg(not(quench_node_cares))]
+        method "caresChannel" (0) => crate::modules::dns_shared_vm::channel,
+        #[cfg(not(quench_node_cares))]
+        method "caresChannelRelease" (0) => crate::modules::dns_shared_vm::channel_release,
+        #[cfg(not(quench_node_cares))]
+        method "caresQuery" (0) => crate::modules::dns_shared_vm::query,
+        #[cfg(not(quench_node_cares))]
+        method "caresGetServers" (0) => crate::modules::dns_shared_vm::get_servers,
+        #[cfg(not(quench_node_cares))]
+        method "caresSetServers" (0) => crate::modules::dns_shared_vm::set_servers,
+        #[cfg(not(quench_node_cares))]
+        method "caresSetLocalAddress" (0) => crate::modules::dns_shared_vm::set_local_address,
+        #[cfg(not(quench_node_cares))]
+        method "caresCancel" (0) => crate::modules::dns_shared_vm::cancel,
+        #[cfg(not(quench_node_cares))]
+        method "caresDrain" (0) => crate::modules::dns_shared_vm::drain,
         method "dnsAddressArray" (0) => crate::modules::cares_binding::address_array,
         #[cfg(quench_node_cares)]
         method "dnsChannelConstruct" (3) => crate::modules::cares_channel_shared_vm::construct,
@@ -731,13 +789,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         #[cfg(quench_node_cares)]
         method "dnsRrBinary" (0) => crate::modules::cares_channel_shared_vm::binary,
         method "dnsRequestConstruct" (0) => crate::modules::cares_binding::construct,
-        method "dnsLookupService" (3) => crate::modules::dns_shared_vm::lookup_service,
-        method "dnsPromiseLookupService" (2) => crate::modules::dns_shared_vm::promise_lookup_service,
-        method "dnsServiceComplete" (3) => crate::modules::dns_shared_vm::service_complete,
         method "dnsGetNameInfo" (3) => crate::modules::cares_binding::getnameinfo,
         method "dnsGetAddrInfo" (5) => crate::modules::cares_binding::getaddrinfo,
-        method "dnsLookupComplete" (2) => crate::modules::dns_shared_vm::complete,
-        method "dnsLookup" (3) => crate::modules::dns_shared_vm::lookup,
         #[cfg(quench_icu)]
         method "icuGetConverter" (2) => crate::modules::icu_binding_shared_vm::get_converter,
         #[cfg(quench_icu)]
@@ -859,6 +912,11 @@ impl quench_runtime::Host for NodeHost {
 
     fn proper_tail_calls(&self) -> bool {
         false
+    }
+
+    /// Node agents (the main thread and workers) may block in `Atomics.wait`.
+    fn can_block(&self) -> bool {
+        true
     }
 
     fn initialize_shadow_realm(

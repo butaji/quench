@@ -155,7 +155,7 @@ mod sort;
 mod string;
 mod string_cache;
 mod string_extra;
-mod structured_clone;
+mod value_serializer;
 mod owned_clone_native;
 mod superinstruction;
 mod symbol;
@@ -183,6 +183,11 @@ mod typed_array_install;
 mod vm_init;
 pub(crate) mod wtf16;
 pub use error::JsError;
+pub use value_serializer::{
+    write_double, write_raw_bytes, write_uint32, write_uint64, HostObjectRead, SerializedValue, SharedWireInput, ValueDeserializer,
+    ValueSerializer, WireInput, WireOutput, WIRE_FORMAT_VERSION,
+};
+pub(crate) use value_serializer::{ReadHooks, WriteHooks};
 use wtf16::JsString;
 #[cfg(test)]
 mod tests;
