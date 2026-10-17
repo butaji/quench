@@ -40,6 +40,9 @@ pub struct CaseObservation {
     pub worker: Option<NodeOutcome>,
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
+    /// The observed process's own peak resident set size (`wait4`'s `ru_maxrss`), where
+    /// the platform reports it.
+    pub peak_rss_bytes: Option<u64>,
 }
 
 impl CaseObservation {
@@ -271,8 +274,9 @@ fn observe_process_in(
         .spawn()
         .map_err(|error| format!("spawn observed process: {error}"))?;
     let deadline = Instant::now() + timeout;
+    let mut peak_rss_bytes = None;
     let waited = loop {
-        match child.try_wait() {
+        match try_wait(&mut child, &mut peak_rss_bytes) {
             Ok(Some(status)) => break Ok(Some(status)),
             Ok(None) if Instant::now() < deadline => {
                 std::thread::sleep(Duration::from_millis(10));
@@ -294,7 +298,7 @@ fn observe_process_in(
         pending => {
             #[cfg(not(unix))]
             let _ = child.kill();
-            let status = child.wait().map_err(|error| error.to_string())?;
+            let status = wait(&mut child, &mut peak_rss_bytes).map_err(|error| error.to_string())?;
             pending.map_err(|error| format!("wait for Node worker: {error}"))?;
             status
         }
@@ -317,7 +321,56 @@ fn observe_process_in(
             .and_then(|bytes| serde_json::from_slice(&bytes).ok()),
         stdout: fs::read(stdout).map_err(|error| format!("read worker stdout: {error}"))?,
         stderr: fs::read(stderr).map_err(|error| format!("read worker stderr: {error}"))?,
+        peak_rss_bytes,
     })
+}
+
+/// `wait4` reports the reaped child's resource usage; Linux counts `ru_maxrss` in KiB.
+#[cfg(target_os = "linux")]
+const MAXRSS_UNIT_BYTES: u64 = 1024;
+
+/// Reap `child` if it has exited, recording its peak RSS.
+#[cfg(target_os = "linux")]
+fn try_wait(child: &mut std::process::Child, peak_rss_bytes: &mut Option<u64>) -> std::io::Result<Option<std::process::ExitStatus>> {
+    reap(child, libc::WNOHANG, peak_rss_bytes)
+}
+
+/// Reap `child`, blocking until it exits, recording its peak RSS.
+#[cfg(target_os = "linux")]
+fn wait(child: &mut std::process::Child, peak_rss_bytes: &mut Option<u64>) -> std::io::Result<std::process::ExitStatus> {
+    loop {
+        if let Some(status) = reap(child, 0, peak_rss_bytes)? {
+            return Ok(status);
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn reap(child: &mut std::process::Child, options: libc::c_int, peak_rss_bytes: &mut Option<u64>) -> std::io::Result<Option<std::process::ExitStatus>> {
+    use std::os::unix::process::ExitStatusExt;
+    let mut status = 0;
+    // SAFETY: zeroed rusage is a valid output buffer for wait4.
+    let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+    // SAFETY: `child` is this process's unreaped child.
+    let pid = unsafe { libc::wait4(child.id() as libc::pid_t, &mut status, options, &mut usage) };
+    match pid {
+        0 => Ok(None),
+        pid if pid < 0 => Err(std::io::Error::last_os_error()),
+        _ => {
+            *peak_rss_bytes = u64::try_from(usage.ru_maxrss).ok().map(|kib| kib * MAXRSS_UNIT_BYTES);
+            Ok(Some(std::process::ExitStatus::from_raw(status)))
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn try_wait(child: &mut std::process::Child, _: &mut Option<u64>) -> std::io::Result<Option<std::process::ExitStatus>> {
+    child.try_wait()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn wait(child: &mut std::process::Child, _: &mut Option<u64>) -> std::io::Result<std::process::ExitStatus> {
+    child.wait()
 }
 
 // Containers may have a PID 1 that does not reap orphaned fixture children.

@@ -203,27 +203,6 @@ const __nodeUrlToHttpOptions = (value) => {
   };
 };
 globalThis.__nodeUrlToHttpOptions = __nodeUrlToHttpOptions;
-globalThis.__nodeURL.revokeObjectURL = (value) => {
-  if (value === undefined) {
-    const error = new TypeError('The "url" argument must be specified');
-    error.code = "ERR_MISSING_ARGS";
-    throw error;
-  }
-  globalThis.__nodeBlobUrls?.delete(value);
-};
-globalThis.__nodeURL.createObjectURL = (value) => {
-  if (!globalThis.Blob || !(value instanceof globalThis.Blob)) {
-    const error = new TypeError(
-      'The "obj" argument must be an instance of Blob'
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
-  }
-  globalThis.__nodeBlobUrls ||= new Map();
-  const id = `blob:nodedata:${Math.random().toString(16).slice(2)}`;
-  globalThis.__nodeBlobUrls.set(id, value);
-  return id;
-};
 globalThis.__nodeIsURL = (value) => value instanceof globalThis.__nodeURL;
 globalThis.__nodeLegacyProtocolRelativeParts = (input) =>
   input.startsWith("//") && !/@|:\d+\//.test(input)
