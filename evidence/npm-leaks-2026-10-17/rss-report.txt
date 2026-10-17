@@ -1,0 +1,33 @@
+packages 300  quench lowest 269  not lowest 31
+  @typescript-eslint/type-utils            behavior-pass      quench   258.8  node   191.3  bun 122.3 
+  typescript-eslint                        behavior-pass      quench   270.4  node   218.6  bun 145.3 
+  @typescript-eslint/eslint-plugin         behavior-pass      quench   268.6  node   211.0  bun 145.5 
+  @typescript-eslint/tsconfig-utils        behavior-pass      quench   156.8  node   125.2  bun 81.0 
+  playwright                               behavior-pass      quench   173.7  node   128.8  bun 102.9 
+  @typescript-eslint/project-service       behavior-pass      quench   137.6  node   108.7  bun 81.0 
+  @typescript-eslint/scope-manager         behavior-pass      quench   142.6  node   130.4  bun 90.7 
+  @typescript-eslint/typescript-estree     behavior-pass      quench   137.7  node   129.1  bun 90.4 
+  @typescript-eslint/parser                behavior-pass      quench   137.3  node   130.2  bun 94.5 
+  @testing-library/dom                     behavior-pass      quench   143.1  node   176.4  bun 119.4 
+  jiti                                     behavior-pass      quench    61.8  node    90.0  bun 38.3 
+  jsdom                                    behavior-pass      quench   120.5  node   164.7  bun 98.5 
+  @babel/traverse                          behavior-pass      quench    67.6  node    80.2  bun 55.4 
+  @babel/template                          behavior-pass      quench    62.1  node    68.6  bun 52.0 
+  @babel/helpers                           behavior-pass      quench    62.4  node    69.4  bun 53.2 
+  @babel/generator                         behavior-pass      quench    57.2  node    67.3  bun 49.5 
+  undici                                   behavior-pass      quench    39.2  node    75.9  bun 33.2 
+  @babel/types                             behavior-pass      quench    54.1  node    66.5  bun 48.3 
+  vite                                     behavior-pass      quench    74.3  node    86.1  bun 69.2 
+  eslint-plugin-react-hooks                behavior-pass      quench    77.2  node    98.4  bun 72.8 
+  @babel/plugin-syntax-typescript          behavior-pass      quench    72.3  node   100.5  bun 71.1 
+  @babel/core                              behavior-pass      quench    71.9  node   101.1  bun 71.0 
+  vitest                                   behavior-pass      quench   102.3  node   116.6  bun 101.4 
+  @types/node                              declarations-pass  quench    72.9  node    72.5  bun 72.4 
+  rollup                                   behavior-pass      quench    52.8  node    75.8  bun 52.4 
+  @types/ws                                declarations-pass  quench    72.3  node    72.2  bun 71.9 
+  @types/react                             declarations-pass  quench    54.2  node    62.8  bun 53.9 
+  @types/ms                                declarations-pass  quench    44.6  node    63.0  bun 44.3 
+  @babel/helper-module-transforms          behavior-pass      quench    73.2  node   101.8  bun 73.0 
+  @types/yargs                             declarations-pass  quench    45.9  node    62.7  bun 45.7 
+  @types/babel__traverse                   declarations-pass  quench    55.2  node    62.7  bun 55.1 
+median MiB quench 22.6 node 63.5 bun 36.8
