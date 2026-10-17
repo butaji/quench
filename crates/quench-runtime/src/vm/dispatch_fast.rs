@@ -2245,8 +2245,8 @@ lane_handler! {
 #[inline(never)]
 fn lane_relation_other<H: Host>(operator: u32, left: Value, right: Value) -> Option<bool> {
     let vm = unsafe { vm(lane_context::<H>()) };
-    vm.identity_equality(operator, left, right)
-        .or_else(|| vm.instanceof_truthy(operator, left, right))
+    vm.instanceof_truthy(operator, left, right)
+        .or_else(|| vm.identity_equality(operator, left, right))
 }
 
 /// A taken jump. Backward jumps, the only ones that close a loop, are
