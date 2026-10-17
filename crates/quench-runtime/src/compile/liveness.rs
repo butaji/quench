@@ -335,6 +335,7 @@ mod tests {
         let function = Function {
             parent: None,
             name: None,
+            inferred_name: None,
             is_arrow: false,
             self_binding_slot: None,
             source_span: None,
