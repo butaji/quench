@@ -2343,7 +2343,75 @@ pub struct ResidualProgram {
     pub(crate) object_sites: Vec<ObjectSite>,
     pub(crate) regexp_literal_sites: Vec<RegExpLiteralSite>,
     pub(crate) superinstructions: Vec<Superinstruction>,
-    pub(crate) register_roots: Vec<u64>,
+    pub(crate) register_roots: RegisterRoots,
+}
+
+/// The live-register masks of every function whose registers fit a mask, concatenated: one
+/// per instruction and one at the end of its code, each `root_mask_bytes` of the function's
+/// registers wide, little-endian. A function's `register_root_offset` is the byte offset of
+/// its first mask. Most functions keep at most sixteen registers, so their masks take two
+/// bytes, a quarter of a `u64`, beside code that takes eight per instruction.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct RegisterRoots {
+    bytes: Vec<u8>,
+}
+
+/// The bytes of one live-register mask of a function with `registers` registers.
+pub(crate) fn root_mask_bytes(registers: u16) -> usize {
+    usize::from(registers).div_ceil(u8::BITS as usize).max(1)
+}
+
+impl RegisterRoots {
+    pub(crate) fn from_bytes(bytes: Vec<u8>) -> Self {
+        Self { bytes }
+    }
+
+    pub(crate) fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Appends one function's masks and returns their offset. Each mask names only the
+    /// function's registers, so it fits its width.
+    pub(crate) fn append(&mut self, registers: u16, masks: impl IntoIterator<Item = u64>) -> u32 {
+        let offset = u32::try_from(self.bytes.len()).unwrap_or(NO_REGISTER_ROOT_MAP);
+        let width = root_mask_bytes(registers);
+        for mask in masks {
+            self.bytes.extend_from_slice(&mask.to_le_bytes()[..width]);
+        }
+        offset
+    }
+
+    /// The mask before the `index`th instruction of the function whose masks start at
+    /// `offset`, or `None` past the table.
+    pub(crate) fn mask(&self, offset: u32, registers: u16, index: usize) -> Option<u64> {
+        let width = root_mask_bytes(registers);
+        let start = (offset as usize).checked_add(index.checked_mul(width)?)?;
+        let bytes = self.bytes.get(start..start.checked_add(width)?)?;
+        let mut mask = [0; size_of::<u64>()];
+        mask[..width].copy_from_slice(bytes);
+        Some(u64::from_le_bytes(mask))
+    }
+
+    /// The function's `count` masks from `offset`, or `None` when they leave the table.
+    pub(crate) fn masks(
+        &self,
+        offset: u32,
+        registers: u16,
+        count: usize,
+    ) -> Option<impl Iterator<Item = u64> + Clone + '_> {
+        let width = root_mask_bytes(registers);
+        let end = (offset as usize).checked_add(count.checked_mul(width)?)?;
+        let bytes = self.bytes.get(offset as usize..end)?;
+        Some(bytes.chunks_exact(width).map(|chunk| {
+            let mut mask = [0; size_of::<u64>()];
+            mask[..chunk.len()].copy_from_slice(chunk);
+            u64::from_le_bytes(mask)
+        }))
+    }
+
+    pub(crate) fn shrink_to_fit(&mut self) {
+        self.bytes.shrink_to_fit();
+    }
 }
 
 #[cold]
@@ -2384,7 +2452,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 93;
+    pub const FORMAT_VERSION: u8 = 94;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

@@ -360,9 +360,10 @@ pub(super) fn write_program(
             out.u32(instruction.imm());
         }
     }
-    out.u32(program.register_roots.len() as u32);
-    for value in &program.register_roots {
-        out.u64(*value);
+    let register_roots = program.register_roots.bytes();
+    out.u32(register_roots.len() as u32);
+    for byte in register_roots {
+        out.u8(*byte);
     }
     std::fs::write(path, out.bytes).map_err(|error| error.to_string())
 }
@@ -774,7 +775,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         }
         Ok(Superinstruction::new(code))
     })?;
-    let register_roots = input.list(|input| input.u64())?;
+    let register_roots = super::RegisterRoots::from_bytes(input.list(|input| input.u8())?);
     input.finish()?;
     let program = super::ResidualProgram {
         specialized,
