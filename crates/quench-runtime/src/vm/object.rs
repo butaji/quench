@@ -625,6 +625,7 @@ impl<H: Host> Vm<H> {
         self.accessor_field_caches.clear();
         self.instanceof_constructor_layout = None;
         self.closure_shapes = [None; 2];
+        self.regexp_object_shapes = None;
         self.regexp_last_index_layout = None;
         self.regexp_builtin_layout = None;
     }
@@ -1251,19 +1252,13 @@ impl<H: Host> Vm<H> {
         };
         let lookup = match legacy_cell {
             Some(Cell::String(_)) if self.specialized && p.specialized => {
-                if !self.field_cache_atom_eligible(atom) {
-                    FieldCacheRead::StringGeneric
-                } else {
-                    let prototype = self.string_proto;
-                    if let Some(receiver) = self.shape_property_lookup(prototype, atom) {
-                        let site = self.field_cache_index(site);
-                        match self.cached_field_value(site, receiver) {
-                            Some(hit) => FieldCacheRead::Hit(hit),
-                            None => FieldCacheRead::StringMiss { prototype, site },
-                        }
-                    } else {
-                        FieldCacheRead::StringGeneric
-                    }
+                match self.string_field_cache_read(atom, site) {
+                    Some(Some(hit)) => FieldCacheRead::Hit(hit),
+                    Some(None) => FieldCacheRead::StringMiss {
+                        prototype: self.string_proto,
+                        site: self.field_cache_index(site),
+                    },
+                    None => FieldCacheRead::StringGeneric,
                 }
             }
             Some(Cell::Proxy { .. }) => FieldCacheRead::Proxy,
@@ -1292,6 +1287,35 @@ impl<H: Host> Vm<H> {
                 Ok(hit.value)
             }
         }
+    }
+
+    /// The field cache's answer for a string primitive's read of `atom`, which
+    /// `String.prototype` answers: `None` when its shape cannot answer it, else the site's
+    /// hit, if any.
+    #[inline(always)]
+    fn string_field_cache_read(&self, atom: Atom, site: u16) -> Option<Option<FieldCacheHit>> {
+        if !self.field_cache_atom_eligible(atom) {
+            return None;
+        }
+        let receiver = self.shape_property_lookup(self.string_proto, atom)?;
+        Some(self.cached_field_value(self.field_cache_index(site), receiver))
+    }
+
+    /// `string_field_cache_read`'s hit for a cached site reading a string primitive `object`.
+    pub(super) fn cached_string_field_hit(
+        &self,
+        p: &ResidualProgram,
+        object: Value,
+        atom: Atom,
+        site: u16,
+    ) -> Option<Value> {
+        if !(self.specialized && p.specialized)
+            || !matches!(self.heap.get(object), Some(Cell::String(_)))
+        {
+            return None;
+        }
+        let hit = self.string_field_cache_read(atom, site)??;
+        Some(hit.value)
     }
 
     /// The field cache's answer for an object cell other than a string or a
