@@ -2644,6 +2644,11 @@ const getLinkedBinding = () => ({});
                 // The wrapper holds the text now, so the file is released before compiling it.
                 drop(text);
                 drop(file_text);
+                if parent.is_none() {
+                    // The entry's compilation is the start-up peak: only the parser's and
+                    // compiler's pages, not the bootstrap's, need be resident across it.
+                    crate::host::resident_pages::release_read_only_pages();
+                }
                 let wrapper = evaluate_wrapper(context, &prefix, &wrapper_source, &key)?;
                 // The compiled program keeps its own source; the module body runs inside this
                 // call, so the wrapper is released before it.
