@@ -2295,19 +2295,28 @@ impl<H: Host> Vm<H> {
         if set == NO_FIELD_ADD_SET {
             return false;
         }
-        let Some(&cache) =
-            unsafe { self.field_add_sets.get_unchecked(set as usize) }.find(shape, atom)
+        let Some(&mut cache) =
+            unsafe { self.field_add_sets.get_unchecked_mut(set as usize) }.find_mut(shape, atom)
         else {
             return false;
         };
-        // Entries record only non-dictionary source and prototype shapes, a shape's dictionary
-        // state is fixed when it is created, and shape compaction clears these caches, so a
-        // matching shape needs no dictionary probe here or along the prototype chain.
-        if !self.field_add_prototype_chain_matches(proto, cache.prototype_shapes()) {
-            return false;
+        let epoch = crate::heap::prototype_layout_epoch();
+        if cache.proved_epoch != epoch || cache.proved_prototype != proto {
+            // Entries record only non-dictionary source and prototype shapes, a shape's
+            // dictionary state is fixed when it is created, and shape compaction clears these
+            // caches, so a matching shape needs no dictionary probe here or along the chain.
+            if !self.field_add_prototype_chain_matches(proto, cache.prototype_shapes()) {
+                return false;
+            }
+            self.prove_field_add_chain(set as usize, shape, atom, proto, cache.prototype_depth, epoch);
         }
         debug_assert_eq!(cache.slot as usize, self.shapes[shape as usize].storage_len());
-        self.heap.property_add(object, value, cache.target_shape);
+        if !self
+            .heap
+            .add_inline_property(object, usize::from(cache.slot), value, cache.target_shape)
+        {
+            self.heap.property_add(object, value, cache.target_shape);
+        }
         if self.method_caches_may_name(atom) {
             self.invalidate_method_caches_for_prototype_add(object, atom);
         }
@@ -2344,6 +2353,36 @@ impl<H: Host> Vm<H> {
             prototype = data.proto();
         }
         Some(guard)
+    }
+
+    /// Records that the walk proved the chain from `proto` for the add entry of `shape` and
+    /// `atom` under `epoch`. Every link becomes a prototype first, so a later change to any of
+    /// them advances the epoch and retires the proof.
+    #[cold]
+    #[inline(never)]
+    fn prove_field_add_chain(
+        &mut self,
+        set: usize,
+        shape: u32,
+        atom: Atom,
+        proto: Value,
+        depth: u8,
+        epoch: u64,
+    ) {
+        let mut link = proto;
+        for _ in 0..depth {
+            self.heap.mark_prototype(link);
+            link = self.heap.object_record(link).map_or(Value::NULL, Object::proto);
+        }
+        // Marking a link that was no prototype yet leaves the epoch where it was, so the
+        // proof made before it holds.
+        if crate::heap::prototype_layout_epoch() != epoch {
+            return;
+        }
+        if let Some(cache) = self.field_add_sets[set].find_mut(shape, atom) {
+            cache.proved_epoch = epoch;
+            cache.proved_prototype = proto;
+        }
     }
 
     #[inline(always)]
