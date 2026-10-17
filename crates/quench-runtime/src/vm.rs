@@ -65,7 +65,6 @@ mod array_indexed;
 mod array_modern;
 mod atom_keys;
 mod atomics;
-mod atomics_shared;
 mod bigint;
 mod boolean;
 mod builtins;
@@ -120,6 +119,7 @@ mod method_cache;
 mod module;
 mod number;
 mod object;
+mod shape_slot_memo;
 mod object_assignment;
 mod object_array;
 mod object_builtins;
@@ -156,6 +156,7 @@ mod string;
 mod string_cache;
 mod string_extra;
 mod value_serializer;
+mod owned_clone_native;
 mod superinstruction;
 mod symbol;
 mod temporal;
@@ -546,23 +547,35 @@ struct FieldCache {
     slot: u16,
 }
 const NO_FIELD_HOLDER: u32 = u32::MAX;
-/// Prototypes an inherited field load may traverse to its holder. DeltaBlue's constraint
-/// methods sit three prototypes above their instances; deeper chains stay uncached.
-const INHERITED_FIELD_CACHE_MAX_DEPTH: usize = 4;
-/// A field load answered by a data property `depth` prototypes above a receiver of shape
-/// `receiver`: the chain still has exactly `prototype_shapes[..depth]`, the last of which
-/// holds the property at `slot`.
+/// Prototypes an inherited field load may traverse to its holder, or to the end of the chain
+/// for an absent name. Node's stream objects (an `IncomingMessage` above `Readable`, `Stream`,
+/// `EventEmitter` and `Object.prototype`) sit five prototypes above their instances; deeper
+/// chains stay uncached.
+const INHERITED_FIELD_CACHE_MAX_DEPTH: usize = 6;
+/// A field load answered `depth` prototypes above a receiver of shape `receiver`: the chain
+/// still has exactly `prototype_shapes[..depth]`, and `answer` says what that chain holds.
 #[derive(Clone, Copy)]
 struct InheritedFieldCache {
     receiver: u32,
     prototype_shapes: [u32; INHERITED_FIELD_CACHE_MAX_DEPTH],
     depth: u8,
-    slot: u16,
+    answer: InheritedFieldAnswer,
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum InheritedFieldAnswer {
+    /// The last recorded prototype holds the data property at this slot.
+    Slot(u16),
+    /// No recorded shape has the name and the last prototype's prototype is null: the load
+    /// is `undefined`.
+    Absent,
 }
 const NO_FIELD_RECEIVER: u32 = u32::MAX;
-// DeltaBlue's measured inherited writes reach three prototypes; keep the
-// residual cache bounded while covering that common constructor shape.
-const FIELD_ADD_CACHE_MAX_PROTO_DEPTH: usize = 4;
+/// A cache site without an inherited entry (`Vm::inherited_field_indices`).
+const NO_INHERITED_FIELD: u32 = u32::MAX;
+// A cached add proves every prototype up to this depth. Node's stream objects (an
+// `IncomingMessage` above `Readable`, `Stream`, `EventEmitter` and `Object.prototype`) add
+// their fields five prototypes below the chain's end; deeper chains stay uncached.
+const FIELD_ADD_CACHE_MAX_PROTO_DEPTH: usize = INHERITED_FIELD_CACHE_MAX_DEPTH;
 /// Source shapes one add site remembers; the oldest is evicted beyond this. Objects whose
 /// optional fields are assigned in varying order reach one add site with several shapes.
 const FIELD_ADD_CACHE_WAYS: usize = 4;
@@ -744,7 +757,10 @@ enum ShapeTransitionKey {
     FunctionNameReconfigured,
     FunctionLengthReconfigured,
     Constructed(Value, bool),
-    AddString(Atom, DataAttributes),
+    /// An added data property. A symbol key names a symbol a live shape keeps alive
+    /// (`append_shape_roots`); compaction rebuilds the index from live shapes only, so no
+    /// entry outlives the symbol it names.
+    Add(property_key::PropertyKey, DataAttributes),
     /// A descriptor without accessor functions (`ShapeAttributes::accessors` is
     /// `NO_SHAPE_ACCESSORS`).
     Descriptor {
@@ -863,17 +879,16 @@ impl ShapeTransition {
             Self::FunctionLengthReconfigured => Some(ShapeTransitionKey::FunctionLengthReconfigured),
             Self::Constructed { constructor, new_target_is_base } => Some(ShapeTransitionKey::Constructed(constructor, new_target_is_base)),
             Self::Add {
-                key: PropertyKey::String(atom),
+                key,
                 attributes,
                 ..
-            } => Some(ShapeTransitionKey::AddString(atom, attributes)),
+            } => Some(ShapeTransitionKey::Add(key, attributes)),
             // The transition table outlives individual properties. Never put
             // accessor values in a key, where they would become strong roots.
             Self::Descriptor { slot, attributes } if attributes.accessors == NO_SHAPE_ACCESSORS => {
                 Some(ShapeTransitionKey::Descriptor { slot, attributes })
             }
             Self::Root
-            | Self::Add { .. }
             | Self::Delete { .. }
             | Self::Vacant
             | Self::Descriptor { .. }
@@ -1195,6 +1210,7 @@ pub(crate) struct Vm<H> {
     lane_stack: dispatch_fast::LaneStack,
     /// Whether Wasm functions with a compiled denotation run as native code.
     execution_mode: ExecutionMode,
+    execution_interrupt: crate::ExecutionInterrupt,
     active_call_roots: Vec<Value>,
     with_stack: Vec<Value>,
     /// The realm's intrinsics as the host bootstrap left them (`seal_startup_intrinsics`).
@@ -1206,6 +1222,7 @@ pub(crate) struct Vm<H> {
     suspended: Vec<SuspendedEntry>,
     suspended_free: Vec<u32>,
     test262_agent: Test262AgentState,
+    shared_async_waiters:Vec<atomics::SharedAsyncWaiter>,
     programs: ProgramStore,
     program_cache_layouts: Vec<ProgramCacheLayout>,
     /// The register file of the frame the general loop dispatches; see `run_general_loop`.
@@ -1221,9 +1238,11 @@ pub(crate) struct Vm<H> {
     /// The getters and setters of shapes' accessor descriptors (`ShapeAttributes`).
     shape_accessors: Vec<ShapeAccessors>,
     transitions: shape_transitions::ShapeTransitionIndex,
+    shape_slot_memo: shape_slot_memo::ShapeSlotMemo,
     atom_text: AtomTable,
-    atoms: FxHashMap<u64, Atom>,
-    atom_collisions: FxHashMap<u64, Vec<Atom>>,
+    /// Every atom, hashed by its text (`atom_keys::text_hash`); equal hashes are told apart
+    /// by comparing the texts, which the atom tables hold.
+    atoms: hashbrown::HashTable<Atom>,
     /// The atoms that spell canonical array indices, by index: index-keyed lookups find
     /// them without formatting and hashing the decimal text.
     array_index_atoms: FxHashMap<u32, Atom>,
@@ -1245,7 +1264,10 @@ pub(crate) struct Vm<H> {
     field_caches: Vec<FieldCache>,
     /// Field load sites whose data property was found beyond the immediate prototype, by
     /// global site index; cleared with the field caches.
-    inherited_field_caches: FxHashMap<usize, InheritedFieldCache>,
+    /// Per cache site, the index of its `inherited_field_caches` entry, or
+    /// `NO_INHERITED_FIELD`.
+    inherited_field_indices: Vec<u32>,
+    inherited_field_caches: Vec<InheritedFieldCache>,
     field_add_indices: Vec<u32>,
     field_add_sets: Vec<FieldAddCacheSet>,
     megamorphic_field_indices: Vec<u32>,
@@ -1311,6 +1333,11 @@ struct IteratorRealmPrototypes {
     async_generator: Value,
 }
 impl<H: Host> Vm<H> {
+    pub(crate) fn execution_interrupt_handle(&self)->crate::ExecutionInterrupt { self.execution_interrupt.clone() }
+    pub(super) fn check_execution_interrupt(&self)->Result<(),JsError> {
+        if self.execution_interrupt.is_termination_requested() { Err(JsError::execution_terminated()) } else { Ok(()) }
+    }
+
     /// Makes `global`'s realm current, carrying each realm's global lexical
     /// scope with it; returns the previous realm's global.
     #[inline]
@@ -1621,6 +1648,7 @@ impl<H: Host> Vm<H> {
         if program.functions.is_empty() {
             return Err(JsError::validation("program has no entry function".into()));
         }
+        self.check_execution_interrupt()?;
         self.initialize(program)?;
         for (source, name) in scripts {
             self.eval_script_source(program, source, name)?;
@@ -1802,13 +1830,7 @@ impl<H: Host> Vm<H> {
             + self.field_add_indices.capacity() * size_of::<u32>()
             + self.field_add_sets.capacity() * size_of::<FieldAddCacheSet>()
             + self.method_caches.capacity() * size_of::<[MethodCache; 2]>();
-        let atom_side_table_bytes = self.atoms.capacity() * size_of::<(u64, Atom)>()
-            + self.atom_collisions.capacity() * size_of::<(u64, Vec<Atom>)>()
-            + self
-                .atom_collisions
-                .values()
-                .map(|atoms| atoms.capacity() * size_of::<Atom>())
-                .sum::<usize>()
+        let atom_side_table_bytes = self.atoms.capacity() * (size_of::<Atom>() + 1)
             + self.dynamic_atoms.capacity() * size_of::<JsString>()
             + self
                 .dynamic_atoms
@@ -1915,6 +1937,7 @@ impl<H: Host> Vm<H> {
         // The snapshot contains heap values, shapes and atom ids from one realm.
         // A host may build a builtin before sealing the replacement realm.
         self.startup_intrinsics = Default::default();
+        self.shared_async_waiters.clear();
         self.heap.reset();
         self.natives.clear();
         self.shared_natives.clear();
@@ -1934,12 +1957,12 @@ impl<H: Host> Vm<H> {
         self.realm.promise = Default::default();
         self.shapes.truncate(1);
         self.transitions.clear();
+        self.shape_slot_memo.clear();
         // The sealed holders and their shapes belong to the discarded heap.
         self.startup_intrinsics = Default::default();
         self.atom_text = program.atoms.clone();
         self.atom_sequence = Rc::new(crate::bytecode::AtomSequence::new(self.atom_text.clone()));
         self.atoms.clear();
-        self.atom_collisions.clear();
         self.array_index_atoms.clear();
         self.dynamic_atoms.clear();
         self.atom_classes.clear();
@@ -1975,6 +1998,7 @@ impl<H: Host> Vm<H> {
         self.field_caches = vec![EMPTY_CACHE; program.cache_sites as usize];
         Self::prime_loop_decoding(program);
         self.inherited_field_caches.clear();
+        self.inherited_field_indices = vec![NO_INHERITED_FIELD; program.cache_sites as usize];
         self.field_add_indices = vec![NO_FIELD_ADD_SET; program.cache_sites as usize];
         self.field_add_sets.clear();
         self.megamorphic_field_indices = vec![NO_MEGAMORPHIC_FIELD; program.cache_sites as usize];
@@ -2101,6 +2125,10 @@ impl<H: Host> Vm<H> {
         self.field_add_indices.resize(
             self.field_add_indices.len() + usize::from(program.cache_sites),
             NO_FIELD_ADD_SET,
+        );
+        self.inherited_field_indices.resize(
+            self.inherited_field_indices.len() + usize::from(program.cache_sites),
+            NO_INHERITED_FIELD,
         );
         self.method_caches.resize(
             self.method_caches.len() + program.method_sites.len(),

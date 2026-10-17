@@ -38,15 +38,7 @@ impl<H: Host> Vm<H> {
         hash: u64,
         mut matches: impl FnMut(Atom) -> bool,
     ) -> Option<Atom> {
-        let primary = self.atoms.get(&hash).copied()?;
-        if matches(primary) {
-            return Some(primary);
-        }
-        self.atom_collisions
-            .get(&hash)?
-            .iter()
-            .copied()
-            .find(|atom| matches(*atom))
+        self.atoms.find(hash, |&atom| matches(atom)).copied()
     }
 
     /// The atom for a run of code units, interned without a string when it already exists.

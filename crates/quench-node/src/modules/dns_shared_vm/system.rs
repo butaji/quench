@@ -1,30 +1,8 @@
-//! The operating system's resolver (libuv `getaddrinfo`/`getnameinfo`), the hosts file
-//! c-ares consults for reverse lookups, and libuv's address text forms.
+//! The hosts file and lookup order c-ares consults for reverse lookups, and libuv's
+//! address text forms.
 
-use std::ffi::{CStr, CString};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-/// glibc `getaddrinfo` failures and the libuv code names they translate to
-/// (`uv__getaddrinfo_translate_error`); `EAI_SYSTEM` reports `errno` instead.
-const EAI_NAMES: [(i32, &str); 12] = [
-    (EAI_ADDRFAMILY, "EAI_ADDRFAMILY"),
-    (libc::EAI_AGAIN, "EAI_AGAIN"),
-    (libc::EAI_BADFLAGS, "EAI_BADFLAGS"),
-    (libc::EAI_FAIL, "EAI_FAIL"),
-    (libc::EAI_FAMILY, "EAI_FAMILY"),
-    (libc::EAI_MEMORY, "EAI_MEMORY"),
-    (libc::EAI_NODATA, "EAI_NODATA"),
-    (libc::EAI_NONAME, "EAI_NONAME"),
-    (libc::EAI_OVERFLOW, "EAI_OVERFLOW"),
-    (libc::EAI_SERVICE, "EAI_SERVICE"),
-    (libc::EAI_SOCKTYPE, "EAI_SOCKTYPE"),
-    (libc::EAI_SYSTEM, "EAI_SYSTEM"),
-];
-/// glibc's `EAI_ADDRFAMILY` (`netdb.h`, a GNU extension the libc crate omits).
-const EAI_ADDRFAMILY: i32 = -9;
-/// `NI_MAXHOST` and `NI_MAXSERV` (glibc `netdb.h`), libuv's getnameinfo buffers.
-const NI_MAXHOST: usize = 1025;
-const NI_MAXSERV: usize = 32;
 const HOSTS_FILE: &str = "/etc/hosts";
 const NSSWITCH_FILE: &str = "/etc/nsswitch.conf";
 
@@ -35,78 +13,6 @@ pub(crate) fn uv_code(name: &str) -> i32 {
         .find(|row| row.1 == name)
         .map(|row| row.0)
         .expect("libuv defines every translated error")
-}
-
-fn translate(error: i32) -> i32 {
-    if error == libc::EAI_SYSTEM {
-        return -std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO);
-    }
-    let name = EAI_NAMES.iter().find(|row| row.0 == error).map_or("EAI_FAIL", |row| row.1);
-    uv_code(name)
-}
-
-/// libuv's `getaddrinfo` for a stream socket; addresses in the system's order, or the
-/// libuv error code.
-pub(crate) fn getaddrinfo(hostname: &str, family: i32, flags: i32) -> Result<Vec<IpAddr>, i32> {
-    let host = CString::new(hostname).map_err(|_| uv_code("EAI_NONAME"))?;
-    // SAFETY: an all-zero addrinfo is the documented "no hints" value.
-    let mut hints: libc::addrinfo = unsafe { std::mem::zeroed() };
-    hints.ai_family = family;
-    hints.ai_socktype = libc::SOCK_STREAM;
-    hints.ai_flags = flags;
-    let mut list = std::ptr::null_mut();
-    // SAFETY: valid NUL-terminated host, hints and out pointer; freed below.
-    let error = unsafe { libc::getaddrinfo(host.as_ptr(), std::ptr::null(), &hints, &mut list) };
-    if error != 0 {
-        return Err(translate(error));
-    }
-    let mut addresses = Vec::new();
-    let mut node = list;
-    while !node.is_null() {
-        // SAFETY: nodes come from getaddrinfo and stay valid until freeaddrinfo.
-        let entry = unsafe { &*node };
-        // SAFETY: ai_addr holds a sockaddr of the length and family the entry declares.
-        match entry.ai_family {
-            libc::AF_INET => {
-                let address = unsafe { &*(entry.ai_addr as *const libc::sockaddr_in) };
-                addresses.push(IpAddr::V4(Ipv4Addr::from(u32::from_be(address.sin_addr.s_addr))));
-            }
-            libc::AF_INET6 => {
-                let address = unsafe { &*(entry.ai_addr as *const libc::sockaddr_in6) };
-                addresses.push(IpAddr::V6(Ipv6Addr::from(address.sin6_addr.s6_addr)));
-            }
-            _ => {}
-        }
-        node = entry.ai_next;
-    }
-    // SAFETY: the list returned by the successful getaddrinfo above.
-    unsafe { libc::freeaddrinfo(list) };
-    Ok(addresses)
-}
-
-/// libuv's `getnameinfo` with `NI_NAMEREQD`: the host name and service, or the libuv code.
-pub(crate) fn getnameinfo(address: SocketAddr) -> Result<(String, String), i32> {
-    let storage: socket2::SockAddr = address.into();
-    let mut host = [0 as libc::c_char; NI_MAXHOST];
-    let mut service = [0 as libc::c_char; NI_MAXSERV];
-    // SAFETY: a valid socket address of its own length and two writable buffers.
-    let error = unsafe {
-        libc::getnameinfo(
-            storage.as_ptr().cast(),
-            storage.len(),
-            host.as_mut_ptr(),
-            host.len() as libc::socklen_t,
-            service.as_mut_ptr(),
-            service.len() as libc::socklen_t,
-            libc::NI_NAMEREQD,
-        )
-    };
-    if error != 0 {
-        return Err(translate(error));
-    }
-    // SAFETY: getnameinfo NUL-terminates both buffers on success.
-    let text = |buffer: &[libc::c_char]| unsafe { CStr::from_ptr(buffer.as_ptr()) }.to_string_lossy().into_owned();
-    Ok((text(&host), text(&service)))
 }
 
 /// `uv_inet_pton`: dotted-quad IPv4, or IPv6 with any `%scope` suffix ignored.

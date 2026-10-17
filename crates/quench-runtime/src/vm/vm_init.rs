@@ -1,7 +1,9 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
-    pub(crate) fn new(host: H) -> Self {
+    pub(crate) fn new(host: H) -> Self { Self::new_with_execution_interrupt(host,crate::ExecutionInterrupt::default()) }
+
+    pub(crate) fn new_with_execution_interrupt(host:H, execution_interrupt:crate::ExecutionInterrupt)->Self {
         Self {
             host,
             specialized: true,
@@ -69,12 +71,14 @@ impl<H: Host> Vm<H> {
             frame_pool: vec![],
             lane_stack: Default::default(),
             execution_mode: ExecutionMode::default(),
+            execution_interrupt,
             active_call_roots: vec![],
             with_stack: vec![],
             with_scope_entered: false,
             suspended: vec![],
             suspended_free: vec![],
             test262_agent: Default::default(),
+            shared_async_waiters:Vec::new(),
             programs: ProgramStore::default(),
             program_cache_layouts: Vec::new(),
             active_registers: std::ptr::null_mut(),
@@ -85,12 +89,12 @@ impl<H: Host> Vm<H> {
             profile: Profile::default(),
             #[cfg(not(feature = "profile-aggregate"))]
             profile: Profile,
+            shape_slot_memo: Default::default(),
             shapes: Shape::table(),
             shape_accessors: Vec::new(),
             transitions: Default::default(),
             atom_text: AtomTable::default(),
-            atoms: FxHashMap::default(),
-            atom_collisions: FxHashMap::default(),
+            atoms: hashbrown::HashTable::new(),
             array_index_atoms: FxHashMap::default(),
             dynamic_atoms: vec![],
             startup_intrinsics: Default::default(),
@@ -104,7 +108,8 @@ impl<H: Host> Vm<H> {
             string_concats: None,
             call_targets: Box::new([EMPTY_CALL_TARGET; CALL_TARGET_CACHE_SIZE]),
             field_caches: vec![],
-            inherited_field_caches: FxHashMap::default(),
+            inherited_field_indices: vec![],
+            inherited_field_caches: vec![],
             field_add_indices: vec![],
             field_add_sets: vec![],
             megamorphic_field_indices: vec![],

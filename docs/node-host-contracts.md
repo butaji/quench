@@ -1137,3 +1137,64 @@ not affect internal channel lookup. The internal test-binding module is the
 original SDK module and exports the same primordial owner used by SDK policies.
 It exposes cached raw native bindings and runs against current process state, so
 its warning observes guest replacements and current warning options.
+
+### Native backend ownership and configured SDK crypto policy
+
+Linux child cancellation uses an owned pidfd and the original child wait owner.
+Exit cleanup discards pending native callbacks without executing guest code.
+Failed-spawn errors precede real failed-pipe close completions. Public spawn
+observes the mutable ChildProcess prototype hook used by SDK MockTracker.
+
+Resolver requests use the shared pool for actual getaddrinfo/getnameinfo, retain
+their real request roots and read mutable completion slots at dispatch. TCP owns
+actual descriptors and connect/write/shutdown requests; public socket admission
+transfers read ownership from the raw handle. Close completion uses one prepend
+queue, with request cancellation before handle completion.
+
+Configured SDK Hash/Hmac and secret-key wrappers use owned fetched OpenSSL
+digests, native incremental contexts, actual copies and provider-backed jobs.
+Digest inventory and aliases come from the selected OpenSSL 3.5.9 provider.
+This does not establish full asymmetric KeyObject or WebCrypto parity. The
+historical public KeyObject family remains in place.
+
+VFS read/write/open/metadata boundaries preserve SDK validation, argument counts,
+getters and undefined-only fallthrough. existsSync falls through to its unwrapped
+native stat continuation after an undefined handler result. Legacy bootstrap VFS
+facades are retired. Host-private symbols use compact native identity and stay
+outside ordinary integrity and reflection queries.
+
+Qualification and retained failures appear in
+`evidence/task20-native-backends-qualified-2026-10-16.json`. Full parallel counts
+remain separate from selected API and upstream proof inventories.
+
+Native UDP handles own real socket descriptors. SDK dgram policy uses the same
+native AsyncWrap identity, callback queue, descriptor classifier and close queue
+as TCP. Retained constructor/prototype roots preserve branding across guest
+mutation; queued send admission changes the default trigger without changing the
+caller's execution context or async-local store. A request shell gains an async
+identity only when native work is admitted. Resource callbacks retain their
+identity through close; operation requests retire after their callback.
+
+Configured c-ares channels poll real sockets and native deadlines. Pending
+requests keep their channel and mutable completion callback reachable; canceled
+or completed requests release those roots through the shared operation lifecycle.
+The SDK-selected native parsers own aliases, TTL minima and address filtering.
+Reverse lookup uses c-ares host-file/DNS policy. Performance observer counts,
+monotonic milestones and DNS-entry delivery have native owners. GC performance
+events remain explicitly unsupported, and this does not complete user-timing
+observer integration.
+
+PBKDF2 and HKDF use original SDK public functions, owned provider digest
+resolution and one native KDF context owner. Async input snapshots and cleansed
+secret buffers cross the existing native task pool; completion uses the same
+mutable job callback and async resource lifecycle as other crypto jobs. This
+does not expose the pending replacement asymmetric KeyObject family.
+
+Trace-event category and name payloads follow the configured V8 JSON trace
+writer's direct quoted-byte boundary. Original SDK timer labels already contain
+trace escaping; encoding them a second time changes the names read from the file.
+Other event fields retain normal JSON encoding.
+
+Selected combined-candidate checks do not replace the full API or parallel
+inventories. The latest published full stable result and every lost pass are in
+`evidence/task20-native-backends-full-stable-2026-10-16.json`.

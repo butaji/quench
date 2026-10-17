@@ -10,7 +10,11 @@ pub struct SharedEventLoop {
 }
 
 /// Async identity and retained resource owned by one queued operation.
+#[derive(Clone,Copy,PartialEq,Eq)]
+pub enum CallbackLifetime { Operation, Resource }
 pub struct CallbackExecution {
+    pub lifetime: CallbackLifetime,
+    pub optional_callback: Option<RootId>,
     pub id: u64,
     pub resource: RootId,
 }
@@ -38,10 +42,23 @@ pub(crate) fn queue_next_tick(
     context.define_data_property_rooted(resource, key, values, true, true, true)?;
     let id = super::async_hooks_shared_vm::create_context(&context.host_mut().shared_state());
     super::async_hooks_shared_vm::emit_init(context, resource, "TickObject", id)?;
-    let execution = Some(CallbackExecution { id, resource: context.retain(resource)? });
+    let execution = Some(CallbackExecution { lifetime: crate::modules::shared_event_loop::CallbackLifetime::Operation, optional_callback: None, id, resource: context.retain(resource)? });
     // The job object owns the mutable callback/argument slots. The retained
-    // callable is only an invocation view, as for Timeout handles.
-    let invocation = context.host_function_with_data(crate::host::shared_vm::operation("asyncTickInvoke"), receiver)?;
+    // callable is only an invocation view, as for Timeout handles; it is never exposed to
+    // guest code, so every tick without a receiver shares one.
+    let receiverless = context.rooted_value(receiver).is_some_and(|value| value.is_undefined());
+    let shared = context.host_mut().shared_state();
+    let cached = receiverless.then(|| shared.borrow().tick_invocation).flatten();
+    let invocation = match cached {
+        Some(invocation) => invocation,
+        None => {
+            let invocation = context.host_function_with_data(crate::host::shared_vm::operation("asyncTickInvoke"), receiver)?;
+            if receiverless {
+                shared.borrow_mut().tick_invocation = Some(context.retain(invocation)?);
+            }
+            invocation
+        }
+    };
     let callback = context.retain(invocation)?;
     let receiver = context.retain(resource)?;
     let args = Vec::new();
@@ -58,25 +75,26 @@ pub(crate) fn queue_next_tick(
     Ok(())
 }
 
+/// Node's `processTicksAndRejections` step for one tick: read the TickObject's current
+/// `callback` and `args` slots, then call the callback with the arguments `args.length` and
+/// its elements give, as `callback(...args)` does for the array the tick queued.
 pub(crate) fn invoke_tick(context: &mut NativeContext<'_, NodeHost>, resource: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     let receiver = context.host_function_data()?;
-    let key = context.string_rooted("callback");
-    let callback = context.get_property_rooted(resource, key)?;
-    let key = context.string_rooted("args");
-    let args = context.get_property_rooted(resource, key)?;
+    let callback = context.get_named_property_rooted(resource, "callback")?;
+    let args = context.get_named_property_rooted(resource, "args")?;
     if context.rooted_value(args).is_some_and(|value| value.is_undefined()) {
-        context.call_rooted(callback, receiver, &[])
-    } else {
-        let apply = context.with_startup_intrinsics(|context| {
-            let global = context.global_root()?;
-            let key = context.string_rooted("Reflect");
-            let reflect = context.get_property_rooted(global, key)?;
-            let key = context.string_rooted("apply");
-            context.get_property_rooted(reflect, key)
-        })?;
-        let undefined = context.undefined();
-        context.call_rooted(apply, undefined, &[callback, receiver, args])
+        return context.call_rooted(callback, receiver, &[]);
     }
+    let length = context.get_named_property_rooted(args, "length")?;
+    let length = context
+        .rooted_value(length)
+        .and_then(|value| value.as_number())
+        .unwrap_or_default() as usize;
+    let mut values = Vec::with_capacity(length);
+    for index in 0..length {
+        values.push(context.get_named_property_rooted(args, &index.to_string())?);
+    }
+    context.call_rooted(callback, receiver, &values)
 }
 
 struct SharedCallbacks {
@@ -423,4 +441,10 @@ impl SharedEventLoop {
     pub fn reset_shared(&mut self) {
         self.shared = SharedCallbacks::default();
     }
+}
+
+/// Resolve a native mutable callback slot without inventing a guest wrapper.
+pub(crate) fn optional_callback(context:&mut NativeContext<'_,NodeHost>,receiver:RootId,args:&[RootId])->Result<RootId,RootedError>{
+ let callback=context.get_property_rooted(receiver,args[0])?;
+ if context.is_callable_rooted(callback)? {Ok(callback)} else {Ok(context.undefined())}
 }

@@ -2,16 +2,12 @@
 
 pub const ABORT: &str = quench_js_check::checked_js!(
     r#"
-((maxKey, warnedKey, maxDefault, addNative, dispatchNative, getHandlerNative, setHandlerNative, removeNative) => {
+((maxKey, warnedKey, maxDefault, addNative, dispatchNative, getHandlerNative, setHandlerNative, removeNative, anyConvertNative, linkNative, refreshNative, settleNative, timeoutNative) => {
   const signalStates = new WeakMap();
   const controllerSignals = new WeakMap();
   const dependantSignals = Symbol("kDependantSignals");
-  const dependantFinalizer = new FinalizationRegistry((entry) => {
-    const source = entry.source.deref();
-    const dependant = entry.dependant.deref();
-    if (source && dependant) signalStates.get(source).children.delete(entry.dependant);
-  });
   const constructorToken = Symbol("AbortSignal constructor");
+  const constructSignal = () => new AbortSignal(constructorToken);
 
   const invalidReceiver = (name) => {
     throw new TypeError(`AbortSignal.prototype.${name} called on an incompatible receiver`);
@@ -82,23 +78,8 @@ pub const ABORT: &str = quench_js_check::checked_js!(
     }
   };
 
-  const refreshDependents = (signal, state) => {
-    const observed = state.listenerCount > 0;
-    for (const source of state.parents) {
-      const dependents = signalStates.get(source).dependents;
-      if (observed) dependents.add(signal);
-      else dependents.delete(signal);
-    }
-  };
-
-  const settleDependents = (signal, state) => {
-    dependantFinalizer.unregister(signal);
-    for (const source of state.parents) {
-      const sourceState = signalStates.get(source);
-      sourceState.children.delete(state.childReferences.get(source));
-      sourceState.dependents.delete(signal);
-    }
-  };
+  const refreshDependents = (signal, state) => refreshNative(signal, state);
+  const settleDependents = (signal, state) => settleNative(signal, state);
 
   const removeAbortListener = (signal, state, listener) =>
     removeNative(signal, state, listener, refreshDependents);
@@ -121,7 +102,7 @@ pub const ABORT: &str = quench_js_check::checked_js!(
         dependents: new Set(),
         children: new Set(),
         parents: [],
-        childReferences: new Map(),
+        composite: false,
       });
       Object.defineProperty(this, dependantSignals, {
         configurable: false,
@@ -183,57 +164,14 @@ pub const ABORT: &str = quench_js_check::checked_js!(
     }
 
     static any(signals) {
-      const invalidArgument = (message) => Object.assign(new TypeError(message), {
-        code: "ERR_INVALID_ARG_TYPE",
-      });
-      if (signals == null || typeof signals[Symbol.iterator] !== "function") {
-        throw invalidArgument('The "signals" argument must be an instance of Array');
-      }
-      const values = [];
-      let index = 0;
-      for (const signal of signals) {
-        if (!signalStates.has(signal)) {
-          throw invalidArgument(`signals[${index}] is not of type AbortSignal.`);
-        }
-        values.push(signal);
-        index++;
-      }
-      const controller = new AbortController();
-      const aborted = values.find((signal) => signalStates.get(signal).aborted);
-      if (aborted) {
-        controller.abort(aborted.reason);
-      } else {
-        const state = signalStates.get(controller.signal);
-        const sources = new Set();
-        for (const signal of values) {
-          sources.add(signal);
-          for (const source of signalStates.get(signal).parents) sources.add(source);
-        }
-        for (const signal of sources) {
-          const sourceState = signalStates.get(signal);
-          const reference = new WeakRef(controller.signal);
-          sourceState.children.add(reference);
-          state.parents.push(signal);
-          state.childReferences.set(signal, reference);
-          dependantFinalizer.register(controller.signal, {
-            source: new WeakRef(signal),
-            dependant: reference,
-          }, controller.signal);
-        }
-      }
-      return controller.signal;
+      const values = anyConvertNative(signals);
+      const signal = new AbortSignal(constructorToken);
+      linkNative(signal, values);
+      return signal;
     }
 
     static timeout(milliseconds) {
-      if (typeof globalThis.setTimeout !== "function") {
-        throw new Error("AbortSignal.timeout requires timers");
-      }
-      const controller = new AbortController();
-      globalThis.setTimeout(() => {
-        const error = new DOMException("The operation was aborted due to timeout", "TimeoutError");
-        controller.abort(error);
-      }, milliseconds);
-      return controller.signal;
+      return timeoutNative(milliseconds, constructSignal);
     }
   }
 

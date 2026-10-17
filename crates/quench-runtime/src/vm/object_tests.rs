@@ -199,6 +199,45 @@ fn cached_field_reads_follow_in_place_writes() {
 }
 
 #[test]
+fn spread_sources_stay_rooted_through_the_loop_that_reuses_them() {
+    // `AppendArray` reads its optional value register, so a spread source the next iteration
+    // reads again is in every root map of the loop, the resume point of the call the spread
+    // feeds included: a collection inside that call must not free it.
+    let source = "function parse(texts, next) { let token; while (token = next(...texts)) {} return token; }";
+    let program = Engine::specialize(source, "spread-roots.js").unwrap();
+    let function = program
+        .functions
+        .iter()
+        .find(|function| {
+            function
+                .name
+                .is_some_and(|name| &program.atoms[name as usize] == "parse")
+        })
+        .unwrap();
+    let (spread_pc, spread) = function
+        .code
+        .iter()
+        .copied()
+        .enumerate()
+        .find(|(_, instruction)| instruction.op() == Op::AppendArray)
+        .unwrap();
+    let register = spread.optional_register_b().expect("spread source register");
+    let (back_edge, head) = function
+        .code
+        .iter()
+        .enumerate()
+        .find_map(|(pc, instruction)| {
+            (instruction.op() == Op::Jump && instruction.jump_target() as usize <= spread_pc)
+                .then(|| (pc, instruction.jump_target() as usize))
+        })
+        .unwrap();
+    for pc in head..=back_edge {
+        let root_map = program.register_roots[function.register_root_offset as usize + pc];
+        assert_ne!(root_map & (1u64 << register), 0, "pc {pc} drops register {register}");
+    }
+}
+
+#[test]
 fn static_three_field_object_literals_share_the_shape_site() {
     let source = r#"
       var order = "";

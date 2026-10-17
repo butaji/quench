@@ -51,6 +51,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let _stack = self.enter_stack()?;
         self.with_call_roots([target, key], |vm| {
+            if vm.is_host_private_symbol(key) && matches!(vm.heap.get(target), Some(Cell::Proxy { .. })) { return Ok(Value::TRUE); }
             if let Some((target, handler)) = vm.proxy_parts(target) {
                 if handler.is_null() {
                     return Err(vm.type_error(p, "cannot access a revoked proxy".into()));
@@ -350,6 +351,10 @@ impl<H: Host> Vm<H> {
         if target == self.object_proto || !data.is_extensible() {
             return Ok(false);
         }
+        // Only an ordinary object answers every property from its shape; an exotic receiver
+        // (an array's `length`, a String object's indices) shares shapes with ordinary objects
+        // and relies on the dictionary transition below to keep its own cache entries apart.
+        let keeps_shape = !data.was_used_as_prototype() && self.heap.ordinary_object(target).is_some();
         let mut cursor = proto;
         while !cursor.is_null() {
             if self.same_value(cursor, target) {
@@ -367,9 +372,18 @@ impl<H: Host> Vm<H> {
         self.object_data_mut(target)
             .expect("object validated")
             .set_proto(proto);
-        self.mark_object_dictionary(target, DictionaryTrigger::PrototypeUse);
-        self.invalidate_field_caches();
-        self.invalidate_method_caches();
+        // Every cache tier keyed by a receiver shape re-reads the receiver's actual
+        // prototype chain and checks each holder's shape (own, holder, inherited, add and
+        // method caches), so a prototype change on an ordinary object that no other object
+        // inherits from leaves every entry sound and keeps the receiver's shape. An object
+        // already serving as a prototype changes the chain of its inheritors, and an exotic
+        // receiver must not share an ordinary shape: both keep the conservative dictionary
+        // transition and cache flush.
+        if !keeps_shape {
+            self.mark_object_dictionary(target, DictionaryTrigger::PrototypeUse);
+            self.invalidate_field_caches();
+            self.invalidate_method_caches();
+        }
         Ok(true)
     }
 
@@ -393,6 +407,7 @@ impl<H: Host> Vm<H> {
         exists: bool,
     ) -> Result<(), JsError> {
         if !exists
+            && !key.symbol_value().is_some_and(|symbol| self.is_host_private_symbol(symbol))
             && self
                 .object_data(object)
                 .is_some_and(|object| !object.is_extensible())
@@ -668,7 +683,7 @@ impl<H: Host> Vm<H> {
                 .map(|data| self.shape_keys(data.shape()))
                 .unwrap_or_default()
                 .into_iter()
-                .filter(|key| matches!(key, PropertyKey::Symbol(_))),
+                .filter(|key| key.symbol_value().is_some_and(|symbol| !self.is_host_private_symbol(symbol))),
         );
         self.update_property_attributes(target, &keys, |attributes| PropertyAttributes {
             configurable: false,
@@ -712,7 +727,7 @@ impl<H: Host> Vm<H> {
         let shape_keys = self.shape_keys(data.shape());
         let symbols_ok = shape_keys
             .iter()
-            .filter(|key| matches!(key, PropertyKey::Symbol(_)))
+            .filter(|key| key.symbol_value().is_some_and(|symbol| !self.is_host_private_symbol(symbol)))
             .all(|symbol| {
                 let attributes = self
                     .property_attributes(target, *symbol)
