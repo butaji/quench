@@ -1582,22 +1582,10 @@ fn raw_header_array(
         raw.push(runtime.string_rooted(&name));
         raw.push(runtime.string_rooted(&value));
     }
-    let global = runtime.global_root().map_err(|error| error.to_string())?;
-    let array_key = runtime.string_rooted("Array");
-    let array = runtime.get_property_rooted(global, array_key);
-    let result = match array {
-        Ok(array) => {
-            let result = runtime.construct_rooted(array, array, &raw);
-            runtime.release_root(array);
-            result
-        }
-        Err(error) => Err(error),
-    };
+    let result = runtime.array_rooted(&raw);
     for value in raw {
         runtime.release_root(value);
     }
-    runtime.release_root(array_key);
-    runtime.release_root(global);
     result.map_err(|error| error.to_string())
 }
 

@@ -351,6 +351,10 @@ impl<H: Host> Vm<H> {
         if target == self.object_proto || !data.is_extensible() {
             return Ok(false);
         }
+        // Only an ordinary object answers every property from its shape; an exotic receiver
+        // (an array's `length`, a String object's indices) shares shapes with ordinary objects
+        // and relies on the dictionary transition below to keep its own cache entries apart.
+        let keeps_shape = !data.was_used_as_prototype() && self.heap.ordinary_object(target).is_some();
         let mut cursor = proto;
         while !cursor.is_null() {
             if self.same_value(cursor, target) {
@@ -368,9 +372,18 @@ impl<H: Host> Vm<H> {
         self.object_data_mut(target)
             .expect("object validated")
             .set_proto(proto);
-        self.mark_object_dictionary(target, DictionaryTrigger::PrototypeUse);
-        self.invalidate_field_caches();
-        self.invalidate_method_caches();
+        // Every cache tier keyed by a receiver shape re-reads the receiver's actual
+        // prototype chain and checks each holder's shape (own, holder, inherited, add and
+        // method caches), so a prototype change on an ordinary object that no other object
+        // inherits from leaves every entry sound and keeps the receiver's shape. An object
+        // already serving as a prototype changes the chain of its inheritors, and an exotic
+        // receiver must not share an ordinary shape: both keep the conservative dictionary
+        // transition and cache flush.
+        if !keeps_shape {
+            self.mark_object_dictionary(target, DictionaryTrigger::PrototypeUse);
+            self.invalidate_field_caches();
+            self.invalidate_method_caches();
+        }
         Ok(true)
     }
 
