@@ -130,6 +130,7 @@ pub(crate) fn poll(
     let mut progressed = false;
     progressed |= emit_listening(runtime, program, shared_state)?;
     progressed |= emit_net_server_events(runtime, shared_state)?;
+    progressed |= emit_response_drains(runtime, shared_state)?;
     for event in events {
         match event {
             net_shared_vm::TransportEvent::Accepted {
@@ -1326,6 +1327,43 @@ fn emit_event(
     let result = emit(runtime, program, receiver, event, args);
     runtime.release_root(event);
     result
+}
+
+/// Settle responses waiting on socket backpressure: a socket that flushed
+/// below the high-water mark owes its response `drain`; a closed socket owes
+/// nothing, as Node never drains a destroyed stream.
+fn emit_response_drains(
+    runtime: &mut Runtime<NodeHost>,
+    shared_state: &Rc<RefCell<SharedNodeState>>,
+) -> Result<bool, String> {
+    let settled = {
+        let mut guard = shared_state.borrow_mut();
+        let host = &mut *guard;
+        if host.http.drain_waiters.is_empty() {
+            return Ok(false);
+        }
+        let tcp = &host.tcp;
+        let mut settled = Vec::new();
+        host.http.drain_waiters.retain(|socket, waiter| {
+            let queued = net_shared_vm::queued_bytes(tcp, *socket);
+            let waiting = queued.is_some_and(|queued| {
+                queued >= super::operations::RESPONSE_HIGH_WATER_MARK
+            });
+            if !waiting {
+                settled.push((*waiter, queued.is_some()));
+            }
+            waiting
+        });
+        settled
+    };
+    let progressed = !settled.is_empty();
+    for (response, open) in settled {
+        if open {
+            queue_net_event(runtime, shared_state, response, "drain", &[])?;
+        }
+        runtime.release_root(response);
+    }
+    Ok(progressed)
 }
 
 fn queue_net_event(

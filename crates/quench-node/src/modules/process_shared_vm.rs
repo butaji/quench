@@ -2574,7 +2574,18 @@ fn drain_shared_jobs(
             super::icu_binding_shared_vm::prune(runtime);
             super::net_reference_shared_vm::prune(runtime);
             super::contextify_shared_vm::prune(runtime);
-            if !runtime.host_mut().shared_state().borrow().async_hooks.promise_resources.is_empty() {
+            let epoch = runtime.collection_epoch();
+            let prune_promises = {
+                let shared = runtime.host_mut().shared_state();
+                let mut state = shared.borrow_mut();
+                let due = !state.async_hooks.promise_resources.is_empty()
+                    && state.async_hooks.promise_prune_epoch != Some(epoch);
+                if due {
+                    state.async_hooks.promise_prune_epoch = Some(epoch);
+                }
+                due
+            };
+            if prune_promises {
                 let prune = runtime.host_function(crate::host::shared_vm::operation("asyncPromisePrune"))
                     .map_err(|error| rooted_error_message(runtime, program, error))?;
                 let result = runtime.call_rooted(prune, prune, &[]);
