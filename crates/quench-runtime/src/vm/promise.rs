@@ -2536,9 +2536,10 @@ impl<H: Host> Vm<H> {
         let Some(source) = self.object_data(source).cloned() else {
             return Err(self.type_error(p, "evaluated module namespace is invalid".into()));
         };
-        if let Some(target) = self.object_data_mut(target) {
+        if self.heap.copy_property_storage(&source, target)
+            && let Some(target) = self.object_data_mut(target)
+        {
             target.set_proto(source.proto());
-            target.copy_property_storage_from(&source);
             if source.is_module_namespace() {
                 target.set_module_namespace();
             }
