@@ -316,19 +316,15 @@ impl<H: Host> Vm<H> {
             },
             env,
         });
-        let program = self.active_program;
-        self.function_values.entry((program, id)).or_default().push(
-            self.heap
-                .weak_handle(function)
-                .expect("new closure is live"),
-        );
-        let name_value = function_plan
-            .name
-            .map(|atom| {
-                self.heap
-                    .alloc(Cell::String(JsString::from_str(self.atom_name(atom))))
-            })
-            .unwrap_or_else(|| self.heap.alloc(Cell::String(JsString::from_str(""))));
+        if Self::caches_function_identity(p, function_plan) {
+            self.function_values
+                .entry((self.active_program, id))
+                .or_default()
+                .push(self.heap.weak_handle(function).expect("new closure is live"));
+        }
+        let name_string =
+            JsString::from_str(function_plan.name.map_or("", |atom| self.atom_name(atom)));
+        let name_value = self.heap.alloc(Cell::String(name_string.clone()));
         let length_value = Value::number(function_plan.length as f64);
         // An ordinary closure's own properties and its prototype's `constructor` take the
         // shapes the first one recorded; every other closure defines them one by one.
@@ -345,7 +341,7 @@ impl<H: Host> Vm<H> {
                 self.heap.property_add(function, prototype, with_prototype);
                 self.heap.property_add(prototype, function, constructor);
             }
-            self.capture_function_name(function, name_value);
+            self.capture_fresh_closure_name(function, &name_string);
             return Ok(function);
         }
         let mut recorded = ClosureShapes {
@@ -419,7 +415,7 @@ impl<H: Host> Vm<H> {
         {
             self.closure_shapes[shapes_key] = Some(recorded);
         }
-        self.capture_function_name(function, name_value);
+        self.capture_fresh_closure_name(function, &name_string);
         Ok(function)
     }
 
