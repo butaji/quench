@@ -6,6 +6,7 @@ impl<H: Host> Vm<H> {
     pub(crate) fn new_with_execution_interrupt(host:H, execution_interrupt:crate::ExecutionInterrupt)->Self {
         Self {
             host,
+            native_microtask_running: false,
             specialized: true,
             heap: Heap::new(),
             realm: Realm {

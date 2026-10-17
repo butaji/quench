@@ -52,6 +52,8 @@ pub(crate) mod crypto_strings;
 pub(crate) mod diagnostics_channel_shared_vm;
 pub(crate) mod dns_shared_vm;
 pub(crate) mod domain_shared_vm;
+pub(crate) mod domain_source;
+pub(crate) mod domain_trampoline;
 pub(crate) mod emitter_async_resource_shared_vm;
 pub(crate) mod eval_globals_shared_vm;
 pub(crate) mod event_constructor_shared_vm;
@@ -106,6 +108,8 @@ pub(crate) mod process_memory_shared_vm;
 #[cfg(target_os = "linux")]
 pub(crate) mod process_metrics_shared_vm;
 pub(crate) mod process_shared_vm;
+mod process_exception_route;
+pub(crate) mod process_fatal_exception_route;
 pub(crate) mod process_signals_state;
 pub(crate) mod process_state;
 pub(crate) mod process_stdin_shared_vm;

@@ -5,7 +5,7 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 type Context<'a> = NativeContext<'a, NodeHost>;
 
 #[derive(Clone, Copy)]
-enum Method { Access, Chmod, Fchmod, Statfs, Exists, Owner, Fowner, Times, Ftimes, Sync, Ftruncate }
+enum Method { Access, Chmod, Fchmod, Statfs, Exists, Owner, Fowner, Times, Ftimes, Sync, Ftruncate, Lstat, Rm }
 impl Method {
     fn parse(name: &str) -> Self {
         match name {
@@ -14,7 +14,7 @@ impl Method {
             "exists" => Self::Exists, "chown" | "lchown" => Self::Owner,
             "fchown" => Self::Fowner, "utimes" | "lutimes" => Self::Times,
             "futimes" => Self::Ftimes, "fsync" | "fdatasync" => Self::Sync,
-            "ftruncate" => Self::Ftruncate,
+            "ftruncate" => Self::Ftruncate, "lstat" => Self::Lstat, "rm" => Self::Rm,
             _ => unreachable!("named SDK callback boundary"),
         }
     }
@@ -26,7 +26,7 @@ impl Method {
         }
     }
     fn length(self) -> usize {
-        match self { Self::Statfs | Self::Ftruncate => 1, _ => self.callback_index() + 1 }
+        match self { Self::Statfs | Self::Ftruncate | Self::Lstat => 1, _ => self.callback_index() + 1 }
     }
 }
 pub(super) fn wrap(c: &mut Context<'_>, original: RootId, name: &str) -> Result<RootId, RootedError> {
@@ -81,6 +81,29 @@ pub(crate) fn dispatch(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Re
     } else if matches!(method, Method::Ftruncate) && c.rooted_value(values[1]).is_some_and(|v| v.is_undefined()) {
         values[1] = c.number(0.0);
     }
+    if matches!(method, Method::Rm) && c.is_callable_rooted(values[1])? {
+        callback = values[1];
+        values[1] = undefined;
+    }
+    if matches!(method, Method::Lstat) {
+        if c.is_callable_rooted(values[1])? {
+            callback = values[1];
+            values[1] = policy::export(c, "kEmptyObject")?;
+        } else if c.rooted_value(values[1]).is_some_and(|v| v.is_undefined()) {
+            values[1] = c.null_object_rooted()?;
+            let key = c.string_rooted("bigint");
+            let no = c.boolean(false);
+            c.define_data_property_rooted(values[1], key, no, true, true, true)?;
+        } else if c.rooted_value(values[1]).is_some_and(|v| v.is_null()) || !c.is_object_rooted(values[1])? {
+            values[1] = policy::export(c, "kEmptyObject")?;
+        } else {
+            let defaults = c.object_rooted()?;
+            let key = c.string_rooted("bigint");
+            let no = c.boolean(false);
+            c.define_data_property_rooted(defaults, key, no, true, true, true)?;
+            values[1] = policy::call(c, "getOptions", &[values[1], defaults])?;
+        }
+    }
     if matches!(method, Method::Exists | Method::Statfs | Method::Sync | Method::Owner | Method::Times) {
         validate_callback(c, callback)?;
     }
@@ -125,6 +148,12 @@ pub(crate) fn dispatch(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Re
                     return Ok(undefined);
                 }
             },
+            Method::Lstat => {
+                if let Some(promise) = policy::vfs_call(c, handlers, &name, &values[..2])? {
+                    policy::call(c, "vfsResult", &[promise, callback])?;
+                    return Ok(undefined);
+                }
+            }
             Method::Exists => {
                 if let Some(value) = policy::vfs_call(c, handlers, "existsSync", &values[..1])? {
                     next_tick(c, &[callback, value])?;
