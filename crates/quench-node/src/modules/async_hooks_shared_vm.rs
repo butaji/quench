@@ -245,12 +245,15 @@ pub(crate) fn promise_job_boundary(
     let shared = context.host_mut().shared_state();
     let resource = shared.borrow().async_hooks.job_resources.get(&snapshot.0).and_then(|job| job.resource);
     let Some(resource) = resource else { return Ok(()); };
-    let id = context.number(resource as f64);
     let kind = if before {
         super::async_hook_registry_shared_vm::HookKind::Before
     } else {
         super::async_hook_registry_shared_vm::HookKind::After
     };
+    if !super::async_hook_registry_shared_vm::has_hooks(context, kind) {
+        return Ok(());
+    }
+    let id = context.number(resource as f64);
     super::async_hook_registry_shared_vm::emit(context, kind, &[id])
 }
 
@@ -258,10 +261,12 @@ pub(crate) fn promise_settled(
     context: &mut NativeContext<'_, NodeHost>,
     resource: quench_runtime::HostExecutionContext,
 ) -> Result<(), RootedError> {
+    let kind = super::async_hook_registry_shared_vm::HookKind::PromiseResolve;
+    if !super::async_hook_registry_shared_vm::has_hooks(context, kind) {
+        return Ok(());
+    }
     let id = context.number(resource.0 as f64);
-    super::async_hook_registry_shared_vm::emit(
-        context, super::async_hook_registry_shared_vm::HookKind::PromiseResolve, &[id],
-    )
+    super::async_hook_registry_shared_vm::emit(context, kind, &[id])
 }
 
 /// Snapshot the currently visible stores under a fresh identity for one
@@ -522,6 +527,12 @@ pub(crate) fn emit_init(
             .context_triggers
             .entry(async_id)
             .or_insert(parent as i64);
+    }
+    if !super::async_hook_registry_shared_vm::has_hooks(
+        context,
+        super::async_hook_registry_shared_vm::HookKind::Init,
+    ) {
+        return Ok(());
     }
     let trigger = state.borrow().async_hooks.context_triggers[&async_id];
     let id = context.number(async_id as f64);
