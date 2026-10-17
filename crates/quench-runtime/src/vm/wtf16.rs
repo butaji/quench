@@ -46,7 +46,7 @@ pub(crate) struct ShortAscii {
 
 /// `FlatUnits` is three words: a shared variant's tag word, then its pointer and length.
 /// `Short` fills them, less its own tag and `ShortAscii::length`.
-const SHORT_ASCII_CAPACITY: usize = 3 * size_of::<usize>() - 2;
+pub(crate) const SHORT_ASCII_CAPACITY: usize = 3 * size_of::<usize>() - 2;
 #[cfg(target_pointer_width = "64")]
 const _: () = assert!(size_of::<FlatUnits>() == 3 * size_of::<usize>());
 
@@ -553,9 +553,11 @@ impl JsString {
     /// The string of `units`, sharing their storage when it is already canonical.
     pub(crate) fn from_unit_run(units: Units<'_>) -> Self {
         match units {
-            Units::Ascii(bytes) => Self::from_flat(FlatUnits::ascii(
-                std::str::from_utf8(bytes).expect("ASCII units are UTF-8"),
-            )),
+            // SAFETY: `Units::Ascii` only views an ASCII `FlatUnits`, and every run of ASCII
+            // bytes is UTF-8.
+            Units::Ascii(bytes) => {
+                Self::from_flat(FlatUnits::ascii(unsafe { std::str::from_utf8_unchecked(bytes) }))
+            }
             Units::Wide(units) => Self::from_units(units),
         }
     }

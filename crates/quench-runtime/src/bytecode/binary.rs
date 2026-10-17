@@ -179,6 +179,7 @@ pub(super) fn write_program(
     for function in &program.functions {
         out.option_u32(function.parent);
         out.option_u32(function.name);
+        out.option_u32(function.inferred_name);
         out.u8(u8::from(function.is_arrow));
         out.u16(function.self_binding_slot.unwrap_or(u16::MAX));
         out.u8(u8::from(function.source_span.is_some()));
@@ -468,6 +469,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
     let functions = input.list(|input| {
         let parent = input.option_u32()?;
         let name = input.option_u32()?;
+        let inferred_name = input.option_u32()?;
         let is_arrow = match input.u8()? {
             0 => false,
             1 => true,
@@ -665,6 +667,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         Ok(Function {
             parent,
             name,
+            inferred_name,
             is_arrow,
             self_binding_slot,
             source_span,

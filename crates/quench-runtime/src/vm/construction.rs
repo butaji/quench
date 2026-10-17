@@ -19,24 +19,37 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         function: Value,
     ) -> Result<Value, JsError> {
-        match self.heap.get(function).cloned() {
+        // Only the fields that decide the realm are copied out; the cell itself stays put.
+        enum Origin {
+            Bound(Value),
+            Own(Value),
+            Revoked,
+            Proxied(Value),
+            Current,
+        }
+        let origin = match self.heap.get(function) {
             Some(Cell::Function {
                 kind: FunctionKind::Native(Native::FunctionBoundCall),
                 env,
                 ..
-            }) => {
+            }) => Origin::Bound(*env),
+            Some(Cell::Function { object, .. }) => Origin::Own(object.realm),
+            Some(Cell::Proxy { handler, .. }) if handler.is_null() => Origin::Revoked,
+            Some(Cell::Proxy { target, .. }) => Origin::Proxied(*target),
+            _ => Origin::Current,
+        };
+        match origin {
+            Origin::Bound(env) => {
                 let target_atom = self.intern_atom("\0quench:bound-target");
                 let target = self
                     .own_property(env, target_atom)
                     .unwrap_or(Value::UNDEFINED);
                 self.function_realm(p, target)
             }
-            Some(Cell::Function { object, .. }) => Ok(object.realm),
-            Some(Cell::Proxy { handler, .. }) if handler.is_null() => {
-                Err(self.type_error(p, "cannot access a revoked proxy".into()))
-            }
-            Some(Cell::Proxy { target, .. }) => self.function_realm(p, target),
-            _ => Ok(self.realm.globals),
+            Origin::Own(realm) => Ok(realm),
+            Origin::Revoked => Err(self.type_error(p, "cannot access a revoked proxy".into())),
+            Origin::Proxied(target) => self.function_realm(p, target),
+            Origin::Current => Ok(self.realm.globals),
         }
     }
 
@@ -67,14 +80,27 @@ impl<H: Host> Vm<H> {
             return Err(JsError("function name atom is invalid".into()));
         }
         // A program's atom ids are the VM's, so the name's atom is known without interning.
-        let value = self.inferred_function_name_slot(function).map(|slot| {
-            (slot, self.heap.alloc(Cell::String(JsString::from_str(self.atom_name(name)))))
-        });
+        let value = self
+            .inferred_function_name_slot(function)
+            .map(|slot| (slot, self.atom_string(name)));
         if let Some((slot, value)) = value {
             self.heap.property_set(function, slot, value);
             self.capture_function_name_for_atom(function, name);
         }
         Ok(())
+    }
+
+    /// The string value spelling `atom`, shared for program atoms and the anonymous name.
+    /// Other dynamic atoms grow with guest input, so their strings stay collectable.
+    pub(super) fn atom_string(&mut self, atom: Atom) -> Value {
+        if let Some(&value) = self.atom_strings.get(&atom) {
+            return value;
+        }
+        let value = self.heap.alloc(Cell::String(JsString::from_str(self.atom_name(atom))));
+        if (atom as usize) < self.atom_text.len() || atom == self.runtime_atoms.empty {
+            self.atom_strings.insert(atom, value);
+        }
+        value
     }
 
     pub(super) fn set_function_name_key(&mut self, function: Value, key: Value, prefix: u32) {
@@ -273,20 +299,6 @@ impl<H: Host> Vm<H> {
                 }),
             });
         }
-        if function_plan.is_arrow {
-            env = self.heap.alloc(Cell::Environment {
-                parent: env,
-                function: u32::MAX,
-                slots: Vec::<Value>::new().into_boxed_slice().into(),
-                scope: Box::new(crate::heap::EnvironmentScope {
-                    program: None,
-                    root_eval_scope: false,
-                    binding_site_pc: None,
-                    dynamic_bindings: Vec::new().into(),
-                    with_objects: Box::default(),
-                }),
-            });
-        }
         let has_instance_prototype = function_plan.constructible || function_plan.is_generator;
         let prototype = if has_instance_prototype {
             let generator_prototype_parent = if function_plan.is_generator {
@@ -338,13 +350,8 @@ impl<H: Host> Vm<H> {
                     .expect("new closure is live"),
             );
         }
-        let name_value = function_plan
-            .name
-            .map(|atom| {
-                self.heap
-                    .alloc(Cell::String(JsString::from_str(self.atom_name(atom))))
-            })
-            .unwrap_or_else(|| self.heap.alloc(Cell::String(JsString::from_str(""))));
+        let plan_name = function_plan.name.or(function_plan.inferred_name);
+        let name_value = self.atom_string(plan_name.unwrap_or(self.runtime_atoms.empty));
         let length_value = Value::number(function_plan.length as f64);
         // An ordinary closure's own properties and its prototype's `constructor` take the
         // shapes the first one recorded; every other closure defines them one by one.
@@ -361,7 +368,7 @@ impl<H: Host> Vm<H> {
                 self.heap.property_add(function, prototype, with_prototype);
                 self.heap.property_add(prototype, function, constructor);
             }
-            self.capture_fresh_closure_name(function, function_plan.name);
+            self.capture_fresh_closure_name(function, plan_name);
             return Ok(function);
         }
         let mut recorded = ClosureShapes {
@@ -435,7 +442,7 @@ impl<H: Host> Vm<H> {
         {
             self.closure_shapes[shapes_key] = Some(recorded);
         }
-        self.capture_fresh_closure_name(function, function_plan.name);
+        self.capture_fresh_closure_name(function, plan_name);
         Ok(function)
     }
 
@@ -714,12 +721,18 @@ impl<H: Host> Vm<H> {
     /// The receiver an in-place [[Construct]] of `callee` allocates: an ordinary object
     /// whose prototype is the callee's own data `prototype`, when that is an object.
     pub(super) fn inline_construct_receiver(&mut self, callee: Value) -> Option<Value> {
+        let object = self.inline_construct_template(callee)?;
+        Some(self.heap.alloc_object(object))
+    }
+
+    /// The object `inline_construct_receiver` allocates, before it is allocated.
+    pub(super) fn inline_construct_template(&mut self, callee: Value) -> Option<Object> {
         let prototype_atom = self.prototype_atom();
         let prototype = self.own_function_prototype_data(callee, prototype_atom)?;
         self.object_data(prototype)?;
         let mut object = Self::empty_object(prototype);
         self.capture_constructed_name(&mut object, callee, true);
-        Some(self.heap.alloc(Cell::Object(object)))
+        Some(object)
     }
 
     pub(super) fn own_function_prototype_data(
