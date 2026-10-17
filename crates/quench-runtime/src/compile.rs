@@ -930,7 +930,7 @@ impl Engine {
             .into_iter()
             .filter_map(|(span, name)| annex_b_forbidden_names.contains(&name).then_some(span))
             .collect();
-        let program = compiler.program(&parsed.program, module_goal, inherited_strict);
+        let emitted = compiler.program(&parsed.program, module_goal, inherited_strict);
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("QUENCH_MEMORY").is_some() {
             eprintln!(
@@ -939,7 +939,12 @@ impl Engine {
                 allocator.capacity(),
             );
         }
-        program
+        // The tree is the largest structure of a compilation; the passes that finish the
+        // program do not read it.
+        drop(parsed);
+        drop(allocator);
+        let (compiler, module) = emitted?;
+        compiler.finish(module)
     }
 
     pub(crate) fn strict_eval_syntax_error(source: &str, in_function: bool) -> Option<String> {
@@ -1105,6 +1110,13 @@ fn push_module_request(
 }
 
 /// The functions and arrows written in `program`, each of which the compiler emits.
+/// The module records `Compiler::program` reads from the tree for `Compiler::finish`.
+struct ModuleParts {
+    requests: Vec<crate::bytecode::ModuleRequest>,
+    imports: Vec<crate::bytecode::ModuleImportBinding>,
+    link_plan: Option<crate::bytecode::ModuleLinkPlan>,
+}
+
 fn source_function_count(program: &Program<'_>) -> usize {
     struct Counter(usize);
     impl<'a> oxc_ast_visit::Visit<'a> for Counter {
@@ -1716,12 +1728,14 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    /// Emits every function of `program`: all the compiler reads of its tree. `finish` makes
+    /// the residual program from what this leaves, after the caller has dropped the tree.
     fn program(
         mut self,
         program: &Program<'_>,
         module_goal: bool,
         inherited_strict: bool,
-    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+    ) -> Result<(Self, ModuleParts), Vec<Diagnostic>> {
         self.source_comments = program.comments.iter().map(|comment| comment.span).collect();
         // One slot per source function and the root, reserved once: grown by doubling, the
         // slots of a large script stood up to twice its functions beside its tree.
@@ -1973,6 +1987,23 @@ impl<'a> Compiler<'a> {
         if !self.errors.is_empty() {
             return Err(self.errors);
         }
+        Ok((
+            self,
+            ModuleParts {
+                requests: module_requests,
+                imports: module_imports,
+                link_plan: module_link_plan,
+            },
+        ))
+    }
+
+    /// The residual program of the functions `program` emitted.
+    fn finish(mut self, module: ModuleParts) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        let ModuleParts {
+            requests: module_requests,
+            imports: module_imports,
+            link_plan: module_link_plan,
+        } = module;
         let mut functions: Vec<_> = self.functions.into_iter().map(Option::unwrap).collect();
         // Functions the compiler synthesizes (class constructors and initializers) may have
         // grown the reservation.
@@ -2042,7 +2073,9 @@ impl<'a> Compiler<'a> {
         }
         for function in &mut functions {
             function.code.shrink_to_fit();
+            function.wide.shrink_to_fit();
             function.handlers.shrink_to_fit();
+            function.source_positions.shrink_to_fit();
         }
         let (mut method_sites, mut method_arguments) =
             Self::flatten_method_sites(self.method_sites);
@@ -2623,6 +2656,7 @@ impl<'a> Compiler<'a> {
             dispatch: DispatchClass::General,
             decoded: Default::default(),
             plain_locals: Default::default(),
+            declared_atom_sets: Default::default(),
             activation_bindings: Default::default(),
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),

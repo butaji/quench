@@ -13,7 +13,8 @@ const LOCAL_ID: &str = "\0quench:async_hooks:local:id";
 const CLASS_FACTORY: &str = r#"(function(initializeResource, runInAsyncScope, emitDestroy,
     initializeStorage, enterWith, getStore, disableStorage,
     initializeHook, enableHook, disableHook, executionIdNative, triggerIdNative,
-    executionResourceNative, hooksEnabledNative, initNative) {
+    executionResourceNative, hooksEnabledNative, initNative, defaultTriggerScopeNative,
+    getDefaultTriggerNative, symbolsNative) {
   class AsyncResource {
     constructor(type, options) {
       initializeResource.call(this, type, options);
@@ -126,12 +127,57 @@ const CLASS_FACTORY: &str = r#"(function(initializeResource, runInAsyncScope, em
     AsyncLocalStorage,
     createHook,
     enabledHooksExist: function enabledHooksExist() { return hooksEnabledNative(); },
-    symbols: { async_id_symbol: Symbol.for("quench.async_hooks.async_id") },
+    symbols: { async_id_symbol: symbolsNative.async_id_symbol, owner_symbol: symbolsNative.owner_symbol },
+    defaultTriggerAsyncIdScope: function defaultTriggerAsyncIdScope(triggerAsyncId, block, ...args) {
+      return defaultTriggerScopeNative(triggerAsyncId, block, ...args);
+    },
+    getDefaultTriggerAsyncId: function getDefaultTriggerAsyncId() { return getDefaultTriggerNative(); },
     executionAsyncId: function executionAsyncId() { return executionIdNative(); },
     triggerAsyncId: function triggerAsyncId() { return triggerIdNative(); },
     executionAsyncResource: function executionAsyncResource() { return executionResourceNative(); },
   };
 })"#;
+
+/// Restore the default constructor trigger on normal, thrown, and reentrant
+/// callback exits. This does not allocate an async resource or alter ALS.
+pub(crate) struct DefaultTriggerScope {
+    shared: Rc<RefCell<crate::host::SharedNodeState>>,
+    previous: Option<f64>,
+}
+impl Drop for DefaultTriggerScope {
+    fn drop(&mut self) {
+        self.shared.borrow_mut().async_hooks.default_trigger_async_id = self.previous;
+    }
+}
+pub(crate) fn enter_default_trigger(shared:&Rc<RefCell<crate::host::SharedNodeState>>,trigger:f64)->DefaultTriggerScope {
+    let previous=shared.borrow_mut().async_hooks.default_trigger_async_id.replace(trigger);
+    DefaultTriggerScope{shared:shared.clone(),previous}
+}
+pub(crate) fn default_trigger_scope(
+    context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let undefined = context.undefined();
+    let trigger = args.first().copied().unwrap_or(undefined);
+    let block = args.get(1).copied().unwrap_or(undefined);
+    let scope = if context.rooted_value(trigger).is_some_and(|value| value.is_undefined()) {
+        None
+    } else {
+        // Node stores through Float64Array; use its ordinary ToNumber coercion.
+        let trigger = context.to_number(trigger)?;
+        let shared = context.host_mut().shared_state();
+        Some(enter_default_trigger(&shared,trigger))
+    };
+    let receiver = context.null();
+    let result = context.call_rooted(block, receiver, args.get(2..).unwrap_or_default());
+    drop(scope);
+    result
+}
+pub(crate) fn get_default_trigger(
+    context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let trigger = context.host_mut().shared_state().borrow().async_hooks.default_trigger_async_id();
+    Ok(context.number(trigger))
+}
 
 /// Allocate an async identity for a host-created request context.
 ///
@@ -142,7 +188,7 @@ pub(crate) fn create_context(shared_state: &Rc<RefCell<crate::host::SharedNodeSt
     let parent = identity.store_context();
     let id = identity.allocate_async_id();
     let mut shared = shared_state.borrow_mut();
-    let trigger = visible_async_id(&shared.async_hooks);
+    let trigger = shared.async_hooks.default_trigger_async_id();
     shared.async_hooks.context_triggers.insert(id, trigger as i64);
     inherit_stores(&mut shared.async_hooks, parent, id);
     id
@@ -157,7 +203,7 @@ pub(crate) fn create_promise_context(
     parent: Option<quench_runtime::HostExecutionContext>,
 ) -> quench_runtime::HostExecutionContext {
     let mut state = shared.borrow_mut();
-    let trigger = parent.map_or_else(|| visible_async_id(&state.async_hooks), |id| id.0);
+    let trigger = parent.map_or_else(|| state.async_hooks.default_trigger_async_id(), |id| id.0 as f64);
     let id = state.async_hooks.identity.allocate_async_id();
     state.async_hooks.context_triggers.insert(id, trigger as i64);
     quench_runtime::HostExecutionContext(id)
@@ -424,7 +470,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
 
     let api = super::async_hook_registry_shared_vm::initialize(context)?;
     let factory = context.evaluate_script_rooted(CLASS_FACTORY, "node:async_hooks/shared.js")?;
-    let functions = [
+    let mut functions = [
         "asyncResourceInit",
         "asyncResourceRunInAsyncScope",
         "asyncResourceEmitDestroy",
@@ -440,10 +486,13 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         "asyncExecutionResource",
         "asyncHooksEnabled",
         "asyncExternalInit",
+        "asyncDefaultTriggerScope",
+        "asyncGetDefaultTrigger",
     ]
     .map(|name| context.host_function_with_data(crate::host::shared_vm::operation(name), api))
     .into_iter()
     .collect::<Result<Vec<_>, _>>()?;
+    functions.push(super::util_shared_vm::symbols_binding(context)?);
     let undefined = context.undefined();
     let module = context.call_rooted(factory, undefined, &functions)?;
     let retained = context.retain(module)?;
@@ -468,7 +517,7 @@ pub(crate) fn emit_init(
     let state = context.host_mut().shared_state();
     {
         let mut state = state.borrow_mut();
-        let parent = visible_async_id(&state.async_hooks);
+        let parent = state.async_hooks.default_trigger_async_id();
         state
             .async_hooks
             .context_triggers
@@ -578,7 +627,7 @@ pub(crate) fn initialize_resource(
     let state = context.host_mut().shared_state();
     let identity = state.borrow().async_hooks.identity.clone();
     let parent = identity.store_context();
-    let trigger_parent = visible_async_id(&state.borrow().async_hooks);
+    let trigger_parent = state.borrow().async_hooks.default_trigger_async_id();
     let trigger = if context
         .rooted_value(options)
         .and_then(|v| v.as_number())

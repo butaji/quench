@@ -219,13 +219,6 @@ pub trait Host {
     fn can_block(&self) -> bool {
         false
     }
-
-    /// Whether SharedArrayBuffers may be shared with agents on other threads. Such
-    /// buffers live in thread-safe data blocks, and `Atomics` on them synchronizes
-    /// across threads; otherwise every agent is emulated within this VM.
-    fn shares_memory_across_threads(&self) -> bool {
-        false
-    }
 }
 
 /// Borrowed capability context. It exposes typed host effects without

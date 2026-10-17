@@ -387,14 +387,18 @@ fn build_internal_binding(
         "modules" => return crate::host::shared_vm::commonjs::cached_native_binding(
             context, "\0binding:modules", module_protocol_binding,
         ),
+        "stream_wrap" => return super::stream_binding::binding(context),
+        "udp_wrap" => return super::udp_binding::binding(context),
+        "tcp_wrap" => return super::tcp_binding::binding(context),
         "contextify" => return super::contextify_shared_vm::binding(context),
         "types" => return super::util_shared_vm::types_binding(context),
+        #[cfg(quench_openssl_provider)]
+        "messaging" => return super::dom_exception_shared_vm::module(context),
         "crypto_keys" => return super::crypto_key_shared_vm::binding(context),
         "util" => return super::util_shared_vm::key_binding(context),
         "options" => return super::cli_options_shared_vm::binding(context),
         "string_decoder" => return super::string_decoder_shared_vm::binding(context),
         "zlib" => return super::zlib_native_shared_vm::binding(context),
-        "cares_wrap" => return super::dns_shared_vm::binding(context),
         "serdes" => return super::serdes_shared_vm::binding(context),
         "v8" => return super::v8_shared_vm::binding(context),
         "heap_utils" => return super::v8_shared_vm::heap_utils_binding(context),
@@ -409,10 +413,12 @@ fn build_internal_binding(
             Ok(binding)
         }
         "symbols" => return super::util_shared_vm::symbols_binding(context),
+        "cares_wrap" => return crate::host::shared_vm::commonjs::cares_binding(context),
         "http2" => return crate::host::shared_vm::commonjs::http2_binding(context),
         "buffer" => return super::buffer_fill_shared_vm::binding(context),
         "crypto" => return super::tls_shared_vm::facade::binding(context),
         "timers" => return super::timers_shared_vm::binding(context),
+        "performance" => return super::performance_binding_shared_vm::binding(context),
         "uv" => return super::util_system_error_shared_vm::uv_binding(context),
         "fs_event_wrap" => return super::fs_watch_shared_vm::event_binding(context),
         "trace_events" => {

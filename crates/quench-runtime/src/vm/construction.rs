@@ -63,10 +63,17 @@ impl<H: Host> Vm<H> {
         function: Value,
         name: Atom,
     ) -> Result<(), JsError> {
-        let Some(text) = ((name as usize) < p.atoms.len()).then(|| &p.atoms[name as usize]) else {
+        if (name as usize) >= p.atoms.len() {
             return Err(JsError("function name atom is invalid".into()));
-        };
-        self.set_function_name_text(function, text.to_string());
+        }
+        // A program's atom ids are the VM's, so the name's atom is known without interning.
+        let value = self.inferred_function_name_slot(function).map(|slot| {
+            (slot, self.heap.alloc(Cell::String(JsString::from_str(self.atom_name(name)))))
+        });
+        if let Some((slot, value)) = value {
+            self.heap.property_set(function, slot, value);
+            self.capture_function_name_for_atom(function, name);
+        }
         Ok(())
     }
 
@@ -87,26 +94,27 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn set_function_name_text(&mut self, function: Value, text: String) {
-        if !matches!(self.heap.get(function), Some(Cell::Function { .. })) {
-            return;
-        }
-        let name_atom = self.intern_atom("name");
-        let current = self
-            .own_property(function, name_atom)
-            .unwrap_or(Value::UNDEFINED);
-        let inferred =
-            matches!(self.heap.get(current), Some(Cell::String(value)) if value.units().is_empty());
-        if !inferred {
-            return;
-        }
-        let value = self.heap.alloc(Cell::String(text.into()));
-        let Some(object) = self.object_data(function) else {
+        let Some(slot) = self.inferred_function_name_slot(function) else {
             return;
         };
-        if let Some(slot) = self.shape_slot(object.shape(), name_atom) {
-            self.heap.property_set(function, slot, value);
-            self.capture_function_name(function, value);
+        let value = self.heap.alloc(Cell::String(text.into()));
+        self.heap.property_set(function, slot, value);
+        self.capture_function_name(function, value);
+    }
+
+    /// The slot of a function's own `name` while it still holds the empty name an anonymous
+    /// function definition starts with, which SetFunctionName replaces; `None` for anything
+    /// else, which keeps its name.
+    fn inferred_function_name_slot(&self, function: Value) -> Option<usize> {
+        if !matches!(self.heap.get(function), Some(Cell::Function { .. })) {
+            return None;
         }
+        let name_atom = self.runtime_atoms.name;
+        let current = self.own_property(function, name_atom).unwrap_or(Value::UNDEFINED);
+        if !matches!(self.heap.get(current), Some(Cell::String(value)) if value.units().is_empty()) {
+            return None;
+        }
+        self.shape_slot(self.object_data(function)?.shape(), name_atom)
     }
 
     pub(super) fn is_constructable(&self, p: &ResidualProgram, value: Value) -> bool {
@@ -316,12 +324,20 @@ impl<H: Host> Vm<H> {
             },
             env,
         });
-        let program = self.active_program;
-        self.function_values.entry((program, id)).or_default().push(
-            self.heap
-                .weak_handle(function)
-                .expect("new closure is live"),
-        );
+        // Only closures of a program's top level are ever found again by plan
+        // (`cached_functions`): a module root's hoisted functions and Wasm functions, which
+        // have no parent. A nested closure is never looked up, so it is not recorded.
+        if function_plan
+            .parent
+            .is_none_or(|parent| parent == super::ROOT_FUNCTION_ID)
+        {
+            let program = self.active_program;
+            self.function_values.entry((program, id)).or_default().push(
+                self.heap
+                    .weak_handle(function)
+                    .expect("new closure is live"),
+            );
+        }
         let name_value = function_plan
             .name
             .map(|atom| {
@@ -345,7 +361,11 @@ impl<H: Host> Vm<H> {
                 self.heap.property_add(function, prototype, with_prototype);
                 self.heap.property_add(prototype, function, constructor);
             }
-            self.capture_function_name(function, name_value);
+            match function_plan.name {
+                // The plan's atom is the name the string spells, so no interning is needed.
+                Some(name) => self.capture_function_name_for_atom(function, name),
+                None => self.capture_function_name(function, name_value),
+            }
             return Ok(function);
         }
         let mut recorded = ClosureShapes {

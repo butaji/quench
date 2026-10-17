@@ -11,6 +11,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
+use crate::shared_backing::SharedBacking;
 
 /// The format version this serializer writes (`kLatestVersion`).
 pub const WIRE_FORMAT_VERSION: u32 = 15;
@@ -443,7 +444,7 @@ fn valid<T>(value: Option<T>) -> Read<T> {
 pub struct SerializedValue {
     bytes: Vec<u8>,
     transferred: Vec<TransferredBuffer>,
-    shared: Vec<SharedBuffer>,
+    shared: Vec<Arc<SharedBacking>>,
 }
 
 impl std::fmt::Debug for SerializedValue {
@@ -464,17 +465,11 @@ struct TransferredBuffer {
     resizable: bool,
 }
 
-struct SharedBuffer {
-    block: Arc<crate::heap::ConcurrentBytes>,
-    max_byte_length: usize,
-    resizable: bool,
-}
-
 /// Hooks for messages within and between agents (Node's messaging delegate): host
 /// objects are the message's transferables by index, shared buffers its shared blocks.
 struct MessageHooks {
     host_objects: Vec<Value>,
-    shared: Vec<SharedBuffer>,
+    shared: Vec<Arc<SharedBacking>>,
 }
 
 impl<H: Host> WriteHooks<H> for MessageHooks {
@@ -497,14 +492,14 @@ impl<H: Host> WriteHooks<H> for MessageHooks {
     }
 
     fn shared_array_buffer_id(&mut self, vm: &mut Vm<H>, _: &ResidualProgram, buffer: Value) -> Result<u32, JsError> {
-        let Some(Cell::ArrayBuffer { bytes, max_byte_length, resizable, .. }) = vm.heap.get(buffer) else {
+        let Some(Cell::ArrayBuffer { bytes, .. }) = vm.heap.get(buffer) else {
             unreachable!("a shared buffer remains an ArrayBuffer");
         };
-        let block = bytes.concurrent_block().expect("shared buffers own a concurrent block").clone();
-        if let Some(index) = self.shared.iter().position(|shared| Arc::ptr_eq(&shared.block, &block)) {
+        let backing = bytes.shared_backing().expect("shared buffers own a shared backing");
+        if let Some(index) = self.shared.iter().position(|shared| Arc::ptr_eq(shared, &backing)) {
             return Ok(index as u32);
         }
-        self.shared.push(SharedBuffer { block, max_byte_length: *max_byte_length, resizable: *resizable });
+        self.shared.push(backing);
         Ok(self.shared.len() as u32 - 1)
     }
 
@@ -522,9 +517,10 @@ impl<H: Host> ReadHooks<H> for MessageHooks {
 
     fn shared_array_buffer(&mut self, vm: &mut Vm<H>, _: &ResidualProgram, id: u32) -> Result<Value, JsError> {
         Ok(match self.shared.get(id as usize) {
-            Some(shared) => {
-                let bytes = crate::heap::BufferBytes::concurrent(shared.block.clone());
-                vm.new_array_buffer_cell(bytes, true, shared.max_byte_length, shared.resizable, false)
+            Some(backing) => {
+                let (maximum, growable) = (backing.maximum(), backing.growable());
+                let bytes = crate::heap::BufferBytes::from_shared(backing.clone());
+                vm.new_array_buffer_cell(bytes, true, maximum, growable, false)
             }
             None => Value::UNDEFINED,
         })
@@ -1110,7 +1106,7 @@ impl<H: Host> Vm<H> {
             unreachable!("dispatched as an ArrayBuffer");
         };
         let (shareable, shared, detached, length, max_byte_length, resizable, immutable) =
-            (bytes.concurrent_block().is_some(), *shared, *detached, bytes.len(), *max_byte_length, *resizable, *immutable);
+            (bytes.shared_backing().is_some(), *shared, *detached, bytes.len(), *max_byte_length, *resizable, *immutable);
         if shared {
             if !shareable {
                 return Err(self.uncloneable_with(program, hooks, buffer));
@@ -1143,7 +1139,7 @@ impl<H: Host> Vm<H> {
             put_varint(&output, max_byte_length as u64);
         }
         if let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get(buffer) {
-            output.borrow_mut().extend_from_slice(bytes);
+            output.borrow_mut().extend_from_slice(&bytes.read());
         }
         Ok(())
     }

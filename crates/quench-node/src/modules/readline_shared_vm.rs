@@ -75,6 +75,5 @@ fn get(
     object: RootId,
     name: &str,
 ) -> Result<RootId, RootedError> {
-    let name = context.string_rooted(name);
-    context.get_property_rooted(object, name)
+    context.get_named_property_rooted(object, name)
 }

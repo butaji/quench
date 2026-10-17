@@ -1930,6 +1930,7 @@ pub(crate) fn finish_requested_exit(
     cleanup_environment(runtime, &shared_state);
     if process_control.exit_without_event() {
         super::tls_shared_vm::contexts::cleanup(runtime);
+        cleanup_native_work(runtime);
         super::zlib_native_shared_vm::cleanup(runtime);
         #[cfg(quench_icu)]
         super::icu_binding_shared_vm::cleanup(runtime);
@@ -2087,10 +2088,18 @@ fn drain_checkpoint(
         if crate::modules::child_process_shared_vm::poll(runtime, program, &shared_state)? {
             continue;
         }
+        #[cfg(quench_node_cares)]
+        if crate::modules::cares_channel_shared_vm::poll(runtime, program)? {
+            continue;
+        }
+        if crate::modules::cares_binding::poll(runtime, program)? {
+            continue;
+        }
         if crate::modules::fetch_shared_vm::poll(runtime, program, &shared_state)? {
             continue;
         }
-        if crate::modules::http_shared_vm::poll(runtime, program, &shared_state)? {
+        let udp_progress=crate::modules::udp_binding::poll(runtime,&shared_state)?;
+        if crate::modules::http_shared_vm::poll(runtime, program, &shared_state)? || udp_progress {
             continue;
         }
         if crate::modules::napi::poll(runtime, program)? {
@@ -2099,6 +2108,7 @@ fn drain_checkpoint(
         if crate::modules::worker_shared_vm::poll(runtime, program, &shared_state)? {
             continue;
         }
+        #[cfg(not(quench_node_cares))]
         if crate::modules::dns_shared_vm::poll(runtime, program, &shared_state)? {
             continue;
         }
@@ -2184,6 +2194,8 @@ fn drain_checkpoint(
                 let poll_interval = crate::modules::fetch_shared_vm::poll_interval()
                     .min(crate::modules::net_shared_vm::poll_interval())
                     .min(crate::modules::child_process_shared_vm::poll_interval());
+                #[cfg(quench_node_cares)]
+                let poll_interval = shared_state.borrow().cares.next_timeout().map_or(poll_interval, |timeout| poll_interval.min(timeout));
                 let wait = next_timer
                     .map(|due| due.saturating_duration_since(std::time::Instant::now()))
                     .map_or(poll_interval, |delay| delay.min(poll_interval));
@@ -2241,6 +2253,8 @@ fn drain_checkpoint(
                 let poll_interval = crate::modules::fetch_shared_vm::poll_interval()
                     .min(crate::modules::net_shared_vm::poll_interval())
                     .min(crate::modules::child_process_shared_vm::poll_interval());
+                #[cfg(quench_node_cares)]
+                let poll_interval = shared_state.borrow().cares.next_timeout().map_or(poll_interval, |timeout| poll_interval.min(timeout));
                 let wait = next_timer
                     .map(|due| due.saturating_duration_since(std::time::Instant::now()))
                     .map_or(poll_interval, |delay| delay.min(poll_interval));
@@ -2280,14 +2294,18 @@ fn run_and_clear_native_immediates(
 }
 
 fn has_referenced_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeState>>) -> bool {
-    crate::modules::child_process_ipc_shared_vm::has_work(&shared_state.borrow())
+    #[cfg(quench_node_cares)]
+    if shared_state.borrow().cares.has_work() { return true; }
+    #[cfg(not(quench_node_cares))]
+    if crate::modules::dns_shared_vm::has_work(shared_state) { return true; }
+    shared_state.borrow().udp.has_work() || shared_state.borrow().dns.has_work()
+        || crate::modules::child_process_ipc_shared_vm::has_work(&shared_state.borrow())
         || crate::modules::process_stdin_shared_vm::has_work(&shared_state.borrow().stdin)
         || crate::modules::fetch_shared_vm::has_pending(shared_state)
         || crate::modules::child_process_shared_vm::has_pending(shared_state)
         || crate::modules::http_shared_vm::has_work(shared_state)
         || crate::modules::napi::has_work()
         || crate::modules::worker_shared_vm::has_work(shared_state)
-        || crate::modules::dns_shared_vm::has_work(shared_state)
         || super::fs_watch_shared_vm::has_work(&shared_state.borrow().fs_watch)
         || super::fs_stat_watch_shared_vm::has_work(&shared_state.borrow().fs_stat_watch)
         || shared_state.borrow().scheduler.has_refed_shared_timers()
@@ -2381,7 +2399,7 @@ fn invoke_timer_callback(
     call_shared_callback(runtime, program, callback)
 }
 
-fn invoke_async_callback(
+pub(super) fn invoke_async_callback(
     runtime: &mut quench_runtime::Runtime<NodeHost>,
     program: &quench_runtime::ResidualProgram,
     callback: crate::modules::shared_event_loop::SharedCallback,
@@ -2396,6 +2414,15 @@ fn call_shared_callback(
     program: &quench_runtime::ResidualProgram,
     callback: &crate::modules::shared_event_loop::SharedCallback,
 ) -> Result<(), String> {
+    let resolved = if let Some(key)=callback.execution.as_ref().and_then(|e|e.optional_callback) {
+        let resolver=runtime.host_function(crate::host::shared_vm::operation("nativeOptionalCallbackSlot")).map_err(|e|e.to_string())?;
+        let result=runtime.call_rooted(resolver,callback.receiver,&[key]);
+        runtime.release_root(resolver);
+        match result { Ok(value)=>{
+            if runtime.rooted_value(value).is_some_and(|v|v.is_undefined()) {runtime.release_root(value);return Ok(())} Some(value)
+        },Err(error)=>return route_callback_failure(runtime,program,error) }
+    }else{None};
+    let actual_callback=resolved.unwrap_or(callback.callback);
     let shared = runtime.host_mut().shared_state();
     let scope = callback.execution.as_ref().map(|execution|
         super::async_hooks_shared_vm::enter_resource_context(&shared, execution.id, execution.resource));
@@ -2403,7 +2430,7 @@ fn call_shared_callback(
         Some(execution) => super::async_hook_registry_shared_vm::emit_runtime(runtime, super::async_hook_registry_shared_vm::HookKind::Before, execution.id),
         None => Ok(()),
     };
-    let called = before.and_then(|()| runtime.call_rooted(callback.callback, callback.receiver, &callback.args));
+    let called = before.and_then(|()| runtime.call_rooted(actual_callback, callback.receiver, &callback.args));
     let result = match called {
         Ok(value) => { runtime.release_root(value); Ok(()) }
         Err(mut error) => {
@@ -2423,6 +2450,7 @@ fn call_shared_callback(
         None => Ok(()),
     });
     drop(scope);
+    if let Some(root)=resolved {runtime.release_root(root);}
     result
 }
 
@@ -2561,6 +2589,9 @@ fn drain_shared_jobs(
         if unhandled.is_empty() {
             runtime.clear_kept_objects();
             crate::modules::zlib_stream_shared_vm::prune(runtime);
+            super::crypto_secret_job_shared_vm::prune(runtime);
+            #[cfg(quench_openssl_provider)]
+            super::crypto_hash_shared_vm::prune(runtime);
             super::zlib_native_shared_vm::prune(runtime);
             super::fs_watch_shared_vm::prune(runtime);
             super::tls_shared_vm::contexts::prune(runtime);
@@ -3076,6 +3107,33 @@ fn cleanup_environment(
     super::fs_stat_watch_shared_vm::cleanup(runtime);
 }
 
+// Exit listeners may submit native work. Accept it, then abandon it without
+// executing guest callbacks. Teardown also runs when an exit listener throws.
+fn cleanup_native_work(runtime: &mut quench_runtime::Runtime<NodeHost>) {
+    let shared = runtime.host_mut().shared_state();
+    shared.borrow_mut().native_tasks.shutdown();
+    super::crypto_secret_job_shared_vm::cleanup(runtime);
+    #[cfg(quench_openssl_provider)]
+    super::crypto_hash_shared_vm::cleanup(runtime);
+    #[cfg(quench_node_cares)]
+    super::cares_channel_shared_vm::cleanup(runtime);
+    super::cares_binding::cleanup(runtime);
+    super::performance_binding_shared_vm::cleanup(runtime);
+    super::udp_binding::cleanup(runtime);
+    super::native_async_wrap::cleanup(runtime);
+    let callbacks = shared.borrow_mut().scheduler.take_all_shared_immediates();
+    for immediate in callbacks {
+        let callback = immediate.callback;
+        if let Some(execution) = callback.execution {
+            // No destroy dispatch is scheduled during final cancellation.
+            super::async_hooks_shared_vm::clear_context(runtime, &shared, execution.id);
+            if let Some(key)=execution.optional_callback {runtime.release_root(key);}
+            runtime.release_root(execution.resource);
+        }
+        release_callback_roots(runtime, callback.callback, callback.receiver, callback.args);
+    }
+}
+
 // Builtin native objects remain usable throughout synchronous exit listeners.
 fn emit_exit(
     runtime: &mut quench_runtime::Runtime<NodeHost>,
@@ -3084,6 +3142,7 @@ fn emit_exit(
 ) -> Result<(), String> {
     let result = emit_exit_inner(runtime, program, code);
     super::tls_shared_vm::contexts::cleanup(runtime);
+        cleanup_native_work(runtime);
         super::zlib_native_shared_vm::cleanup(runtime);
     #[cfg(quench_icu)]
     super::icu_binding_shared_vm::cleanup(runtime);
@@ -3115,7 +3174,8 @@ fn release_callback(
     callback: crate::modules::shared_event_loop::SharedCallback,
 ) {
     if let Some(execution) = callback.execution {
-        super::async_hooks_shared_vm::complete_runtime_context(runtime, execution.id);
+        if execution.lifetime==super::shared_event_loop::CallbackLifetime::Operation {super::async_hooks_shared_vm::complete_runtime_context(runtime, execution.id);super::native_async_wrap::detach(runtime,execution.id);}
+        if let Some(key)=execution.optional_callback {runtime.release_root(key);}
         runtime.release_root(execution.resource);
     }
     release_callback_roots(runtime, callback.callback, callback.receiver, callback.args);
@@ -3470,7 +3530,19 @@ pub(crate) fn initialize_warning_policy(context: &mut NativeContext<'_, NodeHost
     let env = get(context, process, "env")?;
     let disabled = get(context, env, "NODE_NO_WARNINGS")?;
     if options.enabled("--warnings") && context.string_text(disabled)?.as_deref() != Some("1") {
-        let callback = warning_listener(context)?;
+        // Node's listener, or, unless a script can reach Node's own to compare, a listener of
+        // its name and length that loads Node's on the first warning: most runs never warn.
+        let callback = if options.enabled("--expose-internals") {
+            warning_listener(context, process, &[])?
+        } else {
+            let factory = context.evaluate_script_rooted(
+                "(load) => function onWarning(warning) { return load()(warning); }",
+                "node:internal/process/warning-listener.js",
+            )?;
+            let load = context.host_function(crate::host::shared_vm::operation("processWarningListener"))?;
+            let undefined = context.undefined();
+            context.call_rooted(factory, undefined, &[load])?
+        };
         let on = get(context, process, "on")?;
         let event = context.string_rooted("warning");
         context.call_rooted(on, process, &[event, callback])?;
@@ -3503,6 +3575,7 @@ pub(crate) fn initialize_emit_warning(context: &mut NativeContext<'_, NodeHost>,
 }
 
 /// The Console module owns initialization; the SDK owns this public callback.
-fn warning_listener(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+/// Node's `onWarning`.
+pub(crate) fn warning_listener(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     warning_export(context, "onWarning")
 }

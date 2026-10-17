@@ -37,10 +37,17 @@ fn on_path(program: &str) -> bool {
 }
 
 fn main() {
+
+    println!("cargo:rustc-check-cfg=cfg(quench_openssl_provider)");
+    println!("cargo:rerun-if-env-changed=DEP_OPENSSL_VERSION_NUMBER");
+    let provider = std::env::var("DEP_OPENSSL_VERSION_NUMBER").ok()
+        .and_then(|v| u64::from_str_radix(&v,16).ok()).is_some_and(|v|v>=0x3000_0000);
+    if provider { println!("cargo:rustc-cfg=quench_openssl_provider"); }
     embed_node_sources();
     configure_icu();
     configure_native_zlib();
     configure_native_brotli();
+    configure_native_cares();
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed={X86_64_LINUX_ORDER}");
     println!("cargo:rerun-if-changed={X86_64_LINUX_STATIC_ORDER}");
@@ -413,4 +420,15 @@ fn embed_legacy_binding_metadata(root: &Path) {
     if std::fs::read_to_string(&path).ok().as_deref() != Some(&output) {
         std::fs::write(path, output).expect("write SDK legacy binding metadata");
     }
+}
+
+#[allow(dead_code)]
+mod c_ares_abi { include!("src/modules/cares_constants.rs"); }
+fn configure_native_cares() {
+    println!("cargo:rustc-check-cfg=cfg(quench_node_cares)");
+    if std::env::var("CARGO_CFG_TARGET_FAMILY").as_deref() != Ok("unix") { return; }
+    let Ok(library) = pkg_config::Config::new().cargo_metadata(false).statik(true).probe("quench-node-cares") else { return; };
+    assert_eq!(library.version, c_ares_abi::CARES_VERSION, "c-ares ABI must match configured original SDK");
+    println!("cargo:rustc-cfg=quench_node_cares");
+    for directory in library.link_paths { println!("cargo:rustc-link-search=native={}", directory.display()); }
 }

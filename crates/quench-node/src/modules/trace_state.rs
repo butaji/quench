@@ -266,9 +266,28 @@ impl TraceState {
         };
         let file = std::fs::File::create(path)?;
         let mut writer = std::io::BufWriter::new(file);
-        writer.write_all(b"{\"traceEvents\":")?;
-        serde_json::to_writer(&mut writer, &self.events)?;
-        writer.write_all(b"}")?;
+        writer.write_all(b"{\"traceEvents\":[")?;
+        for (index, event) in self.events.iter().enumerate() {
+            if index != 0 { writer.write_all(b",")?; }
+            writer.write_all(b"{")?;
+            for (index, (key, value)) in event.as_object().expect("trace event object").iter().enumerate() {
+                if index != 0 { writer.write_all(b",")?; }
+                serde_json::to_writer(&mut writer, key)?;
+                writer.write_all(b":")?;
+                // The SDK/V8 JSONTraceWriter receives already escaped category
+                // and name payloads and writes them directly inside quotes.
+                // Escaping again changes original SDK safeTraceLabel values.
+                if matches!(key.as_str(), "name" | "cat") {
+                    writer.write_all(b"\"")?;
+                    writer.write_all(value.as_str().expect("trace string field").as_bytes())?;
+                    writer.write_all(b"\"")?;
+                } else {
+                    serde_json::to_writer(&mut writer, value)?;
+                }
+            }
+            writer.write_all(b"}")?;
+        }
+        writer.write_all(b"]}")?;
         writer.flush()
     }
 }

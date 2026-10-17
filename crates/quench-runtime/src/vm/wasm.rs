@@ -1011,7 +1011,7 @@ impl<H: Host> Vm<H> {
                 bytes,
                 detached: false,
                 ..
-            }) => Ok(crate::wasm::memory::MemoryRead::Segment(bytes)),
+            }) => Ok(crate::wasm::memory::MemoryRead::Buffer(bytes.read())),
             _ => Err(JsError::validation("invalid Wasm memory binding".into())),
         }
     }
@@ -1281,7 +1281,7 @@ impl<H: Host> Vm<H> {
                     destination.copy_from(source, input, output)
                 }
                 Some(Cell::ArrayBuffer { bytes: source, .. }) => {
-                    destination.lock()[output].copy_from_slice(&source[input])
+                    destination.lock()[output].copy_from_slice(&source.read()[input])
                 }
                 _ => unreachable!("validated source binding"),
             }

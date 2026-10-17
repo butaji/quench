@@ -256,7 +256,7 @@ fn field_domains_in_bounds(instruction: super::WideInstruction, bounds: Validati
             }
             FieldLayout::RegisterCount => true, // The associated window base owns the bounds check.
             FieldLayout::SignedConstant => true,
-            FieldLayout::OptionalRegister => instruction
+            FieldLayout::OptionalRegister | FieldLayout::OptionalReadRegister => instruction
                 .optional_register_b()
                 .is_none_or(|register| register_in_bounds(register, bounds.registers, 0)),
             FieldLayout::CacheSiteIndex => cache_in_bounds(value, bounds.cache_sites),
@@ -1221,6 +1221,7 @@ mod tests {
             dispatch: DispatchClass::General,
             decoded: Default::default(),
             plain_locals: Default::default(),
+            declared_atom_sets: Default::default(),
             activation_bindings: Default::default(),
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
