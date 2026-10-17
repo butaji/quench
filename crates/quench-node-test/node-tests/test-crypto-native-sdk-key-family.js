@@ -1,0 +1,27 @@
+'use strict';
+const assert=require('node:assert/strict');
+const crypto=require('node:crypto');
+const {AsyncLocalStorage,createHook}=require('node:async_hooks');
+const data=Buffer.from('native source-owned KeyObject family');
+const records=[];
+for(const [family,options]of [['rsa',{modulusLength:2048}],['rsa-pss',{modulusLength:2048,hashAlgorithm:'sha256',mgf1HashAlgorithm:'sha384',saltLength:32}],['ec',{namedCurve:'prime256v1'}],['ed25519',{}],['x25519',{}]]){
+ const pair=crypto.generateKeyPairSync(family,options);
+ for(const [kind,key]of Object.entries(pair)){assert(key instanceof crypto.KeyObject);assert.equal(key.type,kind==='privateKey'?'private':'public');assert.equal(key.asymmetricKeyType,family);}
+ const privateKey=crypto.createPrivateKey(pair.privateKey.export({format:'der',type:'pkcs8'}).length?{key:pair.privateKey.export({format:'der',type:'pkcs8'}),format:'der',type:'pkcs8'}:undefined);
+ const publicKey=crypto.createPublicKey(privateKey);assert(privateKey instanceof crypto.KeyObject);assert(publicKey instanceof crypto.KeyObject);assert(privateKey.equals(pair.privateKey));assert(publicKey.equals(pair.publicKey));
+ records.push(['family',family,privateKey.type,publicKey.type]);
+ if(family==='x25519')continue;
+ const digest=family==='ed25519'?null:'sha256';const signature=crypto.sign(digest,data,privateKey);assert(crypto.verify(digest,data,publicKey,signature));const bad=Buffer.from(signature);bad[0]^=1;assert.equal(crypto.verify(digest,data,publicKey,bad),false);
+ if(family!=='ed25519'){const sign=crypto.createSign(digest);sign.update(data.subarray(0,7));sign.update(data.subarray(7));const result=sign.sign(privateKey);const verify=crypto.createVerify(digest);verify.update(data);assert(verify.verify(publicKey,result));assert.throws(()=>sign.update(data),{code:'ERR_CRYPTO_INVALID_STATE'});}
+ records.push(['signature',family,true]);
+}
+const secret=crypto.createSecretKey(Buffer.from([1,2,3]));assert(secret instanceof crypto.KeyObject);assert.equal(secret.symmetricKeySize,3);assert.equal(secret.export().toString('hex'),'010203');records.push(['secret',true]);
+const pair=crypto.generateKeyPairSync('ec',{namedCurve:'prime256v1'});const signature=crypto.sign('sha256-192',data,pair.privateKey);assert(crypto.verify('sha256-192',data,pair.publicKey,signature));assert(crypto.createVerify('sha256-192').update(data).verify(pair.publicKey,crypto.createSign('sha256-192').update(data).sign(pair.privateKey)));records.push(['provider-only-signatures',true]);
+const nullSignature=crypto.sign(null,data,{key:pair.privateKey,dsaEncoding:'ieee-p1363'});assert.equal(nullSignature.length,64);assert(crypto.verify(null,data,{key:pair.publicKey,dsaEncoding:'ieee-p1363'},nullSignature));records.push(['null-algorithm-p1363',true]);
+const rsa=crypto.generateKeyPairSync('rsa',{modulusLength:2048});for(const digest of ['sha256','sha256-192','keccak-256']){const ciphertext=crypto.publicEncrypt({key:rsa.publicKey,oaepHash:digest},data);assert.deepEqual(crypto.privateDecrypt({key:rsa.privateKey,oaepHash:digest},ciphertext),data);}assert.deepEqual(crypto.publicDecrypt(rsa.publicKey,crypto.privateEncrypt(rsa.privateKey,data)),data);records.push(['rsa-native-provider-digests',true]);
+const rawConstants=require('internal/test/binding').internalBinding('constants').crypto;
+assert.equal(rawConstants,crypto.constants);assert.equal(Object.getPrototypeOf(rawConstants),null);for(const[name,value]of[['RSA_PKCS1_PADDING',1],['RSA_PKCS1_OAEP_PADDING',4],['RSA_PKCS1_PSS_PADDING',6],['RSA_PSS_SALTLEN_MAX_SIGN',-2]])assert.deepEqual(Object.getOwnPropertyDescriptor(rawConstants,name),{value,writable:false,enumerable:true,configurable:false});records.push(['native-constants',true]);
+const {isURLInstance,getURLHref}=require('internal/url');const uri=new URL('https://native.example/key-owner');uri.searchParams.set('v','1');Object.defineProperty(uri,'href',{get(){throw Error('public href getter must not run')}});assert(isURLInstance(uri));assert.equal(getURLHref(uri),'https://native.example/key-owner?v=1');let urlReads=0;assert.equal(isURLInstance({get href(){urlReads++;throw Error('unbranded URL property read')}}),false);assert.equal(isURLInstance(Object.create(URL.prototype)),false);assert.equal(urlReads,0);records.push(['private-url-brand',true]);
+const cipherKey=crypto.createSecretKey(Buffer.alloc(16,7)),iv=Buffer.alloc(16,2);const cipher=crypto.createCipheriv('aes-128-cbc',cipherKey,iv);const ciphertext=Buffer.concat([cipher.update(data),cipher.final()]);const decipher=crypto.createDecipheriv('aes-128-cbc',cipherKey,iv);assert.deepEqual(Buffer.concat([decipher.update(ciphertext),decipher.final()]),data);records.push(['secret-native-owner-cipher-interop',true]);
+const als=new AsyncLocalStorage();const resources=new Set();let before=0,after=0;const hook=createHook({init(id,type){if(type==='SIGNREQUEST')resources.add(id);},before(id){if(resources.has(id))before++},after(id){if(resources.has(id))after++}}).enable();
+als.run('signature-context',()=>{const input=Buffer.from(data);crypto.sign('sha256-192',input,pair.privateKey,(error,result)=>{assert.ifError(error);assert.equal(als.getStore(),'signature-context');assert(crypto.verify('sha256-192',data,pair.publicKey,result));assert(before>0);records.push(['async-source-signature',true,als.getStore(),resources.size>0]);setImmediate(()=>{assert(after>0);hook.disable();console.log(JSON.stringify(records));});});input.fill(0);});
