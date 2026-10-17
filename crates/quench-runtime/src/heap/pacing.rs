@@ -194,34 +194,28 @@ impl GenerationalPacing {
     }
 }
 
-/// The smallest allocation weight between collections, and between full collections,
-/// under RSS-first pacing.
-const RSS_FIRST_MINIMUM_BUDGET: usize = 384;
-
-/// Production pacing. Starting point for the policy table (TOD-137 stage 3): young
-/// collections every half live set (at least 2^15), a full collection once the old
-/// generation has doubled, and never more than eight live sets of allocation between
-/// full collections. When more than half of young allocations survive, collections are
-/// full with two live sets between them, probing survival with a minor collection every
-/// fourth one. (With live measured in cells only, this factor was four: payload-heavy
-/// heaps measured in weight are larger, and two keeps Splay's Score at 21% less RSS.)
-///
-/// RSS-first values (`v2-npm` 6571735f9 and `v2-cloud-c2`, the owner's direction of
-/// 2026-10-17: lowest peak RSS among Node and Bun on the npm package scenarios): at least
-/// 384 allocations between collections, one live set between full collections (at least
-/// 384) and one live set between full-only collections, from the Score-only 2^15/2^18, 8/1
-/// and 2/1. The Score-only pacing raised npm peak RSS 10-30% (evidence/npm-rss-2026-10-17/).
+/// Production pacing, memory-first on the owner's direction of 2026-10-17 (TOD-123): young
+/// collections every half live set (at least 384 weight), a full collection once the old
+/// generation has doubled or one live set of allocation has passed since the last one, and,
+/// when more than half of young allocations survive, full collections with one live set
+/// between them, probing survival with a minor collection every fourth one. The minimums are
+/// the pre-generational 384-cell headroom; the TOD-137 starting point's 2^15 and 2^18 minimums
+/// and its eight- and four-live-set factors keep more garbage resident on V8-v7's small heaps.
 pub(super) const PRODUCTION_PACING: GenerationalPacing = GenerationalPacing {
     young: Ratio::new(1, 2),
-    minimum_young: RSS_FIRST_MINIMUM_BUDGET,
+    minimum_young: MEMORY_FIRST_MINIMUM_ALLOCATION,
     old_growth: Ratio::new(1, 1),
-    minimum_old_growth: 1 << 15,
+    minimum_old_growth: MEMORY_FIRST_MINIMUM_ALLOCATION,
     allocation_cap: Ratio::new(1, 1),
-    minimum_allocation_cap: RSS_FIRST_MINIMUM_BUDGET,
+    minimum_allocation_cap: MEMORY_FIRST_MINIMUM_ALLOCATION,
     survival_limit: SURVIVAL_SCALE / 2,
     full_only_headroom: Ratio::new(1, 1),
     probe_interval: 4,
 };
+
+/// The fewest allocations between collections, whatever survived: the pre-generational
+/// minimum headroom.
+const MEMORY_FIRST_MINIMUM_ALLOCATION: usize = 384;
 
 #[cfg(not(feature = "gc-tuning"))]
 pub(super) fn pacing() -> GenerationalPacing {
