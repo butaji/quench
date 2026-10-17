@@ -1016,7 +1016,7 @@ pub struct Function {
     pub params: u16,
     pub length: u16,
     pub parameter_end_pc: u32,
-    pub parameter_atoms: Vec<Atom>,
+    pub parameter_atoms: crate::heap::ThinBoxSlice<Atom>,
     pub rest: bool,
     pub is_async: bool,
     pub is_generator: bool,
@@ -1033,31 +1033,31 @@ pub struct Function {
     pub simple_parameters: bool,
     pub strict: bool,
     pub locals: u16,
-    pub local_atoms: Vec<Atom>,
+    pub local_atoms: crate::heap::ThinBoxSlice<Atom>,
     /// Names visible through this function's captured declarative environment.
-    pub environment_atoms: Vec<Atom>,
+    pub environment_atoms: crate::heap::ThinBoxSlice<Atom>,
     /// Source local slots owned by a closure environment when this activation
     /// escapes. `None` retains legacy whole-frame promotion; `Some` is the
     /// selective layout, including an empty set for closure-only activations.
     pub(crate) selective_capture_slots: Option<Vec<u16>>,
     /// Binding slots assigned stable frame registers by lowering.
-    pub(crate) local_registers: Vec<LocalRegister>,
+    pub(crate) local_registers: crate::heap::ThinBoxSlice<LocalRegister>,
     /// The function was created while an enclosing `with` scope was active,
     /// so unresolved names in descendants can still observe its outer locals.
     pub(crate) inherited_with_scope: bool,
-    pub lexical_atoms: Vec<Atom>,
-    pub global_lexical_atoms: Vec<Atom>,
-    pub global_var_atoms: Vec<Atom>,
-    pub global_function_atoms: Vec<Atom>,
-    pub global_annex_b_var_atoms: Vec<Atom>,
-    pub global_immutable_atoms: Vec<Atom>,
+    pub lexical_atoms: crate::heap::ThinBoxSlice<Atom>,
+    pub global_lexical_atoms: crate::heap::ThinBoxSlice<Atom>,
+    pub global_var_atoms: crate::heap::ThinBoxSlice<Atom>,
+    pub global_function_atoms: crate::heap::ThinBoxSlice<Atom>,
+    pub global_annex_b_var_atoms: crate::heap::ThinBoxSlice<Atom>,
+    pub global_immutable_atoms: crate::heap::ThinBoxSlice<Atom>,
     /// Bindings a dynamic name lookup in this function can see.
     pub(crate) name_bindings: NameBindings,
     /// Lexical projections at eval calls and dynamic name operations.
-    pub binding_sites: Vec<BindingSite>,
-    pub(crate) source_positions: Vec<SourcePosition>,
+    pub binding_sites: crate::heap::ThinBoxSlice<BindingSite>,
+    pub(crate) source_positions: SourcePositions,
     /// The plan of each CloneEnv instruction.
-    pub environment_clones: Vec<EnvironmentClone>,
+    pub environment_clones: crate::heap::ThinBoxSlice<EnvironmentClone>,
     pub code: Vec<Instr>,
     pub(crate) wide: Vec<WideInstruction>,
     pub registers: u16,
@@ -1074,7 +1074,7 @@ pub struct Function {
     pub(crate) static_name_scope: std::cell::OnceCell<bool>,
     /// Lazily derived `call_plan`; never serialized.
     pub(crate) call_plan: std::cell::OnceCell<CallPlan>,
-    pub(crate) handlers: Vec<Handler>,
+    pub(crate) handlers: crate::heap::ThinBoxSlice<Handler>,
     pub(crate) register_root_offset: u32,
     /// A register that holds `undefined` for the whole activation, set at frame entry and
     /// never written by code: the receiver of plain calls.
@@ -1128,6 +1128,81 @@ pub(crate) struct SourcePosition {
     pub(crate) pc: u32,
     pub(crate) line: u32,
     pub(crate) column: u32,
+}
+
+/// A function's source positions in ascending pc order, as LEB128 varints of each entry's
+/// differences from the one before: the pc, then the line and column zigzag-signed.
+/// Positions are read only when an error records a stack or a diagnostic names a
+/// location, by decoding the one function's table, so the table is kept at a few bytes
+/// an entry rather than three words.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct SourcePositions(Box<[u8]>);
+
+/// Payload bits per LEB128 byte; the high bit marks a continuation.
+const VARINT_PAYLOAD_BITS: u32 = 7;
+const VARINT_CONTINUATION: u8 = 1 << VARINT_PAYLOAD_BITS;
+
+impl SourcePositions {
+    pub(crate) fn iter(&self) -> impl Iterator<Item = SourcePosition> + '_ {
+        let mut bytes = self.0.iter().copied();
+        let mut varint = move || -> Option<u32> {
+            let mut value = 0_u32;
+            let mut shift = 0;
+            loop {
+                let byte = bytes.next()?;
+                value |= u32::from(byte & !VARINT_CONTINUATION) << shift;
+                if byte & VARINT_CONTINUATION == 0 {
+                    return Some(value);
+                }
+                shift += VARINT_PAYLOAD_BITS;
+            }
+        };
+        let unzigzag = |value: u32| ((value >> 1) as i32 ^ -((value & 1) as i32)) as u32;
+        let mut previous = SourcePosition { pc: 0, line: 0, column: 0 };
+        std::iter::from_fn(move || {
+            previous = SourcePosition {
+                pc: previous.pc.wrapping_add(varint()?),
+                line: previous.line.wrapping_add(unzigzag(varint()?)),
+                column: previous.column.wrapping_add(unzigzag(varint()?)),
+            };
+            Some(previous)
+        })
+    }
+
+    pub(crate) fn to_vec(&self) -> Vec<SourcePosition> {
+        self.iter().collect()
+    }
+
+    /// The position of the last entry at or before `pc`.
+    pub(crate) fn at(&self, pc: u32) -> Option<SourcePosition> {
+        self.iter().take_while(|position| position.pc <= pc).last()
+    }
+}
+
+impl From<Vec<SourcePosition>> for SourcePositions {
+    fn from(positions: Vec<SourcePosition>) -> Self {
+        fn push(bytes: &mut Vec<u8>, mut value: u32) {
+            loop {
+                let byte = (value & u32::from(!VARINT_CONTINUATION)) as u8;
+                value >>= VARINT_PAYLOAD_BITS;
+                if value == 0 {
+                    bytes.push(byte);
+                    return;
+                }
+                bytes.push(byte | VARINT_CONTINUATION);
+            }
+        }
+        let zigzag = |delta: u32| ((delta as i32) << 1 ^ ((delta as i32) >> (u32::BITS - 1))) as u32;
+        let mut bytes = Vec::new();
+        let mut previous = SourcePosition { pc: 0, line: 0, column: 0 };
+        for position in positions {
+            push(&mut bytes, position.pc.wrapping_sub(previous.pc));
+            push(&mut bytes, zigzag(position.line.wrapping_sub(previous.line)));
+            push(&mut bytes, zigzag(position.column.wrapping_sub(previous.column)));
+            previous = position;
+        }
+        Self(bytes.into_boxed_slice())
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2125,12 +2200,7 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
 
 impl ResidualProgram {
     pub(crate) fn source_position(&self, function: u32, pc: u32) -> Option<SourcePosition> {
-        let positions = &self.functions.get(function as usize)?.source_positions;
-        let position = *positions.get(
-            positions
-                .partition_point(|position| position.pc <= pc)
-                .checked_sub(1)?,
-        )?;
+        let position = self.functions.get(function as usize)?.source_positions.at(pc)?;
         self.adjust_source_position(position)
     }
 

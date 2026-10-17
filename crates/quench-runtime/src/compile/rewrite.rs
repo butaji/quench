@@ -651,6 +651,7 @@ fn rewrite_once(
         function.parameter_end_pc,
         &function.binding_sites,
     );
+    let positions = function.source_positions.to_vec();
     let mut code = Vec::with_capacity(old.len());
     let mut map = vec![0usize; old.len() + 1];
     let mut index = 0;
@@ -678,7 +679,7 @@ fn rewrite_once(
                     .iter()
                     .filter(|rule| rule.pattern == [first.op(), second.op()])
                     .find_map(|rule| {
-                        let replacement = apply_rule(*rule, first, *second, field_sites, &function.source_positions, index)?;
+                        let replacement = apply_rule(*rule, first, *second, field_sites, &positions, index)?;
                         let removed_definitions = original_definitions
                             & !liveness::definitions(replacement.as_wide(), superinstructions);
                         (live_out & removed_definitions == 0).then_some(replacement)
@@ -746,7 +747,7 @@ pub(super) fn relocate(
     handlers: &mut [crate::bytecode::Handler],
     parameter_end_pc: &mut u32,
     binding_sites: &mut [crate::bytecode::BindingSite],
-    source_positions: &mut Vec<crate::bytecode::SourcePosition>,
+    source_positions: &mut crate::bytecode::SourcePositions,
     old_code: &[Instr],
 ) {
     for instruction in code.iter_mut() {
@@ -778,7 +779,9 @@ pub(super) fn relocate(
     for site in binding_sites {
         site.resume_pc = map[site.resume_pc as usize] as u32;
     }
-    relocate_source_positions(code.len(), source_positions, old_code, wide, map);
+    let mut positions = source_positions.to_vec();
+    relocate_source_positions(code.len(), &mut positions, old_code, wide, map);
+    *source_positions = positions.into();
 }
 
 fn relocate_source_positions(
@@ -868,7 +871,7 @@ mod tests {
                 &mut [],
                 &mut parameter_end,
                 &mut [],
-                &mut vec![],
+                &mut Default::default(),
                 &old,
             );
             assert_eq!(wide[0].jump_target(), 2);
@@ -1236,7 +1239,7 @@ mod tests {
             Instr::new(Op::Nop, 0, 0, 0, 0),
             Instr::new(Op::Return, 0, 0, 0, 0),
         ];
-        let mut source_positions = vec![
+        let mut source_positions: crate::bytecode::SourcePositions = vec![
             SourcePosition {
                 pc: 0,
                 line: 1,
@@ -1252,7 +1255,8 @@ mod tests {
                 line: 1,
                 column: 9,
             },
-        ];
+        ]
+        .into();
         let map = [0, 0, 1, 1, 2];
         let mut parameter_end_pc = 0;
         let mut handlers = vec![];
@@ -1270,7 +1274,7 @@ mod tests {
         );
 
         assert_eq!(
-            source_positions,
+            source_positions.to_vec(),
             vec![
                 SourcePosition {
                     pc: 0,
