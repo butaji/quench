@@ -72,7 +72,7 @@ fn options(
     let [function_name, customization] = result;
     Ok((function_name, customization))
 }
-fn input(
+pub(crate) fn input(
     c: &mut Context<'_>,
     value: RootId,
     encoding: Option<RootId>,

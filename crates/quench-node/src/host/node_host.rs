@@ -60,6 +60,7 @@ pub(crate) enum CommonJsCache {
 
 /// Host-owned state and lifecycle data for the shared VM path.
 pub(crate) struct SharedNodeState {
+    pub(crate) workers: crate::modules::worker_threads_shared_vm::State,
     pub(crate) vm_scripts: crate::modules::contextify_shared_vm::State,
     pub(crate) async_hooks: crate::modules::async_hooks_state::SharedAsyncHooksState,
     pub(crate) native_tasks: crate::modules::native_task_pool::Pool,
@@ -99,6 +100,9 @@ pub(crate) struct SharedNodeState {
     pub(crate) process_ipc: crate::modules::child_process_ipc_shared_vm::State,
     #[cfg(quench_openssl_provider)]
     pub(crate) crypto_hashes: crate::modules::crypto_hash_shared_vm::State,
+    pub(crate) crypto_key_material: crate::modules::crypto_key_material_shared_vm::State,
+    #[cfg(quench_openssl_provider)]
+    pub(crate) crypto_signatures: crate::modules::crypto_signature_shared_vm::State,
     pub(crate) crypto_secret_jobs: crate::modules::crypto_secret_job_shared_vm::State,
     pub(crate) zlib_native: crate::modules::zlib_native_shared_vm::State,
     pub(crate) messaging: crate::modules::worker_shared_vm::State,
@@ -113,10 +117,9 @@ pub(crate) struct SharedNodeState {
     pub(crate) process_module: Option<quench_runtime::RootId>,
     pub(crate) process_capture_state: Option<quench_runtime::RootId>,
     pub(crate) path_module: Option<quench_runtime::RootId>,
-    pub(crate) url_constructor: Option<quench_runtime::RootId>,
-    pub(crate) url_state: Option<quench_runtime::RootId>,
-    pub(crate) url_search_params_constructor: Option<quench_runtime::RootId>,
     pub(crate) timer_handle_api: Option<crate::modules::timers_shared_vm::TimerHandleApi>,
+    /// The emitter configuration's fixed keys and constructor (`event_constructor_shared_vm`).
+    pub(crate) emitter_keys: Option<crate::modules::event_constructor_shared_vm::EmitterKeys>,
     /// The internal invocation every receiverless next tick shares (`queue_next_tick`).
     pub(crate) tick_invocation: Option<quench_runtime::RootId>,
     pub(crate) timer_duration_warnings: crate::modules::timers_shared_vm::TimerDurationWarnings,
@@ -135,6 +138,7 @@ pub(crate) struct SharedNodeState {
     pub(crate) net_socket_close_completed: Option<quench_runtime::RootId>,
     pub(crate) udp: crate::modules::udp_binding::State,
     pub(crate) native_async_wrap: crate::modules::native_async_wrap::State,
+    pub(crate) native_pipe: crate::modules::pipe_binding::State,
     pub(crate) native_stream: crate::modules::stream_binding::State,
     pub(crate) native_tcp_listeners: std::collections::HashMap<u64, quench_runtime::RootId>,
     pub(crate) net_servers: std::collections::HashMap<u64, NetServer>,
@@ -186,6 +190,7 @@ pub(crate) struct SharedChildProcess {
     pub(crate) stdin_stream: Option<quench_runtime::RootId>,
     pub(crate) stdin: crate::modules::child_process_input_shared_vm::Input,
     pub(crate) ipc: Option<crate::modules::child_process_ipc_shared_vm::IpcChannel>,
+    pub(crate) ipc_pipe: Option<u64>,
     pub(crate) events: std::sync::mpsc::Receiver<ChildProcessEvent>,
     pub(crate) stdout_terminal: bool,
     pub(crate) stderr_terminal: bool,
@@ -213,17 +218,16 @@ impl SharedNodeState {
         self.commonjs_cache = None;
         self.module_parent_api = None;
         self.active_esm_requires.clear();
+        self.workers.reset_vm_roots();
         self.primordials_module = None;
         self.crypto_handle_symbol = None;
         self.event_targets_api = None;
         self.process_module = None;
         self.process_capture_state = None;
         self.path_module = None;
-        self.url_constructor = None;
-        self.url_state = None;
-        self.url_search_params_constructor = None;
         self.timer_handle_api = None;
         self.tick_invocation = None;
+        self.emitter_keys = None;
         self.timer_duration_warnings = Default::default();
         self.net_socket_constructor = None;
         self.net_handle_owner_symbol = None;
@@ -232,6 +236,7 @@ impl SharedNodeState {
         self.net_socket_option_keys = None;
         self.udp = Default::default();
         self.native_async_wrap = Default::default();
+        self.native_pipe = Default::default();
         self.native_stream = Default::default();
         self.native_tcp_listeners.clear();
         self.net_handle_identities.clear();
@@ -253,6 +258,7 @@ impl SharedNodeState {
         async_identity: crate::modules::async_hooks_state::AsyncIdentity,
     ) -> Self {
         Self {
+            workers: Default::default(),
             vm_scripts: Default::default(),
             async_hooks: crate::modules::async_hooks_state::SharedAsyncHooksState::new(
                 async_identity,
@@ -290,6 +296,9 @@ impl SharedNodeState {
             process_ipc: crate::modules::child_process_ipc_shared_vm::State::default(),
             #[cfg(quench_openssl_provider)]
             crypto_hashes: crate::modules::crypto_hash_shared_vm::State::default(),
+            crypto_key_material: crate::modules::crypto_key_material_shared_vm::State::default(),
+            #[cfg(quench_openssl_provider)]
+            crypto_signatures: crate::modules::crypto_signature_shared_vm::State::default(),
             crypto_secret_jobs: crate::modules::crypto_secret_job_shared_vm::State::default(),
             zlib_native: crate::modules::zlib_native_shared_vm::State::default(),
             messaging: crate::modules::worker_shared_vm::State::default(),
@@ -304,11 +313,9 @@ impl SharedNodeState {
             process_module: None,
             process_capture_state: None,
             path_module: None,
-            url_constructor: None,
-            url_state: None,
-            url_search_params_constructor: None,
             timer_handle_api: None,
             tick_invocation: None,
+            emitter_keys: None,
             timer_duration_warnings: Default::default(),
             exec_argv: Vec::new(),
             cli_options: Default::default(),
@@ -325,6 +332,7 @@ impl SharedNodeState {
             net_socket_close_completed: None,
             udp: Default::default(),
             native_async_wrap: Default::default(),
+            native_pipe: Default::default(),
             native_stream: Default::default(),
             native_tcp_listeners: std::collections::HashMap::new(),
             net_servers: std::collections::HashMap::new(),
