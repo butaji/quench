@@ -52,7 +52,7 @@ impl<H: Host> Vm<H> {
                     }
                     let message = diagnostics
                         .first()
-                        .map_or("invalid script source".to_owned(), ToString::to_string);
+                        .map_or("invalid script source".to_owned(), |diagnostic| diagnostic.syntax_message().to_owned());
                     return self.syntax_error_result(p, &message);
                 }
             };
@@ -212,7 +212,7 @@ impl<H: Host> Vm<H> {
             }
             let message = diagnostics
                 .first()
-                .map_or("invalid eval source".to_owned(), ToString::to_string);
+                .map_or("invalid eval source".to_owned(), |diagnostic| diagnostic.syntax_message().to_owned());
             self.syntax_error_result(p, &message)
                 .expect_err("dynamic eval syntax errors must throw")
         })?;
@@ -264,7 +264,7 @@ impl<H: Host> Vm<H> {
                 }
                 let message = diagnostics
                     .first()
-                    .map_or("invalid host script".to_owned(), ToString::to_string);
+                    .map_or("invalid host script".to_owned(), |diagnostic| diagnostic.syntax_message().to_owned());
                 self.syntax_error_result(&program, &message)
                     .expect_err("specialized host-script syntax errors must throw")
             })?;
