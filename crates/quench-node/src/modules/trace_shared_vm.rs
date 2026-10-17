@@ -446,7 +446,7 @@ fn build_internal_binding(
                 let os = super::os_binding_shared_vm::constants(context)?;
                 put(context, binding, "os", os)?;
             }
-            let zlib = super::zlib_shared_vm::constants(context)?;
+            let zlib = super::zlib_constants::constants(context)?;
             put(context, binding, "zlib", zlib)?;
             let trace = context.object_rooted()?;
             for (name, code) in [

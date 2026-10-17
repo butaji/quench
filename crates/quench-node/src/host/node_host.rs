@@ -98,7 +98,6 @@ pub(crate) struct SharedNodeState {
     pub(crate) process_signals: crate::modules::process_signals_state::SignalState,
     pub(crate) stdin: crate::modules::process_stdin_shared_vm::State,
     pub(crate) process_ipc: crate::modules::child_process_ipc_shared_vm::State,
-    pub(crate) zlib_streams: crate::modules::zlib_stream_shared_vm::State,
     #[cfg(quench_openssl_provider)]
     pub(crate) crypto_hashes: crate::modules::crypto_hash_shared_vm::State,
     pub(crate) crypto_secret_jobs: crate::modules::crypto_secret_job_shared_vm::State,
@@ -292,7 +291,6 @@ impl SharedNodeState {
             process_signals: crate::modules::process_signals_state::SignalState::default(),
             stdin: crate::modules::process_stdin_shared_vm::State::default(),
             process_ipc: crate::modules::child_process_ipc_shared_vm::State::default(),
-            zlib_streams: crate::modules::zlib_stream_shared_vm::State::default(),
             #[cfg(quench_openssl_provider)]
             crypto_hashes: crate::modules::crypto_hash_shared_vm::State::default(),
             crypto_secret_jobs: crate::modules::crypto_secret_job_shared_vm::State::default(),

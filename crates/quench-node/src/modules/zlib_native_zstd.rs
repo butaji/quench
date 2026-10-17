@@ -1,6 +1,6 @@
 //! Rust ownership of the Zstd streaming ABI already linked by the Node host.
 use super::{Failure, Step};
-use crate::modules::zlib_shared_vm::Codec as Mode;
+use crate::modules::zlib_constants::Mode;
 use std::{
     ffi::{c_int, c_void},
     ptr::NonNull,
@@ -27,9 +27,13 @@ enum State {
 }
 pub(crate) struct Codec {
     state: State,
+    /// The configured pledge, restored by reset; `pledge` is the current frame's.
+    pledged: Option<u64>,
     pledge: Option<u64>,
     consumed: u64,
     frame_complete: bool,
+    /// A compressor's current frame has written bytes that a reset cannot take back.
+    frame_output_emitted: bool,
     after_frame_prefix: Option<Prefix>,
     ignoring_trailing: bool,
     reject_trailing: bool,
@@ -100,10 +104,12 @@ impl Codec {
             )
         })?;
         let codec = Self {
+            frame_complete: matches!(state, State::Compress(_)),
             state,
+            pledged: pledge,
             pledge,
             consumed: 0,
-            frame_complete: false,
+            frame_output_emitted: false,
             after_frame_prefix: None,
             ignoring_trailing: false,
             reject_trailing,
@@ -254,6 +260,13 @@ impl Codec {
                 }
             },
         };
+        if matches!(self.state, State::Compress(_)) {
+            self.frame_output_emitted |= o.pos > 0;
+            self.frame_complete = error(result).is_none() && result == 0 && flush == END;
+            if self.frame_complete {
+                self.frame_output_emitted = false;
+            }
+        }
         if let Some(e) = error(result) {
             return Err(e);
         }
@@ -294,5 +307,39 @@ impl Codec {
             consumed: i.pos,
             produced: o.pos,
         })
+    }
+
+    /// node_zlib.cc `ZstdCompressContext::ResetStream`/`ZstdDecompressContext::ResetStream`.
+    pub(crate) fn reset(&mut self) -> Result<(), Failure> {
+        let result = unsafe {
+            match self.state {
+                State::Compress(p) => {
+                    if !self.frame_complete && self.frame_output_emitted {
+                        return Err(Failure {
+                            errno: sys::ZSTD_ErrorCode::ZSTD_error_stage_wrong as i32,
+                            code: "ERR_ZLIB_INCOMPLETE_FRAME".into(),
+                            message: "Cannot reset a zstd stream with an incomplete frame; end the frame or discard the output produced so far".into(),
+                        });
+                    }
+                    let result = sys::ZSTD_CCtx_reset(p.as_ptr(), sys::ZSTD_ResetDirective::ZSTD_reset_session_only);
+                    if error(result).is_some() {
+                        result
+                    } else {
+                        sys::ZSTD_CCtx_setPledgedSrcSize(p.as_ptr(), self.pledged.unwrap_or(u64::MAX))
+                    }
+                }
+                State::Decompress(p) => sys::ZSTD_DCtx_reset(p.as_ptr(), sys::ZSTD_ResetDirective::ZSTD_reset_session_only),
+            }
+        };
+        if let Some(e) = error(result) {
+            return Err(e);
+        }
+        self.pledge = self.pledged;
+        self.consumed = 0;
+        self.frame_complete = matches!(self.state, State::Compress(_));
+        self.frame_output_emitted = false;
+        self.after_frame_prefix = None;
+        self.ignoring_trailing = false;
+        Ok(())
     }
 }
