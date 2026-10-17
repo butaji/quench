@@ -385,15 +385,20 @@ impl FunctionCompiler<'_, '_> {
             }
         }
         direct.sort_unstable_by_key(|binding| binding.atom);
-        let captured = self.owner.captured_names(&self.scopes);
-        let mut hidden: Vec<Atom> = self
-            .function_scope
-            .iter()
-            .copied()
-            .filter(|atom| captured.as_ref().is_some_and(|names| names.contains(*atom)))
-            .collect();
-        hidden.sort_unstable();
-        crate::bytecode::NameBindings::new(direct, hidden, captured)
+        // The captured and hidden names are consulted only by lookups through dynamic name
+        // resolution, which the whole program decides; `Compiler::finish` resolves them for
+        // the functions that may see such a lookup (`capture_layout::dynamic_name_scopes`).
+        self.owner.deferred_name_bindings.insert(
+            self.function_id,
+            super::super::DeferredNameBindings {
+                names_private_members: self.owner.private_name_references
+                    != self.private_name_references,
+                direct: direct.clone(),
+                scopes: self.scopes.clone(),
+                function_scope: self.function_scope.iter().copied().collect(),
+            },
+        );
+        crate::bytecode::NameBindings::new(direct, Vec::new(), None)
     }
 
     fn after_super_call(&mut self, result: Register) {

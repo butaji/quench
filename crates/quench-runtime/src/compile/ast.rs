@@ -121,6 +121,9 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     annex_b_collisions: FxHashSet<u32>,
     pub(super) scopes: Vec<Rc<FxHashMap<Atom, u16>>>,
     pub(super) function_id: u32,
+    /// `Compiler::private_name_references` when this function began, so a later count
+    /// shows that it or a function it encloses names a private member.
+    private_name_references: u64,
     pub(super) handlers: Vec<crate::bytecode::Handler>,
     pub(super) binding_sites: Vec<crate::bytecode::BindingSite>,
     pub(super) environment_clones: Vec<Vec<u16>>,
@@ -216,6 +219,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         // The register after the promoted locals holds `undefined` for plain-call receivers.
         let shared_undefined = promoted_local_slots.len() as Register;
         let local_register_count = shared_undefined + 1;
+        let private_name_references = owner.private_name_references;
         Self {
             owner,
             locals,
@@ -238,6 +242,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             annex_b_collisions,
             scopes,
             function_id,
+            private_name_references,
             handlers: vec![],
             binding_sites: vec![],
             environment_clones: vec![],

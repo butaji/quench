@@ -2577,13 +2577,10 @@ fn drain_shared_jobs(
             let epoch = runtime.collection_epoch();
             let prune_promises = {
                 let shared = runtime.host_mut().shared_state();
-                let mut state = shared.borrow_mut();
-                let due = !state.async_hooks.promise_resources.is_empty()
-                    && state.async_hooks.promise_prune_epoch != Some(epoch);
-                if due {
-                    state.async_hooks.promise_prune_epoch = Some(epoch);
-                }
-                due
+                let state = shared.borrow();
+                // The prune records the epoch it ran at.
+                !state.async_hooks.promise_resources.is_empty()
+                    && state.async_hooks.promise_resources_pruned_epoch != epoch
             };
             if prune_promises {
                 let prune = runtime.host_function(crate::host::shared_vm::operation("asyncPromisePrune"))

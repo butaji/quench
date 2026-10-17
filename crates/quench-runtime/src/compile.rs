@@ -30,6 +30,8 @@ mod locals;
 mod numeric;
 pub(crate) mod regexp;
 #[cfg(feature = "profile-memory")]
+mod program_profile;
+#[cfg(feature = "profile-memory")]
 mod register_profile;
 mod rewrite;
 mod sequence;
@@ -1391,6 +1393,9 @@ struct Compiler<'a> {
     eval_context: Option<EvalContext>,
     eval_annex_b_collisions: FxHashSet<u32>,
     atoms: CompilerAtoms<'a>,
+    /// Private names resolved so far (`private_name_atom`): private member access resolves
+    /// through name bindings, so functions resolving one keep theirs.
+    private_name_references: u64,
     private_name_ids: FxHashMap<(u32, u32), u32>,
     private_name_labels: FxHashMap<(u32, u32), String>,
     private_name_overrides: FxHashMap<u32, String>,
@@ -1407,6 +1412,9 @@ struct Compiler<'a> {
     superinstructions: Vec<Superinstruction>,
     /// Distinct `name_bindings` lists: sibling functions that see the same bindings,
     /// such as every function declared in one module scope, share one list.
+    /// The captured scopes and declared names of each function's name bindings, resolved
+    /// in `finish` for the functions dynamic name resolution can reach.
+    deferred_name_bindings: FxHashMap<u32, DeferredNameBindings>,
     /// Resolved captured scopes keyed by (scope, enclosing chain) addresses; see `captured_names`.
     captured_name_scopes: FxHashMap<
         (usize, Option<usize>),
@@ -1418,6 +1426,17 @@ struct Compiler<'a> {
 }
 
 type MethodSiteSpec = (Atom, u16, Vec<Register>, Option<(Atom, u16)>);
+
+/// A function's name bindings before its captured names are resolved: its direct bindings,
+/// the scopes it closes over and the names it declares.
+struct DeferredNameBindings {
+    /// Whether the function or one it encloses names a private member, which resolves its
+    /// home through these bindings.
+    names_private_members: bool,
+    direct: Vec<crate::bytecode::EvalBinding>,
+    scopes: Vec<std::rc::Rc<FxHashMap<Atom, u16>>>,
+    function_scope: Vec<Atom>,
+}
 
 fn private_name_ids(semantic: &oxc_semantic::Semantic<'_>) -> FxHashMap<(u32, u32), u32> {
     let classes = semantic.classes();
@@ -1550,6 +1569,33 @@ impl From<&Constant> for ConstantKey {
 impl<'a> Compiler<'a> {
     /// The captured scopes of `scopes`, innermost first. A scope's names are resolved once per
     /// enclosing chain and shared by every function closing over it.
+    /// Completes the name bindings of every function a dynamic name lookup may consult
+    /// (`capture_layout::dynamic_name_scopes`), of every function private member access
+    /// resolves through, and of the root; the rest keep their direct bindings, as no lookup
+    /// reaches their captured names.
+    fn resolve_name_bindings(&mut self, functions: &mut [BcFunction]) {
+        let reachable = capture_layout::dynamic_name_scopes(functions, &self.atoms);
+        for (id, function) in functions.iter_mut().enumerate() {
+            let Some(deferred) = self.deferred_name_bindings.remove(&(id as u32)) else {
+                continue;
+            };
+            if id != crate::vm::ROOT_FUNCTION_ID as usize
+                && !reachable[id]
+                && !deferred.names_private_members
+            {
+                continue;
+            }
+            let captured = self.captured_names(&deferred.scopes);
+            let mut hidden: Vec<Atom> = deferred
+                .function_scope
+                .into_iter()
+                .filter(|atom| captured.as_ref().is_some_and(|names| names.contains(*atom)))
+                .collect();
+            hidden.sort_unstable();
+            function.name_bindings = crate::bytecode::NameBindings::new(deferred.direct, hidden, captured);
+        }
+    }
+
     fn captured_names(
         &mut self,
         scopes: &[std::rc::Rc<FxHashMap<Atom, u16>>],
@@ -1684,6 +1730,7 @@ impl<'a> Compiler<'a> {
             eval_context: None,
             eval_annex_b_collisions: FxHashSet::default(),
             atoms,
+            private_name_references: 0,
             private_name_ids,
             private_name_labels: FxHashMap::default(),
             private_name_overrides: FxHashMap::default(),
@@ -1698,6 +1745,7 @@ impl<'a> Compiler<'a> {
             object_sites: vec![],
             regexp_literal_sites: vec![],
             superinstructions: vec![],
+            deferred_name_bindings: FxHashMap::default(),
             captured_name_scopes: FxHashMap::default(),
         }
     }
@@ -2022,10 +2070,14 @@ impl<'a> Compiler<'a> {
             imports: module_imports,
             link_plan: module_link_plan,
         } = module;
-        let mut functions: Vec<_> = self.functions.into_iter().map(Option::unwrap).collect();
+        let mut functions: Vec<_> = std::mem::take(&mut self.functions)
+            .into_iter()
+            .map(Option::unwrap)
+            .collect();
         // Functions the compiler synthesizes (class constructors and initializers) may have
         // grown the reservation.
         functions.shrink_to_fit();
+        self.resolve_name_bindings(&mut functions);
         capture_layout::apply(&mut functions, &self.atoms);
         for function in &mut functions {
             Self::elide_unobservable_tdz(function, &self.atoms);
@@ -2137,6 +2189,10 @@ impl<'a> Compiler<'a> {
         };
         #[cfg(feature = "profile-aggregate")]
         debug_assert!(crate::profile::instruction_word_domains_fit(&program));
+        #[cfg(feature = "profile-memory")]
+        if std::env::var_os("QUENCH_MEMORY").is_some() {
+            program_profile::report(&program);
+        }
         Ok(program)
     }
 
@@ -2145,6 +2201,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn private_name_atom(&mut self, span: Span) -> Atom {
+        self.private_name_references += 1;
         let name = match self.private_name_ids.get(&(span.start, span.end)) {
             Some(id) => {
                 let label = self.private_name_label(span, *id);

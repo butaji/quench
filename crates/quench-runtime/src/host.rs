@@ -52,9 +52,12 @@ pub struct ModuleSource {
 pub struct HostExecutionContext(pub u64);
 
 pub trait Host {
-    /// Opt in to Promise lifecycle observations. Hosts without observers keep
-    /// Promise allocation and optimized await free of embedding callbacks.
-    const OBSERVE_PROMISE_LIFECYCLE: bool = false;
+    /// Whether Promise lifecycle observers are active now. While none are,
+    /// Promise allocation and optimized await stay free of embedding callbacks
+    /// and of per-Promise host resources.
+    fn observes_promise_lifecycle(&self) -> bool {
+        false
+    }
 
     fn write_line(&mut self, text: &str);
     fn clock_millis(&mut self) -> f64;

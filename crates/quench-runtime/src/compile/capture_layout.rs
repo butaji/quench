@@ -94,22 +94,53 @@ fn captured_slots(functions: &[Function]) -> Vec<Vec<u16>> {
     captured
 }
 
-/// Functions enclosing dynamic name resolution, including a `with` body's by-name
-/// loads, which may denote any ancestor's binding and so need every ancestor's
-/// locals in its environment.
-fn dynamic_scope_ancestors(functions: &[Function], atoms: &CompilerAtoms<'_>) -> Vec<bool> {
+/// Functions whose name bindings a dynamic name lookup may consult: those enclosing dynamic
+/// name resolution (`dynamic_scope_ancestors`), whose environments such a lookup walks, and
+/// those it encloses, whose by-name loads no longer resolve statically.
+pub(super) fn dynamic_name_scopes(functions: &[Function], atoms: &CompilerAtoms<'_>) -> Vec<bool> {
+    let mut reachable = dynamic_scope_ancestors(functions, atoms);
+    let dynamic = dynamic_name_resolution(functions, atoms);
+    for id in 0..functions.len() {
+        let mut current = Some(id);
+        while let Some(function) = current {
+            if dynamic[function] {
+                reachable[id] = true;
+                break;
+            }
+            current = functions[function].parent.map(|parent| parent as usize);
+        }
+    }
+    reachable
+}
+
+/// Functions resolving names dynamically themselves: direct eval, by-name resolution, a
+/// `with` statement, or an enclosing function's binding sites.
+fn dynamic_name_resolution(functions: &[Function], atoms: &CompilerAtoms<'_>) -> Vec<bool> {
     let inherited_dynamic_scope = inherited_dynamic_scope(functions);
     let is_with_enter = |atom: usize| {
         atoms
             .get(atom)
             .is_some_and(|name| name == WITH_ENTER_BINDING)
     };
+    functions
+        .iter()
+        .enumerate()
+        .map(|(id, function)| {
+            function.has_dynamic_scope_access()
+                || inherited_dynamic_scope[id]
+                || function.contains_with_statement(is_with_enter)
+        })
+        .collect()
+}
+
+/// Functions enclosing dynamic name resolution, including a `with` body's by-name
+/// loads, which may denote any ancestor's binding and so need every ancestor's
+/// locals in its environment.
+fn dynamic_scope_ancestors(functions: &[Function], atoms: &CompilerAtoms<'_>) -> Vec<bool> {
+    let dynamic = dynamic_name_resolution(functions, atoms);
     let mut unsafe_layout = vec![false; functions.len()];
-    for (id, function) in functions.iter().enumerate() {
-        if !function.has_dynamic_scope_access()
-            && !inherited_dynamic_scope[id]
-            && !function.contains_with_statement(is_with_enter)
-        {
+    for id in 0..functions.len() {
+        if !dynamic[id] {
             continue;
         }
         let mut current = Some(id);

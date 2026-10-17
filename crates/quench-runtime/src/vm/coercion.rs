@@ -119,7 +119,7 @@ impl<H: Host> Vm<H> {
         } else {
             value
         };
-        if matches!(self.heap.get(primitive), Some(Cell::Symbol(_))) {
+        if matches!(self.heap.get(primitive), Some(Cell::Symbol(_) | Cell::String(_))) {
             return Ok(primitive);
         }
         let text = self.coerce_js_string(program, primitive)?;
@@ -198,6 +198,10 @@ impl<H: Host> Vm<H> {
             }
             TYPEOF => return Ok(self.typeof_value(value)),
             VOID => Value::UNDEFINED,
+            crate::bytecode::UNARY_TO_STRING => {
+                let text = self.coerce_js_string(p, value)?;
+                self.string_value_from(value, &text)
+            }
             _ => return Err(JsError("unsupported unary operator".into())),
         })
     }
