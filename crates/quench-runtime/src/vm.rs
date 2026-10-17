@@ -560,6 +560,12 @@ struct InheritedFieldCache {
     prototype_shapes: [u32; INHERITED_FIELD_CACHE_MAX_DEPTH],
     depth: u8,
     answer: InheritedFieldAnswer,
+    /// The `prototype_layout_epoch` under which a walk last proved the chain from
+    /// `proved_prototype` up to `proved_holder`, its last recorded prototype, or
+    /// `NO_PROVED_EPOCH`; while both hold the chain needs no walk.
+    proved_epoch: u64,
+    proved_prototype: Value,
+    proved_holder: Value,
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum InheritedFieldAnswer {
