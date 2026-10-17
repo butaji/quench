@@ -200,11 +200,48 @@ impl<H: Host> Vm<H> {
     /// a data property holding an object, and `value`'s chain has no proxy. Every step is then
     /// an ordinary data read that runs no guest code and cannot throw; `None` leaves any other
     /// case, unobserved, to the general path.
+    #[inline(always)]
     pub(super) fn ordinary_instanceof(
         &mut self,
         value: Value,
         constructor: Value,
     ) -> Option<bool> {
+        // The steady case first: the remembered constructor layout and `@@hasInstance`
+        // holder, and a chain of object records.
+        if let Some(Cell::Function { kind, object, .. }) = self.heap.get(constructor)
+            && !matches!(kind, FunctionKind::Native(Native::FunctionBoundCall))
+            && let Some((shape, slot)) = self.instanceof_constructor_layout
+            && shape == object.shape()
+            && object.proto() == self.instanceof_has_instance_holder
+            && let Some(prototype) = self.heap.property_get(object, slot)
+            && prototype.direct_object_index().is_some()
+        {
+            let Some(record) = value.direct_object_index() else {
+                if !self.is_object_like(value) {
+                    return Some(false);
+                }
+                return self.ordinary_instanceof_walk(value, constructor);
+            };
+            let mut link = self.heap.object_record_by_id(record).proto();
+            loop {
+                if link == prototype {
+                    return Some(true);
+                }
+                if link.is_null() {
+                    return Some(false);
+                }
+                match self.heap.object_record(link) {
+                    Some(object) => link = object.proto(),
+                    None => break,
+                }
+            }
+        }
+        self.ordinary_instanceof_walk(value, constructor)
+    }
+
+    /// `ordinary_instanceof` in full: whatever its steady case leaves.
+    #[inline(never)]
+    fn ordinary_instanceof_walk(&mut self, value: Value, constructor: Value) -> Option<bool> {
         let Some(Cell::Function { kind, object, .. }) = self.heap.get(constructor) else {
             return None;
         };
