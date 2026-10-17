@@ -376,6 +376,10 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        // The string and RegExp methods belong to none of the families below.
+        if native.runs_from_lane() {
+            return self.call_native_table(p, native, this, args);
+        }
         if let Some(result) = self.string_html_method(p, native, this, args) {
             return result;
         }
@@ -467,6 +471,17 @@ impl<H: Host> Vm<H> {
         if native.is_data_view_native() {
             return self.data_view_native(p, native, this, args);
         }
+        self.call_native_table(p, native, this, args)
+    }
+
+    /// The natives no family above claims, by kind.
+    fn call_native_table(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
         match native {
             Native::IsHTMLDDA => Ok(Value::NULL),
             Native::Proxy => Err(self.type_error(p, "Proxy must be called with new".into())),
