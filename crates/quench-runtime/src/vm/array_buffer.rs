@@ -529,13 +529,13 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         length: usize,
-    ) -> Result<Rc<Vec<u8>>, JsError> {
+    ) -> Result<Vec<u8>, JsError> {
         let mut bytes = Vec::new();
         bytes
             .try_reserve_exact(length)
             .map_err(|_| self.range_error(p, "ArrayBuffer length is too large".into()))?;
         bytes.resize(length, 0);
-        Ok(Rc::new(bytes))
+        Ok(bytes)
     }
 
     fn array_buffer_intrinsic_prototype(&self, shared: bool) -> Value {
@@ -553,9 +553,15 @@ impl<H: Host> Vm<H> {
         length: usize,
         shared: bool,
     ) -> Result<Value, JsError> {
-        let prototype = self.array_buffer_intrinsic_prototype(shared);
         let bytes = self.array_buffer_zeroed_bytes(p, length)?;
-        Ok(self.heap.alloc(Cell::ArrayBuffer {
+        Ok(self.fixed_array_buffer_from(bytes, shared))
+    }
+
+    /// A fixed-length intrinsic ArrayBuffer that takes ownership of `bytes`.
+    pub(super) fn fixed_array_buffer_from(&mut self, bytes: Vec<u8>, shared: bool) -> Value {
+        let prototype = self.array_buffer_intrinsic_prototype(shared);
+        let length = bytes.len();
+        self.heap.alloc(Cell::ArrayBuffer {
             object: Box::new(Self::empty_object(prototype)),
             bytes: bytes.into(),
             shared,
@@ -563,7 +569,7 @@ impl<H: Host> Vm<H> {
             max_byte_length: length,
             resizable: false,
             immutable: false,
-        }))
+        })
     }
 
     pub(super) fn array_buffer_slice_native(
@@ -848,7 +854,7 @@ impl<H: Host> Vm<H> {
         let before = previous.capacity();
         let mut resized = self.array_buffer_zeroed_bytes(p, requested)?;
         let copy_length = previous.len().min(requested);
-        Rc::get_mut(&mut resized).unwrap()[..copy_length].copy_from_slice(&previous[..copy_length]);
+        resized[..copy_length].copy_from_slice(&previous[..copy_length]);
         let after = resized.capacity();
         let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(this) else {
             unreachable!("receiver validated before mutation");
@@ -951,9 +957,7 @@ impl<H: Host> Vm<H> {
         }
         let count = end - start;
         let mut bytes = self.array_buffer_zeroed_bytes(p, count)?;
-        Rc::get_mut(&mut bytes)
-            .unwrap()
-            .copy_from_slice(&source_bytes[start..end]);
+        bytes.copy_from_slice(&source_bytes[start..end]);
         Ok(self.heap.alloc(Cell::ArrayBuffer {
             object: Box::new(Self::empty_object(
                 self.array_buffer_intrinsic_prototype(false),

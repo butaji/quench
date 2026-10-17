@@ -857,12 +857,20 @@ pub(crate) fn from_bytes(
     context: &mut NativeContext<'_, NodeHost>,
     bytes: &[u8],
 ) -> Result<RootId, RootedError> {
+    from_vec(context, bytes.to_vec())
+}
+
+/// A Buffer whose backing store takes ownership of `bytes`.
+pub(crate) fn from_vec(
+    context: &mut NativeContext<'_, NodeHost>,
+    bytes: Vec<u8>,
+) -> Result<RootId, RootedError> {
     let shared = context.host_mut().shared_state();
     let prototype = shared
         .borrow()
         .buffer_prototype
         .ok_or_else(|| RootedError::host("Buffer intrinsic prototype is not initialized"))?;
-    let value = context.uint8_array_rooted(bytes)?;
+    let value = context.uint8_array_from_rooted(bytes)?;
     if !context.set_prototype_rooted(value, prototype)? {
         return Err(RootedError::host(
             "New Buffer view rejected its intrinsic prototype",
