@@ -77,7 +77,6 @@ pub(crate) struct SharedNodeState {
     pub(crate) fs_policy: crate::modules::fs_policy_shared_vm::State,
     pub(crate) fs_stat_watch: crate::modules::fs_stat_watch_shared_vm::State,
     pub(crate) cwd: crate::modules::process_state::ProcessCwd,
-    pub(crate) buffer_prototype: Option<quench_runtime::RootId>,
     pub(crate) module_parent_api: Option<quench_runtime::RootId>,
     pub(crate) active_esm_requires: std::collections::HashMap<String, quench_runtime::RootId>,
     pub(crate) builtin_cache: std::collections::HashMap<String, quench_runtime::RootId>,
@@ -214,7 +213,6 @@ impl SharedNodeState {
         self.commonjs_cache = None;
         self.module_parent_api = None;
         self.active_esm_requires.clear();
-        self.buffer_prototype = None;
         self.primordials_module = None;
         self.crypto_handle_symbol = None;
         self.event_targets_api = None;
@@ -274,7 +272,6 @@ impl SharedNodeState {
             fs_policy: crate::modules::fs_policy_shared_vm::State::default(),
             fs_stat_watch: crate::modules::fs_stat_watch_shared_vm::State::default(),
             cwd,
-            buffer_prototype: None,
             builtin_cache: std::collections::HashMap::new(),
             commonjs_cache: None,
             module_parent_api: None,
