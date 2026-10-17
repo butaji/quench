@@ -684,10 +684,17 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn initialize_private_field(&mut self, p: &ResidualProgram, target: Value, home: Value, atom: Atom, value: Value) -> Result<(), JsError> {
-        let Some(object) = self.object_data_mut(target) else {
+        let Some(extensible) = self.object_data(target).map(Object::is_extensible) else {
             return Err(self.type_error(p, "Cannot add private field to a non-object".into()));
         };
-        if object.initialize_private_field(PrivateBrand { home, name: atom }, value) { return Ok(()); }
+        if !extensible {
+            return Err(self.type_error(p, "Cannot add private field to a non-extensible object".into()));
+        }
+        if let Some(object) = self.object_data_mut(target)
+            && object.initialize_private_field(PrivateBrand { home, name: atom }, value)
+        {
+            return Ok(());
+        }
         let name = crate::bytecode::private_identity_label(self.atom_name(atom)).unwrap_or_else(|| self.atom_name(atom).to_owned());
         Err(self.type_error(p, format!("Cannot initialize #{name} twice on the same object")))
     }
