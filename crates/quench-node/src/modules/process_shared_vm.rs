@@ -1934,7 +1934,6 @@ pub(crate) fn finish_requested_exit(
         super::zlib_native_shared_vm::cleanup(runtime);
         #[cfg(quench_icu)]
         super::icu_binding_shared_vm::cleanup(runtime);
-        super::buffer_shared_vm::cleanup(runtime);
         return Ok(());
     }
     emit_exit(runtime, program, process_control.exit_code().unwrap_or(0))
@@ -3145,7 +3144,6 @@ fn emit_exit(
         super::zlib_native_shared_vm::cleanup(runtime);
     #[cfg(quench_icu)]
     super::icu_binding_shared_vm::cleanup(runtime);
-    super::buffer_shared_vm::cleanup(runtime);
     result
 }
 

@@ -166,6 +166,44 @@ impl<H: Host> Vm<H> {
         self.embedding_view_bytes_prefix(value, maximum)
     }
 
+    /// The backing buffer of an ArrayBuffer or view and the byte range it currently covers.
+    fn embedding_buffer_range(&self, value: Value) -> Option<(Value, std::ops::Range<usize>)> {
+        let (buffer, offset, byte_length) = match self.heap.get(value)? {
+            Cell::ArrayBuffer { bytes, .. } => (value, 0, bytes.len()),
+            Cell::TypedArray { object, buffer, kind, .. } => {
+                (*buffer, object.offset, self.typed_array_length(value)?.checked_mul(kind.width())?)
+            }
+            Cell::DataView { object, buffer, .. } => (*buffer, object.offset, self.embedding_view_bytes_length(value)),
+            _ => return None,
+        };
+        Some((buffer, offset..offset.checked_add(byte_length)?))
+    }
+
+    /// Run `f` over an ArrayBuffer's or view's current bytes without copying them;
+    /// empty once detached.
+    pub(crate) fn embedding_with_buffer_bytes<T>(&self, value: Value, f: impl FnOnce(&[u8]) -> T) -> Option<T> {
+        let (buffer, range) = self.embedding_buffer_range(value)?;
+        let Cell::ArrayBuffer { bytes, detached, .. } = self.heap.get(buffer)? else {
+            return None;
+        };
+        if *detached {
+            return Some(f(&[]));
+        }
+        let bytes = bytes.read();
+        Some(f(bytes.get(range)?))
+    }
+
+    /// Run `f` over an ArrayBuffer's or view's current bytes for writing. `None` for
+    /// another value, or a detached or immutable buffer, which accept no writes.
+    pub(crate) fn embedding_with_buffer_bytes_mut<T>(&mut self, value: Value, f: impl FnOnce(&mut [u8]) -> T) -> Option<T> {
+        let (buffer, range) = self.embedding_buffer_range(value)?;
+        let Cell::ArrayBuffer { bytes, detached: false, immutable: false, .. } = self.heap.get_mut(buffer)? else {
+            return None;
+        };
+        let mut bytes = bytes.make_mut();
+        Some(f(bytes.get_mut(range)?))
+    }
+
     fn embedding_view_bytes_prefix(&self, value: Value, maximum: usize) -> Option<Vec<u8>> {
         let (buffer, offset, byte_length) = match self.heap.get(value)? {
             Cell::TypedArray {

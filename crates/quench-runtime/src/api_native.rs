@@ -1259,6 +1259,19 @@ impl<'a, H: Host> NativeContext<'a, H> {
             .and_then(|value| self.vm.embedding_view_bytes(value))
     }
 
+    /// Run `f` over the bytes of an ArrayBuffer, SharedArrayBuffer, typed array or
+    /// DataView in place; `None` for any other value.
+    pub fn with_buffer_bytes_rooted<T>(&self, root: RootId, f: impl FnOnce(&[u8]) -> T) -> Option<T> {
+        self.vm.root_value(root).and_then(|value| self.vm.embedding_with_buffer_bytes(value, f))
+    }
+
+    /// Run `f` over those bytes for writing in place; `None` for any other value or a
+    /// detached or immutable buffer.
+    pub fn with_buffer_bytes_mut_rooted<T>(&mut self, root: RootId, f: impl FnOnce(&mut [u8]) -> T) -> Option<T> {
+        let value = self.vm.root_value(root)?;
+        self.vm.embedding_with_buffer_bytes_mut(value, f)
+    }
+
     /// Snapshot at most `maximum` original bytes of an ArrayBuffer or buffer view.
     pub fn bytes_prefix_rooted(&self, root: RootId, maximum: usize) -> Option<Vec<u8>> {
         self.vm.root_value(root).and_then(|value| self.vm.embedding_bytes_prefix(value, maximum))
