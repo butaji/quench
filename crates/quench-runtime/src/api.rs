@@ -82,7 +82,7 @@ impl<H: Host> Runtime<H> {
         Self { vm: Vm::new(host) }
     }
 
-    /// Choose how Wasm functions execute; see [`ExecutionMode`].
+    /// Choose how JavaScript and Wasm functions execute; see [`ExecutionMode`].
     pub fn set_execution_mode(&mut self, mode: crate::ExecutionMode) {
         self.vm.set_execution_mode(mode);
     }

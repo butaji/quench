@@ -24,6 +24,7 @@ mod capture_layout;
 mod capture_profile;
 mod class;
 mod early;
+mod syntax_message;
 pub(crate) mod liveness;
 mod locals;
 mod numeric;
@@ -112,6 +113,24 @@ impl Diagnostic {
         }
     }
 
+    /// The message of the SyntaxError this diagnostic throws, without the class name some
+    /// compiler messages carry.
+    pub fn syntax_message(&self) -> &str {
+        let message = self.message();
+        message.strip_prefix(SYNTAX_ERROR_PREFIX).unwrap_or(message)
+    }
+
+    /// A parse failure, reported with V8's message at OXC's position.
+    fn parse_failure(source_name: &str, source: &str, error: &oxc_diagnostics::OxcDiagnostic) -> Self {
+        let offset = error.labels.first().map_or(0, |label| label.offset());
+        Self {
+            kind: DiagnosticKind::Compilation,
+            source: source_name.into(),
+            message: syntax_message::parse_failure(source, error),
+            span: Span::new(offset, offset),
+        }
+    }
+
     pub(crate) fn is_stack_exhausted(&self) -> bool {
         self.kind == DiagnosticKind::StackExhausted
     }
@@ -156,6 +175,9 @@ impl fmt::Display for Diagnostic {
     }
 }
 pub struct Engine;
+
+/// The class name some compiler messages lead with.
+const SYNTAX_ERROR_PREFIX: &str = "SyntaxError: ";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DynamicFunctionKind {
@@ -279,22 +301,23 @@ impl Engine {
             .is_some_and(|body| early::class_eval_references_arguments(&body.statements))
     }
 
-    pub(crate) fn static_module_has_early_error(source: &str) -> bool {
+    /// The SyntaxError message of a module source's first early error, if it has one.
+    pub(crate) fn static_module_early_error(source: &str) -> Option<String> {
         let normalized = early::normalize_hashbang(source);
         let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
         let parsed = Parser::new(&allocator, &normalized, SourceType::mjs()).parse();
         if stack::validate_parsed(&parsed).is_err() {
-            return false;
+            return None;
         }
-        if !parsed.diagnostics.is_empty() {
-            return true;
+        if let Some(error) = parsed.diagnostics.first() {
+            return Some(syntax_message::parse_failure(&normalized, error));
         }
         oxc_semantic::SemanticBuilder::new()
             .with_check_syntax_error(true)
             .build(&parsed.program)
             .diagnostics
-            .len()
-            != 0
+            .first()
+            .map(|error| error.message.to_string())
     }
 
     pub(crate) fn static_module_plan(source: &str, module_name: &str) -> Option<StaticModulePlan> {
@@ -754,13 +777,8 @@ impl Engine {
         if !parsed.diagnostics.is_empty() {
             return Err(parsed
                 .diagnostics
-                .into_iter()
-                .map(|error| Diagnostic {
-                    kind: DiagnosticKind::Compilation,
-                    source: name.into(),
-                    message: error.to_string(),
-                    span: Span::default(),
-                })
+                .iter()
+                .map(|error| Diagnostic::parse_failure(name, &normalized, error))
                 .collect());
         }
         stack::validate(&parsed.program).map_err(|()| vec![Diagnostic::stack_exhausted(name)])?;
@@ -965,7 +983,7 @@ impl Engine {
             return None;
         }
         if !parsed.diagnostics.is_empty() {
-            return Some(format!("SyntaxError: {}", parsed.diagnostics[0]));
+            return Some(format!("{SYNTAX_ERROR_PREFIX}{}", syntax_message::parse_failure(source, &parsed.diagnostics[0])));
         }
         oxc_semantic::SemanticBuilder::new()
             .with_check_syntax_error(true)
