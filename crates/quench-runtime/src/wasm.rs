@@ -898,7 +898,7 @@ impl Engine {
                 instance_initializer: None,
                 super_home_atom: None,
                 constructible: false,
-                class_field_initializer: false,
+                class_initializer: false,
                 parameter_eval_arguments_error: false,
                 arguments_slot: None,
                 simple_parameters: true,

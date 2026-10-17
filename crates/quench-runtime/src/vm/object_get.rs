@@ -369,6 +369,16 @@ impl<H: Host> Vm<H> {
         key: Value,
         receiver: Value,
     ) -> Result<Value, JsError> {
+        if self.is_host_private_symbol(key) {
+            if matches!(self.heap.get(object), Some(Cell::Proxy { .. })) { return Ok(Value::UNDEFINED); }
+            let Some((value, attributes)) = self.ordinary_own_property(p, object, key)? else { return Ok(Value::UNDEFINED); };
+            return if attributes.accessor {
+                match attributes.getter.filter(|value| !value.is_undefined()) {
+                    Some(getter) => self.call_value(p, getter, receiver, &[]),
+                    None => Ok(Value::UNDEFINED),
+                }
+            } else { Ok(value) };
+        }
         let mut owner = self.primitive_prototype(object).unwrap_or(object);
         loop {
             if let Some(Cell::Proxy {
@@ -488,6 +498,7 @@ impl<H: Host> Vm<H> {
         )?;
         if private_name {
             self.check_private_brand(p, private_target, atom)?;
+            if let Some(value) = self.private_field_value(p, private_target, atom) { return Ok(value); }
         }
         loop {
             self.evaluate_deferred_namespace_for_key(
@@ -595,7 +606,7 @@ impl<H: Host> Vm<H> {
                                 return Ok(description
                                     .as_ref()
                                     .map(|value| {
-                                        self.heap.alloc(Cell::String(value.clone().into()))
+                                        self.heap.alloc(Cell::String(value.as_ref().into()))
                                     })
                                     .unwrap_or(Value::UNDEFINED));
                             }
@@ -662,6 +673,32 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    pub(super) fn private_field_value(&mut self, p: &ResidualProgram, target: Value, atom: Atom) -> Option<Value> {
+        let home = self.private_brand_home(p, target, atom)?;
+        self.object_data(target)?.private_field(PrivateBrand { home, name: atom })
+    }
+
+    pub(super) fn set_private_field_value(&mut self, p: &ResidualProgram, target: Value, atom: Atom, value: Value) -> bool {
+        let Some(home) = self.private_brand_home(p, target, atom) else { return false; };
+        self.object_data_mut(target).is_some_and(|object| object.set_private_field(PrivateBrand { home, name: atom }, value))
+    }
+
+    pub(super) fn initialize_private_field(&mut self, p: &ResidualProgram, target: Value, home: Value, atom: Atom, value: Value) -> Result<(), JsError> {
+        let Some(extensible) = self.object_data(target).map(Object::is_extensible) else {
+            return Err(self.type_error(p, "Cannot add private field to a non-object".into()));
+        };
+        if !extensible {
+            return Err(self.type_error(p, "Cannot add private field to a non-extensible object".into()));
+        }
+        if let Some(object) = self.object_data_mut(target)
+            && object.initialize_private_field(PrivateBrand { home, name: atom }, value)
+        {
+            return Ok(());
+        }
+        let name = crate::bytecode::private_identity_label(self.atom_name(atom)).unwrap_or_else(|| self.atom_name(atom).to_owned());
+        Err(self.type_error(p, format!("Cannot initialize #{name} twice on the same object")))
+    }
+
     pub(super) fn check_private_brand(
         &mut self,
         p: &ResidualProgram,
@@ -703,6 +740,11 @@ impl<H: Host> Vm<H> {
     /// so a found home is memoized while that environment lives.
     fn private_name_home(&mut self, p: &ResidualProgram, atom: Atom) -> Option<Value> {
         let frame_index = self.frames.len().checked_sub(1)?;
+        if let Some(binding) = self.name_binding(frame_index, atom)
+            && binding.kind == crate::bytecode::LexicalBindingKind::PrivateName
+        {
+            return self.load_name_binding(p, frame_index, binding).ok();
+        }
         let start = self.captured_parent_environment(frame_index);
         let key = PrivateHomeKey {
             environment: start,
@@ -791,6 +833,7 @@ impl<H: Host> Vm<H> {
         proxy: Value,
         atom: Atom,
     ) -> Result<Value, JsError> {
+        if let Some(value) = self.private_field_value(p, proxy, atom) { return Ok(value); }
         let Some(home) = self.private_brand_home(p, proxy, atom) else {
             return Err(self.type_error(p, "private member is not present on this object".into()));
         };
@@ -805,6 +848,9 @@ impl<H: Host> Vm<H> {
             };
             return self.call_value(p, getter, proxy, &[]);
         }
-        self.get_property(p, home, atom)
+        // Methods live on the home object, which does not carry its own brand.
+        self.own_property(home, atom).ok_or_else(|| {
+            self.type_error(p, "private member is not present on this object".into())
+        })
     }
 }

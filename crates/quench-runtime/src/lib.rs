@@ -27,7 +27,7 @@ pub use wasm::{
 
 pub use bytecode::ResidualProgram;
 pub use compile::{Diagnostic, Engine};
-pub use heap::RootId;
+pub use heap::{RootId, HeapMemoryComposition};
 pub use host::{
     CapabilityId, Host, HostContext, HostExecutionContext, HostGlobal, ModuleSource, SystemHost,
     WasmHostFunctionId, WasmHostValue,
@@ -40,9 +40,9 @@ pub use vm::{ExecutionMode, JsError};
 
 mod api;
 pub use api::{
-    BuiltinBrand, BuiltinData, CollectionPreview, PromiseSnapshot, ExecutionRequest, HostFunction, HostFunctionId, HostWeakRoot,
-    NativeArithmetic, NativeContext, PromiseRejectionEvent, RootedError, RootedIterator, Runtime,
-    RuntimeError, SourceKind, SourceStackFrame, SynchronousModule,
+    BufferStorage, BuiltinBrand, ValueType, BuiltinData, CollectionPreview, PromiseSnapshot, ExecutionRequest, HostFunction, HostFunctionId, HostWeakRoot,
+    PreparedScript, NativeArithmetic, NativeContext, PromiseRejectionEvent, RootedError, RootedIterator, Runtime,
+    CompiledScript, RuntimeError, SourceKind, ErrorSourcePosition, SourceStackFrame, SynchronousModule,
 };
 
 #[cfg(test)]

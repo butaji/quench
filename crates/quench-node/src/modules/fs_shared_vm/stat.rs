@@ -662,53 +662,33 @@ fn symlink_loop(path: &Path) -> bool {
     false
 }
 
-pub(crate) fn read_dir_sync(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let path = args
-        .first()
-        .copied()
-        .map(|path| context.to_string(path))
-        .transpose()?
-        .unwrap_or_else(|| "undefined".to_owned());
-    let path = super::resolve_shared_path(context, path);
-    let entries = match std::fs::read_dir(&path) {
-        Ok(entries) => entries,
-        Err(error) => return Err(stat_error(context, error, &path)?),
-    };
-    let mut names = Vec::new();
-    for entry in entries {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(error) => return Err(stat_error(context, error, &path)?),
-        };
-        let metadata = match entry.metadata() {
-            Ok(metadata) => metadata,
-            Err(error) => return Err(stat_error(context, error, &path)?),
-        };
-        let dirent = context.object_rooted()?;
-        set_string(
-            context,
-            dirent,
-            "name",
-            &entry.file_name().to_string_lossy(),
-        )?;
-        set_bool(context, dirent, "isFile", metadata.is_file())?;
-        set_bool(context, dirent, "isDirectory", metadata.is_dir())?;
-        set_bool(
-            context,
-            dirent,
-            "isSymbolicLink",
-            metadata.file_type().is_symlink(),
-        )?;
-        for name in ["isBlockDevice", "isCharacterDevice", "isFIFO", "isSocket"] {
-            set_bool(context, dirent, name, false)?;
-        }
-        names.push(dirent);
+pub(crate) fn directory_entry_type(kind: std::fs::FileType) -> i32 {
+    if kind.is_file() {
+        return super::UV_DIRENT_FILE;
     }
-    context.array_rooted(&names)
+    if kind.is_dir() {
+        return super::UV_DIRENT_DIR;
+    }
+    if kind.is_symlink() {
+        return super::UV_DIRENT_LINK;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::FileTypeExt;
+        if kind.is_block_device() {
+            return super::UV_DIRENT_BLOCK;
+        }
+        if kind.is_char_device() {
+            return super::UV_DIRENT_CHAR;
+        }
+        if kind.is_fifo() {
+            return super::UV_DIRENT_FIFO;
+        }
+        if kind.is_socket() {
+            return super::UV_DIRENT_SOCKET;
+        }
+    }
+    super::UV_DIRENT_UNKNOWN
 }
 
 pub(crate) fn fstat_sync(
@@ -837,16 +817,6 @@ fn set_number(
     value: f64,
 ) -> Result<(), RootedError> {
     let value = context.number(value);
-    set(context, object, name, value)
-}
-
-fn set_bool(
-    context: &mut NativeContext<'_, NodeHost>,
-    object: RootId,
-    name: &str,
-    value: bool,
-) -> Result<(), RootedError> {
-    let value = context.boolean(value);
     set(context, object, name, value)
 }
 

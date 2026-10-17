@@ -12,6 +12,8 @@ mod cell_access;
 mod buffer_bytes;
 mod collection_entries;
 mod external;
+mod memory_stats;
+pub use memory_stats::HeapMemoryComposition;
 #[cfg(feature = "profile-memory")]
 mod memory_profile;
 mod records;
@@ -41,8 +43,9 @@ const LARGE_HEAP_MINIMUM_LIVE_CELLS: usize = 1 << 16;
 /// further gain (Linux x86_64, 4 vCPU, paired non-PGO rounds); at that minimum, fixed-work
 /// max RSS rose 22% to 36% on DeltaBlue, EarleyBoyer and RayTrace.
 const MINIMUM_GC_ALLOCATION_HEADROOM: usize = 384;
-/// String payload bytes that weigh as one more allocation toward the next collection.
-const STRING_BYTES_PER_ALLOCATION: usize = 64;
+/// Payload bytes beside a cell (string units, array elements) that weigh as one more
+/// allocation toward the next collection.
+const PAYLOAD_BYTES_PER_ALLOCATION: usize = 64;
 const PARALLEL_MARK_MINIMUM_SLOTS: usize = 50_000;
 const PARALLEL_MARK_MAX_THREADS: usize = 4;
 // Paired Splay screens on the 4-vCPU Linux host favored the collector thread;
@@ -155,7 +158,6 @@ pub(super) struct Slot {
 }
 
 impl Slot {
-    #[cfg(feature = "profile-memory")]
     fn is_live(&self) -> bool {
         self.cell.is_some()
     }
@@ -357,6 +359,8 @@ pub(crate) struct Heap {
     external_bytes: usize,
     allocations: usize,
     allocations_since_full: usize,
+    /// Payload bytes grown since the last charge, below one allocation's weight.
+    uncharged_payload_bytes: usize,
     full_collection_growth_limit: usize,
     old_live: usize,
     threshold: usize,
@@ -595,7 +599,6 @@ impl Default for GcProfile {
     }
 }
 
-#[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
 #[repr(usize)]
 #[derive(Clone, Copy)]
 pub(crate) enum CellKind {
@@ -635,10 +638,8 @@ pub(crate) enum CellKind {
     WasmTag,
     WasmException,
 }
-#[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
 impl CellKind {
     pub(crate) const COUNT: usize = Self::WasmException as usize + 1;
-    #[cfg(feature = "profile-memory")]
     pub(crate) const NAMES: [&'static str; Self::COUNT] = [
         "object",
         "array",
@@ -790,7 +791,10 @@ impl Heap {
             self.gc_profile.allocated_size_buckets[kind][Self::size_bucket(bytes)] += 1;
         }
         let weight = 1 + match &cell {
-            Cell::String(text) => text.flat_unit_bytes() / STRING_BYTES_PER_ALLOCATION,
+            Cell::String(text) => text.flat_unit_bytes() / PAYLOAD_BYTES_PER_ALLOCATION,
+            Cell::Array { object } => {
+                object.elements().capacity() * size_of::<Value>() / PAYLOAD_BYTES_PER_ALLOCATION
+            }
             _ => 0,
         };
         self.allocations += weight;
@@ -1039,6 +1043,15 @@ impl Heap {
     #[inline(always)]
     pub(crate) fn collection_epoch(&self) -> u64 {
         self.collections
+    }
+    /// Charges payload a live cell grew outside `alloc` (array elements) toward the next
+    /// collection, at the weight `alloc` gives a cell's own payload.
+    pub(crate) fn charge_payload_growth(&mut self, bytes: usize) {
+        let pending = self.uncharged_payload_bytes.saturating_add(bytes);
+        let weight = pending / PAYLOAD_BYTES_PER_ALLOCATION;
+        self.uncharged_payload_bytes = pending % PAYLOAD_BYTES_PER_ALLOCATION;
+        self.allocations += weight;
+        self.allocations_since_full = self.allocations_since_full.saturating_add(weight);
     }
     pub fn should_collect(&self) -> bool {
         self.allocations >= self.threshold
@@ -2070,6 +2083,34 @@ impl Heap {
         // SAFETY: the caller proves that the property slot exists.
         unsafe { self.properties.set_unchecked(vector, slot, value) };
     }
+    /// `property_set_unchecked` for the direct object `record_id` names, decoded once, where
+    /// its values are inline or a flat arena run. `false` leaves a dictionary's store, which
+    /// makes a call, to the caller.
+    ///
+    /// # Safety
+    /// `record_id` names a live object record holding a property at `slot`.
+    #[inline(always)]
+    pub(crate) unsafe fn record_property_set_flat(
+        &mut self,
+        record_id: u32,
+        slot: usize,
+        value: Value,
+    ) -> bool {
+        // SAFETY: the caller proves the record live; `&mut self` is exclusive.
+        let data = unsafe { self.object_records.get_live_mut(record_id) };
+        if data.inline_properties().is_some() {
+            debug_assert!(slot < INLINE_PROPERTY_COUNT);
+            data.set_inline_property(slot, value);
+            return true;
+        }
+        let vector = data.properties();
+        if vector.is_dictionary() {
+            return false;
+        }
+        // SAFETY: the caller proves that the property slot exists; the vector is flat.
+        unsafe { self.properties.set_flat_unchecked(vector, slot, value) };
+        true
+    }
     /// One cached property add: appends `value` at `slot`, the object's current storage
     /// length, and moves the object to `shape`, whose storage length is `slot + 1`.
     #[inline(always)]
@@ -2463,7 +2504,6 @@ impl Heap {
                 .filter(|value| value.is_heap()),
         );
     }
-    #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
     pub(super) fn cell_kind(cell: &Cell) -> CellKind {
         match cell {
             Cell::Object(_)
@@ -2510,7 +2550,6 @@ impl Heap {
             Cell::TemporalInstant { .. } => CellKind::TemporalInstant,
         }
     }
-    #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
     pub(super) fn cell_payload_bytes(cell: &Cell) -> usize {
         let object_extra_bytes = cell
             .object()
@@ -2569,7 +2608,7 @@ impl Heap {
                 }
                 Cell::String(value) => value.capacity(),
                 Cell::BigInt(value) | Cell::Error(value) => value.capacity(),
-                Cell::Symbol(value) => value.as_ref().map_or(0, String::capacity),
+                Cell::Symbol(value) => value.as_ref().map_or(0, |description| description.len()),
             }
     }
     #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]

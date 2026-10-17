@@ -137,7 +137,7 @@ fn selective_layout_is_safe(function: &Function, id: usize, has_dynamic_descenda
         && !function.is_generator
         && !function.is_class_constructor
         && !function.derived_constructor
-        && !function.class_field_initializer
+        && !function.class_initializer
         && function.simple_parameters
         && !function.has_dynamic_scope_access()
 }

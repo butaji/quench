@@ -274,6 +274,17 @@ impl ValueArena {
             return;
         }
         // SAFETY: caller provides the same initialized-range invariant as get.
+        unsafe { self.set_flat_unchecked(vector, index, value) };
+    }
+
+    /// `set_unchecked` of a vector known not to be a dictionary.
+    ///
+    /// # Safety
+    /// As for `set_unchecked`, and `vector` is not a dictionary.
+    #[inline(always)]
+    pub(crate) unsafe fn set_flat_unchecked(&mut self, vector: ValueVec, index: usize, value: Value) {
+        debug_assert!(!vector.is_dictionary());
+        // SAFETY: caller provides the same initialized-range invariant as get.
         unsafe {
             *self.values.get_unchecked_mut(vector.start() + index) = value;
         }
@@ -398,7 +409,6 @@ impl ValueArena {
         }
     }
 
-    #[cfg(feature = "profile-memory")]
     pub(crate) fn memory_bytes(&self) -> usize {
         self.values.capacity() * size_of::<Value>()
             + self
@@ -415,13 +425,11 @@ impl ValueArena {
             + self.free_dictionaries.capacity() * size_of::<u32>()
     }
 
-    #[cfg(feature = "profile-memory")]
     pub(crate) fn memory_breakdown(&self) -> (usize, usize) {
         let values = self.values.capacity() * size_of::<Value>();
         (values, self.memory_bytes() - values)
     }
 
-    #[cfg(feature = "profile-memory")]
     pub(crate) fn stats(&self) -> (usize, usize, usize) {
         (
             self.values.len(),
@@ -464,7 +472,6 @@ impl ValueArena {
         self.grow(vector, 0);
     }
 
-    #[cfg(any(test, feature = "profile-memory"))]
     pub(crate) fn vector_stats(&self, vector: ValueVec) -> (usize, usize) {
         (self.len(vector), self.capacity(vector))
     }

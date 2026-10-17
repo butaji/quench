@@ -295,7 +295,10 @@ fn util_text_operations_match_node_without_utf16_loss() {
       const texts = ['', 'plain', '\x1b', '\x1b[', '\x1b[31mred\x1b[0m',
         '\x1b(Btext', '\x9b2Jtext', '\x1b]8;;https://a/b?x=1&y=2\x07link\x1b]8;;\x07',
         '\x1b]8;;https://a\x1b\\link\x1b]8;;\x1b\\', '\ud800\x1b[31m\udfff',
-        '\x1b[99999mtext', '\x1b[31☃text', '\x1b]unterminated', '😀\x1b[0m😀'];
+        '\x1b[99999mtext', '\x1b[31☃text', '\x1b]unterminated', '😀\x1b[0m😀',
+        '\x1b]8;;https://example.com/(foo\x07label\x1b]8;;\x07',
+        '\x1b]8;;https://example.com/foo)bar\x9clabel\x1b]8;;\x9c',
+        '\x1b[38:2:255:0:0mHello\x1b[0m', '\x1b[4:3mUnderline\x1b[4:0m'];
       console.log(JSON.stringify(texts.map(text=>util.stripVTControlCharacters(text))));
       const envs = ['', 'Z=1\nA=2\nZ=3', 'A=1#comment\nB=x #rest',
         'A=`x\\n`\nB="x\\n\\r"\nC=\'x\\n\'', 'A="one\ntwo"\nB=three',
@@ -9461,6 +9464,38 @@ fn boxed_primitive_brands_use_internal_values_and_reject_forged_properties_and_p
 }
 
 #[test]
+fn native_buffer_unsafe_allocations_preserve_alignment_pooling_snapshots_and_errors() {
+    compare_node_source_with_args(
+        include_str!("../node-tests/test-native-buffer-unsafe-alignment.js"),
+        &["--no-warnings", "--expose-internals", "--expose-gc"],
+    );
+}
+
+#[test]
+fn native_buffer_concat_preserves_pooling_proxy_reads_reentrancy_and_padding() {
+    compare_node_source_with_args(
+        include_str!("../node-tests/test-native-buffer-concat-pool.js"),
+        &[],
+    );
+}
+
+#[test]
+fn native_buffer_latin1_classifies_actual_units_and_preserves_original_validation() {
+    compare_node_source_with_args(
+        include_str!("../node-tests/test-native-buffer-latin1.js"),
+        &["--no-warnings", "--expose-internals"],
+    );
+}
+
+#[test]
+fn native_buffer_public_policy_captures_original_validators_and_coded_constructors() {
+    compare_node_source_with_args(
+        include_str!("../node-tests/test-native-buffer-policy-captures.js"),
+        &["--no-warnings", "--expose-internals"],
+    );
+}
+
+#[test]
 fn callsite_columns_follow_member_parenthesized_and_constructor_call_syntax() {
     compare_node_source_with_args(include_str!("../node-tests/test-callsite-call-columns.js"), &[]);
 }
@@ -9468,6 +9503,14 @@ fn callsite_columns_follow_member_parenthesized_and_constructor_call_syntax() {
 #[test]
 fn util_call_sites_capture_actual_metadata_without_error_hooks_and_use_node_validation() {
     compare_node_source_with_args(include_str!("../node-tests/test-util-real-call-sites.js"), &[]);
+}
+
+#[test]
+fn shadow_realms_own_original_node_error_policy_default_hooks_and_private_fallbacks() {
+    compare_node_source_with_args(
+        include_str!("../node-tests/test-shadow-stack-policy-isolation.js"),
+        &["--no-warnings", "--expose-internals", "--experimental-shadow-realm", "--expose-gc"],
+    );
 }
 
 #[test]
@@ -9502,4 +9545,604 @@ fn fused_field_reads_preserve_each_getter_operation_source() {
 #[test]
 fn callsite_eval_classification_follows_compilation_origin_and_survives_escaped_closures() {
     compare_node_source_with_args(include_str!("../node-tests/test-callsite-eval-origin.js"), &["--expose-gc"]);
+}
+
+#[test]
+fn fs_glob_uses_original_policy_and_real_dirent_types_across_all_three_apis() {
+    compare_node_source_with_args(include_str!("../node-tests/test-fs-original-glob-policy.js"), &[]);
+}
+
+#[test]
+fn eval_uses_parsed_program_completion_grammar_and_original_source_positions() {
+    compare_node_source_with_args(include_str!("../node-tests/test-compiled-eval-source.js"), &[]);
+
+}
+
+#[test]
+fn fatal_source_excerpts_follow_javascript_line_terminators_and_original_file_lines() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("source-lines.cjs");
+    for separator in ["\n", "\r\n", "\r", "\u{2028}", "\u{2029}"] {
+        std::fs::write(&path, format!("void 0;{separator}  missing();")).unwrap();
+        let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+            let mut command = Command::new(executable);
+            command.arg(&path);
+            if executable != "node" {
+                command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            }
+            quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
+        });
+        for observation in &observations {
+            assert!(!observation.timed_out);
+            assert_eq!(observation.exit_code, Some(1));
+            assert!(observation.stdout.is_empty());
+        }
+        let excerpts = observations.each_ref().map(|observation| {
+            String::from_utf8_lossy(&observation.stderr).lines().take(4).map(str::to_owned).collect::<Vec<_>>()
+        });
+        assert_eq!(excerpts[0][1], "  missing();");
+        assert_eq!(excerpts[0], excerpts[1]);
+    }
+}
+
+#[test]
+fn eval_call_sites_capture_original_compiling_callers_and_hide_absent_script_names() {
+    compare_node_source_with_args(include_str!("../node-tests/test-callsite-eval-origins.js"), &["--expose-gc"]);
+}
+
+#[test]
+fn indirect_eval_script_identity_preserves_origins_fresh_values_templates_and_realm_isolation() {
+    compare_node_source_with_args(include_str!("../node-tests/test-indirect-eval-script-identity.js"), &[]);
+}
+
+#[test]
+fn error_source_positions_preserve_captured_compiler_metadata_without_guest_hooks() {
+    compare_node_source_with_args(include_str!("../node-tests/test-error-source-positions.js"), &["--expose-gc", "--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn native_protocol_constants_derive_from_configured_sdk_headers_and_preserve_descriptors() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-protocol-constants.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn native_caller_location_uses_original_activations_independently_of_error_hooks() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-caller-location.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn filesystem_glob_policy_defers_promises_dependencies_and_preserves_data_descriptors() {
+    compare_node_source_with_args(include_str!("../node-tests/test-fs-promises-glob-lazy-policy.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn function_constructor_default_debug_names_remain_distinct_from_public_names_and_descriptors() {
+    compare_node_source_with_args(include_str!("../node-tests/test-function-constructor-debug-names.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn function_prototype_info_lookups_preserve_native_accessor_layout_and_descriptor_transitions() {
+    compare_node_source_with_args(include_str!("../node-tests/test-function-prototype-info-lookups.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn function_constructor_sources_preserve_whitespace_parameter_positions_and_synthetic_name_scope() {
+    compare_node_source_with_args(include_str!("../node-tests/test-function-constructor-source-layout.js"), &[]);
+}
+
+#[test]
+fn filesystem_readdir_sync_uses_sdk_policy_with_raw_names_and_recursive_native_layout() {
+    compare_node_source_with_args(include_str!("../node-tests/test-fs-readdir-sdk-policy.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn private_fields_keep_class_creation_identity_and_atomic_internal_initialization() {
+    compare_node_source_with_args(include_str!("../node-tests/test-private-field-identity.js"), &[]);
+}
+
+#[test]
+fn private_eval_environments_cross_static_instance_and_ordinary_function_boundaries() {
+    compare_node_source_with_args(include_str!("../node-tests/test-private-eval-environments.js"), &[]);
+}
+
+#[test]
+fn private_brands_follow_initialization_without_branding_the_declaring_prototype() {
+    compare_node_source_with_args(include_str!("../node-tests/test-private-brand-initialization.js"), &[]);
+}
+
+#[test]
+fn static_blocks_retain_strict_eval_super_receiver_and_separate_var_contexts() {
+    compare_node_source_with_args(include_str!("../node-tests/test-static-block-context.js"), &[]);
+}
+
+#[test]
+fn tcp_default_listen_backlog_matches_node_when_syscall_tracing_is_available() {
+    compare_node_source_with_args(include_str!("../node-tests/test-tcp-default-listen-backlog.js"), &[]);
+}
+
+#[test]
+fn tcp_option_listen_backlog_matches_node_truthiness_and_int32_when_tracing_is_available() {
+    compare_node_source_with_args(include_str!("../node-tests/test-tcp-option-listen-backlog.js"), &[]);
+}
+
+#[test]
+fn utility_sdk_projection_preserves_mime_diff_timing_promise_state_and_uv_protocol_metadata() {
+    compare_node_source_with_args(include_str!("../node-tests/test-util-sdk-projection.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn net_listen_lifecycle_retains_dns_generations_callbacks_and_public_method_shapes() {
+    compare_node_source_with_args(include_str!("../node-tests/test-net-listen-lifecycle.js"), &["--expose-gc"]);
+}
+
+#[test]
+fn net_dns_iterator_errors_close_once_preserve_original_abrupt_values_and_survive_gc() {
+    compare_node_source_with_args(include_str!("../node-tests/test-net-dns-iterator-errors.js"), &["--expose-gc"]);
+}
+
+#[test]
+fn process_capture_callback_reset_prioritizes_null_and_original_type_validation() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-callback-reset.js"), &[]);
+}
+
+#[test]
+fn http_listening_derives_from_the_handle_and_close_cancels_pending_notification() {
+    compare_node_source_with_args(include_str!("../node-tests/test-http-listening-handle.js"), &[]);
+}
+
+#[test]
+fn process_capture_state_is_canonical_receiver_independent_and_survives_collection() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-canonical-state.js"), &["--expose-gc"]);
+}
+
+#[test]
+fn process_uncaught_monitor_precedes_capture_and_can_replace_the_pending_handler() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-monitor-capture-transition.js"), &[]);
+}
+
+#[test]
+fn process_uncaught_events_ignore_monitor_results_and_use_emit_truthiness() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-uncaught-emit-truthiness.js"), &[]);
+}
+
+#[test]
+fn process_capture_delivery_reloads_the_callback_after_the_null_check() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-getter-order.js"), &[]);
+}
+
+#[test]
+fn process_auxiliary_capture_runs_in_reverse_order_with_exact_true_handling() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-auxiliary.js"), &[]);
+}
+
+#[test]
+fn process_auxiliary_capture_preserves_length_coercion_fractional_keys_and_replacement() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-auxiliary-coercion.js"), &["--expose-gc"]);
+}
+
+#[test]
+fn process_capture_methods_have_public_names_and_ordinary_constructor_shapes() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-method-shape.js"), &[]);
+}
+
+#[test]
+fn native_contextify_scripts_compile_once_keep_template_sites_and_return_global_functions() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-contextify-owned-script.js"), &["--expose-internals", "--no-warnings", "--expose-gc"]);
+}
+
+#[test]
+fn sdk_mock_tracker_preserves_call_records_restoration_and_virtual_timer_queue() {
+    compare_node_source_with_args(include_str!("../node-tests/test-sdk-mock-tracker.js"), &["--no-warnings"]);
+}
+
+#[test]
+fn original_sdk_test_harness_runs_hooks_subtests_contexts_and_mock_cleanup() {
+    compare_node_source_with_args(include_str!("../node-tests/test-sdk-test-harness.js"), &["--no-warnings", "--test-reporter=dot"]);
+}
+
+#[test]
+fn promise_async_hooks_observe_real_resources_trigger_identity_and_job_order() {
+    compare_node_source_with_args(include_str!("../node-tests/test-promise-async-hooks-lifecycle.js"), &[]);
+}
+
+#[test]
+fn promise_hooks_keep_suspended_continuations_and_reactions_live_during_gc() {
+    compare_node_source_with_args(include_str!("../node-tests/test-promise-hooks-gc-roots.js"), &["--expose-gc"]);
+}
+
+#[test]
+fn promise_init_hooks_can_settle_await_sources_reentrantly() {
+    compare_node_source_with_args(include_str!("../node-tests/test-promise-init-reentry.js"), &[]);
+}
+
+#[test]
+fn fs_internal_module_stat_follows_links_returns_errno_and_resolves_node_cwd() {
+    compare_node_source_with_args(include_str!("../node-tests/test-fs-internal-module-stat.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn process_fatal_handler_exits_preserve_sdk_status_event_suppression_and_explicit_requests() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-fatal-handler-exit.js"), &[]);
+}
+
+
+#[test]
+fn cli_version_aliases_use_the_configured_sdk_and_short_circuit_before_guest_execution() {
+    compare_node_source_with_args(include_str!("../node-tests/test-cli-version-order.js"), &[]);
+}
+
+
+#[test]
+fn process_report_configuration_uses_sdk_descriptors_validation_and_shared_native_state() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-report-configuration.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+
+#[test]
+fn process_capture_preserves_report_flag_snapshot_restoration_and_accessor_order() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-capture-report-flags.js"), &[]);
+}
+
+
+#[test]
+fn process_report_startup_flags_preserve_environment_precedence_aliases_and_signal_registration() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-report-startup.js"), &[]);
+}
+
+
+#[test]
+fn process_events_share_emitter_storage_inspection_borrowed_methods_and_once_wrappers() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-shared-event-store.js"), &[]);
+}
+
+#[test]
+fn module_cache_protocol_types_come_from_configured_sdk_and_preserve_native_descriptors() {
+    compare_node_source_with_args(include_str!("../node-tests/test-module-cache-protocol.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn process_warning_policy_preserves_default_listener_removal_suppression_and_startup_descriptors() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-warning-policy.js"), &[]);
+}
+
+#[test]
+fn sdk_test_context_survives_native_ticks_timers_and_immediate_callbacks() {
+    compare_node_source_with_args(include_str!("../node-tests/test-sdk-test-context-callbacks.js"), &["--no-warnings", "--test-reporter=dot"]);
+}
+
+#[test]
+fn native_callback_uncaught_handlers_observe_resource_before_after_hook_and_scope_restore() {
+    compare_node_source_with_args(include_str!("../node-tests/test-async-callback-error-scope.js"), &[]);
+}
+
+#[test]
+fn native_tick_resources_own_mutable_callback_slots_and_complete_actual_hook_lifecycle() {
+    compare_node_source_with_args(include_str!("../node-tests/test-tick-resource-canonical-slots.js"), &[]);
+}
+
+#[test]
+fn process_warning_uses_sdk_identity_and_only_public_option_getters() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-warning-sdk-authority.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+
+#[test]
+fn process_rejection_warnings_pass_public_arguments_and_preserve_original_stack() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-rejection-warning-arguments.js"), &["--unhandled-rejections=warn", "--no-warnings"]);
+}
+
+
+#[test]
+fn process_report_native_compact_uses_truthiness_without_coercion_hooks() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-report-native-compact.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+#[cfg(target_os = "linux")]
+
+#[test]
+fn process_native_cpu_resource_and_rss_facts_use_sdk_validation_and_live_os_data() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-native-metrics.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn process_binding_uses_sdk_metadata_native_identity_and_original_legacy_type_policy() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-binding-native.js"), &["--no-warnings"]);
+}
+
+#[test]
+fn process_default_warning_listener_preserves_sdk_source_without_internal_exposure() {
+    compare_node_source_with_args(include_str!("../node-tests/test-process-warning-listener-source.js"), &[]);
+}
+
+#[test]
+fn process_binding_pending_warnings_follow_sdk_wrapper_native_once_state_and_flag_precedence() {
+    let source = include_str!("../node-tests/test-process-binding-pending-warning.js");
+    for flags in [vec![], vec!["--pending-deprecation"], vec!["--pending-deprecation", "--no-deprecation"], vec!["--pending-deprecation", "--no-pending-deprecation"]] {
+        compare_node_source_with_args(source, &flags);
+    }
+}
+
+#[test]
+fn awaited_primitives_use_enclosing_async_promise_parent_for_real_hook_resources() {
+    compare_node_source_with_args(include_str!("../node-tests/test-await-primitive-promise-parent.js"), &[]);
+}
+
+#[test]
+fn missing_internal_bindings_throw_native_module_errors_with_original_descriptors() {
+    compare_node_source_with_args(include_str!("../node-tests/test-internal-binding-missing-error.js"), &["--no-warnings", "--expose-internals"]);
+}
+
+#[test]
+fn console_global_and_constructor_use_sdk_identity_namespace_and_output_policy() {
+    compare_node_source_with_args(include_str!("../node-tests/test-console-sdk-authority.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn errors_reserve_native_stack_before_fields_and_capture_after_observable_conversions() {
+    compare_node_source_with_args(include_str!("../node-tests/test-error-stack-layout.js"), &["--no-warnings", "--expose-internals"]);
+}
+
+#[test]
+fn sdk_vfs_mount_lifecycle_and_native_reads_use_canonical_handler_state() {
+    compare_node_file_source_with_args(include_str!("../node-tests/test-sdk-vfs-read-bridge.js"), &["--experimental-vfs", "--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn sdk_vfs_handlers_preserve_receiver_argument_counts_results_and_errors() {
+    compare_node_file_source_with_args(include_str!("../node-tests/test-sdk-vfs-handler-protocol.js"), &["--experimental-vfs", "--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn private_promise_job_snapshots_preserve_public_async_ids_and_isolated_stores() {
+    compare_node_source_with_args(include_str!("../node-tests/test-async-private-job-identities.js"), &["--no-warnings"]);
+}
+
+fn compare_node_file_source_with_args(source: &str, flags: &[&str]) {
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = directory.path().join("test.cjs");
+    std::fs::write(&fixture, source).unwrap();
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(flags).arg(&fixture);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(observation.exit_code, Some(0), "{}", String::from_utf8_lossy(&observation.stderr));
+        assert!(observation.stderr.is_empty(), "{}", String::from_utf8_lossy(&observation.stderr));
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn sdk_vfs_mkdir_realpath_preserve_handler_protocol_and_result_projection() {
+    compare_node_file_source_with_args(include_str!("../node-tests/test-sdk-vfs-mkdir-realpath-protocol.js"), &["--experimental-vfs", "--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn sdk_vfs_open_preserves_flag_mode_validation_and_raw_path_dispatch() {
+    compare_node_file_source_with_args(include_str!("../node-tests/test-sdk-vfs-open-protocol.js"), &["--experimental-vfs", "--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn sdk_vfs_write_options_preserve_getter_order_identity_and_void_results() {
+    compare_node_file_source_with_args(include_str!("../node-tests/test-sdk-vfs-write-options-protocol.js"), &["--experimental-vfs", "--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn sdk_vfs_write_continuations_preserve_append_copying_loop_and_finally() {
+    compare_node_file_source_with_args(include_str!("../node-tests/test-sdk-vfs-write-continuation.js"), &["--experimental-vfs", "--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn sdk_vfs_write_native_effects_preserve_flags_bytes_and_descriptor_ownership() {
+    compare_node_file_source_with_args(include_str!("../node-tests/test-sdk-vfs-write-native-effects.js"), &["--experimental-vfs", "--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn sdk_vfs_write_fd_domains_and_append_delegation_match_source_policy() {
+    compare_node_file_source_with_args(include_str!("../node-tests/test-sdk-write-fd-domains.js"), &["--experimental-vfs", "--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn native_dns_lookup_policy_shares_promise_identity_defaults_and_numeric_bypass() {
+    let source = include_str!("../node-tests/test-native-dns-public-policy.js");
+    compare_node_source_with_args(source, &["--no-warnings"]);
+    compare_node_source_with_args(source, &["--no-warnings", "--dns-result-order=ipv4first"]);
+}
+
+#[test]
+fn native_dns_binding_dispatch_preserves_request_identity_and_async_submission_errors() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-dns-binding-dispatch.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn native_dns_requests_preserve_async_resource_storage_and_gc_lifetime() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-dns-request-lifetime.js"), &["--expose-gc", "--no-warnings"]);
+}
+
+#[test]
+fn native_dns_lowlevel_completion_reads_current_callback_and_retains_request_receiver() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-dns-lowlevel-completion.js"), &["--expose-internals", "--expose-gc", "--no-warnings"]);
+}
+
+#[test]
+fn native_dns_promise_requests_own_mutable_resolvers_and_preserve_binding_address_values() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-dns-promise-request-contract.js"), &["--expose-internals", "--no-warnings"]);
+}
+
+#[test]
+fn native_tcp_constructor_bind_and_inherited_stream_prototypes_match_node() {
+    compare_node_file_source_with_args(include_str!("../node-tests/test-native-tcp-constructor.js"), &["--no-warnings", "--expose-internals"]);
+}
+
+#[test]
+fn native_tcp_accept_preserves_handle_identity_and_real_close_completion() {
+    compare_node_file_source_with_args(include_str!("../node-tests/test-native-tcp-accept.js"), &["--no-warnings", "--expose-internals"]);
+}
+
+#[test]
+fn native_stream_reads_and_synchronous_writes_project_real_buffers_and_state() {
+    compare_node_file_source_with_args(include_str!("../node-tests/test-native-tcp-stream.js"), &["--no-warnings", "--expose-internals"]);
+}
+
+#[test]
+fn native_stream_pressure_completes_actual_write_request_once() {
+    compare_node_file_source_with_args(include_str!("../node-tests/test-native-tcp-async.js"), &["--no-warnings", "--expose-internals"]);
+}
+
+#[test]
+fn native_stream_close_cancels_pending_write_before_handle_close() {
+    compare_node_file_source_with_args(include_str!("../node-tests/test-native-tcp-cancel.js"), &["--no-warnings", "--expose-internals"]);
+}
+
+#[test]
+fn native_sdk_webcrypto_owns_public_namespace_and_real_import_generate_key_lifecycle() {
+    compare_node_file_source_with_args(
+        include_str!("../node-tests/test-crypto-native-sdk-public-key-lifecycle.js"),
+        &["--no-warnings", "--expose-internals"],
+    );
+}
+
+#[test]
+fn native_sdk_webcrypto_initializes_cold_global_and_preserves_random_policy() {
+    compare_node_file_source_with_args(
+        include_str!("../node-tests/test-crypto-native-sdk-cold-global-random.js"),
+        &["--no-warnings", "--expose-internals"],
+    );
+}
+
+#[test]
+fn native_sdk_dom_exception_and_quota_preserve_private_reflection_and_cause() {
+    compare_node_file_source_with_args(
+        include_str!("../node-tests/test-crypto-native-sdk-dom-reflection.js"),
+        &["--no-warnings", "--expose-internals"],
+    );
+}
+
+#[test]
+fn native_secret_key_job_preserves_hook_order_and_async_local_context() {
+    compare_node_file_source_with_args(
+        include_str!("../node-tests/test-crypto-native-keygen-hooks-context.js"),
+        &["--no-warnings", "--expose-internals"],
+    );
+}
+
+#[test]
+fn admitted_public_socket_owns_data_and_eof_after_native_read_request() {
+    compare_node_file_source_with_args(include_str!("../node-tests/test-native-public-socket-read-owner.js"), &["--no-warnings"]);
+}
+
+
+#[test]
+fn native_tcp_close_callbacks_follow_real_libuv_lifo_requests() {
+    compare_node_file_source_with_args(include_str!("../node-tests/test-native-tcp-close-order.js"), &["--no-warnings", "--expose-internals"]);
+}
+
+
+
+#[test]
+fn sdk_vfs_metadata_preserves_public_shape_options_accessors_and_error_boundaries() {
+    let source = include_str!("../node-tests/test-sdk-vfs-metadata-protocol.js");
+    compare_node_file_source_with_args(source, &["--no-warnings", "--expose-internals"]);
+    compare_node_file_source_with_args(source, &["--no-warnings", "--expose-internals", "--experimental-vfs"]);
+}
+
+#[test]
+fn sdk_vfs_virtual_metadata_and_descriptor_lifecycle_match_configured_source() {
+    compare_node_file_source_with_args(include_str!("../node-tests/test-sdk-vfs-metadata-lifecycle.js"), &["--no-warnings", "--experimental-vfs"]);
+}
+
+
+#[test]
+fn native_private_symbol_table_has_all_sdk_keys_and_private_semantics() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-private-symbol-table.js"), &["--no-warnings", "--expose-internals"]);
+}
+
+#[test]
+fn native_exit_listener_accepts_owned_dns_and_crypto_work_without_callbacks() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-exit-work-normal.js"), &["--no-warnings"]);
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn native_pool_reads_environment_at_first_dns_work_and_keeps_configuration() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-pool-first-use.js"), &["--no-warnings"]);
+}
+
+#[test]
+fn native_pending_dns_and_crypto_keep_resources_and_als_across_gc() {
+    compare_node_source_with_args(include_str!("../node-tests/test-native-pending-work-gc.js"), &["--no-warnings", "--expose-gc"]);
+}
+
+#[test]
+fn native_exit_listener_throw_still_abandons_owned_work_without_callbacks() {
+    let source = include_str!("../node-tests/test-native-exit-work-throw.js");
+    for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
+        let mut command = Command::new(executable);
+        command.args(["--no-warnings", "-e", source]);
+        if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+        let observation = quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap();
+        assert!(!observation.timed_out);
+        assert_eq!(observation.exit_code, Some(1));
+        assert_eq!(observation.stdout, b"native-exit-work-accepted\n");
+        assert!(String::from_utf8_lossy(&observation.stderr).contains("Error: native-exit-lifecycle-marker"));
+    }
+}
+
+#[test]
+fn native_commonjs_realm_reuses_canonical_private_util_binding() {
+    // This host bootstrap adapter is intentionally not a require-able Node module.
+    let mut command = Command::new(env!("CARGO_BIN_EXE_run-parallel"));
+    command.args(["--no-warnings", "--expose-internals", "-e", include_str!("../node-tests/test-native-realm-private-binding.js")]);
+    command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+    let observation = quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap();
+    assert!(!observation.timed_out);
+    assert_eq!(observation.exit_code, Some(0), "{}", String::from_utf8_lossy(&observation.stderr));
+    assert!(observation.stderr.is_empty());
+    assert_eq!(observation.stdout,b"native-realm-binding-identity-ok\n");
+}
+
+
+#[test]
+fn child_process_original_sdk_mocktracker_intercepts_real_native_spawn() {
+    compare_node_source_with_args(
+        include_str!("../node-tests/test-child-process-sdk-mocktracker-native-spawn.js"),
+        &["--no-warnings", "--expose-internals"],
+    );
+}
+
+#[test]
+fn child_process_original_sdk_mocktracker_null_stdio_error_lifecycle() {
+    compare_node_source_with_args(
+        include_str!("../node-tests/test-child-process-sdk-mocktracker-null-stdio-errors.js"),
+        &["--no-warnings", "--expose-internals"],
+    );
+}
+
+#[test]
+fn child_process_original_sdk_mocktracker_null_stdio_timeout_lifecycle() {
+    compare_node_source_with_args(
+        include_str!("../node-tests/test-child-process-sdk-mocktracker-null-stdio-timeout.js"),
+        &["--no-warnings", "--expose-internals"],
+    );
+}
+
+#[test]
+fn child_process_direct_spawn_validates_in_sdk_order_and_closes_with_errno() {
+    compare_node_source_with_args(
+        include_str!("../node-tests/test-child-process-direct-spawn-validation-errors.js"),
+        &["--no-warnings", "--expose-internals"],
+    );
+}
+
+#[test]
+fn crypto_original_sdk_hash_hmac_state_copy_and_errors() {
+    compare_node_file_source_with_args(
+        include_str!("../node-tests/test-crypto-native-stateful-sdk-hash.js"),
+        &["--no-warnings", "--expose-internals"],
+    );
 }

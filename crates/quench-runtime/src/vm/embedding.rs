@@ -20,7 +20,7 @@ const TYPED_BRANDS: &[(crate::BuiltinBrand, TypedArrayKind)] = &[
     (crate::BuiltinBrand::Float32Array, TypedArrayKind::Float32),
     (crate::BuiltinBrand::Float64Array, TypedArrayKind::Float64),
 ];
-fn typed_array_brand(kind: TypedArrayKind) -> crate::BuiltinBrand {
+pub(super) fn typed_array_brand(kind: TypedArrayKind) -> crate::BuiltinBrand {
     TYPED_BRANDS
         .iter()
         .find(|(_, candidate)| *candidate == kind)
@@ -29,6 +29,10 @@ fn typed_array_brand(kind: TypedArrayKind) -> crate::BuiltinBrand {
 }
 
 impl<H: Host> Vm<H> {
+    pub(crate) fn embedding_heap_memory_composition(&self) -> crate::HeapMemoryComposition {
+        self.heap.memory_composition()
+    }
+
     pub(super) fn boxed_primitive_value(&self, value: Value) -> Option<Value> {
         self.object_data(value)?.boxed_primitive()
     }
@@ -316,15 +320,53 @@ impl<H: Host> Vm<H> {
         records.into_iter().map(|(program, mut record, module)| {
             Self::map_call_site_source(&mut self.host, &mut record, module);
             let name = self.call_site_name(&record).map_or_else(Vec::new, |name| name.units().to_vec());
+            let unnamed_script = record.eval_origin.is_some();
             let CallSiteLocation::Source { file_name, line, column } = record.location else { unreachable!("source projection"); };
             crate::SourceStackFrame {
                 function_name: name,
-                script_id: u64::from(program.raw()) + 1,
-                script_name: file_name,
+                script_id: u64::from(self.programs.source_identity(program).raw()) + 1,
+                script_name: if unnamed_script { String::new() } else { file_name },
+                is_eval: unnamed_script,
                 line_number: line,
                 column_number: column,
             }
         }).collect()
+    }
+
+    pub(crate) fn embedding_error_source_position(
+        &mut self,
+        error: RootId,
+    ) -> Result<Option<crate::ErrorSourcePosition>, JsError> {
+        let value = self.embedding_value(error)?;
+        // Proxy objects deliberately do not expose their target's captured metadata.
+        if let Some(crate::heap::StackData::Captured { records, source }) =
+            self.object_data(value).and_then(crate::heap::Object::stack_data)
+        {
+            if let Some(record) = records.iter().find(|record| matches!(record.location, CallSiteLocation::Source { .. })) {
+                let CallSiteLocation::Source { file_name, line, column } = &record.location else { unreachable!() };
+                return Ok(Some(crate::ErrorSourcePosition {
+                    source_line: source.as_ref().and_then(|source| source.source_line(*line)).map(str::to_owned),
+                    script_name: record.eval_origin.is_none().then(|| file_name.clone()),
+                    line_number: *line,
+                    column_number: *column,
+                }));
+            }
+        }
+        let Some((mut record, module, source_line)) = self.frames.iter().rev().find_map(|frame| {
+            let (record, module) = self.source_call_site_record(frame, false)?;
+            let CallSiteLocation::Source { line, .. } = &record.location else { return None };
+            let source_line = self.programs.get(frame.program)?.source.as_ref()
+                .and_then(|source| source.source_line(*line)).map(str::to_owned);
+            Some((record, module, source_line))
+        }) else { return Ok(None) };
+        Self::map_call_site_source(&mut self.host, &mut record, module);
+        let CallSiteLocation::Source { file_name, line, column } = record.location else { unreachable!() };
+        Ok(Some(crate::ErrorSourcePosition {
+            source_line,
+            script_name: record.eval_origin.is_none().then_some(file_name),
+            line_number: line,
+            column_number: column,
+        }))
     }
 
     pub(crate) fn embedding_call_stack_source_names(&self) -> Vec<String> {
@@ -1013,7 +1055,11 @@ impl<H: Host> Vm<H> {
     }
 
     pub(crate) fn embedding_symbol(&mut self, description: Option<String>) -> Value {
-        self.heap.alloc(Cell::Symbol(description))
+        self.heap.alloc(Cell::Symbol(crate::heap::SymbolData::public(description)))
+    }
+
+    pub(crate) fn embedding_private_symbol(&mut self, description: Option<String>) -> Value {
+        self.heap.alloc(Cell::Symbol(crate::heap::SymbolData::host_private(description)))
     }
 
     fn create_embedding_object_with_prototype(
@@ -1072,18 +1118,51 @@ impl<H: Host> Vm<H> {
 
     /// Evaluates host Script source as a global Script of the realm owning `global`.
     pub(crate) fn evaluate_embedding_script_in_realm(
-        &mut self,
-        global: RootId,
-        source: &str,
-        name: &str,
+        &mut self, global: RootId, source: &str, name: &str,
     ) -> Result<Value, JsError> {
+        self.with_embedding_realm(global, |vm| vm.evaluate_embedding_global_script(source, name))
+    }
+
+    pub(crate) fn evaluate_embedding_specialized_script_in_realm_with_origin(
+        &mut self, global: RootId, source: &str, name: &str, origin: (u32, u32),
+    ) -> Result<Value, JsError> {
+        self.with_embedding_realm(global, |vm| vm.evaluate_embedding_specialized_script_with_origin(source, name, Some(origin)))
+    }
+
+    pub(crate) fn prepare_embedding_specialized_script_in_realm_with_origin(
+        &mut self, global: RootId, source: &str, name: &str, origin: (u32, u32),
+    ) -> Result<crate::PreparedScript, JsError> {
+        self.with_embedding_realm(global, |vm| vm.prepare_embedding_specialized_script(source, name, Some(origin)))
+    }
+
+    pub(crate) fn evaluate_embedding_prepared_script_in_realm(
+        &mut self, global: RootId, prepared: &crate::PreparedScript,
+    ) -> Result<Value, JsError> {
+        self.with_embedding_realm(global, |vm| vm.evaluate_embedding_prepared_script(prepared))
+    }
+
+    pub(crate) fn compile_embedding_script_in_realm(
+        &mut self, global: RootId, source: &str, name: &str, origin: (u32, u32),
+    ) -> Result<crate::CompiledScript, JsError> {
+        self.with_embedding_realm(global, |vm| vm.compile_embedding_host_script(source, name, origin))
+    }
+
+    pub(crate) fn evaluate_embedding_compiled_script_in_realm(
+        &mut self, global: RootId, script: &crate::CompiledScript,
+    ) -> Result<Value, JsError> {
+        self.with_embedding_realm(global, |vm| vm.evaluate_embedding_compiled_script(script))
+    }
+
+    fn with_embedding_realm<T>(
+        &mut self, global: RootId, run: impl FnOnce(&mut Self) -> Result<T, JsError>,
+    ) -> Result<T, JsError> {
         let global = self.embedding_value(global)?;
         if !self.is_realm_global(global) {
             let program = self.embedding_program()?;
             return Err(self.type_error(&program, "value is not a realm global object".into()));
         }
         let previous_global = self.switch_realm_global(global);
-        let result = self.evaluate_embedding_global_script(source, name);
+        let result = run(self);
         self.switch_realm_global(previous_global);
         result
     }
@@ -1210,6 +1289,17 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         )
+    }
+
+    pub(crate) fn materialize_lazy_data_property_rooted(
+        &mut self,
+        holder: RootId,
+        name: &str,
+    ) -> Result<(), JsError> {
+        let holder = self.embedding_value(holder)?;
+        let program = self.embedding_program()?;
+        let key = PropertyKey::string(self.intern_atom(name));
+        self.materialize_lazy_data_property(&program, holder, key)
     }
 
     pub(crate) fn define_lazy_data_properties_rooted(

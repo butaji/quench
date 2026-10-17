@@ -619,7 +619,11 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         result: Result<Value, JsError>,
     ) -> Result<Value, JsError> {
-        let promise = self.promise_object();
+        let payload = match &result {
+            Ok(value) => *value,
+            Err(error) => error.thrown_value().unwrap_or(Value::UNDEFINED),
+        };
+        let promise = self.with_call_roots([payload], |vm| vm.promise_object())?;
         match result {
             Ok(value) => self.promise_resolve_value(p, promise, value)?,
             Err(error) => {

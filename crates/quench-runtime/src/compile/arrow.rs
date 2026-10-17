@@ -10,7 +10,7 @@ impl Compiler<'_> {
         super_home: bool,
         super_home_atom: Option<Atom>,
         inherited_strict: bool,
-        class_field_initializer: bool,
+        class_initializer: bool,
         lexical_this_atom: Option<Atom>,
         super_call_binds_this: bool,
         with_depth: u16,
@@ -78,7 +78,7 @@ impl Compiler<'_> {
         function.super_static = super_static;
         function.super_home = super_home;
         function.super_home_atom = super_home_atom;
-        function.class_field_initializer = class_field_initializer;
+        function.class_initializer = class_initializer;
         function.super_call_binds_this = super_call_binds_this;
         function.this_override = lexical_this_atom.map(|atom| function.load_atom(atom));
         function.dynamic_eval = early::parameters_contain_direct_eval(&value.params)
@@ -136,7 +136,7 @@ impl Compiler<'_> {
             instance_initializer: None,
             super_home_atom,
             constructible: false,
-            class_field_initializer,
+            class_initializer,
             parameter_eval_arguments_error: false,
             arguments_slot: None,
             simple_parameters: !FunctionCompiler::has_non_simple_parameters(&value.params),
