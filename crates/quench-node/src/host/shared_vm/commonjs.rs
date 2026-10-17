@@ -190,6 +190,9 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     let bootstrap_require = create_require(context, &bootstrap_filename)?;
     set(context, global, "\0quench:require", bootstrap_require)?;
     context.release_root(bootstrap_require);
+    let export_values = context.host_function(crate::host::shared_vm::operation("builtinExportValues"))?;
+    let key = context.string_rooted(BUILTIN_EXPORT_VALUES);
+    context.define_data_property_rooted(global, key, export_values, false, false, false)?;
     let print_eval = context.host_function(crate::host::shared_vm::operation("nodePrintEvalScript"))?;
     let key = context.string_rooted("\0quench:evalScript");
     context.define_data_property_rooted(global, key, print_eval, false, false, false)?;
@@ -914,6 +917,44 @@ pub(crate) fn initialize_console_global(
 
 /// A require capability installed only in a configured SDK module wrapper.
 /// Public module.filename mutation cannot grant access to the timer adapter.
+/// The private global through which a builtin's ESM facade reads its exports.
+pub(crate) const BUILTIN_EXPORT_VALUES: &str = "\0quench:builtinExportValues";
+
+/// The values of a builtin module's named exports (`args`: the module and the export names),
+/// aligned with the names. As lib/internal/bootstrap/realm.js `syncExports` does, each is read
+/// with `getOwn` (absent own property: `undefined`), in the order the module lists its own
+/// enumerable keys, then the names it does not list.
+pub(crate) fn builtin_export_values(
+    context: &mut Context<'_>, _: RootId, args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let undefined = context.undefined();
+    let module = args.first().copied().unwrap_or(undefined);
+    let names = args.get(1).copied().unwrap_or(undefined);
+    let count = get(context, names, "length")?;
+    let count = context.to_number(count)? as usize;
+    let mut wanted = Vec::with_capacity(count);
+    for index in 0..count {
+        let name = get(context, names, &index.to_string())?;
+        wanted.push(context.string_text(name)?.unwrap_or_default());
+    }
+    let mut values = vec![None; count];
+    for key in context.enumerable_own_keys_rooted(module, false, false)? {
+        let Some(text) = context.string_text(key)? else { continue };
+        if let Some(index) = wanted.iter().position(|name| *name == text) {
+            values[index] = Some(context.get_property_rooted(module, key)?);
+        }
+    }
+    for (index, name) in wanted.iter().enumerate() {
+        if values[index].is_some() { continue; }
+        let key = context.string_rooted(name);
+        let descriptor = context.own_property_descriptor_rooted(module, key)?;
+        let own = !context.rooted_value(descriptor).is_some_and(|value| value.is_undefined());
+        values[index] = Some(if own { context.get_property_rooted(module, key)? } else { undefined });
+    }
+    let values = values.into_iter().map(|value| value.unwrap_or(undefined)).collect::<Vec<_>>();
+    context.array_rooted(&values)
+}
+
 pub(super) fn require_node_library(
     context: &mut Context<'_>, receiver: RootId, args: &[RootId],
 ) -> Result<RootId, RootedError> {
@@ -1380,8 +1421,7 @@ fn cached_builtin(
     if matches!(builtin, BuiltinModule::Crypto | BuiltinModule::Events | BuiltinModule::Fs) {
         let policy = context.with_startup_intrinsics(|context| {
             if matches!(builtin, BuiltinModule::Fs) {
-                crate::modules::fs_shared_vm::initialize_directory_policy(context, module)?;
-                return crate::modules::fs_shared_vm::initialize_glob_policy(context, module);
+                return crate::modules::fs_shared_vm::install_library_policy(context, module);
             }
             if matches!(builtin, BuiltinModule::Events) {
                 let listener = get(context, module, "addAbortListener")?;
@@ -2337,6 +2377,7 @@ fn load_with_resolution(
         ModuleCache::NodeLibrary
     } else { ModuleCache::CommonJs };
     let cached = cache.get(context, &key)?;
+    if std::env::var_os("QTRACE_LOAD").is_some() && context.rooted_value(cached).is_some_and(|value| value.is_undefined()) { eprintln!("QLOAD {key}"); }
     if !context.rooted_value(cached).is_some_and(|value| value.is_undefined()) {
         if let Some(parent) = parent {
             transition_child(context, parent, cached, ChildTransition::Attach)?;
@@ -2489,6 +2530,8 @@ const getLinkedBinding = () => ({});
                 if parent.is_none() {
                     crate::host::resident_pages::release_read_only_pages();
                     crate::host::resident_pages::quench_entry_compiled();
+                } else if in_node_internal {
+                    crate::host::resident_pages::release_read_only_pages();
                 }
                 let mut arguments = vec![exports, require, module, name, directory];
                 if in_node_internal {
