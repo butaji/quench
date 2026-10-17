@@ -1298,6 +1298,12 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.vm.release_root(reference.0)
     }
 
+    /// The number of collections so far. Host weak references can only have died when it
+    /// changed, so a host prunes its weak tables when it does instead of on a timer.
+    pub fn collection_epoch(&self) -> u64 {
+        self.vm.embedding_collection_epoch()
+    }
+
     /// Copy the raw bytes from a typed array or DataView without per-index guest property reads.
     pub fn view_bytes_rooted(&self, root: RootId) -> Option<Vec<u8>> {
         self.vm

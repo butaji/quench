@@ -1481,6 +1481,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "quench-alloc"
+version = "0.1.0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "quench-bench"
 version = "0.1.0"
 dependencies = [
@@ -1541,6 +1548,7 @@ dependencies = [
  "oxc_span",
  "oxc_syntax",
  "pkg-config",
+ "quench-alloc",
  "quench-js-check",
  "quench-runtime",
  "quench-stack",
