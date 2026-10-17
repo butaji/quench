@@ -132,14 +132,13 @@ impl SharedAsyncHooksState {
         }
     }
 
-    /// Whether promises get an async-hooks identity: Node installs its promise hook only
-    /// while an async hook, or the hook an entered AsyncLocalStorage enables, is enabled.
-    pub(super) fn tracks_promises(&self) -> bool {
-        self.registry.any_enabled() || !self.enabled_local_storages.is_empty()
-    }
-
     /// Node internal/async_hooks getDefaultTriggerAsyncId: a negative slot
     /// means inherit executionAsyncId; scope never changes execution or ALS.
+    /// Node gives Promises async resources only while its promise hook is installed.
+    pub(crate) fn tracks_promises(&self) -> bool {
+        self.registry.tracks_promises()
+    }
+
     pub(super) fn default_trigger_async_id(&self) -> f64 {
         self.default_trigger_async_id.filter(|id| !(*id < 0.0))
             .unwrap_or(self.identity.current_async_id() as f64)

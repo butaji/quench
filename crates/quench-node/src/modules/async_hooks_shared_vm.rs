@@ -220,6 +220,19 @@ pub(crate) fn initialize_promise(
     promise: RootId,
     resource: quench_runtime::HostExecutionContext,
 ) -> Result<(), RootedError> {
+    // A long run of promises can stay within one event-loop turn, where the turn-end prune
+    // never comes: every new promise first prunes the table once a collection has run since
+    // the last prune, so it holds only promises that may still be live.
+    let prune_due = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .async_hooks
+        .promise_resources_pruned_epoch
+        != context.collection_epoch();
+    if prune_due {
+        prune_promise_resources(context)?;
+    }
     let weak = context.host_weak_root(promise)?;
     context.host_mut().shared_state().borrow_mut().async_hooks.promise_resources.insert(resource.0, weak);
     emit_init(context, promise, "PROMISE", resource.0)
@@ -268,25 +281,7 @@ pub(crate) fn promise_job_boundary(
     if before && prune_due {
         prune_promise_resources(context)?;
     }
-    let resource = {
-        let mut shared = shared.borrow_mut();
-        let state = &mut shared.async_hooks;
-        let tracks = state.tracks_promises();
-        match state.job_resources.get_mut(&snapshot.0) {
-            Some(job) if job.resource.is_none() && tracks => {
-                // A promise made while untracked meets an enabled hook only at its job; like
-                // Node, the job then gets an identity of its own, without an init.
-                let id = state.identity.allocate_async_id();
-                job.resource = Some(id);
-                if before {
-                    job.execution = id;
-                    state.identity.replace_current_async_id(id);
-                }
-                Some(id)
-            }
-            job => job.and_then(|job| job.resource),
-        }
-    };
+    let resource = tracked_job(&mut shared.borrow_mut().async_hooks, snapshot.0).resource;
     let Some(resource) = resource else { return Ok(()); };
     let kind = if before {
         super::async_hook_registry_shared_vm::HookKind::Before
@@ -333,13 +328,28 @@ pub(crate) fn capture_job_context(
     Some(token)
 }
 
+/// A Promise created while no promise hook was installed has no async resource. Like
+/// Node's promise before/after hooks, a job running once a hook is installed gives its
+/// Promise one on demand, without an init event or destroy tracking.
+fn tracked_job(state: &mut super::async_hooks_state::SharedAsyncHooksState, token: u64) -> JobContext {
+    let job = *state.job_resources.get(&token).expect("live Promise job context");
+    if job.resource.is_some() || !state.tracks_promises() {
+        return job;
+    }
+    let trigger = state.default_trigger_async_id() as i64;
+    let id = state.identity.allocate_async_id();
+    let job = JobContext { resource: Some(id), execution: id, trigger };
+    state.job_resources.insert(token, job);
+    job
+}
+
 /// Public identity and private ALS ownership are separate projections.
 pub(crate) fn enter_job_context(
     shared_state: &Rc<RefCell<crate::host::SharedNodeState>>, token: u64,
 ) -> u64 {
     let mut shared = shared_state.borrow_mut();
     let state = &mut shared.async_hooks;
-    let job = *state.job_resources.get(&token).expect("live Promise job context");
+    let job = tracked_job(state, token);
     let previous = (state.identity.current_async_id(), state.identity.current_trigger_id(), state.identity.store_context());
     state.job_stack.push(previous);
     state.identity.replace_current_async_id(job.execution);
