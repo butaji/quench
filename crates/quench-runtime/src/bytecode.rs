@@ -1054,7 +1054,7 @@ pub struct Function {
     pub(crate) name_bindings: NameBindings,
     /// Lexical projections at eval calls and dynamic name operations.
     pub binding_sites: Vec<BindingSite>,
-    pub(crate) source_positions: Vec<SourcePosition>,
+    pub(crate) source_positions: SourcePositions,
     /// The plan of each CloneEnv instruction.
     pub environment_clones: Vec<EnvironmentClone>,
     pub code: Vec<Instr>,
@@ -1127,6 +1127,134 @@ pub(crate) struct SourcePosition {
     pub(crate) pc: u32,
     pub(crate) line: u32,
     pub(crate) column: u32,
+}
+
+/// A function's source positions in increasing pc order, each delta-coded against the one
+/// before it as LEB128 varints: the pc advance, the line change (zigzag), then the column,
+/// as a change (zigzag) on the same line and absolute on a new one. Most entries take three
+/// bytes, a quarter of a `SourcePosition`, and a function keeps one per source location
+/// change while it compiles and for as long as it lives.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct SourcePositions {
+    bytes: Vec<u8>,
+    /// The final entry, which the next one is coded against.
+    last: Option<SourcePosition>,
+}
+
+/// The payload bits of one LEB128 byte; the high bit marks a continuation.
+const LEB128_PAYLOAD_BITS: u32 = 7;
+const LEB128_CONTINUATION: u8 = 1 << LEB128_PAYLOAD_BITS;
+
+impl SourcePositions {
+    pub(crate) fn last(&self) -> Option<SourcePosition> {
+        self.last
+    }
+
+    /// Appends `position`. Compiled code orders positions by pc; a decoded table keeps any
+    /// order exactly, for validation to judge.
+    pub(crate) fn push(&mut self, position: SourcePosition) {
+        let previous = self.last.unwrap_or(SourcePosition { pc: 0, line: 0, column: 0 });
+        let line_change = i64::from(position.line) - i64::from(previous.line);
+        self.write(u64::from(position.pc.wrapping_sub(previous.pc)));
+        self.write(zigzag(line_change));
+        self.write(if line_change == 0 {
+            zigzag(i64::from(position.column) - i64::from(previous.column))
+        } else {
+            u64::from(position.column)
+        });
+        self.last = Some(position);
+    }
+
+    fn write(&mut self, mut value: u64) {
+        loop {
+            let byte = (value & u64::from(!LEB128_CONTINUATION)) as u8;
+            value >>= LEB128_PAYLOAD_BITS;
+            if value == 0 {
+                self.bytes.push(byte);
+                return;
+            }
+            self.bytes.push(byte | LEB128_CONTINUATION);
+        }
+    }
+
+    pub(crate) fn iter(&self) -> SourcePositionIter<'_> {
+        SourcePositionIter {
+            bytes: &self.bytes,
+            previous: SourcePosition { pc: 0, line: 0, column: 0 },
+        }
+    }
+
+    /// The position in effect at `pc`: the last entry at or before it.
+    pub(crate) fn at(&self, pc: u32) -> Option<SourcePosition> {
+        self.iter().take_while(|position| position.pc <= pc).last()
+    }
+
+    pub(crate) fn shrink_to_fit(&mut self) {
+        self.bytes.shrink_to_fit();
+    }
+}
+
+impl FromIterator<SourcePosition> for SourcePositions {
+    fn from_iter<I: IntoIterator<Item = SourcePosition>>(positions: I) -> Self {
+        let mut table = Self::default();
+        for position in positions {
+            table.push(position);
+        }
+        table
+    }
+}
+
+fn zigzag(value: i64) -> u64 {
+    ((value << 1) ^ (value >> (i64::BITS - 1))) as u64
+}
+
+fn unzigzag(value: u64) -> i64 {
+    (value >> 1) as i64 ^ -((value & 1) as i64)
+}
+
+/// Decodes a `SourcePositions` table in order.
+#[derive(Clone)]
+pub(crate) struct SourcePositionIter<'a> {
+    bytes: &'a [u8],
+    previous: SourcePosition,
+}
+
+impl SourcePositionIter<'_> {
+    fn read(&mut self) -> u64 {
+        let mut value = 0;
+        let mut shift = 0;
+        while let Some((&byte, rest)) = self.bytes.split_first() {
+            self.bytes = rest;
+            value |= u64::from(byte & !LEB128_CONTINUATION) << shift;
+            if byte & LEB128_CONTINUATION == 0 {
+                break;
+            }
+            shift += LEB128_PAYLOAD_BITS;
+        }
+        value
+    }
+}
+
+impl Iterator for SourcePositionIter<'_> {
+    type Item = SourcePosition;
+
+    fn next(&mut self) -> Option<SourcePosition> {
+        if self.bytes.is_empty() {
+            return None;
+        }
+        let previous = self.previous;
+        let pc = previous.pc.wrapping_add(self.read() as u32);
+        let line_change = unzigzag(self.read());
+        let column = self.read();
+        let column = if line_change == 0 {
+            (i64::from(previous.column) + unzigzag(column)) as u32
+        } else {
+            column as u32
+        };
+        let line = (i64::from(previous.line) + line_change) as u32;
+        self.previous = SourcePosition { pc, line, column };
+        Some(self.previous)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2236,12 +2364,7 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
 
 impl ResidualProgram {
     pub(crate) fn source_position(&self, function: u32, pc: u32) -> Option<SourcePosition> {
-        let positions = &self.functions.get(function as usize)?.source_positions;
-        let position = *positions.get(
-            positions
-                .partition_point(|position| position.pc <= pc)
-                .checked_sub(1)?,
-        )?;
+        let position = self.functions.get(function as usize)?.source_positions.at(pc)?;
         self.adjust_source_position(position)
     }
 

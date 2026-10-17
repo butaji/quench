@@ -157,7 +157,7 @@ fn decoder_rejects_out_of_range_local_load() {
             global_immutable_atoms: vec![],
             name_bindings: Default::default(),
             binding_sites: vec![],
-            source_positions: vec![],
+            source_positions: Default::default(),
             environment_clones: vec![],
             code: vec![Instr::new(Op::LoadLocal, 0, 0, 0, 1)],
             wide: vec![],
@@ -240,7 +240,7 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             global_immutable_atoms: vec![],
             name_bindings: Default::default(),
             binding_sites: vec![],
-            source_positions: vec![],
+            source_positions: Default::default(),
             environment_clones: vec![],
             code: vec![Instr::new(Op::Return, 0, 0, 0, 0)],
             wide: vec![],
@@ -488,4 +488,20 @@ fn source_lines_share_javascript_boundaries_and_preserve_wrapper_origins() {
     assert_eq!(wrapped.source_line(1), Some("first"));
     assert_eq!(wrapped.source_line(2), Some("second"));
     assert_eq!(wrapped.source_line(3), Some("third"));
+}
+
+#[test]
+fn source_positions_round_trip_every_delta_shape() {
+    let positions = [
+        SourcePosition { pc: 0, line: 3, column: 40 },
+        SourcePosition { pc: 1, line: 3, column: 7 },
+        SourcePosition { pc: 9, line: 1, column: 200_000 },
+        SourcePosition { pc: 300, line: 1, column: 200_001 },
+        SourcePosition { pc: u32::MAX, line: u32::MAX, column: u32::MAX },
+    ];
+    let table = positions.into_iter().collect::<SourcePositions>();
+    assert_eq!(table.iter().collect::<Vec<_>>(), positions);
+    assert_eq!(table.last(), positions.last().copied());
+    assert_eq!(table.at(8), Some(positions[1]));
+    assert_eq!(table.at(300), Some(positions[3]));
 }

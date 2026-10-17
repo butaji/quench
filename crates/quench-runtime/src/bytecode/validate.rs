@@ -610,11 +610,12 @@ impl ResidualProgram {
                 return Err(format!("function {index} has invalid name bindings"));
             }
             let code_len = function.code.len() as u32;
-            if function
-                .source_positions
-                .windows(2)
-                .any(|pair| pair[0].pc >= pair[1].pc)
-                || function.source_positions.iter().any(|position| {
+            let positions = function.source_positions.iter();
+            if positions
+                .clone()
+                .zip(positions.clone().skip(1))
+                .any(|(first, second)| first.pc >= second.pc)
+                || positions.clone().any(|position| {
                     position.pc >= code_len || position.line == 0 || position.column == 0
                 })
             {
@@ -1213,7 +1214,7 @@ mod tests {
             global_immutable_atoms: vec![],
             name_bindings: Default::default(),
             binding_sites: vec![],
-            source_positions: vec![],
+            source_positions: Default::default(),
             environment_clones: vec![],
             code,
             wide: vec![],

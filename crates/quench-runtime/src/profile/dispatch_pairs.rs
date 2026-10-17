@@ -138,7 +138,7 @@ mod tests {
             global_immutable_atoms: vec![],
             name_bindings: Default::default(),
             binding_sites: vec![],
-            source_positions: vec![],
+            source_positions: Default::default(),
             environment_clones: vec![],
             constructible: true,
             parameter_eval_arguments_error: false,
