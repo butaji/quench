@@ -10,12 +10,11 @@ pub(crate) fn derive(
     methods: &[MethodSite],
     fields: &[FieldSite],
     superinstructions: &[Superinstruction],
-) -> Vec<u64> {
-    let mut roots = Vec::new();
+) -> crate::bytecode::RegisterRoots {
+    let mut roots = crate::bytecode::RegisterRoots::default();
     for function in functions {
         if let Some(map) = analyze(function, methods, fields, superinstructions) {
-            function.register_root_offset = roots.len() as u32;
-            roots.extend(map);
+            function.register_root_offset = roots.append(function.registers, map);
         }
     }
     roots.shrink_to_fit();
