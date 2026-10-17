@@ -303,6 +303,8 @@ pub(super) struct CompiledFunction {
     entry: Entry,
     params: Vec<crate::WasmType>,
     result: Option<crate::WasmType>,
+    #[cfg(test)]
+    native_entries: std::cell::Cell<u64>,
 }
 
 /// A program's compiled functions, sharing one code mapping and one call
@@ -327,6 +329,16 @@ pub(super) struct CompiledProgram {
     /// The environment slots of the globals compiled code accesses, in the
     /// order of the context's global addresses.
     globals: Vec<u32>,
+}
+
+impl CompiledProgram {
+    #[cfg(test)]
+    pub(super) fn native_entries(&self, function: usize) -> Option<u64> {
+        self.functions
+            .get(function)?
+            .as_ref()
+            .map(|function| function.native_entries.get())
+    }
 }
 
 /// Executable memory holding a program's machine code.
@@ -3097,6 +3109,8 @@ impl<H: Host> Vm<H> {
                     entry,
                     params: plan.params,
                     result: plan.result,
+                    #[cfg(test)]
+                    native_entries: std::cell::Cell::new(0),
                 })
             })
             .collect();
@@ -3217,6 +3231,10 @@ impl<H: Host> Vm<H> {
             raised: None,
         };
         let mut out = 0u64;
+        #[cfg(test)]
+        function
+            .native_entries
+            .set(function.native_entries.get().saturating_add(1));
         let status = match guard_trampoline() {
             Some(trampoline) => {
                 // Compiled calls nest only through the interpreter, so the
