@@ -698,7 +698,7 @@ mod tests {
                 Rc::new(Vec::new()),
             ),
         });
-        let atom_count = vm.dynamic_atoms.len();
+        let atom_count = vm.atom_sequence.len();
         vm.heap.retain_allocations_for_test();
         let cell_count = vm.heap.occupied_cell_count_for_test();
 
@@ -712,7 +712,7 @@ mod tests {
             .unwrap();
         }
 
-        assert_eq!(vm.dynamic_atoms.len(), atom_count);
+        assert_eq!(vm.atom_sequence.len(), atom_count);
         assert!(vm.lookup_array_index_atom(1023).is_none());
         assert_eq!(vm.heap.occupied_cell_count_for_test(), cell_count);
     }
@@ -726,7 +726,7 @@ mod tests {
                 Rc::new(vec![Value::FALSE; 1024]),
             ),
         });
-        let atom_count = vm.dynamic_atoms.len();
+        let atom_count = vm.atom_sequence.len();
 
         assert_eq!(vm.delete_array_index(array, 1023), Value::TRUE);
 
@@ -735,7 +735,7 @@ mod tests {
         };
         let elements = array_object.elements();
         assert!(elements[1023].is_deleted());
-        assert_eq!(vm.dynamic_atoms.len(), atom_count);
+        assert_eq!(vm.atom_sequence.len(), atom_count);
         assert!(vm.lookup_array_index_atom(1023).is_none());
     }
 
