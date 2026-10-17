@@ -208,14 +208,19 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let (shape, holder) = (object.shape(), object.proto());
-        let prototype_slot = match self.instanceof_constructor_layout {
-            Some((cached, slot)) if cached == shape => slot,
-            _ => {
+        // The layout memo answers the `prototype` read from the cell already in hand.
+        let remembered = match self.instanceof_constructor_layout {
+            Some((cached, slot)) if cached == shape => Some(self.heap.property_get(object, slot)),
+            _ => None,
+        };
+        let prototype = match remembered {
+            Some(prototype) => prototype?,
+            None => {
                 let slot = self.instanceof_constructor_slot(constructor)?;
                 if !self.shape_is_dictionary(shape) {
                     self.instanceof_constructor_layout = Some((shape, slot));
                 }
-                slot
+                self.heap.property_get(self.object_data(constructor)?, slot)?
             }
         };
         if holder != self.instanceof_has_instance_holder && !self.verify_has_instance_holder(holder)
@@ -225,18 +230,18 @@ impl<H: Host> Vm<H> {
         if !self.is_object_like(value) {
             return Some(false);
         }
-        let prototype = self
-            .heap
-            .property_get(self.object_data(constructor)?, prototype_slot)?;
         if !self.is_object_like(prototype) {
             return None;
         }
         // One cell lookup per link: a proxy anywhere on the chain needs the full algorithm.
         let mut current = value;
         loop {
-            let next = match self.heap.get(current) {
-                Some(Cell::Proxy { .. }) => return None,
-                _ => self.heap.object(current).map_or(Value::NULL, |object| object.proto()),
+            let next = match self.heap.object_record(current) {
+                Some(object) => object.proto(),
+                None => match self.heap.get(current) {
+                    Some(Cell::Proxy { .. }) => return None,
+                    _ => self.heap.object(current).map_or(Value::NULL, |object| object.proto()),
+                },
             };
             if next.is_null() {
                 return Some(false);
