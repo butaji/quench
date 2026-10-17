@@ -692,6 +692,16 @@ impl Heap {
         }
     }
 
+    /// Every live legacy cell, without needing `&mut` (census and diagnostics).
+    #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+    pub(crate) fn for_each_live_cell(&self, mut visit: impl FnMut(&Cell)) {
+        for slot in self.slots.iter() {
+            if let Some(cell) = &slot.cell {
+                visit(cell);
+            }
+        }
+    }
+
     pub(crate) fn live_slots(&self) -> usize {
         self.slots.len() - self.free_slots
             + self.object_records.live_count()
