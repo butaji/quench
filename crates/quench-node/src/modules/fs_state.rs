@@ -252,12 +252,31 @@ impl FsState {
             .descriptors
             .get_mut(&fd)
             .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EBADF))?;
-        let mut bytes = vec![0; size];
-        let read = descriptor.file.read(&mut bytes)?;
+        // The chunk becomes a Buffer's backing store, so read straight into
+        // uninitialized capacity rather than zeroing bytes the read overwrites.
+        let mut bytes = Vec::<u8>::with_capacity(size);
+        let read = loop {
+            // SAFETY: the kernel writes at most `size` bytes into the reserved capacity.
+            let read = unsafe {
+                libc::read(
+                    std::os::fd::AsRawFd::as_raw_fd(&descriptor.file),
+                    bytes.as_mut_ptr().cast(),
+                    size,
+                )
+            };
+            if read >= 0 {
+                break read as usize;
+            }
+            let error = std::io::Error::last_os_error();
+            if error.kind() != std::io::ErrorKind::Interrupted {
+                return Err(error);
+            }
+        };
         if read == 0 {
             return Ok(None);
         }
-        bytes.truncate(read);
+        // SAFETY: the kernel initialized the first `read` bytes.
+        unsafe { bytes.set_len(read) };
         Ok(Some(bytes))
     }
 

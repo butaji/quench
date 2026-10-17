@@ -94,14 +94,32 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     context.define_data_property_rooted(performance, brand, yes, true, true, true)?;
     let key = context.string_rooted("brand");
     context.define_data_property_rooted(data, key, brand, false, false, false)?;
-    // Actual configured SDK policy owns observer registration, buffering and dispatch.
+    // The configured SDK policy owns observer registration, buffering and dispatch. Its module
+    // graph (util, buffer, validators) loads when a script first observes an observer type.
+    let observers = context.host_function_with_data(
+        crate::host::shared_vm::operation("perfHooksObserversInitialize"), module,
+    )?;
+    context.define_lazy_data_properties_rooted(module, &OBSERVER_TYPES, true, observers)?;
+    Ok(module)
+}
+
+/// The observer types `perf_hooks` takes from `internal/perf/observe.js`.
+const OBSERVER_TYPES: [&str; 2] = ["PerformanceObserver", "PerformanceObserverEntryList"];
+
+/// Defines the observer types on `perf_hooks` (the lazy group `module` defines).
+pub(crate) fn initialize_observers(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let module = context.host_function_data()?;
     let observe = crate::host::shared_vm::commonjs::node_library_module(context, "perf_hooks.js", "internal/perf/observe.js")?;
-    for name in ["PerformanceObserver", "PerformanceObserverEntryList"] {
+    for name in OBSERVER_TYPES {
         let key = context.string_rooted(name);
         let value = context.get_property_rooted(observe, key)?;
         context.define_data_property_rooted(module, key, value, true, true, true)?;
     }
-    Ok(module)
+    Ok(context.undefined())
 }
 
 pub(crate) fn now(

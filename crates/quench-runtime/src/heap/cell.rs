@@ -740,6 +740,52 @@ impl Native {
         )
     }
 
+    /// `String.prototype` methods that, for a string primitive receiver and arguments that
+    /// are not objects, run no guest code and have no effect beyond allocating their result.
+    /// The methods that look up a `Symbol.split`-like method on an argument (`split`,
+    /// `replace`, `match` and their kin) are not among them.
+    pub(crate) fn is_pure_string_method(self) -> bool {
+        matches!(
+            self,
+            Self::StringCharCodeAt
+                | Self::StringCharAt
+                | Self::StringSlice
+                | Self::StringSubstring
+                | Self::StringSubstr
+                | Self::StringIncludes
+                | Self::StringStartsWith
+                | Self::StringEndsWith
+                | Self::StringIndexOf
+                | Self::StringLastIndexOf
+                | Self::StringTrim
+                | Self::StringTrimStart
+                | Self::StringTrimEnd
+                | Self::StringAt
+                | Self::StringCodePointAt
+                | Self::StringToUpperCase
+                | Self::StringToLowerCase
+                | Self::StringConcat
+        )
+    }
+
+    /// Natives a lane `Call` makes in place from the running frame (`lane_call_native`):
+    /// the string and RegExp methods, which read no caller state beyond the frame's published
+    /// PC and run guest code only through ordinary nested calls.
+    pub(crate) fn runs_from_lane(self) -> bool {
+        self.is_pure_string_method()
+            || matches!(
+                self,
+                Self::RegExpExec
+                    | Self::RegExpTest
+                    | Self::StringReplace
+                    | Self::StringReplaceAll
+                    | Self::StringMatch
+                    | Self::StringMatchAll
+                    | Self::StringSearch
+                    | Self::StringSplit
+            )
+    }
+
     pub(crate) fn is_host_control_native(self) -> bool {
         matches!(
             self,
@@ -1982,15 +2028,19 @@ impl EnvironmentSlots {
     }
 }
 
+impl From<Vec<Value>> for EnvironmentSlots {
+    fn from(values: Vec<Value>) -> Self {
+        Self(super::thin_slice::ThinBoxSlice::from_exact_iter(
+            values.into_iter().map(EnvironmentSlot::Owned),
+        ))
+    }
+}
+
 impl From<Box<[Value]>> for EnvironmentSlots {
     fn from(values: Box<[Value]>) -> Self {
-        Self(
-            values
-                .into_iter()
-                .map(EnvironmentSlot::Owned)
-                .collect::<Box<[_]>>()
-                .into(),
-        )
+        Self(super::thin_slice::ThinBoxSlice::from_exact_iter(
+            values.iter().copied().map(EnvironmentSlot::Owned),
+        ))
     }
 }
 
@@ -2356,6 +2406,18 @@ pub(crate) enum Cell {
 }
 
 impl Cell {
+    /// Whether a collection prunes this cell's entries by the liveness of their targets
+    /// (`Heap::prune_weak_cell`).
+    pub(crate) fn has_weak_entries(&self) -> bool {
+        matches!(
+            self,
+            Self::WeakMap { .. }
+                | Self::WeakSet { .. }
+                | Self::WeakRef { .. }
+                | Self::FinalizationRegistry { .. }
+        )
+    }
+
     pub(crate) fn profile_variant_name(&self) -> &'static str {
         match self {
             Self::Object(_) => "object",

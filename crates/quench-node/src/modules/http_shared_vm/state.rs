@@ -12,6 +12,9 @@ pub(crate) struct State {
     pub(crate) servers: HashMap<u64, Server>,
     pub(crate) connections: HashMap<u64, ServerConnection>,
     pub(crate) responses: HashMap<u64, Response>,
+    /// Responses whose write returned false, keyed by socket, until their
+    /// queued bytes fall below the high-water mark and `drain` is due.
+    pub(crate) drain_waiters: HashMap<u64, RootId>,
     pub(crate) requests: HashMap<u64, OutgoingRequest>,
     pub(crate) clients: HashMap<u64, Client>,
     pub(crate) agents: HashMap<u64, HashSet<u64>>,
@@ -153,6 +156,7 @@ impl State {
             servers: HashMap::new(),
             connections: HashMap::new(),
             responses: HashMap::new(),
+            drain_waiters: HashMap::new(),
             requests: HashMap::new(),
             clients: HashMap::new(),
             agents: HashMap::new(),

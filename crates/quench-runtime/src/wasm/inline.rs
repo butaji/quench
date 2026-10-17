@@ -82,7 +82,7 @@ fn disqualifies(operator: &Operator<'_>) -> bool {
 
 /// The inlinable leaves among the defined functions, by defined index.
 fn leaves(
-    bodies: &[(Vec<ValType>, Vec<Operator<'_>>)],
+    bodies: &[Body<'_>],
     signatures: &WasmSignatures,
     budget: usize,
 ) -> Vec<Option<Leaf>> {
@@ -142,52 +142,111 @@ fn default_value<'a>(ty: ValType) -> Operator<'a> {
     }
 }
 
-/// Inline leaf calls throughout a module's bodies, by defined index.
-pub(super) fn inline_leaf_calls<'a>(
-    mut bodies: Vec<(Vec<ValType>, Vec<Operator<'a>>)>,
-    signatures: &WasmSignatures,
-    budget: usize,
-) -> Option<Vec<(Vec<ValType>, Vec<Operator<'a>>)>> {
-    for _ in 0..INLINE_ROUNDS {
-        let leaves = leaves(&bodies, signatures, budget);
-        if leaves.iter().all(Option::is_none) {
-            break;
-        }
-        // Only bodies that call a leaf are rebuilt; the rest stay in place.
-        // A rebuilt caller that is not itself a leaf replaces its old body at
-        // once, since no other body inlines it; leaves change only after the
-        // round, so every call site of a round inlines the same bodies.
-        let mut rebuilt_leaves = Vec::new();
-        for index in 0..bodies.len() {
-            let (locals, operators) = &bodies[index];
-            if !operators
-                .iter()
-                .any(|operator| leaf_call(operator, index, &leaves, signatures).is_some())
-            {
-                continue;
+/// A defined function's declared locals and operators.
+pub(super) type Body<'a> = (Vec<ValType>, Vec<Operator<'a>>);
+
+/// One inlining round: its leaves, and the leaf bodies as they stand when it starts (every
+/// other entry is empty). Every call site of a round inlines these same bodies.
+struct Round<'a> {
+    leaves: Vec<Option<Leaf>>,
+    bodies: Vec<Body<'a>>,
+}
+
+/// A module's inlining, planned from its bodies. Inlining only adds operators and numeric
+/// locals, so a body that is not a leaf in the first round never becomes one: the plan inlines
+/// the first round's leaves in place, round by round, and any other body is inlined only when
+/// it is lowered (`inline`). The module then holds the leaf bodies of each round and one
+/// inlined body at a time, never every inlined body at once.
+pub(super) struct LeafPlan<'a> {
+    rounds: Vec<Round<'a>>,
+    /// The first round's leaves, which the plan has already inlined.
+    planned: Vec<bool>,
+}
+
+impl<'a> LeafPlan<'a> {
+    pub(super) fn new(
+        bodies: &mut [Body<'a>],
+        signatures: &WasmSignatures,
+        budget: usize,
+    ) -> Option<Self> {
+        let mut rounds = Vec::new();
+        let mut planned = Vec::new();
+        for round in 0..INLINE_ROUNDS {
+            let leaves = leaves(bodies, signatures, budget);
+            if leaves.iter().all(Option::is_none) {
+                break;
             }
-            let params = signatures.defined_signature(index as u32)?.params.len();
-            let mut locals = locals.clone();
-            let operators = inline_body(
-                index,
-                params,
-                &mut locals,
-                operators,
-                &bodies,
-                &leaves,
-                signatures,
-            )?;
-            if leaves[index].is_some() {
-                rebuilt_leaves.push((index, (locals, operators)));
-            } else {
-                bodies[index] = (locals, operators);
+            if round == 0 {
+                planned = leaves.iter().map(Option::is_some).collect();
             }
+            let round = Round {
+                bodies: bodies
+                    .iter()
+                    .zip(&leaves)
+                    .map(|(body, leaf)| if leaf.is_some() { body.clone() } else { Body::default() })
+                    .collect(),
+                leaves,
+            };
+            for (index, body) in bodies.iter_mut().enumerate() {
+                if planned[index] {
+                    if let Some(inlined) = round.inline(index, body, signatures)? {
+                        *body = inlined;
+                    }
+                }
+            }
+            rounds.push(round);
         }
-        for (index, body) in rebuilt_leaves {
-            bodies[index] = body;
-        }
+        Some(Self { rounds, planned })
     }
-    Some(bodies)
+
+    /// The inlined form of the body at defined `index`, given as read.
+    pub(super) fn inline(
+        &self,
+        index: usize,
+        mut body: Body<'a>,
+        signatures: &WasmSignatures,
+    ) -> Option<Body<'a>> {
+        if self.planned.get(index).copied().unwrap_or(false) {
+            return Some(body);
+        }
+        for round in &self.rounds {
+            if let Some(inlined) = round.inline(index, &body, signatures)? {
+                body = inlined;
+            }
+        }
+        Some(body)
+    }
+}
+
+impl<'a> Round<'a> {
+    /// `body` (at defined `index`) with this round's leaf calls inlined, or `None` inside the
+    /// result when it calls no leaf.
+    fn inline(
+        &self,
+        index: usize,
+        body: &Body<'a>,
+        signatures: &WasmSignatures,
+    ) -> Option<Option<Body<'a>>> {
+        let (locals, operators) = body;
+        if !operators
+            .iter()
+            .any(|operator| leaf_call(operator, index, &self.leaves, signatures).is_some())
+        {
+            return Some(None);
+        }
+        let params = signatures.defined_signature(index as u32)?.params.len();
+        let mut locals = locals.clone();
+        let operators = inline_body(
+            index,
+            params,
+            &mut locals,
+            operators,
+            &self.bodies,
+            &self.leaves,
+            signatures,
+        )?;
+        Some(Some((locals, operators)))
+    }
 }
 
 /// The leaf `operator` calls from `caller`, if it is a call to one.
@@ -226,7 +285,7 @@ fn inline_body<'a>(
     params: usize,
     locals: &mut Vec<ValType>,
     operators: &[Operator<'a>],
-    bodies: &[(Vec<ValType>, Vec<Operator<'a>>)],
+    bodies: &[Body<'a>],
     leaves: &[Option<Leaf>],
     signatures: &WasmSignatures,
 ) -> Option<Vec<Operator<'a>>> {

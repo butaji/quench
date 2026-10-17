@@ -31,7 +31,9 @@ pub struct ExecutionRequest<'a> {
 }
 
 /// A host-visible Promise rejection notification produced at an execution
-/// checkpoint. Release every root in the event after dispatching it.
+/// checkpoint. Runtime event methods return owned roots: release each after
+/// dispatch. NativeContext event methods instead scope these roots to the
+/// callback frame; retain explicitly to carry one beyond that frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PromiseRejectionEvent {
     Unhandled {
@@ -80,7 +82,7 @@ impl<H: Host> Runtime<H> {
         Self { vm: Vm::new(host) }
     }
 
-    /// Choose how Wasm functions execute; see [`ExecutionMode`].
+    /// Choose how JavaScript and Wasm functions execute; see [`ExecutionMode`].
     pub fn set_execution_mode(&mut self, mode: crate::ExecutionMode) {
         self.vm.set_execution_mode(mode);
     }
@@ -130,6 +132,11 @@ impl<H: Host> Runtime<H> {
     pub fn execute_deferred_jobs(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         program.validate().map_err(JsError::validation)?;
         self.vm.execute_deferred_jobs(program).map(drop)
+    }
+
+    /// Counts collections: a host weak root can die only when this changes.
+    pub fn collection_epoch(&self) -> u64 {
+        self.vm.collection_epoch()
     }
 
     /// Release WeakRef targets after the host completes a job and its microtasks.

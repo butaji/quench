@@ -123,6 +123,11 @@ impl RootTable {
         true
     }
 
+    /// Entry slots, live or free: the most values `values` yields.
+    pub(crate) fn slot_count(&self) -> usize {
+        self.entries.len()
+    }
+
     pub(crate) fn values(&self) -> impl Iterator<Item = Value> + '_ {
         self.entries.iter().filter_map(|entry| entry.value)
     }

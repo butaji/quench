@@ -1546,6 +1546,7 @@ dependencies = [
  "quench-stack",
  "quench-wasm",
  "regex",
+ "rustc-hash",
  "serde_json",
  "sha1",
  "socket2",
@@ -1576,6 +1577,7 @@ version = "0.1.0"
 dependencies = [
  "icu_casemap",
  "icu_properties",
+ "memchr",
  "oxc",
  "quench-stack",
  "regex",
@@ -1597,6 +1599,7 @@ dependencies = [
  "oxc_allocator",
  "oxc_ast",
  "oxc_ast_visit",
+ "oxc_diagnostics",
  "oxc_parser",
  "oxc_semantic",
  "oxc_span",

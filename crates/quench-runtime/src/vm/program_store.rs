@@ -5,6 +5,23 @@ use std::rc::{Rc, Weak};
 use crate::heap::WeakHandle;
 use rustc_hash::FxHashMap;
 
+/// Prespecified looks for the Number-entry profile. Critical counts are the
+/// exact one-sided Binomial( n, 0.80 ) cutoffs at alpha = 0.05 / 4 per look.
+/// A union bound caps false promotion at 5% across looks for one function
+/// under a stationary Bernoulli model; it is not a VM-wide multiple-test bound.
+pub(super) const JS_JIT_PROMOTION_LOOKS: [(u8, u8); 4] =
+    [(32, 31), (64, 59), (128, 113), (255, 219)];
+const JS_JIT_MAX_FUNCTIONS: usize = 8;
+const JS_JIT_MAX_TRACKED_FUNCTIONS: usize = 256;
+const JS_JIT_MAX_MAPPED_BYTES: usize = 64 * 1024;
+
+#[derive(Clone)]
+pub(super) enum JsTierState {
+    Hot { observations: u8, numeric: u8 },
+    Unsupported,
+    Compiled(Rc<super::compiled::CompiledJsFunction>),
+}
+
 struct ProgramEntry {
     residual: Rc<ResidualProgram>,
     wasm_signatures: Option<Rc<crate::wasm::WasmSignatures>>,
@@ -21,6 +38,9 @@ struct ProgramEntry {
     /// The program's compiled functions, once the compiled mode first calls
     /// one; `Some(None)` records that none compile.
     compiled: Option<Option<Rc<super::compiled::CompiledProgram>>>,
+    /// Sparse, lazy JavaScript tiers. A program only pays for this map when
+    /// JIT mode actually enters one of its functions.
+    js_tiers: FxHashMap<u32, JsTierState>,
     /// The environment the program's root body evaluates in.
     scope: ProgramScope,
     /// Source provenance is independent of the root binding environment.
@@ -33,6 +53,10 @@ struct ProgramEntry {
     reclaimable: bool,
     /// The reclamation pass current at insertion.
     pass: u64,
+    /// Its root values changed since a collection last traced them. A minor collection
+    /// traces only such programs: what an earlier collection reached stays marked until
+    /// the next full collection, which traces every program.
+    roots_pending: bool,
 }
 
 pub(super) const ANONYMOUS_EVAL_ORIGIN: &str = "eval at <anonymous>";
@@ -110,6 +134,10 @@ pub(crate) struct ProgramStore {
     reclaim_passes: u64,
     /// Reclaimable programs inserted since the last reclamation pass.
     unchecked_reclaimable: usize,
+    /// VM-local bounds for the optional JavaScript tier cache.
+    js_jit_tracked_functions: usize,
+    js_jit_compiled_functions: usize,
+    js_jit_mapped_bytes: usize,
 }
 
 impl ProgramStore {
@@ -130,8 +158,11 @@ impl ProgramStore {
         self.programs.get(id.index())?.as_ref()
     }
 
+    /// Every mutation goes through here, so it also marks the program's roots pending.
     fn entry_mut(&mut self, id: ProgramId) -> Option<&mut ProgramEntry> {
-        self.programs.get_mut(id.index())?.as_mut()
+        let entry = self.programs.get_mut(id.index())?.as_mut()?;
+        entry.roots_pending = true;
+        Some(entry)
     }
 
     /// Inserts dynamic code that `reclaim_unreferenced` may later drop.
@@ -177,6 +208,7 @@ impl ProgramStore {
         let previous_pass = self.reclaim_passes;
         self.reclaim_passes += 1;
         let mut reclaimed = Vec::new();
+        let mut reclaimed_tiers = (0usize, 0usize, 0usize);
         let mut pending = 0;
         for (index, slot) in self.programs.iter_mut().enumerate() {
             let Some(entry) = slot else { continue };
@@ -187,9 +219,23 @@ impl ProgramStore {
                 pending += 1;
                 continue;
             }
+            reclaimed_tiers.0 += entry.js_tiers.len();
+            for state in entry.js_tiers.values() {
+                if let JsTierState::Compiled(compiled) = state {
+                    reclaimed_tiers.1 += 1;
+                    reclaimed_tiers.2 += compiled.mapped_bytes();
+                }
+            }
             *slot = None;
             reclaimed.extend(ProgramId::from_index(index));
         }
+        self.js_jit_tracked_functions = self
+            .js_jit_tracked_functions
+            .saturating_sub(reclaimed_tiers.0);
+        self.js_jit_compiled_functions = self
+            .js_jit_compiled_functions
+            .saturating_sub(reclaimed_tiers.1);
+        self.js_jit_mapped_bytes = self.js_jit_mapped_bytes.saturating_sub(reclaimed_tiers.2);
         self.unchecked_reclaimable = pending;
         if !reclaimed.is_empty() {
             let programs = &self.programs;
@@ -204,6 +250,9 @@ impl ProgramStore {
         self.owned_scripts.clear();
         self.programs.clear();
         self.unchecked_reclaimable = 0;
+        self.js_jit_tracked_functions = 0;
+        self.js_jit_compiled_functions = 0;
+        self.js_jit_mapped_bytes = 0;
         let module = main.is_module();
         let id = self.insert_shared(main).unwrap_or(ProgramId::MAIN);
         if module && let Some(entry) = self.entry_mut(id) {
@@ -368,11 +417,13 @@ impl ProgramStore {
             module: false,
             lane_views,
             compiled: None,
+            js_tiers: FxHashMap::default(),
             scope: ProgramScope::Own,
             origin,
             script_or_module: None,
             reclaimable: false,
             pass: self.reclaim_passes,
+            roots_pending: true,
         }));
         Some(id)
     }
@@ -637,6 +688,102 @@ impl ProgramStore {
         }
     }
 
+    pub(super) fn js_tier(&self, id: ProgramId, function: u32) -> Option<JsTierState> {
+        self.entry(id)?.js_tiers.get(&function).cloned()
+    }
+
+    /// Record the input guard outcome. Promotion checks only at prespecified
+    /// sample sizes; exact binomial cutoffs spend alpha across those looks.
+    pub(super) fn note_js_function_entry(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        numeric: bool,
+    ) -> bool {
+        let compiled_functions = self.js_jit_compiled_functions;
+        let can_track = self.js_jit_tracked_functions < JS_JIT_MAX_TRACKED_FUNCTIONS;
+        let mut inserted = false;
+        let Some(entry) = self.entry_mut(id) else {
+            return false;
+        };
+        let should_compile = match entry.js_tiers.entry(function) {
+            std::collections::hash_map::Entry::Vacant(slot) => {
+                if !can_track {
+                    return false;
+                }
+                inserted = true;
+                if compiled_functions >= JS_JIT_MAX_FUNCTIONS {
+                    slot.insert(JsTierState::Unsupported);
+                } else {
+                    slot.insert(JsTierState::Hot {
+                        observations: 1,
+                        numeric: u8::from(numeric),
+                    });
+                }
+                false
+            }
+            std::collections::hash_map::Entry::Occupied(mut slot) => match slot.get_mut() {
+                JsTierState::Hot {
+                    observations,
+                    numeric: numeric_entries,
+                } => {
+                    *observations += 1;
+                    *numeric_entries += u8::from(numeric);
+                    let decision = numeric_promotion_decision(*numeric_entries, *observations);
+                    if compiled_functions >= JS_JIT_MAX_FUNCTIONS {
+                        *slot.get_mut() = JsTierState::Unsupported;
+                        false
+                    } else if decision == Some(true) {
+                        true
+                    } else {
+                        if decision == Some(false) && *observations == u8::MAX {
+                            *slot.get_mut() = JsTierState::Unsupported;
+                        }
+                        false
+                    }
+                }
+                JsTierState::Unsupported | JsTierState::Compiled(_) => false,
+            },
+        };
+        if inserted {
+            self.js_jit_tracked_functions += 1;
+        }
+        should_compile
+    }
+
+    pub(super) fn install_js_tier(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        compiled: Option<Rc<super::compiled::CompiledJsFunction>>,
+    ) {
+        if self.entry(id).is_none() {
+            return;
+        }
+        let compiled = compiled.filter(|compiled| {
+            self.js_jit_compiled_functions < JS_JIT_MAX_FUNCTIONS
+                && self
+                    .js_jit_mapped_bytes
+                    .saturating_add(compiled.mapped_bytes())
+                    <= JS_JIT_MAX_MAPPED_BYTES
+        });
+        if let Some(compiled) = &compiled {
+            self.js_jit_compiled_functions += 1;
+            self.js_jit_mapped_bytes += compiled.mapped_bytes();
+        }
+        if let Some(entry) = self.entry_mut(id) {
+            entry.js_tiers.insert(
+                function,
+                compiled.map_or(JsTierState::Unsupported, JsTierState::Compiled),
+            );
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn js_jit_tracked_function_count(&self) -> usize {
+        self.js_jit_tracked_functions
+    }
+
     /// A program's lane views by function, derived on first use.
     pub(super) fn lane_views(
         &self,
@@ -743,9 +890,15 @@ impl ProgramStore {
         })
     }
 
-    /// Appends every value the stored programs keep alive to `roots`.
-    pub(crate) fn extend_roots(&self, roots: &mut Vec<Value>) {
-        for entry in self.programs.iter().flatten() {
+    /// Appends the values the stored programs keep alive to `roots`: every program's for a
+    /// full collection, only those of programs whose roots changed since the last
+    /// collection for a minor one.
+    pub(crate) fn extend_roots(&mut self, roots: &mut Vec<Value>, full: bool) {
+        for entry in self.programs.iter_mut().flatten() {
+            if !full && !entry.roots_pending {
+                continue;
+            }
+            entry.roots_pending = false;
             roots.extend_from_slice(&entry.constants);
             roots.extend(entry.function_sources.iter().flatten());
             roots.extend(entry.module_environment);
@@ -756,4 +909,11 @@ impl ProgramStore {
             }));
         }
     }
+}
+
+fn numeric_promotion_decision(numeric: u8, observations: u8) -> Option<bool> {
+    let minimum = JS_JIT_PROMOTION_LOOKS
+        .iter()
+        .find_map(|(look, minimum)| (*look == observations).then_some(*minimum))?;
+    Some(numeric >= minimum)
 }

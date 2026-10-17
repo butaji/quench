@@ -83,6 +83,22 @@ pub(crate) fn data_clone_exception(context: &mut NativeContext<'_, NodeHost>, me
     }
 }
 
+/// One Node policy boundary for clone failures from structuredClone and Workers.
+pub(crate) fn translate_clone_failure(
+    context: &mut NativeContext<'_,NodeHost>,error:RootedError,
+)->Result<RootedError,RootedError>{
+    let Some(message)=error.error.data_clone_failure_message() else {return Ok(error)};
+    let message=message.to_owned();
+    if let Some(exception)=error.exception {context.release_root(exception);}
+    let constructor=context.with_startup_intrinsics(|context| {
+        let global=context.global_root()?;let key=context.string_rooted("DOMException");
+        context.get_property_rooted(global,key)
+    })?;
+    let message=context.string_rooted(&message);let name=context.string_rooted("DataCloneError");
+    let error=context.construct_rooted(constructor,constructor,&[message,name])?;
+    Ok(context.throw(error))
+}
+
 /// Report the runtime's structured-serialization failures as Node's DOMException.
 pub(crate) fn as_dom_exception(context: &mut NativeContext<'_, NodeHost>, error: RootedError) -> RootedError {
     let Some(message) = error.error.data_clone_failure_message().map(str::to_owned) else {
