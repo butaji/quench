@@ -136,20 +136,27 @@ impl Heap {
         let Cell::Environment { slots, .. } = self.get(environment)? else {
             return None;
         };
-        (0..slots.len())
-            .map(|slot| {
-                if reset.binary_search(&(slot as u16)).is_ok() {
-                    Some(EnvironmentSlot::Owned(Value::UNDEFINED))
-                } else if fresh.binary_search(&(slot as u16)).is_ok() {
-                    self.environment_slot(environment, slot)
-                        .map(EnvironmentSlot::Owned)
-                } else {
-                    self.environment_slot_owner(environment, slot)
-                        .map(EnvironmentSlot::Shared)
+        let source = &slots.0;
+        super::thin_slice::ThinBoxSlice::try_from_fn(source.len(), |index| {
+            let slot = index as u16;
+            if reset.binary_search(&slot).is_ok() {
+                return Some(EnvironmentSlot::Owned(Value::UNDEFINED));
+            }
+            let fresh = fresh.binary_search(&slot).is_ok();
+            Some(match source[index] {
+                EnvironmentSlot::Owned(value) if fresh => EnvironmentSlot::Owned(value),
+                EnvironmentSlot::Owned(_) => EnvironmentSlot::Shared(environment),
+                // A shared slot names its owner, which holds the slot itself.
+                EnvironmentSlot::Shared(owner) if fresh => {
+                    let Cell::Environment { slots, .. } = self.get(owner)? else {
+                        return None;
+                    };
+                    EnvironmentSlot::Owned(slots.owned(index)?)
                 }
+                EnvironmentSlot::Shared(owner) => EnvironmentSlot::Shared(owner),
             })
-            .collect::<Option<Box<[_]>>>()
-            .map(|slots| EnvironmentSlots(slots.into()))
+        })
+        .map(EnvironmentSlots)
     }
 
     #[inline(always)]
