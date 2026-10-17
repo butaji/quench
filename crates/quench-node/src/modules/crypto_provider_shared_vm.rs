@@ -2,7 +2,7 @@
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 #[path = "crypto_provider_facts.rs"]
-mod native;
+pub(crate) mod native;
 type Context<'a> = NativeContext<'a, NodeHost>;
 fn get(c: &mut Context<'_>, o: RootId, name: &str) -> Result<RootId, RootedError> {
     let name = c.string_rooted(name);
@@ -151,7 +151,6 @@ pub(crate) fn install_classes(
 /// SDK already converted BufferSource ranges to bytes. Use intrinsic slot getters
 /// and one bulk typed-array write; never evaluate public .buffer/.byteOffset.
 fn random_fill(c: &mut Context<'_>, args: &[RootId]) -> Result<RootId, RootedError> {
-    use quench_runtime::BuiltinBrand;
     let missing = c.undefined();
     let input = args.first().copied().unwrap_or(missing);
     let integer = |c: &mut Context<'_>, index: usize| -> Result<usize, RootedError> {
@@ -166,7 +165,22 @@ fn random_fill(c: &mut Context<'_>, args: &[RootId]) -> Result<RootId, RootedErr
     };
     let offset = integer(c, 1)?;
     let size = integer(c, 2)?;
-    let (destination, set) = c.with_startup_intrinsics(|c| {
+    let (destination, set) = random_destination(c, input, offset, size)?;
+    let mut bytes = vec![0; size];
+    openssl::rand::rand_bytes(&mut bytes)
+        .map_err(|stack| super::crypto_error_shared_vm::decorated(c, stack))?;
+    random_write(c, destination, set, &bytes)?;
+    Ok(c.undefined())
+}
+
+/// One generation owner for actual FIPS transitions and every SDK digest cache.
+pub(crate) fn fips_generation() -> u64 {
+    native::fips_generation()
+}
+
+pub(crate) fn random_destination(c: &mut Context<'_>, input: RootId, offset: usize, size: usize) -> Result<(RootId, RootId), RootedError> {
+    use quench_runtime::BuiltinBrand;
+    c.with_startup_intrinsics(|c| {
         let global = c.global_root()?;
         let constructor = get(c, global, "Uint8Array")?;
         let byte_proto = get(c, constructor, "prototype")?;
@@ -215,16 +229,10 @@ fn random_fill(c: &mut Context<'_>, args: &[RootId]) -> Result<RootId, RootedErr
         let destination =
             c.construct_rooted(constructor, constructor, &[backing, offset, length])?;
         Ok((destination, setter))
-    })?;
-    let mut bytes = vec![0; size];
-    openssl::rand::rand_bytes(&mut bytes)
-        .map_err(|stack| super::crypto_error_shared_vm::decorated(c, stack))?;
-    let source = c.uint8_array_rooted(&bytes)?;
+    })
+ }
+pub(crate) fn random_write(c: &mut Context<'_>, destination: RootId, set: RootId, bytes: &[u8]) -> Result<(), RootedError> {
+    let source = c.uint8_array_rooted(bytes)?;
     c.call_rooted(set, destination, &[source])?;
-    Ok(c.undefined())
-}
-
-/// One generation owner for actual FIPS transitions and every SDK digest cache.
-pub(crate) fn fips_generation() -> u64 {
-    native::fips_generation()
+    Ok(())
 }

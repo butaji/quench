@@ -1022,7 +1022,9 @@ subtests and test contexts. It exposes the SDK's real MockTracker, assertion
 registration and snapshot policy through native lazy accessors. File-oriented
 runner execution still requires a genuine V8 serializer and is unavailable.
 Repeated-string CLI option defaults come from the configured SDK declarations;
-startup environment and invocation values populate those lists.
+startup environment and invocation values populate those lists. The harness
+also reads the parsed `--test-only`, `--test-randomize` and
+`--test-update-snapshots` boolean options.
 
 Core exposes real Promise creation, job-boundary and settlement observations to
 opted-in hosts. Node assigns Promise identities before observable init callbacks,
@@ -1031,6 +1033,20 @@ to the actual execution resource. Init callbacks may collect or settle awaited
 sources reentrantly: incoming async closure state, suspended continuation handlers
 and detached reaction payloads remain rooted across those callbacks. Hosts without
 observers retain the optimized primitive-await path.
+
+Native contexts can create pending intrinsic Promises and settle them without
+reading mutable public constructors, static methods or `then` properties.
+Resolution retains Core's thenable assimilation and lifecycle observers. Host
+checkpoint admission uses the existing VM microtask-running state, so a
+reentrant callback cannot start a second checkpoint. Detached reaction and
+rejection payloads remain rooted across collection and observer callbacks.
+
+The configured SDK domain module and EventEmitter initialization own domain
+association. Native crypto completion enters the canonical AsyncWrap callback
+scope, preserving the actual resource, async-local store and thrown identity.
+Weak domain references share the SDK internal utility owner; public guest
+globals cannot impersonate the current domain. Other callback families require
+their own lifecycle qualification.
 
 The private fs internalModuleStat binding follows native filesystem symlinks and
 returns the configured SDK classifier protocol: directory1, other successful
@@ -1154,8 +1170,8 @@ queue, with request cancellation before handle completion.
 Configured SDK Hash/Hmac and secret-key wrappers use owned fetched OpenSSL
 digests, native incremental contexts, actual copies and provider-backed jobs.
 Digest inventory and aliases come from the selected OpenSSL 3.5.9 provider.
-This does not establish full asymmetric KeyObject or WebCrypto parity. The
-historical public KeyObject family remains in place.
+The configured SDK asymmetric KeyObject family and native provider-backed jobs
+are described below. Full asymmetric and WebCrypto parity remain open.
 
 VFS read/write/open/metadata boundaries preserve SDK validation, argument counts,
 getters and undefined-only fallthrough. existsSync falls through to its unwrapped
@@ -1175,6 +1191,22 @@ caller's execution context or async-local store. A request shell gains an async
 identity only when native work is admitted. Resource callbacks retain their
 identity through close; operation requests retire after their callback.
 
+The complete DNS resolver surface requires the optional, SDK-version-matched
+`quench-node-cares` pkg-config dependency. On Unix, the standard build script
+probes that metadata, validates its version against the native SDK ABI, and emits
+`quench_node_cares` plus its library search paths. Reusing a build-script output
+that lacks this configuration selects the reduced system-lookup module; it does
+not provide the c-ares resolver API. Isolated builds must record the selected
+configuration and equivalent native library paths. Do not repair a disabled
+native backend by adding public aliases or fabricated resolver state.
+
+With c-ares enabled, unchanged SDK `dns.js` and `internal/dns/utils.js` own
+`setServers`, bound `getServers`, server validation, default-resolver replacement,
+and promise-namespace rebinding. Their `Resolver` handles use the same native
+channel owner as RR queries. Instance server changes reject pending queries;
+default replacement preserves queries on the old channel until their own
+completion or cancellation.
+
 Configured c-ares channels poll real sockets and native deadlines. Pending
 requests keep their channel and mutable completion callback reachable; canceled
 or completed requests release those roots through the shared operation lifecycle.
@@ -1188,7 +1220,7 @@ PBKDF2 and HKDF use original SDK public functions, owned provider digest
 resolution and one native KDF context owner. Async input snapshots and cleansed
 secret buffers cross the existing native task pool; completion uses the same
 mutable job callback and async resource lifecycle as other crypto jobs. This
-does not expose the pending replacement asymmetric KeyObject family.
+does not establish complete asymmetric or WebCrypto coverage.
 
 Trace-event category and name payloads follow the configured V8 JSON trace
 writer's direct quoted-byte boundary. Original SDK timer labels already contain
@@ -1197,4 +1229,65 @@ Other event fields retain normal JSON encoding.
 
 Selected combined-candidate checks do not replace the full API or parallel
 inventories. The latest published full stable result and every lost pass are in
-`evidence/task20-native-backends-full-stable-2026-10-16.json`.
+`evidence/task20-workers-ipc-keys-full-2026-10-17.json`.
+
+### Native Worker, IPC and key-family ownership
+
+Workers execute in independent owned Runtime instances on real native threads.
+Message graphs retain aliases and transfer owned backing stores through the
+shared clone representation. Filename validation uses native calls into the
+canonical SDK path and URL owners. Error transport currently supports a bounded
+owned packet; unsupported exotic values do not establish complete V8 serializer
+parity. Fatal delivery reads the mutable public `_fatalException` property on
+each dispatch. Only literal false requests fatal termination; property access,
+non-callable values and handler throws retain their distinct exit paths. Worker
+custom overrides bypass the default owned error packet. Fatal text formatting
+and the wider Worker lifecycle remain separate qualification boundaries.
+
+IPC pipe handles own native Unix descriptors and SCM_RIGHTS transfers. Received
+TCP handles classify the actual socket and transfer sole descriptor ownership;
+stream requests use the shared AsyncWrap and completion frontier. Advanced V8
+serialization, complete public ProcessWrap/Net AsyncWrap behavior and cluster HTTP
+delegation remain open.
+
+The configured SDK asymmetric KeyObject classes and public key-generation,
+signature and RSA policies use native owned OpenSSL keys. Request input snapshots,
+provider work and callback lifetime share the native crypto job pipeline. This
+does not complete Diffie-Hellman jobs or all WebCrypto algorithms. RandomBytesJob
+uses owned native task output; asynchronous writes currently become visible on
+main-thread completion, which differs from Node while the guest thread is busy.
+
+FileHandle append/write dispatch recognizes issued handles through a private
+registry and uses their actual native descriptor and close gate. The SDK owns
+argument normalization, including input backing-store property reads and the
+constructed view length. Iterable writes still have a buffered continuation;
+this does not establish complete incremental FileHandle write semantics.
+
+### Checkpoint admission and Promise ownership
+
+Runtime and NativeContext entries share the checkpoint admission authority.
+Pending event roots remain visible to the collector until the admitted outer
+entry consumes them. A checkpoint already running cannot be admitted again by
+an inner host callback. Execution termination retains its original diagnostic;
+fatal exit listeners can choose the final status without a later rejection
+helper overwriting it.
+
+Native pending Promise capabilities allocate genuine Promise objects and
+resolvers through the common runtime operation. They do not consult guest
+replacements of the public Promise constructor or static methods. The Promise
+capability and its retained roots have the same behavior in interpreter and
+specialized execution.
+
+The SDK domain class, weak references, EventEmitter policy and native callback
+scope share one domain authority. Domain resource cycles can be collected;
+filesystem domain delivery and public AsyncResource automatic destruction have
+separate open qualification boundaries.
+
+Test runner command-line booleans preserve the original SDK option policy.
+They do not alter test registration, suppress failures or substitute empty
+test bodies. The unchanged test census remains part of their qualification.
+
+The full inventories for production source `fb8df696` are published in
+`evidence/task20-workers-ipc-keys-full-2026-10-17.json`: 2,145 passes out of
+5,015 stable cases and 2,073 out of 4,727 pinned cases. These results retain
+every failed, timed-out and skipped case and all previously passing losses.

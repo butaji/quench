@@ -465,6 +465,24 @@ impl<'a, H: Host> NativeContext<'a, H> {
         result.map_err(|error| self.error(error))
     }
 
+    /// Allocate an intrinsic pending Promise without invoking guest constructors.
+    /// The returned root belongs to this callback frame; retain it for later completion.
+    pub fn pending_promise_rooted(&mut self) -> Result<RootId, RootedError> {
+        let value = self.vm.embedding_pending_promise().map_err(|error| self.error(error))?;
+        Ok(self.scoped_value(value))
+    }
+
+    /// Resolve a genuine Promise through the intrinsic thenable assimilation algorithm.
+    /// A settled Promise is unchanged; no public constructor, resolve or then method is used.
+    pub fn resolve_promise_rooted(&mut self, promise: RootId, value: RootId) -> Result<(), RootedError> {
+        self.vm.embedding_resolve_promise(promise, value).map_err(|error| self.error(error))
+    }
+
+    /// Reject a genuine Promise with the exact rooted reason, including undefined.
+    pub fn reject_promise_rooted(&mut self, promise: RootId, reason: RootId) -> Result<(), RootedError> {
+        self.vm.embedding_reject_promise(promise, reason).map_err(|error| self.error(error))
+    }
+
     /// Observe settlement without then/species access, reactions or a job checkpoint.
     pub fn promise_snapshot_rooted(&mut self, promise: RootId) -> Result<Option<PromiseSnapshot>, RootedError> {
         let snapshot = self.vm.embedding_promise_snapshot(promise).map_err(|error| self.error(error))?;
@@ -1241,6 +1259,27 @@ impl<'a, H: Host> NativeContext<'a, H> {
             .map_err(|error| self.error(error))
     }
 
+    /// Produce the same non-coercing diagnostic description as Runtime.
+    pub fn detail_string_rooted(&mut self, value: RootId) -> Result<String, RootedError> {
+        self.vm.embedding_detail_string(value).map_err(|error| self.error(error))
+    }
+
+    /// Diagnostic own-property test shared with Runtime; no accessors or Proxy traps.
+    pub fn has_own_property_rooted(&mut self, object: RootId, name: &str) -> Result<bool, RootedError> {
+        self.vm.embedding_has_own_property(object, name).map_err(|error| self.error(error))
+    }
+
+    /// The VM's unforgeable Error brand, without guest property access.
+    pub fn is_error_rooted(&mut self, value: RootId) -> Result<bool, RootedError> {
+        self.vm.embedding_is_error(value).map_err(|error| self.error(error))
+    }
+
+    /// Probe a private weak reference without creating a temporary strong root
+    /// or changing ECMAScript kept-object state, exactly as Runtime does.
+    pub fn host_weak_root_is_live(&self, reference: HostWeakRoot) -> bool {
+        self.vm.embedding_host_weak_value(reference.0).is_some()
+    }
+
     /// Resolve a host weak reference into this callback's temporary root scope.
     pub fn resolve_host_weak_root(&mut self, reference: HostWeakRoot) -> Option<RootId> {
         self.vm
@@ -1559,6 +1598,60 @@ impl<'a, H: Host> NativeContext<'a, H> {
     ) -> Result<RootId, RootedError> {
         let result = self.vm.call_rooted(callee, receiver, args);
         self.completion(result)
+    }
+
+    /// Take handled notifications from the VM's existing rejection authority.
+    /// Returned event roots are scoped to this NativeContext frame. Retain a root
+    /// explicitly to carry it beyond this callback; do not release scoped roots.
+    pub fn take_promise_rejection_handled_events_rooted(&mut self) -> Vec<crate::PromiseRejectionEvent> {
+        let events = self.vm.take_promise_rejection_handled_events();
+        self.scope_rejection_event_roots(&events);
+        events
+    }
+    /// Snapshot pending unhandled notifications only after handled dispatch. Roots
+    /// have the same scoped ownership as other NativeContext rooted operations.
+    pub fn take_promise_rejection_unhandled_events_rooted(&mut self) -> Vec<crate::PromiseRejectionEvent> {
+        let events = self.vm.take_promise_rejection_unhandled_events();
+        self.scope_rejection_event_roots(&events);
+        events
+    }
+    fn scope_rejection_event_roots(&mut self, events: &[crate::PromiseRejectionEvent]) {
+        for event in events {
+            match event {
+                crate::PromiseRejectionEvent::Handled { promise, .. } => self.roots.push(*promise),
+                crate::PromiseRejectionEvent::Unhandled { promise, reason, .. } => {
+                    self.roots.push(*promise);
+                    self.roots.push(*reason);
+                }
+            }
+        }
+    }
+    pub fn mark_promise_rejection_reported(&mut self, promise: RootId) -> Result<(), RootedError> {
+        let promise = self.vm.embedding_value(promise).map_err(|error| self.error(error))?;
+        self.vm.mark_promise_rejection_reported(promise).map_err(|error| self.error(error))
+    }
+    /// The embedder calls this once after completing the outer job's ticks,
+    /// reactions and rejection policy. Never run automatically on C reentry.
+    pub fn clear_kept_objects(&mut self) {
+        self.vm.clear_kept_objects();
+    }
+
+    /// Whether the VM is already executing/draining ECMAScript jobs. A native
+    /// embedder must defer its entire task checkpoint (including nextTick and
+    /// rejection policy) in this case, rather than only skipping microtasks.
+    /// This projects the same VM-wide guard used by run_microtask_checkpoint.
+    pub fn is_microtask_checkpoint_active(&self) -> bool {
+        self.vm.native_microtask_checkpoint_is_active()
+    }
+
+    /// Run currently queued ECMAScript jobs at a native MakeCallback boundary.
+    /// This does not run host agent tasks (for example ready waitAsync tasks).
+    /// Node owns nextTick-before-microtask ordering and callback depth. A native
+    /// checkpoint requested from an already running job is deferred to its drain.
+    pub fn run_microtask_checkpoint(&mut self) -> Result<(), RootedError> {
+        let program = self.vm.embedding_program().map_err(|error| self.error(error))?;
+        let result = self.vm.native_microtask_checkpoint(&program);
+        result.map(drop).map_err(|error| self.error(error))
     }
 
     /// Enqueue a callable in the realm's ECMAScript job queue.

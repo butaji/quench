@@ -1,0 +1,530 @@
+{
+  "recorded_utc": "2026-10-17T02:23:26.307713+00:00",
+  "compiled_source_commit": "d2f999538c3584cd5fb2393b292911c064bbf0f7",
+  "qualified_source_manifest_sha256": "14572dc75d6d3939fbf1be023b4dcec4f8d539168de7fe4cce0c2dbd8635a92e",
+  "qualified_source_files": 822,
+  "main_source_exact_match": false,
+  "main_source_mismatches": [
+    "crates/quench-node/src/modules/process_exception_route.rs",
+    "crates/quench-node-test/tests/child_entry.rs"
+  ],
+  "source_map": {
+    "base": "fb8df696009fad540f58e75ac3df7a67afa93313",
+    "cohort_commit": "6339dc7fc27b8472bd0c791cb1e7cd79d1821e67",
+    "patch_sha256": "e030a0797ffafedd9a3f198113cc27ff0a00c57eec3582c985037837bbe684d0",
+    "files": [
+      {
+        "path": "crates/quench-node/src/host/shared_vm/commonjs.rs",
+        "old_sha256": "32862212fc9d19f61fa6d0bbf64b9ad4be57e2dba6eaa5097a099085b381c6f2",
+        "new_sha256": "406dbc98b508fa7424511345e53dbddaeeddd35b0f5d72b5045539b5dbdb708e"
+      },
+      {
+        "path": "crates/quench-node/src/host/shared_vm.rs",
+        "old_sha256": "47f88d49e73e1a3b3e2d1a17d2efbe2cafc211b3e56a204e2e94a46ade1eb0c5",
+        "new_sha256": "2319e4f92f00c0fdd444cf1147415df48a2c89b2f74a3998e58dd96effd72f22"
+      },
+      {
+        "path": "crates/quench-node/src/modules/cli_options.rs",
+        "old_sha256": "3b46b0b084ba9e93fc3a057e864a5cddfec22a83e553a4c678dd64dad4c6f436",
+        "new_sha256": "c810c47469b445e9cddeb60b24e839d59f7d7f9b5f9f9ce89c4198e97a93f436"
+      },
+      {
+        "path": "crates/quench-node/src/modules/domain_shared_vm.rs",
+        "old_sha256": "6f8d0f0a7d79b3ae1387c5ac26ae9591b5a5a47212d94a0a96dede5003ea0aec",
+        "new_sha256": "49f36a7bee882a468317c5e7cf86502fed681eef5ee69acd736b96af2608d80f"
+      },
+      {
+        "path": "crates/quench-node/src/modules/domain_source.rs",
+        "old_sha256": null,
+        "new_sha256": "11da1c940ea031dc63ff46ae8ea5fa193bbd05e0047abc60e1fc4cc947384ffb"
+      },
+      {
+        "path": "crates/quench-node/src/modules/domain_trampoline.rs",
+        "old_sha256": null,
+        "new_sha256": "4def4ad790c8c4bd05d803fb351e97a8ca834354b01bf05de1bca7a99e141cf4"
+      },
+      {
+        "path": "crates/quench-node/src/modules/event_constructor_shared_vm.rs",
+        "old_sha256": "2c0f30410090d2a837d50dd379b24a63cfd44dd5fa8359eb36877cde65d71a9c",
+        "new_sha256": "71b02ad59ce0d5541089a32eb33fd98636d55ef1e78e835cd733946ebaf17620"
+      },
+      {
+        "path": "crates/quench-node/src/modules/fs_shared_vm/callback_public.rs",
+        "old_sha256": "54e920a16a9bff3250d2002385f4ceab143918b382b3765e469b5a768f88bcd2",
+        "new_sha256": "a3f138479ffb6787f8ddd6dae379fb9a6059b61806d953529fd44309d0419bd5"
+      },
+      {
+        "path": "crates/quench-node/src/modules/fs_shared_vm/metadata_public.rs",
+        "old_sha256": "3e0f635977f2030772b327dc7f3952f0eca8aa130aaaf92a2f8f70e64c7c6ee6",
+        "new_sha256": "85a8a87f00654bb8db09a36ca8c4c62241fbc482ee9605f3860ede5c376aacd9"
+      },
+      {
+        "path": "crates/quench-node/src/modules/fs_shared_vm.rs",
+        "old_sha256": "dc0954e98356bc3779c63c15731db451dd5f7410d92da617facae1a4300668b9",
+        "new_sha256": "9ad9ce6941cce2ea32dca2e51a9e2eda371ac471831098900a56296ce27969cf"
+      },
+      {
+        "path": "crates/quench-node/src/modules/mod.rs",
+        "old_sha256": "d4b7ca9c3bcf43835213ab4fdb2fc84a42f169384864763b5a172e853c6c9e91",
+        "new_sha256": "e4b53a6e054360c1e79ee4b5a4f8c307db3c3cc2a712c521ad820006258a932d"
+      },
+      {
+        "path": "crates/quench-node/src/modules/process_exception_route.rs",
+        "old_sha256": null,
+        "new_sha256": "36a82493da21dce03ff6d253cc64b0c0fc5a160f64ed6cff4be52f90da31300e"
+      },
+      {
+        "path": "crates/quench-node/src/modules/process_fatal_exception_route.rs",
+        "old_sha256": null,
+        "new_sha256": "05132b0040a9ca29a9cc83254197e383adde44cc433e441d1ad257c53f0a06ff"
+      },
+      {
+        "path": "crates/quench-node/src/modules/process_shared_vm.rs",
+        "old_sha256": "b099f2df8e28285db210077ef32d9398cd7ff684a2423c01ce9a122d6e809e51",
+        "new_sha256": "3cfafaac6915d69e36f0c20a1dc1660b1f36193e42a6f794ecb606be14d13596"
+      },
+      {
+        "path": "crates/quench-node/src/modules/process_state.rs",
+        "old_sha256": "8fcbc3c71080e853aac183072be5501568c0789faa52f1553a2da8692bed13d2",
+        "new_sha256": "cadd1114052765ec46b7a0cec6060f5be57a382fdf1dbb448a90f4a08b11b9ba"
+      },
+      {
+        "path": "crates/quench-node/src/modules/worker_threads_shared_vm.rs",
+        "old_sha256": "90ebec9570b592bfd1ed7fc6ca67e5b39244ad5c3ab403c407e1b3323420fe51",
+        "new_sha256": "fd58aecc4f204a16bc7cf53eb1b32158f5d3f4515685cadf3dabfea22be55750"
+      },
+      {
+        "path": "crates/quench-node-test/node-tests/test-crypto-native-sdk-domains.js",
+        "old_sha256": null,
+        "new_sha256": "d9321879ed207972b06e6b016b5e4b76e6702a2b97e0d3af36f9f5e8ba79b853"
+      },
+      {
+        "path": "crates/quench-node-test/node-tests/test-domain-source-emitter-policy.js",
+        "old_sha256": null,
+        "new_sha256": "b6d65b1633f1572c8b15d59338ceef1b32d75f897daaa4e7e8381c51b197a6d8"
+      },
+      {
+        "path": "crates/quench-node-test/tests/child_entry.rs",
+        "old_sha256": "05e8cc42a5726e28eed27ec6c6d6cf35f7cdd42e9d7af69e68ddb16f25f2d8e7",
+        "new_sha256": "c3e38a57561239db47eea372e8f5d6c8e84eb5548df3e5d1a15a55a607755598"
+      },
+      {
+        "path": "crates/quench-runtime/src/api.rs",
+        "old_sha256": "ada4558ed0df13ee539c058b52bf204a05f3a3e48e3260f5be5a9dfaf5b83426",
+        "new_sha256": "80b2676cfa59c63306ae9cf40f29cae49be1bd5917c76d610221b61031568ef0"
+      },
+      {
+        "path": "crates/quench-runtime/src/api_native.rs",
+        "old_sha256": "9656a7e71b76f12f1da702ce3622197245ae04f7580c77c134355c9f55425484",
+        "new_sha256": "2441bf5e430fe857b00ebb506d198f36e7eb9395ebe5f0b074e6d1d199d79264"
+      },
+      {
+        "path": "crates/quench-runtime/src/vm/embedding.rs",
+        "old_sha256": "b0bb431d454ac817a95f9b0c8a73c35ac60b0202da3b6b8b27c920bc1cfd0b6d",
+        "new_sha256": "94c4dc98a13d29795f02e5fbd59e79132bc97484f36faf8e3dacb09fbf058007"
+      },
+      {
+        "path": "crates/quench-runtime/src/vm/gc.rs",
+        "old_sha256": "55a924b1ef8bcfaa622bec677b547ad397d0cc100da379346af6671d8691ae63",
+        "new_sha256": "85d57288d082e4700841c4cb67ba5b3bb65d678710d850624b81646d92a6a9dc"
+      },
+      {
+        "path": "crates/quench-runtime/src/vm/promise.rs",
+        "old_sha256": "5ce05cec1a76141a5b219dc4510449edd67fb6fdc30af1c2e616f4eb06f31181",
+        "new_sha256": "a649ae7fc2cdb0729d32cd35a252cd5ecb0bb1a80839fc7284560f207c5e1074"
+      },
+      {
+        "path": "crates/quench-runtime/src/vm/promise_jobs.rs",
+        "old_sha256": "04401a9febd6f263f52b622d6bf41221e18589119ad06ea8a99ff54390177275",
+        "new_sha256": "c20c3b16b515b3d855124f2890bd8526d3f48ab3f12b5f028024e9d1ff356b10"
+      },
+      {
+        "path": "crates/quench-runtime/src/vm/vm_init.rs",
+        "old_sha256": "e13fa45e9fbab42ca06f2713c83869436f38438ec9fce0cbd7ef72ec67a5b297",
+        "new_sha256": "8330904d80f0ef4d33610fef916fcc2cbf256a62839986cf2ebe69061aae8d33"
+      },
+      {
+        "path": "crates/quench-runtime/src/vm.rs",
+        "old_sha256": "14d045529051aaa163f9f805a427387fc642cbc7292ccbcb5c0d8fed68925cdb",
+        "new_sha256": "da3be507702c5474c000208b0b7b54dba59cfde809b064d76de82c026f200809"
+      }
+    ]
+  },
+  "api": {
+    "source_commit": "d2f999538c3584cd5fb2393b292911c064bbf0f7",
+    "test_count": 474,
+    "exit": 0,
+    "seconds": 337.4911648320267,
+    "binaries_before": {
+      "quench-node": "414ac3d40650b14d933a57fe156ec5879157c6e0f21c23ba9ed9a3b18455180a",
+      "run-parallel": "6d631c361a83d2603c1a8b5ac49fc43e7523cc774de6597ed12643b107a5382d",
+      "child-entry-api": "c8c4f84f4d5c28f0be5f642613118ebf27b23491f190322977066ca2b847af61",
+      "libquench_node_workers.rlib": "7bce3f020d2d45aabaf60d4ecca04af2d6bf7c2108bbabaac15d7a5930492b0f"
+    },
+    "binaries_after": {
+      "quench-node": "414ac3d40650b14d933a57fe156ec5879157c6e0f21c23ba9ed9a3b18455180a",
+      "run-parallel": "6d631c361a83d2603c1a8b5ac49fc43e7523cc774de6597ed12643b107a5382d",
+      "child-entry-api": "c8c4f84f4d5c28f0be5f642613118ebf27b23491f190322977066ca2b847af61",
+      "libquench_node_workers.rlib": "7bce3f020d2d45aabaf60d4ecca04af2d6bf7c2108bbabaac15d7a5930492b0f"
+    },
+    "memory_before": "low 0\nhigh 0\nmax 1296850\noom 2\noom_kill 1\noom_group_kill 0\n",
+    "memory_after": "low 0\nhigh 0\nmax 1296850\noom 2\noom_kill 1\noom_group_kill 0\n",
+    "finished_utc": "2026-10-17T02:20:28.428391+00:00"
+  },
+  "focused": {
+    "source_commit": "d2f999538c3584cd5fb2393b292911c064bbf0f7",
+    "patch_sha256": "82c391ac0cd26e61ccf80db93935298e2a4bc6f96c5f24cb570bdb19649282a7",
+    "source_files_audited": 822,
+    "source_unchanged": true,
+    "binaries_unchanged": true,
+    "focused_original_api": {
+      "fatal_before_exit_errors_retain_diagnostics_and_final_exit_status": true,
+      "fatal_promise_rejections_preserve_original_stack_and_intrinsic_wrapper": true
+    },
+    "controls_pass": 42,
+    "controls_total": 42,
+    "original_workers_pass": 22,
+    "original_workers_total": 22,
+    "rejection_final_status_pass": 4,
+    "rejection_final_status_total": 4,
+    "full_api474_status": "background executor waiting BOTH original full-suite receipts before unchangedquiet474",
+    "full_api_driver_pid": 17660,
+    "aggregate_driver_pid": 17951,
+    "strict_receipt": "/workspace/quench/work/agent-fatal-dispatch/diagnostic-followup/strict-pair-receipt.json",
+    "source_manifest": "/workspace/quench/work/agent-fatal-dispatch/diagnostic-followup/source-manifest.json",
+    "pass": true
+  },
+  "selected": {
+    "receipt_path": "/tmp/quench-next-selected-proof/receipt.json",
+    "receipt_sha256": "d620d288b017424e930df4d677c91241b87763cff9dbe7d9b5af83aa806df213",
+    "source_commit": "d2f999538c3584cd5fb2393b292911c064bbf0f7",
+    "binaries_before": {
+      "candidate": "414ac3d40650b14d933a57fe156ec5879157c6e0f21c23ba9ed9a3b18455180a",
+      "node26": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943"
+    },
+    "binaries_after": {
+      "candidate": "414ac3d40650b14d933a57fe156ec5879157c6e0f21c23ba9ed9a3b18455180a",
+      "node26": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943"
+    },
+    "summary": {
+      "counts": {
+        "pass": 104,
+        "diagnostic_difference": 1,
+        "known_failure": 5,
+        "gain": 3
+      },
+      "suites": {
+        "worker15": {
+          "cases": 15,
+          "node_pass": 15,
+          "candidate_pass": 15,
+          "qualifications": {
+            "pass": 15
+          }
+        },
+        "ipc-clean18": {
+          "cases": 18,
+          "node_pass": 18,
+          "candidate_pass": 18,
+          "qualifications": {
+            "pass": 18
+          }
+        },
+        "ipc-udp-clean5": {
+          "cases": 5,
+          "node_pass": 5,
+          "candidate_pass": 5,
+          "qualifications": {
+            "pass": 5
+          }
+        },
+        "tcp-owner": {
+          "cases": 1,
+          "node_pass": 1,
+          "candidate_pass": 1,
+          "qualifications": {
+            "pass": 1
+          }
+        },
+        "crypto-originals": {
+          "cases": 3,
+          "node_pass": 3,
+          "candidate_pass": 3,
+          "qualifications": {
+            "pass": 3
+          }
+        },
+        "crypto-key-family17": {
+          "cases": 1,
+          "node_pass": 1,
+          "candidate_pass": 1,
+          "qualifications": {
+            "pass": 1
+          }
+        },
+        "crypto-random-public": {
+          "cases": 1,
+          "node_pass": 1,
+          "candidate_pass": 1,
+          "qualifications": {
+            "pass": 1
+          }
+        },
+        "crypto-random-original": {
+          "cases": 1,
+          "node_pass": 1,
+          "candidate_pass": 1,
+          "qualifications": {
+            "pass": 1
+          }
+        },
+        "crypto-known-diagnostic": {
+          "cases": 1,
+          "node_pass": 1,
+          "candidate_pass": 1,
+          "qualifications": {
+            "diagnostic_difference": 1
+          }
+        },
+        "filehandle": {
+          "cases": 5,
+          "node_pass": 5,
+          "candidate_pass": 5,
+          "qualifications": {
+            "pass": 5
+          }
+        },
+        "vfs38": {
+          "cases": 38,
+          "node_pass": 38,
+          "candidate_pass": 33,
+          "qualifications": {
+            "pass": 30,
+            "known_failure": 5,
+            "gain": 3
+          }
+        },
+        "non-vfs7": {
+          "cases": 7,
+          "node_pass": 7,
+          "candidate_pass": 7,
+          "qualifications": {
+            "pass": 7
+          }
+        },
+        "vfs-matrices8": {
+          "cases": 8,
+          "node_pass": 8,
+          "candidate_pass": 8,
+          "qualifications": {
+            "pass": 8
+          }
+        },
+        "domain": {
+          "cases": 2,
+          "node_pass": 2,
+          "candidate_pass": 2,
+          "qualifications": {
+            "pass": 2
+          }
+        },
+        "test-options": {
+          "cases": 7,
+          "node_pass": 7,
+          "candidate_pass": 7,
+          "qualifications": {
+            "pass": 7
+          }
+        }
+      }
+    },
+    "qualification_green": true,
+    "options_census": {
+      "cli": "/tmp/quench-fatal-diagnostics-bin/quench-node",
+      "cli_sha256": "414ac3d40650b14d933a57fe156ec5879157c6e0f21c23ba9ed9a3b18455180a",
+      "results": [
+        {
+          "kind": "option-values",
+          "options": [],
+          "expected": {
+            "returncode": 0,
+            "stdout": "[[\"--test-only\",false,true],[\"--test-randomize\",false,true],[\"--test-update-snapshots\",false,true]]\n",
+            "stderr": ""
+          },
+          "actual": {
+            "returncode": 0,
+            "stdout": "[[\"--test-only\",false,true],[\"--test-randomize\",false,true],[\"--test-update-snapshots\",false,true]]\n",
+            "stderr": ""
+          },
+          "pass": true
+        },
+        {
+          "kind": "option-values",
+          "options": [
+            "--test-only"
+          ],
+          "expected": {
+            "returncode": 0,
+            "stdout": "[[\"--test-only\",true,false],[\"--test-randomize\",false,true],[\"--test-update-snapshots\",false,true]]\n",
+            "stderr": ""
+          },
+          "actual": {
+            "returncode": 0,
+            "stdout": "[[\"--test-only\",true,false],[\"--test-randomize\",false,true],[\"--test-update-snapshots\",false,true]]\n",
+            "stderr": ""
+          },
+          "pass": true
+        },
+        {
+          "kind": "option-values",
+          "options": [
+            "--no-test-only"
+          ],
+          "expected": {
+            "returncode": 0,
+            "stdout": "[[\"--test-only\",false,true],[\"--test-randomize\",false,true],[\"--test-update-snapshots\",false,true]]\n",
+            "stderr": ""
+          },
+          "actual": {
+            "returncode": 0,
+            "stdout": "[[\"--test-only\",false,true],[\"--test-randomize\",false,true],[\"--test-update-snapshots\",false,true]]\n",
+            "stderr": ""
+          },
+          "pass": true
+        },
+        {
+          "kind": "option-values",
+          "options": [
+            "--test-only",
+            "--no-test-only"
+          ],
+          "expected": {
+            "returncode": 0,
+            "stdout": "[[\"--test-only\",false,true],[\"--test-randomize\",false,true],[\"--test-update-snapshots\",false,true]]\n",
+            "stderr": ""
+          },
+          "actual": {
+            "returncode": 0,
+            "stdout": "[[\"--test-only\",false,true],[\"--test-randomize\",false,true],[\"--test-update-snapshots\",false,true]]\n",
+            "stderr": ""
+          },
+          "pass": true
+        },
+        {
+          "kind": "option-values",
+          "options": [
+            "--test-randomize"
+          ],
+          "expected": {
+            "returncode": 0,
+            "stdout": "[[\"--test-only\",false,true],[\"--test-randomize\",true,false],[\"--test-update-snapshots\",false,true]]\n",
+            "stderr": ""
+          },
+          "actual": {
+            "returncode": 0,
+            "stdout": "[[\"--test-only\",false,true],[\"--test-randomize\",true,false],[\"--test-update-snapshots\",false,true]]\n",
+            "stderr": ""
+          },
+          "pass": true
+        },
+        {
+          "kind": "option-values",
+          "options": [
+            "--test-update-snapshots"
+          ],
+          "expected": {
+            "returncode": 0,
+            "stdout": "[[\"--test-only\",false,true],[\"--test-randomize\",false,true],[\"--test-update-snapshots\",true,false]]\n",
+            "stderr": ""
+          },
+          "actual": {
+            "returncode": 0,
+            "stdout": "[[\"--test-only\",false,true],[\"--test-randomize\",false,true],[\"--test-update-snapshots\",true,false]]\n",
+            "stderr": ""
+          },
+          "pass": true
+        },
+        {
+          "kind": "option-values",
+          "options": [
+            "--no-test-randomize",
+            "--test-randomize"
+          ],
+          "expected": {
+            "returncode": 0,
+            "stdout": "[[\"--test-only\",false,true],[\"--test-randomize\",true,false],[\"--test-update-snapshots\",false,true]]\n",
+            "stderr": ""
+          },
+          "actual": {
+            "returncode": 0,
+            "stdout": "[[\"--test-only\",false,true],[\"--test-randomize\",true,false],[\"--test-update-snapshots\",false,true]]\n",
+            "stderr": ""
+          },
+          "pass": true
+        },
+        {
+          "kind": "unchanged-original-harness",
+          "fixture": "parallel/test-runner-filter-warning.js",
+          "node": {
+            "returncode": 0,
+            "stdout": "\u2139 tests 0\n\u2139 suites 0\n\u2139 pass 0\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 6.127694\n",
+            "stderr": ""
+          },
+          "candidate": {
+            "returncode": 0,
+            "stdout": "\u2139 tests 0\n\u2139 suites 0\n\u2139 pass 0\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 26.74945\n",
+            "stderr": ""
+          },
+          "pass": true
+        },
+        {
+          "kind": "unchanged-original-harness",
+          "fixture": "fixtures/test-runner/output/only_tests.js",
+          "node": {
+            "returncode": 0,
+            "stdout": "\ufe63 only = true, skip = string (0.953686ms) # skip message\n\ufe63 only = true, skip = true (0.12653ms) # SKIP\n\u25b6 only = true, with subtests\n  \u2714 running subtest 1 (0.106991ms)\n  \u2714 running subtest 2 (0.122164ms)\n  \u2714 running subtest 3 (0.138258ms)\n  \u25b6 running subtest 4\n    \u2714 running sub-subtest 1 (0.110817ms)\n    \u2714 running sub-subtest 2 (0.096215ms)\n  \u2714 running subtest 4 (0.666723ms)\n  \ufe63 skipped subtest 4 (0.125619ms) # SKIP\n\u2714 only = true, with subtests (2.156966ms)\n\u25b6 describe only = true, with subtests\n  \u2714 `it` subtest 1 should run (0.146621ms)\n\u2714 describe only = true, with subtests (0.451519ms)\n\u25b6 describe only = true, with a mixture of subtests\n  \u2714 `it` subtest 1 (0.136776ms)\n  \u2714 `it` async subtest 1 (0.055343ms)\n  \u2714 `it` subtest 2 only=true (0.031227ms)\n  \u2714 `test` subtest 1 (0.04684ms)\n  \u2714 `test` async subtest 1 (0.042734ms)\n  \u2714 `test` subtest 2 only=true (0.029014ms)\n\u2714 describe only = true, with a mixture of subtests (0.572722ms)\n\u25b6 describe only = true, with subtests\n  \u2714 subtest should run (0.121603ms)\n\u2714 describe only = true, with subtests (0.220092ms)\n\u25b6 describe only = undefined, with nested only subtest\n  \u25b6 nested describe\n    \u2714 nested test should run (0.07316ms)\n  \u2714 nested describe (0.424219ms)\n\u2714 describe only = undefined, with nested only subtest (0.534334ms)\n\u25b6 describe only = true, with nested subtests\n  \u2714 async subtest should run (0.059921ms)\n  \u25b6 nested describe\n    \u2714 nested test should run (0.039379ms)\n  \u2714 nested describe (0.113971ms)\n\u2714 describe only = true, with nested subtests (0.261634ms)\n\u25b6 nested tests with run only\n  \u2714 running subtest - 1 (0.135885ms)\n  \u25b6 this subtest is run  - 3\n    \u2714 this subtest is run - 4 (0.051187ms)\n    \u2714 this subtest is run - 5 (0.035404ms)\n  \u2714 this subtest is run  - 3 (0.315665ms)\n  \u2714 this subtest is now run - 6 (0.029585ms)\n  \ufe63 skipped subtest - 8 (0.057537ms) # SKIP\n\u2714 nested tests with run only (1.050721ms)\n\u2139 tests 28\n\u2139 suites 7\n\u2139 pass 24\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 4\n\u2139 todo 0\n\u2139 duration_ms 19.034742\n",
+            "stderr": ""
+          },
+          "candidate": {
+            "returncode": 0,
+            "stdout": "\ufe63 only = true, skip = string (7.309322ms) # skip message\n\ufe63 only = true, skip = true (1.700029ms) # SKIP\n\u25b6 only = true, with subtests\n  \u2714 running subtest 1 (1.502221ms)\n  \u2714 running subtest 2 (0.840295ms)\n  \u2714 running subtest 3 (0.838912ms)\n  \u25b6 running subtest 4\n    \u2714 running sub-subtest 1 (1.327248ms)\n    \u2714 running sub-subtest 2 (0.813645ms)\n  \u2714 running subtest 4 (7.156132ms)\n  \ufe63 skipped subtest 4 (0.9166ms) # SKIP\n\u2714 only = true, with subtests (37.047027ms)\n\u25b6 describe only = true, with subtests\n  \u2714 `it` subtest 1 should run (1.622903ms)\n\u2714 describe only = true, with subtests (2.953927ms)\n\u25b6 describe only = true, with a mixture of subtests\n  \u2714 `it` subtest 1 (4.153112ms)\n  \u2714 `it` async subtest 1 (0.954577ms)\n  \u2714 `it` subtest 2 only=true (0.771772ms)\n  \u2714 `test` subtest 1 (1.046936ms)\n  \u2714 `test` async subtest 1 (0.792713ms)\n  \u2714 `test` subtest 2 only=true (0.771301ms)\n\u2714 describe only = true, with a mixture of subtests (13.799613ms)\n\u25b6 describe only = true, with subtests\n  \u2714 subtest should run (1.84039ms)\n\u2714 describe only = true, with subtests (3.364415ms)\n\u25b6 describe only = undefined, with nested only subtest\n  \u25b6 nested describe\n    \u2714 nested test should run (1.698337ms)\n  \u2714 nested describe (3.174298ms)\n\u2714 describe only = undefined, with nested only subtest (5.286848ms)\n\u25b6 describe only = true, with nested subtests\n  \u2714 async subtest should run (1.728251ms)\n  \u25b6 nested describe\n    \u2714 nested test should run (1.436422ms)\n  \u2714 nested describe (2.540354ms)\n\u2714 describe only = true, with nested subtests (5.951839ms)\n\u25b6 nested tests with run only\n  \u2714 running subtest - 1 (11.407291ms)\n  \u25b6 this subtest is run  - 3\n    \u2714 this subtest is run - 4 (1.193637ms)\n    \u2714 this subtest is run - 5 (0.834887ms)\n  \u2714 this subtest is run  - 3 (5.660741ms)\n  \u2714 this subtest is now run - 6 (0.857671ms)\n  \ufe63 skipped subtest - 8 (0.80365ms) # SKIP\n\u2714 nested tests with run only (25.785284ms)\n\u2139 tests 28\n\u2139 suites 7\n\u2139 pass 24\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 4\n\u2139 todo 0\n\u2139 duration_ms 241.764834\n",
+            "stderr": ""
+          },
+          "pass": true
+        }
+      ],
+      "passed": 9,
+      "total": 9
+    }
+  },
+  "core": {
+    "artifact": "/tmp/quench-promise-capability/libquench_runtime.rlib",
+    "sha256": "a2e924516e3db082ec426033dc2eb86f829b37e4b0f9807cd84d806c75249cf0",
+    "matching_wasm_sha256": "97e9615797dd7fbfa1dcb1739ae08193552bcf51ff8ede5487fd3c8d5364cf51",
+    "qualification_scope": "Corrected checkpoint full677 baseline separately qualified; additive admission focused gates and Promise22 both execution modes+Node26 qualified. No claim this additive a2 leaf ran full677."
+  },
+  "limits": [
+    "Original latest stable and pinned full inventories published for preceding productionfb8; this candidate full inventory has not yet run.",
+    "Selected VFS38 retains five failures; random-byte busy-guest visibility remains an explicit diagnostic difference.",
+    "Native byte lease, typed fatal completion followups, filesystem request jobs, new V8 wire backend and transport C7 are separate unintegrated candidates.",
+    "No test filtering, skipped assertions or timeout weakening."
+  ],
+  "main_production_source_exact_match": false,
+  "main_rust_bodies_byte_identical": true,
+  "source_equivalence_exceptions": [
+    {
+      "path": "crates/quench-node/src/modules/process_exception_route.rs",
+      "compiled_source_sha256": "36a82493da21dce03ff6d253cc64b0c0fc5a160f64ed6cff4be52f90da31300e",
+      "main_source_sha256": "96be50e05520854778cd99339ec79611f375dbe07ab474c76ca280c898fd4a2a",
+      "difference": "Removed exactly one trailing empty line for git diff --check; Rust bodies are byte-identical.",
+      "verified_compiled_equals_main_plus_one_newline": true
+    },
+    {
+      "path": "crates/quench-node-test/tests/child_entry.rs",
+      "compiled_source_sha256": "c3e38a57561239db47eea372e8f5d6c8e84eb5548df3e5d1a15a55a607755598",
+      "main_source_sha256": "3eddae9e549179d5ee6bd2dc1be9f0e9e595809dd094171e20c6e96ec6bb3579",
+      "difference": "Removed exactly one trailing empty line for git diff --check; Rust bodies are byte-identical.",
+      "verified_compiled_equals_main_plus_one_newline": true
+    }
+  ]
+}
