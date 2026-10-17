@@ -1001,7 +1001,7 @@ impl<H: Host> Vm<H> {
         };
         if let Some(code) = error.code {
             let name = self.heap.alloc(Cell::String(JsString::from_str("code")));
-            let value = self.heap.alloc(Cell::String(JsString::from_str(&code)));
+            let value = self.heap.alloc(Cell::String(JsString::from_str(code)));
             let defined = self.to_property_key(program, name).and_then(|key| {
                 let record = super::object_descriptors::PropertyDescriptorRecord::data(value);
                 self.define_own_property_record(program, object, key, record)
