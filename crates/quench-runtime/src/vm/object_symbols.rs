@@ -396,13 +396,13 @@ impl<H: Host> Vm<H> {
                         self.heap.root_value(value_root).unwrap(),
                     );
                 }
-                let descriptor = self.object_get_own_property_descriptor(p, &[current, key])?;
-                if !descriptor.is_undefined() {
-                    if self.descriptor_field(p, descriptor, "get")?.is_some()
-                        || self.descriptor_field(p, descriptor, "set")?.is_some()
-                    {
-                        let setter = self.descriptor_field(p, descriptor, "set")?;
-                        let Some(setter) = setter.filter(|setter| !setter.is_undefined()) else {
+                // A symbol key on a non-Proxy object: the own property's value and
+                // attributes, without the descriptor object `[[GetOwnProperty]]` would build.
+                if let Some((_, attributes)) = self.ordinary_own_property(p, current, key)? {
+                    if attributes.accessor {
+                        let Some(setter) =
+                            attributes.setter.filter(|setter| !setter.is_undefined())
+                        else {
                             return Ok(false);
                         };
                         self.call_value(
@@ -413,10 +413,7 @@ impl<H: Host> Vm<H> {
                         )?;
                         return Ok(true);
                     }
-                    let writable = self
-                        .descriptor_field(p, descriptor, "writable")?
-                        .is_some_and(|writable| self.truthy(writable));
-                    if !writable {
+                    if !attributes.writable {
                         return Ok(false);
                     }
                     break;

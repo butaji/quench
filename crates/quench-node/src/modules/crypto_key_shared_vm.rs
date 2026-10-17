@@ -10,8 +10,7 @@ const KEY_SLOT_COUNT: usize = 2;
 const CRYPTO_KEY_SLOT_COUNT: usize = 7;
 const CACHE: &str = "\0builtin:crypto/native-key-slots";
 fn get(c: &mut Context<'_>, o: RootId, n: &str) -> Result<RootId, RootedError> {
-    let k = c.string_rooted(n);
-    c.get_property_rooted(o, k)
+    c.get_named_property_rooted(o, n)
 }
 fn set(c: &mut Context<'_>, o: RootId, n: &str, v: RootId) -> Result<(), RootedError> {
     let k = c.string_rooted(n);

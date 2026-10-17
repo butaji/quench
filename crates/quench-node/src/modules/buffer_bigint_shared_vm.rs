@@ -108,8 +108,7 @@ pub(crate) fn install(context: &mut Context<'_>, prototype: RootId) -> Result<()
     Ok(())
 }
 fn get(context: &mut Context<'_>, object: RootId, key: &str) -> Result<RootId, RootedError> {
-    let key = context.string_rooted(key);
-    context.get_property_rooted(object, key)
+    context.get_named_property_rooted(object, key)
 }
 fn index(context: &mut Context<'_>, object: RootId, offset: f64) -> Result<RootId, RootedError> {
     let key = context.number(offset);

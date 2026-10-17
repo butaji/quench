@@ -78,6 +78,11 @@ impl<H: Host> Vm<H> {
         };
         let name = name.clone();
         let name = self.intern_js_atom(&name);
+        self.capture_function_name_for_atom(function, name);
+    }
+
+    /// `capture_function_name` of a name already interned as `name`.
+    pub(super) fn capture_function_name_for_atom(&mut self, function: Value, name: Atom) {
         if self.original_function_name(function) == Some(name) {
             return;
         }
