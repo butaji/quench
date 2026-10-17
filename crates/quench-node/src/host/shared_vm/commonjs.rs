@@ -11,6 +11,11 @@ const WRAPPER_PREFIX: &str =
     "(function (exports, require, module, __filename, __dirname) { ";
 const WRAPPER_SUFFIX: &str = "\n});";
 
+/// A specifier naming a package rather than a relative or absolute path.
+fn is_bare_specifier(specifier: &str) -> bool {
+    !specifier.starts_with('.') && !Path::new(specifier).is_absolute()
+}
+
 pub(super) fn commonjs_resolver() -> oxc_resolver::Resolver {
     oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
         extensions: vec![".js".into(), ".json".into(), ".node".into()],
@@ -1908,8 +1913,20 @@ fn resolve_filename(
     if let Some(path) = exact_file_path(base, &resolved_specifier) {
         return std::fs::canonicalize(path).map_err(|error| RootedError::host(error.to_string()));
     }
-    match commonjs_resolver().resolve(base, &resolved_specifier) {
+    let resolver = commonjs_resolver();
+    match resolver.resolve(base, &resolved_specifier) {
         Ok(resolution) => Ok(resolution.full_path()),
+        Err(oxc_resolver::ResolveError::NotFound(_)) if !node_internal && is_bare_specifier(specifier) && let Some(super::esm_errors::MissingPackageFile::ExportsTarget { target, package }) =
+            super::esm_errors::missing_package_file(&resolver, base, specifier) =>
+        {
+            // `finalizeEsmResolution`: the missing target, with the package as `path`.
+            let error = context.error_rooted(&format!("Cannot find module '{}'", target.display()))?;
+            let code = context.string_rooted("MODULE_NOT_FOUND");
+            set(context, error, "code", code)?;
+            let path = context.string_rooted(&package.to_string_lossy());
+            set(context, error, "path", path)?;
+            Err(context.throw(error))
+        }
         Err(oxc_resolver::ResolveError::NotFound(_) | oxc_resolver::ResolveError::Specifier(_)) => {
             let mut stack = Vec::new();
             let mut module = parent;

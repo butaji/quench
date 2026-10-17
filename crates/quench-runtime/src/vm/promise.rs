@@ -2302,8 +2302,8 @@ impl<H: Host> Vm<H> {
         module: &ModuleSource,
     ) -> Result<Value, JsError> {
         self.instantiate_static_module_graph(p, module, None)?;
-        if crate::Engine::static_module_has_early_error(&module.source) {
-            return self.syntax_error_result(p, "module source has an early error");
+        if let Some(message) = crate::Engine::static_module_early_error(&module.source) {
+            return self.syntax_error_result(p, &message);
         }
         if let Some(plan) = crate::Engine::static_module_plan(&module.source, &module.name) {
             let mut active = ModuleEvaluationStack::default();
@@ -3185,9 +3185,9 @@ impl<H: Host> Vm<H> {
         if record.and_then(ModuleRecord::deferred_namespace).is_some() {
             return Ok(());
         }
-        if record.is_none() && crate::Engine::static_module_has_early_error(&module.source) {
+        if record.is_none() && let Some(message) = crate::Engine::static_module_early_error(&module.source) {
             return self
-                .syntax_error_result(p, "module source has an early error")
+                .syntax_error_result(p, &message)
                 .map(|_| ());
         }
         let namespace = self.deferred_module_namespace(p, module)?;
@@ -3495,9 +3495,9 @@ impl<H: Host> Vm<H> {
         let program = match precompiled {
             Some(program) => program,
             None => {
-                if crate::Engine::static_module_has_early_error(&module.source) {
+                if let Some(message) = crate::Engine::static_module_early_error(&module.source) {
                     return self
-                        .syntax_error_result(p, "module source has an early error")
+                        .syntax_error_result(p, &message)
                         .map(|_| ());
                 }
                 let residual = crate::Engine::specialize_module_unspecialized_with_atom_prefix(
@@ -3657,9 +3657,9 @@ impl<H: Host> Vm<H> {
             }
             None => {}
         }
-        if crate::Engine::static_module_has_early_error(&module.source) {
+        if let Some(message) = crate::Engine::static_module_early_error(&module.source) {
             return self
-                .syntax_error_result(p, "module source has an early error")
+                .syntax_error_result(p, &message)
                 .map(|_| ());
         }
         let Some(plan) = crate::Engine::static_module_plan(&module.source, &module.name) else {
@@ -3782,12 +3782,12 @@ impl<H: Host> Vm<H> {
         cache_key: &str,
         error: JsError,
     ) -> Result<(), JsError> {
-        let waiters = self
-            .realm
-            .promise
-            .modules
-            .get_mut(cache_key)
-            .and_then(ModuleRecord::retry_instantiation)
+        // A source rejected before its record exists (an early error) has nothing to retry.
+        let Some(record) = self.realm.promise.modules.get_mut(cache_key) else {
+            return Err(error);
+        };
+        let waiters = record
+            .retry_instantiation()
             .ok_or_else(|| self.type_error(p, "module was not being instantiated".into()))?;
         // Queued imports own their promises outside the module record. Return
         // the transient error to that job instead of leaving it waiting on an
