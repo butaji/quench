@@ -1080,7 +1080,7 @@ impl quench_runtime::Host for NodeHost {
                 let resolution = match resolver.resolve(&base, &resolution_specifier) {
                     Ok(resolution) => resolution,
                     Err(oxc_resolver::ResolveError::Specifier(_)) => return Ok(None),
-                    Err(error) => return Err(esm_errors::unresolved(error, specifier, &base, &referrer_path)),
+                    Err(error) => return Err(esm_errors::unresolved(&resolver, error, specifier, &base, &referrer_path)),
                 };
                 resolution.full_path()
             }
