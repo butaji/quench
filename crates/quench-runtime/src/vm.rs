@@ -155,6 +155,7 @@ mod string;
 mod string_cache;
 mod string_extra;
 mod structured_clone;
+mod owned_clone_native;
 mod superinstruction;
 mod symbol;
 mod temporal;
@@ -1191,6 +1192,7 @@ pub(crate) struct Vm<H> {
     lane_stack: dispatch_fast::LaneStack,
     /// Whether Wasm functions with a compiled denotation run as native code.
     execution_mode: ExecutionMode,
+    execution_interrupt: crate::ExecutionInterrupt,
     active_call_roots: Vec<Value>,
     with_stack: Vec<Value>,
     /// The realm's intrinsics as the host bootstrap left them (`seal_startup_intrinsics`).
@@ -1202,6 +1204,7 @@ pub(crate) struct Vm<H> {
     suspended: Vec<SuspendedEntry>,
     suspended_free: Vec<u32>,
     test262_agent: Test262AgentState,
+    shared_async_waiters:Vec<atomics::SharedAsyncWaiter>,
     programs: ProgramStore,
     program_cache_layouts: Vec<ProgramCacheLayout>,
     /// The register file of the frame the general loop dispatches; see `run_general_loop`.
@@ -1311,6 +1314,11 @@ struct IteratorRealmPrototypes {
     async_generator: Value,
 }
 impl<H: Host> Vm<H> {
+    pub(crate) fn execution_interrupt_handle(&self)->crate::ExecutionInterrupt { self.execution_interrupt.clone() }
+    pub(super) fn check_execution_interrupt(&self)->Result<(),JsError> {
+        if self.execution_interrupt.is_termination_requested() { Err(JsError::execution_terminated()) } else { Ok(()) }
+    }
+
     /// Makes `global`'s realm current, carrying each realm's global lexical
     /// scope with it; returns the previous realm's global.
     #[inline]
@@ -1621,6 +1629,7 @@ impl<H: Host> Vm<H> {
         if program.functions.is_empty() {
             return Err(JsError::validation("program has no entry function".into()));
         }
+        self.check_execution_interrupt()?;
         self.initialize(program)?;
         for (source, name) in scripts {
             self.eval_script_source(program, source, name)?;
@@ -1909,6 +1918,7 @@ impl<H: Host> Vm<H> {
         // The snapshot contains heap values, shapes and atom ids from one realm.
         // A host may build a builtin before sealing the replacement realm.
         self.startup_intrinsics = Default::default();
+        self.shared_async_waiters.clear();
         self.heap.reset();
         self.natives.clear();
         self.shared_natives.clear();
