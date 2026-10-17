@@ -1784,6 +1784,22 @@ lane_handler! {
     }
 }
 
+/// The cached add of an add record (`Vm::primary_field_add_hit`) of `r[i.a]` to `object`.
+/// Out of line: the add keeps locals whose addresses its callees take, and a handler with
+/// such locals cannot dispatch its successor as a sibling call.
+#[inline(never)]
+fn lane_field_add<H: Host>(
+    vm: &mut Vm<H>,
+    code: &ResidualProgram,
+    object: Value,
+    i: &LaneInstruction,
+) -> bool {
+    // SAFETY: the record's registers belong to the running activation, which the add
+    // neither moves nor frees.
+    let value = unsafe { (*lane_context::<H>()).registers }.get(i.a);
+    vm.primary_field_add_hit(code, object, i.imm(), value, i.c)
+}
+
 lane_handler! {
     /// `SetField` or `SetFieldStrict` at a site that adds a property to records of one shape
     /// (`lane_set_field_miss`): the cached add alone (`Vm::primary_field_add_hit`). Any other
@@ -1792,7 +1808,7 @@ lane_handler! {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
-        if !vm.primary_field_add_hit(code, r.get(i.b), i.imm(), r.get(i.a), i.c) {
+        if !lane_field_add(vm, code, r.get(i.b), i) {
             requicken(ip, lane_set_object_field::<H>);
             sibling!(lane_set_object_field::<H>, r, ip, Carried::SCRIPT)
         }
@@ -1808,8 +1824,7 @@ lane_handler! {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
-        let added = unsafe { lane_fixed_this(cx) }
-            .is_some_and(|this| vm.primary_field_add_hit(code, this, i.imm(), r.get(i.a), i.c));
+        let added = unsafe { lane_fixed_this(cx) }.is_some_and(|this| lane_field_add(vm, code, this, i));
         if !added {
             requicken(ip, lane_set_this_field::<H>);
             sibling!(lane_set_this_field::<H>, r, ip, Carried::SCRIPT)
@@ -3946,42 +3961,55 @@ lane_handler! {
     /// the frame, kept, as `Vm::try_inline_call_apply` pushes it. Any other call takes the
     /// general path.
     fn lane_forward_call<>(cx, r, ip, i, view) {
-        let window = ImmediateLayout::call_window_base(i.imm());
-        if !unsafe { (*cx).script_calls }
-            || ImmediateLayout::argument_count(i.imm()) != FORWARDED_APPLY_ARGUMENTS
-            || r.get(window + 1) != Value::UNMATERIALIZED_ARGUMENTS
-        {
-            return exit(ip);
-        }
-        let vm = unsafe { vm(cx) };
-        if !matches!(
-            vm.heap.get(r.get(i.b)),
-            Some(Cell::Function {
-                kind: FunctionKind::Native(Native::FunctionApply),
-                ..
-            })
-        ) {
-            return exit(ip);
-        }
-        let Some(kept) = (unsafe { lane_kept_arguments(cx) }) else {
-            return exit(ip);
-        };
-        let Some(target) = lane_script_target(cx, r.get(i.c)) else {
-            return exit(ip);
-        };
-        let receiver = r.get(window);
-        let this = if target.strict || vm.is_object_like(receiver) {
-            receiver
-        } else if receiver.is_null() || receiver.is_undefined() {
-            vm.realm.globals
-        } else {
-            return exit(ip);
-        };
-        match lane_activate_keeping(cx, r, ip, target, kept, this, false) {
+        match lane_forward_activation(cx, r, ip, i) {
             Ok((registers, base)) => next!(cx, registers, base, Carried::SCRIPT),
             Err(next) => next,
         }
     }
+}
+
+/// `lane_forward_call`'s activation: the callee's registers and first record, or the record
+/// to continue at. Out of line: the call target it passes on lives in its frame, and a
+/// handler whose frame a callee addresses cannot dispatch its successor as a sibling call.
+#[inline(never)]
+fn lane_forward_activation<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    i: &LaneInstruction,
+) -> Result<(Registers, Ip), Ip> {
+    let window = ImmediateLayout::call_window_base(i.imm());
+    if !unsafe { (*cx).script_calls }
+        || ImmediateLayout::argument_count(i.imm()) != FORWARDED_APPLY_ARGUMENTS
+        || r.get(window + 1) != Value::UNMATERIALIZED_ARGUMENTS
+    {
+        return Err(exit(ip));
+    }
+    let vm = unsafe { vm(cx) };
+    if !matches!(
+        vm.heap.get(r.get(i.b)),
+        Some(Cell::Function {
+            kind: FunctionKind::Native(Native::FunctionApply),
+            ..
+        })
+    ) {
+        return Err(exit(ip));
+    }
+    let Some(kept) = (unsafe { lane_kept_arguments(cx) }) else {
+        return Err(exit(ip));
+    };
+    let Some(target) = lane_script_target(cx, r.get(i.c)) else {
+        return Err(exit(ip));
+    };
+    let receiver = r.get(window);
+    let this = if target.strict || vm.is_object_like(receiver) {
+        receiver
+    } else if receiver.is_null() || receiver.is_undefined() {
+        vm.realm.globals
+    } else {
+        return Err(exit(ip));
+    };
+    lane_activate_keeping(cx, r, ip, target, kept, this, false)
 }
 
 /// The argument count of a forwarding `apply` call: the receiver and `arguments`.
