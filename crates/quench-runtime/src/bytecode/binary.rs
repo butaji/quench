@@ -81,6 +81,7 @@ pub(super) fn write_program(
         program.source.as_ref().map(|source| source.text.as_ref()),
     );
     if let Some(source) = &program.source {
+        out.u32(source.base);
         out.u32(source.line_offset);
         out.u32(source.column_offset);
     }
@@ -385,7 +386,8 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
     let source_name = input.string()?;
     let source = match read_optional_string(&mut input)? {
         Some(text) => Some(super::ProgramSource {
-            text: std::sync::Arc::from(text),
+            text: super::SourceText::Shared(std::sync::Arc::from(text)),
+            base: input.u32()?,
             line_offset: input.u32()?,
             column_offset: input.u32()?,
         }),
