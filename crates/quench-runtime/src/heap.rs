@@ -769,7 +769,7 @@ impl Heap {
             Cell::Array { object } => {
                 object.elements().capacity() * size_of::<Value>() / PAYLOAD_BYTES_PER_ALLOCATION
             }
-            _ => 0,
+            cell => cell.external_bytes() / PAYLOAD_BYTES_PER_ALLOCATION,
         };
         self.allocations += weight;
         self.allocations_since_full = self.allocations_since_full.saturating_add(weight);
