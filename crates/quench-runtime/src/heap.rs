@@ -37,13 +37,12 @@ const DENSE_ARRAY_HOLE_BUDGET_BYTES: usize = 256 * 1024;
 const MAX_DENSE_ARRAY_HOLE_LENGTH: usize = DENSE_ARRAY_HOLE_BUDGET_BYTES / size_of::<Value>();
 const LARGE_HEAP_MINIMUM_LIVE_CELLS: usize = 1 << 16;
 /// Allocations a collection allows at least, whatever survived. The trunk owns this
-/// headroom with the factors below (decision 21). Under the Score-only direction of
-/// 2026-10-16, which sets max RSS aside, the Score lane raised it from 384 cells with the
-/// factors below: with all four, fixed-work instructions fell 16% on Splay, 13% on
-/// EarleyBoyer, 19% on RayTrace, 12% on RegExp and 4% on DeltaBlue (Linux x86_64, 4 vCPU),
-/// and paired stock rounds rose Splay about 20%, EarleyBoyer 15% and RayTrace 40%. Max
-/// RSS rises with it.
-pub(crate) const MINIMUM_GC_ALLOCATION_HEADROOM: usize = 1 << 18;
+/// headroom with the factors below (decision 21). The owner's memory-first direction of
+/// 2026-10-17 restores 384 cells and the factors below from the Score-only pacing of
+/// e14aadb13 (2^18 cells; two, four and four live sets), which took fixed-work max RSS on
+/// the static build to 17-94 MB (Crypto 21.2, DeltaBlue 19.5, EarleyBoyer 47.6, RayTrace
+/// 17.3, RegExp 25.8, Splay 93.8) for 4-19% fewer instructions on five fixtures.
+pub(crate) const MINIMUM_GC_ALLOCATION_HEADROOM: usize = 384;
 /// Payload bytes beside a cell (string units, array elements) that weigh as one more
 /// allocation toward the next collection.
 const PAYLOAD_BYTES_PER_ALLOCATION: usize = 64;
@@ -82,21 +81,21 @@ impl GcHeadroomFactor {
     }
 }
 
-// Two live sets of new cells before the next collection on small heaps (Score-only
-// direction, above; 1/2 before).
+// Half a live set of new cells before the next collection on small heaps (memory-first
+// direction, above).
 const SMALL_HEAP_GC_HEADROOM: GcHeadroomFactor = GcHeadroomFactor {
-    numerator: 2,
-    denominator: 1,
+    numerator: 1,
+    denominator: 2,
 };
 // This is the sweep variable for large-heap RSS/Score measurements. A factor
 // of 1/1 allows one live set's worth of new cells before collection (2x total
 // occupied high-water); 4/1 allows four (5x). The trunk owns this factor
-// (decision 21); the Score-only direction (above) moved it from 1/1. Lane
+// (decision 21); the memory-first direction (above) keeps it at 1/1. Lane
 // measurements on Linux x86_64: RSS lane 1/2, stock Splay max RSS 66.3 -> 54.5 MB
 // for -14% Score (one run); Score lane, Splay paired non-PGO rounds: 1/1 3542,
 // 2/1 3638, 4/1 4023, 8/1 below 4/1.
 const LARGE_HEAP_GC_HEADROOM: GcHeadroomFactor = GcHeadroomFactor {
-    numerator: 4,
+    numerator: 1,
     denominator: 1,
 };
 
@@ -117,11 +116,10 @@ impl FullCollectionGrowthFactor {
     }
 }
 
-// Bound total allocations between full collections, at four live sets under the
-// Score-only direction (above; one before). Minor collections may run earlier to
-// sweep the young cells.
+// Bound total allocations between full collections, at one live set (memory-first
+// direction, above). Minor collections may run earlier to sweep the young cells.
 const FULL_COLLECTION_GROWTH: FullCollectionGrowthFactor = FullCollectionGrowthFactor {
-    numerator: 4,
+    numerator: 1,
     denominator: 1,
 };
 
