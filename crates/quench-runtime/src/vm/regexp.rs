@@ -6,6 +6,8 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 /// Recently matched strings whose prepared subjects are kept (`Vm::regexp_subject`): a
 /// scanner's input plus the few short strings it tests between matches.
 const REGEXP_SUBJECT_CACHE_ENTRIES: usize = 4;
+// A short string's units fit a subject's inline text.
+const _: () = assert!(super::wtf16::SHORT_ASCII_CAPACITY <= quench_regexp::INLINE_SUBJECT_BYTES);
 
 const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
 const HIGH_SURROGATE_START: u16 = 0xD800;
@@ -809,10 +811,20 @@ impl<H: Host> Vm<H> {
     fn regexp_subject(&mut self, input: &JsString) -> Rc<quench_regexp::Subject> {
         let flat = input.flat();
         let text = match flat {
-            // A short subject prepares in proportion to its few units and has no shared storage
-            // to recognize it by, so it neither consults nor displaces the cache.
+            // A short subject is copied inline and has no shared storage to recognize it by,
+            // so it neither consults nor displaces the cache; its one slot is reused once no
+            // match holds it.
             FlatUnits::Short(text) => {
-                return Rc::new(quench_regexp::Subject::from_ascii(Rc::from(text.as_str())));
+                let subject = quench_regexp::Subject::short_ascii(text.as_str());
+                if let Some(slot) = self.regexp_short_subject.as_mut()
+                    && let Some(reused) = Rc::get_mut(slot)
+                {
+                    *reused = subject;
+                    return Rc::clone(slot);
+                }
+                let subject = Rc::new(subject);
+                self.regexp_short_subject = Some(Rc::clone(&subject));
+                return subject;
             }
             FlatUnits::Ascii(_) | FlatUnits::Wide(_) => flat,
         };
@@ -1477,6 +1489,10 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         value: Value,
     ) -> Result<usize, JsError> {
+        // A number is its own primitive and number, so its conversion runs no guest code.
+        if let Some(number) = value.as_number() {
+            return Ok(regexp_to_length(number));
+        }
         self.with_call_roots([value], |vm| {
             let value = vm.to_primitive(p, value, "number")?;
             Ok(regexp_to_length(vm.to_number(p, value)?))
@@ -1977,6 +1993,15 @@ impl<H: Host> Vm<H> {
             }),
             matcher,
         });
+        // Every new RegExp object starts in the same shape, so the `lastIndex` definition the
+        // first one recorded applies again.
+        let start = self.object_data(object).map(Object::shape);
+        if let Some((source, target)) = self.regexp_object_shapes
+            && start == Some(source)
+        {
+            self.heap.property_add(object, Value::number(0.0), target);
+            return Ok(object);
+        }
         let last_index_atom = self.intern_atom("lastIndex");
         self.set_property_with_attributes(
             object,
@@ -1991,6 +2016,13 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         )?;
+        if let Some(source) = start
+            && let Some(target) = self.object_data(object).map(Object::shape)
+            && !self.shape_is_dictionary(source)
+            && !self.shape_is_dictionary(target)
+        {
+            self.regexp_object_shapes = Some((source, target));
+        }
         Ok(object)
     }
 
@@ -2108,6 +2140,16 @@ impl<H: Host> Vm<H> {
                 }
                 let input =
                     vm.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                // With the builtin exec, only the match and its effects are observable: the
+                // result array it would build never escapes.
+                if vm.regexp_builtin_exec_matcher(receiver).is_some() {
+                    let matched = vm.regexp_builtin_match(p, receiver, &input)?;
+                    let found = matched.is_some();
+                    if let Some(matched) = matched {
+                        vm.record_regexp_legacy_match(receiver, input, matched)?;
+                    }
+                    return Ok(if found { Value::TRUE } else { Value::FALSE });
+                }
                 let input =
                     vm.string_value_from(args.first().copied().unwrap_or(Value::UNDEFINED), &input);
                 let result = vm.regexp_exec_value(p, receiver, input)?;
@@ -2118,6 +2160,51 @@ impl<H: Host> Vm<H> {
                 })
             },
         )
+    }
+
+    /// `RegExpBuiltinExec` steps 2–15 for the RegExp `this`: reads and updates `lastIndex`
+    /// and matches `input`, leaving the result's construction to the caller.
+    fn regexp_builtin_match(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        input: &JsString,
+    ) -> Result<Option<quench_regexp::Match>, JsError> {
+        let last_index = self.regexp_last_index(p, this)?;
+        let last_index = self.regexp_to_length_value(p, last_index)?;
+        let (regex, stateful, sticky) = match self.heap.get(this) {
+            Some(Cell::RegExp { matcher, meta, .. }) => (
+                Rc::clone(matcher),
+                meta.flags.contains('g') || meta.flags.contains('y'),
+                meta.flags.contains('y'),
+            ),
+            _ => {
+                return Err(
+                    self.type_error(p, "RegExp method called on incompatible receiver".into())
+                );
+            }
+        };
+        let start = if stateful { last_index } else { 0 };
+        if stateful && start > input.units().len() {
+            self.store_regexp_last_index(p, this, Value::number(0.0))?;
+            return Ok(None);
+        }
+        let subject = self.regexp_subject(input);
+        let matched = if sticky {
+            // A start inside a surrogate pair resolves to the next code point, which a
+            // sticky match may not move to.
+            regex
+                .find_sticky_in_subject(&subject, start)
+                .next()
+                .filter(|matched| matched.range.start == start)
+        } else {
+            regex.find_in_subject(&subject, start).next()
+        };
+        if stateful {
+            let last_index = matched.as_ref().map_or(0, |matched| matched.range.end);
+            self.store_regexp_last_index(p, this, Value::number(last_index as f64))?;
+        }
+        Ok(matched)
     }
 
     pub(super) fn regexp_builtin_exec(
@@ -2134,45 +2221,13 @@ impl<H: Host> Vm<H> {
             }
             let input =
                 vm.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-            let last_index = vm.regexp_last_index(p, this)?;
-            let last_index = vm.regexp_to_length_value(p, last_index)?;
-            let (regex, flags) = match vm.heap.get(this) {
-                Some(Cell::RegExp { matcher, meta, .. }) => {
-                    (Rc::clone(matcher), meta.flags.clone())
-                }
-                _ => {
-                    return Err(
-                        vm.type_error(p, "RegExp method called on incompatible receiver".into())
-                    );
-                }
-            };
-            let stateful = flags.contains('g') || flags.contains('y');
-            let sticky = flags.contains('y');
-            let start = if stateful { last_index } else { 0 };
-            if stateful && start > input.units().len() {
-                vm.store_regexp_last_index(p, this, Value::number(0.0))?;
-                return Ok(Value::NULL);
-            }
-            let subject = vm.regexp_subject(&input);
-            let matched = if sticky {
-                // A start inside a surrogate pair resolves to the next code point, which a
-                // sticky match may not move to.
-                regex
-                    .find_sticky_in_subject(&subject, start)
-                    .next()
-                    .filter(|matched| matched.range.start == start)
-            } else {
-                regex.find_in_subject(&subject, start).next()
-            };
-            let Some(matched) = matched else {
-                if stateful {
-                    vm.store_regexp_last_index(p, this, Value::number(0.0))?;
-                }
+            let Some(matched) = vm.regexp_builtin_match(p, this, &input)? else {
                 return Ok(Value::NULL);
             };
-            if stateful {
-                vm.store_regexp_last_index(p, this, Value::number(matched.range.end as f64))?;
-            }
+            let has_indices = match vm.heap.get(this) {
+                Some(Cell::RegExp { meta, .. }) => meta.flags.contains('d'),
+                _ => false,
+            };
             let values = std::iter::once(Some(matched.range.clone()))
                 .chain(matched.captures.iter().cloned())
                 .map(|range| {
@@ -2195,7 +2250,7 @@ impl<H: Host> Vm<H> {
             let input_value =
                 vm.string_value_from(args.first().copied().unwrap_or(Value::UNDEFINED), &input);
             vm.initialize_regexp_result(result, index, input_value, groups)?;
-            if flags.contains('d') {
+            if has_indices {
                 let indices = vm.regexp_indices_array(&matched, &named)?;
                 let indices_atom = vm.intern_atom("indices");
                 vm.set_property(result, indices_atom, indices)?;

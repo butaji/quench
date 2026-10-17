@@ -1525,6 +1525,23 @@ lane_handler! {
 }
 
 lane_handler! {
+    /// `GetField` of a string primitive, which `String.prototype` answers through the
+    /// site's cache (`Vm::cached_string_field_hit`): a method read, as `s.substring`. A miss
+    /// moves the record on as `lane_get_field_miss` decides.
+    fn lane_get_field_string<>(cx, r, ip, i, view) {
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) }).and_then(|object| {
+            (unsafe { vm(cx) }).cached_string_field_hit(code, object, i.imm(), i.c)
+        }) else {
+            sibling!(lane_get_field_miss::<H>, r, ip, Carried::SCRIPT)
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::SCRIPT)
+    }
+}
+
+lane_handler! {
     /// `lane_get_field_holder` for a receiver in a heap cell rather than the object records
     /// (`Vm::cell_holder_field_hit`): a method read from a function, as `f.apply`. A miss
     /// moves the record on as `lane_get_field_miss` decides.
@@ -1613,7 +1630,13 @@ lane_handler! {
     fn lane_get_field_miss<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
+        let base = unsafe { lane_single_field_base(cx, r, i.b) };
+        let string_base = base.is_some_and(|base| {
+            matches!((unsafe { vm(cx) }).heap.get(base), Some(Cell::String(_)))
+        });
         let handler: Option<Handler> = match lane_field_site_tier(unsafe { vm(cx) }, code, i) {
+            // A string primitive reads `String.prototype`, whatever tier its entries name.
+            _ if string_base => Some(lane_get_field_string::<H>),
             FieldSiteTier::Nested => Some(lane_get_field_nested::<H>),
             FieldSiteTier::General => Some(lane_get_field::<H>),
             FieldSiteTier::Polymorphic => Some(single_base_handler(
@@ -1624,8 +1647,7 @@ lane_handler! {
             )),
             // A receiver outside the object records, such as a function, takes the cell lookup.
             FieldSiteTier::Holder
-                if unsafe { lane_single_field_base(cx, r, i.b) }
-                    .is_some_and(|object| object.direct_object_index().is_none()) =>
+                if base.is_some_and(|object| object.direct_object_index().is_none()) =>
             {
                 Some(lane_get_field_holder_cell::<H>)
             }
@@ -1642,8 +1664,7 @@ lane_handler! {
                 lane_get_field::<H>,
             )),
             FieldSiteTier::Own
-                if unsafe { lane_single_field_base(cx, r, i.b) }
-                    .is_some_and(|object| object.direct_object_index().is_none()) =>
+                if base.is_some_and(|object| object.direct_object_index().is_none()) =>
             {
                 Some(lane_get_field_own_cell::<H>)
             }
@@ -1834,7 +1855,9 @@ fn lane_cached_field_miss<H: Host>(
         super::object::FieldCacheProbe::OrdinaryMiss => vm
             .array_length_field(object, atom)
             .or_else(|| vm.cached_field_polymorphic_hit(code, object, atom, site)),
-        super::object::FieldCacheProbe::Ineligible => vm.array_length_field(object, atom),
+        super::object::FieldCacheProbe::Ineligible => vm
+            .array_length_field(object, atom)
+            .or_else(|| vm.cached_string_field_hit(code, object, atom, site)),
     }
 }
 
@@ -4037,8 +4060,9 @@ lane_handler! {
 
 lane_handler! {
     /// A `Call` of `Array.prototype.push` or `pop` on a dense array (`Vm::array_push_dense`,
-    /// `Vm::array_pop_dense`), which completes without calling out or allocating cells; out
-    /// of line, so script calls keep their code. Any other call takes the general path.
+    /// `Vm::array_pop_dense`), which completes without calling out or allocating cells, or
+    /// of a string method that runs no guest code (`Vm::pure_string_method_call`); out of
+    /// line, so script calls keep their code. Any other call takes the general path.
     #[inline(never)]
     fn lane_native_call<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
@@ -4076,7 +4100,18 @@ lane_handler! {
                 kind: FunctionKind::Native(Native::ArrayPop),
                 ..
             }) => vm.array_pop_dense(receiver),
-            _ => None,
+            _ => {
+                // SAFETY: the context's program outlives the lane run.
+                let code = unsafe { &*(*cx).code };
+                let window = ImmediateLayout::call_window_base(i.imm());
+                let argc = ImmediateLayout::argument_count(i.imm());
+                // SAFETY: the call's window is registers of the running function, which a
+                // pure string method neither moves nor frees.
+                let args = unsafe {
+                    std::slice::from_raw_parts(r.0.add(usize::from(window)), usize::from(argc))
+                };
+                vm.pure_string_method_call(code, r.get(i.b), receiver, args)
+            }
         };
         let Some(value) = value else {
             return exit(ip);
