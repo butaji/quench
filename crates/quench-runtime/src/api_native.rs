@@ -335,18 +335,16 @@ impl<'a, H: Host> NativeContext<'a, H> {
     pub const MAX_STRING_CODE_UNITS: usize = crate::vm::wtf16::MAX_STRING_UNITS;
 
     pub(crate) fn new(vm: &'a mut Vm<H>) -> Self {
+        Self::with_new_target(vm, None)
+    }
+
+    /// A callback's context. Its root list comes from the pool `Drop` returns lists to, so
+    /// the pool stays as deep as the native calls nested at once.
+    pub(crate) fn with_new_target(vm: &'a mut Vm<H>, new_target: Option<Value>) -> Self {
         let roots = vm.native_root_lists.pop().unwrap_or_default();
         Self {
             vm,
             roots,
-            new_target: None,
-        }
-    }
-
-    pub(crate) fn with_new_target(vm: &'a mut Vm<H>, new_target: Option<Value>) -> Self {
-        Self {
-            vm,
-            roots: Vec::new(),
             new_target,
         }
     }
@@ -933,6 +931,23 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.completion(result)
     }
 
+    /// Compile and evaluate a host wrapper `prefix + body + suffix` whose body is static
+    /// host text (an embedded library module): the program retains the body instead of a
+    /// copy of the wrapped source, and positions start at the wrapper origin.
+    pub fn evaluate_specialized_static_body_rooted(
+        &mut self,
+        prefix: &str,
+        body: &'static str,
+        suffix: &str,
+        name: &str,
+    ) -> Result<RootId, RootedError> {
+        let result = self
+            .vm
+            .prepare_embedding_static_body(prefix, body, suffix, name)
+            .and_then(|prepared| self.vm.evaluate_embedding_prepared_script(&prepared));
+        self.completion(result)
+    }
+
     pub fn parse_json_rooted(&mut self, source: &str) -> Result<RootId, RootedError> {
         let result = self.vm.parse_embedding_json(source);
         self.completion(result)
@@ -1296,6 +1311,12 @@ impl<'a, H: Host> NativeContext<'a, H> {
 
     pub fn release_host_weak_root(&mut self, reference: HostWeakRoot) -> bool {
         self.vm.release_root(reference.0)
+    }
+
+    /// The number of collections so far. Host weak references can only have died when it
+    /// changed, so a host prunes its weak tables when it does instead of on a timer.
+    pub fn collection_epoch(&self) -> u64 {
+        self.vm.embedding_collection_epoch()
     }
 
     /// Copy the raw bytes from a typed array or DataView without per-index guest property reads.

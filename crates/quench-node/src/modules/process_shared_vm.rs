@@ -2577,13 +2577,10 @@ fn drain_shared_jobs(
             let epoch = runtime.collection_epoch();
             let prune_promises = {
                 let shared = runtime.host_mut().shared_state();
-                let mut state = shared.borrow_mut();
-                let due = !state.async_hooks.promise_resources.is_empty()
-                    && state.async_hooks.promise_prune_epoch != Some(epoch);
-                if due {
-                    state.async_hooks.promise_prune_epoch = Some(epoch);
-                }
-                due
+                let state = shared.borrow();
+                // The prune records the epoch it ran at.
+                !state.async_hooks.promise_resources.is_empty()
+                    && state.async_hooks.promise_resources_pruned_epoch != epoch
             };
             if prune_promises {
                 let prune = runtime.host_function(crate::host::shared_vm::operation("asyncPromisePrune"))
@@ -3566,7 +3563,7 @@ fn warning_export(context: &mut NativeContext<'_, NodeHost>, name: &str) -> Resu
 }
 
 /// The environment `process.env` starts from: a worker's own, else the OS environment.
-fn environment(context: &mut NativeContext<'_, NodeHost>) -> Vec<(String, String)> {
+pub(crate) fn environment(context: &mut NativeContext<'_, NodeHost>) -> Vec<(String, String)> {
     let worker_env = context.host_mut().shared_state().borrow().messaging.context.as_ref().map(|worker| worker.env.clone());
     worker_env.unwrap_or_else(|| std::env::vars().collect())
 }
