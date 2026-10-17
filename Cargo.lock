@@ -1575,6 +1575,7 @@ version = "0.1.0"
 dependencies = [
  "icu_casemap",
  "icu_properties",
+ "memchr",
  "oxc",
  "quench-stack",
  "regex",
