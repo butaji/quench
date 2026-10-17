@@ -350,7 +350,7 @@ impl Frame {
     #[inline(always)]
     fn prepare_registers_for(&mut self, function: &crate::bytecode::Function) {
         let register_count = usize::from(function.registers);
-        if function.register_root_offset == crate::bytecode::NO_REGISTER_ROOT_MAP
+        if !function.register_roots.covered()
             || function.is_generator
             || function.is_async
             || function.initial_register != crate::bytecode::InitialRegister::Undefined

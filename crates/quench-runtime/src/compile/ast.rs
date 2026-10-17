@@ -376,6 +376,31 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         self.statement_completion = previous;
     }
 
+    /// NamedEvaluation of an anonymous function definition whose value `value` holds. When
+    /// the definition's closure is the instruction just made into `value`, nothing observes
+    /// it unnamed, so the name joins its plan and closure creation defines it; any other
+    /// value (a class, or a closure that control can reach here without) is named at run time.
+    pub(super) fn name_function_definition(&mut self, value: Register, name: Atom) {
+        let made = self.code.last().map(|packed| {
+            if packed.is_wide() {
+                self.wide[packed.wide_index()]
+            } else {
+                packed.as_wide()
+            }
+        });
+        if let Some(made) = made
+            && made.op() == Op::MakeClosure
+            && made.result_register() == value
+            && let Some(Some(plan)) = self.owner.functions.get_mut(made.closure_function_index() as usize)
+            && plan.name.is_none()
+            && !plan.is_class_constructor
+        {
+            plan.name = Some(name);
+            return;
+        }
+        self.emit(Op::SetFunctionName, value, 0, 0, name);
+    }
+
     pub(super) fn emit(
         &mut self,
         op: Op,
@@ -741,7 +766,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                     && Self::anonymous_function_definition(initializer)
                 {
                     let name = self.owner.atom(identifier.name.as_str());
-                    self.emit(Op::SetFunctionName, value, 0, 0, name);
+                    self.name_function_definition(value, name);
                 }
                 self.emit(Op::Move, current, value, 0, 0);
                 self.patch(skip);

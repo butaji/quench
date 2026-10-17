@@ -129,7 +129,7 @@ fn decoder_rejects_out_of_range_local_load() {
             params: 0,
             length: 0,
             parameter_end_pc: 0,
-            parameter_atoms: vec![],
+            parameter_atoms: vec![].into(),
             rest: false,
             is_async: false,
             is_generator: false,
@@ -144,21 +144,21 @@ fn decoder_rejects_out_of_range_local_load() {
             simple_parameters: true,
             strict: false,
             locals: 1,
-            local_atoms: vec![],
-            environment_atoms: vec![],
+            local_atoms: vec![].into(),
+            environment_atoms: vec![].into(),
             selective_capture_slots: None,
-            local_registers: Vec::new(),
+            local_registers: Vec::new().into(),
             inherited_with_scope: false,
-            lexical_atoms: vec![],
-            global_lexical_atoms: vec![],
-            global_var_atoms: vec![],
-            global_function_atoms: vec![],
-            global_annex_b_var_atoms: vec![],
-            global_immutable_atoms: vec![],
+            lexical_atoms: vec![].into(),
+            global_lexical_atoms: vec![].into(),
+            global_var_atoms: vec![].into(),
+            global_function_atoms: vec![].into(),
+            global_annex_b_var_atoms: vec![].into(),
+            global_immutable_atoms: vec![].into(),
             name_bindings: Default::default(),
-            binding_sites: vec![],
-            source_positions: vec![],
-            environment_clones: vec![],
+            binding_sites: vec![].into(),
+            source_positions: Default::default(),
+            environment_clones: vec![].into(),
             code: vec![Instr::new(Op::LoadLocal, 0, 0, 0, 1)],
             wide: vec![],
             registers: 1,
@@ -169,8 +169,8 @@ fn decoder_rejects_out_of_range_local_load() {
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
             call_plan: Default::default(),
-            handlers: vec![],
-            register_root_offset: 0,
+            handlers: vec![].into(),
+            register_roots: Default::default(),
             undefined_register: None,
             parameter_registers: None,
             initial_register: Default::default(),
@@ -182,7 +182,6 @@ fn decoder_rejects_out_of_range_local_load() {
         object_sites: vec![],
         regexp_literal_sites: vec![],
         superinstructions: vec![],
-        register_roots: vec![],
     };
     let path = std::env::temp_dir().join(format!("quench-invalid-local-{}", std::process::id()));
     program.write_binary(&path).unwrap();
@@ -212,7 +211,7 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             params: 0,
             length: 0,
             parameter_end_pc: 0,
-            parameter_atoms: vec![],
+            parameter_atoms: vec![].into(),
             rest: false,
             is_async: false,
             is_generator: false,
@@ -227,21 +226,21 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             simple_parameters: true,
             strict: false,
             locals: 0,
-            local_atoms: vec![],
-            environment_atoms: vec![],
+            local_atoms: vec![].into(),
+            environment_atoms: vec![].into(),
             selective_capture_slots: None,
-            local_registers: Vec::new(),
+            local_registers: Vec::new().into(),
             inherited_with_scope: false,
-            lexical_atoms: vec![],
-            global_lexical_atoms: vec![],
-            global_var_atoms: vec![],
-            global_function_atoms: vec![],
-            global_annex_b_var_atoms: vec![],
-            global_immutable_atoms: vec![],
+            lexical_atoms: vec![].into(),
+            global_lexical_atoms: vec![].into(),
+            global_var_atoms: vec![].into(),
+            global_function_atoms: vec![].into(),
+            global_annex_b_var_atoms: vec![].into(),
+            global_immutable_atoms: vec![].into(),
             name_bindings: Default::default(),
-            binding_sites: vec![],
-            source_positions: vec![],
-            environment_clones: vec![],
+            binding_sites: vec![].into(),
+            source_positions: Default::default(),
+            environment_clones: vec![].into(),
             code: vec![Instr::new(Op::Return, 0, 0, 0, 0)],
             wide: vec![],
             registers: 1,
@@ -252,8 +251,8 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
             call_plan: Default::default(),
-            handlers: vec![],
-            register_root_offset: u32::MAX,
+            handlers: vec![].into(),
+            register_roots: Default::default(),
             undefined_register: None,
             parameter_registers: None,
             initial_register: Default::default(),
@@ -265,7 +264,6 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
         object_sites: vec![],
         regexp_literal_sites: vec![],
         superinstructions: vec![],
-        register_roots: vec![],
     };
     let path = std::env::temp_dir().join(format!("quench-invalid-abi-{}", std::process::id()));
     program.write_binary(&path).unwrap();
@@ -432,9 +430,11 @@ fn decoder_rejects_invalid_binding_site_metadata() {
                 function.binding_sites[0].bindings[0].location =
                     EvalBindingLocation::Local(function.locals)
             }
-            3 => function
-                .binding_sites
-                .insert(0, function.binding_sites[0].clone()),
+            3 => {
+                let mut sites = function.binding_sites.to_vec();
+                sites.insert(0, sites[0].clone());
+                function.binding_sites = sites.into();
+            }
             _ => unreachable!(),
         }
         invalid.write_binary(&path).unwrap();
@@ -513,4 +513,22 @@ fn source_lines_share_javascript_boundaries_and_preserve_wrapper_origins() {
     let second = (prefix.len() + body.find("second").unwrap()) as u32;
     assert_eq!(retained.slice(second, second + 6), Some("second"));
     assert_eq!(retained.slice(0, second), None);
+}
+
+#[test]
+fn source_positions_round_trip_through_their_delta_encoding() {
+    use super::{SourcePosition, SourcePositions};
+    let positions = vec![
+        SourcePosition { pc: 0, line: 1, column: 1 },
+        SourcePosition { pc: 3, line: 1, column: 70_000 },
+        SourcePosition { pc: 4, line: 40, column: 2 },
+        SourcePosition { pc: 900, line: 7, column: 1 },
+        SourcePosition { pc: u32::MAX - 1, line: u32::MAX, column: u32::MAX },
+    ];
+    let table = SourcePositions::from(positions.clone());
+    assert_eq!(table.to_vec(), positions);
+    assert_eq!(table.at(0), Some(positions[0]));
+    assert_eq!(table.at(899), Some(positions[2]));
+    assert_eq!(table.at(900), Some(positions[3]));
+    assert_eq!(SourcePositions::default().at(0), None);
 }

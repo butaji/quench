@@ -1900,8 +1900,8 @@ impl<'a> Compiler<'a> {
             .filter_map(|name| self.atoms.find(name))
             .collect();
         if let Some(Some(root)) = self.functions.first_mut() {
-            root.global_lexical_atoms = global_lexical_atoms;
-            root.global_immutable_atoms = global_immutable_atoms;
+            root.global_lexical_atoms = global_lexical_atoms.into();
+            root.global_immutable_atoms = global_immutable_atoms.into();
             root.global_var_atoms = global_var_atoms;
             root.global_function_atoms = global_function_atoms;
             root.global_annex_b_var_atoms = global_annex_b_var_atoms;
@@ -1972,13 +1972,13 @@ impl<'a> Compiler<'a> {
             if function.dispatch == DispatchClass::Numeric {
                 let live = liveness::analyze(
                     function,
-                    &self.method_sites,
+                    self.method_sites.as_slice(),
                     &self.field_sites,
                     &self.superinstructions,
                 );
                 numeric::apply(function, live.as_deref());
             }
-            Self::specialize_plain_local_operations(function, &self.atoms);
+            Self::specialize_plain_local_operations(function, &self.superinstructions);
             if function
                 .code
                 .iter()
@@ -1986,16 +1986,16 @@ impl<'a> Compiler<'a> {
             {
                 let live = liveness::analyze(
                     function,
-                    &self.method_sites,
+                    self.method_sites.as_slice(),
                     &self.field_sites,
                     &self.superinstructions,
                 );
                 numeric::apply_plain_local_stores(function, live.as_deref());
             }
         }
-        let register_roots = liveness::derive(
+        liveness::mark_register_roots(
             &mut functions,
-            &self.method_sites,
+            self.method_sites.as_slice(),
             &self.field_sites,
             &self.superinstructions,
         );
@@ -2010,7 +2010,6 @@ impl<'a> Compiler<'a> {
         }
         for function in &mut functions {
             function.code.shrink_to_fit();
-            function.handlers.shrink_to_fit();
         }
         let (mut method_sites, mut method_arguments) =
             Self::flatten_method_sites(self.method_sites);
@@ -2051,7 +2050,6 @@ impl<'a> Compiler<'a> {
             object_sites: self.object_sites,
             regexp_literal_sites: self.regexp_literal_sites,
             superinstructions: self.superinstructions,
-            register_roots,
         };
         #[cfg(feature = "profile-aggregate")]
         debug_assert!(crate::profile::instruction_word_domains_fit(&program));
@@ -2578,7 +2576,7 @@ impl<'a> Compiler<'a> {
             } else {
                 0
             },
-            parameter_atoms,
+            parameter_atoms: parameter_atoms.into(),
             rest: options.rest_override
                 || options.defaults.is_some_and(|value| value.rest.is_some()),
             is_async: options.async_function,
@@ -2596,21 +2594,21 @@ impl<'a> Compiler<'a> {
             simple_parameters,
             strict: root_strict,
             locals: function.locals.len() as u16,
-            local_atoms: function.locals.clone(),
+            local_atoms: function.locals.clone().into(),
             environment_atoms,
             selective_capture_slots: None,
-            local_registers: function.promoted_local_layout(),
+            local_registers: function.promoted_local_layout().into(),
             inherited_with_scope: options.with_depth != 0,
-            lexical_atoms,
-            global_lexical_atoms: Vec::new(),
-            global_var_atoms: Vec::new(),
-            global_function_atoms: Vec::new(),
-            global_annex_b_var_atoms: Vec::new(),
-            global_immutable_atoms: Vec::new(),
+            lexical_atoms: lexical_atoms.into(),
+            global_lexical_atoms: Vec::new().into(),
+            global_var_atoms: Vec::new().into(),
+            global_function_atoms: Vec::new().into(),
+            global_annex_b_var_atoms: Vec::new().into(),
+            global_immutable_atoms: Vec::new().into(),
             name_bindings,
-            binding_sites: function.binding_sites,
-            source_positions: function.source_positions,
-            environment_clones,
+            binding_sites: function.binding_sites.into(),
+            source_positions: function.source_positions.into(),
+            environment_clones: environment_clones.into(),
             code: function.code,
             wide: function.wide,
             registers: function.max_reg,
@@ -2621,8 +2619,8 @@ impl<'a> Compiler<'a> {
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
             call_plan: Default::default(),
-            handlers: function.handlers,
-            register_root_offset: crate::bytecode::NO_REGISTER_ROOT_MAP,
+            handlers: function.handlers.into(),
+            register_roots: Default::default(),
             undefined_register,
             parameter_registers: None,
             initial_register: Default::default(),
@@ -2665,9 +2663,11 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn specialize_plain_local_operations(function: &mut BcFunction, atoms: &CompilerAtoms<'_>) {
-        let plain_slots = function.plain_local_slots(|atom| atoms.get(atom as usize));
-
+    fn specialize_plain_local_operations(
+        function: &mut BcFunction,
+        superinstructions: &[crate::bytecode::Superinstruction],
+    ) {
+        let plain_slots = function.plain_local_slots(superinstructions);
         for instruction in &mut function.code {
             match instruction.op() {
                 Op::LoadLocal | Op::StoreLocal
