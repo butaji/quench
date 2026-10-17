@@ -611,11 +611,9 @@ impl ResidualProgram {
                 return Err(format!("function {index} has invalid name bindings"));
             }
             let code_len = function.code.len() as u32;
-            if function
-                .source_positions
-                .windows(2)
-                .any(|pair| pair[0].pc >= pair[1].pc)
-                || function.source_positions.iter().any(|position| {
+            let positions = function.source_positions.to_vec();
+            if positions.windows(2).any(|pair| pair[0].pc >= pair[1].pc)
+                || positions.iter().any(|position| {
                     position.pc >= code_len || position.line == 0 || position.column == 0
                 })
             {
@@ -1172,7 +1170,7 @@ mod tests {
             assert!(invalid.validate().is_err());
         }
         let mut invalid = program;
-        invalid.functions[0].environment_clones.clear();
+        invalid.functions[0].environment_clones = Default::default();
         assert!(invalid.validate().is_err());
     }
 
@@ -1186,7 +1184,7 @@ mod tests {
             params: 0,
             length: 0,
             parameter_end_pc: 0,
-            parameter_atoms: vec![],
+            parameter_atoms: vec![].into(),
             rest: false,
             is_async: false,
             is_generator: false,
@@ -1201,21 +1199,21 @@ mod tests {
             simple_parameters: true,
             strict: false,
             locals: 0,
-            local_atoms: vec![],
-            environment_atoms: vec![],
+            local_atoms: vec![].into(),
+            environment_atoms: vec![].into(),
             selective_capture_slots: None,
-            local_registers: vec![],
+            local_registers: vec![].into(),
             inherited_with_scope: false,
-            lexical_atoms: vec![],
-            global_lexical_atoms: vec![],
-            global_var_atoms: vec![],
-            global_function_atoms: vec![],
-            global_annex_b_var_atoms: vec![],
-            global_immutable_atoms: vec![],
+            lexical_atoms: vec![].into(),
+            global_lexical_atoms: vec![].into(),
+            global_var_atoms: vec![].into(),
+            global_function_atoms: vec![].into(),
+            global_annex_b_var_atoms: vec![].into(),
+            global_immutable_atoms: vec![].into(),
             name_bindings: Default::default(),
-            binding_sites: vec![],
-            source_positions: vec![],
-            environment_clones: vec![],
+            binding_sites: vec![].into(),
+            source_positions: Default::default(),
+            environment_clones: vec![].into(),
             code,
             wide: vec![],
             registers,
@@ -1226,7 +1224,7 @@ mod tests {
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
             call_plan: Default::default(),
-            handlers: vec![],
+            handlers: vec![].into(),
             register_root_offset: root,
             undefined_register: None,
             parameter_registers: None,

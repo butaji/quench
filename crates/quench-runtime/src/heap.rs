@@ -20,6 +20,7 @@ mod records;
 mod root;
 mod slots;
 mod thin_slice;
+pub(crate) use thin_slice::ThinBoxSlice;
 mod weak;
 pub(crate) use cell::*;
 pub(crate) use buffer_bytes::BufferBytes;
