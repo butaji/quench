@@ -19,6 +19,13 @@ pub(super) struct Test262AgentState {
     pub(super) started_at: Instant,
 }
 
+impl Test262AgentState {
+    /// Whether agents run inside this VM, sharing its heap and its emulated waiter list.
+    pub(super) fn emulates_agents(&self) -> bool {
+        self.active_callback || !self.callbacks.is_empty()
+    }
+}
+
 pub(super) struct AgentWaiter {
     pub(super) id: usize,
     pub(super) buffer: Value,
@@ -615,7 +622,7 @@ impl<H: Host> Vm<H> {
     /// yields to them.
     fn test262_agent_owns_atomic(&self, native: Native) -> bool {
         self.test262_agent.installed
-            && (!self.test262_agent.callbacks.is_empty()
+            && (self.test262_agent.emulates_agents()
                 || matches!(
                     native,
                     Native::AtomicsWait | Native::AtomicsWaitAsync | Native::AtomicsNotify
@@ -668,10 +675,9 @@ impl<H: Host> Vm<H> {
                 "Atomics wait/notify requires Int32Array or BigInt64Array".into(),
             ));
         }
-        // ValidateAtomicAccess reads the length recorded before index coercion.
+        // ValidateAtomicAccess compares against the length read before ToIndex.
         let length = self.typed_array_length(view).unwrap_or(0);
         let index = self.atomic_index(p, args.get(1).copied())?;
-        self.atomic_array_kind(p, view)?;
         self.atomic_validate_index(p, length, index)?;
         let big = matches!(kind, TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64);
         let mut store_result = None;
@@ -679,11 +685,10 @@ impl<H: Host> Vm<H> {
             if big {
                 let n = vm.to_bigint(p, value)?;
                 store_result = Some(vm.heap.alloc(Cell::BigInt(n.to_string())));
-                Ok(vm
-                    .normalize_atomic_bigint(n)
+                vm.normalize_atomic_bigint(n)
                     .to_string()
                     .parse::<u64>()
-                    .map_err(|_| vm.type_error(p, "Invalid atomic BigInt".into()))?)
+                    .map_err(|_| vm.type_error(p, "Invalid atomic BigInt".into()))
             } else {
                 let n = vm.to_number(p, value)?;
                 let integer = if n.is_nan() || n == 0.0 {
