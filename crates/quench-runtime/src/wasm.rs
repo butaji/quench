@@ -764,7 +764,7 @@ impl Engine {
         }
         let mut constants = vec![Constant::Number(0.0), Constant::Undefined];
         let mut functions = Vec::with_capacity(bodies.len());
-        let bodies = bodies
+        let mut bodies = bodies
             .into_iter()
             .map(|(locals, operators)| {
                 // Reserve to the source's bound instead of doubling: a large
@@ -779,10 +779,15 @@ impl Engine {
                 Ok((locals, collected))
             })
             .collect::<Result<Vec<_>, Diagnostic>>()?;
-        let bodies = inline::inline_leaf_calls(bodies, &signature_pool, inline::leaf_budget(mode))
-            .ok_or_else(|| Diagnostic::unsupported(name, "too many Wasm locals"))?;
-        for (index, (locals, operators)) in bodies.into_iter().enumerate() {
-            let index = u32::try_from(index)
+        let too_many_locals = || Diagnostic::unsupported(name, "too many Wasm locals");
+        let plan = inline::LeafPlan::new(&mut bodies, &signature_pool, inline::leaf_budget(mode))
+            .ok_or_else(too_many_locals)?;
+        for (position, body) in bodies.into_iter().enumerate() {
+            // Each body is inlined as it is lowered and dropped after it.
+            let (locals, operators) = plan
+                .inline(position, body, &signature_pool)
+                .ok_or_else(too_many_locals)?;
+            let index = u32::try_from(position)
                 .map_err(|_| Diagnostic::unsupported(name, "too many Wasm functions"))?;
             let signature = signature_pool.defined_signature(index).unwrap().clone();
             let params = u16::try_from(signature.params.len())
