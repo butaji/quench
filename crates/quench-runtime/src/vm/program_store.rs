@@ -609,6 +609,12 @@ impl ProgramStore {
         }
     }
 
+    /// Every live program's compiled form.
+    #[cfg(feature = "profile-memory")]
+    pub(crate) fn residuals(&self) -> impl Iterator<Item = &ResidualProgram> {
+        self.programs.iter().flatten().map(|entry| &*entry.residual)
+    }
+
     pub(crate) fn module_environment(&self, id: ProgramId) -> Option<Value> {
         self.entry(id)?.module_environment
     }

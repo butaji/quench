@@ -1220,6 +1220,11 @@ impl SourcePositions {
     pub(crate) fn shrink_to_fit(&mut self) {
         self.bytes.shrink_to_fit();
     }
+
+    #[cfg(feature = "profile-memory")]
+    pub(crate) fn capacity_bytes(&self) -> usize {
+        self.bytes.capacity()
+    }
 }
 
 impl FromIterator<SourcePosition> for SourcePositions {
@@ -2540,6 +2545,11 @@ impl RegisterRoots {
 
     pub(crate) fn shrink_to_fit(&mut self) {
         self.bytes.shrink_to_fit();
+    }
+
+    #[cfg(feature = "profile-memory")]
+    pub(crate) fn capacity_bytes(&self) -> usize {
+        self.bytes.capacity()
     }
 }
 
