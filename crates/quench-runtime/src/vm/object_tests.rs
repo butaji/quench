@@ -116,7 +116,7 @@ fn method_cache_program(mut program: ResidualProgram) -> ResidualProgram {
     ];
     function.local_registers.clear();
     function.parameter_end_pc = 0;
-    function.source_positions.clear();
+    function.source_positions = Default::default();
     let methods = program
         .method_sites
         .iter()
