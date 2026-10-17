@@ -10529,12 +10529,17 @@ fn anonymous_function_definitions_are_named_by_their_plan() {
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(RecordingHost(output.clone()));
     let program = Engine::specialize(source, "named-definitions.js").unwrap();
-    let set_names = program.functions[0]
-        .instructions()
-        .filter(|instruction| instruction.op() == crate::bytecode::Op::SetFunctionName)
-        .count();
-    // Only the class expression's name is set at run time.
-    assert_eq!(set_names, 1);
+    // Closures made straight into the named value carry the name in their plan; classes,
+    // computed keys and static field values are named at run time.
+    for name in ["arrow", "expression", "fallback", "method"] {
+        assert!(
+            program
+                .functions
+                .iter()
+                .any(|function| function.name.is_some_and(|atom| program.atoms[atom as usize] == *name)),
+            "{name} is named by its plan"
+        );
+    }
     vm.execute(&program).unwrap();
     assert_eq!(
         output.borrow().as_slice(),
