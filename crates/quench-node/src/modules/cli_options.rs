@@ -1,6 +1,11 @@
 //! Parsed startup values for implemented Node feature switches.
 include!(concat!(env!("OUT_DIR"), "/node_option_defaults.rs"));
 const BOOLEAN_OPTIONS: &[(&str, bool)] = &[
+    // These switches are consumed by the unchanged SDK harness even when
+    // tests are run directly rather than through the file-runner CLI.
+    ("--test-only", false),
+    ("--test-randomize", false),
+    ("--test-update-snapshots", false),
     ("--experimental-vfs", false),
     ("--experimental-stream-iter", false),
     ("--expose-internals", false),

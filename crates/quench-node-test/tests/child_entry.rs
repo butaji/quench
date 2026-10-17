@@ -10180,3 +10180,27 @@ fn crypto_original_sdk_pbkdf2_uses_provider_jobs_and_async_context() {
         &["--no-warnings", "--expose-internals"],
     );
 }
+
+#[test]
+fn crypto_original_sdk_key_family_owns_provider_keys_and_signature_jobs() {
+    compare_node_file_source_with_args(
+        include_str!("../node-tests/test-crypto-native-sdk-key-family.js"),
+        &["--no-warnings", "--expose-internals"],
+    );
+}
+
+#[test]
+fn crypto_native_sdk_domains_preserve_callback_resource_and_error_identity() {
+    compare_node_file_source_with_args(
+        include_str!("../node-tests/test-crypto-native-sdk-domains.js"),
+        &["--no-warnings", "--expose-internals"],
+    );
+}
+
+#[test]
+fn domain_sdk_owns_emitter_association_without_compatibility_global() {
+    compare_node_file_source_with_args(
+        include_str!("../node-tests/test-domain-source-emitter-policy.js"),
+        &["--no-warnings", "--expose-internals"],
+    );
+}
