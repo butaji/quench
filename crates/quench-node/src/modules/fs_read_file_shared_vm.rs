@@ -14,8 +14,7 @@ struct Handle {
     ownership: Ownership,
 }
 fn get(c: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, RootedError> {
-    let key = c.string_rooted(name);
-    c.get_property_rooted(object, key)
+    c.get_named_property_rooted(object, name)
 }
 fn method(
     c: &mut Context<'_>,

@@ -75,16 +75,26 @@ pub fn execute_shared(input: SharedInput, argv: Vec<String>) -> Result<SharedCom
             worker_mask
                 .restore()
                 .map_err(|error| format!("runtime execution signal mask: {error}"))?;
-            execute_shared_on_worker(input, argv)
+            execute_shared_on_worker(input, argv, None)
         })
         .map_err(|error| format!("runtime worker thread: {error}"))?
         .join()
         .unwrap_or_else(|_| Err("runtime worker panicked".into()))
 }
 
+/// Run a `worker_threads` Worker's entry on the calling (worker) thread.
+pub(crate) fn execute_worker(
+    input: SharedInput,
+    argv: Vec<String>,
+    worker: crate::modules::worker_shared_vm::WorkerContext,
+) -> Result<SharedCompletion, String> {
+    execute_shared_on_worker(input, argv, Some(worker))
+}
+
 fn execute_shared_on_worker(
     input: SharedInput,
     argv: Vec<String>,
+    worker: Option<crate::modules::worker_shared_vm::WorkerContext>,
 ) -> Result<SharedCompletion, String> {
     let eval_builtin_globals = matches!(&input, SharedInput::Eval { .. });
     let eval_source_nonempty = matches!(&input, SharedInput::Eval { source, .. } if !source.is_empty());
@@ -157,6 +167,7 @@ fn execute_shared_on_worker(
         None => host,
     };
     let shared_state = host.shared_state();
+    shared_state.borrow_mut().messaging.context = worker;
     {
         let mut state = shared_state.borrow_mut();
         let argv = state.process_argv.clone();
@@ -170,6 +181,9 @@ fn execute_shared_on_worker(
         kind,
     })
     .map_err(|error| format!("{error:?}"))?;
+    if let Some(worker) = &shared_state.borrow().messaging.context {
+        worker.control.set_online();
+    }
     let execution = runtime.execute_deferred_jobs(&program);
     let completion = match execution {
         Ok(()) => crate::modules::process_shared_vm::finish_execution(&mut runtime, &program),

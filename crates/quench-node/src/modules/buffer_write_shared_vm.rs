@@ -3,8 +3,7 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeArithmetic, NativeContext, RootId, RootedError};
 type Context<'a> = NativeContext<'a, NodeHost>;
 fn get(c: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, RootedError> {
-    let key = c.string_rooted(name);
-    c.get_property_rooted(object, key)
+    c.get_named_property_rooted(object, name)
 }
 fn getter(c: &mut Context<'_>, prototype: RootId, name: &str) -> Result<RootId, RootedError> {
     let key = c.string_rooted(name);

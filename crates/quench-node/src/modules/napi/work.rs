@@ -10,7 +10,7 @@ use super::functions::{call, callable};
 use super::lifecycle::{collected, finalize, Finalizer};
 use super::{api, enter, js_api, out, Context, Env, NapiValue, Status, Thrown, ENVS, NULL_VALUE};
 use crate::host::NodeHost;
-use quench_runtime::{RootId, RootedError, Value};
+use quench_runtime::{RootId, RootedError};
 use std::cell::Cell;
 use std::collections::VecDeque;
 use std::ffi::c_void;
@@ -558,30 +558,5 @@ pub(crate) fn poll(
     if ENVS.with(|envs| envs.borrow().is_empty()) {
         return Ok(false);
     }
-    let operation = runtime
-        .host_function(crate::host::shared_vm::operation("napiDrain"))
-        .map_err(|error| error.to_string())?;
-    let receiver = runtime.root(Value::UNDEFINED);
-    let mut ran = false;
-    loop {
-        match runtime.call_rooted(operation, receiver, &[]) {
-            Ok(result) => {
-                let delivered = runtime.rooted_value(result).and_then(Value::as_bool) == Some(true);
-                runtime.release_root(result);
-                if !delivered {
-                    break;
-                }
-                ran = true;
-                crate::modules::process_shared_vm::run_host_jobs_with_uncaught(runtime, program)?;
-            }
-            Err(error) => {
-                ran = true;
-                crate::modules::process_shared_vm::route_callback_failure(runtime, program, error)?;
-                crate::modules::process_shared_vm::run_host_jobs_with_uncaught(runtime, program)?;
-            }
-        }
-    }
-    runtime.release_root(operation);
-    runtime.release_root(receiver);
-    Ok(ran)
+    crate::modules::process_shared_vm::deliver_each(runtime, program, "napiDrain")
 }
