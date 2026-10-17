@@ -36,7 +36,10 @@ pub use host::{
 pub use memory_edge::report_allocator_memory;
 pub use stack::{STACK_BUDGET_BYTES, STACK_HEADROOM_BYTES, WORKER_STACK_SIZE};
 pub use value::Value;
-pub use vm::{ExecutionMode, JsError, SerializedValue};
+pub use vm::{
+    write_double, write_raw_bytes, write_uint32, write_uint64, ExecutionMode, HostObjectRead, JsError, SerializedValue, SharedWireInput,
+    ValueDeserializer, ValueSerializer, WireInput, WireOutput, WIRE_FORMAT_VERSION,
+};
 
 /// Serialized values cross to other agents' threads.
 const _: fn() = || {
@@ -49,6 +52,7 @@ pub use api::{
     BufferStorage, BuiltinBrand, ValueType, BuiltinData, CollectionPreview, PromiseSnapshot, ExecutionRequest, HostFunction, HostFunctionId, HostWeakRoot,
     PreparedScript, NativeArithmetic, NativeContext, PromiseRejectionEvent, RootedError, RootedIterator, Runtime,
     CompiledScript, RuntimeError, SourceKind, ErrorSourcePosition, SourceStackFrame, SynchronousModule,
+    DeserializerDelegate, SerializerDelegate,
 };
 
 #[cfg(test)]
