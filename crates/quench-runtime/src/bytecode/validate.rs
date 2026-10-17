@@ -574,15 +574,7 @@ impl ResidualProgram {
             let plain_local_slots = if self.kind == super::ProgramKind::Wasm {
                 vec![true; usize::from(function.locals)]
             } else {
-                function.plain_local_slots(
-                    |atom| {
-                        usize::try_from(atom)
-                            .ok()
-                            .filter(|atom| *atom < self.atoms.len())
-                            .map(|atom| &self.atoms[atom])
-                    },
-                    &self.superinstructions,
-                )
+function.plain_local_slots(&self.superinstructions)
             };
             if let Some(initializer) = function.instance_initializer {
                 let valid = self
