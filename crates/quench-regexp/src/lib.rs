@@ -467,7 +467,7 @@ impl Regex {
             return Matches { item: found };
         }
         if let (Some(bytes), Some(compiled)) = (subject.ascii(), &self.compiled) {
-            if !self.compiled_dot_requires_cr_guard || !subject.has_carriage_return {
+            if !self.compiled_dot_requires_cr_guard || !subject.has_carriage_return() {
                 return self.find_compiled(compiled, bytes, start);
             }
         }
@@ -506,7 +506,7 @@ impl Regex {
             subject.ascii(),
             self.range_matcher().or(self.compiled.as_ref()),
         ) {
-            if !self.compiled_dot_requires_cr_guard || !subject.has_carriage_return {
+            if !self.compiled_dot_requires_cr_guard || !subject.has_carriage_return() {
                 return compiled
                     .find_at(bytes, start)
                     .map(|matched| matched.range());
@@ -540,7 +540,7 @@ impl Regex {
                 };
             if automata
                 && (!captures || self.capture_names.is_empty())
-                && (!self.compiled_dot_requires_cr_guard || !subject.has_carriage_return)
+                && (!self.compiled_dot_requires_cr_guard || !subject.has_carriage_return())
             {
                 return None;
             }
@@ -551,7 +551,7 @@ impl Regex {
                 }
             }
             let linear = self.compiled.is_some()
-                && (!self.compiled_dot_requires_cr_guard || !subject.has_carriage_return);
+                && (!self.compiled_dot_requires_cr_guard || !subject.has_carriage_return());
             let budget = linear.then(|| backtrack::Program::budget(bytes.len()));
             let found = program.find(bytes, start, sticky, budget).ok()?;
             return Some(found.map(|found| Match {
@@ -728,7 +728,9 @@ enum SubjectText {
 /// can recognize the same string again by allocation identity.
 pub struct Subject {
     text: SubjectText,
-    has_carriage_return: bool,
+    /// Whether the text holds a carriage return, found on first use: only the automata
+    /// backend's dot guard asks (`compiled_dot_requires_cr_guard`).
+    carriage_return: std::cell::OnceCell<bool>,
     /// The units decoded for the backtracking matcher, by code unit and by code point
     /// (`unicode`), each decoded on first use.
     decoded: [std::cell::OnceCell<Vec<Unit>>; 2],
@@ -746,7 +748,7 @@ impl Subject {
         let ascii = (all_bits <= ASCII_MAX).then(|| units.iter().map(|unit| *unit as u8).collect());
         Self {
             text: SubjectText::Wide { units, ascii },
-            has_carriage_return,
+            carriage_return: std::cell::OnceCell::from(has_carriage_return),
             decoded: Default::default(),
         }
     }
@@ -754,10 +756,9 @@ impl Subject {
     /// A subject over ASCII text, matched in place without a copy.
     pub fn from_ascii(text: std::rc::Rc<str>) -> Self {
         debug_assert!(text.is_ascii());
-        let has_carriage_return = text.as_bytes().contains(&b'\r');
         Self {
             text: SubjectText::Ascii(text),
-            has_carriage_return,
+            carriage_return: std::cell::OnceCell::new(),
             decoded: Default::default(),
         }
     }
@@ -773,9 +774,16 @@ impl Subject {
                 length: u8::try_from(text.len()).expect("short text fits its length byte"),
                 bytes,
             },
-            has_carriage_return: text.as_bytes().contains(&b'\r'),
+            carriage_return: std::cell::OnceCell::new(),
             decoded: Default::default(),
         }
+    }
+
+    fn has_carriage_return(&self) -> bool {
+        *self.carriage_return.get_or_init(|| match self.ascii() {
+            Some(bytes) => bytes.contains(&b'\r'),
+            None => self.wide().is_some_and(|units| units.contains(&u16::from(b'\r'))),
+        })
     }
 
     fn len(&self) -> usize {
@@ -1347,23 +1355,27 @@ fn required_literal(program: &Expr, flags: Flags) -> Box<[u32]> {
     best.into()
 }
 
-/// Whether `literal` occurs in UTF-16 `input`; an empty literal occurs everywhere.
+/// Whether `literal` occurs in UTF-16 `input`; an empty literal occurs everywhere. The search
+/// runs over the units' bytes, where an occurrence must start at a unit boundary.
 fn contains_code_units(input: &[u16], literal: &[u32]) -> bool {
-    let Some((&first, rest)) = literal.split_first() else {
+    if literal.is_empty() {
         return true;
-    };
-    let mut from = 0;
-    while let Some(offset) = input[from..].iter().position(|unit| u32::from(*unit) == first) {
-        let at = from + offset;
-        let tail = &input[at + 1..];
-        if tail.len() >= rest.len()
-            && tail.iter().zip(rest).all(|(unit, value)| u32::from(*unit) == *value)
-        {
-            return true;
-        }
-        from = at + 1;
     }
-    false
+    let Some(needle) = literal
+        .iter()
+        .map(|unit| u16::try_from(*unit).ok().map(u16::to_ne_bytes))
+        .collect::<Option<Vec<_>>>()
+    else {
+        // A unit past UTF-16 occurs in no code-unit text.
+        return false;
+    };
+    let needle = needle.concat();
+    // SAFETY: the bytes of initialized `u16` values, which any `u8` view may read.
+    let haystack = unsafe {
+        std::slice::from_raw_parts(input.as_ptr().cast::<u8>(), std::mem::size_of_val(input))
+    };
+    let unit = std::mem::size_of::<u16>();
+    memchr::memmem::find_iter(haystack, &needle).any(|offset| offset % unit == 0)
 }
 
 /// Whether `literal` occurs in `input`.
@@ -2961,7 +2973,22 @@ fn is_line_terminator(value: u32) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_new_unicode_scripts, Flags, Regex, NEW_UNICODE_SCRIPTS};
+    use super::{
+        contains_code_units, normalize_new_unicode_scripts, Flags, Regex, NEW_UNICODE_SCRIPTS,
+    };
+
+    #[test]
+    fn code_unit_literals_match_whole_units() {
+        let text = |text: &str| text.encode_utf16().collect::<Vec<_>>();
+        let literal = |text: &str| text.encode_utf16().map(u32::from).collect::<Vec<_>>();
+        assert!(contains_code_units(&text("aé=bc"), &literal("=b")));
+        assert!(contains_code_units(&text("aé=bc"), &literal("")));
+        assert!(!contains_code_units(&text("aé=bc"), &literal("cb")));
+        // Little-endian bytes 01 02 03 00 hold the bytes of 0x0302 across a unit boundary.
+        assert!(!contains_code_units(&[0x0201, 0x0003], &[0x0302]));
+        assert!(contains_code_units(&[0x0201, 0x0302], &[0x0302]));
+        assert!(!contains_code_units(&text("abc"), &[0x1_F600]));
+    }
 
     #[test]
     fn new_unicode_script_normalization_borrows_unrelated_patterns() {
