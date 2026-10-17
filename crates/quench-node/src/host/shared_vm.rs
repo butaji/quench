@@ -1017,6 +1017,12 @@ impl quench_runtime::Host for NodeHost {
         self.shared_state.borrow().async_hooks.tracks_promises()
     }
 
+    /// The code a long run touched once (start-up, set-up, one-time paths) leaves the
+    /// resident set at each full collection; what still runs comes back from the page cache.
+    fn after_full_collection(&mut self) {
+        crate::host::resident_pages::release_read_only_pages();
+    }
+
     fn proper_tail_calls(&self) -> bool {
         false
     }
