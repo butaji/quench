@@ -50,6 +50,8 @@ struct RuntimeAtoms {
     constructor: Atom,
     /// Canonical key for named function-info lookup; paired with length_atom.
     name: Atom,
+    /// The empty string, an anonymous function's initial name.
+    empty: Atom,
 }
 pub(crate) mod activation;
 mod activation_lifecycle;
@@ -1192,6 +1194,10 @@ pub(crate) struct Vm<H> {
     temporal_plain_month_day_proto: Value,
     temporal_plain_year_month_proto: Value,
     natives: Vec<(Native, Value)>,
+    /// One shared string value per program atom a function name spells (`atom_string`):
+    /// strings are immutable, so every closure of a plan can hold the same name value.
+    /// Only program atoms and the anonymous name are kept, so the loaded program bounds it.
+    atom_strings: FxHashMap<Atom, Value>,
     /// The function values in `natives`. One native serves every realm, so it runs in the
     /// realm of its caller rather than switching to the creator's.
     shared_natives: FxHashSet<Value>,
@@ -1943,6 +1949,7 @@ impl<H: Host> Vm<H> {
         self.shapes.truncate(1);
         self.transitions.clear();
         self.shape_slot_memo.clear();
+        self.atom_strings.clear();
         // The sealed holders and their shapes belong to the discarded heap.
         self.startup_intrinsics = Default::default();
         self.atom_text = program.atoms.clone();
@@ -1980,6 +1987,7 @@ impl<H: Host> Vm<H> {
             then: self.intern_atom("then"),
             constructor: self.intern_atom("constructor"),
             name: self.intern_atom("name"),
+            empty: self.intern_atom(""),
         };
         self.field_caches = vec![EMPTY_CACHE; program.cache_sites as usize];
         Self::prime_loop_decoding(program);
