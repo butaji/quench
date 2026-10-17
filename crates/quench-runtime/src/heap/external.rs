@@ -7,6 +7,21 @@ impl Cell {
             _ => 0,
         }
     }
+
+    /// The memory a cell owns beyond its slot, which allocation weight and live weight
+    /// charge: string units, array element storage and external buffers.
+    pub(super) fn payload_bytes(&self) -> usize {
+        match self {
+            Self::String(text) => text.flat_unit_bytes(),
+            Self::Array { object } => array_payload_bytes(object),
+            cell => cell.external_bytes(),
+        }
+    }
+}
+
+/// Element storage an array owns.
+pub(super) fn array_payload_bytes(array: &super::ArrayObject) -> usize {
+    array.elements().capacity() * size_of::<super::Value>()
 }
 
 impl Heap {
