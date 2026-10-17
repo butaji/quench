@@ -128,13 +128,15 @@ pub(super) fn apply(
     while rewrite_super_window(function, superinstructions) {
         changed_passes += 1;
     }
-    while coalesce_distant_producer_moves(function, methods, field_sites, superinstructions) {
+    // Each pass hands the liveness of the code it leaves unchanged to the next.
+    let mut liveness = None;
+    while coalesce_distant_producer_moves(function, methods, field_sites, superinstructions, &mut liveness) {
         changed_passes += 1;
     }
-    if forward_move_sources(function, methods, field_sites, superinstructions) {
+    if forward_move_sources(function, methods, field_sites, superinstructions, &mut liveness) {
         changed_passes += 1;
     }
-    while rewrite_once(function, methods, field_sites, superinstructions) {
+    while rewrite_once(function, methods, field_sites, superinstructions, &mut liveness) {
         changed_passes += 1;
     }
     if std::env::var_os("QUENCH_REWRITE_STATS").is_some() {
@@ -143,6 +145,30 @@ pub(super) fn apply(
             function.code.len(),
             changed_passes + 1
         );
+    }
+}
+
+/// The liveness of a function's code as it stands: each instruction's transfer masks and the
+/// registers live before it. A pass that leaves the code unchanged hands it on.
+struct CodeLiveness {
+    transfers: Vec<(u64, u64)>,
+    live: Vec<u64>,
+}
+
+impl CodeLiveness {
+    /// `current` when a pass handed it on, otherwise derived from the code.
+    fn of(
+        current: &mut Option<Self>,
+        function: &BcFunction,
+        methods: &[MethodSiteSpec],
+        field_sites: &[FieldSite],
+        superinstructions: &[Superinstruction],
+    ) -> Option<Self> {
+        current.take().or_else(|| {
+            let transfers = liveness::transfers(function, methods, field_sites, superinstructions)?;
+            let live = liveness::analyze_transfers(function, &transfers);
+            Some(Self { transfers, live })
+        })
     }
 }
 
@@ -223,6 +249,7 @@ fn coalesce_distant_producer_moves(
     methods: &[MethodSiteSpec],
     field_sites: &[FieldSite],
     superinstructions: &[Superinstruction],
+    current: &mut Option<CodeLiveness>,
 ) -> bool {
     // Liveness is the expensive part; a function without a `Move` has nothing to coalesce.
     if !function
@@ -232,11 +259,11 @@ fn coalesce_distant_producer_moves(
     {
         return false;
     }
-    let Some(transfers) = liveness::transfers(function, methods, field_sites, superinstructions)
+    let Some(analysis) = CodeLiveness::of(current, function, methods, field_sites, superinstructions)
     else {
         return false;
     };
-    let live = liveness::analyze_transfers(function, &transfers);
+    let CodeLiveness { transfers, live } = &analysis;
     let protected = protected_positions(
         &function.code,
         &function.wide,
@@ -308,6 +335,9 @@ fn coalesce_distant_producer_moves(
         claimed_until = target + 1;
         changed = true;
     }
+    if !changed {
+        *current = Some(analysis);
+    }
     changed
 }
 
@@ -323,6 +353,7 @@ fn forward_move_sources(
     methods: &[MethodSiteSpec],
     field_sites: &[FieldSite],
     superinstructions: &[Superinstruction],
+    current: &mut Option<CodeLiveness>,
 ) -> bool {
     if !function
         .code
@@ -331,11 +362,11 @@ fn forward_move_sources(
     {
         return false;
     }
-    let Some(transfers) = liveness::transfers(function, methods, field_sites, superinstructions)
+    let Some(analysis) = CodeLiveness::of(current, function, methods, field_sites, superinstructions)
     else {
         return false;
     };
-    let live = liveness::analyze_transfers(function, &transfers);
+    let CodeLiveness { transfers, live } = &analysis;
     let protected = protected_positions(
         &function.code,
         &function.wide,
@@ -388,6 +419,9 @@ fn forward_move_sources(
         } else {
             pc += 1;
         }
+    }
+    if !changed {
+        *current = Some(analysis);
     }
     changed
 }
@@ -641,8 +675,23 @@ fn rewrite_once(
     methods: &[MethodSiteSpec],
     field_sites: &mut Vec<FieldSite>,
     superinstructions: &[Superinstruction],
+    current: &mut Option<CodeLiveness>,
 ) -> bool {
-    let live = liveness::analyze(function, methods, field_sites, superinstructions);
+    let rewrites_pair = |first: &Instr, second: &Instr| {
+        !first.is_wide()
+            && !second.is_wide()
+            && RULES.iter().any(|rule| rule.pattern == [first.op(), second.op()])
+    };
+    // A pass without a rule-shaped pair or a `Nop` changes nothing, and liveness is needed
+    // only to judge pairs.
+    let has_pair = function.code.windows(2).any(|pair| rewrites_pair(&pair[0], &pair[1]));
+    if !has_pair && !function.code.iter().any(|instruction| instruction.op() == Op::Nop) {
+        return false;
+    }
+    let analysis = has_pair
+        .then(|| CodeLiveness::of(current, function, methods, field_sites, superinstructions))
+        .flatten();
+    let live = analysis.as_ref().map(|analysis| &analysis.live);
     let old = std::mem::take(&mut function.code);
     let protected = protected_positions(
         &old,
@@ -668,23 +717,25 @@ fn rewrite_once(
             .get(index + 1)
             .filter(|second| !protected[index + 1] && !old[index].is_wide() && !second.is_wide())
             .and_then(|second| {
+                let first = old[index];
+                let mut rules = RULES
+                    .iter()
+                    .filter(|rule| rule.pattern == [first.op(), second.op()])
+                    .peekable();
+                rules.peek()?;
                 // The same control-flow facts justify frame roots and every
                 // removed register write. An unavailable map keeps the pair.
                 let live = live.as_ref()?;
-                let first = old[index];
                 let original_definitions =
                     liveness::definitions(first.as_wide(), superinstructions)
                         | liveness::definitions(second.as_wide(), superinstructions);
                 let live_out = liveness::live_out(function, live, index + 1, second.as_wide());
-                RULES
-                    .iter()
-                    .filter(|rule| rule.pattern == [first.op(), second.op()])
-                    .find_map(|rule| {
-                        let replacement = apply_rule(*rule, first, *second, field_sites, &positions, index)?;
-                        let removed_definitions = original_definitions
-                            & !liveness::definitions(replacement.as_wide(), superinstructions);
-                        (live_out & removed_definitions == 0).then_some(replacement)
-                    })
+                rules.find_map(|rule| {
+                    let replacement = apply_rule(*rule, first, *second, field_sites, &positions, index)?;
+                    let removed_definitions = original_definitions
+                        & !liveness::definitions(replacement.as_wide(), superinstructions);
+                    (live_out & removed_definitions == 0).then_some(replacement)
+                })
             });
         if let Some(instruction) = rewritten {
             map[index + 1] = code.len();
@@ -697,6 +748,14 @@ fn rewrite_once(
         }
     }
     map[old.len()] = code.len();
+    if !changed {
+        function.code = old;
+        if analysis.is_some() {
+            *current = analysis;
+        }
+        return false;
+    }
+    *current = None;
     relocate(
         &mut code,
         &mut function.wide,
@@ -708,7 +767,7 @@ fn rewrite_once(
         &old,
     );
     function.code = code;
-    changed
+    true
 }
 
 fn apply_rule(
@@ -888,7 +947,7 @@ mod tests {
             Instr::new(Op::Move, 5, 3, 0, 0),
             Instr::new(Op::Return, 5, 0, 0, 0),
         ];
-        assert!(!coalesce_distant_producer_moves(function, &[], &[], &[]));
+        assert!(!coalesce_distant_producer_moves(function, &[], &[], &[], &mut None));
         assert_eq!(function.code[0].result_register(), 3);
         assert_eq!(function.code[2].op(), Op::Move);
     }
@@ -1006,7 +1065,7 @@ mod tests {
                 register,
             })
             .collect();
-        while coalesce_distant_producer_moves(function, &[], &[], &[]) {}
+        while coalesce_distant_producer_moves(function, &[], &[], &[], &mut None) {}
         function
             .code
             .iter()
@@ -1112,7 +1171,7 @@ mod tests {
         let function = &mut program.functions[0];
         function.code = code;
         function.registers = registers;
-        rewrite_once(function, &[], &mut vec![], &[]);
+        rewrite_once(function, &[], &mut vec![], &[], &mut None);
         std::mem::take(&mut function.code)
     }
 
