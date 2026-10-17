@@ -30,6 +30,8 @@ mod locals;
 mod numeric;
 pub(crate) mod regexp;
 #[cfg(feature = "profile-memory")]
+mod program_profile;
+#[cfg(feature = "profile-memory")]
 mod register_profile;
 mod rewrite;
 mod sequence;
@@ -2187,6 +2189,10 @@ impl<'a> Compiler<'a> {
         };
         #[cfg(feature = "profile-aggregate")]
         debug_assert!(crate::profile::instruction_word_domains_fit(&program));
+        #[cfg(feature = "profile-memory")]
+        if std::env::var_os("QUENCH_MEMORY").is_some() {
+            program_profile::report(&program);
+        }
         Ok(program)
     }
 
