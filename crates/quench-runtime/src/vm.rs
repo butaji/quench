@@ -119,6 +119,7 @@ mod method_cache;
 mod module;
 mod number;
 mod object;
+mod shape_slot_memo;
 mod object_assignment;
 mod object_array;
 mod object_builtins;
@@ -154,7 +155,8 @@ mod sort;
 mod string;
 mod string_cache;
 mod string_extra;
-mod structured_clone;
+mod value_serializer;
+mod owned_clone_native;
 mod superinstruction;
 mod symbol;
 mod temporal;
@@ -181,6 +183,11 @@ mod typed_array_install;
 mod vm_init;
 pub(crate) mod wtf16;
 pub use error::JsError;
+pub use value_serializer::{
+    write_double, write_raw_bytes, write_uint32, write_uint64, HostObjectRead, SerializedValue, SharedWireInput, ValueDeserializer,
+    ValueSerializer, WireInput, WireOutput, WIRE_FORMAT_VERSION,
+};
+pub(crate) use value_serializer::{ReadHooks, WriteHooks};
 use wtf16::JsString;
 #[cfg(test)]
 mod tests;
@@ -540,25 +547,35 @@ struct FieldCache {
     slot: u16,
 }
 const NO_FIELD_HOLDER: u32 = u32::MAX;
-/// Prototypes an inherited field load may traverse to its holder. DeltaBlue's constraint
-/// methods sit three prototypes above their instances; deeper chains stay uncached.
-const INHERITED_FIELD_CACHE_MAX_DEPTH: usize = 4;
-/// A field load answered by a data property `depth` prototypes above a receiver of shape
-/// `receiver`: the chain still has exactly `prototype_shapes[..depth]`, the last of which
-/// holds the property at `slot`.
+/// Prototypes an inherited field load may traverse to its holder, or to the end of the chain
+/// for an absent name. Node's stream objects (an `IncomingMessage` above `Readable`, `Stream`,
+/// `EventEmitter` and `Object.prototype`) sit five prototypes above their instances; deeper
+/// chains stay uncached.
+const INHERITED_FIELD_CACHE_MAX_DEPTH: usize = 6;
+/// A field load answered `depth` prototypes above a receiver of shape `receiver`: the chain
+/// still has exactly `prototype_shapes[..depth]`, and `answer` says what that chain holds.
 #[derive(Clone, Copy)]
 struct InheritedFieldCache {
     receiver: u32,
     prototype_shapes: [u32; INHERITED_FIELD_CACHE_MAX_DEPTH],
     depth: u8,
-    slot: u16,
+    answer: InheritedFieldAnswer,
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum InheritedFieldAnswer {
+    /// The last recorded prototype holds the data property at this slot.
+    Slot(u16),
+    /// No recorded shape has the name and the last prototype's prototype is null: the load
+    /// is `undefined`.
+    Absent,
 }
 const NO_FIELD_RECEIVER: u32 = u32::MAX;
 /// A cache site without an inherited entry (`Vm::inherited_field_indices`).
 const NO_INHERITED_FIELD: u32 = u32::MAX;
-// DeltaBlue's measured inherited writes reach three prototypes; keep the
-// residual cache bounded while covering that common constructor shape.
-const FIELD_ADD_CACHE_MAX_PROTO_DEPTH: usize = 4;
+// A cached add proves every prototype up to this depth. Node's stream objects (an
+// `IncomingMessage` above `Readable`, `Stream`, `EventEmitter` and `Object.prototype`) add
+// their fields five prototypes below the chain's end; deeper chains stay uncached.
+const FIELD_ADD_CACHE_MAX_PROTO_DEPTH: usize = INHERITED_FIELD_CACHE_MAX_DEPTH;
 /// Source shapes one add site remembers; the oldest is evicted beyond this. Objects whose
 /// optional fields are assigned in varying order reach one add site with several shapes.
 const FIELD_ADD_CACHE_WAYS: usize = 4;
@@ -740,7 +757,10 @@ enum ShapeTransitionKey {
     FunctionNameReconfigured,
     FunctionLengthReconfigured,
     Constructed(Value, bool),
-    AddString(Atom, DataAttributes),
+    /// An added data property. A symbol key names a symbol a live shape keeps alive
+    /// (`append_shape_roots`); compaction rebuilds the index from live shapes only, so no
+    /// entry outlives the symbol it names.
+    Add(property_key::PropertyKey, DataAttributes),
     /// A descriptor without accessor functions (`ShapeAttributes::accessors` is
     /// `NO_SHAPE_ACCESSORS`).
     Descriptor {
@@ -859,17 +879,16 @@ impl ShapeTransition {
             Self::FunctionLengthReconfigured => Some(ShapeTransitionKey::FunctionLengthReconfigured),
             Self::Constructed { constructor, new_target_is_base } => Some(ShapeTransitionKey::Constructed(constructor, new_target_is_base)),
             Self::Add {
-                key: PropertyKey::String(atom),
+                key,
                 attributes,
                 ..
-            } => Some(ShapeTransitionKey::AddString(atom, attributes)),
+            } => Some(ShapeTransitionKey::Add(key, attributes)),
             // The transition table outlives individual properties. Never put
             // accessor values in a key, where they would become strong roots.
             Self::Descriptor { slot, attributes } if attributes.accessors == NO_SHAPE_ACCESSORS => {
                 Some(ShapeTransitionKey::Descriptor { slot, attributes })
             }
             Self::Root
-            | Self::Add { .. }
             | Self::Delete { .. }
             | Self::Vacant
             | Self::Descriptor { .. }
@@ -1191,6 +1210,7 @@ pub(crate) struct Vm<H> {
     lane_stack: dispatch_fast::LaneStack,
     /// Whether Wasm functions with a compiled denotation run as native code.
     execution_mode: ExecutionMode,
+    execution_interrupt: crate::ExecutionInterrupt,
     active_call_roots: Vec<Value>,
     with_stack: Vec<Value>,
     /// The realm's intrinsics as the host bootstrap left them (`seal_startup_intrinsics`).
@@ -1202,6 +1222,7 @@ pub(crate) struct Vm<H> {
     suspended: Vec<SuspendedEntry>,
     suspended_free: Vec<u32>,
     test262_agent: Test262AgentState,
+    shared_async_waiters:Vec<atomics::SharedAsyncWaiter>,
     programs: ProgramStore,
     program_cache_layouts: Vec<ProgramCacheLayout>,
     /// The register file of the frame the general loop dispatches; see `run_general_loop`.
@@ -1217,6 +1238,7 @@ pub(crate) struct Vm<H> {
     /// The getters and setters of shapes' accessor descriptors (`ShapeAttributes`).
     shape_accessors: Vec<ShapeAccessors>,
     transitions: shape_transitions::ShapeTransitionIndex,
+    shape_slot_memo: shape_slot_memo::ShapeSlotMemo,
     atom_text: AtomTable,
     /// Every atom, hashed by its text (`atom_keys::text_hash`); equal hashes are told apart
     /// by comparing the texts, which the atom tables hold.
@@ -1311,6 +1333,11 @@ struct IteratorRealmPrototypes {
     async_generator: Value,
 }
 impl<H: Host> Vm<H> {
+    pub(crate) fn execution_interrupt_handle(&self)->crate::ExecutionInterrupt { self.execution_interrupt.clone() }
+    pub(super) fn check_execution_interrupt(&self)->Result<(),JsError> {
+        if self.execution_interrupt.is_termination_requested() { Err(JsError::execution_terminated()) } else { Ok(()) }
+    }
+
     /// Makes `global`'s realm current, carrying each realm's global lexical
     /// scope with it; returns the previous realm's global.
     #[inline]
@@ -1621,6 +1648,7 @@ impl<H: Host> Vm<H> {
         if program.functions.is_empty() {
             return Err(JsError::validation("program has no entry function".into()));
         }
+        self.check_execution_interrupt()?;
         self.initialize(program)?;
         for (source, name) in scripts {
             self.eval_script_source(program, source, name)?;
@@ -1909,6 +1937,7 @@ impl<H: Host> Vm<H> {
         // The snapshot contains heap values, shapes and atom ids from one realm.
         // A host may build a builtin before sealing the replacement realm.
         self.startup_intrinsics = Default::default();
+        self.shared_async_waiters.clear();
         self.heap.reset();
         self.natives.clear();
         self.shared_natives.clear();
@@ -1928,6 +1957,7 @@ impl<H: Host> Vm<H> {
         self.realm.promise = Default::default();
         self.shapes.truncate(1);
         self.transitions.clear();
+        self.shape_slot_memo.clear();
         // The sealed holders and their shapes belong to the discarded heap.
         self.startup_intrinsics = Default::default();
         self.atom_text = program.atoms.clone();

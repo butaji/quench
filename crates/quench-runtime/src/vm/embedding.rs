@@ -1092,6 +1092,24 @@ impl<H: Host> Vm<H> {
         self.get_index(&program, object, key)
     }
 
+    /// `object[name]` for a property key given as Rust text, without allocating the key
+    /// string: an array-index name keeps `get_index`'s element path, and any other name is
+    /// the interned atom `get_index` would resolve.
+    pub(crate) fn get_named_property_rooted(
+        &mut self,
+        object: RootId,
+        name: &str,
+    ) -> Result<Value, JsError> {
+        let object = self.embedding_value(object)?;
+        let program = self.embedding_program()?;
+        if super::object_static::array_index(name).is_some() {
+            let key = self.heap.alloc(Cell::String(JsString::from_str(name)));
+            return self.get_index(&program, object, key);
+        }
+        let atom = self.intern_atom(name);
+        self.get_property(&program, object, atom)
+    }
+
     pub(crate) fn call_rooted(
         &mut self,
         callee: RootId,
@@ -1217,9 +1235,28 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         let object = self.embedding_value(object)?;
         let value = self.embedding_value(value)?;
-        let atom = self.intern_atom(name);
         let program = self.embedding_program()?;
+        if super::object_static::array_index(name).is_some() {
+            let key = self.heap.alloc(Cell::String(JsString::from_str(name)));
+            return self.set_index_mode(&program, object, key, value, true);
+        }
+        let atom = self.intern_atom(name);
         self.set_property_with_program_mode(&program, object, atom, value, true)
+    }
+
+    /// Strict-mode `object[key] = value` for a string or symbol key, as the guest's
+    /// `SetIndex` performs it.
+    pub(crate) fn assign_property_rooted(
+        &mut self,
+        object: RootId,
+        key: RootId,
+        value: RootId,
+    ) -> Result<(), JsError> {
+        let object = self.embedding_value(object)?;
+        let key = self.embedding_value(key)?;
+        let value = self.embedding_value(value)?;
+        let program = self.embedding_program()?;
+        self.set_index_mode(&program, object, key, value, true)
     }
 
     pub(crate) fn evaluate_module_sync(
@@ -1309,12 +1346,23 @@ impl<H: Host> Vm<H> {
         enumerable: bool,
         initializer: RootId,
     ) -> Result<(), JsError> {
+        let members = names.iter().map(|name| (*name, enumerable)).collect::<Vec<_>>();
+        self.define_lazy_group_rooted(holder, &members, false, initializer)
+    }
+
+    pub(crate) fn define_lazy_group_rooted(
+        &mut self,
+        holder: RootId,
+        members: &[(&str, bool)],
+        completes_keys: bool,
+        initializer: RootId,
+    ) -> Result<(), JsError> {
         let holder = self.embedding_value(holder)?;
         let initializer = self.embedding_value(initializer)?;
         let program = self.embedding_program()?;
-        let keys = names
+        let keys = members
             .iter()
-            .map(|name| {
+            .map(|(name, _)| {
                 // The key shares the atom table's text.
                 let atom = self.intern_atom(name);
                 let name = self.heap.alloc(Cell::String(self.atom_value(atom)));
@@ -1323,10 +1371,16 @@ impl<H: Host> Vm<H> {
             .collect::<Vec<_>>();
         let values = keys
             .iter()
-            .map(|&key| self.heap.root_value(key).unwrap())
+            .zip(members)
+            .map(|(&key, &(_, enumerable))| (self.heap.root_value(key).unwrap(), enumerable))
             .collect::<Vec<_>>();
-        let defined =
-            self.define_lazy_data_properties(&program, holder, &values, enumerable, initializer);
+        let defined = self.define_lazy_data_properties(
+            &program,
+            holder,
+            &values,
+            completes_keys,
+            initializer,
+        );
         for key in keys {
             self.heap.release_root(key);
         }

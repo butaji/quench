@@ -691,6 +691,7 @@ pub(crate) fn poll(
                     progressed = true;
                 }
             }
+            net_shared_vm::TransportEvent::DatagramCloseCompleted { id } => {progressed |= crate::modules::udp_binding::queue_close(runtime,shared_state,id)?;}
             net_shared_vm::TransportEvent::CloseCompleted { socket } => {
                 cancel_native_requests(runtime, shared_state, socket, -libc::ECANCELED)?;
                 let reader=shared_state.borrow_mut().native_stream.readers.remove(&socket);
@@ -706,8 +707,14 @@ pub(crate) fn poll(
                 if let Some(handle) = raw_callback {
                     let callback = runtime.host_function(crate::host::shared_vm::operation("netHandleCloseComplete"))
                         .map_err(|error| error.to_string())?;
+                    let execution=if let Some(resource)=crate::modules::native_async_wrap::tcp_resource(shared_state,socket){
+                        let owner=runtime.root(runtime.rooted_value(handle).ok_or("native close handle expired")?);
+                        let symbol=shared_state.borrow().net_handle_onclose_symbol.ok_or("native TCP close symbol missing")?;
+                        let key=runtime.root(runtime.rooted_value(symbol).ok_or("native TCP close symbol expired")?);
+                        Some(crate::modules::shared_event_loop::CallbackExecution{id:resource.id,resource:owner,lifetime:crate::modules::shared_event_loop::CallbackLifetime::Operation,optional_callback:Some(key)})
+                    }else{None};
                     shared_state.borrow_mut().scheduler.queue_shared_next_tick(
-                        crate::modules::shared_event_loop::SharedCallback { execution: None, callback, receiver: handle, args: Vec::new() },
+                        crate::modules::shared_event_loop::SharedCallback { execution, callback, receiver: handle, args: Vec::new() },
                     );
                     progressed = true;
                 }
@@ -1575,22 +1582,10 @@ fn raw_header_array(
         raw.push(runtime.string_rooted(&name));
         raw.push(runtime.string_rooted(&value));
     }
-    let global = runtime.global_root().map_err(|error| error.to_string())?;
-    let array_key = runtime.string_rooted("Array");
-    let array = runtime.get_property_rooted(global, array_key);
-    let result = match array {
-        Ok(array) => {
-            let result = runtime.construct_rooted(array, array, &raw);
-            runtime.release_root(array);
-            result
-        }
-        Err(error) => Err(error),
-    };
+    let result = runtime.array_rooted(&raw);
     for value in raw {
         runtime.release_root(value);
     }
-    runtime.release_root(array_key);
-    runtime.release_root(global);
     result.map_err(|error| error.to_string())
 }
 
@@ -1695,11 +1690,15 @@ fn queue_native_read(
             .rooted_value(handle)
             .ok_or("raw native handle expired")?,
     );
+    let execution=if let Some(resource)=crate::modules::native_async_wrap::tcp_resource(shared_state,socket){
+        let owner=runtime.root(runtime.rooted_value(handle).ok_or("native read handle expired")?);
+        Some(crate::modules::shared_event_loop::CallbackExecution{id:resource.id,resource:owner,lifetime:crate::modules::shared_event_loop::CallbackLifetime::Resource,optional_callback:None})
+    }else{None};
     let count = runtime.root(Value::number(f64::from(count)));
     let id = runtime.root(Value::number(socket as f64));
     shared_state.borrow_mut().scheduler.queue_shared_next_tick(
         crate::modules::shared_event_loop::SharedCallback {
-            execution: None,
+            execution,
             callback,
             receiver,
             args: vec![payload, count, id],

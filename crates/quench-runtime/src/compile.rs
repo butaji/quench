@@ -2331,6 +2331,61 @@ impl<'a> Compiler<'a> {
         }
         bindings
     }
+    /// The local slots a function body keeps in registers, and the promoted slots a nested
+    /// function may write (clobbered). `eligible` states the activation's own conditions;
+    /// the body's fixed-register facts and the register budget decide the rest. Ordinary
+    /// functions and arrows share this plan.
+    #[allow(clippy::too_many_arguments)]
+    fn promoted_local_plan(
+        &mut self,
+        eligible: bool,
+        body: &[Statement<'_>],
+        expression_body: Option<&Expression<'_>>,
+        locals: &[Atom],
+        function_scope: &FxHashSet<Atom>,
+        lexical_atoms: &[Atom],
+        self_binding_slot: Option<u16>,
+    ) -> (Vec<u16>, Vec<u16>) {
+        let register_local_facts = early::fixed_register_local_facts(body, expression_body);
+        if !eligible || !register_local_facts.safe {
+            return (Vec::new(), Vec::new());
+        }
+        let arguments_atom = self.atom("arguments");
+        let mut latest_local_slot = FxHashMap::default();
+        for (slot, atom) in locals.iter().copied().enumerate() {
+            if let Ok(slot) = u16::try_from(slot) {
+                latest_local_slot.insert(atom, slot);
+            }
+        }
+        let mut promoted_local_slots = latest_local_slot
+            .into_iter()
+            .filter_map(|(atom, slot)| {
+                (function_scope.contains(&atom)
+                    && !lexical_atoms.contains(&atom)
+                    && atom != arguments_atom
+                    && self_binding_slot != Some(slot)
+                    && !self.atoms[atom as usize].starts_with('\0'))
+                .then_some(slot)
+            })
+            .collect::<Vec<_>>();
+        // Promoted locals take the lowest registers; past half the register domain a
+        // function keeps its locals in frame slots so its temporaries still fit.
+        if promoted_local_slots.len() > usize::from(PROMOTED_LOCAL_REGISTER_BUDGET) {
+            promoted_local_slots.clear();
+        }
+        promoted_local_slots.sort_unstable();
+        let clobbered_local_slots = promoted_local_slots
+            .iter()
+            .copied()
+            .filter(|&slot| {
+                register_local_facts
+                    .nested_written_names
+                    .contains(&self.atoms[locals[usize::from(slot)] as usize])
+            })
+            .collect::<Vec<_>>();
+        (promoted_local_slots, clobbered_local_slots)
+    }
+
     fn compile_function(
         &mut self,
         name: Option<&str>,
@@ -2435,7 +2490,6 @@ impl<'a> Compiler<'a> {
             && options
                 .defaults
                 .is_none_or(|formal| !FunctionCompiler::has_non_simple_parameters(formal));
-        let register_local_facts = early::fixed_register_local_facts(body, expression_body);
         let promote_plain_locals = parent.is_some()
             && simple_parameters
             && !options.async_function
@@ -2446,45 +2500,16 @@ impl<'a> Compiler<'a> {
             && !options.implicit_super
             && options.with_depth == 0
             && self.eval_context.is_none()
-            && !dynamic_eval
-            && register_local_facts.safe;
-        let arguments_atom = self.atom("arguments");
-        let mut latest_local_slot = FxHashMap::default();
-        for (slot, atom) in locals.iter().copied().enumerate() {
-            if let Ok(slot) = u16::try_from(slot) {
-                latest_local_slot.insert(atom, slot);
-            }
-        }
-        let mut promoted_local_slots = if promote_plain_locals {
-            latest_local_slot
-                .into_iter()
-                .filter_map(|(atom, slot)| {
-                    (function_scope.contains(&atom)
-                        && !lexical_atoms.contains(&atom)
-                        && atom != arguments_atom
-                        && self_binding_slot != Some(slot)
-                        && !self.atoms[atom as usize].starts_with('\0'))
-                    .then_some(slot)
-                })
-                .collect::<Vec<_>>()
-        } else {
-            Vec::new()
-        };
-        // Promoted locals take the lowest registers; past half the register domain a
-        // function keeps its locals in frame slots so its temporaries still fit.
-        if promoted_local_slots.len() > usize::from(PROMOTED_LOCAL_REGISTER_BUDGET) {
-            promoted_local_slots.clear();
-        }
-        promoted_local_slots.sort_unstable();
-        let clobbered_local_slots = promoted_local_slots
-            .iter()
-            .copied()
-            .filter(|&slot| {
-                register_local_facts
-                    .nested_written_names
-                    .contains(&self.atoms[locals[usize::from(slot)] as usize])
-            })
-            .collect::<Vec<_>>();
+            && !dynamic_eval;
+        let (promoted_local_slots, clobbered_local_slots) = self.promoted_local_plan(
+            promote_plain_locals,
+            body,
+            expression_body,
+            &locals,
+            &function_scope,
+            &lexical_atoms,
+            self_binding_slot,
+        );
         let mut function = FunctionCompiler::new(
             self,
             locals,

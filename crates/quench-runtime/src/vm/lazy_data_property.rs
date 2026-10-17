@@ -22,10 +22,13 @@ enum GroupSlot {
     Holder,
     Initializer,
     State,
+    /// Whether the initializer adds own keys beside the members (`Value::TRUE`), so the
+    /// holder's key lists are complete only once the group has materialized.
+    CompletesKeys,
 }
 
 impl GroupSlot {
-    const COUNT: usize = Self::State as usize + 1;
+    const COUNT: usize = Self::CompletesKeys as usize + 1;
 }
 
 /// The slots of one member's own environment.
@@ -63,23 +66,27 @@ impl GroupState {
 }
 
 impl<H: Host> Vm<H> {
-    /// Defines each of `keys` (string property keys) on `holder` as one lazy group of
-    /// configurable data properties that `initializer` defines when any of them is observed.
+    /// Defines each of `members` (a string property key and whether it is enumerable) on
+    /// `holder` as one lazy group of configurable data properties that `initializer` defines
+    /// when any of them is observed. With `completes_keys`, the initializer also adds keys the
+    /// members do not name, and listing the holder's keys materializes the group first
+    /// (`complete_lazy_keys`).
     pub(crate) fn define_lazy_data_properties(
         &mut self,
         p: &ResidualProgram,
         holder: Value,
-        keys: &[Value],
-        enumerable: bool,
+        members: &[(Value, bool)],
+        completes_keys: bool,
         initializer: Value,
     ) -> Result<(), JsError> {
         let mut slots = vec![Value::UNDEFINED; GroupSlot::COUNT];
         slots[GroupSlot::Holder as usize] = holder;
         slots[GroupSlot::Initializer as usize] = initializer;
         slots[GroupSlot::State as usize] = GroupState::Pending.value();
+        slots[GroupSlot::CompletesKeys as usize] = if completes_keys { Value::TRUE } else { Value::FALSE };
         let group = self.native_environment(slots);
         self.with_call_roots([group], |vm| {
-            for &key in keys {
+            for &(key, enumerable) in members {
                 let mut slots = vec![Value::UNDEFINED; MemberSlot::COUNT];
                 slots[MemberSlot::Group as usize] = group;
                 slots[MemberSlot::Key as usize] = key;
@@ -141,6 +148,30 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn has_lazy_data_properties(&self, holder: Value) -> bool {
         self.lazy_data_properties(holder).next().is_some()
+    }
+
+    /// Materializes the pending groups whose initializers add keys to `holder`, before an
+    /// operation that observes its complete key list (`GroupSlot::CompletesKeys`).
+    pub(super) fn complete_lazy_keys(
+        &mut self,
+        p: &ResidualProgram,
+        holder: Value,
+    ) -> Result<(), JsError> {
+        let completes = |vm: &Self, group: Value| {
+            vm.heap.environment_slot(group, GroupSlot::CompletesKeys as usize) == Some(Value::TRUE)
+                && vm.heap.environment_slot(group, GroupSlot::State as usize)
+                    .map(GroupState::of)
+                    == Some(GroupState::Pending)
+        };
+        let groups = self
+            .lazy_data_properties(holder)
+            .map(|(_, group)| group)
+            .filter(|&group| completes(self, group))
+            .collect::<Vec<_>>();
+        for group in groups {
+            self.materialize_lazy_group(p, group)?;
+        }
+        Ok(())
     }
 
     /// Materializes `holder`'s own property `key` when it is a lazy data property, so a
