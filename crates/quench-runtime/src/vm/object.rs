@@ -842,6 +842,33 @@ impl<H: Host> Vm<H> {
     /// `array.length`: an array's own `length` is a data property no definition can turn
     /// into an accessor or hide, so reading it needs no lookup.
     #[inline(always)]
+    /// A string primitive's `GetField` where no lookup can run guest code, in the order
+    /// `get_field_cached` takes: its `length`, then a `String.prototype` data property its
+    /// site cache holds. An index, or any other key, is left to the general path.
+    pub(super) fn string_field_hit(
+        &self,
+        p: &ResidualProgram,
+        object: Value,
+        atom: Atom,
+        site: u16,
+    ) -> Option<Value> {
+        let Some(Cell::String(text)) = self.heap.get(object) else {
+            return None;
+        };
+        if atom == self.length_atom {
+            return Some(Value::number(text.len() as f64));
+        }
+        if !(self.specialized && p.specialized)
+            || self.atom_class(atom).contains(AtomClass::ARRAY_INDEX)
+            || !self.field_cache_atom_eligible(atom)
+        {
+            return None;
+        }
+        let receiver = self.shape_property_lookup(self.string_proto, atom)?;
+        let hit = self.cached_field_value(self.field_cache_index(site), receiver)?;
+        Some(hit.value)
+    }
+
     pub(super) fn array_length_field(&self, object: Value, atom: Atom) -> Option<Value> {
         (atom == self.length_atom)
             .then(|| self.own_array_length(object))

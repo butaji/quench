@@ -67,6 +67,39 @@ impl<H: Host> Vm<H> {
         Err(JsError("value is not callable".into()))
     }
 
+    /// A string query of a primitive string whose arguments are numbers, `undefined` or
+    /// strings: its general implementation then runs no guest code, raises nothing and
+    /// allocates no cell, so a lane completes the call in place. `None` for any other call.
+    pub(super) fn pure_string_query(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        this: Value,
+        args: &[Value],
+    ) -> Option<Value> {
+        let query = matches!(
+            native,
+            Native::StringCharCodeAt
+                | Native::StringIndexOf
+                | Native::StringLastIndexOf
+                | Native::StringIncludes
+                | Native::StringStartsWith
+                | Native::StringEndsWith
+        );
+        let primitive = |value: &Value| {
+            value.is_undefined()
+                || value.as_number().is_some()
+                || matches!(self.heap.get(*value), Some(Cell::String(_)))
+        };
+        if !query
+            || !matches!(self.heap.get(this), Some(Cell::String(_)))
+            || !args.iter().all(primitive)
+        {
+            return None;
+        }
+        self.call_primitive_native(p, native, this, args).ok()
+    }
+
     pub(super) fn call_primitive_native(
         &mut self,
         p: &ResidualProgram,

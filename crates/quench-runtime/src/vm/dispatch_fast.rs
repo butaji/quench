@@ -781,6 +781,23 @@ lane_handler! {
 }
 
 lane_handler! {
+    /// `InitializeTdz`: opens the binding's dead zone wherever the frame keeps it, as the
+    /// general path does (`Vm::frame_binding_mut`).
+    fn lane_initialize_tdz<>(cx, r, ip, i, view) {
+        // SAFETY: the context's program outlives the lane run.
+        let Some(binding) = (unsafe { vm(cx) }).frame_binding_mut(
+            unsafe { &*(*cx).code },
+            unsafe { (*cx).frame },
+            i.imm() as usize,
+        ) else {
+            return exit(ip);
+        };
+        *binding = Value::DELETED;
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
     fn lane_load_this<>(cx, r, ip, i, view) {
         // An uninitialized `this` throws on the general path.
         let Some(value) = (unsafe { lane_this(cx) }) else {
@@ -1465,7 +1482,9 @@ fn lane_cached_field_miss<H: Host>(
         super::object::FieldCacheProbe::OrdinaryMiss => vm
             .array_length_field(object, atom)
             .or_else(|| vm.cached_field_polymorphic_hit(code, object, atom, site)),
-        super::object::FieldCacheProbe::Ineligible => vm.array_length_field(object, atom),
+        super::object::FieldCacheProbe::Ineligible => vm
+            .array_length_field(object, atom)
+            .or_else(|| vm.string_field_hit(code, object, atom, site)),
     }
 }
 
@@ -3478,6 +3497,19 @@ lane_handler! {
                 kind: FunctionKind::Native(Native::ArrayPop),
                 ..
             }) => vm.array_pop_dense(receiver),
+            Some(&Cell::Function {
+                kind: FunctionKind::Native(native),
+                ..
+            }) => {
+                let window = ImmediateLayout::call_window_base(i.imm());
+                let argc = ImmediateLayout::argument_count(i.imm());
+                // SAFETY: as for the push; a pure query writes no register.
+                let args = unsafe {
+                    std::slice::from_raw_parts(r.0.add(usize::from(window)), usize::from(argc))
+                };
+                // SAFETY: the context's program outlives the lane run.
+                vm.pure_string_query(unsafe { &*(*cx).code }, native, receiver, args)
+            }
             _ => None,
         };
         let Some(value) = value else {
@@ -4308,6 +4340,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::StoreLocalPlain => Some(lane_store_local_plain::<H>),
         Op::StoreLocal | Op::StoreEnvLocal => Some(lane_store_local::<H>),
         Op::LoadThis => Some(lane_load_this::<H>),
+        Op::InitializeTdz => Some(lane_initialize_tdz::<H>),
         Op::GetField => Some(lane_get_field_first::<H>),
         Op::SetField | Op::SetFieldStrict => Some(lane_set_object_field_own::<H>),
         Op::SetThisField | Op::SetThisFieldStrict => Some(lane_set_this_field_own::<H>),
