@@ -32,9 +32,6 @@ pub fn entry_globals_source() -> String {
         web_streams::JS,
         performance::JS,
         r#"
-Object.defineProperty(globalThis, "URL", { value: URL, writable: true, configurable: true });
-Object.defineProperty(globalThis, "__nodeURL", { value: globalThis.URL, configurable: true });
-Object.defineProperty(globalThis, "__nodeURLSearchParams", { value: globalThis.URLSearchParams, configurable: true });
 "#,
     ]
     .join("\n")
