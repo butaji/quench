@@ -11,20 +11,21 @@ const EVENTS_API: &str = quench_js_check::checked_js!(
     return error;
   };
 
-  const once = (emitter, event, options) => {
+  // lib/events.js `async function once(emitter, name, options = kEmptyObject)`.
+  async function once(emitter, event, options = undefined) {
     if (options !== undefined && (options === null || typeof options !== "object")) {
-      return Promise.reject(invalid("The options argument must be an object"));
+      throw invalid("The options argument must be an object");
     }
     options ||= {};
     const signal = options.signal;
     if (signal !== undefined &&
         (signal === null || typeof signal !== "object" ||
          typeof signal.addEventListener !== "function")) {
-      return Promise.reject(invalid("The signal option must be an AbortSignal"));
+      throw invalid("The signal option must be an AbortSignal");
     }
     const isEmitter = typeof emitter?.once === "function";
     if (!isEmitter && typeof emitter?.addEventListener !== "function") {
-      return Promise.reject(invalid("The emitter must be an EventEmitter or EventTarget"));
+      throw invalid("The emitter must be an EventEmitter or EventTarget");
     }
     return new Promise((resolve, reject) => {
       const remove = () => {
@@ -55,7 +56,7 @@ const EVENTS_API: &str = quench_js_check::checked_js!(
       else signal?.addEventListener?.("abort", onAbort, { once: true });
       queueMicrotask(() => { if (signal?.aborted) onAbort(); });
     });
-  };
+  }
 
   return { once };
 })()"#
@@ -67,17 +68,6 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let module = context.get_property_rooted(global, class_key)?;
     set(context, module, "EventEmitter", module)?;
     super::emitter_async_resource_shared_vm::install(context, module)?;
-
-    let inspect = crate::modules::util_shared_vm::internal_inspect(context)?;
-    let internal_inspect = context.evaluate_script_rooted(
-        "Symbol.for('quench.internal.eventEmitter.inspect')",
-        "node:events/internal-inspect-symbol",
-    )?;
-    if !context.set_property_rooted(module, internal_inspect, inspect, module)? {
-        return Err(RootedError::host(
-            "cannot install the EventEmitter error inspector",
-        ));
-    }
 
     let api = context.evaluate_script_rooted(EVENTS_API, "node:events/shared-api.js")?;
     let once = get(context, api, "once")?;
@@ -129,6 +119,11 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     )?;
     set(context, module, "captureRejectionSymbol", capture_symbol)?;
     Ok(module)
+}
+
+/// The `util.inspect` an unhandled `'error'` event formats a non-Error value with.
+pub(crate) fn error_inspector(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    crate::modules::util_shared_vm::internal_inspect(context)
 }
 
 fn set(
