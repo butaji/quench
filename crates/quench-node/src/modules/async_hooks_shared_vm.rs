@@ -614,7 +614,7 @@ pub(crate) fn initialize_resource(
     receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    use super::event_constructor_shared_vm::{get, named_set};
+    use super::event_constructor_shared_vm::get;
     let undefined = context.undefined();
     let kind = args.first().copied().unwrap_or(undefined);
     let options = args.get(1).copied().unwrap_or(undefined);
@@ -623,7 +623,6 @@ pub(crate) fn initialize_resource(
             context, kind, "type", "string",
         )?);
     };
-    let api = context.host_function_data()?;
     let state = context.host_mut().shared_state();
     let identity = state.borrow().async_hooks.identity.clone();
     let parent = identity.store_context();
@@ -663,21 +662,18 @@ pub(crate) fn initialize_resource(
         let error =
             context.range_error_rooted(&format!("Invalid triggerAsyncId value: {received}"))?;
         let code = context.string_rooted("ERR_INVALID_ASYNC_ID");
-        named_set(context, api, error, "code", code)?;
+        context.assign_named_property_rooted(error, "code", code)?;
         return Err(context.throw(error));
     }
     let trigger = number.unwrap() as i64;
     let id = identity.allocate_async_id();
     set_number(context, receiver, ASYNC_ID, id)?;
     let trigger_value = context.number(trigger as f64);
-    named_set(
-        context,
-        api,
-        receiver,
+    context.assign_named_property_rooted(receiver,
         "\0quench:async_hooks:trigger",
         trigger_value,
     )?;
-    named_set(context, api, receiver, "\0quench:async_hooks:type", kind)?;
+    context.assign_named_property_rooted(receiver, "\0quench:async_hooks:type", kind)?;
     {
         let mut state = state.borrow_mut();
         state.async_hooks.context_triggers.insert(id, trigger);
@@ -691,7 +687,7 @@ pub(crate) fn initialize_resource(
     {
         let error = context.type_error_rooted("Invalid name for async \"type\": ")?;
         let code = context.string_rooted("ERR_ASYNC_TYPE");
-        named_set(context, api, error, "code", code)?;
+        context.assign_named_property_rooted(error, "code", code)?;
         return Err(context.throw(error));
     }
     emit_init(context, receiver, &kind_text, id)?;
