@@ -647,6 +647,12 @@ impl FieldAddCacheSet {
         entries: [FieldAddCache::EMPTY; FIELD_ADD_CACHE_WAYS],
     };
     #[inline(always)]
+    fn find(&self, source_shape: u32, atom: Atom) -> Option<&FieldAddCache> {
+        self.entries[..usize::from(self.len)]
+            .iter()
+            .find(|cache| cache.source_shape == source_shape && cache.atom == atom)
+    }
+    #[inline(always)]
     fn find_mut(&mut self, source_shape: u32, atom: Atom) -> Option<&mut FieldAddCache> {
         self.entries[..usize::from(self.len)]
             .iter_mut()

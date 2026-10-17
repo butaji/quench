@@ -735,12 +735,18 @@ impl<H: Host> Vm<H> {
     /// The receiver an in-place [[Construct]] of `callee` allocates: an ordinary object
     /// whose prototype is the callee's own data `prototype`, when that is an object.
     pub(super) fn inline_construct_receiver(&mut self, callee: Value) -> Option<Value> {
+        let object = self.inline_construct_template(callee)?;
+        Some(self.heap.alloc_object(object))
+    }
+
+    /// The object `inline_construct_receiver` allocates, before it is allocated.
+    pub(super) fn inline_construct_template(&mut self, callee: Value) -> Option<Object> {
         let prototype_atom = self.prototype_atom();
         let prototype = self.own_function_prototype_data(callee, prototype_atom)?;
         self.object_data(prototype)?;
         let mut object = Self::empty_object(prototype);
         self.capture_constructed_name(&mut object, callee, true);
-        Some(self.heap.alloc_object(object))
+        Some(object)
     }
 
     pub(super) fn own_function_prototype_data(
