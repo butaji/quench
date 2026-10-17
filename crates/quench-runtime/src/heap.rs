@@ -22,7 +22,7 @@ mod slots;
 mod thin_slice;
 mod weak;
 pub(crate) use cell::*;
-pub(crate) use buffer_bytes::BufferBytes;
+pub(crate) use buffer_bytes::{BufferBytes,BufferRead};
 pub(crate) use collection_entries::CollectionEntries;
 use records::{ArrayRecordSpace, ObjectRecordSpace, RecordSweep};
 pub use root::RootId;
@@ -2643,7 +2643,7 @@ impl Heap {
                 }
                 Cell::String(value) => value.capacity(),
                 Cell::BigInt(value) | Cell::Error(value) => value.capacity(),
-                Cell::Symbol(value) => value.as_ref().map_or(0, String::capacity),
+                Cell::Symbol(value) => value.as_ref().map_or(0, |description| description.len()),
             }
     }
     #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]

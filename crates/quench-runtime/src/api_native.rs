@@ -21,6 +21,86 @@ pub(crate) struct CompiledScriptState {
     pub(crate) source: crate::vm::ProgramId,
 }
 
+/// An embedder's hooks for its scripted serializer (V8's `ValueSerializer::Delegate`).
+pub trait SerializerDelegate<H: Host> {
+    /// Write a host object's contents; its tag is already written. A returned value is
+    /// written next, through the same serializer.
+    fn write_host_object(
+        &mut self,
+        context: &mut NativeContext<'_, H>,
+        output: &crate::WireOutput,
+        object: RootId,
+    ) -> Result<Option<RootId>, RootedError>;
+    fn shared_array_buffer_id(&mut self, context: &mut NativeContext<'_, H>, buffer: RootId) -> Result<u32, RootedError>;
+    /// The exception for a value that cannot be cloned, already thrown.
+    fn data_clone_error(&mut self, context: &mut NativeContext<'_, H>, message: &str) -> RootedError;
+}
+
+/// An embedder's hooks for its scripted deserializer (V8's `ValueDeserializer::Delegate`).
+pub trait DeserializerDelegate<H: Host> {
+    fn read_host_object(
+        &mut self,
+        context: &mut NativeContext<'_, H>,
+        input: &crate::SharedWireInput,
+    ) -> Result<crate::HostObjectRead<RootId>, RootedError>;
+    fn shared_array_buffer(&mut self, context: &mut NativeContext<'_, H>, id: u32) -> Result<RootId, RootedError>;
+}
+
+/// Embedder delegates seen as the serializer's internal hooks: each call runs in a
+/// native scope over the VM.
+struct Scripted<'d, D: ?Sized>(&'d mut D);
+
+fn hook_value<H: Host>(context: &mut NativeContext<'_, H>, result: Result<RootId, RootedError>) -> Result<Value, JsError> {
+    result
+        .map(|root| context.vm.root_value(root).unwrap_or(Value::UNDEFINED))
+        .map_err(|error| error.error)
+}
+
+impl<H: Host, D: SerializerDelegate<H> + ?Sized> crate::vm::WriteHooks<H> for Scripted<'_, D> {
+    fn write_host_object(&mut self, vm: &mut Vm<H>, _: &crate::ResidualProgram, output: &crate::WireOutput, object: Value) -> Result<Option<Value>, JsError> {
+        let mut context = NativeContext::new(vm);
+        let object = context.scoped_value(object);
+        match self.0.write_host_object(&mut context, output, object) {
+            Ok(Some(next)) => hook_value(&mut context, Ok(next)).map(Some),
+            Ok(None) => Ok(None),
+            Err(error) => Err(error.error),
+        }
+    }
+
+    fn shared_array_buffer_id(&mut self, vm: &mut Vm<H>, _: &crate::ResidualProgram, buffer: Value) -> Result<u32, JsError> {
+        let mut context = NativeContext::new(vm);
+        let buffer = context.scoped_value(buffer);
+        self.0.shared_array_buffer_id(&mut context, buffer).map_err(|error| error.error)
+    }
+
+    fn data_clone_error(&mut self, vm: &mut Vm<H>, _: &crate::ResidualProgram, message: &str) -> JsError {
+        let mut context = NativeContext::new(vm);
+        self.0.data_clone_error(&mut context, message).error
+    }
+}
+
+impl<H: Host, D: DeserializerDelegate<H> + ?Sized> crate::vm::ReadHooks<H> for Scripted<'_, D> {
+    fn read_host_object(
+        &mut self,
+        vm: &mut Vm<H>,
+        _: &crate::ResidualProgram,
+        input: &crate::SharedWireInput,
+    ) -> Result<crate::HostObjectRead<Value>, JsError> {
+        let mut context = NativeContext::new(vm);
+        match self.0.read_host_object(&mut context, input) {
+            Ok(crate::HostObjectRead::Object(object)) => hook_value(&mut context, Ok(object)).map(crate::HostObjectRead::Object),
+            Ok(crate::HostObjectRead::NextValue) => Ok(crate::HostObjectRead::NextValue),
+            Err(error) => Err(error.error),
+        }
+    }
+
+    fn shared_array_buffer(&mut self, vm: &mut Vm<H>, _: &crate::ResidualProgram, id: u32) -> Result<Value, JsError> {
+        let mut context = NativeContext::new(vm);
+        let result = self.0.shared_array_buffer(&mut context, id);
+        hook_value(&mut context, result)
+    }
+}
+
 /// Opaque index into the embedding's stable native-operation table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HostFunctionId(pub u32);
@@ -236,6 +316,17 @@ pub struct NativeContext<'a, H: Host> {
 
 impl<'a, H: Host> NativeContext<'a, H> {
     /// Count actual heap record/arena capacities and unique live payloads without guest effects.
+    /// An owned cancellation handle for a native operation; no Vm reference escapes.
+    pub fn execution_interrupt_handle(&self)->crate::ExecutionInterrupt { self.vm.execution_interrupt_handle() }
+    /// Register an idempotent native wakeup while a host operation is blocked.
+    /// Keep the strong callback until the wait ends; the Core stores only a Weak.
+    pub fn register_termination_waker(&self,wake:&std::sync::Arc<dyn Fn()+Send+Sync>) {
+        self.vm.execution_interrupt_handle().register_termination_waker(wake)
+    }
+    /// Propagate host cancellation as the same uncatchable completion as bytecode.
+    pub fn check_execution_interrupt(&mut self)->Result<(),RootedError> {
+        self.vm.check_execution_interrupt().map_err(|error|self.error(error))
+    }
     pub fn heap_memory_composition(&self) -> crate::HeapMemoryComposition {
         self.vm.embedding_heap_memory_composition()
     }
@@ -853,6 +944,103 @@ impl<'a, H: Host> NativeContext<'a, H> {
             .map_err(|error| self.error(error))
     }
 
+    /// How V8 shows a value in a DataCloneError, without side effects.
+    pub fn clone_description_rooted(&mut self, value: RootId) -> String {
+        match self.vm.root_value(value) {
+            Some(value) => self.vm.clone_description(value),
+            None => String::new(),
+        }
+    }
+
+    /// `ValueSerializer::WriteValue` through an embedder's hooks.
+    pub fn serializer_write_value(
+        &mut self,
+        serializer: &mut crate::ValueSerializer,
+        value: RootId,
+        delegate: &mut dyn SerializerDelegate<H>,
+    ) -> Result<(), RootedError> {
+        let result = self.vm.embedding_value(value).and_then(|value| {
+            let program = self.vm.embedding_program()?;
+            self.vm.wire_write(&program, serializer, &mut Scripted(delegate), value)
+        });
+        result.map_err(|error| self.error(error))
+    }
+
+    /// `ValueSerializer::TransferArrayBuffer`; `false` when `buffer` is no ArrayBuffer.
+    pub fn serializer_transfer_array_buffer(
+        &mut self,
+        serializer: &mut crate::ValueSerializer,
+        id: u32,
+        buffer: RootId,
+    ) -> Result<bool, RootedError> {
+        let buffer = self.vm.embedding_value(buffer).map_err(|error| self.error(error))?;
+        if !self.vm.is_unshared_array_buffer(buffer) {
+            return Ok(false);
+        }
+        self.vm.wire_transfer_array_buffer(serializer, id, buffer);
+        Ok(true)
+    }
+
+    /// Release the objects a serializer numbered.
+    pub fn serializer_release(&mut self, serializer: &mut crate::ValueSerializer) {
+        self.vm.release_wire_serializer(serializer);
+    }
+
+    /// `ValueDeserializer::ReadHeader`.
+    pub fn deserializer_read_header(&mut self, deserializer: &mut crate::ValueDeserializer) -> Result<(), RootedError> {
+        let result = self.vm.embedding_program().and_then(|program| self.vm.wire_read_header(&program, deserializer));
+        result.map_err(|error| self.error(error))
+    }
+
+    /// `ValueDeserializer::ReadValue` through an embedder's hooks.
+    pub fn deserializer_read_value(
+        &mut self,
+        deserializer: &mut crate::ValueDeserializer,
+        delegate: &mut dyn DeserializerDelegate<H>,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.embedding_program().and_then(|program| {
+            self.vm.wire_read_value(&program, deserializer, &mut Scripted(delegate))
+        });
+        self.completion(result)
+    }
+
+    /// `ValueDeserializer::TransferArrayBuffer`; `false` when `buffer` is no
+    /// ArrayBuffer or SharedArrayBuffer.
+    pub fn deserializer_transfer_array_buffer(
+        &mut self,
+        deserializer: &mut crate::ValueDeserializer,
+        id: u32,
+        buffer: RootId,
+    ) -> Result<bool, RootedError> {
+        let buffer = self.vm.embedding_value(buffer).map_err(|error| self.error(error))?;
+        if !self.vm.is_array_buffer(buffer) {
+            return Ok(false);
+        }
+        self.vm.wire_receive_array_buffer(deserializer, id, buffer);
+        Ok(true)
+    }
+
+    /// Release the objects a deserializer created or was handed.
+    pub fn deserializer_release(&mut self, deserializer: &mut crate::ValueDeserializer) {
+        self.vm.release_wire_deserializer(deserializer);
+    }
+
+    /// Capture a Send + Sync graph; source transfer detachment occurs once here.
+    pub fn capture_owned_clone_rooted(&mut self,value:RootId,transfers:&[RootId])->Result<crate::owned_clone::Graph,RootedError>{crate::owned_clone::capture(self,value,transfers)}
+    pub fn import_owned_clone_rooted(&mut self,graph:&crate::owned_clone::Graph)->Result<RootId,RootedError>{crate::owned_clone::import(self,graph)}
+    pub fn clone_metadata_rooted(&mut self,value:RootId)->Result<Option<crate::owned_clone::Metadata>,RootedError>{
+        use crate::owned_clone::Metadata as M;
+        let metadata=self.vm.embedding_clone_metadata(value).map_err(|e|self.error(e))?;
+        Ok(metadata.map(|m|match m{
+            M::View{kind,buffer,offset,length,tracking}=>M::View{kind,buffer:self.scoped_value(buffer),offset,length,tracking},
+            M::SharedBuffer(b)=>M::SharedBuffer(b),M::RegExp(s,f)=>M::RegExp(s,f),M::Error(s)=>M::Error(s),
+            M::Buffer{bytes,shared,detached,maximum,resizable}=>M::Buffer{bytes,shared,detached,maximum,resizable},
+        }))
+    }
+    pub fn clone_bigint_rooted(&mut self,text:&str)->Result<RootId,RootedError>{let result=self.vm.embedding_clone_bigint(text);self.completion(result)}
+    pub fn clone_allocate_rooted(&mut self,node:&crate::owned_clone::Node,operands:&[RootId])->Result<RootId,RootedError>{let result=self.vm.embedding_clone_allocate(node,operands);self.completion(result)}
+    pub fn clone_collection_insert_rooted(&mut self,target:RootId,args:&[RootId],map:bool)->Result<RootId,RootedError>{let result=self.vm.embedding_clone_collection_insert(target,args,map);self.completion(result)}
+
     pub fn structured_clone_rooted(
         &mut self,
         value: RootId,
@@ -864,6 +1052,34 @@ impl<'a, H: Host> NativeContext<'a, H> {
 
     /// Clone with an already-converted transfer sequence. Host Web IDL conversion
     /// owns iteration; the VM must not consult the public iterator a second time.
+    /// Mark a host object serializable only when listed for transfer, as a MessagePort.
+    pub fn require_transfer_rooted(&mut self, value: RootId) -> Result<(), RootedError> {
+        self.vm.embedding_require_transfer(value).map_err(|error| self.error(error))
+    }
+
+    /// Serialize `value` for another agent: `transfers` (ArrayBuffers) move into the
+    /// result, and each of `host_objects` becomes a reference the receiver supplies.
+    pub fn serialize_rooted(
+        &mut self,
+        value: RootId,
+        transfers: &[RootId],
+        host_objects: &[RootId],
+    ) -> Result<crate::SerializedValue, RootedError> {
+        self.vm
+            .embedding_serialize(value, transfers, host_objects)
+            .map_err(|error| self.error(error))
+    }
+
+    /// Deserialize into this heap, substituting `host_objects` in the sender's order.
+    pub fn deserialize_rooted(
+        &mut self,
+        serialized: crate::SerializedValue,
+        host_objects: &[RootId],
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.embedding_deserialize(serialized, host_objects);
+        self.completion(result)
+    }
+
     pub fn structured_clone_with_transfers_rooted(
         &mut self,
         value: RootId,
@@ -887,6 +1103,13 @@ impl<'a, H: Host> NativeContext<'a, H> {
     pub fn symbol_rooted(&mut self, description: Option<&str>) -> RootId {
         let description = description.map(str::to_owned);
         let symbol = self.vm.embedding_symbol(description);
+        self.scoped_value(symbol)
+    }
+
+    /// Create a native host-private symbol. Explicit key operations work, while
+    /// ordinary reflection and property copying never expose the key.
+    pub fn private_symbol_rooted(&mut self, description: Option<&str>) -> RootId {
+        let symbol = self.vm.embedding_private_symbol(description.map(str::to_owned));
         self.scoped_value(symbol)
     }
 
@@ -1204,6 +1427,17 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.completion(result)
     }
 
+    /// `object[name]` for a key given as Rust text; equivalent to `get_property_rooted` with
+    /// a string key, without allocating the key.
+    pub fn get_named_property_rooted(
+        &mut self,
+        object: RootId,
+        name: &str,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.get_named_property_rooted(object, name);
+        self.completion(result)
+    }
+
     /// Perform the same strict named assignment as guest JavaScript.
     pub fn assign_named_property_rooted(
         &mut self,
@@ -1212,6 +1446,18 @@ impl<'a, H: Host> NativeContext<'a, H> {
         value: RootId,
     ) -> Result<(), RootedError> {
         self.vm.assign_named_property_rooted(object, name, value)
+            .map_err(|error| self.error(error))
+    }
+
+    /// Perform the same strict keyed assignment as guest JavaScript.
+    pub fn assign_property_rooted(
+        &mut self,
+        object: RootId,
+        key: RootId,
+        value: RootId,
+    ) -> Result<(), RootedError> {
+        self.vm
+            .assign_property_rooted(object, key, value)
             .map_err(|error| self.error(error))
     }
 
@@ -1264,6 +1510,21 @@ impl<'a, H: Host> NativeContext<'a, H> {
     ) -> Result<(), RootedError> {
         self.vm
             .define_lazy_data_properties_rooted(holder, names, enumerable, initializer)
+            .map_err(|error| self.error(error))
+    }
+
+    /// Defines `members` (a name and whether it is enumerable) on `holder` as one group of
+    /// lazy data properties, like `define_lazy_data_properties_rooted`, whose `initializer`
+    /// also adds keys the members do not name: listing `holder`'s keys with its symbols, or
+    /// fixing its integrity, materializes the group first.
+    pub fn define_lazy_holder_keys_rooted(
+        &mut self,
+        holder: RootId,
+        members: &[(&str, bool)],
+        initializer: RootId,
+    ) -> Result<(), RootedError> {
+        self.vm
+            .define_lazy_group_rooted(holder, members, true, initializer)
             .map_err(|error| self.error(error))
     }
 

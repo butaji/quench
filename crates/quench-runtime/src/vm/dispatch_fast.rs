@@ -2000,7 +2000,7 @@ fn lane_jump<H: Host>(
     let jump = unsafe { (*ip).jump() };
     // SAFETY: the view records the distance to a validated jump target.
     let target = unsafe { ip.byte_offset(jump) };
-    if backward && below_floor() {
+    if backward && (below_floor() || unsafe { vm(cx) }.execution_interrupt.is_termination_requested()) {
         // Scalar arguments only, so the slow path stays a sibling call.
         return match commit {
             None => lane_safepoint::<H>(ip, target),
@@ -2881,7 +2881,7 @@ fn frame_memory_view<H: Host>(
 #[inline(never)]
 fn lane_safepoint<H: Host>(ip: Ip, target: Ip) -> Ip {
     // SAFETY: called only while a lane runs, from one of its handlers.
-    if unsafe { vm(lane_context::<H>()) }.heap.should_collect() {
+    if unsafe { vm(lane_context::<H>()) }.heap.should_collect() || unsafe { vm(lane_context::<H>()) }.execution_interrupt.is_termination_requested() {
         return exit(ip);
     }
     target
@@ -5153,14 +5153,11 @@ const ACCUMULATOR: bool = cfg!(quench_lane_tail_calls);
 fn derive_lane_view<H: Host>(
     function: &Function,
     constants: &[Value],
-    kind: crate::bytecode::ProgramKind,
+    _kind: crate::bytecode::ProgramKind,
 ) -> LaneView {
-    // A backward jump is a safepoint where the lane can meet a due
-    // collection. Wasm records never allocate, so no collection becomes due
-    // inside a Wasm run (one due at entry is taken there), and with sibling
-    // calls the run's stack never grows: a Wasm function's jumps all take
-    // the plain path.
-    let safepoints = kind != crate::bytecode::ProgramKind::Wasm;
+    // Every backward jump observes host termination, including allocation-free
+    // Wasm loops. Collection and stack-floor exits share this safepoint.
+
     let tables = const { &LaneTable::<H>::TABLES };
     let memory_register = memory_register(function);
     let jump_targets = jump_targets(function);
@@ -5203,8 +5200,7 @@ fn derive_lane_view<H: Host>(
                 accumulator_field(instruction, register)
             });
             // A table is backward when one of its entries jumps back.
-            let backward_jump = safepoints
-                && if op == Op::WasmBranchTable {
+            let backward_jump = if op == Op::WasmBranchTable {
                     crate::bytecode::branch_table_entries(pc, instruction).any(|entry| {
                         decoded_instruction(function, function.code[entry]).imm() as usize <= pc
                     })
@@ -5455,7 +5451,7 @@ fn derive_lane_view<H: Host>(
         }
         let absorbed = decoded_instruction(function, function.code[target]);
         let plain = |op: Op| absorbed.op() == op && serves(records[target].handler, op, ACC_NONE);
-        let backward = safepoints && target < pc;
+        let backward = target <= pc;
         let (handler, c) = if plain(Op::Move) {
             (JumpFusions::<H>::THROUGH[0][usize::from(backward)], 0)
         } else if plain(Op::WasmI32AddImmediate)

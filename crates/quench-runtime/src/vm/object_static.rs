@@ -830,7 +830,8 @@ impl<H: Host> Vm<H> {
         let current_record = (!is_new).then(|| {
             PropertyDescriptorRecord::from_attributes(existing.unwrap_or(Value::UNDEFINED), current)
         });
-        let extensible = self.object_data(target).is_some_and(Object::is_extensible);
+        let host_private = key.symbol_value().is_some_and(|symbol| self.is_host_private_symbol(symbol));
+        let extensible = host_private || self.object_data(target).is_some_and(Object::is_extensible);
         if !descriptor.compatible_with(current_record, extensible, |a, b| self.same_value(a, b)) {
             return Ok(false);
         }

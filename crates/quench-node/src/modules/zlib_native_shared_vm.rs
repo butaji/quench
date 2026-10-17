@@ -1,6 +1,6 @@
-//! Native compression handles consumed by the configured Node algorithms.
+//! `internalBinding('zlib')` (src/node_zlib.cc): compression handles lib/zlib.js drives.
 use super::zlib_native_codec::{Codec as Engine, Failure, Step};
-use super::zlib_shared_vm::Codec as Mode;
+use super::zlib_constants::Mode;
 use crate::host::NodeHost;
 use quench_runtime::{HostWeakRoot, NativeContext, RootId, RootedError, Runtime};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
@@ -27,8 +27,7 @@ struct Completed {
     output: Vec<u8>,
 }
 fn get(c: &mut Context<'_>, o: RootId, n: &str) -> Result<RootId, RootedError> {
-    let k = c.string_rooted(n);
-    c.get_property_rooted(o, k)
+    c.get_named_property_rooted(o, n)
 }
 fn put(c: &mut Context<'_>, o: RootId, n: &str, v: RootId) -> Result<(), RootedError> {
     let k = c.string_rooted(n);
@@ -102,9 +101,7 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
             ("Zlib", "Zlib"),
             ("ZstdCompress", "ZstdCompress"),
             ("ZstdDecompress", "ZstdDecompress"),
-            #[cfg(quench_node_brotli)]
             ("BrotliEncoder", "BrotliEncoder"),
-            #[cfg(quench_node_brotli)]
             ("BrotliDecoder", "BrotliDecoder"),
         ];
         for (name, operation) in constructors {
@@ -116,6 +113,8 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
                 ("writeSync", "zlibNativeWriteSync"),
                 ("close", "zlibNativeClose"),
                 ("init", "zlibNativeInit"),
+                ("params", "zlibNativeParams"),
+                ("reset", "zlibNativeReset"),
             ] {
                 let f = c.host_function_named_with_data(
                     crate::host::shared_vm::operation(op),
@@ -126,11 +125,10 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
             }
             put(c, result, name, ctor)?;
         }
-        #[cfg(quench_node_zlib)]
-        {
-            let version = c.string_rooted(&super::zlib_native_codec::version());
-            put(c, result, "ZLIB_VERSION", version)?;
-        }
+        let crc32 = c.host_function_named(crate::host::shared_vm::operation("zlibNativeCrc32"), "crc32")?;
+        put(c, result, "crc32", crc32)?;
+        let version = c.string_rooted(&super::zlib_native_codec::version());
+        put(c, result, "ZLIB_VERSION", version)?;
 
         Ok(result)
     })?;
@@ -148,16 +146,12 @@ pub(crate) fn create(
         .copied()
         .ok_or_else(|| RootedError::host("compression mode missing"))?;
     let value = c.to_number(value)?;
-    let mode = super::zlib_shared_vm::CODECS
-        .iter()
-        .find(|(_, _, mode)| {
-            *mode as i32 as f64 == value && mode.family() == super::zlib_shared_vm::Family::Zlib
-        })
-        .map(|v| v.2)
+    let mode = Mode::ZLIB
+        .into_iter()
+        .find(|mode| *mode as i32 as f64 == value)
         .ok_or_else(|| fail(c, "Invalid zlib mode"))?;
     create_handle(c, handle, mode)
 }
-#[cfg(quench_node_brotli)]
 pub(crate) fn create_brotli_encoder(
     c: &mut Context<'_>,
     handle: RootId,
@@ -165,7 +159,6 @@ pub(crate) fn create_brotli_encoder(
 ) -> Result<RootId, RootedError> {
     create_handle(c, handle, Mode::BrotliCompress)
 }
-#[cfg(quench_node_brotli)]
 pub(crate) fn create_brotli_decoder(
     c: &mut Context<'_>,
     handle: RootId,
@@ -223,40 +216,24 @@ pub(crate) fn initialize(
             let params = parameter_values(c, args)?;
             let pledge = pledged_size(c, args.get(1).copied())?;
             let dictionary = dictionary_bytes(c, args.get(4).copied())?;
-            let reject_trailing = args
-                .get(5)
-                .copied()
-                .and_then(|v| c.rooted_value(v))
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
+            let reject_trailing = flag(c, args, 5);
             (
                 Engine::zstd(mode, &params, pledge, dictionary, reject_trailing),
                 2,
                 3,
             )
+        } else if matches!(mode, Mode::BrotliCompress | Mode::BrotliDecompress) {
+            let params = parameter_values(c, args)?;
+            let dictionary = dictionary_bytes(c, args.get(3).copied())?;
+            (Engine::brotli(mode, &params, dictionary), 1, 2)
         } else {
-            #[cfg(quench_node_brotli)]
-            if matches!(mode, Mode::BrotliCompress | Mode::BrotliDecompress) {
-                let params = parameter_values(c, args)?;
-                let dictionary = dictionary_bytes(c, args.get(3).copied())?;
-                (Engine::brotli(mode, &params, dictionary), 1, 2)
-            } else {
-                initialize_zlib(c, mode, args)?
-            }
-            #[cfg(not(quench_node_brotli))]
-            {
-                initialize_zlib(c, mode, args)?
-            }
+            initialize_zlib(c, mode, args)?
         };
     let api = c.host_function_data()?;
     let engine = match engine {
         Ok(engine) => engine,
         Err(error) => {
-            let callback = get(c, handle, "onerror")?;
-            let message = c.string_rooted(&error.message);
-            let errno = c.number(error.errno as f64);
-            let code = c.string_rooted(&error.code);
-            c.call_rooted(callback, handle, &[message, errno, code])?;
+            emit_error(c, handle, &error)?;
             let init_message = if matches!(mode, Mode::ZstdCompress | Mode::ZstdDecompress) {
                 &error.message
             } else {
@@ -332,6 +309,10 @@ fn parameter_values(c: &mut Context<'_>, args: &[RootId]) -> Result<Vec<u32>, Ro
         .map(|bytes| u32::from_ne_bytes(bytes.try_into().expect("u32 chunk")))
         .collect())
 }
+/// The optional `rejectGarbageAfterEnd` boolean at `index`.
+fn flag(c: &Context<'_>, args: &[RootId], index: usize) -> bool {
+    args.get(index).and_then(|v| c.rooted_value(*v)).and_then(|v| v.as_bool()).unwrap_or(false)
+}
 fn initialize_zlib(
     c: &mut Context<'_>,
     mode: Mode,
@@ -345,8 +326,9 @@ fn initialize_zlib(
         return Err(fail(c, "Invalid zlib initialization"));
     }
     let dictionary = args.get(6).copied().and_then(|v| c.view_bytes_rooted(v));
+    let reject_garbage_after_end = flag(c, args, 7);
     Ok((
-        Engine::new(mode, values[0], values[1], values[2], values[3], dictionary),
+        Engine::new(mode, values[0], values[1], values[2], values[3], dictionary, reject_garbage_after_end),
         4,
         5,
     ))
@@ -440,13 +422,7 @@ fn complete(
                 c.call_rooted(callback, handle, &[])?;
             }
         }
-        Err(error) => {
-            let callback = get(c, handle, "onerror")?;
-            let message = c.string_rooted(&error.message);
-            let number = c.number(error.errno as f64);
-            let code = c.string_rooted(&error.code);
-            c.call_rooted(callback, handle, &[message, number, code])?;
-        }
+        Err(error) => emit_error(c, handle, error)?,
     }
     Ok(())
 }
@@ -641,6 +617,76 @@ pub(crate) fn close(
     let api = c.host_function_data()?;
     close_handle(c, api, handle)?;
     Ok(c.undefined())
+}
+/// Report a codec failure through the handle's `onerror`, as `EmitError` does; like
+/// `MakeCallback`, a handle without one (still initializing) reports nothing.
+fn emit_error(c: &mut Context<'_>, handle: RootId, error: &Failure) -> Result<(), RootedError> {
+    let callback = get(c, handle, "onerror")?;
+    if !c.is_callable_rooted(callback)? {
+        return Ok(());
+    }
+    let message = c.string_rooted(&error.message);
+    let errno = c.number(error.errno as f64);
+    let code = c.string_rooted(&error.code);
+    c.call_rooted(callback, handle, &[message, errno, code])?;
+    Ok(())
+}
+/// Run `operation` on a ready engine; a busy engine is a write in progress.
+fn with_engine(
+    c: &mut Context<'_>,
+    handle: RootId,
+    busy: &str,
+    operation: impl FnOnce(&mut Engine) -> Result<(), Failure>,
+) -> Result<RootId, RootedError> {
+    let i = index(c, handle)?;
+    let shared = c.host_mut().shared_state();
+    let result = match &mut shared.borrow_mut().zlib_native.entries[i].phase {
+        Phase::Ready(engine) => Some(operation(engine)),
+        Phase::Busy(_) => None,
+        Phase::New => Some(Ok(())),
+    };
+    match result {
+        None => {
+            let error = c.error_rooted(busy)?;
+            Err(c.throw(error))
+        }
+        Some(Err(error)) => {
+            emit_error(c, handle, &error)?;
+            Ok(c.undefined())
+        }
+        Some(Ok(())) => Ok(c.undefined()),
+    }
+}
+/// `reset()`.
+pub(crate) fn reset(c: &mut Context<'_>, handle: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    with_engine(c, handle, "Cannot reset zlib stream while a write is in progress", Engine::reset)
+}
+/// `params(level, strategy)`.
+pub(crate) fn params(c: &mut Context<'_>, handle: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let mut values = [0; 2];
+    for (value, arg) in values.iter_mut().zip(args) {
+        *value = c.to_number(*arg)? as i32;
+    }
+    let [level, strategy] = values;
+    with_engine(c, handle, "Cannot set parameters while a write is in progress", |engine| engine.params(level, strategy))
+}
+/// `crc32(data, value)`: zlib's CRC-32 continued from `value` over a view or a string's
+/// UTF-8 bytes.
+pub(crate) fn crc32(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let data = args.first().copied().ok_or_else(|| RootedError::host("crc32 data missing"))?;
+    let bytes = match c.string_text(data)? {
+        Some(text) => text.into_bytes(),
+        None => c.view_bytes_rooted(data).ok_or_else(|| fail(c, "crc32 data must be a string or a buffer view"))?,
+    };
+    let value = match args.get(1) {
+        Some(value) => c.to_number(*value)? as u32,
+        None => 0,
+    };
+    let crc = bytes.chunks(libz_rs_sys::uInt::MAX as usize).fold(value, |crc, chunk| {
+        // SAFETY: a valid buffer of the length passed.
+        unsafe { libz_rs_sys::crc32(crc.into(), chunk.as_ptr(), chunk.len() as libz_rs_sys::uInt) as u32 }
+    });
+    Ok(c.number(f64::from(crc)))
 }
 pub(crate) fn prune(runtime: &mut Runtime<NodeHost>) {
     let shared = runtime.host_mut().shared_state();

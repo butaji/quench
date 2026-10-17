@@ -48,20 +48,93 @@ const MODULE_FACTORY: &str = r#"((initializeServer, EventEmitter, request, creat
     }
   });
   const createServer = (...args) => new Server(...args);
-  class Agent {
-    constructor(options) {
-      this._quenchSharedAgentId = createAgent(options);
+  // Node's lib/_http_agent.js public pool state; the native pool owns the sockets.
+  const DEFAULT_KEEP_ALIVE_MSECS = 1000;
+  const DEFAULT_MAX_FREE_SOCKETS = 256;
+  const DEFAULT_KEEP_ALIVE_TIMEOUT_BUFFER = 1000;
+  const MIN_TOTAL_SOCKETS = 1;
+  const SCHEDULING = ["fifo", "lifo"];
+  function Agent(options) {
+    if (!(this instanceof Agent)) return new Agent(options);
+    EventEmitter.call(this);
+    this.options = { __proto__: null, ...options };
+    this.defaultPort = this.options.defaultPort || 80;
+    this.protocol = this.options.protocol || "http:";
+    if (this.options.noDelay === undefined) this.options.noDelay = true;
+    this.options.path = null;
+    this.requests = { __proto__: null };
+    this.sockets = { __proto__: null };
+    this.freeSockets = { __proto__: null };
+    this.keepAliveMsecs = this.options.keepAliveMsecs || DEFAULT_KEEP_ALIVE_MSECS;
+    this.keepAlive = this.options.keepAlive || false;
+    this.maxSockets = this.options.maxSockets || Agent.defaultMaxSockets;
+    this.maxFreeSockets = this.options.maxFreeSockets || DEFAULT_MAX_FREE_SOCKETS;
+    this.scheduling = this.options.scheduling || "lifo";
+    this.maxTotalSockets = this.options.maxTotalSockets;
+    this.totalSocketCount = 0;
+    const buffer = this.options.agentKeepAliveTimeoutBuffer;
+    this.agentKeepAliveTimeoutBuffer =
+      typeof buffer === "number" && buffer >= 0 && Number.isFinite(buffer) ? buffer : DEFAULT_KEEP_ALIVE_TIMEOUT_BUFFER;
+    if (!SCHEDULING.includes(this.scheduling)) {
+      const error = new TypeError(`The argument 'scheduling' must be one of: 'fifo', 'lifo'. Received ${JSON.stringify(this.scheduling)}`);
+      error.code = "ERR_INVALID_ARG_VALUE";
+      throw error;
     }
-    destroy() {
-      return destroyAgent(this._quenchSharedAgentId);
+    if (this.maxTotalSockets !== undefined) {
+      if (typeof this.maxTotalSockets !== "number") throw invalidArgument("maxTotalSockets", "of type number", this.maxTotalSockets);
+      if (!(this.maxTotalSockets >= MIN_TOTAL_SOCKETS)) {
+        const error = new RangeError(`The value of "maxTotalSockets" is out of range. It must be >= ${MIN_TOTAL_SOCKETS}. Received ${this.maxTotalSockets}`);
+        error.code = "ERR_OUT_OF_RANGE";
+        throw error;
+      }
+    } else {
+      this.maxTotalSockets = Infinity;
     }
+    Object.defineProperty(this, "_quenchSharedAgentId", { value: createAgent(options) });
   }
+  Object.setPrototypeOf(Agent.prototype, EventEmitter.prototype);
+  Object.setPrototypeOf(Agent, EventEmitter);
+  Agent.defaultMaxSockets = Infinity;
+  Agent.prototype.destroy = function destroy() {
+    return destroyAgent(this._quenchSharedAgentId);
+  };
+  // Node's internal/http.js getGlobalAgent options.
+  const GLOBAL_AGENT_TIMEOUT_MSECS = 5000;
+  const globalAgent = new Agent({ keepAlive: true, scheduling: "lifo", timeout: GLOBAL_AGENT_TIMEOUT_MSECS });
   const get = (input, options, callback) => {
     const outgoing = request(input, options, callback);
     outgoing.end();
     return outgoing;
   };
-  return { Server, createServer, request, get, Agent, IncomingMessage, ServerResponse };
+  return { Server, createServer, request, get, Agent, globalAgent, IncomingMessage, ServerResponse };
+})"#;
+
+// Node's lib/https.js agent over the HTTP agent's pool state. Fastify and the AWS SDK
+// import both transports at initialization; requests need the TLS client transport.
+const HTTPS_FACTORY: &str = r#"((http) => {
+  const DEFAULT_MAX_CACHED_SESSIONS = 100;
+  function Agent(options) {
+    if (!(this instanceof Agent)) return new Agent(options);
+    options = { __proto__: null, ...options };
+    options.defaultPort ??= 443;
+    options.protocol ??= "https:";
+    http.Agent.call(this, options);
+    this.maxCachedSessions = this.options.maxCachedSessions;
+    if (this.maxCachedSessions === undefined) this.maxCachedSessions = DEFAULT_MAX_CACHED_SESSIONS;
+    this._sessionCache = { map: {}, list: [] };
+  }
+  Object.setPrototypeOf(Agent.prototype, http.Agent.prototype);
+  Object.setPrototypeOf(Agent, http.Agent);
+  // Node's internal/http.js getGlobalAgent options.
+  const GLOBAL_AGENT_TIMEOUT_MSECS = 5000;
+  const globalAgent = new Agent({ keepAlive: true, scheduling: "lifo", timeout: GLOBAL_AGENT_TIMEOUT_MSECS });
+  const unavailable = () => new Error("HTTPS transport is unavailable");
+  return {
+    Agent,
+    globalAgent,
+    request: function request() { throw unavailable(); },
+    get: function get() { throw unavailable(); },
+  };
 })"#;
 
 const SERVER_CLOSE_FACTORY: &str = r#"((closeOperation) => function(callback) {
@@ -70,8 +143,41 @@ const SERVER_CLOSE_FACTORY: &str = r#"((closeOperation) => function(callback) {
   return this;
 })"#;
 
-const RESPONSE_FACTORY: &str = r#"((Writable, setHeaderOperation, getHeaderOperation, removeHeader, write, finish, writeHeadOperation, destroyOperation, initializeResponse) => {
+/// Node's `ServerResponse` as an `OutgoingMessage`: a legacy `Stream` whose writes go to
+/// the native exchange `id` names. Methods live on the prototype and read the exchange from
+/// the instance; `end` writes and finishes synchronously, then `finish` and `close` follow on
+/// ticks, as Node's socket write completion and `emitCloseNT` deliver them.
+const RESPONSE_FACTORY: &str = r#"((Stream, setHeaderOperation, getHeaderOperation, removeHeaderOperation, write, finish, writeHeadOperation, destroyOperation, initializeResponse, nextTick, codes) => {
+  const kExchange = Symbol("kResponseExchange");
+  const kFinished = Symbol("kResponseFinished");
+  const normalizeHeaderValue = (value) => {
+    if (value === undefined) return [value, false];
+    if (Array.isArray(value)) return [value.map((item) => String(item)), true];
+    return [String(value), false];
+  };
+  const validChunk = (chunk) => {
+    if (chunk === null) throw new codes.ERR_STREAM_NULL_VALUES();
+    if (typeof chunk !== "string" && !(chunk instanceof Uint8Array)) {
+      throw new codes.ERR_INVALID_ARG_TYPE("chunk", ["string", "Buffer", "Uint8Array"], chunk);
+    }
+  };
+  const writeAfterEnd = (response, callback) => {
+    const error = new codes.ERR_STREAM_WRITE_AFTER_END();
+    nextTick(() => {
+      response.emit("error", error);
+      if (typeof callback === "function") callback(error);
+    });
+  };
+  const emitFinished = (response) => {
+    response[kFinished] = true;
+    response.emit("finish");
+    nextTick(() => response.emit("close"));
+  };
   function ServerResponse(id, statusCode, request, server, socket) {
+    // The native exchange calls the constructor as a function for each request.
+    if (!(this instanceof ServerResponse)) {
+      return new ServerResponse(id, statusCode, request, server, socket);
+    }
     if (typeof id !== "number") {
       socket = undefined;
       server = undefined;
@@ -79,82 +185,140 @@ const RESPONSE_FACTORY: &str = r#"((Writable, setHeaderOperation, getHeaderOpera
       id = 0;
       statusCode = 200;
     }
-    let response;
-    let ending = false;
-    const normalizeHeaderValue = (value) => {
-      if (value === undefined) return [value, false];
-      if (Array.isArray(value)) return [value.map((item) => String(item)), true];
-      return [String(value), false];
-    };
-    response = new Writable({
-      // Writable `finish` completes the response body, while the socket owns
-      // the response's transport lifetime.
-      autoDestroy: false,
-      write(chunk, encoding, callback) {
-        write(id, chunk, !ending, response.statusCode, response.statusMessage, response, encoding);
-        response.headersSent = true;
-        callback();
-      },
-      final(callback) {
-        try { finish(id, response.statusCode, response.statusMessage, request, response, server, socket); response.headersSent = true; callback(); }
-        catch (error) { callback(error); }
-      },
-      destroy(error, callback) {
-        try { destroyOperation(id); callback(error); }
-        catch (failure) { callback(failure); }
-      },
-    });
-    Object.setPrototypeOf(response, ServerResponse.prototype);
-    response.finished = false;
-    response.statusCode = statusCode;
-    const endStream = response.end.bind(response);
-    response.end = (chunk, encoding, callback) => {
-      ending = true;
-      response.finished = true;
-      return endStream(chunk, encoding, callback);
-    };
-    response.setHeader = (name, value) => {
-      const [normalized, multiple] = normalizeHeaderValue(value);
-      setHeaderOperation(id, name, normalized, multiple);
-      return response;
-    };
-    response.getHeader = (name) => getHeaderOperation(id, name);
-    response.removeHeader = (name) => removeHeader(id, name);
-    response.writeHead = (status, reasonOrHeaders, headers) => {
-      const hasReason = typeof reasonOrHeaders === "string";
-      const reason = hasReason ? reasonOrHeaders : undefined;
-      const source = hasReason ? headers : reasonOrHeaders;
-      const entries = [];
-      let invalid = false;
-      if (source !== undefined) {
-        if (Array.isArray(source)) {
-          if (source.length % 2 !== 0) invalid = true;
-          else {
-            for (let index = 0; index < source.length; index += 2) {
-              const [value, multiple] = normalizeHeaderValue(source[index + 1]);
-              entries.push(source[index], value, multiple);
-            }
-          }
-        } else if (source !== null && typeof source === "object") {
-          for (const name of Object.keys(source)) {
-            const [value, multiple] = normalizeHeaderValue(source[name]);
-            entries.push(name, value, multiple);
-          }
-        } else {
-          invalid = true;
-        }
-      }
-      writeHeadOperation(id, status, reason, entries, invalid, response);
-      response.headersSent = true;
-      return response;
-    };
-    initializeResponse(id, response);
-    return response;
+    Stream.call(this);
+    this.outputData = [];
+    this.outputSize = 0;
+    this.writable = true;
+    this.destroyed = false;
+    this.chunkedEncoding = false;
+    this.useChunkedEncodingByDefault = true;
+    this.sendDate = true;
+    this.finished = false;
+    this._headerSent = false;
+    this.statusCode = statusCode;
+    this.statusMessage = undefined;
+    this.req = request;
+    this[kExchange] = { id, request, server, socket };
+    this[kFinished] = false;
+    initializeResponse(id, this);
   }
-  ServerResponse.prototype = Object.create(Writable.prototype);
-  Object.defineProperty(ServerResponse.prototype, "constructor", {
-    value: ServerResponse, writable: true, configurable: true,
+  ServerResponse.prototype = Object.create(Stream.prototype);
+  Object.setPrototypeOf(ServerResponse, Stream);
+  const define = (name, value) => Object.defineProperty(ServerResponse.prototype, name, {
+    value, writable: true, configurable: true,
   });
+  const getter = (name, get) => Object.defineProperty(ServerResponse.prototype, name, {
+    get, configurable: true, enumerable: true,
+  });
+  define("constructor", ServerResponse);
+  define("setHeader", function setHeader(name, value) {
+    const [normalized, multiple] = normalizeHeaderValue(value);
+    setHeaderOperation(this[kExchange].id, name, normalized, multiple);
+    return this;
+  });
+  define("getHeader", function getHeader(name) {
+    return getHeaderOperation(this[kExchange].id, name);
+  });
+  define("removeHeader", function removeHeader(name) {
+    return removeHeaderOperation(this[kExchange].id, name);
+  });
+  define("writeHead", function writeHead(status, reasonOrHeaders, headers) {
+    const hasReason = typeof reasonOrHeaders === "string";
+    const reason = hasReason ? reasonOrHeaders : undefined;
+    const source = hasReason ? headers : reasonOrHeaders;
+    const entries = [];
+    let invalid = false;
+    if (source !== undefined) {
+      if (Array.isArray(source)) {
+        if (source.length % 2 !== 0) invalid = true;
+        else {
+          for (let index = 0; index < source.length; index += 2) {
+            const [value, multiple] = normalizeHeaderValue(source[index + 1]);
+            entries.push(source[index], value, multiple);
+          }
+        }
+      } else if (source !== null && typeof source === "object") {
+        for (const name of Object.keys(source)) {
+          const [value, multiple] = normalizeHeaderValue(source[name]);
+          entries.push(name, value, multiple);
+        }
+      } else {
+        invalid = true;
+      }
+    }
+    writeHeadOperation(this[kExchange].id, status, reason, entries, invalid, this);
+    this._headerSent = true;
+    return this;
+  });
+  define("write", function write(chunk, encoding, callback) {
+    if (typeof encoding === "function") {
+      callback = encoding;
+      encoding = null;
+    }
+    validChunk(chunk);
+    if (this.finished) {
+      writeAfterEnd(this, callback);
+      return false;
+    }
+    writeChunk(this, chunk, encoding, true);
+    if (typeof callback === "function") nextTick(callback);
+    return true;
+  });
+  const writeChunk = (response, chunk, encoding, more) => {
+    write(response[kExchange].id, chunk, more, response.statusCode, response.statusMessage, response, encoding);
+    response._headerSent = true;
+  };
+  define("end", function end(chunk, encoding, callback) {
+    if (typeof chunk === "function") {
+      callback = chunk;
+      chunk = null;
+      encoding = null;
+    } else if (typeof encoding === "function") {
+      callback = encoding;
+      encoding = null;
+    }
+    if (chunk) {
+      validChunk(chunk);
+      if (this.finished) {
+        writeAfterEnd(this, callback);
+        return this;
+      }
+      writeChunk(this, chunk, encoding, false);
+    } else if (this.finished) {
+      if (typeof callback === "function") {
+        if (!this[kFinished]) this.once("finish", callback);
+        else callback(new codes.ERR_STREAM_ALREADY_FINISHED("end"));
+      }
+      return this;
+    }
+    if (typeof callback === "function") this.once("finish", callback);
+    this.finished = true;
+    const exchange = this[kExchange];
+    finish(exchange.id, this.statusCode, this.statusMessage, exchange.request, this, exchange.server, exchange.socket);
+    this._headerSent = true;
+    this.emit("prefinish");
+    nextTick(emitFinished, this);
+    return this;
+  });
+  define("destroy", function destroy(error) {
+    if (this.destroyed) return this;
+    this.destroyed = true;
+    destroyOperation(this[kExchange].id);
+    nextTick(() => {
+      if (error) this.emit("error", error);
+      this.emit("close");
+    });
+    return this;
+  });
+  define("cork", function cork() {});
+  define("uncork", function uncork() {});
+  getter("headersSent", function headersSent() { return this._headerSent; });
+  getter("writableEnded", function writableEnded() { return this.finished; });
+  getter("writableFinished", function writableFinished() { return this[kFinished]; });
+  getter("writableObjectMode", function writableObjectMode() { return false; });
+  getter("writableLength", function writableLength() { return 0; });
+  getter("writableCorked", function writableCorked() { return 0; });
+  getter("writableNeedDrain", function writableNeedDrain() { return false; });
   return ServerResponse;
 })"#;
 
@@ -206,8 +370,15 @@ pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     let name = context.string_rooted("_send");
     context.define_data_property_rooted(send, key, name, false, false, true)?;
     let stream = crate::host::shared_vm::commonjs::stream_module(context)?;
-    let writable_key = context.string_rooted("Writable");
-    let writable = context.get_property_rooted(stream, writable_key)?;
+    let legacy_stream = get(context, stream, "Stream")?;
+    let process = get(context, global, "process")?;
+    let next_tick = get(context, process, "nextTick")?;
+    let codes = crate::host::shared_vm::commonjs::node_library_export(
+        context,
+        "internal/errors.js",
+        "internal/errors.js",
+        "codes",
+    )?;
     let response_factory =
         context.evaluate_script_rooted(RESPONSE_FACTORY, "node:http/response-factory.js")?;
     let undefined = context.undefined();
@@ -215,7 +386,7 @@ pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
         response_factory,
         undefined,
         &[
-            writable,
+            legacy_stream,
             set_header,
             get_header,
             remove_header,
@@ -224,6 +395,8 @@ pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
             write_head,
             destroy_response,
             initialize_response,
+            next_tick,
+            codes,
         ],
     )?;
     let key = context.string_rooted("prototype");
@@ -325,6 +498,12 @@ pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
         .http
         .incoming_factory = Some(incoming_factory);
     Ok(module)
+}
+
+pub(crate) fn https_module(context: &mut Context<'_>, http: RootId) -> Result<RootId, RootedError> {
+    let factory = context.evaluate_script_rooted(HTTPS_FACTORY, "node:https.js")?;
+    let undefined = context.undefined();
+    context.call_rooted(factory, undefined, &[http])
 }
 
 pub(crate) fn create_server(
