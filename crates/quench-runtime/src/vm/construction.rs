@@ -96,7 +96,7 @@ impl<H: Host> Vm<H> {
         if let Some(&value) = self.atom_strings.get(&atom) {
             return value;
         }
-        let value = self.heap.alloc(Cell::String(JsString::from_str(self.atom_name(atom))));
+        let value = self.heap.alloc(Cell::String(self.atom_value(atom)));
         if (atom as usize) < self.atom_text.len() || atom == self.runtime_atoms.empty {
             self.atom_strings.insert(atom, value);
         }

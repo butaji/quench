@@ -1687,6 +1687,40 @@ mod tests {
     use wasmparser::Operator;
 
     #[test]
+    fn compiled_wasm_first_call_compiles_and_enters_its_root() {
+        let function = crate::Engine::lower_wasm_module(
+            "compiled-wasm-first-root",
+            0,
+            [crate::WasmFunctionBody {
+                ty: crate::WasmCallableType::Embedded(crate::WasmSignature {
+                    params: vec![],
+                    results: vec![crate::WasmType::I32],
+                }),
+                locals: vec![],
+                operators: [Operator::I32Const { value: 42 }, Operator::End]
+                    .into_iter()
+                    .map(Ok),
+            }],
+        )
+        .unwrap();
+        let mut vm = Vm::new(crate::SystemHost);
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+
+        assert_eq!(vm.execute_wasm_i32(&function, &[]).unwrap(), Some(42));
+
+        let program = vm
+            .programs
+            .find_shared(&function.module.program)
+            .expect("registered Wasm program");
+        let compiled = vm
+            .programs
+            .compiled(program)
+            .flatten()
+            .expect("first call compiled the Wasm root");
+        assert_eq!(compiled.native_entries(0), Some(1));
+    }
+
+    #[test]
     fn tag_import_roots_transfer_identity_without_retaining_exporter_environment() {
         type Body = crate::WasmFunctionBody<
             std::vec::IntoIter<Result<Operator<'static>, wasmparser::BinaryReaderError>>,

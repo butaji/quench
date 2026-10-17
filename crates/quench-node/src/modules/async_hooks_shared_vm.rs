@@ -198,15 +198,21 @@ fn visible_async_id(state: &super::async_hooks_state::SharedAsyncHooksState) -> 
     state.identity.current_async_id()
 }
 
+/// A promise's async-hooks identity, made only while promises are tracked
+/// (`SharedAsyncHooksState::tracks_promises`): an untracked promise holds no id, trigger or
+/// resource entry for a later destroy.
 pub(crate) fn create_promise_context(
     shared: &Rc<RefCell<crate::host::SharedNodeState>>,
     parent: Option<quench_runtime::HostExecutionContext>,
-) -> quench_runtime::HostExecutionContext {
+) -> Option<quench_runtime::HostExecutionContext> {
     let mut state = shared.borrow_mut();
+    if !state.async_hooks.tracks_promises() {
+        return None;
+    }
     let trigger = parent.map_or_else(|| state.async_hooks.default_trigger_async_id(), |id| id.0 as f64);
     let id = state.async_hooks.identity.allocate_async_id();
     state.async_hooks.context_triggers.insert(id, trigger as i64);
-    quench_runtime::HostExecutionContext(id)
+    Some(quench_runtime::HostExecutionContext(id))
 }
 
 pub(crate) fn initialize_promise(
@@ -214,6 +220,19 @@ pub(crate) fn initialize_promise(
     promise: RootId,
     resource: quench_runtime::HostExecutionContext,
 ) -> Result<(), RootedError> {
+    // A long run of promises can stay within one event-loop turn, where the turn-end prune
+    // never comes: every new promise first prunes the table once a collection has run since
+    // the last prune, so it holds only promises that may still be live.
+    let prune_due = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .async_hooks
+        .promise_resources_pruned_epoch
+        != context.collection_epoch();
+    if prune_due {
+        prune_promise_resources(context)?;
+    }
     let weak = context.host_weak_root(promise)?;
     context.host_mut().shared_state().borrow_mut().async_hooks.promise_resources.insert(resource.0, weak);
     emit_init(context, promise, "PROMISE", resource.0)
@@ -224,7 +243,15 @@ pub(crate) fn prune_promises(
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
+    prune_promise_resources(context)?;
+    Ok(context.undefined())
+}
+
+/// Releases the weak references of collected promises and queues their destroy hooks.
+fn prune_promise_resources(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
+    let epoch = context.collection_epoch();
     let shared = context.host_mut().shared_state();
+    shared.borrow_mut().async_hooks.promise_resources_pruned_epoch = epoch;
     let entries: Vec<_> = shared.borrow().async_hooks.promise_resources.iter().map(|(&id, &weak)| (id, weak)).collect();
     for (id, weak) in entries {
         if context.resolve_host_weak_root(weak).is_none() {
@@ -234,7 +261,7 @@ pub(crate) fn prune_promises(
             queue_destroy(context, id)?;
         }
     }
-    Ok(context.undefined())
+    Ok(())
 }
 
 pub(crate) fn promise_job_boundary(
@@ -243,7 +270,18 @@ pub(crate) fn promise_job_boundary(
     before: bool,
 ) -> Result<(), RootedError> {
     let shared = context.host_mut().shared_state();
-    let resource = shared.borrow().async_hooks.job_resources.get(&snapshot.0).and_then(|job| job.resource);
+    // A long run of promise jobs can stay within one event-loop turn, where the turn-end
+    // prune never comes: prune here once a collection has run since the last prune, so the
+    // table holds only promises that may still be live.
+    let prune_due = {
+        let state = shared.borrow();
+        !state.async_hooks.promise_resources.is_empty()
+            && state.async_hooks.promise_resources_pruned_epoch != context.collection_epoch()
+    };
+    if before && prune_due {
+        prune_promise_resources(context)?;
+    }
+    let resource = tracked_job(&mut shared.borrow_mut().async_hooks, snapshot.0).resource;
     let Some(resource) = resource else { return Ok(()); };
     let kind = if before {
         super::async_hook_registry_shared_vm::HookKind::Before
@@ -290,13 +328,28 @@ pub(crate) fn capture_job_context(
     Some(token)
 }
 
+/// A Promise created while no promise hook was installed has no async resource. Like
+/// Node's promise before/after hooks, a job running once a hook is installed gives its
+/// Promise one on demand, without an init event or destroy tracking.
+fn tracked_job(state: &mut super::async_hooks_state::SharedAsyncHooksState, token: u64) -> JobContext {
+    let job = *state.job_resources.get(&token).expect("live Promise job context");
+    if job.resource.is_some() || !state.tracks_promises() {
+        return job;
+    }
+    let trigger = state.default_trigger_async_id() as i64;
+    let id = state.identity.allocate_async_id();
+    let job = JobContext { resource: Some(id), execution: id, trigger };
+    state.job_resources.insert(token, job);
+    job
+}
+
 /// Public identity and private ALS ownership are separate projections.
 pub(crate) fn enter_job_context(
     shared_state: &Rc<RefCell<crate::host::SharedNodeState>>, token: u64,
 ) -> u64 {
     let mut shared = shared_state.borrow_mut();
     let state = &mut shared.async_hooks;
-    let job = *state.job_resources.get(&token).expect("live Promise job context");
+    let job = tracked_job(state, token);
     let previous = (state.identity.current_async_id(), state.identity.current_trigger_id(), state.identity.store_context());
     state.job_stack.push(previous);
     state.identity.replace_current_async_id(job.execution);
@@ -859,6 +912,7 @@ pub(crate) fn enter_with(
             .identity
             .store_context();
         let mut shared = shared_state.borrow_mut();
+        shared.async_hooks.enabled_local_storages.insert(local_id);
         let previous = shared
             .async_hooks
             .local_stores
@@ -902,6 +956,7 @@ pub(crate) fn disable_storage(
     let released = {
         let shared_state = context.host_mut().shared_state();
         let mut shared = shared_state.borrow_mut();
+        shared.async_hooks.enabled_local_storages.remove(&local_id);
         let keys = shared
             .async_hooks
             .local_stores
