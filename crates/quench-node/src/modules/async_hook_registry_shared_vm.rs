@@ -58,6 +58,10 @@ impl Registry {
     fn visible_counts(&self) -> [u32; HookKind::ALL.len()] {
         self.snapshot.map_or(self.counts, |(_, counts)| counts)
     }
+    /// Whether any hook of any kind is enabled.
+    pub(super) fn any_enabled(&self) -> bool {
+        self.visible_counts().iter().any(|count| *count != 0)
+    }
 }
 
 pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
