@@ -5,15 +5,26 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 type Context<'a> = NativeContext<'a, NodeHost>;
 
 #[derive(Clone, Copy)]
-enum Method { Stat, Lstat, Fstat, Close, Fchmod, RawVoid(usize) }
+enum Method { Stat, Lstat, Statfs, Fstat, Close, Fchmod, RawVoid(usize), RawValue(usize), Truncate, Rmdir, Chmod, Owner, Times, Fowner, Ftimes, Ftruncate }
 impl Method {
     fn parse(name: &str) -> Self {
         match name {
             "statSync" => Self::Stat, "lstatSync" => Self::Lstat,
-            "fstatSync" => Self::Fstat, "closeSync" => Self::Close,
+            "statfsSync" => Self::Statfs, "fstatSync" => Self::Fstat, "closeSync" => Self::Close,
             "fchmodSync" => Self::Fchmod,
             "accessSync" | "renameSync" | "linkSync" => Self::RawVoid(2),
-            "copyFileSync" => Self::RawVoid(3),
+            "copyFileSync" | "symlinkSync" => Self::RawVoid(3),
+            "rmSync" => Self::RawVoid(2),
+            "unlinkSync" | "fsyncSync" | "fdatasyncSync" => Self::RawVoid(1),
+            "mkdtempSync" | "readlinkSync" | "createReadStream" | "createWriteStream" => Self::RawValue(2),
+            "chmodSync" => Self::Chmod,
+            "chownSync" | "lchownSync" => Self::Owner,
+            "utimesSync" | "lutimesSync" => Self::Times,
+            "truncateSync" => Self::Truncate,
+            "ftruncateSync" => Self::Ftruncate,
+            "fchownSync" => Self::Fowner,
+            "futimesSync" => Self::Ftimes,
+            "rmdirSync" => Self::Rmdir,
             _ => unreachable!("metadata boundary is installed only for its named SDK methods"),
         }
     }
@@ -22,7 +33,7 @@ impl Method {
     fn required_arguments(self) -> usize {
         // SDK stat/lstat/fstat have a defaulted second parameter; close has
         // only fd, whereas fchmod requires both fd and mode.
-        match self { Self::Fchmod => 2, Self::RawVoid(arity) => arity, _ => 1 }
+        match self { Self::Fchmod => 2, Self::RawVoid(arity) | Self::RawValue(arity) => arity, Self::Truncate | Self::Rmdir | Self::Chmod => 2, Self::Owner | Self::Times | Self::Fowner | Self::Ftimes => 3, _ => 1 }
     }
 }
 
@@ -42,10 +53,12 @@ pub(super) fn wrap(c: &mut Context<'_>, original: RootId, name: &str) -> Result<
 fn nullish(c: &Context<'_>, value: RootId) -> bool {
     c.rooted_value(value).is_some_and(|v| v.is_null() || v.is_undefined())
 }
-fn stat_options(c: &mut Context<'_>, value: RootId) -> Result<RootId, RootedError> {
+fn stat_options(c: &mut Context<'_>, value: RootId, missing_entry_policy: bool) -> Result<RootId, RootedError> {
     if !c.rooted_value(value).is_some_and(|v| v.is_undefined()) { return Ok(value); }
     let options = c.null_object_rooted()?;
-    for (name, value) in [("bigint", false), ("throwIfNoEntry", true)] {
+    let defaults = [("bigint", false), ("throwIfNoEntry", true)];
+    let defaults = if missing_entry_policy { &defaults[..] } else { &defaults[..1] };
+    for &(name, value) in defaults {
         let key = c.string_rooted(name);
         let value = c.boolean(value);
         c.define_data_property_rooted(options, key, value, true, true, true)?;
@@ -70,19 +83,71 @@ pub(crate) fn dispatch(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Re
     let name = c.to_string(name_root)?;
     let method = Method::parse(&name);
     let undefined = c.undefined();
-    // The SDK reads the unvalidated arguments in these four boundaries and
-    // treats any defined handler result as a presence envelope for void.
-    if let Method::RawVoid(arity) = method {
+    // SDK raw boundaries dispatch before path validation. Void operations
+    // use any defined handler result as a presence envelope; value operations
+    // return that same result. Truncate alone supplies a default length.
+    let raw_arity = match method {
+        Method::RawVoid(arity) | Method::RawValue(arity) => Some(arity),
+        Method::Truncate | Method::Ftruncate | Method::Chmod => Some(2),
+        Method::Owner | Method::Times | Method::Fowner | Method::Ftimes => Some(3), Method::Rmdir => Some(1), _ => None,
+    };
+    if let Some(arity) = raw_arity {
         let mut forwarded = [undefined; 3];
         for (slot, value) in forwarded.iter_mut().zip(args) { *slot = *value; }
-        if crate::modules::fs_policy_shared_vm::vfs_read(c, &name, &forwarded[..arity])?.is_some() {
-            return Ok(undefined);
+        if matches!(method, Method::Truncate | Method::Ftruncate) && c.rooted_value(forwarded[1]).is_some_and(|v| v.is_undefined()) {
+            forwarded[1] = c.number(0.0);
         }
-        return c.call_rooted(original, this, &forwarded[..arity]);
+        if matches!(method, Method::Ftruncate) {
+            let label = c.string_rooted("len");
+            crate::modules::fs_policy_shared_vm::call(c, "validateInteger", &[forwarded[1], label])?;
+            if c.to_number(forwarded[1])? < 0.0 { forwarded[1] = c.number(0.0); }
+        }
+        if matches!(method, Method::Chmod | Method::Owner | Method::Times | Method::Fowner | Method::Ftimes) {
+            use crate::modules::fs_policy_shared_vm as policy;
+            if !matches!(method, Method::Fowner | Method::Ftimes) {
+                forwarded[0] = policy::call(c, "getValidatedPath", &[forwarded[0]])?;
+            }
+            match method {
+                Method::Chmod => {
+                    let label = c.string_rooted("mode");
+                    forwarded[1] = policy::call(c, "parseFileMode", &[forwarded[1], label])?;
+                }
+                Method::Owner | Method::Fowner => {
+                    let maximum = policy::export(c, "kMaxUserId")?;
+                    let minimum = c.number(-1.0);
+                    for (index, label) in [(1, "uid"), (2, "gid")] {
+                        let label = c.string_rooted(label);
+                        policy::call(c, "validateInteger", &[forwarded[index], label, minimum, maximum])?;
+                    }
+                }
+                Method::Times | Method::Ftimes => {
+                    if matches!(method, Method::Ftimes) {
+                        let atime = c.string_rooted("atime");
+                        let mtime = c.string_rooted("mtime");
+                        forwarded[1] = policy::call(c, "toUnixTimestamp", &[forwarded[1], atime])?;
+                        forwarded[2] = policy::call(c, "toUnixTimestamp", &[forwarded[2], mtime])?;
+                    } else {
+                        forwarded[1] = policy::call(c, "toUnixTimestamp", &[forwarded[1]])?;
+                        forwarded[2] = policy::call(c, "toUnixTimestamp", &[forwarded[2]])?;
+                    }
+                }
+                _ => unreachable!("normalized VFS path policy"),
+            }
+        }
+        let handler_arity = if matches!(method, Method::Fowner) { 1 } else { arity };
+        if let Some(value) = crate::modules::fs_policy_shared_vm::vfs_read(c, &name, &forwarded[..handler_arity])? {
+            return Ok(if matches!(method, Method::RawValue(_)) { value } else { undefined });
+        }
+        let fallback_arity = if matches!(method, Method::Rmdir) {
+            forwarded[1] = args.get(1).copied().unwrap_or(undefined); 2
+        } else { arity };
+        return c.call_rooted(original, this, &forwarded[..fallback_arity]);
     }
     let path_or_fd = args.first().copied().unwrap_or(undefined);
     let mut second = args.get(1).copied().unwrap_or(undefined);
-    if method.catches_missing() { second = stat_options(c, second)?; }
+    if method.catches_missing() || matches!(method, Method::Statfs) {
+        second = stat_options(c, second, method.catches_missing())?;
+    }
     if matches!(method, Method::Fchmod) {
         let mode_name = c.string_rooted("mode");
         second = crate::modules::fs_policy_shared_vm::call(c, "parseFileMode", &[second, mode_name])?;

@@ -9,6 +9,10 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn atom_hash_str(text: &str) -> u64 {
+        // ASCII text is its own UTF-16: one unit per byte, hashed without transcoding.
+        if text.is_ascii() {
+            return Self::atom_hash_utf16(text.len(), text.bytes().map(u16::from));
+        }
         Self::atom_hash_utf16(text.encode_utf16().count(), text.encode_utf16())
     }
 
@@ -29,7 +33,8 @@ impl<H: Host> Vm<H> {
     pub(super) fn atom_units_equal_str(&self, atom: Atom, text: &str) -> bool {
         let index = atom as usize;
         if index < self.atom_text.len() {
-            self.atom_text[index].encode_utf16().eq(text.encode_utf16())
+            // Both are UTF-8 text, whose UTF-16 forms are equal exactly when they are.
+            &self.atom_text[index] == text
         } else {
             match self.dynamic_atom(index).units() {
                 Units::Ascii(bytes) => bytes == text.as_bytes(),

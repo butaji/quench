@@ -11,6 +11,11 @@ const WRAPPER_PREFIX: &str =
     "(function (exports, require, module, __filename, __dirname) { ";
 const WRAPPER_SUFFIX: &str = "\n});";
 
+/// A specifier naming a package rather than a relative or absolute path.
+fn is_bare_specifier(specifier: &str) -> bool {
+    !specifier.starts_with('.') && !Path::new(specifier).is_absolute()
+}
+
 pub(super) fn commonjs_resolver() -> oxc_resolver::Resolver {
     oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
         extensions: vec![".js".into(), ".json".into(), ".node".into()],
@@ -131,7 +136,7 @@ fn detect_source_kind(path: &Path) -> Result<quench_runtime::SourceKind, String>
     let text = if text.starts_with("#!") {
         text.find('\n').map_or("", |newline| &text[newline..])
     } else { text };
-    let wrapper = format!("{WRAPPER_PREFIX}{text}{WRAPPER_SUFFIX}");
+    let wrapper = [WRAPPER_PREFIX, text, WRAPPER_SUFFIX].concat();
     if valid_source(&wrapper, oxc_span::SourceType::cjs()) {
         return Ok(quench_runtime::SourceKind::Script);
     }
@@ -173,12 +178,9 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     context.scoped(crate::modules::buffer_shared_vm::install_global)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_buffer_global");
-    context.scoped(crate::modules::url_shared_vm::install_global)?;
-    #[cfg(feature = "profile-memory")]
-    context.profile_memory_checkpoint("node_url_global");
     crate::host::resident_pages::release_read_only_pages();
     context.scoped(install_shared_web_globals)?;
-    context.scoped(crate::modules::util_shared_vm::install_lazy_base64_globals)?;
+    context.scoped(crate::modules::util_shared_vm::install_lazy_globals)?;
     let global = context.global_root()?;
     // The process.getBuiltinModule bootstrap needs access to the host's
     // builtin loader in both Script and Module goals. Keep it under a private
@@ -242,6 +244,10 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     }
     context.scoped(crate::modules::process_shared_vm::initialize_warning_policy)?;
     context.scoped(crate::modules::report_configuration_shared_vm::initialize_signal)?;
+    context.scoped(crate::modules::worker_threads_shared_vm::initialize_process_owner)?;
+    // IPC and cluster startup precede all user preloads and synchronous entry.
+    context.scoped(crate::modules::child_process_ipc_shared_vm::activate_process)?;
+    context.scoped(initialize_cluster_worker)?;
     context.scoped(preload_modules)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_preloads");
@@ -812,7 +818,11 @@ pub(crate) fn require_for_module(
             return cached_builtin(context, BuiltinModule::Module);
         }
         Some(BuiltinModule::AsyncHooks) => {
-            return crate::modules::async_hooks_shared_vm::module(context);
+            return if specifier.strip_prefix("node:").unwrap_or(&specifier) == "internal/async_hooks" {
+                crate::modules::domain_trampoline::internal_hooks(context)
+            } else {
+                crate::modules::async_hooks_shared_vm::module(context)
+            };
         }
         Some(BuiltinModule::DiagnosticsChannel) => {
             return crate::modules::diagnostics_channel_shared_vm::module(context);
@@ -1125,8 +1135,6 @@ pub(crate) fn is_builtin_specifier(specifier: &str) -> bool {
 
 const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("internal/process/task_queues", BuiltinModule::Internal("internal/process/task_queues")),
-    ("internal/blob", BuiltinModule::Internal("internal/blob")),
-    ("internal/file", BuiltinModule::Internal("internal/file")),
     ("internal/crypto/keys", BuiltinModule::Internal("internal/crypto/keys")),
     ("internal/abort_controller", BuiltinModule::Internal("internal/abort_controller")),
     ("internal/worker/io", BuiltinModule::Internal("internal/worker/io")),
@@ -1426,18 +1434,6 @@ pub(crate) fn events_on_initialize(
 }
 
 /// Load a real configured standard-library export over this VM's native bindings.
-/// lib/internal/blob.js `resolveObjectURL` over the host's `blob:nodedata:` registry.
-const RESOLVE_OBJECT_URL: &str = r#"(function resolveObjectURL(url) {
-  url = `${url}`;
-  try {
-    const split = new URL(url).pathname.split(":");
-    if (split.length !== 2 || split[0] !== "nodedata") return;
-    return globalThis.__nodeBlobUrls?.get(url);
-  } catch {
-    return;
-  }
-})"#;
-
 /// A library module's `require(id)`: a host builtin when the id names one, otherwise the
 /// pinned library file.
 pub(crate) fn library_require(context: &mut Context<'_>, id: &str) -> Result<RootId, RootedError> {
@@ -1549,6 +1545,10 @@ pub(crate) fn url_module(context: &mut Context<'_>) -> Result<RootId, RootedErro
     cached_builtin(context, BuiltinModule::Url)
 }
 
+pub(crate) fn internal_url_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    cached_builtin(context, BuiltinModule::InternalUrl)
+}
+
 /// Private namespaces project the same original objects as the public globals.
 fn native_global_namespace(context: &mut Context<'_>, names: &[&str]) -> Result<RootId, RootedError> {
     context.with_startup_intrinsics(|context| {
@@ -1591,13 +1591,6 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             }
             Ok(module)
         }
-        BuiltinModule::Internal("internal/blob") => {
-            let module = native_global_namespace(context, &["Blob"])?;
-            let resolve = context.evaluate_script_rooted(RESOLVE_OBJECT_URL, "node:internal/blob/resolve.js")?;
-            set(context, module, "resolveObjectURL", resolve)?;
-            Ok(module)
-        }
-        BuiltinModule::Internal("internal/file") => native_global_namespace(context, &["File"]),
         BuiltinModule::Internal("internal/worker/io") =>
             native_global_namespace(context, &["MessageChannel", "MessagePort"]),
         BuiltinModule::Internal("internal/abort_controller") => {
@@ -1621,21 +1614,14 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::Internal(_) => context.object_rooted(),
         BuiltinModule::Fs => crate::modules::fs_shared_vm::module(context),
         BuiltinModule::InternalUrl => {
-            let public = cached_builtin(context, BuiltinModule::Url)?;
-            let internal = context.object_rooted()?;
-            for key in context.enumerable_own_keys_rooted(public, true, true)? {
-                let value = context.get_property_rooted(public, key)?;
-                context.define_data_property_rooted(internal, key, value, true, true, true)?;
-            }
-            let is_url = context.host_function(crate::host::shared_vm::operation("urlIsURL"))?;
-            let key = context.string_rooted("name");
-            let name = context.string_rooted("isURL");
-            context.define_data_property_rooted(is_url, key, name, false, false, true)?;
-            set(context, internal, "isURL", is_url)?;
-            let convert = context.host_function(crate::host::shared_vm::operation("toPathIfFileURL"))?;
-            set(context, internal, "toPathIfFileURL", convert)?;
-            Ok(internal)
-        },
+            // Node's bootstrap (exposed-window-or-worker.js) installs `URL.createObjectURL`
+            // and `URL.revokeObjectURL`; the module loads on first use here, so it does then.
+            let module = node_library_module(context, "url.js", "internal/url.js")?;
+            let install = get(context, module, "installObjectURLMethods")?;
+            let undefined = context.undefined();
+            context.call_rooted(install, undefined, &[])?;
+            Ok(module)
+        }
         // lib/util/types.js re-exports internal/util/types, the object `util.types` names.
         BuiltinModule::UtilTypes => node_library_module(context, "util/types.js", "util/types.js"),
         BuiltinModule::FsPromises => {
@@ -1679,8 +1665,8 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             }
             crate::modules::worker_shared_vm::module(context, &markers)
         }
-        BuiltinModule::Url => crate::modules::url_shared_vm::module(context),
-        BuiltinModule::Querystring => crate::modules::querystring_shared_vm::module(context),
+        BuiltinModule::Url => node_library_module(context, "url.js", "url.js"),
+        BuiltinModule::Querystring => node_library_module(context, "querystring.js", "querystring.js"),
         BuiltinModule::Readline => crate::modules::readline_shared_vm::module(context),
         BuiltinModule::StreamConsumers => {
             crate::modules::web_stream_consumers_shared_vm::module(context)
@@ -1735,7 +1721,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::ChildProcess => crate::modules::child_process_shared_vm::module(context),
         BuiltinModule::InternalChildProcess => {
             let public = cached_builtin(context, BuiltinModule::ChildProcess)?;
-            let module = context.object_rooted()?;
+            let module = node_library_module(context, "child_process.js", "internal/child_process.js")?;
             let constructor = get(context, public, "ChildProcess")?;
             set(context, module, "ChildProcess", constructor)?;
             Ok(module)
@@ -1775,9 +1761,9 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             set(context, module, "constants", constants)?;
             Ok(module)
         }
+        BuiltinModule::Cluster => node_library_module(context, "cluster.js", "cluster.js"),
         BuiltinModule::Inspector
         | BuiltinModule::Repl
-        | BuiltinModule::Cluster
         | BuiltinModule::Wasi => context.object_rooted(),
         BuiltinModule::Sea => context.evaluate_script_rooted(
             "({ isSea: function isSea() { return false; } })",
@@ -1908,8 +1894,20 @@ fn resolve_filename(
     if let Some(path) = exact_file_path(base, &resolved_specifier) {
         return std::fs::canonicalize(path).map_err(|error| RootedError::host(error.to_string()));
     }
-    match commonjs_resolver().resolve(base, &resolved_specifier) {
+    let resolver = commonjs_resolver();
+    match resolver.resolve(base, &resolved_specifier) {
         Ok(resolution) => Ok(resolution.full_path()),
+        Err(oxc_resolver::ResolveError::NotFound(_)) if !node_internal && is_bare_specifier(specifier) && let Some(super::esm_errors::MissingPackageFile::ExportsTarget { target, package }) =
+            super::esm_errors::missing_package_file(&resolver, base, specifier) =>
+        {
+            // `finalizeEsmResolution`: the missing target, with the package as `path`.
+            let error = context.error_rooted(&format!("Cannot find module '{}'", target.display()))?;
+            let code = context.string_rooted("MODULE_NOT_FOUND");
+            set(context, error, "code", code)?;
+            let path = context.string_rooted(&package.to_string_lossy());
+            set(context, error, "path", path)?;
+            Err(context.throw(error))
+        }
         Err(oxc_resolver::ResolveError::NotFound(_) | oxc_resolver::ResolveError::Specifier(_)) => {
             let mut stack = Vec::new();
             let mut module = parent;
@@ -2386,6 +2384,17 @@ fn load_with_resolution(
             Err(error) => crate::node_sources::source(filename, &context.host_mut().node_library_root)
                 .ok_or_else(|| RootedError::host(error.to_string()))?.to_owned(),
         };
+        let file_text = match library_relative {
+            Some(path) if path == Path::new("lib/internal/child_process.js") =>
+                super::policy_projection::project(&file_text, &["setupChannel", "kChannelHandle"]).map_err(RootedError::host)?,
+            Some(path) if path == Path::new("lib/internal/child_process/serialization.js") =>
+                super::policy_projection::project(&file_text, &["json"]).map_err(RootedError::host)?,
+            Some(path) if path == Path::new("lib/net.js") =>
+                super::policy_projection::project(&file_text, &["BoundSocket"]).map_err(RootedError::host)?,
+            Some(path) if path == Path::new("lib/child_process.js") =>
+                super::policy_projection::project(&file_text, &["_forkChild"]).map_err(RootedError::host)?,
+            _ => file_text,
+        };
         let text = file_text.strip_prefix('\u{feff}').unwrap_or(&file_text);
         match filename
             .extension()
@@ -2468,7 +2477,8 @@ const getLinkedBinding = () => ({});
                 } else {
                     format!("{WRAPPER_PREFIX}{internal_binding}")
                 };
-                let wrapper_source = format!("{prefix}{text}{WRAPPER_SUFFIX}");
+                // Sized exactly: a formatted string grows by doubling, copying the module text each time.
+                let wrapper_source = [prefix.as_str(), &text, WRAPPER_SUFFIX].concat();
                 // The wrapper holds the text now, so the file is released before compiling it.
                 drop(text);
                 drop(file_text);
@@ -2572,7 +2582,7 @@ pub(crate) fn compile_public(context: &mut Context<'_>, module: RootId, args: &[
     let name = context.string_text(filename)?.ok_or_else(|| RootedError::host("Module._compile filename must be a string"))?;
     let text = content.as_str();
     let text = if text.starts_with("#!") { text.find('\n').map_or("", |end| &text[end..]) } else { text };
-    let source = format!("{WRAPPER_PREFIX}{text}{WRAPPER_SUFFIX}");
+    let source = [WRAPPER_PREFIX, text, WRAPPER_SUFFIX].concat();
     let wrapper = evaluate_wrapper(context, WRAPPER_PREFIX, &source, &name)?;
     let exports = get(context, module, "exports")?;
     let require = context.host_function_with_data(super::operation("require"), module)?;
@@ -2650,6 +2660,9 @@ fn set(
 pub(crate) fn node_internal_binding_source() -> &'static str {
     r#"const internalBinding = (name) => {
   switch (String(name)) {
+    case "pipe_wrap":
+    case "tcp_wrap":
+    case "stream_wrap":
     case "udp_wrap":
     case "os":
     case "timers":
@@ -2691,11 +2704,13 @@ pub(crate) fn node_internal_binding_source() -> &'static str {
       fs: __nativeInternalBinding("constants").fs,
       zlib: __nativeInternalBinding("constants").zlib,
       os: __nativeInternalBinding("constants").os || { signals: (require("os").constants || {}).signals || {}, errno: { EISDIR: -21 } },
-      crypto: { ENGINE_METHOD_ALL: 0xffff },
+      crypto: __nativeInternalBinding("constants").crypto,
     };
     case "options": return __nativeInternalBinding("options");
     case "string_decoder": return __nativeInternalBinding("string_decoder");
-    case "buffer": return __nativeInternalBinding(name);
+    case "buffer":
+    case "url":
+    case "blob": return __nativeInternalBinding(name);
     case "fs": return __nativeInternalBinding("fs");
     case "crypto": {
       const native = __nativeInternalBinding("crypto");
@@ -2810,4 +2825,37 @@ pub(crate) fn node_library_module_in_realm(
         ],
     )?;
     get(context, module, "exports")
+}
+
+/// Run the unchanged SDK worker policy after native process IPC and require
+/// exist, matching initializeClusterIPC's startup boundary.
+pub(crate) fn initialize_cluster_worker(context: &mut Context<'_>) -> Result<(), RootedError> {
+    let shared = context.host_mut().shared_state();
+    let process = shared
+        .borrow()
+        .process_module
+        .ok_or_else(|| RootedError::host("process module owner unavailable"))?;
+    let argv = get(context, process, "argv")?;
+    let entry = get(context, argv, "1")?;
+    if !context.truthy_rooted(entry)? {
+        return Ok(());
+    }
+    let env = get(context, process, "env")?;
+    let worker_id = get(context, env, "NODE_UNIQUE_ID")?;
+    if !context.truthy_rooted(worker_id)? {
+        return Ok(());
+    }
+    let cluster = cached_builtin(context, BuiltinModule::Cluster)?;
+    let setup = get(context, cluster, "_setupWorker")?;
+    context.call_rooted(setup, cluster, &[])?;
+    context.with_startup_intrinsics(|context| {
+        let global = context.global_root()?;
+        let reflect = get(context, global, "Reflect")?;
+        let delete = get(context, reflect, "deleteProperty")?;
+        let key = context.string_rooted("NODE_UNIQUE_ID");
+        context.call_rooted(delete, reflect, &[env, key])?;
+        let undefined = context.undefined();
+        crate::modules::process_shared_vm::delete_env(context, undefined, &[key])?;
+        Ok(())
+    })
 }
