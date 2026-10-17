@@ -97,6 +97,7 @@ pub(crate) struct SharedNodeState {
     pub(crate) zlib_native: crate::modules::zlib_native_shared_vm::State,
     pub(crate) messaging: crate::modules::worker_shared_vm::State,
     pub(crate) dns: crate::modules::dns_shared_vm::State,
+    pub(crate) serdes: crate::modules::serdes_shared_vm::State,
     pub(crate) unhandled_rejection_mode: crate::modules::process_state::UnhandledRejectionMode,
     pub(crate) output: Option<NodeOutputSink>,
     pub(crate) net_auto_select_family_attempt_timeout: u64,
@@ -191,6 +192,7 @@ impl SharedNodeState {
         self.builtin_cache.clear();
         self.messaging.reset();
         self.dns.reset();
+        self.serdes.reset();
         self.commonjs_cache = None;
         self.module_parent_api = None;
         self.active_esm_requires.clear();
@@ -265,6 +267,7 @@ impl SharedNodeState {
             zlib_native: crate::modules::zlib_native_shared_vm::State::default(),
             messaging: crate::modules::worker_shared_vm::State::default(),
             dns: crate::modules::dns_shared_vm::State::default(),
+            serdes: crate::modules::serdes_shared_vm::State::default(),
             unhandled_rejection_mode: crate::modules::process_state::UnhandledRejectionMode::Throw,
             output: None,
             net_auto_select_family: crate::modules::net_config::DEFAULT_AUTO_SELECT_FAMILY,

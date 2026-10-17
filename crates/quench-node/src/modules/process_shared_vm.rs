@@ -677,8 +677,22 @@ pub(crate) fn stream_write(
     let Some(chunk) = args.first().copied() else {
         return invalid_stream_chunk(context);
     };
-    let bytes = if let Some(text) = context.string_text(chunk)? {
-        text.into_bytes()
+    // Writable.write(chunk[, encoding][, callback]).
+    let (encoding, callback) = match args.get(1).copied() {
+        Some(value) if context.is_callable_rooted(value)? => (None, Some(value)),
+        encoding => (encoding, args.get(2).copied()),
+    };
+    // A falsy encoding selects the stream's default.
+    let encoding = match encoding {
+        Some(value) if context.truthy_rooted(value)? => Some(value),
+        _ => None,
+    };
+    let callback = match callback {
+        Some(value) if context.is_callable_rooted(value)? => Some(value),
+        _ => None,
+    };
+    let bytes = if context.string_text(chunk)?.is_some() {
+        crate::modules::buffer_shared_vm::encode_bytes(context, chunk, encoding)?
     } else if context
         .has_builtin_brand_rooted(chunk, quench_runtime::BuiltinBrand::ArrayBufferView)?
     {
@@ -697,9 +711,7 @@ pub(crate) fn stream_write(
     if let Some(control) = worker {
         // A worker's stdio reaches its parent's `worker.stdout`/`worker.stderr`.
         control.write_output(fd == STDERR_FD, bytes);
-        return Ok(context.boolean(true));
-    }
-    if fd == STDERR_FD {
+    } else if fd == STDERR_FD {
         std::io::stderr()
             .lock()
             .write_all(&bytes)
@@ -716,6 +728,12 @@ pub(crate) fn stream_write(
                 .and_then(|()| stdout.flush())
                 .map_err(|error| RootedError::host(error.to_string()))?;
         }
+    }
+    // Stdio writes complete synchronously; Writable reports that on the next tick.
+    if let Some(callback) = callback {
+        let undefined = context.undefined();
+        let null = context.null();
+        super::shared_event_loop::queue_next_tick(context, callback, undefined, &[null])?;
     }
     Ok(context.boolean(true))
 }

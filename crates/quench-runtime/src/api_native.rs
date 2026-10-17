@@ -21,6 +21,86 @@ pub(crate) struct CompiledScriptState {
     pub(crate) source: crate::vm::ProgramId,
 }
 
+/// An embedder's hooks for its scripted serializer (V8's `ValueSerializer::Delegate`).
+pub trait SerializerDelegate<H: Host> {
+    /// Write a host object's contents; its tag is already written. A returned value is
+    /// written next, through the same serializer.
+    fn write_host_object(
+        &mut self,
+        context: &mut NativeContext<'_, H>,
+        output: &crate::WireOutput,
+        object: RootId,
+    ) -> Result<Option<RootId>, RootedError>;
+    fn shared_array_buffer_id(&mut self, context: &mut NativeContext<'_, H>, buffer: RootId) -> Result<u32, RootedError>;
+    /// The exception for a value that cannot be cloned, already thrown.
+    fn data_clone_error(&mut self, context: &mut NativeContext<'_, H>, message: &str) -> RootedError;
+}
+
+/// An embedder's hooks for its scripted deserializer (V8's `ValueDeserializer::Delegate`).
+pub trait DeserializerDelegate<H: Host> {
+    fn read_host_object(
+        &mut self,
+        context: &mut NativeContext<'_, H>,
+        input: &crate::SharedWireInput,
+    ) -> Result<crate::HostObjectRead<RootId>, RootedError>;
+    fn shared_array_buffer(&mut self, context: &mut NativeContext<'_, H>, id: u32) -> Result<RootId, RootedError>;
+}
+
+/// Embedder delegates seen as the serializer's internal hooks: each call runs in a
+/// native scope over the VM.
+struct Scripted<'d, D: ?Sized>(&'d mut D);
+
+fn hook_value<H: Host>(context: &mut NativeContext<'_, H>, result: Result<RootId, RootedError>) -> Result<Value, JsError> {
+    result
+        .map(|root| context.vm.root_value(root).unwrap_or(Value::UNDEFINED))
+        .map_err(|error| error.error)
+}
+
+impl<H: Host, D: SerializerDelegate<H> + ?Sized> crate::vm::WriteHooks<H> for Scripted<'_, D> {
+    fn write_host_object(&mut self, vm: &mut Vm<H>, _: &crate::ResidualProgram, output: &crate::WireOutput, object: Value) -> Result<Option<Value>, JsError> {
+        let mut context = NativeContext::new(vm);
+        let object = context.scoped_value(object);
+        match self.0.write_host_object(&mut context, output, object) {
+            Ok(Some(next)) => hook_value(&mut context, Ok(next)).map(Some),
+            Ok(None) => Ok(None),
+            Err(error) => Err(error.error),
+        }
+    }
+
+    fn shared_array_buffer_id(&mut self, vm: &mut Vm<H>, _: &crate::ResidualProgram, buffer: Value) -> Result<u32, JsError> {
+        let mut context = NativeContext::new(vm);
+        let buffer = context.scoped_value(buffer);
+        self.0.shared_array_buffer_id(&mut context, buffer).map_err(|error| error.error)
+    }
+
+    fn data_clone_error(&mut self, vm: &mut Vm<H>, _: &crate::ResidualProgram, message: &str) -> JsError {
+        let mut context = NativeContext::new(vm);
+        self.0.data_clone_error(&mut context, message).error
+    }
+}
+
+impl<H: Host, D: DeserializerDelegate<H> + ?Sized> crate::vm::ReadHooks<H> for Scripted<'_, D> {
+    fn read_host_object(
+        &mut self,
+        vm: &mut Vm<H>,
+        _: &crate::ResidualProgram,
+        input: &crate::SharedWireInput,
+    ) -> Result<crate::HostObjectRead<Value>, JsError> {
+        let mut context = NativeContext::new(vm);
+        match self.0.read_host_object(&mut context, input) {
+            Ok(crate::HostObjectRead::Object(object)) => hook_value(&mut context, Ok(object)).map(crate::HostObjectRead::Object),
+            Ok(crate::HostObjectRead::NextValue) => Ok(crate::HostObjectRead::NextValue),
+            Err(error) => Err(error.error),
+        }
+    }
+
+    fn shared_array_buffer(&mut self, vm: &mut Vm<H>, _: &crate::ResidualProgram, id: u32) -> Result<Value, JsError> {
+        let mut context = NativeContext::new(vm);
+        let result = self.0.shared_array_buffer(&mut context, id);
+        hook_value(&mut context, result)
+    }
+}
+
 /// Opaque index into the embedding's stable native-operation table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HostFunctionId(pub u32);
@@ -851,6 +931,87 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.vm
             .embedding_is_marked_untransferable(value)
             .map_err(|error| self.error(error))
+    }
+
+    /// How V8 shows a value in a DataCloneError, without side effects.
+    pub fn clone_description_rooted(&mut self, value: RootId) -> String {
+        match self.vm.root_value(value) {
+            Some(value) => self.vm.clone_description(value),
+            None => String::new(),
+        }
+    }
+
+    /// `ValueSerializer::WriteValue` through an embedder's hooks.
+    pub fn serializer_write_value(
+        &mut self,
+        serializer: &mut crate::ValueSerializer,
+        value: RootId,
+        delegate: &mut dyn SerializerDelegate<H>,
+    ) -> Result<(), RootedError> {
+        let result = self.vm.embedding_value(value).and_then(|value| {
+            let program = self.vm.embedding_program()?;
+            self.vm.wire_write(&program, serializer, &mut Scripted(delegate), value)
+        });
+        result.map_err(|error| self.error(error))
+    }
+
+    /// `ValueSerializer::TransferArrayBuffer`; `false` when `buffer` is no ArrayBuffer.
+    pub fn serializer_transfer_array_buffer(
+        &mut self,
+        serializer: &mut crate::ValueSerializer,
+        id: u32,
+        buffer: RootId,
+    ) -> Result<bool, RootedError> {
+        let buffer = self.vm.embedding_value(buffer).map_err(|error| self.error(error))?;
+        if !self.vm.is_unshared_array_buffer(buffer) {
+            return Ok(false);
+        }
+        self.vm.wire_transfer_array_buffer(serializer, id, buffer);
+        Ok(true)
+    }
+
+    /// Release the objects a serializer numbered.
+    pub fn serializer_release(&mut self, serializer: &mut crate::ValueSerializer) {
+        self.vm.release_wire_serializer(serializer);
+    }
+
+    /// `ValueDeserializer::ReadHeader`.
+    pub fn deserializer_read_header(&mut self, deserializer: &mut crate::ValueDeserializer) -> Result<(), RootedError> {
+        let result = self.vm.embedding_program().and_then(|program| self.vm.wire_read_header(&program, deserializer));
+        result.map_err(|error| self.error(error))
+    }
+
+    /// `ValueDeserializer::ReadValue` through an embedder's hooks.
+    pub fn deserializer_read_value(
+        &mut self,
+        deserializer: &mut crate::ValueDeserializer,
+        delegate: &mut dyn DeserializerDelegate<H>,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.embedding_program().and_then(|program| {
+            self.vm.wire_read_value(&program, deserializer, &mut Scripted(delegate))
+        });
+        self.completion(result)
+    }
+
+    /// `ValueDeserializer::TransferArrayBuffer`; `false` when `buffer` is no
+    /// ArrayBuffer or SharedArrayBuffer.
+    pub fn deserializer_transfer_array_buffer(
+        &mut self,
+        deserializer: &mut crate::ValueDeserializer,
+        id: u32,
+        buffer: RootId,
+    ) -> Result<bool, RootedError> {
+        let buffer = self.vm.embedding_value(buffer).map_err(|error| self.error(error))?;
+        if !self.vm.is_array_buffer(buffer) {
+            return Ok(false);
+        }
+        self.vm.wire_receive_array_buffer(deserializer, id, buffer);
+        Ok(true)
+    }
+
+    /// Release the objects a deserializer created or was handed.
+    pub fn deserializer_release(&mut self, deserializer: &mut crate::ValueDeserializer) {
+        self.vm.release_wire_deserializer(deserializer);
     }
 
     pub fn structured_clone_rooted(
