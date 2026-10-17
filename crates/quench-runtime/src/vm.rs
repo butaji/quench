@@ -121,7 +121,7 @@ mod method_cache;
 mod module;
 mod number;
 mod object;
-mod shape_slot_memo;
+mod shape_memo;
 mod object_assignment;
 mod object_array;
 mod object_builtins;
@@ -1203,6 +1203,10 @@ pub(crate) struct Vm<H> {
     shared_natives: FxHashSet<Value>,
     frames: Vec<Box<Frame>>,
     native_stack_frames: Vec<(usize, String)>,
+    /// Emptied root lists of finished native calls, reused by the next `NativeContext`.
+    pub(crate) native_root_lists: Vec<Vec<RootId>>,
+    /// The roots the last collection gathered, which sizes the next one's root vector.
+    gc_root_count: usize,
     frame_pool: Vec<Box<Frame>>,
     /// Activations a running lane holds without frames.
     lane_stack: dispatch_fast::LaneStack,
@@ -1234,7 +1238,8 @@ pub(crate) struct Vm<H> {
     /// The getters and setters of shapes' accessor descriptors (`ShapeAttributes`).
     shape_accessors: Vec<ShapeAccessors>,
     transitions: shape_transitions::ShapeTransitionIndex,
-    shape_slot_memo: shape_slot_memo::ShapeSlotMemo,
+    shape_slot_memo: shape_memo::ShapeSlotMemo,
+    shape_attribute_memo: shape_memo::ShapeAttributeMemo,
     atom_text: AtomTable,
     atoms: FxHashMap<u64, Atom>,
     atom_collisions: FxHashMap<u64, Vec<Atom>>,
@@ -1949,6 +1954,7 @@ impl<H: Host> Vm<H> {
         self.shapes.truncate(1);
         self.transitions.clear();
         self.shape_slot_memo.clear();
+        self.shape_attribute_memo.clear();
         self.atom_strings.clear();
         // The sealed holders and their shapes belong to the discarded heap.
         self.startup_intrinsics = Default::default();

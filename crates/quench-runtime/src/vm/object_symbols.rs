@@ -342,6 +342,45 @@ impl<H: Host> Vm<H> {
         self.set_shape_property(object, PropertyKey::symbol(key), value)
     }
 
+/// `[[Set]]` of a symbol key on its own receiver along a chain of extensible, non-Proxy
+    /// objects, where every step is a shape fact: the nearest data property decides, and an
+    /// absent key is added. `None` leaves an accessor, a Proxy, a non-extensible object or a
+    /// primitive to the general path, which runs no guest code before reaching one.
+    fn set_plain_symbol_property(&mut self, object: Value, key: Value, value: Value) -> Option<bool> {
+        let symbol = PropertyKey::symbol(key);
+        let mut current = object;
+        loop {
+            if self.proxy_parts(current).is_some() {
+                return None;
+            }
+            let data = self.object_data(current)?;
+            if !data.is_extensible() {
+                return None;
+            }
+            let (shape, proto) = (data.shape(), data.proto());
+            if let Some(slot) = self.property_shape_slot(shape, symbol) {
+                let attributes = self.shape_attribute(shape, slot)?;
+                if attributes.accessor {
+                    return None;
+                }
+                if !attributes.writable {
+                    return Some(false);
+                }
+                if current == object {
+                    self.heap.property_set(object, slot, value);
+                    return Some(true);
+                }
+                break;
+            }
+            if proto.is_null() {
+                break;
+            }
+            current = proto;
+        }
+        self.set_symbol_property(object, key, value).ok()?;
+        Some(true)
+    }
+
     pub(super) fn set_symbol_property_with_receiver(
         &mut self,
         p: &ResidualProgram,
@@ -350,6 +389,11 @@ impl<H: Host> Vm<H> {
         value: Value,
         receiver: Value,
     ) -> Result<bool, JsError> {
+        if target == receiver
+            && let Some(succeeded) = self.set_plain_symbol_property(target, key, value)
+        {
+            return Ok(succeeded);
+        }
         let target_root = self.heap.root(target);
         let key_root = self.heap.root(key);
         let value_root = self.heap.root(value);

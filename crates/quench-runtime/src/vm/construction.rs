@@ -364,10 +364,8 @@ impl<H: Host> Vm<H> {
                     .expect("new closure is live"),
             );
         }
-        let name_value = match function_plan.name {
-            Some(atom) => self.atom_string(atom),
-            None => self.atom_string(self.runtime_atoms.empty),
-        };
+        let name_atom = function_plan.name.unwrap_or(self.runtime_atoms.empty);
+        let name_value = self.atom_string(name_atom);
         let length_value = Value::number(function_plan.length as f64);
         // An ordinary closure's own properties and its prototype's `constructor` take the
         // shapes the first one recorded; every other closure defines them one by one.
@@ -384,11 +382,8 @@ impl<H: Host> Vm<H> {
                 self.heap.property_add(function, prototype, with_prototype);
                 self.heap.property_add(prototype, function, constructor);
             }
-            match function_plan.name {
-                // The plan's atom is the name the string spells, so no interning is needed.
-                Some(name) => self.capture_function_name_for_atom(function, name),
-                None => self.capture_function_name(function, name_value),
-            }
+            // The plan's atom is the name the string spells, so no interning is needed.
+            self.name_fresh_function(function, name_atom);
             return Ok(function);
         }
         let mut recorded = ClosureShapes {
@@ -462,7 +457,7 @@ impl<H: Host> Vm<H> {
         {
             self.closure_shapes[shapes_key] = Some(recorded);
         }
-        self.capture_function_name(function, name_value);
+        self.name_fresh_function(function, name_atom);
         Ok(function)
     }
 
