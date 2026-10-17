@@ -985,6 +985,23 @@ impl<H: Host> Vm<H> {
         Some(hit.value)
     }
 
+    /// `primary_holder_field_hit` for a receiver any heap cell holds, such as a function whose
+    /// prototype holds the method (`f.apply`), which a direct object's record lookup misses.
+    #[inline(always)]
+    pub(super) fn cell_holder_field_hit(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        site: u16,
+    ) -> Option<Value> {
+        debug_assert!(self.lane_admits(p));
+        let receiver = self.heap.object(object)?;
+        let hit = self.cached_ordinary_holder_field_value(self.field_cache_index(site), receiver)?;
+        self.profile
+            .field_cache_hit(usize::from(hit.tier), hit.depth);
+        Some(hit.value)
+    }
+
     /// The data field a direct object inherits from beyond its immediate prototype, at the
     /// site's inherited entry (`cached_inherited_field_value`): `field_miss_data_value`'s
     /// cache hit for a site that has one (`field_site_inherited`).
