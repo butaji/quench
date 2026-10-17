@@ -335,18 +335,16 @@ impl<'a, H: Host> NativeContext<'a, H> {
     pub const MAX_STRING_CODE_UNITS: usize = crate::vm::wtf16::MAX_STRING_UNITS;
 
     pub(crate) fn new(vm: &'a mut Vm<H>) -> Self {
+        Self::with_new_target(vm, None)
+    }
+
+    /// A callback's context. Its root list comes from the pool `Drop` returns lists to, so
+    /// the pool stays as deep as the native calls nested at once.
+    pub(crate) fn with_new_target(vm: &'a mut Vm<H>, new_target: Option<Value>) -> Self {
         let roots = vm.native_root_lists.pop().unwrap_or_default();
         Self {
             vm,
             roots,
-            new_target: None,
-        }
-    }
-
-    pub(crate) fn with_new_target(vm: &'a mut Vm<H>, new_target: Option<Value>) -> Self {
-        Self {
-            vm,
-            roots: Vec::new(),
             new_target,
         }
     }
