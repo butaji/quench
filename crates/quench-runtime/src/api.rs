@@ -134,6 +134,11 @@ impl<H: Host> Runtime<H> {
         self.vm.execute_deferred_jobs(program).map(drop)
     }
 
+    /// Counts collections: a host weak root can die only when this changes.
+    pub fn collection_epoch(&self) -> u64 {
+        self.vm.collection_epoch()
+    }
+
     /// Release WeakRef targets after the host completes a job and its microtasks.
     pub fn clear_kept_objects(&mut self) {
         self.vm.clear_kept_objects();
