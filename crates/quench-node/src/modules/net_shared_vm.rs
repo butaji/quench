@@ -827,12 +827,53 @@ pub(crate) fn socket_address(transport: &Transport, id: u64, peer: bool) -> std:
 }
 
 pub(crate) fn write(transport: &mut Transport, socket: u64, bytes: &[u8]) -> Result<(), String> {
+    write_with(transport, socket, |pending| pending.extend_from_slice(bytes))
+}
+
+/// Queue bytes that `encode` appends straight to the socket's pending output,
+/// so framing a borrowed payload needs no intermediate buffer.
+pub(crate) fn write_with(
+    transport: &mut Transport,
+    socket: u64,
+    encode: impl FnOnce(&mut Vec<u8>),
+) -> Result<(), String> {
     let stream = transport
         .sockets
         .get_mut(&socket)
         .ok_or_else(|| "shared TCP socket is not connected".to_owned())?;
-    stream.pending_write.extend_from_slice(bytes);
+    encode(&mut stream.pending_write);
     Ok(())
+}
+
+/// Bytes a socket has queued that the kernel has not yet accepted; the
+/// writable length Node's stream backpressure compares to its high-water mark.
+pub(crate) fn queued_bytes(transport: &Transport, socket: u64) -> Option<usize> {
+    transport
+        .sockets
+        .get(&socket)
+        .map(|stream| stream.pending_write.len() - stream.write_offset)
+}
+
+/// Offer a plain socket's queued bytes to the kernel now, as libuv's
+/// `uv_try_write` does before queueing a stream write. Failures and completion
+/// delivery stay with `poll`, which retries the remaining bytes.
+pub(crate) fn try_flush(transport: &mut Transport, socket: u64) {
+    let Some(stream) = transport.sockets.get_mut(&socket) else {
+        return;
+    };
+    if !matches!(stream.delivery, DeliveryPhase::Delivered)
+        || !matches!(stream.stream, SocketStream::Plain(_))
+        || stream.write_offset == stream.pending_write.len()
+    {
+        return;
+    }
+    if let Ok(written) = stream.stream.write(&stream.pending_write, stream.write_offset) {
+        stream.write_offset += written;
+    }
+    if stream.write_offset == stream.pending_write.len() && stream.completions.is_empty() {
+        stream.pending_write.clear();
+        stream.write_offset = 0;
+    }
 }
 
 /// Record the byte boundary for a guest stream write. Raw protocol writes

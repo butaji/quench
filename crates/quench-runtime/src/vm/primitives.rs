@@ -67,6 +67,35 @@ impl<H: Host> Vm<H> {
         Err(JsError("value is not callable".into()))
     }
 
+    /// A call of `callee` that `Native::is_pure_string_method` admits for `receiver` and
+    /// `args`, answered without the general call path. `None` leaves the call to it: a call
+    /// outside the method's admission, or one that fails, which the general path repeats
+    /// to raise the same error, since the attempt had no observable effect.
+    #[inline(never)]
+    pub(super) fn pure_string_method_call(
+        &mut self,
+        p: &ResidualProgram,
+        callee: Value,
+        receiver: Value,
+        args: &[Value],
+    ) -> Option<Value> {
+        let Some(Cell::Function {
+            kind: FunctionKind::Native(native),
+            ..
+        }) = self.heap.get(callee)
+        else {
+            return None;
+        };
+        let native = *native;
+        if !native.is_pure_string_method()
+            || !matches!(self.heap.get(receiver), Some(Cell::String(_)))
+            || args.iter().any(|argument| self.is_object_like(*argument))
+        {
+            return None;
+        }
+        self.call_primitive_native(p, native, receiver, args).ok()
+    }
+
     pub(super) fn call_primitive_native(
         &mut self,
         p: &ResidualProgram,

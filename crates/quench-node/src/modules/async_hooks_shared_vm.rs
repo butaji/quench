@@ -231,11 +231,10 @@ pub(crate) fn prune_promises(
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let shared = context.host_mut().shared_state();
-    let entries = std::mem::take(&mut shared.borrow_mut().async_hooks.promise_resources);
+    let entries: Vec<_> = shared.borrow().async_hooks.promise_resources.iter().map(|(&id, &weak)| (id, weak)).collect();
     for (id, weak) in entries {
-        if context.resolve_host_weak_root(weak).is_some() {
-            shared.borrow_mut().async_hooks.promise_resources.insert(id, weak);
-        } else {
+        if context.resolve_host_weak_root(weak).is_none() {
+            shared.borrow_mut().async_hooks.promise_resources.remove(&id);
             context.release_host_weak_root(weak);
             shared.borrow_mut().async_hooks.context_triggers.remove(&id);
             queue_destroy(context, id)?;
