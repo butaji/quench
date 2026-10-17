@@ -35,7 +35,7 @@ oxc_semantic = { workspace = true }
 oxc_span = { workspace = true }
 oxc_syntax = { workspace = true }
 quench-stack = { path = "../quench-stack" }
-url = "2"
+url = { version = "2", features = ["expose_internals"] }
 brotli = "7"
 encoding_rs = "0.8"
 crc32fast = "1"
