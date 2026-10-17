@@ -74,13 +74,17 @@ pub(crate) fn facade(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let prototype = context.object_rooted()?;
     context.set_prototype_rooted(console, prototype)?;
     // Bound to the console, as the SDK binds every method of its global console.
+    // Called directly: compiling a helper would fault the compiler back in after the entry's
+    // compilation released it.
     let log = context.host_function(crate::host::shared_vm::operation("consoleLog"))?;
-    let bind = context.evaluate_script_rooted(
-        "(method, console) => Function.prototype.bind.call(method, console)",
-        "node:internal/console/bind.js",
-    )?;
-    let undefined = context.undefined();
-    let log = context.call_rooted(bind, undefined, &[log, console])?;
+    let global = context.global_root()?;
+    let function_key = context.string_rooted("Function");
+    let function = context.get_property_rooted(global, function_key)?;
+    let prototype_key = context.string_rooted("prototype");
+    let function_prototype = context.get_property_rooted(function, prototype_key)?;
+    let bind_key = context.string_rooted("bind");
+    let bind = context.get_property_rooted(function_prototype, bind_key)?;
+    let log = context.call_rooted(bind, log, &[console])?;
     let (log_key, enumerable) = CONSOLE_KEYS[0];
     let key = context.string_rooted(log_key);
     context.define_data_property_rooted(console, key, log, true, enumerable, true)?;
@@ -91,7 +95,6 @@ pub(crate) fn facade(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     context.define_data_property_rooted(log, length, variadic, false, false, true)?;
     let initializer = context.host_function(crate::host::shared_vm::operation("consoleLoad"))?;
     context.define_lazy_holder_keys_rooted(console, &CONSOLE_KEYS[1..], initializer)?;
-    let global = context.global_root()?;
     let symbol_key = context.string_rooted("Symbol");
     let symbol = context.get_property_rooted(global, symbol_key)?;
     let tag_key = context.string_rooted("toStringTag");
