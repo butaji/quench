@@ -473,6 +473,21 @@ impl<H: Host> Vm<H> {
                     Native::StringToUpperCase | Native::StringToLocaleUpperCase
                 );
                 let units = receiver.units();
+                // ASCII maps ASCII without locale tailoring; an already-mapped string is its
+                // own result, as primitive strings have no identity.
+                if matches!(native, Native::StringToUpperCase | Native::StringToLowerCase)
+                    && let super::wtf16::Units::Ascii(bytes) = units
+                {
+                    let mapped = |byte: &u8| {
+                        if upper { byte.to_ascii_uppercase() } else { byte.to_ascii_lowercase() }
+                    };
+                    if bytes.iter().all(|byte| mapped(byte) == *byte) {
+                        return Ok(this);
+                    }
+                    let bytes: Vec<u8> = bytes.iter().map(mapped).collect();
+                    let text = std::str::from_utf8(&bytes).expect("ASCII units are UTF-8");
+                    return Ok(self.heap.alloc(Cell::String(JsString::from_str(text))));
+                }
                 let text = if matches!(
                     native,
                     Native::StringToLocaleUpperCase | Native::StringToLocaleLowerCase
