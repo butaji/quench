@@ -547,6 +547,15 @@ struct FieldCache {
     slot: u16,
 }
 const NO_FIELD_HOLDER: u32 = u32::MAX;
+/// A field site's read of an accessor on the immediate prototype of a shaped receiver: it
+/// holds while receiver and prototype keep these shapes, whose `slot` attributes carry the
+/// getter.
+#[derive(Clone, Copy)]
+struct AccessorFieldCache {
+    receiver: u32,
+    holder: u32,
+    slot: u16,
+}
 /// Prototypes an inherited field load may traverse to its holder, or to the end of the chain
 /// for an absent name. Node's stream objects (an `IncomingMessage` above `Readable`, `Stream`,
 /// `EventEmitter` and `Object.prototype`) sit five prototypes above their instances; deeper
@@ -1276,6 +1285,9 @@ pub(crate) struct Vm<H> {
     /// `NO_INHERITED_FIELD`.
     inherited_field_indices: Vec<u32>,
     inherited_field_caches: Vec<InheritedFieldCache>,
+    /// Accessor reads by field-cache index (`AccessorFieldCache`); cleared with the field
+    /// caches.
+    accessor_field_caches: FxHashMap<usize, AccessorFieldCache>,
     field_add_indices: Vec<u32>,
     field_add_sets: Vec<FieldAddCacheSet>,
     megamorphic_field_indices: Vec<u32>,
