@@ -1,6 +1,6 @@
 //! Native async-hook subscriptions and snapshots across nested hook emission.
 
-use super::event_constructor_shared_vm::{get, named_set};
+use super::event_constructor_shared_vm::get;
 use crate::host::NodeHost;
 use quench_runtime::{BuiltinData, NativeContext, RootId, RootedError};
 
@@ -94,21 +94,21 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<Ro
     };
     let prototype = get(context, constructor, "prototype")?;
     let hooks = context.construct_rooted(constructor, constructor, &[])?;
-    named_set(context, api, api, "hooks", hooks)?;
+    context.assign_named_property_rooted(api, "hooks", hooks)?;
     for name in ["add", "delete", "has"] {
         let method = get(context, prototype, name)?;
-        named_set(context, api, api, name, method)?;
+        context.assign_named_property_rooted(api, name, method)?;
     }
     let keys = HookKind::ALL
         .iter()
         .map(|kind| context.symbol_rooted(Some(kind.name())))
         .collect::<Vec<_>>();
     let keys = context.array_rooted(&keys)?;
-    named_set(context, api, api, "keys", keys)?;
+    context.assign_named_property_rooted(api, "keys", keys)?;
     let no_promise = context.symbol_rooted(Some("kNoPromiseHook"));
-    named_set(context, api, api, "noPromiseKey", no_promise)?;
+    context.assign_named_property_rooted(api, "noPromiseKey", no_promise)?;
     let resource = context.object_rooted()?;
-    named_set(context, api, api, "defaultResource", resource)?;
+    context.assign_named_property_rooted(api, "defaultResource", resource)?;
     let retained = context.retain(api)?;
     context
         .host_mut()
@@ -147,7 +147,7 @@ pub(crate) fn initialize_hook(
             let error =
                 context.type_error_rooted(&format!("hook.{} must be a function", kind.name()))?;
             let code = context.string_rooted("ERR_ASYNC_CALLBACK");
-            named_set(context, api, error, "code", code)?;
+            context.assign_named_property_rooted(error, "code", code)?;
             return Err(context.throw(error));
         }
     }
@@ -173,17 +173,17 @@ pub(crate) fn initialize_hook(
     for (index, kind) in HookKind::ALL.iter().enumerate() {
         let value = args.get(index + 1).copied().unwrap_or(undefined);
         let key = key(context, api, *kind)?;
-        super::event_constructor_shared_vm::set(context, api, hook, key, value)?;
+        context.assign_property_rooted(hook, key, value)?;
     }
     if no_promise && context.is_callable_rooted(promise)? {
         let error=context.type_error_rooted("The argument 'trackPromises' must not be false when promiseResolve is enabled. Received false")?;
         let code = context.string_rooted("ERR_INVALID_ARG_VALUE");
-        named_set(context, api, error, "code", code)?;
+        context.assign_named_property_rooted(error, "code", code)?;
         return Err(context.throw(error));
     }
     let key = get(context, api, "noPromiseKey")?;
     let value = context.boolean(no_promise);
-    super::event_constructor_shared_vm::set(context, api, hook, key, value)?;
+    context.assign_property_rooted(hook, key, value)?;
     Ok(undefined)
 }
 
