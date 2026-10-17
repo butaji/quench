@@ -595,7 +595,13 @@ struct FieldAddCache {
     slot: u16,
     prototype_depth: u8,
     prototype_shapes: [u32; FIELD_ADD_CACHE_MAX_PROTO_DEPTH],
+    /// The `prototype_layout_epoch` under which a walk last proved the chain from
+    /// `proved_prototype`, or `NO_PROVED_EPOCH`; while both hold the chain needs no walk.
+    proved_epoch: u64,
+    proved_prototype: Value,
 }
+/// A `FieldAddCache::proved_epoch` no epoch reaches: the chain is unproven.
+const NO_PROVED_EPOCH: u64 = u64::MAX;
 impl FieldAddCache {
     const EMPTY: Self = Self {
         atom: u32::MAX,
@@ -604,6 +610,8 @@ impl FieldAddCache {
         slot: 0,
         prototype_depth: 0,
         prototype_shapes: [NO_FIELD_RECEIVER; FIELD_ADD_CACHE_MAX_PROTO_DEPTH],
+        proved_epoch: NO_PROVED_EPOCH,
+        proved_prototype: Value::UNDEFINED,
     };
     fn prototype_shapes(&self) -> &[u32] {
         &self.prototype_shapes[..usize::from(self.prototype_depth)]
@@ -621,9 +629,9 @@ impl FieldAddCacheSet {
         entries: [FieldAddCache::EMPTY; FIELD_ADD_CACHE_WAYS],
     };
     #[inline(always)]
-    fn find(&self, source_shape: u32, atom: Atom) -> Option<&FieldAddCache> {
+    fn find_mut(&mut self, source_shape: u32, atom: Atom) -> Option<&mut FieldAddCache> {
         self.entries[..usize::from(self.len)]
-            .iter()
+            .iter_mut()
             .find(|cache| cache.source_shape == source_shape && cache.atom == atom)
     }
     /// Replaces the entry for the same source shape and atom, else appends, evicting the oldest
