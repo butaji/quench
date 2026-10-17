@@ -1683,12 +1683,15 @@ impl Object {
         previous
     }
 
-    pub(crate) fn copy_property_storage_from(&mut self, source: &Self) {
-        let properties = source.properties();
+    /// Takes `source`'s property values, given `properties`, the arena's duplicate of
+    /// `source.properties()`, and returns the storage this object held before.
+    pub(crate) fn copy_property_storage_from(&mut self, source: &Self, properties: ValueVec) -> ValueVec {
+        let previous = self.properties();
         self.set_properties(properties);
         if properties.has_inline_property_storage() {
             *self.inline_property_values_mut() = *source.inline_property_values();
         }
+        previous
     }
 
     /// Presence of [[ErrorData]] is the unforgeable Error brand.
