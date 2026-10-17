@@ -1,16 +1,15 @@
-//! Shared owned streaming ABI; policy stays in configured Node source.
-use crate::modules::zlib_shared_vm::Codec as Mode;
-#[cfg(quench_node_zlib)]
-#[path = "zlib_native_codec_c.rs"]
-mod backend;
-#[cfg(not(quench_node_zlib))]
-#[path = "zlib_native_codec_rust.rs"]
-mod backend;
+//! Shared owned streaming ABI behind `internalBinding('zlib')`; policy stays in Node's
+//! lib/zlib.js. Each engine follows its node_zlib.cc context.
+use crate::modules::zlib_constants::Mode;
+#[path = "zlib_native_codec_zlib.rs"]
+mod zlib;
 #[cfg(quench_node_brotli)]
 #[path = "zlib_native_brotli.rs"]
 mod brotli;
-#[cfg(quench_node_zlib)]
-pub(crate) use backend::version;
+#[cfg(not(quench_node_brotli))]
+#[path = "zlib_native_brotli_rust.rs"]
+mod brotli;
+pub(crate) use zlib::version;
 #[path = "zlib_native_zstd.rs"]
 mod zstd;
 pub(crate) struct Failure {
@@ -22,11 +21,17 @@ pub(crate) struct Step {
     pub(crate) consumed: usize,
     pub(crate) produced: usize,
 }
+/// What a Brotli stream was created from; `ResetStream` recreates it with the same
+/// dictionary and replays the same parameters.
+pub(crate) struct BrotliRecipe {
+    mode: Mode,
+    params: Vec<u32>,
+    dictionary: Option<Vec<u8>>,
+}
 pub(crate) enum Codec {
-    Zlib(backend::Codec),
+    Zlib(zlib::Codec),
     Zstd(zstd::Codec),
-    #[cfg(quench_node_brotli)]
-    Brotli(brotli::Codec),
+    Brotli(brotli::Codec, BrotliRecipe),
 }
 impl Codec {
     pub(in crate::modules) fn new(
@@ -36,16 +41,17 @@ impl Codec {
         memory: i32,
         strategy: i32,
         dictionary: Option<Vec<u8>>,
+        reject_garbage_after_end: bool,
     ) -> Result<Self, Failure> {
-        backend::Codec::new(mode, bits, level, memory, strategy, dictionary).map(Self::Zlib)
+        zlib::Codec::new(mode, bits, level, memory, strategy, dictionary, reject_garbage_after_end).map(Self::Zlib)
     }
-    #[cfg(quench_node_brotli)]
     pub(in crate::modules) fn brotli(
         mode: Mode,
         params: &[u32],
         dictionary: Option<Vec<u8>>,
     ) -> Result<Self, Failure> {
-        brotli::Codec::new(mode, params, dictionary).map(Self::Brotli)
+        let recipe = BrotliRecipe { mode, params: params.to_vec(), dictionary };
+        brotli::Codec::new(mode, params, recipe.dictionary.clone()).map(|codec| Self::Brotli(codec, recipe))
     }
     pub(in crate::modules) fn zstd(
         mode: Mode,
@@ -65,8 +71,25 @@ impl Codec {
         match self {
             Self::Zlib(codec) => codec.write(flush, input, output),
             Self::Zstd(codec) => codec.write(flush, input, output),
-            #[cfg(quench_node_brotli)]
-            Self::Brotli(codec) => codec.write(flush, input, output),
+            Self::Brotli(codec, _) => codec.write(flush, input, output),
+        }
+    }
+    /// `ResetStream`: start a new stream with the same configuration.
+    pub(crate) fn reset(&mut self) -> Result<(), Failure> {
+        match self {
+            Self::Zlib(codec) => codec.reset(),
+            Self::Zstd(codec) => codec.reset(),
+            Self::Brotli(codec, recipe) => {
+                *codec = brotli::Codec::new(recipe.mode, &recipe.params, recipe.dictionary.clone())?;
+                Ok(())
+            }
+        }
+    }
+    /// `params(level, strategy)`: zlib's `SetParams`; a no-op for Brotli and Zstd streams.
+    pub(crate) fn params(&mut self, level: i32, strategy: i32) -> Result<(), Failure> {
+        match self {
+            Self::Zlib(codec) => codec.params(level, strategy),
+            Self::Zstd(_) | Self::Brotli(..) => Ok(()),
         }
     }
 }
