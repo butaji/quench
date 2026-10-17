@@ -99,8 +99,8 @@ fn api(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         ("hasRef", "messagingHasRef"),
         ("receive", "messagingReceive"),
         ("workerStart", "workerStart"),
-        ("workerRef", "workerRef"),
-        ("workerTerminate", "workerTerminate"),
+        ("workerRef", "messagingWorkerRef"),
+        ("workerTerminate", "messagingWorkerTerminate"),
         ("workerExited", "workerExited"),
     ] {
         let function = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;

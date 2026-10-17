@@ -10220,3 +10220,48 @@ fn domain_sdk_owns_emitter_association_without_compatibility_global() {
         &["--no-warnings", "--expose-internals"],
     );
 }
+
+#[test]
+fn require_resolve_options_paths_resolve_paths_and_global_paths_match_node() {
+    compare_node_stream_source(
+        r#"
+const fs=require('fs'),path=require('path'),os=require('os');
+const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'resolve-paths-')));
+fs.mkdirSync(path.join(root,'node_modules','pkg'),{recursive:true});
+fs.writeFileSync(path.join(root,'node_modules','pkg','index.js'),'');
+fs.writeFileSync(path.join(root,'local.js'),'');
+const out=[],rel=p=>typeof p==='string'?p.replace(root,'<root>'):p;
+const t=f=>{try{out.push(f())}catch(e){out.push([e.name,e.code,e.message.split('\n')[0].replace(root,'<root>')])}};
+t(()=>rel(require.resolve('pkg',{paths:[root]})));
+t(()=>rel(require.resolve('./local.js',{paths:[root]})));
+t(()=>rel(require.resolve('pkg',{paths:[path.join(root,'missing'),root]})));
+t(()=>rel(require.resolve('pkg/index.js',{paths:[path.join(root,'node_modules','pkg')]})));
+t(()=>require.resolve('pkg',{paths:'x'}));
+t(()=>require.resolve('pkg',{paths:[1]}));
+t(()=>require.resolve('missing-pkg',{paths:[root]}));
+t(()=>require.resolve('fs',{paths:[]}));
+t(()=>require.resolve.paths('fs'));
+t(()=>require.resolve.paths('node:fs'));
+t(()=>[require.resolve.paths.name,require.resolve.paths.length,typeof require('module').createRequire(root+'/').resolve.paths]);
+t(()=>require.resolve.paths('..x').length);
+t(()=>require('module').globalPaths.slice(-1)[0].endsWith(path.join('lib','node')));
+fs.rmSync(root,{recursive:true,force:true});
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[test]
+fn advanced_ipc_serialization_carries_v8_values_like_node() {
+    compare_node_stream_source(
+        r#"
+const {spawn}=require('child_process');
+const child=`process.on('message',m=>{process.send({map:m.map instanceof Map&&m.map.get(1),self:m.self===m,big:m.big+1n,date:m.date instanceof Date,bytes:[...m.bytes]});process.disconnect()})`;
+const c=spawn(process.execPath,['-e',child],{stdio:['inherit','inherit','inherit','ipc'],serialization:'advanced'});
+const message={map:new Map([[1,'one']]),big:41n,date:new Date(0),bytes:new Uint8Array([1,2,3])};message.self=message;
+c.on('message',reply=>console.log(JSON.stringify(reply,(k,v)=>typeof v==='bigint'?`${v}n`:v)));
+c.on('exit',code=>console.log('exit',code));
+c.send(message);
+"#,
+    );
+}
