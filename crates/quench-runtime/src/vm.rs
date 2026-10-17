@@ -1777,8 +1777,8 @@ impl<H: Host> Vm<H> {
         let (_, collections, _, _, _, _) = self.heap.stats();
         let gc = self.heap.gc_profile();
         eprintln!(
-            "{{\"kind\":\"quench-gc-time\",\"collections\":{collections},\"mark_nanos\":{},\"sweep_nanos\":{},\"mark_clear_nanos\":{}}}",
-            gc.mark_nanos, gc.sweep_nanos, gc.mark_clear_nanos,
+            "{{\"kind\":\"quench-gc-time\",\"collections\":{collections},\"mark_nanos\":{},\"sweep_nanos\":{},\"mark_clear_nanos\":{},\"vm_owner_edges_nanos\":{},\"vm_roots_nanos\":{},\"vm_shape_setup_nanos\":{},\"vm_after_nanos\":{}}}",
+            gc.mark_nanos, gc.sweep_nanos, gc.mark_clear_nanos, gc.vm_phase_nanos[0], gc.vm_phase_nanos[1], gc.vm_phase_nanos[2], gc.vm_phase_nanos[3],
         );
     }
     #[cfg(feature = "profile-memory")]
