@@ -73,7 +73,13 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let callee = self.read(f, i.register_b());
-        let (id, env) = self.in_loop_call_target(p, callee)?;
+        let (program, id, env) = self.in_loop_call_target(p, callee)?;
+        // A callee of another program is activated in its program, which the loop executes
+        // from the push (`StepResult::PushFrame`) until the return restores the caller's.
+        let caller_program = self.active_program;
+        let callee_residual = (program != caller_program)
+            .then(|| self.programs.get(program))
+            .flatten();
         self.profile.call_source(0);
         let window = i.call_window();
         let this = self.read(f, i.register_c());
@@ -84,15 +90,21 @@ impl<H: Host> Vm<H> {
         // of which can run while a frame is pushed; afterwards the new frame itself roots the
         // callee, receiver and arguments.
         let arguments: *const [Value] = self.register_window(f, window);
+        if callee_residual.is_some() {
+            self.set_active_program(program);
+        }
         // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
         let call_guard = self.push_general_user_frame(
-            p,
+            callee_residual.as_deref().unwrap_or(p),
             id,
             env,
             this,
             unsafe { &*arguments },
             CallContext::user_function(id, callee),
         );
+        if call_guard.is_err() {
+            self.set_active_program(caller_program);
+        }
         Some(call_guard.map(|call_guard| StepResult::PushFrame {
             destination: i.result_register(),
             call_guard,
@@ -100,20 +112,20 @@ impl<H: Host> Vm<H> {
         }))
     }
 
-    /// The function and environment of `callee` when it is a user function of the active
-    /// program in the current realm that the loop may push in place: a non-root ordinary
-    /// body (`CallPlan::in_loop`). Resolved targets are cached (`InLoopCallTarget`).
+    /// The program, function and environment of `callee` when it is a user function of a
+    /// JavaScript program in the current realm that the loop may push in place: a non-root
+    /// ordinary body (`CallPlan::in_loop`). Resolved targets are cached (`InLoopCallTarget`).
     #[inline(always)]
-    fn in_loop_call_target(&mut self, p: &ResidualProgram, callee: Value) -> Option<(u32, Value)> {
+    fn in_loop_call_target(
+        &mut self,
+        p: &ResidualProgram,
+        callee: Value,
+    ) -> Option<(ProgramId, u32, Value)> {
         let index = callee.heap_index()? as usize & (super::CALL_TARGET_CACHE_SIZE - 1);
         let epoch = self.heap.collection_epoch();
         let cached = self.call_targets[index];
-        if cached.callee == callee
-            && cached.epoch == epoch
-            && cached.realm == self.realm.globals
-            && cached.program == self.active_program
-        {
-            return Some((cached.function, cached.env));
+        if cached.callee == callee && cached.epoch == epoch && cached.realm == self.realm.globals {
+            return Some((cached.program, cached.function, cached.env));
         }
         self.resolve_in_loop_call_target(p, callee, index, epoch)
     }
@@ -125,14 +137,19 @@ impl<H: Host> Vm<H> {
         callee: Value,
         index: usize,
         epoch: u64,
-    ) -> Option<(u32, Value)> {
+    ) -> Option<(ProgramId, u32, Value)> {
         let (program, function, env) = self.same_realm_user_target(callee)?;
+        let owner = if program == self.active_program {
+            p
+        } else {
+            self.programs.residual(program)?
+        };
         if function == super::ROOT_FUNCTION_ID
-            || program != self.active_program
-            || !p
+            || owner.kind == crate::bytecode::ProgramKind::Wasm
+            || !owner
                 .functions
                 .get(function as usize)
-                .is_some_and(|function| function.call_plan(&p.atoms).in_loop)
+                .is_some_and(|function| function.call_plan(&owner.atoms).in_loop)
         {
             return None;
         }
@@ -144,7 +161,7 @@ impl<H: Host> Vm<H> {
             function,
             env,
         };
-        Some((function, env))
+        Some((program, function, env))
     }
 
     /// `f.call(this, ...args)` and `f.apply(this, list)` of the intrinsic natives invoke `f`
