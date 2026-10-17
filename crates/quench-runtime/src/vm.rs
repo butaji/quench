@@ -1886,6 +1886,7 @@ impl<H: Host> Vm<H> {
             + heap.free_slot_metadata_bytes
             + property_arena_bytes
             + heap.cell_payload_bytes
+            + heap.array_buffer_store_bytes
             + heap.boxed_object_header_bytes
             + heap.sparse_array_sidecar_bytes
             + vm_metadata_bytes;
