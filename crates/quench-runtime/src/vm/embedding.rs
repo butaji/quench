@@ -1212,6 +1212,7 @@ impl<H: Host> Vm<H> {
     fn is_realm_global(&self, value: Value) -> bool {
         value == self.realm.globals
             || self.realm.global_lexical_states.contains_key(&value)
+            || self.realm.parked.as_ref().is_some_and(|parked| parked.global == value)
             || self
                 .realm
                 .intrinsics
