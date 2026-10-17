@@ -27,6 +27,54 @@ impl<T> ThinBoxSlice<T> {
         // SAFETY: the header was initialized at allocation and never changes.
         unsafe { *self.header.as_ptr() }
     }
+
+    /// A slice of `len` elements made in place by `element(index)`, or `None` when one is
+    /// missing, which drops those made before it.
+    pub(crate) fn try_from_fn(len: usize, mut element: impl FnMut(usize) -> Option<T>) -> Option<Self> {
+        /// Owns the allocation and its initialized prefix until every element exists.
+        struct Partial<T> {
+            raw: *mut u8,
+            layout: Layout,
+            elements: *mut T,
+            initialized: usize,
+        }
+        impl<T> Drop for Partial<T> {
+            fn drop(&mut self) {
+                // SAFETY: the prefix is initialized and the allocation came from `alloc` with
+                // this layout.
+                unsafe {
+                    std::ptr::drop_in_place(std::ptr::slice_from_raw_parts_mut(self.elements, self.initialized));
+                    dealloc(self.raw, self.layout);
+                }
+            }
+        }
+        let (layout, offset) = Self::layout(len);
+        // SAFETY: the layout is non-zero sized, as it always holds the header.
+        let raw = unsafe { alloc(layout) };
+        let Some(header) = NonNull::new(raw.cast::<usize>()) else {
+            handle_alloc_error(layout)
+        };
+        let mut partial = Partial {
+            raw,
+            layout,
+            // SAFETY: the allocation spans the header and `len` elements from `offset`.
+            elements: unsafe { raw.add(offset).cast::<T>() },
+            initialized: 0,
+        };
+        while partial.initialized < len {
+            let value = element(partial.initialized)?;
+            // SAFETY: the element lies within the allocation and is not yet initialized.
+            unsafe { partial.elements.add(partial.initialized).write(value) };
+            partial.initialized += 1;
+        }
+        std::mem::forget(partial);
+        // SAFETY: the header lies at the start of the allocation.
+        unsafe { header.as_ptr().write(len) };
+        Some(Self {
+            header,
+            marker: std::marker::PhantomData,
+        })
+    }
 }
 
 impl<T> From<Box<[T]>> for ThinBoxSlice<T> {
@@ -84,7 +132,7 @@ impl<T> Drop for ThinBoxSlice<T> {
 
 impl<T: Clone> Clone for ThinBoxSlice<T> {
     fn clone(&self) -> Self {
-        self.iter().cloned().collect::<Box<[T]>>().into()
+        Self::try_from_fn(self.len(), |index| Some(self[index].clone())).expect("every element clones")
     }
 }
 
@@ -110,6 +158,11 @@ mod tests {
         assert_eq!(std::rc::Rc::strong_count(&shared), 5);
         drop(slice);
         drop(copy);
+        assert_eq!(std::rc::Rc::strong_count(&shared), 1);
+        let made = ThinBoxSlice::try_from_fn(3, |index| Some(shared.clone()).filter(|_| index < 3)).unwrap();
+        assert_eq!(std::rc::Rc::strong_count(&shared), 4);
+        drop(made);
+        assert!(ThinBoxSlice::try_from_fn(3, |index| (index < 2).then(|| shared.clone())).is_none());
         assert_eq!(std::rc::Rc::strong_count(&shared), 1);
         let empty: ThinBoxSlice<u64> = Vec::new().into_boxed_slice().into();
         assert!(empty.is_empty());
