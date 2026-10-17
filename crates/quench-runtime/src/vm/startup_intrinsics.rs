@@ -54,6 +54,9 @@ pub(super) struct StartupIntrinsics {
     /// Open `enter_startup_intrinsics` calls; only the outermost one swaps.
     depth: usize,
     swapped: Vec<SwappedProperty>,
+    /// The values `holders` keep alive (see `extend_startup_intrinsic_roots`); reset whenever
+    /// `holders` changes.
+    holder_roots: std::cell::OnceCell<Vec<Value>>,
     regexp: Option<super::regexp::LegacyRegExpSnapshot>,
 }
 
@@ -106,23 +109,29 @@ impl<H: Host> Vm<H> {
 
     /// Values the snapshot keeps alive: holders, their sealed values, the symbol keys and
     /// accessor functions of their sealed shapes, and the script's state of a swap.
-    pub(super) fn startup_intrinsic_roots(&self) -> Vec<Value> {
-        let mut roots = Vec::new();
-        for sealed in &self.startup_intrinsics.holders {
-            roots.push(sealed.holder);
-            roots.extend(sealed.values.iter().copied());
-            for (key, attributes) in super::gc::active_shape_attributes(&self.shapes, sealed.shape)
-                .into_iter()
-                .flatten()
-            {
-                let (getter, setter) = attributes.functions(&self.shape_accessors);
-                roots.extend(key.symbol_value().into_iter().chain(getter).chain(setter));
+    /// The holder part is derived once per sealed state: holders change only when sealed or
+    /// re-sealed, and shape compaction renumbers shapes without changing their values.
+    pub(super) fn extend_startup_intrinsic_roots(&self, roots: &mut Vec<Value>) {
+        let holder_roots = self.startup_intrinsics.holder_roots.get_or_init(|| {
+            let mut holder_roots = Vec::new();
+            for sealed in &self.startup_intrinsics.holders {
+                holder_roots.push(sealed.holder);
+                holder_roots.extend(sealed.values.iter().copied());
+                for (key, attributes) in
+                    super::gc::active_shape_attributes(&self.shapes, sealed.shape)
+                        .into_iter()
+                        .flatten()
+                {
+                    let (getter, setter) = attributes.functions(&self.shape_accessors);
+                    holder_roots.extend(key.symbol_value().into_iter().chain(getter).chain(setter));
+                }
             }
-        }
+            holder_roots
+        });
+        roots.extend_from_slice(holder_roots);
         for swapped in &self.startup_intrinsics.swapped {
             roots.extend(swapped.previous.iter().flat_map(SlotProperty::values));
         }
-        roots
     }
 
     /// Records the intrinsics: every own shape property of the global object, of each object a
@@ -155,6 +164,7 @@ impl<H: Host> Vm<H> {
             .filter_map(|holder| self.sealed_holder(holder))
             .collect();
         self.startup_intrinsics.holders = sealed;
+        self.startup_intrinsics.holder_roots = std::cell::OnceCell::new();
     }
 
     /// `holder`'s current shape and slot values.
@@ -249,6 +259,7 @@ impl<H: Host> Vm<H> {
                 let holder = self.startup_intrinsics.holders[index].holder;
                 if let Some(sealed) = self.sealed_holder(holder) {
                     self.startup_intrinsics.holders[index] = sealed;
+                    self.startup_intrinsics.holder_roots = std::cell::OnceCell::new();
                 }
             }
         }
