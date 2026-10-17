@@ -51,6 +51,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "processMetricsResources" (0) => crate::modules::process_metrics_shared_vm::resources,
         #[cfg(target_os = "linux")]
         method "processMetricsRss" (0) => crate::modules::process_metrics_shared_vm::rss,
+        method "processMetricsMemoryUsage" (1) => crate::modules::process_metrics_shared_vm::memory_usage,
         method "processExitCodeGet" (0) => crate::modules::process_shared_vm::exit_code_get,
         method "processExitCodeSet" (1) => crate::modules::process_shared_vm::exit_code_set,
         method "processExit" (1) => crate::modules::process_shared_vm::exit,
