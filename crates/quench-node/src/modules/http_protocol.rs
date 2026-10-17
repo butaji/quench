@@ -260,13 +260,20 @@ pub(crate) fn compose(
 }
 
 pub(crate) fn chunk_frame(body: &[u8]) -> Vec<u8> {
-    if body.is_empty() {
-        return Vec::new();
-    }
-    let mut frame = format!("{:x}\r\n", body.len()).into_bytes();
-    frame.extend_from_slice(body);
-    frame.extend_from_slice(b"\r\n");
+    let mut frame = Vec::new();
+    append_chunk_frame(&mut frame, body);
     frame
+}
+
+/// Append one chunked-coding frame; an empty body has none, as `0` ends the message.
+pub(crate) fn append_chunk_frame(out: &mut Vec<u8>, body: &[u8]) {
+    if body.is_empty() {
+        return;
+    }
+    use std::io::Write;
+    write!(out, "{:x}\r\n", body.len()).expect("writing to a Vec cannot fail");
+    out.extend_from_slice(body);
+    out.extend_from_slice(b"\r\n");
 }
 
 pub(crate) fn chunk_terminator(trailers: &[(String, String)]) -> Vec<u8> {

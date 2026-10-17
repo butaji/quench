@@ -53,14 +53,14 @@ impl<H: Host> Vm<H> {
     }
 
     pub(crate) fn embedding_uint8_array(&mut self, bytes: &[u8]) -> Result<Value, JsError> {
-        let program = self.embedding_program()?;
-        let buffer = self.new_fixed_array_buffer(&program, bytes.len(), false)?;
+        self.embedding_uint8_array_from(bytes.to_vec())
+    }
+
+    /// A Uint8Array over a new ArrayBuffer that owns `bytes`, without copying them.
+    pub(crate) fn embedding_uint8_array_from(&mut self, bytes: Vec<u8>) -> Result<Value, JsError> {
+        let length = bytes.len();
+        let buffer = self.fixed_array_buffer_from(bytes, false);
         let buffer_root = self.heap.root(buffer);
-        if let Some(Cell::ArrayBuffer { bytes: backing, .. }) = self.heap.get_mut(buffer) {
-            backing.make_mut().copy_from_slice(bytes);
-        } else {
-            unreachable!("fixed ArrayBuffer allocation");
-        }
         let view = self.heap.alloc(Cell::TypedArray {
             kind: TypedArrayKind::Uint8,
             object: Box::new(crate::heap::BufferViewObject {
@@ -68,7 +68,7 @@ impl<H: Host> Vm<H> {
                 offset: 0,
             }),
             buffer: self.heap.root_value(buffer_root).unwrap(),
-            length: bytes.len(),
+            length,
             length_tracking: false,
         });
         self.heap.release_root(buffer_root);
@@ -87,6 +87,12 @@ impl<H: Host> Vm<H> {
     }
 
     fn embedding_view_bytes_prefix(&self, value: Value, maximum: usize) -> Option<Vec<u8>> {
+        self.embedding_view_slice(value)
+            .map(|bytes| bytes[..bytes.len().min(maximum)].to_vec())
+    }
+
+    /// The bytes a typed array or DataView currently views; empty once detached.
+    pub(crate) fn embedding_view_slice(&self, value: Value) -> Option<&[u8]> {
         let (buffer, offset, byte_length) = match self.heap.get(value)? {
             Cell::TypedArray {
                 object,
@@ -131,10 +137,10 @@ impl<H: Host> Vm<H> {
             return None;
         };
         if *detached {
-            return Some(Vec::new());
+            return Some(&[]);
         }
-        let end = offset.checked_add(byte_length.min(maximum))?;
-        Some(bytes.get(offset..end)?.to_vec())
+        let end = offset.checked_add(byte_length)?;
+        bytes.get(offset..end)
     }
 
     pub(super) fn typed_array_get(&mut self, object: Value, index: usize) -> Option<Value> {
@@ -596,10 +602,11 @@ mod backing_address_tests {
         vm.execute(&program).unwrap();
         let buffer = vm.new_fixed_array_buffer(&program, 4096, false).unwrap();
         let root = vm.heap.root(buffer);
-        let before = vm.heap.stats().5;
+        let accounted = vm.heap.stats().5;
+        assert!(accounted >= 4096, "a fresh buffer owns its zeroed bytes");
         let offset = vm.embedding_array_buffer_aligned_offset(root, 64).unwrap();
         assert!(offset < 64);
-        assert_eq!(vm.heap.stats().5, before + 4096);
+        assert_eq!(vm.heap.stats().5, accounted);
         let snapshot = vm.heap.get(buffer).unwrap().clone();
         let Some(Cell::ArrayBuffer { bytes, .. }) = vm.heap.get_mut(buffer) else {
             panic!("ArrayBuffer");
@@ -613,7 +620,7 @@ mod backing_address_tests {
             vm.embedding_array_buffer_aligned_offset(root, 64).unwrap(),
             offset
         );
-        assert_eq!(vm.heap.stats().5, before + 4096);
+        assert_eq!(vm.heap.stats().5, accounted);
         vm.heap.release_root(root);
     }
 }

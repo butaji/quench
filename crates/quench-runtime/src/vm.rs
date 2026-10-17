@@ -2324,6 +2324,11 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// Counts collections; see `Heap::collection_epoch`.
+    pub(crate) fn collection_epoch(&self) -> u64 {
+        self.heap.collection_epoch()
+    }
+
     fn with_call_roots<R>(
         &mut self,
         values: impl IntoIterator<Item = Value>,
