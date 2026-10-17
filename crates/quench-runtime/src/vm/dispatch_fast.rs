@@ -3938,9 +3938,7 @@ lane_handler! {
         let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
         let atom = i.imm();
-        if vm.realm.global_lexical_declarations.contains(&atom)
-            || vm.realm.global_lexical_bindings.contains_key(&atom)
-        {
+        if vm.realm.global_lexical_declarations.contains(&atom) {
             return exit(ip);
         }
         let super::object::FieldCacheProbe::Hit(value) =
