@@ -10454,3 +10454,20 @@ class Derived extends Base {
         std::fs::remove_file(path).unwrap();
     }
 }
+
+
+#[test]
+fn spread_of_a_branch_built_array_survives_collection() {
+    // The consequent's array reaches AppendArray only through the conditional's result
+    // register, which must stay a register root while the spread allocates its iterator.
+    let mut vm = Vm::new(SilentHost);
+    let script = crate::Engine::specialize(
+        "var x = 5; var out = []; for (var i = 0; i < 2000; i++) { var a = [...(x ? [x, i] : [])]; out.push(a[0] + a[1]); } var total = out[1999] * 10000 + out.length;",
+        "spread-branch-array.js",
+    )
+    .unwrap();
+    vm.execute(&script).unwrap();
+    let name = vm.intern_atom("total");
+    let total = vm.own_property(vm.realm.globals, name).unwrap();
+    assert_eq!(total.as_number(), Some(20_042_000.0));
+}

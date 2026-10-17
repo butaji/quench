@@ -122,6 +122,7 @@ mod module;
 mod number;
 mod object;
 mod shape_memo;
+mod name_atom_memo;
 mod object_assignment;
 mod object_array;
 mod object_builtins;
@@ -1240,6 +1241,7 @@ pub(crate) struct Vm<H> {
     transitions: shape_transitions::ShapeTransitionIndex,
     shape_slot_memo: shape_memo::ShapeSlotMemo,
     shape_attribute_memo: shape_memo::ShapeAttributeMemo,
+    name_atom_memo: name_atom_memo::NameAtomMemo,
     atom_text: AtomTable,
     atoms: FxHashMap<u64, Atom>,
     atom_collisions: FxHashMap<u64, Vec<Atom>>,
@@ -1962,6 +1964,7 @@ impl<H: Host> Vm<H> {
         self.atom_sequence = Rc::new(crate::bytecode::AtomSequence::new(self.atom_text.clone()));
         self.atoms.clear();
         self.atom_collisions.clear();
+        self.name_atom_memo.clear();
         self.array_index_atoms.clear();
         self.dynamic_atoms.clear();
         self.atom_classes.clear();

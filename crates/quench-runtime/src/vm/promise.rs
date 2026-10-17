@@ -2430,6 +2430,13 @@ impl<H: Host> Vm<H> {
         namespace: Value,
         key: Option<crate::vm::property_key::PropertyKey>,
     ) -> Result<(), JsError> {
+        // Only a deferred namespace can evaluate; most objects are rejected before the key.
+        if !self
+            .object_data(namespace)
+            .is_some_and(|object| object.deferred_module().is_some())
+        {
+            return Ok(());
+        }
         let triggers_evaluation = match key {
             None => true,
             Some(crate::vm::property_key::PropertyKey::String(atom)) => {
@@ -2440,11 +2447,7 @@ impl<H: Host> Vm<H> {
                 | crate::vm::property_key::PropertyKey::Private(_),
             ) => false,
         };
-        if triggers_evaluation
-            && self
-                .object_data(namespace)
-                .is_some_and(|object| object.deferred_module().is_some())
-        {
+        if triggers_evaluation {
             self.evaluate_deferred_module_namespace(p, namespace)?;
         }
         Ok(())
@@ -2764,7 +2767,7 @@ impl<H: Host> Vm<H> {
         let environment = self.heap.alloc(Cell::Environment {
             parent: Value::NULL,
             function: super::ROOT_FUNCTION_ID,
-            slots: slots.into_boxed_slice().into(),
+            slots: slots.into(),
             scope: Box::new(crate::heap::EnvironmentScope {
                 program: Some(program.raw()),
                 root_eval_scope: false,

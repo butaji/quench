@@ -1938,15 +1938,19 @@ impl EnvironmentSlots {
     }
 }
 
+impl From<Vec<Value>> for EnvironmentSlots {
+    fn from(values: Vec<Value>) -> Self {
+        Self(super::thin_slice::ThinBoxSlice::from_exact_iter(
+            values.into_iter().map(EnvironmentSlot::Owned),
+        ))
+    }
+}
+
 impl From<Box<[Value]>> for EnvironmentSlots {
     fn from(values: Box<[Value]>) -> Self {
-        Self(
-            values
-                .into_iter()
-                .map(EnvironmentSlot::Owned)
-                .collect::<Box<[_]>>()
-                .into(),
-        )
+        Self(super::thin_slice::ThinBoxSlice::from_exact_iter(
+            values.iter().copied().map(EnvironmentSlot::Owned),
+        ))
     }
 }
 
