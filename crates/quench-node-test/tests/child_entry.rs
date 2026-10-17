@@ -8349,6 +8349,22 @@ fn process_memory_reports_kernel_constraints_and_native_function_metadata() {
 }
 #[cfg(target_os = "linux")]
 #[test]
+fn process_memory_usage_reports_heap_and_external_backing_stores_like_node() {
+    compare_node_stream_source(
+        r#"
+const memoryUsage=process.memoryUsage,descriptor=Object.getOwnPropertyDescriptor(process,'memoryUsage'),out=[];
+out.push([memoryUsage.name,memoryUsage.length,Object.keys(memoryUsage),descriptor.writable,descriptor.enumerable,descriptor.configurable,memoryUsage.rss.name]);
+const before=memoryUsage();
+out.push(Object.keys(before),Object.values(before).every(Number.isSafeInteger));
+out.push([before.rss>0,memoryUsage.rss()>0,before.heapTotal>=before.heapUsed,before.heapUsed>0,before.external>=before.arrayBuffers]);
+const size=8*1024*1024,buffer=new ArrayBuffer(size),after=memoryUsage();
+out.push([after.external-before.external>=size,after.arrayBuffers>=size,buffer.byteLength]);
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+#[cfg(target_os = "linux")]
+#[test]
 fn process_memory_constraints_respect_inherited_data_limits() {
     use std::os::unix::process::CommandExt;
     const DATA_LIMIT_BYTES: u64 = 12 * 1024 * 1024 * 1024;

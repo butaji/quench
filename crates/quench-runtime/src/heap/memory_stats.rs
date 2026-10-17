@@ -27,6 +27,8 @@ pub struct HeapMemoryComposition {
     pub cell_size_bytes: usize,
     pub object_header_size_bytes: usize,
     pub occupied_slots: usize,
+    /// Live values held in object or array records rather than the slot arena.
+    pub direct_records: usize,
     pub object_headers: usize,
     pub embedded_object_headers: usize,
     pub boxed_object_headers: usize,
@@ -47,6 +49,11 @@ pub struct HeapMemoryComposition {
     pub sparse_array_sidecar_bytes: usize,
     pub string_buffers_bytes: usize,
     pub string_buffer_count: usize,
+    /// Byte lengths of the unique ArrayBuffer backing stores: memory outside the heap
+    /// proper, as V8 counts it (`external`, `arrayBuffers`).
+    pub array_buffer_bytes: usize,
+    /// The heap allocations those backing stores own.
+    pub array_buffer_store_bytes: usize,
     pub cell_payload_bytes: usize,
     pub other_cell_payload_bytes: usize,
     pub profile_instrumentation_bytes: usize,
@@ -55,6 +62,7 @@ pub struct HeapMemoryComposition {
 impl Heap {
     pub(crate) fn memory_composition(&self) -> HeapMemoryComposition {
         let mut occupied_slots = 0;
+        let mut direct_records = 0;
         let mut object_headers = 0;
         let mut embedded_object_headers = 0;
         let mut boxed_object_headers = 0;
@@ -73,12 +81,16 @@ impl Heap {
         let mut other_cell_payload_bytes = 0;
         let mut array_identities = HashSet::new();
         let mut string_identities = HashSet::new();
+        let mut array_buffer_bytes = 0;
+        let mut array_buffer_store_bytes = 0;
+        let mut buffer_identities = HashSet::new();
         self.for_each_live_value(|identity| {
             occupied_slots += 1;
             let object_record = self.object_record(identity);
             let direct_array = identity.direct_array_index().is_some();
             let cell = self.get(identity);
             let direct_object = identity.direct_object_index().is_some();
+            direct_records += usize::from(direct_object || direct_array);
             let kind = if direct_object {
                 CellKind::Object as usize
             } else if direct_array {
@@ -187,6 +199,13 @@ impl Heap {
                             }
                         }
                     }
+                    Some(Cell::ArrayBuffer { bytes, .. }) => {
+                        other_cell_payload_bytes += payload_bytes.saturating_sub(bytes.capacity());
+                        if buffer_identities.insert(bytes.as_ptr() as usize) {
+                            array_buffer_bytes += bytes.len();
+                            array_buffer_store_bytes += bytes.capacity();
+                        }
+                    }
                     _ => other_cell_payload_bytes += payload_bytes,
                 }
             }
@@ -224,6 +243,7 @@ impl Heap {
             cell_size_bytes: size_of::<Cell>(),
             object_header_size_bytes: size_of::<Object>(),
             occupied_slots,
+            direct_records,
             object_headers,
             embedded_object_headers,
             boxed_object_headers,
@@ -246,6 +266,8 @@ impl Heap {
             sparse_array_sidecar_bytes,
             string_buffers_bytes,
             string_buffer_count,
+            array_buffer_bytes,
+            array_buffer_store_bytes,
             cell_payload_bytes,
             other_cell_payload_bytes,
             profile_instrumentation_bytes: {
@@ -261,9 +283,9 @@ impl Heap {
 
 impl HeapMemoryComposition {
     /// Bytes the heap holds for live values: their slots, object headers, used property
-    /// values and payloads.
+    /// values and payloads. ArrayBuffer backing stores are external memory, outside it.
     pub fn used_bytes(&self) -> usize {
-        self.occupied_slots * self.slot_size_bytes
+        (self.occupied_slots - self.direct_records) * self.slot_size_bytes
             + self.embedded_object_headers * self.object_header_size_bytes
             + self.boxed_object_header_bytes
             + self.live_property_used_values * size_of::<crate::Value>()
@@ -271,7 +293,8 @@ impl HeapMemoryComposition {
             + self.sparse_array_sidecar_bytes
     }
 
-    /// Bytes the heap has reserved: arenas and records at capacity, plus payloads.
+    /// Bytes the heap has reserved: arenas and records at capacity, plus payloads; like
+    /// `used_bytes`, without ArrayBuffer backing stores.
     pub fn reserved_bytes(&self) -> usize {
         self.slot_arena_reserved_bytes
             + self.object_record_reserved_bytes
