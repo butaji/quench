@@ -440,12 +440,13 @@ fn comparison(
     registers: &[cranelift_frontend::Variable],
     strings: &[Option<StringJitRegister>],
 ) -> Option<ir::Value> {
-    let operator = instruction.binary_operator_field();
-    let code = match operator {
-        value if value == BinaryOperator::LessThan as u32 => FloatCC::LessThan,
-        value if value == BinaryOperator::LessEqualThan as u32 => FloatCC::LessThanOrEqual,
-        value if value == BinaryOperator::GreaterThan as u32 => FloatCC::GreaterThan,
-        value if value == BinaryOperator::GreaterEqualThan as u32 => FloatCC::GreaterThanOrEqual,
+    let relation =
+        super::operations::NumberRelation::from_operator(instruction.binary_operator_field())?;
+    let code = match relation {
+        super::operations::NumberRelation::LessThan => FloatCC::LessThan,
+        super::operations::NumberRelation::LessEqual => FloatCC::LessThanOrEqual,
+        super::operations::NumberRelation::GreaterThan => FloatCC::GreaterThan,
+        super::operations::NumberRelation::GreaterEqual => FloatCC::GreaterThanOrEqual,
         _ => return None,
     };
     let left = numeric_operand(
