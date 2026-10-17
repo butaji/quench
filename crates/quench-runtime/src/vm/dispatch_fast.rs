@@ -912,6 +912,18 @@ lane_handler! {
 }
 
 lane_handler! {
+    /// `RequireObjectCoercible`: any value but `null` and `undefined` passes; the general
+    /// path throws for those.
+    fn lane_require_object_coercible<>(cx, r, ip, i, view) {
+        let value = r.get(i.b);
+        if value.is_null() || value.is_undefined() {
+            return exit(ip);
+        }
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
     /// `IncDec` of a Number; other values take the general path. The view derives the
     /// direction from the record (`specialize_updates`).
     fn lane_inc_dec<DECREMENT: bool>(cx, r, ip, i, view) {
@@ -1167,13 +1179,15 @@ lane_handler! {
 }
 
 lane_handler! {
-    /// `lane_set_index` past a record array, or appending to a dense array at its length.
+    /// `lane_set_index` past a record array, appending to a dense array at its length, or
+    /// filling one of its holes.
     #[inline(never)]
     fn lane_set_index_slot<>(cx, r, ip, i, view) {
         let (object, key, value) = (r.get(i.b), r.get(i.c), r.get(i.a));
         let vm = unsafe { vm(cx) };
         if !vm.try_replace_dense_element(object, key, value)
             && !vm.try_append_dense_element(object, key, value)
+            && !vm.try_fill_dense_hole(object, key, value)
         {
             return exit(ip);
         }
@@ -4120,7 +4134,7 @@ lane_handler! {
         if !matches!(
             vm.heap.get(r.get(i.b)),
             Some(Cell::Function {
-                kind: FunctionKind::Native(_),
+                kind: FunctionKind::Native(_) | FunctionKind::NumericUser(..),
                 ..
             })
         ) {
@@ -4137,10 +4151,11 @@ lane_handler! {
         ) {
             sibling!(lane_function_call::<H>, r, ip, Carried::SCRIPT)
         }
-        // A call that returns its result completes its caller, which only an activation
-        // does in the lane.
+        // A call that returns its result completes its caller: an activation in the lane, or
+        // the frame in the general loop (`lane_frame_return`).
         let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
-        if returns && vm.lane_stack.activations.is_empty() {
+        let frame_returns = returns && vm.lane_stack.activations.is_empty();
+        if frame_returns && !lane_returning_call_admitted(cx) {
             return exit(ip);
         }
         let receiver = r.get(i.c);
@@ -4179,6 +4194,9 @@ lane_handler! {
         let Some(value) = value else {
             return exit(ip);
         };
+        if frame_returns {
+            return lane_frame_return(vm, ip, value);
+        }
         if returns {
             let Some((registers, next, view)) = lane_complete_activation(cx, value) else {
                 unreachable!("a returning lane call has an activation caller");
@@ -4193,8 +4211,9 @@ lane_handler! {
     }
 }
 
-/// A lane `Call` of a native that `Native::runs_from_lane` admits, made as the general path
-/// makes it from the running frame: with the frame's resume PC published and the arguments
+/// A lane `Call` of a native that `Native::runs_from_lane` admits, or of a numeric function
+/// (`FunctionKind::NumericUser`), whose executor runs it, made as the general path makes it
+/// from the running frame: with the frame's resume PC published and the arguments
 /// copied out of its registers, which stay rooted by the frame. Only a frame's own lane run
 /// calls out, so the frame stack the native and its nested calls observe is the general
 /// path's. `None` exits to the general path, which raises the error the call stashed in
@@ -4208,18 +4227,19 @@ fn lane_call_native<H: Host>(
 ) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     let callee = r.get(i.b);
-    let Some(Cell::Function {
-        kind: FunctionKind::Native(native),
-        ..
-    }) = vm.heap.get(callee)
-    else {
-        return None;
+    // A native the lane admits, or a numeric function, which its own executor runs.
+    let native = match vm.heap.get(callee) {
+        Some(Cell::Function {
+            kind: FunctionKind::Native(native),
+            ..
+        }) if native.runs_from_lane() => Some(*native),
+        Some(Cell::Function {
+            kind: FunctionKind::NumericUser(..),
+            ..
+        }) => None,
+        _ => return None,
     };
-    let native = *native;
-    if !native.runs_from_lane()
-        || !unsafe { (*cx).script_calls }
-        || !vm.lane_stack.activations.is_empty()
-    {
+    if !unsafe { (*cx).script_calls } || !vm.lane_stack.activations.is_empty() {
         return None;
     }
     // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
@@ -4239,8 +4259,14 @@ fn lane_call_native<H: Host>(
     let arguments = super::call_arguments::CallArguments::from_slice(unsafe {
         std::slice::from_raw_parts(r.0.add(usize::from(window)), usize::from(argc))
     });
-    // The native branch of `Vm::call_value_with_target_inner`, whose callee this is.
-    let result = vm.call_native_guarded(code, native, r.get(i.c), arguments.as_slice(), callee);
+    let result = match native {
+        // The native branch of `Vm::call_value_with_target_inner`, whose callee this is.
+        Some(native) => {
+            vm.call_native_guarded(code, native, r.get(i.c), arguments.as_slice(), callee)
+        }
+        // The general path's call of the frame's callee.
+        None => vm.call_value_from_frame(code, callee, r.get(i.c), arguments.as_slice()),
+    };
     // The native's allocations may make a collection due, which the lane's safepoints take.
     note_allocation(vm);
     match result {
@@ -5302,6 +5328,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::SetField | Op::SetFieldStrict => Some(lane_set_object_field_own::<H>),
         Op::SetThisField | Op::SetThisFieldStrict => Some(lane_set_this_field_own::<H>),
         Op::ToNumeric => Some(lane_to_numeric::<H>),
+        Op::RequireObjectCoercible => Some(lane_require_object_coercible::<H>),
         Op::IncDec => Some(lane_inc_dec::<H, false>),
         Op::Binary | Op::NumericAdd | Op::NumericMultiply => Some(lane_binary::<H>),
         Op::GetIndex => Some(lane_get_index::<H>),
