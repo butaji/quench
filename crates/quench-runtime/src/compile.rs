@@ -2606,7 +2606,7 @@ impl<'a> Compiler<'a> {
                 .iter()
                 .any(|instruction| instruction.op() == Op::MakeClosure);
         let arguments_slot = arguments_slot.filter(|slot| {
-            captures_locals
+            (captures_locals && function.owner.arrows_reach_arguments(id, *slot))
                 || function.dynamic_eval
                 || function.code.iter().any(|instruction| {
                     instruction.op() == Op::LoadLocal
@@ -2694,6 +2694,41 @@ impl<'a> Compiler<'a> {
         };
         self.functions[id as usize] = Some(result);
         id
+    }
+
+    /// Whether code nested in function `owner` can reach its `arguments` binding in local
+    /// `slot`. Only an arrow shares its enclosing function's `arguments`; every other function
+    /// binds its own. So the binding is reachable exactly where a function nested in `owner`
+    /// through arrows alone captures the slot, or resolves names at run time (direct eval, a
+    /// `with` statement or an enclosing one), which may denote it.
+    fn arrows_reach_arguments(&self, owner: u32, slot: u16) -> bool {
+        let is_with_enter = |atom: usize| self.atoms.get(atom) == Some(crate::bytecode::WITH_ENTER_BINDING);
+        self.functions.iter().flatten().any(|function| {
+            // The function levels between `function` and `owner`, along arrows alone.
+            let mut distance = 0;
+            let mut current = function;
+            loop {
+                if !current.is_arrow {
+                    return false;
+                }
+                distance += 1;
+                match current.parent {
+                    Some(parent) if parent == owner => break,
+                    Some(parent) => match self.functions.get(parent as usize) {
+                        Some(Some(parent)) => current = parent,
+                        _ => return false,
+                    },
+                    None => return false,
+                }
+            }
+            function.has_dynamic_scope_access()
+                || function.contains_with_statement(is_with_enter)
+                || function.instructions().any(|instruction| {
+                    matches!(instruction.op(), Op::LoadCapture | Op::StoreCapture)
+                        && usize::from(instruction.capture_depth()) + 1 == distance
+                        && instruction.capture_slot() == slot
+                })
+        })
     }
 
     fn formal_length(params: &oxc_ast::ast::FormalParameters<'_>) -> usize {

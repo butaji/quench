@@ -5,6 +5,7 @@ use quench_runtime::{HostFunction, HostFunctionId, NativeContext, RootedError, S
 
 pub(crate) mod commonjs;
 mod commonjs_exports;
+mod esm_errors;
 pub(crate) use commonjs::source_kind;
 
 pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
@@ -361,6 +362,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "emitterRemoveAllListeners" (3) => crate::modules::event_emitter_shared_vm::remove_all_listeners,
         method "emitterRemoveListener" (3) => crate::modules::event_emitter_shared_vm::remove_listener,
         method "emitterEmit" (3) => crate::modules::event_emitter_shared_vm::emit,
+        method "emitterErrorInspector" (0) => crate::modules::events_shared_vm::error_inspector,
         method "emitterEmitListeners" (4) => crate::modules::event_emitter_shared_vm::emit_listeners,
         method "emitterCaptureDefaultGet" (0) => crate::modules::event_constructor_shared_vm::default_get,
         method "emitterCaptureDefaultSet" (1) => crate::modules::event_constructor_shared_vm::default_set,
@@ -953,14 +955,21 @@ impl quench_runtime::Host for NodeHost {
         &mut self,
         referrer: &str,
         specifier: &str,
-    ) -> Result<Option<quench_runtime::ModuleSource>, String> {
+    ) -> Result<Option<quench_runtime::ModuleSource>, quench_runtime::ModuleLoadError> {
         use std::path::Path;
 
         let builtin_exports: std::collections::BTreeMap<String, Vec<String>> =
             serde_json::from_str(include_str!("builtin_esm_exports.json"))
                 .expect("generated Node builtin export names are valid JSON");
         let builtin_name = specifier.strip_prefix("node:").unwrap_or(specifier);
-        if crate::host::shared_vm::commonjs::is_builtin_specifier(specifier) {
+        let builtin = crate::host::shared_vm::commonjs::is_builtin_specifier(specifier);
+        if !builtin && specifier.starts_with("node:") {
+            return Err(esm_errors::unknown_builtin(specifier));
+        }
+        if let Some(error) = esm_errors::unsupported_scheme(specifier) {
+            return Err(error);
+        }
+        if builtin {
             let exports = builtin_exports
                 .get(builtin_name)
                 .map(Vec::as_slice)
@@ -1068,25 +1077,26 @@ impl quench_runtime::Host for NodeHost {
                 };
                 let resolution = match resolver.resolve(&base, &resolution_specifier) {
                     Ok(resolution) => resolution,
-                    Err(
-                        oxc_resolver::ResolveError::NotFound(_)
-                        | oxc_resolver::ResolveError::Specifier(_),
-                    ) => return Ok(None),
-                    Err(error) => return Err(error.to_string()),
+                    Err(oxc_resolver::ResolveError::Specifier(_)) => return Ok(None),
+                    Err(error) => return Err(esm_errors::unresolved(error, specifier, &base, &referrer_path)),
                 };
                 resolution.full_path()
             }
         };
         let path = std::fs::canonicalize(&path).unwrap_or(path);
-        let bytes =
-            std::fs::read(&path).map_err(|error| format!("module {}: {error}", path.display()))?;
+        if !internal {
+            if let Some(error) = esm_errors::unloadable(&path) {
+                return Err(error);
+            }
+        }
+        let bytes = std::fs::read(&path).map_err(|error| match error.kind() {
+            std::io::ErrorKind::NotFound => esm_errors::module_not_found(&path, &referrer_path),
+            _ => format!("module {}: {error}", path.display()).into(),
+        })?;
         let extension = path
             .extension()
             .and_then(|value| value.to_str())
             .unwrap_or("");
-        if extension == "node" {
-            return Ok(None);
-        }
         let name = if let Some(original) = file_url.as_ref().filter(|url| {
             url.query().is_some_and(|value| !value.is_empty())
                 || url.fragment().is_some_and(|value| !value.is_empty())
@@ -1144,6 +1154,15 @@ impl quench_runtime::Host for NodeHost {
             bytes,
             source,
         }))
+    }
+
+    fn validate_module_type(
+        &mut self,
+        module: &quench_runtime::ModuleSource,
+        module_type: &str,
+    ) -> Result<(), quench_runtime::ModuleLoadError> {
+        let url = self.import_meta_url(&module.name);
+        esm_errors::validate_type(&url, module_type)
     }
 
     fn import_meta_url(&mut self, source_name: &str) -> String {
@@ -1310,7 +1329,8 @@ fn install_event_emitter(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         "node:bootstrap/event-emitter.js",
     )?;
     let undefined = context.undefined();
-    let event_emitter = context.call_rooted(emitter_factory, undefined, &[initialize, dispatch])?;
+    let inspector = context.host_function(operation("emitterErrorInspector"))?;
+    let event_emitter = context.call_rooted(emitter_factory, undefined, &[initialize, dispatch, inspector])?;
     context.release_root(event_emitter);
     crate::modules::event_constructor_shared_vm::install(context)?;
     crate::modules::event_emitter_shared_vm::initialize(context)?;
