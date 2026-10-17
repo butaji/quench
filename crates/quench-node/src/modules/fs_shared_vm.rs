@@ -2827,7 +2827,7 @@ pub(crate) fn read_file_sync(
         }
     };
     match bytes {
-        Ok(bytes) => super::buffer_string_shared_vm::decode_bytes(context, &bytes, "utf8"),
+        Ok(bytes) => super::buffer_binding_shared_vm::decode_bytes(context, &bytes, "utf8"),
         Err(ReadFileFailure::TooLarge(size)) => {
             let error =
                 context.range_error_rooted(&format!("File size ({size}) is greater than 2 GiB"))?;

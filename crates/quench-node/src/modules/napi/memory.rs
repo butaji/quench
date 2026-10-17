@@ -60,7 +60,7 @@ fn is_array_buffer(kind: BuiltinBrand) -> bool {
 
 /// A new Buffer of `length` zeroed bytes and the address of its first byte.
 fn new_buffer(env: &Env, c: &mut Context<'_>, length: usize) -> Result<(RootId, *mut u8), Status> {
-    let constructor = crate::modules::buffer_constructor_shared_vm::fast_buffer(c).napi(env, c)?;
+    let constructor = crate::modules::buffer_shared_vm::fast_buffer(c).napi(env, c)?;
     let length = c.number(length as f64);
     let buffer = c
         .construct_rooted(constructor, constructor, &[length])
@@ -177,7 +177,7 @@ node_api! {
                 throw_range_error(env, c, "ERR_OUT_OF_RANGE", "The byte offset + length is out of range");
                 return Ok(());
             }
-            let constructor = crate::modules::buffer_constructor_shared_vm::fast_buffer(c).napi(env, c)?;
+            let constructor = crate::modules::buffer_shared_vm::fast_buffer(c).napi(env, c)?;
             let (offset, length) = (c.number(offset as f64), c.number(length as f64));
             let buffer = c.construct_rooted(constructor, constructor, &[source.buffer, offset, length]).napi(env, c)?;
             out(result, env.handle(buffer))

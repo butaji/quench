@@ -178,7 +178,7 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     context.profile_memory_checkpoint("node_url_global");
     crate::host::resident_pages::release_read_only_pages();
     context.scoped(install_shared_web_globals)?;
-    context.scoped(crate::modules::base64_shared_vm::install)?;
+    context.scoped(crate::modules::util_shared_vm::install_lazy_base64_globals)?;
     let global = context.global_root()?;
     // The process.getBuiltinModule bootstrap needs access to the host's
     // builtin loader in both Script and Module goals. Keep it under a private
@@ -230,7 +230,6 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
         // that can require internal modules can replace those exports before a policy's
         // first use, so only then are the policies captured before it runs.
         if internals_exposed(context) {
-            context.scoped(crate::modules::buffer_policy_shared_vm::initialize)?;
             context.scoped(crate::modules::util_shared_vm::initialize_call_site_policy)?;
             // Capture SDK process policies before exposed internal exports can be replaced.
             #[cfg(target_os = "linux")]
@@ -709,8 +708,7 @@ pub(crate) fn require_for_module(
             };
         }
         Some(BuiltinModule::UtilTypes) => {
-            let util = cached_builtin(context, BuiltinModule::Util)?;
-            return get(context, util, "types");
+            return cached_builtin(context, BuiltinModule::UtilTypes);
         }
         Some(BuiltinModule::InternalUrl) => {
             return cached_builtin(context, BuiltinModule::InternalUrl);
@@ -1127,7 +1125,8 @@ pub(crate) fn is_builtin_specifier(specifier: &str) -> bool {
 
 const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("internal/process/task_queues", BuiltinModule::Internal("internal/process/task_queues")),
-    ("internal/buffer", BuiltinModule::Internal("internal/buffer")),
+    ("internal/blob", BuiltinModule::Internal("internal/blob")),
+    ("internal/file", BuiltinModule::Internal("internal/file")),
     ("internal/crypto/keys", BuiltinModule::Internal("internal/crypto/keys")),
     ("internal/abort_controller", BuiltinModule::Internal("internal/abort_controller")),
     ("internal/worker/io", BuiltinModule::Internal("internal/worker/io")),
@@ -1427,6 +1426,28 @@ pub(crate) fn events_on_initialize(
 }
 
 /// Load a real configured standard-library export over this VM's native bindings.
+/// lib/internal/blob.js `resolveObjectURL` over the host's `blob:nodedata:` registry.
+const RESOLVE_OBJECT_URL: &str = r#"(function resolveObjectURL(url) {
+  url = `${url}`;
+  try {
+    const split = new URL(url).pathname.split(":");
+    if (split.length !== 2 || split[0] !== "nodedata") return;
+    return globalThis.__nodeBlobUrls?.get(url);
+  } catch {
+    return;
+  }
+})"#;
+
+/// A library module's `require(id)`: a host builtin when the id names one, otherwise the
+/// pinned library file.
+pub(crate) fn library_require(context: &mut Context<'_>, id: &str) -> Result<RootId, RootedError> {
+    if let Some(builtin) = BuiltinModule::from_specifier(id) {
+        return cached_builtin(context, builtin);
+    }
+    let relative = if id.ends_with(".js") { id.to_owned() } else { format!("{id}.js") };
+    node_library_module(context, "internal/util.js", &relative)
+}
+
 pub(crate) fn node_library_export(
     context: &mut Context<'_>, owner: &str, relative: &str, name: &str,
 ) -> Result<RootId, RootedError> {
@@ -1570,7 +1591,13 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             }
             Ok(module)
         }
-        BuiltinModule::Internal("internal/buffer") => crate::modules::buffer_constructor_shared_vm::internal_module(context),
+        BuiltinModule::Internal("internal/blob") => {
+            let module = native_global_namespace(context, &["Blob"])?;
+            let resolve = context.evaluate_script_rooted(RESOLVE_OBJECT_URL, "node:internal/blob/resolve.js")?;
+            set(context, module, "resolveObjectURL", resolve)?;
+            Ok(module)
+        }
+        BuiltinModule::Internal("internal/file") => native_global_namespace(context, &["File"]),
         BuiltinModule::Internal("internal/worker/io") =>
             native_global_namespace(context, &["MessageChannel", "MessagePort"]),
         BuiltinModule::Internal("internal/abort_controller") => {
@@ -1609,10 +1636,8 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             set(context, internal, "toPathIfFileURL", convert)?;
             Ok(internal)
         },
-        BuiltinModule::UtilTypes => {
-            let util = cached_builtin(context, BuiltinModule::Util)?;
-            get(context, util, "types")
-        }
+        // lib/util/types.js re-exports internal/util/types, the object `util.types` names.
+        BuiltinModule::UtilTypes => node_library_module(context, "util/types.js", "util/types.js"),
         BuiltinModule::FsPromises => {
             let fs = cached_builtin(context, BuiltinModule::Fs)?;
             get(context, fs, "promises")
@@ -1626,11 +1651,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::Os => node_library_module(context, "os.js", "os.js"),
         #[cfg(not(target_os = "linux"))]
         BuiltinModule::Os => crate::modules::os_shared_vm::module(context),
-        BuiltinModule::Buffer => {
-            let module = crate::modules::buffer_shared_vm::module(context)?;
-            crate::modules::buffer_shared_vm::install_blob_export(context, module)?;
-            Ok(module)
-        }
+        BuiltinModule::Buffer => crate::modules::buffer_shared_vm::module(context),
         BuiltinModule::Stream => node_library_module(context, "stream.js", "stream.js"),
         BuiltinModule::StreamPromises => node_library_module(context, "stream.js", "stream/promises.js"),
         BuiltinModule::StreamIter => node_library_module(context, "stream/iter.js", "stream/iter.js"),
@@ -2662,6 +2683,7 @@ pub(crate) fn node_internal_binding_source() -> &'static str {
       constructSharedArrayBuffer: (length) => new SharedArrayBuffer(length),
       guessHandleType: __nativeInternalBinding("util").guessHandleType,
       defineLazyProperties: __nativeInternalBinding("util").defineLazyProperties,
+      isInsideNodeModules: __nativeInternalBinding("util").isInsideNodeModules,
       sleep: () => undefined,
     });
     case "types": return __nativeInternalBinding("types");
@@ -2673,7 +2695,7 @@ pub(crate) fn node_internal_binding_source() -> &'static str {
     };
     case "options": return __nativeInternalBinding("options");
     case "string_decoder": return __nativeInternalBinding("string_decoder");
-    case "buffer": return Object.assign({}, require("buffer"), __nativeInternalBinding("buffer"));
+    case "buffer": return __nativeInternalBinding(name);
     case "fs": return __nativeInternalBinding("fs");
     case "crypto": {
       const native = __nativeInternalBinding("crypto");
