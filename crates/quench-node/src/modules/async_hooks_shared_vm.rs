@@ -198,15 +198,21 @@ fn visible_async_id(state: &super::async_hooks_state::SharedAsyncHooksState) -> 
     state.identity.current_async_id()
 }
 
+/// A promise's async-hooks identity, made only while promises are tracked
+/// (`SharedAsyncHooksState::tracks_promises`): an untracked promise holds no id, trigger or
+/// resource entry for a later destroy.
 pub(crate) fn create_promise_context(
     shared: &Rc<RefCell<crate::host::SharedNodeState>>,
     parent: Option<quench_runtime::HostExecutionContext>,
-) -> quench_runtime::HostExecutionContext {
+) -> Option<quench_runtime::HostExecutionContext> {
     let mut state = shared.borrow_mut();
+    if !state.async_hooks.tracks_promises() {
+        return None;
+    }
     let trigger = parent.map_or_else(|| state.async_hooks.default_trigger_async_id(), |id| id.0 as f64);
     let id = state.async_hooks.identity.allocate_async_id();
     state.async_hooks.context_triggers.insert(id, trigger as i64);
-    quench_runtime::HostExecutionContext(id)
+    Some(quench_runtime::HostExecutionContext(id))
 }
 
 pub(crate) fn initialize_promise(
@@ -262,7 +268,25 @@ pub(crate) fn promise_job_boundary(
     if before && prune_due {
         prune_promise_resources(context)?;
     }
-    let resource = shared.borrow().async_hooks.job_resources.get(&snapshot.0).and_then(|job| job.resource);
+    let resource = {
+        let mut shared = shared.borrow_mut();
+        let state = &mut shared.async_hooks;
+        let tracks = state.tracks_promises();
+        match state.job_resources.get_mut(&snapshot.0) {
+            Some(job) if job.resource.is_none() && tracks => {
+                // A promise made while untracked meets an enabled hook only at its job; like
+                // Node, the job then gets an identity of its own, without an init.
+                let id = state.identity.allocate_async_id();
+                job.resource = Some(id);
+                if before {
+                    job.execution = id;
+                    state.identity.replace_current_async_id(id);
+                }
+                Some(id)
+            }
+            job => job.and_then(|job| job.resource),
+        }
+    };
     let Some(resource) = resource else { return Ok(()); };
     let kind = if before {
         super::async_hook_registry_shared_vm::HookKind::Before
@@ -878,6 +902,7 @@ pub(crate) fn enter_with(
             .identity
             .store_context();
         let mut shared = shared_state.borrow_mut();
+        shared.async_hooks.enabled_local_storages.insert(local_id);
         let previous = shared
             .async_hooks
             .local_stores
@@ -921,6 +946,7 @@ pub(crate) fn disable_storage(
     let released = {
         let shared_state = context.host_mut().shared_state();
         let mut shared = shared_state.borrow_mut();
+        shared.async_hooks.enabled_local_storages.remove(&local_id);
         let keys = shared
             .async_hooks
             .local_stores
