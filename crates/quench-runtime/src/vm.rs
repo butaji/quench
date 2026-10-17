@@ -547,6 +547,15 @@ struct FieldCache {
     slot: u16,
 }
 const NO_FIELD_HOLDER: u32 = u32::MAX;
+/// A field site's read of an accessor on the immediate prototype of a shaped receiver: it
+/// holds while receiver and prototype keep these shapes, whose `slot` attributes carry the
+/// getter.
+#[derive(Clone, Copy)]
+struct AccessorFieldCache {
+    receiver: u32,
+    holder: u32,
+    slot: u16,
+}
 /// Prototypes an inherited field load may traverse to its holder, or to the end of the chain
 /// for an absent name. Node's stream objects (an `IncomingMessage` above `Readable`, `Stream`,
 /// `EventEmitter` and `Object.prototype`) sit five prototypes above their instances; deeper
@@ -560,6 +569,12 @@ struct InheritedFieldCache {
     prototype_shapes: [u32; INHERITED_FIELD_CACHE_MAX_DEPTH],
     depth: u8,
     answer: InheritedFieldAnswer,
+    /// The `prototype_layout_epoch` under which a walk last proved the chain from
+    /// `proved_prototype` up to `proved_holder`, its last recorded prototype, or
+    /// `NO_PROVED_EPOCH`; while both hold the chain needs no walk.
+    proved_epoch: u64,
+    proved_prototype: Value,
+    proved_holder: Value,
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum InheritedFieldAnswer {
@@ -1254,15 +1269,14 @@ pub(crate) struct Vm<H> {
     /// The atoms that spell canonical array indices, by index: index-keyed lookups find
     /// them without formatting and hashing the decimal text.
     array_index_atoms: FxHashMap<u32, Atom>,
-    dynamic_atoms: Vec<JsString>,
-    /// Every atom name in id order (`atom_text`, then `dynamic_atoms`), shared by the dynamic
-    /// and module programs whose atoms are a prefix of the VM's.
+    /// Every atom name in id order (`atom_text`, then the names the VM appends), shared by
+    /// the dynamic and module programs whose atoms are a prefix of the VM's.
     atom_sequence: Rc<crate::bytecode::AtomSequence>,
     /// The strings most recently matched by a RegExp, most recent first, each prepared once
     /// for repeated matching (`Vm::regexp_subject`).
     regexp_subjects: Vec<Rc<quench_regexp::Subject>>,
     regexp_matchers: regexp::RegExpMatcherCache,
-    // One lazily derived class byte per atom; length tracks atom_text plus dynamic_atoms.
+    // One lazily derived class byte per atom; length tracks `atom_sequence`.
     atom_classes: Vec<std::cell::Cell<u8>>,
     dynamic_strings: Option<Box<FxHashMap<u64, Value>>>,
     symbol_registry: FxHashMap<String, Value>,
@@ -1276,6 +1290,9 @@ pub(crate) struct Vm<H> {
     /// `NO_INHERITED_FIELD`.
     inherited_field_indices: Vec<u32>,
     inherited_field_caches: Vec<InheritedFieldCache>,
+    /// Accessor reads by field-cache index (`AccessorFieldCache`); cleared with the field
+    /// caches.
+    accessor_field_caches: FxHashMap<usize, AccessorFieldCache>,
     field_add_indices: Vec<u32>,
     field_add_sets: Vec<FieldAddCacheSet>,
     megamorphic_field_indices: Vec<u32>,
@@ -1839,11 +1856,9 @@ impl<H: Host> Vm<H> {
             + self.field_add_sets.capacity() * size_of::<FieldAddCacheSet>()
             + self.method_caches.capacity() * size_of::<[MethodCache; 2]>();
         let atom_side_table_bytes = self.atoms.capacity() * (size_of::<Atom>() + 1)
-            + self.dynamic_atoms.capacity() * size_of::<JsString>()
-            + self
-                .dynamic_atoms
-                .iter()
-                .map(JsString::capacity)
+            + self.atom_sequence.appended_record_bytes()
+            + (0..self.atom_sequence.appended_len())
+                .map(|offset| self.atom_sequence.appended(offset).capacity())
                 .sum::<usize>();
         let frame_bytes = self
             .frames
@@ -1972,7 +1987,6 @@ impl<H: Host> Vm<H> {
         self.atom_sequence = Rc::new(crate::bytecode::AtomSequence::new(self.atom_text.clone()));
         self.atoms.clear();
         self.array_index_atoms.clear();
-        self.dynamic_atoms.clear();
         self.atom_classes.clear();
         self.regexp_subjects.clear();
         self.regexp_matchers.clear();
@@ -2202,7 +2216,7 @@ impl<H: Host> Vm<H> {
     /// Interns the atoms `program` adds to the VM's; its atom ids are the VM's, so it then reads
     /// every name through the shared sequence instead of keeping its own copy.
     fn intern_program_atoms(&mut self, mut program: ResidualProgram) -> ResidualProgram {
-        let first_new_atom = self.atom_text.len() + self.dynamic_atoms.len();
+        let first_new_atom = self.atom_sequence.len();
         for (index, name) in program.atoms.iter().enumerate().skip(first_new_atom) {
             let atom = self.intern_atom(name);
             debug_assert_eq!(atom as usize, index);

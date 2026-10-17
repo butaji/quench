@@ -170,42 +170,13 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         set_text(context, process, "title", title)?;
     }
     super::child_process_ipc_shared_vm::initialize(context)?;
-    let env = context.object_rooted()?;
-    let worker_env = context.host_mut().shared_state().borrow().messaging.context.as_ref().map(|worker| worker.env.clone());
-    for (name, value) in worker_env.unwrap_or_else(|| std::env::vars().collect()) {
-        if context
-            .host_mut()
-            .shared_state()
-            .borrow()
-            .process_ipc
-            .channel
-            .is_some()
-            && matches!(
-                name.as_str(),
-                "NODE_CHANNEL_FD" | "NODE_CHANNEL_SERIALIZATION_MODE"
-            )
-        {
-            continue;
-        }
-        // One entry's handles at a time, however large the environment.
-        context.scoped(|context| {
-            let key = context.string_rooted(&name);
-            let value = context.string_rooted(&value);
-            if !context.set_property_rooted(env, key, value, env)? {
-                return Err(RootedError::host("cannot install process.env entry"));
-            }
-            Ok(())
-        })?;
-    }
-    install(context, process, "env", env)?;
+    // Copied from the OS environment on the first read of `process.env`: most runs never read
+    // it, and every variable costs a key and a string.
+    let initializer = context.host_function(crate::host::shared_vm::operation("processEnvInitialize"))?;
+    context.define_lazy_data_properties_rooted(process, &["env"], true, initializer)?;
     let load_env_file =
         context.host_function(crate::host::shared_vm::operation("processLoadEnvFile"))?;
     install(context, process, "loadEnvFile", load_env_file)?;
-    let set_env = context.host_function(crate::host::shared_vm::operation("processSetEnv"))?;
-    install(context, process, "__quenchSetEnv", set_env)?;
-    let delete_env =
-        context.host_function(crate::host::shared_vm::operation("processDeleteEnv"))?;
-    install(context, process, "__quenchDeleteEnv", delete_env)?;
     for (name, values) in [
         ("argv", argv.as_slice()),
         ("execArgv", exec_argv.as_slice()),
@@ -3524,9 +3495,9 @@ pub(crate) fn initialize_warning_policy(context: &mut NativeContext<'_, NodeHost
         let initializer = context.host_function(crate::host::shared_vm::operation("processEmitWarningInitialize"))?;
         context.define_lazy_data_properties_rooted(process, &["emitWarning"], true, initializer)?;
     }
-    let env = get(context, process, "env")?;
-    let disabled = get(context, env, "NODE_NO_WARNINGS")?;
-    if options.enabled("--warnings") && context.string_text(disabled)?.as_deref() != Some("1") {
+    // The bootstrap reads the environment before any script can change `process.env`.
+    let disabled = std::env::var("NODE_NO_WARNINGS").ok();
+    if options.enabled("--warnings") && disabled.as_deref() != Some("1") {
         // Node's listener, or, unless a script can reach Node's own to compare, a listener of
         // its name and length that loads Node's on the first warning: most runs never warn.
         let callback = if options.enabled("--expose-internals") {
@@ -3561,6 +3532,105 @@ pub(crate) fn initialize_warning_policy(context: &mut NativeContext<'_, NodeHost
 fn warning_export(context: &mut NativeContext<'_, NodeHost>, name: &str) -> Result<RootId, RootedError> {
     crate::host::shared_vm::commonjs::node_library_export(context, "internal/process/pre_execution.js", "internal/process/warning.js", name)
 }
+
+/// `process.env`: the OS environment as Node's bootstrap reads it, less an IPC channel's own
+/// variables.
+pub(crate) fn initialize_env(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let process = context.host_mut().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))?;
+    let env = context.object_rooted()?;
+    // A Worker reads the environment its parent gave it; the main thread reads the OS.
+    let worker_env = context.host_mut().shared_state().borrow().messaging.context.as_ref().map(|worker| worker.env.clone());
+    for (name, value) in worker_env.unwrap_or_else(|| std::env::vars().collect()) {
+        if context
+            .host_mut()
+            .shared_state()
+            .borrow()
+            .process_ipc
+            .channel
+            .is_some()
+            && matches!(
+                name.as_str(),
+                "NODE_CHANNEL_FD" | "NODE_CHANNEL_SERIALIZATION_MODE"
+            )
+        {
+            continue;
+        }
+        // One entry's handles at a time, however large the environment.
+        context.scoped(|context| {
+            let key = context.string_rooted(&name);
+            let value = context.string_rooted(&value);
+            if !context.set_property_rooted(env, key, value, env)? {
+                return Err(RootedError::host("cannot install process.env entry"));
+            }
+            Ok(())
+        })?;
+    }
+    let factory = context.evaluate_script_rooted(ENV_PROXY_SOURCE, "node:process/env.js")?;
+    let set_env = context.host_function(crate::host::shared_vm::operation("processSetEnv"))?;
+    let delete_env = context.host_function(crate::host::shared_vm::operation("processDeleteEnv"))?;
+    let undefined = context.undefined();
+    let env = context.call_rooted(factory, undefined, &[env, set_env, delete_env])?;
+    let key = context.string_rooted("env");
+    context.define_data_property_rooted(process, key, env, true, true, true)?;
+    Ok(context.undefined())
+}
+
+/// Node's `process.env` over the copied environment: a stored value becomes a string and
+/// sets the OS variable, a deleted key unsets it, and keys take only plain data descriptors.
+const ENV_PROXY_SOURCE: &str = r#"(target, setEnv, deleteEnv) => new Proxy(target, {
+  set(target, key, value) {
+    if (typeof key === "symbol" || typeof value === "symbol") {
+      throw new TypeError("Cannot convert a Symbol value to a string");
+    }
+    if (key === "") return true;
+    if (typeof value !== "string" && typeof value !== "number" &&
+        typeof value !== "boolean" &&
+        globalThis.process.execArgv.includes("--pending-deprecation")) {
+      globalThis.process.emitWarning(
+        "Assigning any value other than a string, number, or boolean to a process.env property is deprecated. Please make sure to convert the value to a string before setting process.env with it.",
+        { type: "DeprecationWarning", code: "DEP0104" }
+      );
+    }
+    const text = String(value);
+    const result = Reflect.set(target, key, text, target);
+    if (result && typeof key !== "symbol") setEnv(String(key), text);
+    return result;
+  },
+  defineProperty(target, key, descriptor) {
+    const invalid = (message) => {
+      const error = new TypeError(message);
+      error.code = "ERR_INVALID_OBJECT_DEFINE_PROPERTY";
+      return error;
+    };
+    if (typeof key === "symbol") {
+      throw invalid("'process.env' does not accept symbol properties");
+    }
+    if (key === "") return true;
+    if ("get" in descriptor || "set" in descriptor) {
+      throw invalid("'process.env' does not accept an accessor(getter/setter) descriptor");
+    }
+    if (descriptor.configurable !== true || descriptor.writable !== true || descriptor.enumerable !== true) {
+      throw invalid("'process.env' only accepts a configurable, writable, and enumerable data descriptor");
+    }
+    if (typeof descriptor.value === "symbol") {
+      throw new TypeError("Cannot convert a Symbol value to a string");
+    }
+    const value = String(descriptor.value);
+    const result = Reflect.defineProperty(target, key, {
+      value,
+      configurable: true,
+      writable: true,
+      enumerable: true
+    });
+    if (result) setEnv(String(key), value);
+    return result;
+  },
+  deleteProperty(target, key) {
+    const result = Reflect.deleteProperty(target, key);
+    if (result && key !== "" && typeof key !== "symbol") deleteEnv(String(key));
+    return result;
+  }
+})"#;
 
 /// Defines `process.emitWarning` as Node's.
 pub(crate) fn initialize_emit_warning(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
