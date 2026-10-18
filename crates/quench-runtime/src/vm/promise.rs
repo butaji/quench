@@ -2978,7 +2978,11 @@ impl<H: Host> Vm<H> {
                     let is_namespace = self
                         .object_data(namespace)
                         .is_some_and(Object::is_module_namespace);
-                    let fallback = self.own_property(namespace, atom);
+                    // A named import of a pending builtin export takes the member's value now.
+                    let fallback = match self.own_property(namespace, atom) {
+                        Some(value) => Some(self.resolve_pending_binding(p, value)?),
+                        None => None,
+                    };
                     if is_namespace && named_binding.is_none() && fallback.is_none() {
                         return self
                             .missing_module_export(p, &import.source, name)

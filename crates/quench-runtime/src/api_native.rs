@@ -1573,6 +1573,25 @@ impl<'a, H: Host> NativeContext<'a, H> {
 
     /// Runs the initializer of `name`'s lazy group on `holder` if it is still lazy; otherwise
     /// does nothing, and runs no guest code.
+    /// The pending value a binding of `holder`'s member `key` holds while the member is still a
+    /// lazy data property, or `None` when it is not. `listener` is then called with `index` and
+    /// the member's value when its group materializes; until then script's writes and deletes of
+    /// the member materialize the group first, and reading the pending value through a binding
+    /// reads the member.
+    pub fn pending_lazy_data_property_rooted(
+        &mut self,
+        holder: RootId,
+        key: RootId,
+        listener: RootId,
+        index: u32,
+    ) -> Result<Option<RootId>, RootedError> {
+        let pending = self
+            .vm
+            .pending_lazy_data_property_rooted(holder, key, listener, index)
+            .map_err(|error| self.error(error))?;
+        Ok(pending.map(|value| self.scoped_value(value)))
+    }
+
     pub fn materialize_lazy_data_property_rooted(
         &mut self,
         holder: RootId,
