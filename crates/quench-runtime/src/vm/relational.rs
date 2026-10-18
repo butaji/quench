@@ -78,6 +78,10 @@ impl<H: Host> Vm<H> {
     ) -> Result<bool, JsError> {
         let _stack = self.enter_stack()?;
         self.with_call_roots([object, key], |vm| {
+            if vm.is_host_private_symbol(key) {
+                return Ok(!matches!(vm.heap.get(object), Some(Cell::Proxy { .. }))
+                    && vm.symbol_property(object, key).is_some());
+            }
             if let Some((target, handler)) = vm.proxy_parts(object)
             {
                 if handler.is_null() {
@@ -196,11 +200,51 @@ impl<H: Host> Vm<H> {
     /// a data property holding an object, and `value`'s chain has no proxy. Every step is then
     /// an ordinary data read that runs no guest code and cannot throw; `None` leaves any other
     /// case, unobserved, to the general path.
+    #[inline(always)]
     pub(super) fn ordinary_instanceof(
         &mut self,
         value: Value,
         constructor: Value,
     ) -> Option<bool> {
+        // The steady case first: the remembered constructor layout and `@@hasInstance`
+        // holder, and a chain of object records.
+        if let Some(Cell::Function { kind, object, .. }) = self.heap.get(constructor)
+            && !matches!(kind, FunctionKind::Native(Native::FunctionBoundCall))
+            && let Some((shape, slot)) = self.instanceof_constructor_layout
+            && shape == object.shape()
+            && object.proto() == self.instanceof_has_instance_holder
+            // SAFETY: the memo names the slot of `prototype` in the shape it holds, which is
+            // never a dictionary's, so the slot exists.
+            && let Some(prototype) = unsafe { self.heap.property_get_shaped(object, slot) }
+                .filter(|prototype| !prototype.is_deleted())
+            && prototype.direct_object_index().is_some()
+        {
+            let Some(record) = value.direct_object_index() else {
+                if !self.is_object_like(value) {
+                    return Some(false);
+                }
+                return self.ordinary_instanceof_walk(value, constructor);
+            };
+            let mut link = self.heap.object_record_by_id(record).proto();
+            loop {
+                if link == prototype {
+                    return Some(true);
+                }
+                if link.is_null() {
+                    return Some(false);
+                }
+                match self.heap.object_record(link) {
+                    Some(object) => link = object.proto(),
+                    None => break,
+                }
+            }
+        }
+        self.ordinary_instanceof_walk(value, constructor)
+    }
+
+    /// `ordinary_instanceof` in full: whatever its steady case leaves.
+    #[inline(never)]
+    fn ordinary_instanceof_walk(&mut self, value: Value, constructor: Value) -> Option<bool> {
         let Some(Cell::Function { kind, object, .. }) = self.heap.get(constructor) else {
             return None;
         };
@@ -208,14 +252,19 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let (shape, holder) = (object.shape(), object.proto());
-        let prototype_slot = match self.instanceof_constructor_layout {
-            Some((cached, slot)) if cached == shape => slot,
-            _ => {
+        // The layout memo answers the `prototype` read from the cell already in hand.
+        let remembered = match self.instanceof_constructor_layout {
+            Some((cached, slot)) if cached == shape => Some(self.heap.property_get(object, slot)),
+            _ => None,
+        };
+        let prototype = match remembered {
+            Some(prototype) => prototype?,
+            None => {
                 let slot = self.instanceof_constructor_slot(constructor)?;
                 if !self.shape_is_dictionary(shape) {
                     self.instanceof_constructor_layout = Some((shape, slot));
                 }
-                slot
+                self.heap.property_get(self.object_data(constructor)?, slot)?
             }
         };
         if !self.inherits_native_has_instance(holder) {
@@ -224,18 +273,18 @@ impl<H: Host> Vm<H> {
         if !self.is_object_like(value) {
             return Some(false);
         }
-        let prototype = self
-            .heap
-            .property_get(self.object_data(constructor)?, prototype_slot)?;
         if !self.is_object_like(prototype) {
             return None;
         }
         // One cell lookup per link: a proxy anywhere on the chain needs the full algorithm.
         let mut current = value;
         loop {
-            let next = match self.heap.get(current) {
-                Some(Cell::Proxy { .. }) => return None,
-                _ => self.heap.object(current).map_or(Value::NULL, |object| object.proto()),
+            let next = match self.heap.object_record(current) {
+                Some(object) => object.proto(),
+                None => match self.heap.get(current) {
+                    Some(Cell::Proxy { .. }) => return None,
+                    _ => self.heap.object(current).map_or(Value::NULL, |object| object.proto()),
+                },
             };
             if next.is_null() {
                 return Some(false);

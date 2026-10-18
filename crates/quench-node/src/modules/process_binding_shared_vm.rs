@@ -38,10 +38,5 @@ pub(crate) fn binding(context: &mut NativeContext<'_, NodeHost>, _: RootId, args
         return Err(context.throw(error));
     }
     let undefined = context.undefined();
-    let binding = super::trace_shared_vm::internal_binding(context, undefined, &[value])?;
-    if context.rooted_value(binding).is_some_and(|value| value.is_undefined()) {
-        let error = context.error_rooted(&format!("No such module: {name}"))?;
-        return Err(context.throw(error));
-    }
-    Ok(binding)
+    super::trace_shared_vm::internal_binding(context, undefined, &[value])
 }

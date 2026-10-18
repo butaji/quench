@@ -1,6 +1,5 @@
 //! OpenSSL error presentation shared by Node crypto and TLS operations.
-use crate::host::NodeHost;
-use quench_runtime::{NativeContext, RootId, RootedError};
+use quench_runtime::{Host, NativeContext, RootId, RootedError};
 
 // OpenSSL err.h library IDs and Node crypto_util.cc's public code prefixes.
 const LIBRARY_CODES: &[(i32, &str)] = &[
@@ -57,8 +56,8 @@ fn message(code: std::ffi::c_ulong, capacity: usize) -> String {
     String::from_utf8_lossy(&bytes[..end]).into_owned()
 }
 
-fn put(
-    context: &mut NativeContext<'_, NodeHost>,
+fn put<H: Host>(
+    context: &mut NativeContext<'_, H>,
     error: RootId,
     name: &str,
     value: RootId,
@@ -68,13 +67,17 @@ fn put(
     Ok(())
 }
 
-pub(crate) fn create(
-    context: &mut NativeContext<'_, NodeHost>,
+pub(crate) fn create<H: Host>(
+    context: &mut NativeContext<'_, H>,
     stack: &openssl::error::ErrorStack,
     decorate: bool,
 ) -> Result<RootId, RootedError> {
+    create_message(context,stack,decorate,None)
+}
+
+fn create_message<H:Host>(context:&mut NativeContext<'_,H>,stack:&openssl::error::ErrorStack,decorate:bool,custom:Option<&str>)->Result<RootId,RootedError> {
     let first = stack.errors().first();
-    let text = first
+    let text = custom.map(str::to_owned).unwrap_or_else(|| first
         .map(|error| {
             message(
                 error.code(),
@@ -91,10 +94,11 @@ pub(crate) fn create(
             } else {
                 "ok".to_owned()
             }
-        });
+        }));
     let error = context.error_rooted(&text)?;
-    if stack.errors().len() > 1 {
-        let entries = stack.errors()[1..]
+    let skip=usize::from(custom.is_none());
+    if stack.errors().len() > skip {
+        let entries = stack.errors()[skip..]
             .iter()
             .rev()
             .map(|entry| context.string_rooted(&message(entry.code(), STACK_MESSAGE_BYTES)))
@@ -131,8 +135,8 @@ pub(crate) fn create(
     Ok(error)
 }
 
-pub(crate) fn decorated(
-    context: &mut NativeContext<'_, NodeHost>,
+pub(crate) fn decorated<H: Host>(
+    context: &mut NativeContext<'_, H>,
     stack: openssl::error::ErrorStack,
 ) -> RootedError {
     match create(context, &stack, true) {
@@ -141,14 +145,21 @@ pub(crate) fn decorated(
     }
 }
 
-pub(crate) fn list(
-    context: &mut NativeContext<'_, NodeHost>,
+pub(crate) fn list<H: Host>(
+    context: &mut NativeContext<'_, H>,
     stack: openssl::error::ErrorStack,
 ) -> RootedError {
     match create(context, &stack, false) {
         Ok(error) => context.throw(error),
         Err(error) => error,
     }
+}
+
+/// CryptoJob failures retain their SDK operation message and the complete
+/// actual native error queue with the same shared decoration authority.
+#[cfg(quench_openssl_provider)]
+pub(crate) fn job_failure<H:Host>(context:&mut NativeContext<'_,H>,stack:&openssl::error::ErrorStack,text:&str)->RootedError {
+    match create_message(context,stack,true,Some(text)) {Ok(error)=>context.throw(error),Err(error)=>error}
 }
 
 unsafe extern "C" {

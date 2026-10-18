@@ -225,7 +225,7 @@ impl<'a> Visit<'a> for RegExpEarlyErrors {
         };
         let pattern = &text[1..separator];
         let flags = &text[separator + 1..];
-        if let Err(error) = validate_modifier_groups(pattern) {
+        if let Err(error) = validate_modifier_groups(pattern, flags.contains('v')) {
             self.0 = Some(RegExpEarlyError::Syntax(error));
             return;
         }
@@ -239,12 +239,29 @@ impl<'a> Visit<'a> for RegExpEarlyErrors {
     }
 }
 
-fn validate_modifier_groups(pattern: &str) -> Result<(), String> {
+/// Validate `(?flags-flags:...)` groups. A character class is atoms, never groups:
+/// `[(?-i)]` is a class of `(`, `?`-`i` and `)`. Classes nest only under the `v` flag.
+fn validate_modifier_groups(pattern: &str, nested_classes: bool) -> Result<(), String> {
     let bytes = pattern.as_bytes();
     let mut index = 0;
+    let mut class_depth = 0usize;
     while index + 1 < bytes.len() {
         if bytes[index] == b'\\' {
             index += 2;
+            continue;
+        }
+        if class_depth > 0 {
+            match bytes[index] {
+                b']' => class_depth -= 1,
+                b'[' if nested_classes => class_depth += 1,
+                _ => {}
+            }
+            index += 1;
+            continue;
+        }
+        if bytes[index] == b'[' {
+            class_depth = 1;
+            index += 1;
             continue;
         }
         if bytes[index] != b'(' || bytes[index + 1] != b'?' {
@@ -1395,5 +1412,20 @@ impl StrictRestrictedAssignmentEarlyError {
             "arguments" => Some("arguments"),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod regexp_modifier_tests {
+    use super::validate_modifier_groups;
+
+    #[test]
+    fn classes_hold_atoms_not_modifier_groups() {
+        for pattern in [r"^[(?-i)y]$", r"[a(?-i)]", r"[\](?-i)]", r"(?i:a)[(?-m)]"] {
+            assert!(validate_modifier_groups(pattern, false).is_ok(), "{pattern}");
+        }
+        assert!(validate_modifier_groups(r"[[a]](?-i)", true).is_err());
+        assert!(validate_modifier_groups(r"[a](?-i)", false).is_err());
+        assert!(validate_modifier_groups(r"(?ii:a)", false).is_err());
     }
 }

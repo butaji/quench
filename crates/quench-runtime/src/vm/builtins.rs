@@ -717,7 +717,7 @@ impl<H: Host> Vm<H> {
         ] {
             let value = self
                 .heap
-                .alloc(Cell::Symbol(Some(format!("Symbol.{name}").into())));
+                .alloc(Cell::Symbol(crate::heap::SymbolData::public(Some(format!("Symbol.{name}").into()))));
             self.well_known_symbols.insert(name.into(), value);
             self.set_named_constant(program, symbol, name, value)?;
         }
@@ -888,7 +888,7 @@ impl<H: Host> Vm<H> {
         let atom = self.intern_atom("Temporal");
         let key = self.heap.alloc(Cell::String(self.atom_value(atom)));
         self.with_call_roots([initializer, key], |vm| {
-            vm.define_lazy_data_properties(program, vm.realm.globals, &[key], false, initializer)
+            vm.define_lazy_data_properties(program, vm.realm.globals, &[(key, false)], false, initializer)
         })?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_temporal");
@@ -1116,10 +1116,9 @@ impl<H: Host> Vm<H> {
         self.insert_dynamic_atom(name.clone(), hash)
     }
     pub(super) fn insert_dynamic_atom(&mut self, name: JsString, hash: u64) -> Atom {
-        let atom = (self.atom_text.len() + self.dynamic_atoms.len()) as Atom;
+        let atom = self.atom_sequence.len() as Atom;
         self.record_array_index_atom(name.host_string(), atom);
-        self.atom_sequence.append(name.clone());
-        self.dynamic_atoms.push(name);
+        self.atom_sequence.append(name);
         self.atom_classes.push(Default::default());
         self.index_atom_hash(hash, atom);
         self.profile.dynamic_atom();
@@ -1140,18 +1139,22 @@ impl<H: Host> Vm<H> {
     }
 
     fn index_atom_hash(&mut self, hash: u64, atom: Atom) {
-        if let std::collections::hash_map::Entry::Vacant(entry) = self.atoms.entry(hash) {
-            entry.insert(atom);
-        } else {
-            self.atom_collisions.entry(hash).or_default().push(atom);
-        }
+        let (text, sequence) = (&self.atom_text, &self.atom_sequence);
+        self.atoms.insert_unique(hash, atom, |&atom| {
+            let index = atom as usize;
+            if index < text.len() {
+                Self::atom_hash_str(&text[index])
+            } else {
+                Self::atom_hash_units(sequence.appended(index - text.len()).units())
+            }
+        });
     }
     pub(super) fn atom_name(&self, atom: Atom) -> &str {
         let index = atom as usize;
         if index < self.atom_text.len() {
             &self.atom_text[index]
         } else {
-            self.dynamic_atoms[index - self.atom_text.len()].host_string()
+            self.dynamic_atom(index).host_string()
         }
     }
     pub(super) fn global(
@@ -1314,5 +1317,23 @@ impl<H: Host> Vm<H> {
             },
         )?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod math_function_tests {
+    use super::*;
+
+    #[test]
+    fn math_functions_are_the_math_natives() {
+        for (name, native) in MATH_FUNCTIONS {
+            assert!(native.is_math_function(), "Math.{name}");
+        }
+        for native in NATIVES.iter().filter(|native| native.is_math_function()) {
+            assert!(
+                MATH_FUNCTIONS.iter().any(|(_, listed)| listed == native),
+                "{native:?} is a Math function"
+            );
+        }
     }
 }

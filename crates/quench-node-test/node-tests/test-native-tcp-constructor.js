@@ -1,0 +1,17 @@
+'use strict';
+const assert=require('assert');
+const {TCP,constants}=require('internal/test/binding').internalBinding('tcp_wrap');
+const h=new TCP(constants.SOCKET);
+assert.strictEqual(Object.getPrototypeOf(h),TCP.prototype);
+const stream=Object.getPrototypeOf(TCP.prototype);
+assert.equal(stream.constructor.name,'LibuvStreamWrap');
+assert.equal(Object.getPrototypeOf(stream).constructor.name,'HandleWrap');
+assert(!Object.hasOwn(h,'writeQueueSize'));assert(!Object.hasOwn(TCP.prototype,'writeQueueSize'));
+const d=Object.getOwnPropertyDescriptor(stream,'writeQueueSize');
+assert.equal(d.enumerable,true);assert.equal(d.configurable,false);assert.equal(d.set,undefined);
+assert.equal(h.writeQueueSize,0);assert.equal(h.getsockname({}),-9);assert.equal(h.hasRef(),true);
+h.unref();assert.equal(h.hasRef(),false);h.ref();assert.equal(h.hasRef(),true);
+assert.equal(h.bind('127.0.0.1',0),0);const out={};assert.equal(h.getsockname(out),0);assert(out.port>0);assert.equal(out.family,'IPv4');assert.equal(h.bind('127.0.0.1',out.port),-22);
+assert.equal(h.listen(128),0);assert.equal(h.listen(64),0);
+let sync=true;h.close(function(){assert.equal(sync,false);assert.equal(this,h);assert.equal(h.hasRef(),false);assert.equal(h.writeQueueSize,0);console.log('async close identity/ref/queue pass')});sync=false;
+console.log(JSON.stringify({version:process.version,constants,chain:[h.constructor.name,stream.constructor.name,Object.getPrototypeOf(stream).constructor.name],prototypeQueue:true,bound:true,repeatBind:-22,repeatListen:0}));

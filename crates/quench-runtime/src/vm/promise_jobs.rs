@@ -262,7 +262,7 @@ impl<H: Host> Vm<H> {
                         )?;
                     }
                 } else if mode == AggregateMode::Any {
-                    let error = self.aggregate_error(values)?;
+                    let error = self.aggregate_error(p, values)?;
                     self.call_value(
                         p,
                         self.heap.root_value(capability.reject).unwrap(),
@@ -426,7 +426,7 @@ impl<H: Host> Vm<H> {
                 };
                 if let Some((values, keys)) = completion {
                     if mode == AggregateMode::Any {
-                        let error = self.aggregate_error(values)?;
+                        let error = self.aggregate_error(p, values)?;
                         self.call_value(p, reject, Value::UNDEFINED, &[error])?;
                     } else {
                         let values = self.aggregate_result(keys, values)?;
@@ -492,6 +492,10 @@ impl<H: Host> Vm<H> {
             let (state, result) =
                 match vm.call_value(p, reaction.handler, Value::UNDEFINED, &[value]) {
                     Ok(result) => (PromiseState::Fulfilled, result),
+                    // Host execution termination is not a guest throw. Return
+                    // through the outer realm/context cleanup, without
+                    // rejecting the result capability with undefined.
+                    Err(error) if error.is_execution_terminated() => return Err(error),
                     Err(error) => (
                         PromiseState::Rejected,
                         error.thrown_value().unwrap_or(Value::UNDEFINED),

@@ -380,7 +380,7 @@ impl<H: Host> Vm<H> {
             ArraySegmentValues::Data { bytes, load, range } => {
                 let value = load
                     .read(
-                        bytes.as_ref().expect("nonempty available segment"),
+                        &bytes.as_ref().expect("nonempty available segment").read(),
                         (range.start + index * load.width()) as u64,
                     )
                     .expect("checked complete segment range");

@@ -19,7 +19,7 @@ pub(crate) fn config_variable_facts() -> &'static [(&'static str, ProcessFact)] 
     &[
         ("v8_enable_i18n_support", ProcessFact::Number(1.0)),
         ("node_module_version", ProcessFact::Number(127.0)),
-        ("napi_build_version", ProcessFact::String("9")),
+        ("napi_build_version", ProcessFact::String(env!("QUENCH_NODE_API_SUPPORTED_VERSION_MAX"))),
         (
             "node_builtin_shareable_builtins",
             ProcessFact::StringArray(&["deps/undici/undici.js"]),
@@ -56,6 +56,9 @@ pub(crate) fn version_facts() -> &'static [(&'static str, &'static str)] {
         ("node", NODE_VERSION),
         ("acorn", "8.18.0"),
         ("ada", "2.7.8"),
+        #[cfg(quench_node_cares)]
+        ("ares", super::cares_channel_shared_vm::VERSION),
+        #[cfg(not(quench_node_cares))]
         ("ares", "1.0.0"),
         ("brotli", "1.1.0"),
         ("cldr", "45.0"),
@@ -64,7 +67,7 @@ pub(crate) fn version_facts() -> &'static [(&'static str, &'static str)] {
         ("llhttp", "9.2.1"),
         ("merve", "1.0.0"),
         ("modules", "127"),
-        ("napi", "9"),
+        ("napi", env!("QUENCH_NODE_API_SUPPORTED_VERSION_MAX")),
         ("nbytes", "1.0.0"),
         ("ncrypto", "1.0.0"),
         ("nghttp2", "1.61.0"),
@@ -384,17 +387,17 @@ pub(crate) struct ProcessControl(Rc<ProcessControlCells>);
 #[derive(Debug)]
 struct ProcessControlCells {
     started: std::time::Instant,
+    performance_origins: Option<(f64, f64)>,
     exit_code: Cell<Option<i32>>,
     requested_exit: Cell<Option<RequestedExit>>,
-    exit_emitting: Cell<bool>,
     umask: Cell<u32>,
 }
 
 #[derive(Clone, Copy, Debug)]
 enum RequestedExit {
-    Graceful(i32),
     Immediate(i32),
     FatalExceptionHandler(i32),
+    FatalUncaught(i32),
 }
 
 impl ProcessControl {
@@ -409,12 +412,14 @@ impl ProcessControl {
         let umask = INITIAL_UMASK;
         Self(Rc::new(ProcessControlCells {
             started: std::time::Instant::now(),
+            performance_origins: sample_performance_origins(),
             exit_code: Cell::new(None),
             requested_exit: Cell::new(None),
-            exit_emitting: Cell::new(false),
             umask: Cell::new(umask),
         }))
     }
+
+    pub(crate) fn performance_origins(&self) -> Option<(f64, f64)> { self.0.performance_origins }
 
     pub(crate) fn uptime(&self) -> f64 {
         self.0.started.elapsed().as_secs_f64()
@@ -428,14 +433,17 @@ impl ProcessControl {
         self.0.exit_code.set(code);
     }
 
-    pub(crate) fn request_exit(&self, code: i32) {
-        self.0.exit_code.set(Some(code));
-        self.0.requested_exit.set(Some(RequestedExit::Graceful(code)));
-    }
-
     pub(crate) fn request_really_exit(&self, code: i32) {
         self.0.exit_code.set(Some(code));
         self.0.requested_exit.set(Some(RequestedExit::Immediate(code)));
+    }
+
+    pub(crate) fn request_fatal_uncaught(&self, code: i32) {
+        self.0.exit_code.set(Some(code));
+        self.0.requested_exit.set(Some(RequestedExit::FatalUncaught(code)));
+    }
+    pub(crate) fn fatal_uncaught_requested(&self) -> bool {
+        matches!(self.0.requested_exit.get(), Some(RequestedExit::FatalUncaught(_)))
     }
 
     pub(crate) fn fail_fatal_exception_handler(&self) {
@@ -450,20 +458,12 @@ impl ProcessControl {
 
     pub(crate) fn requested_exit_code(&self) -> Option<i32> {
         self.0.requested_exit.get().map(|request| match request {
-            RequestedExit::Graceful(code) | RequestedExit::Immediate(code) | RequestedExit::FatalExceptionHandler(code) => code,
+            RequestedExit::Immediate(code) | RequestedExit::FatalExceptionHandler(code) | RequestedExit::FatalUncaught(code) => code,
         })
     }
 
     pub(crate) fn exit_without_event(&self) -> bool {
-        matches!(self.0.requested_exit.get(), Some(RequestedExit::Immediate(_) | RequestedExit::FatalExceptionHandler(_)))
-    }
-
-    pub(crate) fn exit_emitting(&self) -> bool {
-        self.0.exit_emitting.get()
-    }
-
-    pub(crate) fn begin_exit_emission(&self) {
-        self.0.exit_emitting.set(true);
+        matches!(self.0.requested_exit.get(), Some(RequestedExit::Immediate(_) | RequestedExit::FatalExceptionHandler(_) | RequestedExit::FatalUncaught(_)))
     }
 
     pub(crate) fn umask(&self) -> u32 {
@@ -503,4 +503,18 @@ pub(crate) fn shared_openssl() -> bool {
     }
     #[cfg(not(unix))]
     false
+}
+
+// Capture actual clock coordinates at environment creation, rather than synthesizing
+// a zero origin when a performance module happens to be imported later.
+fn sample_performance_origins() -> Option<(f64, f64)> {
+    #[cfg(unix)] {
+        const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
+        const MICROS_PER_SECOND: f64 = 1_000_000.0;
+        let mut time: libc::timespec = unsafe { std::mem::zeroed() };
+        if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut time) } != 0 { return None; }
+        let wall = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok()?;
+        Some((time.tv_sec as f64 * NANOS_PER_SECOND + time.tv_nsec as f64, wall.as_secs_f64() * MICROS_PER_SECOND))
+    }
+    #[cfg(not(unix))] { None }
 }

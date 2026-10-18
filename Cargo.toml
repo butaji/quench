@@ -8,6 +8,7 @@ members = [
     "crates/quench-node-test",
     "crates/quench-runtime",
     "crates/quench-stack",
+    "crates/quench-alloc",
     "vendor/oxc-parser",
     "crates/quench-regexp",
     "crates/quench-intl",
@@ -22,6 +23,7 @@ oxc = "=0.153.0"
 oxc_allocator = "=0.153.0"
 oxc_ast = "=0.153.0"
 oxc_ast_visit = "=0.153.0"
+oxc_diagnostics = "=0.153.0"
 oxc_parser = { version = "=0.153.0", default-features = false }
 oxc_regular_expression = "=0.153.0"
 oxc_semantic = "=0.153.0"

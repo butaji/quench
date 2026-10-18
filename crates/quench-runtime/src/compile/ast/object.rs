@@ -19,6 +19,8 @@ impl FunctionCompiler<'_, '_> {
             && !Self::anonymous_function_definition(&second.value)
             && let (Some(first_key), Some(second_key)) =
                 (Self::static_key(&first.key), Self::static_key(&second.key))
+            // A shape gains only keys it lacks; `{ a, a }` defines one property.
+            && first_key != second_key
         {
             let first_value = self.expression(&first.value);
             let second_value = self.expression(&second.value);
@@ -133,7 +135,7 @@ impl FunctionCompiler<'_, '_> {
                     );
                 } else if let Some(name) = Self::static_key(&property.key) {
                     let name = self.owner.atom(&format!("{accessor} {name}"));
-                    self.name_function_definition(item, name);
+                    self.emit_function_name(item, name);
                 } else {
                     self.emit(
                         Op::SetFunctionNameKey,
@@ -222,7 +224,7 @@ impl FunctionCompiler<'_, '_> {
             );
             let atom = self.owner.atom(key);
             if Self::anonymous_function_definition(&property.value) {
-                self.name_function_definition(item, atom);
+                self.emit_function_name(item, atom);
             }
             self.emit(Op::DefineField, item, dst, 0, atom);
         }

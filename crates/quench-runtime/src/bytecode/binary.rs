@@ -180,6 +180,7 @@ pub(super) fn write_program(
     for function in &program.functions {
         out.option_u32(function.parent);
         out.option_u32(function.name);
+        out.option_u32(function.inferred_name);
         out.u8(u8::from(function.is_arrow));
         out.u16(function.self_binding_slot.unwrap_or(u16::MAX));
         out.u8(u8::from(function.source_span.is_some()));
@@ -247,24 +248,24 @@ pub(super) fn write_program(
         for atom in &function.lexical_atoms {
             out.u32(*atom);
         }
-        out.u32(function.global_lexical_atoms.len() as u32);
-        for atom in &function.global_lexical_atoms {
+        out.u32(function.global_lexical_atoms().len() as u32);
+        for atom in function.global_lexical_atoms() {
             out.u32(*atom);
         }
-        out.u32(function.global_var_atoms.len() as u32);
-        for atom in &function.global_var_atoms {
+        out.u32(function.global_var_atoms().len() as u32);
+        for atom in function.global_var_atoms() {
             out.u32(*atom);
         }
-        out.u32(function.global_function_atoms.len() as u32);
-        for atom in &function.global_function_atoms {
+        out.u32(function.global_function_atoms().len() as u32);
+        for atom in function.global_function_atoms() {
             out.u32(*atom);
         }
-        out.u32(function.global_annex_b_var_atoms.len() as u32);
-        for atom in &function.global_annex_b_var_atoms {
+        out.u32(function.global_annex_b_var_atoms().len() as u32);
+        for atom in function.global_annex_b_var_atoms() {
             out.u32(*atom);
         }
-        out.u32(function.global_immutable_atoms.len() as u32);
-        for atom in &function.global_immutable_atoms {
+        out.u32(function.global_immutable_atoms().len() as u32);
+        for atom in function.global_immutable_atoms() {
             out.u32(*atom);
         }
         out.u32(function.binding_sites.len() as u32);
@@ -311,9 +312,8 @@ pub(super) fn write_program(
             out.u16(handler.return_slot.unwrap_or(u16::MAX));
             out.u16(handler.with_depth);
         }
-        let positions = function.source_positions.to_vec();
-        out.u32(positions.len() as u32);
-        for position in &positions {
+        out.u32(function.source_positions.iter().count() as u32);
+        for position in function.source_positions.iter() {
             out.u32(position.pc);
             out.u32(position.line);
             out.u32(position.column);
@@ -466,6 +466,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
     let functions = input.list(|input| {
         let parent = input.option_u32()?;
         let name = input.option_u32()?;
+        let inferred_name = input.option_u32()?;
         let is_arrow = match input.u8()? {
             0 => false,
             1 => true,
@@ -654,17 +655,20 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
                 with_depth,
             })
         })?;
-        let source_positions = input.list(|input| {
-            Ok(SourcePosition {
-                pc: input.u32()?,
-                line: input.u32()?,
-                column: input.u32()?,
-            })
-        })?
-        .into();
+        let source_positions = input
+            .list(|input| {
+                Ok(SourcePosition {
+                    pc: input.u32()?,
+                    line: input.u32()?,
+                    column: input.u32()?,
+                })
+            })?
+            .into_iter()
+            .collect();
         Ok(Function {
             parent,
             name,
+            inferred_name,
             is_arrow,
             self_binding_slot,
             source_span,
@@ -694,11 +698,14 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             environment_clones: environment_clones.into(),
             name_bindings: crate::bytecode::NameBindings::flat(name_bindings),
             lexical_atoms: lexical_atoms.into(),
-            global_lexical_atoms: global_lexical_atoms.into(),
-            global_var_atoms: global_var_atoms.into(),
-            global_function_atoms: global_function_atoms.into(),
-            global_annex_b_var_atoms: global_annex_b_var_atoms.into(),
-            global_immutable_atoms: global_immutable_atoms.into(),
+            global_declarations: super::GlobalDeclarations {
+                lexical: global_lexical_atoms,
+                var: global_var_atoms,
+                function: global_function_atoms,
+                annex_b_var: global_annex_b_var_atoms,
+                immutable: global_immutable_atoms,
+            }
+            .boxed(),
             binding_sites: binding_sites.into(),
             source_positions,
             code,
@@ -707,6 +714,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             dispatch,
             decoded: Default::default(),
             plain_locals: Default::default(),
+            declared_atom_sets: Default::default(),
             activation_bindings: Default::default(),
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
