@@ -981,10 +981,17 @@ pub(super) fn require_node_library(
     context: &mut Context<'_>, receiver: RootId, args: &[RootId],
 ) -> Result<RootId, RootedError> {
     if let Some(value) = args.first() {
-        if context.string_text(*value)?.is_some_and(|name| {
-            name.strip_prefix("node:").unwrap_or(&name) == "internal/timers"
-        }) {
-            return cached_builtin(context, BuiltinModule::InternalTimers);
+        match context.string_text(*value)?.as_deref() {
+            Some(name) if name.strip_prefix("node:").unwrap_or(name) == "internal/timers" => {
+                return cached_builtin(context, BuiltinModule::InternalTimers);
+            }
+            Some(crate::modules::buffer_shared_vm::FAST_BUFFER_REQUEST) => {
+                return crate::modules::buffer_shared_vm::fast_buffer_request(context);
+            }
+            Some(crate::modules::buffer_shared_vm::BUFFER_POOL_REQUEST) => {
+                return crate::modules::buffer_shared_vm::buffer_pool_request(context);
+            }
+            _ => {}
         }
     }
     require(context, receiver, args)
@@ -2581,6 +2588,10 @@ fn load_with_resolution(
                 super::policy_projection::project(&file_text, &["BoundSocket"]).map_err(RootedError::host)?.into(),
             Some(path) if path == Path::new("lib/child_process.js") =>
                 super::policy_projection::project(&file_text, &["_forkChild"]).map_err(RootedError::host)?.into(),
+            Some(path) if path == Path::new("lib/internal/buffer.js") =>
+                crate::modules::buffer_shared_vm::project_internal_buffer(&file_text)?.into(),
+            Some(path) if path == Path::new("lib/buffer.js") =>
+                crate::modules::buffer_shared_vm::project_buffer(&file_text)?.into(),
             _ => file_text,
         };
         // An embedded library file is static text the compiled program can retain as is;
