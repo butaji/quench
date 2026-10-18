@@ -4139,9 +4139,7 @@ lane_handler! {
         {
             return exit(ip);
         }
-        let array = vm.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(Vm::<H>::empty_object(prototype), Rc::new(args.to_vec())),
-        });
+        let array = lane_new_array(vm, prototype, args);
         note_allocation(vm);
         if returns {
             let Some((registers, next, view)) = lane_complete_activation(cx, array) else {
@@ -4157,36 +4155,58 @@ lane_handler! {
     }
 }
 
+/// The array `new Array(...args)` allocates with `prototype`. Out of line: the cell it builds
+/// lives in its frame, and a handler whose frame a callee addresses cannot dispatch its
+/// successor as a sibling call.
+#[inline(never)]
+fn lane_new_array<H: Host>(vm: &mut Vm<H>, prototype: Value, args: &[Value]) -> Value {
+    vm.heap.alloc(Cell::Array {
+        object: crate::heap::ArrayObject::new(Vm::<H>::empty_object(prototype), Rc::new(args.to_vec())),
+    })
+}
+
 lane_handler! {
     /// `Function.prototype.call` of a frameless target `f` (`f.call(thisArg, ...args)`):
     /// `f`'s activation as `lane_script_call` makes it, with `this` the first value the call
     /// passes and the remaining values its arguments. Any other takes the general path.
     #[inline(never)]
     fn lane_function_call<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let Some(target) = lane_script_target(cx, r.get(i.c)) else {
-            return exit(ip);
-        };
-        let window = ImmediateLayout::call_window_base(i.imm());
-        let argc = usize::from(ImmediateLayout::argument_count(i.imm()));
-        let receiver = if argc == 0 { Value::UNDEFINED } else { r.get(window) };
-        // `call_this_value` without its boxing of primitives, which allocates.
-        let this = if target.strict || vm.is_object_like(receiver) {
-            receiver
-        } else if receiver.is_null() || receiver.is_undefined() {
-            vm.realm.globals
-        } else {
-            return exit(ip);
-        };
-        // SAFETY: the values after `thisArg` are registers of the running function, which
-        // the activation copies before anything can move them.
-        let rest = unsafe { r.0.add(usize::from(window) + 1) };
-        let arguments = ActivationArguments::Kept(rest, argc.saturating_sub(1));
-        match lane_activate_keeping(cx, r, ip, target, arguments, this, false) {
+        match lane_function_call_activation(cx, r, ip, i) {
             Ok((registers, base)) => next!(cx, registers, base, Carried::SCRIPT),
             Err(next) => next,
         }
     }
+}
+
+/// `lane_function_call`'s activation: the callee's registers and first record, or the
+/// record to continue at. Out of line, as `lane_construct_keeping_activation`.
+#[inline(never)]
+fn lane_function_call_activation<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    i: &LaneInstruction,
+) -> Result<(Registers, Ip), Ip> {
+    let vm = unsafe { vm(cx) };
+    let Some(target) = lane_script_target(cx, r.get(i.c)) else {
+        return Err(exit(ip));
+    };
+    let window = ImmediateLayout::call_window_base(i.imm());
+    let argc = usize::from(ImmediateLayout::argument_count(i.imm()));
+    let receiver = if argc == 0 { Value::UNDEFINED } else { r.get(window) };
+    // `call_this_value` without its boxing of primitives, which allocates.
+    let this = if target.strict || vm.is_object_like(receiver) {
+        receiver
+    } else if receiver.is_null() || receiver.is_undefined() {
+        vm.realm.globals
+    } else {
+        return Err(exit(ip));
+    };
+    // SAFETY: the values after `thisArg` are registers of the running function, which the
+    // activation copies before anything can move them.
+    let rest = unsafe { r.0.add(usize::from(window) + 1) };
+    let arguments = ActivationArguments::Kept(rest, argc.saturating_sub(1));
+    lane_activate_keeping(cx, r, ip, target, arguments, this, false)
 }
 
 lane_handler! {
