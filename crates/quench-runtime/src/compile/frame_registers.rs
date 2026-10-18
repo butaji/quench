@@ -5,19 +5,22 @@
 //! zone is never read, and its frame storage is reached only through them, so the register
 //! holds exactly what the slot would; opening its dead zone writes nothing anyone reads.
 
-use super::liveness::ROOT_MAP_REGISTERS;
-use super::rewrite::{fixed_width, relocate};
+use super::liveness::{self, MethodArguments, ROOT_MAP_REGISTERS};
+use super::rewrite::{fixed_width, relocate, relocate_targets};
 /// The binding legacy argument reflection looks for.
 const ARGUMENTS_NAME: &str = "arguments";
 
 use crate::bytecode::{
-    WITH_ENTER_BINDING, EvalBindingLocation, FieldLayout, Function, ImmediateRole, Instr, InstructionField, Op,
+    WITH_ENTER_BINDING, EvalBindingLocation, FieldLayout, FieldSite, Function, ImmediateRole, Instr, InstructionField, Op,
     Operand, OperandKind, REGISTER_MASK, Register, Superinstruction, WideInstruction,
 };
 
 pub(super) fn promote<'a>(
     function: &mut Function,
+    methods: &(impl MethodArguments + ?Sized),
+    fields: &[FieldSite],
     superinstructions: &[Superinstruction],
+    undefined_constant: u32,
     atom_name: impl Fn(usize) -> Option<&'a str>,
 ) {
     let mut eligible = function.plain_local_slots(superinstructions);
@@ -201,6 +204,58 @@ pub(super) fn promote<'a>(
         &mut function.source_positions,
         &old,
     );
+    function.code = code;
+    let promoted = registers
+        .iter()
+        .flatten()
+        .fold(0u64, |mask, register| mask | 1 << register);
+    initialize_unwritten(function, methods, fields, superinstructions, promoted, undefined_constant);
+}
+
+/// A frame slot starts undefined but a register holds whatever its frame last left in it, so
+/// a promoted register that some path reads before writing (a `var` read before its first
+/// assignment) is set to undefined on entry. Liveness at the first instruction names exactly
+/// those registers; the others are written before any read and need nothing.
+fn initialize_unwritten(
+    function: &mut Function,
+    methods: &(impl MethodArguments + ?Sized),
+    fields: &[FieldSite],
+    superinstructions: &[Superinstruction],
+    promoted: u64,
+    undefined_constant: u32,
+) {
+    let live = liveness::analyze(function, methods, fields, superinstructions)
+        .expect("promotion keeps registers within liveness coverage");
+    let unwritten = live.first().copied().unwrap_or(0) & promoted;
+    if unwritten == 0 {
+        return;
+    }
+    let old = function.code.clone();
+    let mut code = (0..u64::BITS as Register)
+        .filter(|register| unwritten & 1 << register != 0)
+        .map(|register| Instr::new(Op::LoadConst, register, 0, 0, undefined_constant))
+        .collect::<Vec<_>>();
+    let prefix = code.len();
+    code.extend_from_slice(&old);
+    // Every old position, the entry included, moves past the prefix: a jump back to the
+    // first instruction does not re-run the initialization.
+    let map = (0..=old.len()).map(|pc| pc + prefix).collect::<Vec<_>>();
+    relocate_targets(
+        &mut code[prefix..],
+        &mut function.wide,
+        &map,
+        &mut function.handlers,
+        &mut function.parameter_end_pc,
+        &mut function.binding_sites,
+    );
+    let mut positions = crate::bytecode::SourcePositions::default();
+    for position in function.source_positions.iter() {
+        positions.push(crate::bytecode::SourcePosition {
+            pc: position.pc + prefix as u32,
+            ..position
+        });
+    }
+    function.source_positions = positions;
     function.code = code;
 }
 
