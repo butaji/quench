@@ -712,6 +712,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "fsWriteFilePublic" (3) => crate::modules::fs_shared_vm::write_public::write,
         method "fsAppendFilePublic" (3) => crate::modules::fs_shared_vm::write_public::append,
         method "fsVfsReadlinkPromise" (3) => crate::modules::fs_shared_vm::promise_public::readlink_continuation,
+        method "fsPromisesReadlinkInitialize" (0) => crate::modules::fs_shared_vm::promise_public::initialize,
         method "fsVfsExistsComplete" (1) => crate::modules::fs_shared_vm::callback_public::exists_complete,
         method "fsVfsCallback" (0) => crate::modules::fs_shared_vm::callback_public::dispatch,
         method "fsVfsMetadata" (0) => crate::modules::fs_shared_vm::metadata_public::dispatch,
