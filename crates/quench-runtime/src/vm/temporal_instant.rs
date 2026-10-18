@@ -166,9 +166,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
         let bigint = self.to_bigint(p, value)?;
-        let epoch = bigint
-            .to_string()
-            .parse::<i128>()
+        let epoch = i128::try_from(bigint)
             .map_err(|_| self.range_error(p, "epochNanoseconds outside supported range".into()))?;
         if epoch.unsigned_abs() > MAX_INSTANT_EPOCH_NANOSECONDS as u128 {
             return Err(self.range_error(p, "epochNanoseconds outside supported range".into()));
@@ -249,10 +247,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
         let epoch = match native {
-            Native::TemporalInstantFromEpochNanoseconds => self
-                .to_bigint(p, value)?
-                .to_string()
-                .parse::<i128>()
+            Native::TemporalInstantFromEpochNanoseconds => i128::try_from(self.to_bigint(p, value)?)
                 .map_err(|_| {
                     self.range_error(p, "epochNanoseconds outside supported range".into())
                 })?,
