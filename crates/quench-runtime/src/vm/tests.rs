@@ -4493,11 +4493,7 @@ fn dynamic_import_waiters_are_rooted_while_queued_and_during_batch_evaluation() 
             let source = "$262.gc(); export const value = 57;".to_owned();
             vm.realm.promise.dynamic_import_jobs.push(DynamicImportJob {
                 cache_key: format!("{name}:javascript"),
-                module: crate::ModuleSource {
-                    name,
-                    bytes: source.as_bytes().to_vec(),
-                    source,
-                },
+                module: crate::ModuleSource::text(name, source),
                 promise,
             });
         }
@@ -4627,6 +4623,7 @@ fn await_state_traces_its_continuation_until_a_reaction_takes_it() {
     let state = vm.heap.alloc(crate::heap::Cell::AwaitState(Box::new(
         crate::heap::AwaitState {
             continuation: Some(Box::new(continuation)),
+            realm: Value::UNDEFINED,
             promise: Value::UNDEFINED,
             generator: None,
             yielded: false,
@@ -6992,6 +6989,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                 let value = vm.heap.alloc(super::Cell::AwaitState(Box::new(
                     crate::heap::AwaitState {
                         continuation: Some(Box::new(continuation)),
+                        realm: Value::UNDEFINED,
                         promise,
                         generator: None,
                         yielded: false,
