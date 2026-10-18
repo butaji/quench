@@ -395,7 +395,7 @@ pub(super) struct ScriptCallTarget {
     /// It keeps the values it was passed for a forwarded `arguments` (`CallPlan::forwards_arguments`).
     forwards: bool,
     /// The slots its depth-0 captures read (`LaneContext::capture`), or null where the walk
-    /// does not end at a function environment. The storage of a live environment never
+    /// does not end at a function environment or its storage is sparse. The storage of a live environment never
     /// moves, and the generation retires the target at the next collection.
     capture: *const crate::heap::EnvironmentSlots,
     /// The `LaneStack::forwarded_methods` index of a constructor body forwarding to a method
@@ -615,7 +615,8 @@ struct LaneContext<H: Host> {
     /// The running JavaScript activation's environment, or `DELETED` for a VM frame.
     env: Value,
     /// The innermost capture slots of the running function, once a capture read found
-    /// them; null until then. No collection runs in the lane, so they stay in place.
+    /// them dense (`EnvironmentSlots::dense`); null until then and for sparse storage, which
+    /// the walk reads. No collection runs in the lane, so they stay in place.
     capture: *const crate::heap::EnvironmentSlots,
 }
 
@@ -1243,6 +1244,14 @@ lane_handler! {
     }
 }
 
+/// A string's element in the lane (`Vm::string_element`), which allocates its one-unit string.
+#[inline(never)]
+fn lane_string_element<H: Host>(vm: &mut Vm<H>, base: Value, key: Value) -> Option<Value> {
+    let value = vm.string_element(base, key)?;
+    note_allocation(vm);
+    Some(value)
+}
+
 lane_handler! {
     /// A present dense array element; any other read takes the general path.
     fn lane_get_index<>(cx, r, ip, i, view) {
@@ -1256,6 +1265,7 @@ lane_handler! {
             .dense_array_element(base, key)
             .or_else(|| vm.plain_keyed_get(base, key))
             .or_else(|| vm.plain_typed_element(base, key))
+            .or_else(|| lane_string_element(vm, base, key))
         else {
             return exit(ip);
         };
@@ -1288,6 +1298,7 @@ lane_handler! {
             .dense_array_element(base, key)
             .or_else(|| vm.plain_keyed_get(base, key))
             .or_else(|| vm.plain_typed_element(base, key))
+            .or_else(|| lane_string_element(vm, base, key))
         else {
             return exit(ip);
         };
@@ -1334,8 +1345,11 @@ lane_handler! {
         let imm = i.imm();
         let slots = unsafe { (*cx).capture };
         let value = if ImmediateLayout::capture_depth(imm) == 0 && !slots.is_null() {
-            // SAFETY: the running function's capture slots, found this run (`LaneContext::capture`).
-            (unsafe { vm(cx) }).owned_capture(unsafe { &*slots }, None, ImmediateLayout::capture_slot(imm))
+            // SAFETY: the running function's dense capture slots, found this run
+            // (`LaneContext::capture`).
+            (unsafe { &*slots })
+                .dense_owned(usize::from(ImmediateLayout::capture_slot(imm)))
+                .filter(|value| !value.is_deleted())
         } else {
             None
         };
@@ -1362,6 +1376,7 @@ lane_handler! {
             let value = vm.cached_direct_capture(frame, depth, slot);
             if depth == 0
                 && let Some((slots, None)) = vm.current_capture_slots(frame)
+                && let Some(slots) = unsafe { &*slots }.dense()
             {
                 unsafe { (*cx).capture = slots };
             }
@@ -1369,8 +1384,11 @@ lane_handler! {
         } else {
             // A frameless activation's function has no environment of its own.
             vm.environment_capture_slots(env, false, depth).and_then(|(slots, root)| {
-                if depth == 0 && root.is_none() {
-                    unsafe { (*cx).capture = slots };
+                if depth == 0
+                    && root.is_none()
+                    && let Some(dense) = slots.dense()
+                {
+                    unsafe { (*cx).capture = dense };
                 }
                 vm.owned_capture(slots, root, slot)
             })
@@ -2064,6 +2082,17 @@ fn lane_cached_field_miss<H: Host>(
     site: u16,
     probe: super::object::FieldCacheProbe,
 ) -> Option<Value> {
+    // A private field reads from the object's private elements before any cache, as the
+    // general loop's `GetField` does. Its home follows the running frame's environment, which
+    // is the lane's frame only while no frameless activation runs.
+    if vm.is_private_name(atom) {
+        return vm
+            .lane_stack
+            .activations
+            .is_empty()
+            .then(|| vm.private_field_value(code, object, atom))
+            .flatten();
+    }
     match probe {
         super::object::FieldCacheProbe::Hit(value) => Some(value),
         // The order `Vm::get_field_cached` takes: an array's `length` before the lookups.
@@ -4160,7 +4189,9 @@ impl<H: Host> Vm<H> {
         let view = self.lane_view_any(program, function)?;
         // A frameless activation's function has no environment of its own.
         let capture = match self.environment_capture_slots(env, false, 0) {
-            Some((slots, None)) => slots as *const crate::heap::EnvironmentSlots,
+            Some((slots, None)) => slots
+                .dense()
+                .map_or(std::ptr::null(), |slots| slots as *const crate::heap::EnvironmentSlots),
             _ => std::ptr::null(),
         };
         let target = ScriptCallTarget {

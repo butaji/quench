@@ -179,6 +179,10 @@ fn promoted_locals_preserve_order_and_survive_collection() {
       function keyed(x, i) { x[i] = x[++i] * 10; return x.join() + ":" + i; }
       function window(i) { var a = [i, ++i, i++, i]; return a.join() + ":" + i; }
       function compound(i) { i += i++ + ++i; return i; }
+      // A `var` read before its first write is undefined, whatever an earlier frame left
+      // in the register it moved to.
+      function dirty() { var a = "stale", b = "stale"; return a + b; }
+      function unset(o) { var n; (function (e) { e.k = 1; })(n || (o.x = n = {})); return typeof o.x + ":" + n.k; }
       print(read({ answer: 42 }));
       print(ordered(5));
       print(destructured(9));
@@ -186,6 +190,8 @@ fn promoted_locals_preserve_order_and_survive_collection() {
       print(keyed([1, 2, 3, 4], 0));
       print(window(0));
       print(compound(2));
+      dirty();
+      print(unset({}));
     "#;
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(RecordingHost(output.clone()));
@@ -193,7 +199,7 @@ fn promoted_locals_preserve_order_and_survive_collection() {
     vm.execute(&program).unwrap();
     assert_eq!(
         output.borrow().as_slice(),
-        ["42", "3", "3", "602", "20,2,3,4:1", "0,1,1,2:2", "8"]
+        ["42", "3", "3", "602", "20,2,3,4:1", "0,1,1,2:2", "8", "object:1"]
     );
 
     // Every binding here stays in a register, including those written inside expressions.
@@ -744,11 +750,17 @@ fn unreachable_promise_callback_and_aggregate_cycles_are_collected() {
     let values = vm
         .call_value(&program, factory, Value::UNDEFINED, &[])
         .unwrap();
-    let owners: Vec<_> = vm
-        .realm
-        .promise
-        .records
-        .keys()
+    let promises: Vec<_> = vm
+        .heap
+        .array_elements(values)
+        .unwrap()
+        .iter()
+        .copied()
+        .filter(|value| vm.is_promise(*value))
+        .collect();
+    assert_eq!(promises.len(), 6);
+    let owners: Vec<_> = promises
+        .iter()
         .chain(vm.realm.promise.finally_handler_callbacks.keys())
         .chain(vm.realm.promise.aggregates.keys())
         .chain(vm.realm.promise.aggregate_jobs.keys())
@@ -775,7 +787,6 @@ fn unreachable_promise_callback_and_aggregate_cycles_are_collected() {
         weak.iter()
             .all(|handle| vm.heap.weak_value(*handle).is_none())
     );
-    assert!(vm.realm.promise.records.is_empty());
     assert!(vm.realm.promise.finally_handler_callbacks.is_empty());
     assert!(vm.realm.promise.aggregates.is_empty());
     assert!(vm.realm.promise.aggregate_jobs.is_empty());
@@ -1181,10 +1192,7 @@ fn promise_record_edges_follow_promise_and_resolver_lifetime() {
     assert!(vm.heap.is_live(promise));
     assert!(vm.heap.is_live(result));
     assert_eq!(
-        vm.realm
-            .promise
-            .records
-            .get(&promise)
+        vm.promise_record(promise)
             .map(|record| record.result),
         Some(result)
     );
@@ -1198,7 +1206,7 @@ fn promise_record_edges_follow_promise_and_resolver_lifetime() {
     vm.collect_now(&program);
     assert!(vm.heap.weak_value(promise_weak).is_none());
     assert!(vm.heap.weak_value(result_weak).is_none());
-    assert!(!vm.realm.promise.records.contains_key(&promise));
+    assert!(!vm.is_promise(promise));
 }
 
 #[test]
@@ -4506,14 +4514,14 @@ fn dynamic_import_waiters_are_rooted_while_queued_and_during_batch_evaluation() 
         for (promise, weak) in &promises {
             assert_eq!(vm.heap.weak_value(*weak), Some(*promise));
             assert_eq!(
-                vm.realm.promise.records[promise].state,
+                vm.promise_record(*promise).expect("promise record").state,
                 PromiseState::Fulfilled
             );
         }
         vm.collect_now(&program);
         for (promise, weak) in promises {
             assert!(vm.heap.weak_value(weak).is_none());
-            assert!(!vm.realm.promise.records.contains_key(&promise));
+            assert!(!vm.is_promise(promise));
         }
     }
 }
