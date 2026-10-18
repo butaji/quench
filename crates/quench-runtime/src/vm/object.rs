@@ -845,6 +845,52 @@ impl<H: Host> Vm<H> {
         self.derive_object_site_shape(program, site)
     }
 
+    /// A nested literal of constants built from its template (`LiteralStep`). No guest code
+    /// and no collection runs while it is built, so the values on the build stack need no
+    /// roots; each container is made as `MakeObjectLiteral` and `MakeConstArray` make one.
+    pub(super) fn literal_template(
+        &mut self,
+        program: &ResidualProgram,
+        frame: usize,
+        template: usize,
+    ) -> Result<Value, JsError> {
+        let program_id = self.frames[frame].program;
+        let steps = &program.literal_templates[template];
+        let mut values: Vec<Value> = Vec::new();
+        for step in steps.iter().copied() {
+            let value = match step {
+                crate::bytecode::LiteralStep::Constant(index) => {
+                    self.programs.constant(program_id, index as usize).ok_or_else(|| {
+                        JsError::validation("literal constant is outside program".into())
+                    })?
+                }
+                crate::bytecode::LiteralStep::Array(count) => {
+                    let elements = values.split_off(values.len() - count as usize);
+                    self.heap.alloc(Cell::Array {
+                        object: crate::heap::ArrayObject::new(
+                            Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
+                            Rc::new(elements),
+                        ),
+                    })
+                }
+                crate::bytecode::LiteralStep::Object(site) => {
+                    let shape = self.object_site_shape(program, site as usize);
+                    let count = program.object_sites[site as usize].atoms.len();
+                    let start = values.len() - count;
+                    let object = self.heap.alloc_object_with_properties(
+                        self.object_proto,
+                        shape,
+                        &values[start..],
+                    );
+                    values.truncate(start);
+                    object
+                }
+            };
+            values.push(value);
+        }
+        Ok(values.pop().expect("a validated template leaves its literal"))
+    }
+
     /// Walks a literal site's transitions from the empty shape, recording the result when
     /// shape caches are active.
     #[inline(never)]
@@ -1919,6 +1965,9 @@ impl<H: Host> Vm<H> {
         value: Value,
         receiver: Value,
     ) -> Result<bool, JsError> {
+        if target == receiver && self.set_plain_named_property(target, atom, value).is_some() {
+            return Ok(true);
+        }
         let _stack = self.enter_stack()?;
         if self.is_private_name(atom) {
             self.check_private_brand(p, target, atom)?;
@@ -2943,11 +2992,20 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn append_cached_shape_transition(&mut self, shape: u32, transition: ShapeTransition) -> u32 {
         let key = transition.cache_key();
-        if let Some(key) = key
-            && let Some(next) = self.transitions.get(&self.shapes, shape, key)
-        {
-            self.profile.shape_transition(true);
-            return next;
+        if let Some(key) = key {
+            let last = self.shapes[shape as usize].last_child.get();
+            let next = if last != NO_LAST_CHILD
+                && super::shape_transitions::is_transition(&self.shapes, last, shape, key)
+            {
+                Some(last)
+            } else {
+                self.transitions.get(&self.shapes, shape, key)
+            };
+            if let Some(next) = next {
+                self.shapes[shape as usize].last_child.set(next);
+                self.profile.shape_transition(true);
+                return next;
+            }
         }
         if key.is_some() || matches!(transition, ShapeTransition::Add { .. }) {
             self.profile.shape_transition(false);
@@ -2983,6 +3041,7 @@ impl<H: Host> Vm<H> {
         }
         if let Some(key) = key {
             self.transitions.insert(&self.shapes, shape, key, next);
+            self.shapes[shape as usize].last_child.set(next);
         }
         next
     }

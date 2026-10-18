@@ -1414,6 +1414,7 @@ struct Compiler<'a> {
     field_sites: Vec<FieldSite>,
     object_sites: Vec<ObjectSite>,
     regexp_literal_sites: Vec<crate::bytecode::RegExpLiteralSite>,
+    literal_templates: Vec<Box<[crate::bytecode::LiteralStep]>>,
     superinstructions: Vec<Superinstruction>,
     /// Distinct `name_bindings` lists: sibling functions that see the same bindings,
     /// such as every function declared in one module scope, share one list.
@@ -1753,6 +1754,7 @@ impl<'a> Compiler<'a> {
             field_sites: vec![],
             object_sites: vec![],
             regexp_literal_sites: vec![],
+            literal_templates: vec![],
             superinstructions: vec![],
             deferred_name_bindings: FxHashMap::default(),
             captured_name_scopes: FxHashMap::default(),
@@ -2202,6 +2204,7 @@ impl<'a> Compiler<'a> {
             field_sites: self.field_sites,
             object_sites: self.object_sites,
             regexp_literal_sites: self.regexp_literal_sites,
+            literal_templates: self.literal_templates,
             superinstructions: self.superinstructions,
         };
         #[cfg(feature = "profile-aggregate")]
