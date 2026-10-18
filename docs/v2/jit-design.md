@@ -171,10 +171,29 @@ target hits and no fallback. The complete report and source/binary hashes are in
 `evidence/jit-jetstream3-wasm-2026-10-18/site-attribution/README.md`.
 
 This confirms a high-volume VM transition even when both caller and target are
-compiled. The current implementation experiment calls the existing fixed
-native entry directly for same-program, same-instance targets using the raw
-Wasm words. It keeps table validation in the VM resolver and retains the
-existing slow path for another instance or an uncompiled target. One-round
-diagnostic Score/RSS are not qualification evidence, and the separate clean
-11-round results still show no JIT Score wins; rerun the five selected cases on
-this change before claiming an improvement.
+compiled. Commit `3399bb547` calls the existing fixed native entry directly
+for same-program, same-instance targets using raw Wasm words. Table bounds,
+null, signature, memory-guard, and cross-instance checks stay in the VM; other
+targets retain the existing fallback. The tests prove direct entry, guard-trap
+propagation, nested raised-error propagation, and foreign-instance fallback.
+
+The clean five-case follow-up used 11 matched rounds on Node v26.12.0 and Bun
+1.4.3. It is preserved in
+`evidence/jit-jetstream3-wasm-2026-10-18/direct-entry/`. All fixtures validated
+and produced equal output, but no fixture passed the Score-and-RSS rule:
+
+| Fixture | Quench Score / RSS MiB | Score vs Bun | RSS vs Bun | Score vs Node | RSS vs Node |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| HashSet | 32.21 / 112.87 | 0.157 [0.147, 0.167] | 2.289 [2.278, 2.300] | 0.136 [0.134, 0.141] | 1.065 [1.064, 1.065] |
+| gcc-loops | 72.94 / 47.68 | 0.422 [0.404, 0.446] | 0.981 [0.957, 0.984] | 0.398 [0.384, 0.420] | 0.669 [0.669, 0.672] |
+| quicksort | 206.68 / 41.46 | 0.604 [0.501, 0.686] | 0.985 [0.978, 0.987] | 0.473 [0.455, 0.533] | 0.608 [0.605, 0.608] |
+| TSF | 14.73 / 224.47 | 0.076 [0.069, 0.079] | 1.881 [1.838, 1.890] | 0.077 [0.074, 0.080] | 1.883 [1.783, 1.903] |
+| zlib | 13.65 / 112.55 | 0.154 [0.150, 0.155] | 1.031 [1.029, 1.032] | 0.159 [0.152, 0.165] | 1.224 [1.194, 1.232] |
+
+gcc-loops and quicksort retain their RSS wins but remain far behind on Score.
+The direct-entry optimization does not materially close the TSF score or RSS
+gap. The next target is HashSet's interpreted `main`: its compiled callees
+receive 49 million `CallKnown` entries across the benchmark. Test a low-overhead
+known-callee entry path or a narrowly admitted caller closure under a strict
+native-byte cap; do not enable `WasmUnreachable` globally, since the prior
+experiment expanded TSF code about 52× and increased both compile time and RSS.
