@@ -10265,3 +10265,25 @@ c.send(message);
 "#,
     );
 }
+
+#[test]
+fn process_execve_replaces_the_process_and_reports_errors_like_node() {
+    compare_node_source_with_args(
+        r#"
+const out = [];
+const t = (f) => { try { out.push(f()); } catch (e) { out.push([e.name, e.code, e.message, e.errno, e.path, e.syscall, Object.keys(e)]); } };
+t(() => [process.execve.length, process.execve.name, Object.getOwnPropertyDescriptor(process, 'execve').enumerable]);
+t(() => process.execve('/nonexistent/quench-execve', ['x']));
+t(() => process.execve('/bin/sh', [1]));
+t(() => process.execve('/bin/sh', ['a\0b']));
+t(() => process.execve('/bin/sh', [], { a: 1 }));
+t(() => process.execve(1));
+const seen = [];
+require('diagnostics_channel').channel('process.execve').subscribe((m) => seen.push(m.execPath, m.args.length, m.env));
+process.on('exit', () => console.log('exit handlers do not run'));
+console.log(JSON.stringify(out));
+process.execve('/bin/sh', ['sh', '-c', 'echo replaced "$X" "$#"', 'sh', 'one'], { X: 'kept' });
+"#,
+        &["--no-warnings"],
+    );
+}
