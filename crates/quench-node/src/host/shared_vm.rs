@@ -1068,10 +1068,14 @@ impl quench_runtime::Host for NodeHost {
         bytes: &[u8],
         mode: quench_runtime::ExecutionMode,
     ) -> Result<quench_runtime::WasmModule, String> {
-        quench_wasm::Engine::new()
+        let module = quench_wasm::Engine::new()
             .compile(bytes)
             .and_then(|module| module.lower_shared_module_for(mode))
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string());
+        // Decoding, validation and lowering run once per module; their code leaves the
+        // resident set before the module runs.
+        crate::host::resident_pages::release_read_only_pages();
+        module
     }
 
     fn resolve_dynamic_import(
