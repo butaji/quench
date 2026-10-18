@@ -81,11 +81,7 @@ impl Host for Test262RuntimeHost {
         specifier: &str,
     ) -> Result<Option<ModuleSource>, quench_runtime::ModuleLoadError> {
         if specifier == TEST262_MODULE_SOURCE_SPECIFIER {
-            return Ok(Some(ModuleSource {
-                name: specifier.to_string(),
-                source: String::new(),
-                bytes: Vec::new(),
-            }));
+            return Ok(Some(ModuleSource::text(specifier, "")));
         }
         if !specifier.starts_with('.') {
             return Ok(None);
@@ -97,12 +93,7 @@ impl Host for Test262RuntimeHost {
             .join(specifier);
         let bytes =
             std::fs::read(&path).map_err(|error| format!("module {}: {error}", path.display()))?;
-        let source = String::from_utf8_lossy(&bytes).into_owned();
-        Ok(Some(ModuleSource {
-            name: path.display().to_string(),
-            source,
-            bytes,
-        }))
+        Ok(Some(ModuleSource::from_bytes(path.display().to_string(), bytes)))
     }
 }
 
