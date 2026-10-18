@@ -393,14 +393,13 @@ impl Regex {
         // mode modifiers).  Keep compilation behind a source-shape guard so
         // those patterns use the repository matcher instead of silently
         // changing observable match results.
-        // The trunk leaves the automata out for memory (V8-v7 RegExp max RSS 9544 -> 8660
-        // KiB, static x86_64, 2026-10-18). The Score lane (`v2-cloud-c`) keeps them: with
-        // its Score-first collection pacing, paired V8-v7 RegExp runs of one binary score
-        // 1121 without them and 1201 with them (+7.1%, 7/9, max RSS 18.2 -> 20.4 MB, Linux
-        // x86_64, 4 vCPU, 2026-10-18). `QUENCH_DISABLE_COMPILED_REGEXP` leaves them out.
+        // Since the compiled backtracking matcher (`backtrack::Program`), the automata cost
+        // more than they save: on V8-v7 RegExp (static x86_64, 2026-10-18) leaving them out
+        // takes max RSS from 9544 to 8660 KiB and Score from 869 to 971. They stay available,
+        // as a linear-time bound on backtracking, for embedders that ask for them.
         let backend_enabled = !flags.unicode_sets
             && !flags.unicode
-            && std::env::var_os("QUENCH_DISABLE_COMPILED_REGEXP").is_none();
+            && std::env::var_os("QUENCH_COMPILED_REGEXP").is_some();
         let compiled = (backend_enabled
             && compiled_source_syntax_is_safe(source, NonCapturingGroups::Allowed)
             && compiled_structure_is_safe(&parsed.body))
