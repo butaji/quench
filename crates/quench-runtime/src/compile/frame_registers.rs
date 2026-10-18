@@ -14,9 +14,11 @@ use crate::bytecode::{
     Operand, OperandKind, REGISTER_MASK, Register, Superinstruction, WideInstruction,
 };
 
+/// `undefined_constant` is the program's constant index of `undefined`.
 pub(super) fn promote<'a>(
     function: &mut Function,
     superinstructions: &[Superinstruction],
+    undefined_constant: u32,
     atom_name: impl Fn(usize) -> Option<&'a str>,
 ) {
     let mut eligible = function.plain_local_slots(superinstructions);
@@ -161,8 +163,25 @@ pub(super) fn promote<'a>(
     }
     function.registers = next;
     let register = |slot: usize| registers.get(slot).copied().flatten();
+    // A frame slot starts undefined, a register only once written (`prepare_registers_for`):
+    // a promoted slot some read can reach before any store gets `undefined` on entry.
+    let promoted: Vec<bool> = registers.iter().map(Option::is_some).collect();
+    let written_first = crate::bytecode::initialization::initialized_before_reads(
+        function,
+        superinstructions,
+        &promoted,
+        &promoted,
+    );
     let old = function.code.clone();
     let mut code = Vec::with_capacity(old.len());
+    for (slot, target) in registers.iter().enumerate() {
+        if let Some(target) = *target
+            && !written_first[slot]
+        {
+            let load = WideInstruction::new(Op::LoadConst, target, 0, 0, undefined_constant);
+            code.push(encode(load, Instr::new(Op::Nop, 0, 0, 0, 0), &mut function.wide));
+        }
+    }
     let mut map = vec![0; old.len() + 1];
     for (pc, &packed) in old.iter().enumerate() {
         map[pc] = code.len();

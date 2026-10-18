@@ -50,11 +50,13 @@ impl Rows {
 }
 
 /// Of `candidates`, the slots that no read can reach inside a dead zone. Function entry
-/// leaves every local initialized, so only `InitializeTdz` makes a slot maybe-uninitialized.
-pub(super) fn initialized_before_reads(
+/// leaves a slot initialized unless `uninitialized_at_entry` names it; after that only
+/// `InitializeTdz` makes a slot maybe-uninitialized.
+pub(crate) fn initialized_before_reads(
     function: &Function,
     superinstructions: &[Superinstruction],
     candidates: &[bool],
+    uninitialized_at_entry: &[bool],
 ) -> Vec<bool> {
     let mut proven = candidates.to_vec();
     let dense: Vec<Option<usize>> = {
@@ -77,6 +79,15 @@ pub(super) fn initialized_before_reads(
     let decoded: Vec<WideInstruction> = function.instructions().collect();
     // One row past the last instruction stands for the function's end.
     let mut maybe_uninitialized = Rows::new(decoded.len() + 1, words);
+    let mut entry = vec![0; words];
+    for (slot, index) in dense.iter().enumerate() {
+        if let Some(index) = index
+            && uninitialized_at_entry.get(slot) == Some(&true)
+        {
+            entry[index / u64::BITS as usize] |= 1 << (index % u64::BITS as usize);
+        }
+    }
+    maybe_uninitialized.join(0, &entry);
     let mut state = vec![0; words];
     let mut abrupt = vec![0; words];
     let mut changed = true;
