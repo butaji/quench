@@ -290,6 +290,7 @@ pub(crate) enum ImmediateRole {
     WasmF64UnaryOperator,
     TemplateSiteIndex,
     RegExpLiteralSiteIndex,
+    LiteralTemplateIndex,
     JumpTarget,
     BranchTableCases,
     MethodSiteIndex,
@@ -609,6 +610,7 @@ opcodes!(
     MakeClosure => CALL_EFFECT; layout Scalar; meaning ClosureFunctionIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
     MakeArray => CALL_EFFECT; layout Scalar; meaning ArrayLength, @ Register, @ fields(ResultRegister, Unused, Unused),
     MakeConstArray => CALL_EFFECT; layout Scalar; meaning ConstantIndex, @ Register, @ fields(ResultRegister, ElementCount, Unused),
+    MakeLiteralTemplate => CALL_EFFECT; layout Scalar; meaning LiteralTemplateIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
     MakeObject => CALL_EFFECT; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Unused, Unused),
     MakeObject2 => CALL_EFFECT; layout Scalar; meaning ObjectSiteIndex, @ Returnable, @ fields(ResultRegister, Register, Register),
     MakeObjectLiteral => CALL_EFFECT; layout Scalar; meaning ObjectSiteIndex, @ Returnable, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
@@ -2025,6 +2027,19 @@ pub(crate) struct ObjectSite {
     pub atoms: SmallVec<[Atom; INLINE_OBJECT_SITE_ATOMS]>,
 }
 
+/// One step of a nested literal of constants (`MakeLiteralTemplate`), run in order over a
+/// stack of values: a constant pushes its value, and an array or an object replaces the
+/// element or property values on top of the stack with a fresh container of them. A
+/// template's steps leave exactly one value, the literal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LiteralStep {
+    Constant(u32),
+    /// An array of the given number of elements.
+    Array(u32),
+    /// An object of an object site's keys, one value each.
+    Object(u32),
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RegExpLiteralSite {
     pub pattern_constant: u32,
@@ -2440,6 +2455,7 @@ pub struct ResidualProgram {
     pub(crate) field_sites: Vec<FieldSite>,
     pub(crate) object_sites: Vec<ObjectSite>,
     pub(crate) regexp_literal_sites: Vec<RegExpLiteralSite>,
+    pub(crate) literal_templates: Vec<Box<[LiteralStep]>>,
     pub(crate) superinstructions: Vec<Superinstruction>,
 }
 
@@ -2509,7 +2525,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 97;
+    pub const FORMAT_VERSION: u8 = 98;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

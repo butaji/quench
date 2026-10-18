@@ -232,7 +232,7 @@ impl FunctionCompiler<'_, '_> {
         dst
     }
 
-    fn static_object_data_properties<'property, 'ast>(
+    pub(super) fn static_object_data_properties<'property, 'ast>(
         value: &'property ObjectExpression<'ast>,
     ) -> Option<Vec<(&'property ObjectProperty<'ast>, &'property str)>> {
         value
