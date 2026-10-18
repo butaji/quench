@@ -357,7 +357,7 @@ impl Frame {
     #[inline(always)]
     fn prepare_registers_for(&mut self, function: &crate::bytecode::Function) {
         let register_count = usize::from(function.registers);
-        if function.register_root_offset == crate::bytecode::NO_REGISTER_ROOT_MAP
+        if !function.register_roots.covered()
             || function.is_generator
             || function.is_async
             || function.initial_register != crate::bytecode::InitialRegister::Undefined
@@ -824,16 +824,17 @@ enum ShapeTransitionKey {
     /// (`append_shape_roots`); compaction rebuilds the index from live shapes only, so no
     /// entry outlives the symbol it names.
     Add(property_key::PropertyKey, DataAttributes),
-    /// A descriptor without accessor functions (`ShapeAttributes::accessors` is
-    /// `NO_SHAPE_ACCESSORS`).
+    /// A descriptor whose shape names no accessor function (`ShapeAttributes::table_accessors`
+    /// is false).
     Descriptor {
         slot: u32,
         attributes: ShapeAttributes,
     },
 }
-/// A property's attributes as a shape records them. Accessor functions are rare among
-/// shapes and live in `Vm::shape_accessors`, which `accessors` indexes, so every shape stays
-/// small.
+/// A property's attributes as a shape records them. A getter-only accessor keeps its getter
+/// in the property's slot (`SLOT_GETTER`), so its shape names no function and every object
+/// defining the same keys shares it. Other accessor functions are rare among shapes and live
+/// in `Vm::shape_accessors`, which `accessors` indexes, so every shape stays small.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct ShapeAttributes {
     writable: bool,
@@ -878,16 +879,23 @@ const DEFAULT_DATA_ATTRIBUTES: DataAttributes = DataAttributes {
 };
 /// `ShapeAttributes::accessors` of attributes with neither getter nor setter.
 const NO_SHAPE_ACCESSORS: u32 = u32::MAX;
+/// `ShapeAttributes::accessors` of an accessor with a getter and no setter: the getter is the
+/// property's slot value. Re-exports (`__createBinding`, `__export`, Babel's interop getters)
+/// define these by the thousand, each with its own getter.
+const SLOT_GETTER: u32 = u32::MAX - 1;
 /// A shape-held accessor property's getter and setter.
 type ShapeAccessors = (Option<Value>, Option<Value>);
 impl ShapeAttributes {
     /// `attributes` for a shape, appending its accessor functions to `accessors`.
+    /// A `SLOT_GETTER` record leaves storing the getter in the slot to the caller.
     fn record(attributes: PropertyAttributes, accessors: &mut Vec<ShapeAccessors>) -> Self {
-        let index = if attributes.getter.is_none() && attributes.setter.is_none() {
-            NO_SHAPE_ACCESSORS
-        } else {
-            accessors.push((attributes.getter, attributes.setter));
-            u32::try_from(accessors.len() - 1).expect("shape accessor table exhausted")
+        let index = match (attributes.getter, attributes.setter) {
+            (None, None) => NO_SHAPE_ACCESSORS,
+            (Some(_), None) if attributes.accessor => SLOT_GETTER,
+            (getter, setter) => {
+                accessors.push((getter, setter));
+                u32::try_from(accessors.len() - 1).expect("shape accessor table exhausted")
+            }
         };
         Self {
             writable: attributes.writable,
@@ -907,15 +915,41 @@ impl ShapeAttributes {
         })
     }
 
-    fn functions(self, accessors: &[ShapeAccessors]) -> ShapeAccessors {
+    /// These attributes, their table accessors recorded anew from `old` into `accessors`.
+    fn rehomed(self, old: &[ShapeAccessors], accessors: &mut Vec<ShapeAccessors>) -> Self {
+        if !self.table_accessors() {
+            return self;
+        }
+        accessors.push(self.functions(old, || None));
+        Self {
+            accessors: u32::try_from(accessors.len() - 1).expect("shape accessor table exhausted"),
+            ..self
+        }
+    }
+
+    /// Whether the property's slot holds its getter.
+    fn slot_getter(self) -> bool {
+        self.accessors == SLOT_GETTER
+    }
+
+    /// Whether `Vm::shape_accessors` holds this property's functions.
+    fn table_accessors(self) -> bool {
+        !matches!(self.accessors, NO_SHAPE_ACCESSORS | SLOT_GETTER)
+    }
+
+    /// The accessor functions, given the property's slot value for a `SLOT_GETTER` record.
+    fn functions(self, accessors: &[ShapeAccessors], slot_value: impl FnOnce() -> Option<Value>) -> ShapeAccessors {
+        if self.slot_getter() {
+            return (slot_value(), None);
+        }
         accessors
             .get(self.accessors as usize)
             .copied()
             .unwrap_or((None, None))
     }
 
-    fn attributes(self, accessors: &[ShapeAccessors]) -> PropertyAttributes {
-        let (getter, setter) = self.functions(accessors);
+    fn attributes(self, accessors: &[ShapeAccessors], slot_value: impl FnOnce() -> Option<Value>) -> PropertyAttributes {
+        let (getter, setter) = self.functions(accessors, slot_value);
         PropertyAttributes {
             writable: self.writable,
             enumerable: self.enumerable,
@@ -930,7 +964,7 @@ impl ShapeTransition {
     fn introduces_gc_roots(self) -> bool {
         match self {
             Self::Add { key, .. } => key.symbol_value().is_some(),
-            Self::Descriptor { attributes, .. } => attributes.accessors != NO_SHAPE_ACCESSORS,
+            Self::Descriptor { attributes, .. } => attributes.table_accessors(),
             Self::Root | Self::FunctionName { .. } | Self::FunctionNameReconfigured | Self::FunctionLengthReconfigured | Self::Constructed { .. } | Self::Delete { .. } | Self::Vacant | Self::Dictionary { .. } => false,
         }
     }
@@ -948,7 +982,7 @@ impl ShapeTransition {
             } => Some(ShapeTransitionKey::Add(key, attributes)),
             // The transition table outlives individual properties. Never put
             // accessor values in a key, where they would become strong roots.
-            Self::Descriptor { slot, attributes } if attributes.accessors == NO_SHAPE_ACCESSORS => {
+            Self::Descriptor { slot, attributes } if !attributes.table_accessors() => {
                 Some(ShapeTransitionKey::Descriptor { slot, attributes })
             }
             Self::Root
@@ -1028,6 +1062,37 @@ impl ShapeLookupIndex {
             + self.attributes.capacity() * size_of::<(u32, ShapeAttributes)>()
     }
 }
+/// Facts a shape inherits from its chain: once a transition introduces one, every descendant
+/// keeps it. One byte, so `Shape` keeps its size.
+#[derive(Clone, Copy, Default)]
+struct ShapeFacts(u8);
+impl ShapeFacts {
+    /// A symbol key or a table accessor of the chain may be a GC root.
+    const MAY_HAVE_GC_ROOTS: u8 = 1 << 0;
+    /// Some property of the chain was a `SLOT_GETTER` accessor, so a raw slot read must check
+    /// whether the slot holds a getter rather than a value.
+    const SLOT_GETTERS: u8 = 1 << 1;
+
+    fn extended_by(self, transition: ShapeTransition) -> Self {
+        let introduced = |fact: bool, bit: u8| if fact { bit } else { 0 };
+        Self(
+            self.0
+                | introduced(transition.introduces_gc_roots(), Self::MAY_HAVE_GC_ROOTS)
+                | introduced(
+                    matches!(transition, ShapeTransition::Descriptor { attributes, .. } if attributes.slot_getter()),
+                    Self::SLOT_GETTERS,
+                ),
+        )
+    }
+
+    fn may_have_gc_roots(self) -> bool {
+        self.0 & Self::MAY_HAVE_GC_ROOTS != 0
+    }
+
+    fn slot_getters(self) -> bool {
+        self.0 & Self::SLOT_GETTERS != 0
+    }
+}
 struct Shape {
     /// The shape this one extends; `NO_PARENT_SHAPE` for the root.
     parent: u32,
@@ -1035,7 +1100,7 @@ struct Shape {
     /// Property slots an object of this shape stores (slot indices are `u32`).
     storage_len: u32,
     dictionary_trigger: Option<DictionaryTrigger>,
-    may_have_gc_roots: bool,
+    facts: ShapeFacts,
     lookup_index: OnceCell<Box<ShapeLookupIndex>>,
     /// Lookups that walked at least `SHAPE_INDEX_WALK_DISTANCE` transitions
     /// from this shape before it had an index.
@@ -1061,7 +1126,7 @@ const PROTOTYPE_SLOT_NONE: u32 = u32::MAX - 1;
 const SHAPE_TABLE_CAPACITY: usize = 4096;
 impl Shape {
     fn root() -> Self {
-        Self::child(None, ShapeTransition::Root, 0, None, false)
+        Self::child(None, ShapeTransition::Root, 0, None, ShapeFacts::default())
     }
 
     /// A shape table holding the root shape.
@@ -1084,14 +1149,14 @@ impl Shape {
         transition: ShapeTransition,
         storage_len: usize,
         dictionary_trigger: Option<DictionaryTrigger>,
-        parent_may_have_gc_roots: bool,
+        parent_facts: ShapeFacts,
     ) -> Self {
         Self {
             parent: parent.unwrap_or(NO_PARENT_SHAPE),
             transition,
             storage_len: u32::try_from(storage_len).expect("object property index exceeds u32"),
             dictionary_trigger,
-            may_have_gc_roots: parent_may_have_gc_roots || transition.introduces_gc_roots(),
+            facts: parent_facts.extended_by(transition),
             lookup_index: OnceCell::new(),
             long_walks: std::cell::Cell::new(0),
             prototype_slot: std::cell::Cell::new(PROTOTYPE_SLOT_UNKNOWN),
@@ -1278,6 +1343,8 @@ pub(crate) struct Vm<H> {
     pub(crate) native_root_lists: Vec<Vec<RootId>>,
     /// The roots the last collection gathered, which sizes the next one's root vector.
     gc_root_count: usize,
+    /// Owners with out-of-cell edges at the previous collection, which sizes the next index.
+    gc_owned_root_count: usize,
     frame_pool: Vec<Box<Frame>>,
     /// Activations a running lane holds without frames.
     lane_stack: dispatch_fast::LaneStack,
@@ -1334,7 +1401,8 @@ pub(crate) struct Vm<H> {
     /// The strings most recently matched by a RegExp, most recent first, each prepared once
     /// for repeated matching (`Vm::regexp_subject`).
     regexp_subjects: Vec<Rc<quench_regexp::Subject>>,
-    /// The subject of the last short string matched, reused in place once no match holds it.
+    /// The last short subject matched, recognized by content and otherwise reused in place
+    /// once no match holds it (`Vm::regexp_subject`).
     regexp_short_subject: Option<Rc<quench_regexp::Subject>>,
     regexp_matchers: regexp::RegExpMatcherCache,
     // One lazily derived class byte per atom; length tracks `atom_sequence`.
@@ -1407,6 +1475,9 @@ pub(crate) struct Vm<H> {
     /// Private-name home objects found by `private_name_home`, kept while their starting
     /// environment is live.
     private_homes: FxHashMap<PrivateHomeKey, Value>,
+    /// The collation `String.prototype.localeCompare` resolves without locales or options
+    /// (`Vm::locale_compare_collation`); the host's default locale fixes it.
+    default_collation: Option<std::rc::Rc<intl_collator::Collation>>,
     wasm_js: wasm_js::WasmJsIntrinsics,
     direct_eval: bool,
     direct_eval_var_program: Option<ProgramId>,
@@ -1540,7 +1611,7 @@ impl<H: Host> Vm<H> {
         let Some(root) = program.functions.first() else {
             return Ok(());
         };
-        for atom in root.global_lexical_atoms.iter().copied() {
+        for atom in root.global_lexical_atoms().iter().copied() {
             if self.realm.global_lexical_declarations.contains(&atom) {
                 return self
                     .syntax_error_result(program, "global lexical declaration already exists")
@@ -1565,17 +1636,17 @@ impl<H: Host> Vm<H> {
         }
         self.realm
             .global_lexical_declarations
-            .extend(root.global_lexical_atoms.iter().copied());
+            .extend(root.global_lexical_atoms().iter().copied());
         if self.eval_script_context {
             self.realm.immutable_global_lexical_bindings.extend(
-                root.global_immutable_atoms
+                root.global_immutable_atoms()
                     .iter()
                     .copied()
-                    .filter(|atom| root.global_lexical_atoms.contains(atom)),
+                    .filter(|atom| root.global_lexical_atoms().contains(atom)),
             );
         }
         if root
-            .global_var_atoms
+            .global_var_atoms()
             .iter()
             .any(|atom| self.realm.global_lexical_declarations.contains(atom))
         {
@@ -1586,7 +1657,7 @@ impl<H: Host> Vm<H> {
                 )
                 .map(|_| ());
         }
-        for atom in root.global_function_atoms.iter().copied() {
+        for atom in root.global_function_atoms().iter().copied() {
             let key = PropertyKey::string(atom);
             let Some(attributes) = self.property_attributes(self.realm.globals, key) else {
                 if self
@@ -1627,7 +1698,7 @@ impl<H: Host> Vm<H> {
                 return Err(self.type_error(program, "cannot declare global function".into()));
             }
         }
-        for atom in root.global_var_atoms.iter().copied() {
+        for atom in root.global_var_atoms().iter().copied() {
             if self.own_property(self.realm.globals, atom).is_some() {
                 continue;
             }
@@ -1677,7 +1748,7 @@ impl<H: Host> Vm<H> {
             return;
         };
         if program.functions[ROOT_FUNCTION_ID as usize]
-            .global_lexical_atoms
+            .global_lexical_atoms()
             .contains(&atom)
         {
             self.realm.bind_global_lexical(atom, value);
@@ -1700,7 +1771,7 @@ impl<H: Host> Vm<H> {
     fn persist_root_global_lexical_bindings(&mut self, program: &ResidualProgram, frame: &Frame) {
         let metadata = &program.functions[ROOT_FUNCTION_ID as usize];
         let bindings = metadata
-            .global_lexical_atoms
+            .global_lexical_atoms()
             .iter()
             .map(|atom| {
                 let value = metadata
@@ -1834,9 +1905,9 @@ impl<H: Host> Vm<H> {
         let (_, collections, _, _, _, _) = self.heap.stats();
         let gc = self.heap.gc_profile();
         eprintln!(
-            "{{\"kind\":\"quench-gc-time\",\"collections\":{collections},\"full_collections\":{},\"full_mark_nanos\":{},\"minor_mark_nanos\":{},\"mark_nanos\":{},\"sweep_nanos\":{},\"mark_clear_nanos\":{},\"vm_owner_edges_nanos\":{},\"vm_roots_nanos\":{},\"vm_shape_setup_nanos\":{},\"vm_after_nanos\":{}}}",
+            "{{\"kind\":\"quench-gc-time\",\"collections\":{collections},\"full_collections\":{},\"full_mark_nanos\":{},\"minor_mark_nanos\":{},\"mark_nanos\":{},\"sweep_nanos\":{},\"sweep_phase_nanos\":{:?},\"mark_clear_nanos\":{},\"vm_owner_edges_nanos\":{},\"vm_roots_nanos\":{},\"vm_shape_setup_nanos\":{},\"vm_after_nanos\":{}}}",
             gc.full_collections, gc.full_mark_nanos, gc.minor_mark_nanos,
-            gc.mark_nanos, gc.sweep_nanos, gc.mark_clear_nanos, gc.vm_phase_nanos[0], gc.vm_phase_nanos[1], gc.vm_phase_nanos[2], gc.vm_phase_nanos[3],
+            gc.mark_nanos, gc.sweep_nanos, gc.sweep_phase_nanos, gc.mark_clear_nanos, gc.vm_phase_nanos[0], gc.vm_phase_nanos[1], gc.vm_phase_nanos[2], gc.vm_phase_nanos[3],
         );
         // Sizes of the VM-side tables beside the heap: a table that grows with work done
         // rather than with live data is retention.
@@ -2022,7 +2093,7 @@ impl<H: Host> Vm<H> {
             + heap.sparse_array_sidecar_bytes
             + vm_metadata_bytes;
         eprintln!(
-            "{{\"kind\":\"quench-memory-composition\",\"phase\":\"{phase}\",\"collection\":{},\"cell_kind_names\":{:?},\"cell_counts\":{:?},\"cell_variant_names\":{:?},\"cell_variant_counts\":{:?},\"occupied_slots\":{},\"complete_slot_slabs\":{},\"fully_free_slot_slabs\":{},\"partial_slot_slabs\":{},\"fully_empty_slot_pages\":{fully_empty_slot_pages},\"slot_arena_reserved_bytes\":{},\"object_record_reserved_bytes\":{},\"object_record_reusable_ids\":{},\"object_record_allocation_scan_cursor\":{},\"array_record_reserved_bytes\":{},\"array_record_reusable_ids\":{},\"array_record_allocation_scan_cursor\":{},\"legacy_cell_record_reserved_bytes\":{},\"free_slot_metadata_bytes\":{},\"object_headers\":{},\"embedded_object_headers\":{},\"boxed_object_headers\":{},\"boxed_object_header_bytes\":{},\"object_property_counts_by_width\":{:?},\"inline_property_attribution_bytes_overlapping_slots\":{},\"object_header_size_bytes\":{},\"cell_size_bytes\":{},\"slot_size_bytes\":{},\"property_arena_values_bytes\":{},\"property_arena_metadata_bytes\":{},\"property_arena_used_values\":{},\"property_arena_capacity_values\":{},\"live_property_used_values\":{},\"live_property_capacity_values\":{},\"live_property_used_values_by_width\":{:?},\"live_property_capacity_values_by_width\":{:?},\"dense_array_elements_bytes\":{},\"dense_array_headers_bytes\":{},\"dense_array_backing_count\":{},\"sparse_array_sidecar_bytes\":{},\"string_buffers_bytes\":{},\"string_buffer_count\":{},\"other_cell_payload_bytes\":{},\"cell_payload_total_bytes\":{},\"shape_table_bytes\":{},\"shape_lookup_bytes\":{},\"transition_table_bytes\":{},\"descriptor_side_table_bytes\":{},\"cache_side_table_bytes\":{},\"atom_side_table_bytes\":{},\"frame_bytes\":{},\"profile_instrumentation_bytes\":{},\"accounted_runtime_bytes\":{},\"accounted_with_profile_bytes\":{}}}",
+            "{{\"kind\":\"quench-memory-composition\",\"phase\":\"{phase}\",\"collection\":{},\"cell_kind_names\":{:?},\"cell_counts\":{:?},\"cell_variant_names\":{:?},\"cell_variant_counts\":{:?},\"occupied_slots\":{},\"complete_slot_slabs\":{},\"fully_free_slot_slabs\":{},\"partial_slot_slabs\":{},\"fully_empty_slot_pages\":{fully_empty_slot_pages},\"slot_arena_reserved_bytes\":{},\"object_record_reserved_bytes\":{},\"object_record_reusable_ids\":{},\"object_record_allocation_scan_cursor\":{},\"array_record_reserved_bytes\":{},\"array_record_reusable_ids\":{},\"array_record_allocation_scan_cursor\":{},\"legacy_cell_record_reserved_bytes\":{},\"free_slot_metadata_bytes\":{},\"object_headers\":{},\"embedded_object_headers\":{},\"boxed_object_headers\":{},\"boxed_object_header_bytes\":{},\"object_property_counts_by_width\":{:?},\"inline_property_attribution_bytes_overlapping_slots\":{},\"object_header_size_bytes\":{},\"cell_size_bytes\":{},\"slot_size_bytes\":{},\"property_arena_values_bytes\":{},\"property_arena_metadata_bytes\":{},\"property_arena_used_values\":{},\"property_arena_capacity_values\":{},\"live_property_used_values\":{},\"live_property_capacity_values\":{},\"live_property_used_values_by_width\":{:?},\"live_property_capacity_values_by_width\":{:?},\"dense_array_elements_bytes\":{},\"dense_array_headers_bytes\":{},\"dense_array_backing_count\":{},\"sparse_array_sidecar_bytes\":{},\"string_buffers_bytes\":{},\"string_buffer_count\":{},\"other_cell_payload_bytes\":{},\"cell_payload_total_bytes\":{},\"shape_table_bytes\":{},\"shape_count\":{},\"dictionary_shape_count\":{},\"shape_lookup_bytes\":{},\"transition_table_bytes\":{},\"descriptor_side_table_bytes\":{},\"cache_side_table_bytes\":{},\"atom_side_table_bytes\":{},\"frame_bytes\":{},\"profile_instrumentation_bytes\":{},\"accounted_runtime_bytes\":{},\"accounted_with_profile_bytes\":{}}}",
             self.heap.collection_count(),
             CellKind::NAMES,
             heap.cell_counts,
@@ -2067,6 +2138,8 @@ impl<H: Host> Vm<H> {
             heap.other_cell_payload_bytes,
             heap.cell_payload_bytes,
             shape_table_bytes,
+            self.shapes.len(),
+            self.shapes.iter().filter(|shape| shape.dictionary_trigger.is_some()).count(),
             shape_lookup_bytes,
             transition_table_bytes,
             descriptor_side_table_bytes,
@@ -2218,7 +2291,7 @@ impl<H: Host> Vm<H> {
             Constant::WasmV128(bits) => self.heap.alloc(Cell::WasmV128(*bits)),
             Constant::String(v) => self.heap.alloc(Cell::String(v.clone().into())),
             Constant::StringUnits(v) => self.heap.alloc(Cell::String(JsString::from_units(v))),
-            Constant::BigInt(v) => self.heap.alloc(Cell::BigInt(v.clone())),
+            Constant::BigInt(v) => self.heap.alloc(Cell::bigint(v.clone())),
             Constant::Boolean(true) => Value::TRUE,
             Constant::Boolean(false) => Value::FALSE,
             Constant::Null => Value::NULL,

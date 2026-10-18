@@ -404,7 +404,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         // The string and RegExp methods belong to none of the families below.
-        if native.runs_from_lane() {
+        if native.is_string_regexp_or_math() {
             return self.call_native_table(p, native, this, args);
         }
         if let Some(result) = self.string_html_method(p, native, this, args) {
@@ -1561,43 +1561,38 @@ impl<H: Host> Vm<H> {
         let Some(Cell::BigInt(right)) = self.heap.get(right) else {
             return Err(self.type_error(p, MIXED_BIGINT_TYPES.into()));
         };
+        let (left, right): (&num_bigint::BigInt, &num_bigint::BigInt) = (left, right);
+        let nonzero_divisor = || {
+            if right.sign() == num_bigint::Sign::NoSign {
+                Err(crate::bigint::Error::DivisionByZero)
+            } else {
+                Ok(right)
+            }
+        };
         let result = match op {
-            8 => crate::bigint::binary(left, right, |a, b| Ok(a + b)),
-            9 => crate::bigint::binary(left, right, |a, b| Ok(a - b)),
-            10 => crate::bigint::binary(left, right, |a, b| Ok(a * b)),
-            11 => crate::bigint::binary(left, right, |a, b| {
-                if b == 0.into() {
-                    Err(crate::bigint::Error::DivisionByZero)
+            8 => Ok(left + right),
+            9 => Ok(left - right),
+            10 => Ok(left * right),
+            11 => nonzero_divisor().map(|right| left / right),
+            12 => nonzero_divisor().map(|right| left % right),
+            13 => {
+                if right.sign() == num_bigint::Sign::Minus {
+                    Err(crate::bigint::Error::NegativeExponent)
                 } else {
-                    Ok(a / b)
+                    u32::try_from(right.magnitude())
+                        .map(|exponent| left.pow(exponent))
+                        .map_err(|_| crate::bigint::Error::ExponentTooLarge)
                 }
-            }),
-            12 => crate::bigint::binary(left, right, |a, b| {
-                if b == 0.into() {
-                    Err(crate::bigint::Error::DivisionByZero)
-                } else {
-                    Ok(a % b)
-                }
-            }),
-            13 => crate::bigint::binary(left, right, |a, b| {
-                if b.sign() == num_bigint::Sign::Minus {
-                    return Err(crate::bigint::Error::NegativeExponent);
-                }
-                let exponent = b
-                    .to_str_radix(10)
-                    .parse::<u32>()
-                    .map_err(|_| crate::bigint::Error::ExponentTooLarge)?;
-                Ok(a.pow(exponent))
-            }),
+            }
             14 => crate::bigint::shift(left, right, true),
             15 => crate::bigint::shift(left, right, false),
-            17 => crate::bigint::binary(left, right, |a, b| Ok(a | b)),
-            18 => crate::bigint::binary(left, right, |a, b| Ok(a ^ b)),
-            19 => crate::bigint::binary(left, right, |a, b| Ok(a & b)),
+            17 => Ok(left | right),
+            18 => Ok(left ^ right),
+            19 => Ok(left & right),
             _ => return Err(self.type_error(p, "BigInt operation is not supported".into())),
         };
         match result {
-            Ok(value) => Ok(self.heap.alloc(Cell::BigInt(value))),
+            Ok(value) => Ok(self.heap.alloc(Cell::bigint(value))),
             Err(crate::bigint::Error::DivisionByZero) => {
                 Err(self.range_error(p, "Division by zero".into()))
             }
@@ -1606,9 +1601,6 @@ impl<H: Host> Vm<H> {
             }
             Err(crate::bigint::Error::ExponentTooLarge) => {
                 Err(self.range_error(p, "Maximum BigInt size exceeded".into()))
-            }
-            Err(crate::bigint::Error::InvalidDecimal) => {
-                Err(self.type_error(p, "Invalid BigInt value".into()))
             }
         }
     }
@@ -1722,14 +1714,10 @@ impl<H: Host> Vm<H> {
         decrement: bool,
     ) -> Result<Value, JsError> {
         let delta = if decrement { -1.0 } else { 1.0 };
-        if matches!(self.heap.get(input), Some(Cell::BigInt(_))) {
-            let one = self.heap.alloc(Cell::BigInt("1".into()));
-            let operator = if decrement {
-                BinaryOperator::Subtraction
-            } else {
-                BinaryOperator::Addition
-            };
-            self.binary(p, operator as u32, input, one)
+        if let Some(Cell::BigInt(integer)) = self.heap.get(input) {
+            let integer: &num_bigint::BigInt = integer;
+            let next = if decrement { integer - 1_u8 } else { integer + 1_u8 };
+            Ok(self.heap.alloc(Cell::bigint(next)))
         } else if let Some(integer) = input.as_int() {
             let next = if decrement {
                 integer.checked_sub(1)

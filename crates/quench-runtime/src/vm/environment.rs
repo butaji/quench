@@ -134,7 +134,7 @@ impl<H: Host> Vm<H> {
         p.root_variables_are_local()
             && function == super::ROOT_FUNCTION_ID
             && p.functions[super::ROOT_FUNCTION_ID as usize]
-                .global_var_atoms
+                .global_var_atoms()
                 .contains(&atom)
     }
 
@@ -167,7 +167,7 @@ impl<H: Host> Vm<H> {
             return None;
         };
         Some((
-            super::ProgramId::from_raw(scope.program?),
+            super::ProgramId::from_raw(scope.program()?),
             *function,
             *parent,
         ))
@@ -298,7 +298,7 @@ impl<H: Host> Vm<H> {
             ..
         }) = self.heap.get(environment)
         {
-            let (program, binding_site_pc) = (&scope.program, &scope.binding_site_pc);
+            let (program, binding_site_pc) = (&scope.program(), &scope.binding_site_pc());
             if let Some(program) = program.and_then(|id| {
                 self.programs
                     .get(super::program_store::ProgramId::from_raw(id))
@@ -494,7 +494,7 @@ impl<H: Host> Vm<H> {
         }
         let program = self.programs.get(program_id)?;
         program.functions[super::ROOT_FUNCTION_ID as usize]
-            .global_var_atoms
+            .global_var_atoms()
             .contains(&atom)
             .then(|| frame.checked_sub(1))
             .flatten()
@@ -824,11 +824,11 @@ impl<H: Host> Vm<H> {
         let mut before_binding = !local;
         let mut environment = parent;
         while let Some(Cell::Environment { parent, scope, .. }) = self.heap.get(environment) {
-            let with_objects = &scope.with_objects;
+            let with_objects = scope.with_objects();
             inherited_count += with_objects.len();
             before_binding &= boundary != Some(environment);
             if before_binding && !with_objects.is_empty() {
-                layers.push(with_objects.as_ref());
+                layers.push(with_objects);
             }
             environment = *parent;
         }
@@ -846,8 +846,8 @@ impl<H: Host> Vm<H> {
             .map_or(0, |binding| {
                 let owner_depth = named_owner.and_then(|owner| {
                     let Cell::Environment { function, scope, .. } = self.heap.get(owner)? else { return None; };
-                    let pc = &scope.binding_site_pc?;
-                    let program = self.programs.get(super::ProgramId::from_raw(scope.program?))?;
+                    let pc = &scope.binding_site_pc()?;
+                    let program = self.programs.get(super::ProgramId::from_raw(scope.program()?))?;
                     let metadata = program.functions.get(*function as usize)?;
                     let site = &metadata.binding_sites[metadata.binding_sites.binary_search_by_key(pc, |site| site.resume_pc).ok()?];
                     let crate::bytecode::EvalBindingLocation::Capture { slot, .. } = binding.location else { return None; };
@@ -935,7 +935,7 @@ impl<H: Host> Vm<H> {
             scope,
         }) = self.heap.get(env)
         {
-            let program = &scope.program;
+            let program = &scope.program();
             if *function != u32::MAX
                 && let Some(environment_program) = program.and_then(|program| {
                     self.programs
@@ -1045,10 +1045,10 @@ impl<H: Host> Vm<H> {
         if let Some(frame_index) = self.frames.len().checked_sub(1)
             && (self.frames[frame_index].function != 0
                 || p.functions[self.frames[frame_index].function as usize]
-                    .global_lexical_atoms
+                    .global_lexical_atoms()
                     .contains(&atom)
                 || p.functions[self.frames[frame_index].function as usize]
-                    .global_var_atoms
+                    .global_var_atoms()
                     .contains(&atom)
                 || self.root_local_var_binding(p, self.frames[frame_index].function, atom))
             && let Some(slot) = self.local_binding_slot(p, self.frames[frame_index].function, atom)
@@ -1062,7 +1062,7 @@ impl<H: Host> Vm<H> {
                 )
                 .is_some();
             if p.functions[self.frames[frame_index].function as usize]
-                .global_immutable_atoms
+                .global_immutable_atoms()
                 .contains(&atom)
             {
                 return Err(self.type_error(p, "assignment to constant binding".into()));
@@ -1465,18 +1465,18 @@ impl<H: Host> Vm<H> {
         }) = self.heap.get(env)
         {
             if *function != u32::MAX {
-                debug_assert!(scope.with_objects.is_empty());
+                debug_assert!(scope.with_objects().is_empty());
                 break;
             }
             // Only a slotless, non-eval layer can be a lexical-this wrapper, so its dynamic
             // bindings are read only after those field checks pass.
-            let lexical_this_wrapper = !scope.root_eval_scope && slots.is_empty() && {
+            let lexical_this_wrapper = !scope.root_eval_scope() && slots.is_empty() && {
                 let dynamic_bindings = self.heap.environment_bindings(env)?;
                 dynamic_bindings.is_empty()
                     || (dynamic_bindings.len() == 1
                         && dynamic_bindings[0].0 == self.runtime_atoms.lexical_this)
             };
-            if scope.with_objects.is_empty() && !lexical_this_wrapper {
+            if scope.with_objects().is_empty() && !lexical_this_wrapper {
                 break;
             }
             env = *parent;
@@ -1523,9 +1523,14 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        slots
-            .owned(usize::from(slot))
-            .filter(|value| !value.is_deleted())
+        let value = match slots.slot(usize::from(slot))? {
+            crate::heap::EnvironmentSlotState::Owned(value) => value,
+            // A shared slot names its owner, which holds the slot itself.
+            crate::heap::EnvironmentSlotState::Shared(owner) => {
+                self.heap.environment_slot(owner, usize::from(slot))?
+            }
+        };
+        (!value.is_deleted()).then_some(value)
     }
 
     /// The slots a direct capture at `depth` reads, and the program of a root environment
@@ -1573,7 +1578,7 @@ impl<H: Host> Vm<H> {
             if remaining == 0 {
                 return Some((
                     slots,
-                    (*function == super::ROOT_FUNCTION_ID).then_some(scope.program),
+                    (*function == super::ROOT_FUNCTION_ID).then_some(scope.program()),
                 ));
             }
             remaining -= 1;
@@ -1660,7 +1665,7 @@ impl<H: Host> Vm<H> {
             function, scope, ..
         }) = self.heap.get(env)
             && (*function != super::ROOT_FUNCTION_ID
-                || self.root_environment_slot_is_binding(scope.program, slot))
+                || self.root_environment_slot_is_binding(scope.program(), slot))
             && let Some(value) = self.heap.environment_slot(env, usize::from(slot))
             && !value.is_deleted()
         {
@@ -1697,7 +1702,7 @@ impl<H: Host> Vm<H> {
         else {
             return Err(JsError("invalid capture".into()));
         };
-        let program = scope.program;
+        let program = scope.program();
         let slot = usize::from(slot);
         let owner_id = program
             .map(super::ProgramId::from_raw)
@@ -1744,13 +1749,7 @@ impl<H: Host> Vm<H> {
                         .copied()
                 })
                 .unwrap_or_default();
-            return Err(self.reference_error(
-                p,
-                format!(
-                    "Cannot access '{}' before initialization",
-                    self.atom_name(atom)
-                ),
-            ));
+            return Err(self.uninitialized_binding_error(p, atom));
         }
         Ok(value)
     }
@@ -1796,7 +1795,7 @@ impl<H: Host> Vm<H> {
         debug_assert_eq!(program, self.active_program);
         if function == super::ROOT_FUNCTION_ID
             || function == u32::MAX
-            || scope.program.is_some_and(|owner| owner != program.raw())
+            || scope.program().is_some_and(|owner| owner != program.raw())
         {
             return false;
         }
@@ -1831,7 +1830,7 @@ impl<H: Host> Vm<H> {
                 function, scope, ..
             }) => (
                 *function,
-                scope.program,
+                scope.program(),
                 self.heap
                     .environment_slot(env, usize::from(slot))
                     .is_some_and(Value::is_deleted),
@@ -1855,13 +1854,7 @@ impl<H: Host> Vm<H> {
                 .and_then(|metadata| metadata.local_atoms.get(usize::from(slot)))
                 .copied()
                 .unwrap_or_default();
-            return Err(self.reference_error(
-                p,
-                format!(
-                    "Cannot access '{}' before initialization",
-                    self.atom_name(atom)
-                ),
-            ));
+            return Err(self.uninitialized_binding_error(p, atom));
         }
         if atom.is_some_and(|atom| self.is_self_binding(atom)) {
             if p.functions[self.frames[frame].function as usize].strict {
@@ -1871,7 +1864,7 @@ impl<H: Host> Vm<H> {
         }
         if atom.is_some_and(|atom| {
             owner.functions[function as usize]
-                .global_immutable_atoms
+                .global_immutable_atoms()
                 .contains(&atom)
         }) {
             return Err(self.type_error(p, "assignment to constant binding".into()));
@@ -1982,7 +1975,7 @@ impl<H: Host> Vm<H> {
             if let Some(frame) = self.frames.last()
                 && (self.function_environment_binding(p, frame.function, atom)
                     || p.functions[frame.function as usize]
-                        .global_lexical_atoms
+                        .global_lexical_atoms()
                         .contains(&atom)
                     || self.root_local_var_binding(p, frame.function, atom))
                 && let Some(slot) = self.local_binding_slot(p, frame.function, atom)
@@ -2102,13 +2095,7 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<Value, JsError> {
         if value.is_deleted() {
-            return Err(self.reference_error(
-                p,
-                format!(
-                    "Cannot access '{}' before initialization",
-                    self.atom_name(atom)
-                ),
-            ));
+            return Err(self.uninitialized_binding_error(p, atom));
         }
         Ok(value)
     }
@@ -2149,14 +2136,14 @@ impl<H: Host> Vm<H> {
             if let Some(frame_index) = self.frames.len().checked_sub(1)
                 && (self.frames[frame_index].function != 0
                     || p.functions[self.frames[frame_index].function as usize]
-                        .global_lexical_atoms
+                        .global_lexical_atoms()
                         .contains(&atom)
                     || self.root_local_var_binding(p, self.frames[frame_index].function, atom))
                 && let Some(slot) =
                     self.local_binding_slot(p, self.frames[frame_index].function, atom)
             {
                 if p.functions[self.frames[frame_index].function as usize]
-                    .global_immutable_atoms
+                    .global_immutable_atoms()
                     .contains(&atom)
                     && !initializing
                 {

@@ -78,6 +78,8 @@ pub const LAZY_MEMBERS: &[&str] = &[
     "memoryUsage",
     "cpuUsage",
     "threadCpuUsage",
+    // Node's own wrapper over the native system call (`process_metrics_shared_vm`).
+    "execve",
     "ref",
     "unref",
 ];

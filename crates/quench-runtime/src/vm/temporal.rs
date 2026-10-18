@@ -269,7 +269,7 @@ impl<H: Host> Vm<H> {
                 let constructor = self.get_property(p, temporal, constructor_key)?;
                 let args = [
                     self.heap
-                        .alloc(Cell::BigInt(epoch_nanoseconds.to_string().into())),
+                        .alloc(Cell::bigint(epoch_nanoseconds.into())),
                     self.heap.alloc(Cell::String(timezone.into())),
                 ];
                 self.temporal_zoned_date_time_construct(p, &args, constructor)

@@ -1054,7 +1054,7 @@ impl<H: Host> Vm<H> {
             .programs
             .get(self.active_program)
             .ok_or_else(|| JsError::validation("missing host caller program".into()))?;
-        let mut arguments = Vec::with_capacity(args.len());
+        let mut arguments: smallvec::SmallVec<[Value; 8]> = smallvec::SmallVec::new();
         for (&value, &ty) in args.iter().zip(&signature.params) {
             arguments.push(self.wasm_to_js(&program, value, ty)?);
         }
@@ -1113,7 +1113,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         Ok(match value {
             WasmValue::I32(value) => Value::number(f64::from(value)),
-            WasmValue::I64(value) => self.heap.alloc(Cell::BigInt(value.to_string())),
+            WasmValue::I64(value) => self.heap.alloc(Cell::bigint(value.into())),
             WasmValue::F32(bits) => Value::number(f64::from(f32::from_bits(bits))),
             WasmValue::F64(bits) => Value::number(f64::from_bits(bits)),
             WasmValue::FuncRef(function) => self.wasm_js_function(function, None)?,

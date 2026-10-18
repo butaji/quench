@@ -416,8 +416,8 @@ impl<H: Host> Vm<H> {
         let result = (|| {
             if !root_function.strict {
                 let global_function_atoms = residual.functions[super::ROOT_FUNCTION_ID as usize]
-                    .global_function_atoms
-                    .clone();
+                    .global_function_atoms()
+                    .to_vec();
                 for atom in &global_function_atoms {
                     if (!caller_scope && self.realm.global_lexical_declarations.contains(atom))
                         || (direct_eval
@@ -438,7 +438,7 @@ impl<H: Host> Vm<H> {
                     self.check_global_eval_declaration(p, globals, &name, true)?;
                 }
                 for atom in residual.functions[super::ROOT_FUNCTION_ID as usize]
-                    .global_var_atoms
+                    .global_var_atoms()
                     .iter()
                     .copied()
                 {
@@ -490,7 +490,7 @@ impl<H: Host> Vm<H> {
                             self.define_global_eval_binding(p, *atom, Value::UNDEFINED)?;
                         }
                     }
-                    for atom in root_function.global_var_atoms.iter().copied() {
+                    for atom in root_function.global_var_atoms().iter().copied() {
                         if global_function_atoms.contains(&atom) {
                             continue;
                         }
@@ -513,7 +513,7 @@ impl<H: Host> Vm<H> {
                 }
             }
             if caller_scope {
-                self.prepare_direct_eval_var_bindings(&root_function.global_var_atoms);
+                self.prepare_direct_eval_var_bindings(&root_function.global_var_atoms());
             }
             let parent = if direct_eval {
                 if let Some(frame) = self.frames.len().checked_sub(1) {
@@ -542,7 +542,7 @@ impl<H: Host> Vm<H> {
                     parent,
                     function: u32::MAX,
                     slots: Vec::<Value>::new().into_boxed_slice().into(),
-                    scope: Box::new(crate::heap::EnvironmentScope {
+                    scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
                         program: None,
                         root_eval_scope: root_scope,
                         binding_site_pc: None,
@@ -612,12 +612,12 @@ impl<H: Host> Vm<H> {
             parent: *parent,
             function: *function,
             slots,
-            scope: Box::new(crate::heap::EnvironmentScope {
-                program: scope.program,
-                root_eval_scope: scope.root_eval_scope,
+            scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+                program: scope.program(),
+                root_eval_scope: scope.root_eval_scope(),
                 binding_site_pc: Some(binding_site_pc),
                 dynamic_bindings: crate::heap::EnvironmentBindings::Shared(owner),
-                with_objects: scope.with_objects.clone(),
+                with_objects: scope.with_objects().into(),
             }),
         };
         Ok(self.heap.alloc(scope))
@@ -766,7 +766,7 @@ impl<H: Host> Vm<H> {
         atoms.extend(metadata.name_bindings.resolved().into_iter().filter(|binding| binding.kind == crate::bytecode::LexicalBindingKind::PrivateName).map(|binding| binding.atom));
         let mut environment = self.captured_parent_environment(frame);
         while let Some(Cell::Environment { parent, function, scope, .. }) = self.heap.get(environment) {
-            if let Some(owner) = scope.program.and_then(|program| self.programs.get(ProgramId::from_raw(program)))
+            if let Some(owner) = scope.program().and_then(|program| self.programs.get(ProgramId::from_raw(program)))
                 && let Some(metadata) = owner.functions.get(*function as usize)
             {
                 atoms.extend(metadata.name_bindings.resolved().into_iter().filter(|binding| binding.kind == crate::bytecode::LexicalBindingKind::PrivateName).map(|binding| binding.atom));

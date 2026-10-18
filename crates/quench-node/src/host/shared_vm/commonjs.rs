@@ -942,6 +942,7 @@ pub(crate) fn builtin_export_values(
     let undefined = context.undefined();
     let module = args.first().copied().unwrap_or(undefined);
     let names = args.get(1).copied().unwrap_or(undefined);
+    let listener = args.get(2).copied().unwrap_or(undefined);
     let count = get(context, names, "length")?;
     let count = context.to_number(count)? as usize;
     let mut wanted = Vec::with_capacity(count);
@@ -950,15 +951,24 @@ pub(crate) fn builtin_export_values(
         wanted.push(context.string_text(name)?.unwrap_or_default());
     }
     let mut values = vec![None; count];
+    // A pending lazy member stays pending: the facade binds its pending value, which
+    // resolves on first read, and `listener` receives the member's value when it materializes.
     for key in context.enumerable_own_keys_rooted(module, false, false)? {
         let Some(text) = context.string_text(key)? else { continue };
         if let Some(index) = wanted.iter().position(|name| *name == text) {
-            values[index] = Some(context.get_property_rooted(module, key)?);
+            values[index] = Some(match context.pending_lazy_data_property_rooted(module, key, listener, index as u32)? {
+                Some(pending) => pending,
+                None => context.get_property_rooted(module, key)?,
+            });
         }
     }
     for (index, name) in wanted.iter().enumerate() {
         if values[index].is_some() { continue; }
         let key = context.string_rooted(name);
+        if let Some(pending) = context.pending_lazy_data_property_rooted(module, key, listener, index as u32)? {
+            values[index] = Some(pending);
+            continue;
+        }
         let descriptor = context.own_property_descriptor_rooted(module, key)?;
         let own = !context.rooted_value(descriptor).is_some_and(|value| value.is_undefined());
         values[index] = Some(if own { context.get_property_rooted(module, key)? } else { undefined });
@@ -1278,6 +1288,7 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("internal/crypto/keys", BuiltinModule::Internal("internal/crypto/keys")),
     ("internal/abort_controller", BuiltinModule::Internal("internal/abort_controller")),
     ("internal/worker/io", BuiltinModule::Internal("internal/worker/io")),
+    ("internal/worker", BuiltinModule::Internal("internal/worker")),
     ("constants", BuiltinModule::Internal("constants")),
     ("node:constants", BuiltinModule::Internal("constants")),
     ("dns/promises", BuiltinModule::DnsPromises),
@@ -1732,6 +1743,20 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         }
         BuiltinModule::Internal("internal/worker/io") =>
             native_global_namespace(context, &["MessageChannel", "MessagePort"]),
+        // Node's lib reads its thread facts here (`process.execve`, `crypto.setFips`,
+        // `trace_events`, Web Locks); they are the public `worker_threads` module's.
+        BuiltinModule::Internal("internal/worker") => {
+            let threads = cached_builtin(context, BuiltinModule::WorkerThreads)?;
+            let module = context.object_rooted()?;
+            for name in ["isMainThread", "isInternalThread", "threadId", "threadName", "resourceLimits"] {
+                let value = get(context, threads, name)?;
+                set(context, module, name, value)?;
+            }
+            // Only the main thread owns process-wide state (Node's `ownsProcessState`).
+            let main = get(context, threads, "isMainThread")?;
+            set(context, module, "ownsProcessState", main)?;
+            Ok(module)
+        }
         BuiltinModule::Internal("internal/abort_controller") => {
             let module=native_global_namespace(context, &["AbortController", "AbortSignal"])?;
             let data=context.host_mut().shared_state().borrow().event_targets_api
@@ -2500,7 +2525,6 @@ fn load_with_resolution(
         ModuleCache::NodeLibrary
     } else { ModuleCache::CommonJs };
     let cached = cache.get(context, &key)?;
-    if std::env::var_os("QTRACE_LOAD").is_some() && context.rooted_value(cached).is_some_and(|value| value.is_undefined()) { eprintln!("QLOAD {key}"); }
     if !context.rooted_value(cached).is_some_and(|value| value.is_undefined()) {
         if let Some(parent) = parent {
             transition_child(context, parent, cached, ChildTransition::Attach)?;
@@ -2643,6 +2667,11 @@ const getLinkedBinding = () => ({});
                 } else {
                     format!("{WRAPPER_PREFIX}{internal_binding}")
                 };
+                if parent.is_none() {
+                    // The entry's compilation is the start-up peak: only the parser's and
+                    // compiler's pages, not the bootstrap's, need be resident across it.
+                    crate::host::resident_pages::release_read_only_pages();
+                }
                 let wrapper = match embedded.filter(|_| !is_primordials) {
                     // The program retains the embedded text itself, not a wrapped copy.
                     Some(body) => context
@@ -2663,6 +2692,7 @@ const getLinkedBinding = () => ({});
                 };
                 if parent.is_none() {
                     crate::host::resident_pages::release_read_only_pages();
+                    crate::host::resident_pages::release_free_heap_pages();
                     crate::host::resident_pages::quench_entry_compiled();
                 } else if in_node_internal {
                     crate::host::resident_pages::release_read_only_pages();
