@@ -3180,34 +3180,27 @@ impl<H: Host> Emitter<'_, '_, H> {
         self.builder.ins().jump(block, &[]);
     }
 
-    /// A loop latch (a branch whose taken target lies behind its
-    /// fallthrough) polls only on the taken backedge. Its exit stays free of
-    /// the atomic check, and values only the exit passes (merge arguments)
-    /// are computed after the loop, not on every iteration. A fallthrough at
-    /// or before `pc` is a backedge too and polls on its own edge.
+    /// A conditional transfer from `pc`. It checks for an interrupt when
+    /// either edge leads to `pc` or before: a loop repeats through one of
+    /// them (`JumpI32Zero` passes its targets swapped, so either may be the
+    /// one behind). The check sits before the branch so the backedge stays
+    /// direct: routing it through a block of its own measured 10% more
+    /// CoreMark instructions. A loop latch (a taken target behind the
+    /// fallthrough) leaves the loop through a block of its own, so values
+    /// only the exit passes (merge arguments) are computed after the loop,
+    /// not on every iteration.
     fn branch(&mut self, pc: usize, condition: ir::Value, target: usize, fallthrough: usize) {
+        if target <= pc || fallthrough <= pc {
+            self.interrupt_safepoint();
+        }
         let taken = self.edge(target);
         let next = self.edge(fallthrough);
         if target >= fallthrough {
-            if fallthrough > pc {
-                self.builder.ins().brif(condition, taken, &[], next, &[]);
-                return;
-            }
-            let backedge = self.builder.create_block();
-            self.builder
-                .ins()
-                .brif(condition, taken, &[], backedge, &[]);
-            self.builder.switch_to_block(backedge);
-            self.interrupt_safepoint();
-            self.builder.ins().jump(next, &[]);
+            self.builder.ins().brif(condition, taken, &[], next, &[]);
             return;
         }
         let exit = self.builder.create_block();
-        let backedge = self.builder.create_block();
-        self.builder.ins().brif(condition, backedge, &[], exit, &[]);
-        self.builder.switch_to_block(backedge);
-        self.interrupt_safepoint();
-        self.builder.ins().jump(taken, &[]);
+        self.builder.ins().brif(condition, taken, &[], exit, &[]);
         self.builder.switch_to_block(exit);
         self.builder.ins().jump(next, &[]);
     }
@@ -3292,9 +3285,6 @@ impl<H: Host> Emitter<'_, '_, H> {
         instruction: WideInstruction,
     ) -> bool {
         let op = instruction.op();
-        if op == Op::WasmBranchTable {
-            self.interrupt_safepoint();
-        }
         let (a, b, c) = (instruction.a(), instruction.b(), instruction.c());
         if let Some(operator) = I32BinaryOperator::from_register_op(op) {
             let left = self.read(b, Kind::I32);
