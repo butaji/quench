@@ -1772,13 +1772,16 @@ impl<H: Host> Vm<H> {
         let epoch = crate::heap::prototype_layout_epoch();
         if cache.proved_epoch == epoch && cache.proved_prototype == first {
             let value = match cache.answer {
-                // SAFETY: the proof keeps the holder and its recorded shape.
-                InheritedFieldAnswer::Slot(slot) => unsafe {
-                    self.heap.property_get_shaped(
-                        self.heap.ordinary_object(cache.proved_holder)?,
-                        usize::from(slot),
-                    )
-                }?,
+                InheritedFieldAnswer::Slot(slot) => {
+                    // A holder in the object records, as most prototypes are, without the
+                    // out-of-line lookup of one in a slot.
+                    let holder = match self.heap.object_record(cache.proved_holder) {
+                        Some(holder) => holder,
+                        None => self.heap.ordinary_object(cache.proved_holder)?,
+                    };
+                    // SAFETY: the proof keeps the holder and its recorded shape.
+                    unsafe { self.heap.property_get_shaped(holder, usize::from(slot)) }?
+                }
                 InheritedFieldAnswer::Absent => Value::UNDEFINED,
             };
             return Some((hit(value), None));

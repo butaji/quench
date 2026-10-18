@@ -350,7 +350,7 @@ impl Heap {
             Some(object) => Some(object),
             None => match self.get(value)? {
                 Cell::Object(object) => Some(object),
-                Cell::Promise { object, .. } => Some(object),
+                Cell::Promise(promise) => Some(&promise.object),
                 _ => None,
             },
         }
