@@ -4975,14 +4975,27 @@ lane_handler! {
         // native code. Unsupported calls stay on the fast interpreter lane.
         if vm.execution_mode == super::ExecutionMode::Compiled
             && i.a & crate::bytecode::RETURN_REGISTER == 0
-            && vm
-                .programs
-                .has_compiled_function_or_note_fallback(
-                    unsafe { (*cx).program },
-                    i.b as usize,
-                )
         {
-            return exit(ip);
+            let program = unsafe { (*cx).program };
+            let function = i.b as usize;
+            if vm
+                .programs
+                .has_compiled_function_or_note_fallback(program, function)
+                || vm.programs.has_wasm_tier_containing(program, function)
+            {
+                return exit(ip);
+            }
+            // `run_compiled_inner` is the one-shot promotion claimant. Count
+            // lane-only entries here, but leave the threshold entry for that
+            // general-path hook so no handoff token or duplicate count is
+            // needed. Terminal calls stay on their tail-call path above the
+            // tier gate and are deliberately not observed here.
+            if vm
+                .programs
+                .note_wasm_tier_lane_entry(program, u32::from(i.b))
+            {
+                return exit(ip);
+            }
         }
         // SAFETY: the program's views outlive the lane run.
         let views = unsafe { &*(*cx).views };

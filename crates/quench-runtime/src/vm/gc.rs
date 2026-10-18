@@ -774,6 +774,7 @@ impl<H: Host> Vm<H> {
         // into newly freed slots.
         let heap = &self.heap;
         self.programs.prune_owned_script_realms(|realm| heap.weak_value(realm).is_some());
+        self.programs.clear_wasm_reference_caches();
         self.prune_function_values();
         self.prune_wasm_exported_functions();
         // A home stays reachable through its environment; entries of swept environments go

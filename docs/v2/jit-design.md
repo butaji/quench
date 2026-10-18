@@ -198,6 +198,27 @@ compilation screen below tests that caller path; `WasmUnreachable` remains
 opt-in because the prior global experiment expanded TSF code about 52× and
 increased both compile time and RSS.
 
+## Monomorphic Wasm indirect-call cache
+
+Commit `f40e5ddeda1765ace5506af81a37fddb1b6de2b0` adds a lazy monomorphic cache
+to compiled `call_indirect` sites. It checks the table binding, index,
+signature, caller environment, and current table element; target artifacts are
+weakly held. Every hit rebuilds the memory and global activation state, while
+every miss retains the ordinary resolver's bounds, null, signature, and
+fallback behavior. GC clears cached identities before freed heap slots can be
+reused. The mutable-table test proves that a warmed site observes replacement,
+that the cache is actually hit, and that a null target still traps.
+
+The clean-source 11-round QuickSort/gcc-loops screen is preserved in
+`evidence/jit-jetstream3-wasm-2026-10-18/indirect-call-cache/`. Output matched
+on both fixtures. Quench remains below Bun and Node on Score (QuickSort 190.49
+vs. 345.96/405.88; gcc-loops 64.47 vs. 186.70/192.71), while its max RSS is
+lower on both. Paired Score ratios are 0.569 [0.520, 0.606] and 0.465 [0.416,
+0.500] against Bun/Node for QuickSort, and 0.340 [0.324, 0.373] and 0.342
+[0.329, 0.350] for gcc-loops. This targeted screen is not a score win; the
+next optimization should address the hot-call tiering path and first-iteration
+compile cost.
+
 ## Bounded HashSet root compilation
 
 Commit `ea7c76c6c327f76f18376b75ab278c22ce7c585e` adds an explicitly selected,
@@ -279,3 +300,71 @@ They therefore confirm a memory opportunity without a score win. Full commands,
 environment wrapper, diagnostic details, and raw reports are in
 `evidence/jit-jetstream3-wasm-2026-10-18/sparse-analysis-baseline-screen/`.
 No case has yet met the paired score-and-RSS rule; the target remains open.
+
+## Selective handoff from `CallKnown`
+
+Commit `7961b7bde` lets a hot eligible Wasm `CallKnown` activation leave the
+frameless fast interpreter lane and reach the existing one-shot Cranelift
+promotion gate. Cold calls stay on the lane, terminal calls retain the
+existing tail path, and the general dispatcher remains the sole owner of the
+compile attempt. The regression uses a four-function chain so the frontend
+does not inline away the target; it checks the residual `CallKnown`, correct
+result, tier threshold, and native entries.
+
+On the same clean source revision, an 11-round selective-mode screen improved
+gcc-loops median Score from 57.11 to 71.28 (+24.8%) relative to default JIT;
+the median first timed iteration fell from about 306 ms to 118 ms, while
+average iteration time changed from about 33 ms to 35 ms. QuickSort Score was
+roughly flat (183.47 default, 180.05 selective). Both modes retain lower RSS
+than Bun and Node but remain below both peers on Score. The default paired
+analysis has Score ratios of 0.320 [0.311, 0.351] for gcc-loops vs Bun and
+0.474 [0.459, 0.514] for QuickSort vs Bun. Selective mode intentionally has
+`qualification_ready: false`; its medians are a screen without a paired
+qualification claim. Raw reports and diagnostic limits are documented in
+`evidence/jit-jetstream3-wasm-2026-10-18/selective-callknown-handoff/`.
+
+The selective one-round diagnostic reports 309,089 gcc-loops native-to-VM
+callouts (309,039 imported), against 9,955 total for QuickSort. It reports
+345.5 ms summed tier compilation time for gcc-loops and 39.7 ms for QuickSort.
+The aggregate does not attribute individual import symbols. This separates
+two next optimization problems: attribute and lower repeated imported-call
+boundary costs for gcc-loops, and improve generated code or native-entry
+overhead for QuickSort, whose hot sort path has few callouts. Selective tier-up
+is only an admission mechanism; it does not by itself solve either runtime
+cost and it does not satisfy the requested peer-score target.
+
+## Safepoints on compiled control-flow cycles
+
+Commit `e955cff99` retains the native function-entry poll and checks a
+conditional branch only when its taken edge moves to an earlier bytecode PC.
+For a finite bytecode graph, every cycle contains such a backward edge; a
+forward-only path cannot remain in the loop indefinitely. This moves the
+interrupt effect onto cycle-crossing edges, preserving cancellation at loop
+iteration granularity while removing atomic loads from forward exits. The
+native-loop cancellation regression requests termination from a second thread
+after the Wasm loop reaches an imported callback.
+
+The clean 11-round comparison still confirms lower RSS than Bun and Node on
+gcc-loops and QuickSort, but its Score intervals remain below parity. Quench's
+medians are 59.80 / 47.79 MiB and 173.19 / 42.43 MiB respectively. Because the
+earlier report used a separate sampling window, these runs do not establish a
+causal before/after gain from safepoint placement. Full rounds, paired
+intervals, and reproduction commands are in
+`evidence/jit-jetstream3-wasm-2026-10-18/backedge-safepoints/`.
+
+The gcc-loops diagnostic attributes 307,270 of its 309,039 imported callouts
+to `_emscripten_memcpy_js`. The generic boundary was cloning parameter and
+result vectors and allocating converted JS arguments on each call. Commit
+`280b9a011` stores these small lists inline with `SmallVec`, spilling for
+larger imports while retaining the per-instance target, normal JavaScript
+conversion, dynamic helper lookup, and fallback semantics. It avoids
+specializing behavior by import name, since Emscripten's helper reads the
+current memory view and property target on every call. The consecutive
+same-host 11-round A/B screen is inconclusive for Score: the medians shift down
+1.3% on gcc-loops and 3.2% on QuickSort, but Bun's scores also fall between
+runs. Peak RSS is lower by 0.83 MiB and 1.06 MiB; Quench still loses Score to
+both engines. Full reports and executable hashes are in
+`evidence/jit-jetstream3-wasm-2026-10-18/import-alloc-smallvec/`. The
+optimization removes container churn, not the Wasm-to-VM-to-JS callout;
+reducing that boundary remains a separate opportunity with realm, caller
+masking, and dynamic property semantics to preserve.
