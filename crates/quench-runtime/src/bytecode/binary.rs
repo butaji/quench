@@ -291,7 +291,7 @@ pub(super) fn write_program(
         out.u8(function.initial_register as u8);
         out.u32(function.code.len() as u32);
         for instruction in &function.code {
-            out.u8(instruction.op() as u8);
+            out.u16(instruction.op() as u16);
             out.u16(instruction.a());
             out.u16(instruction.b());
             out.u16(instruction.c());
@@ -299,7 +299,7 @@ pub(super) fn write_program(
         }
         out.u32(function.wide.len() as u32);
         for instruction in &function.wide {
-            out.u8(instruction.op() as u8);
+            out.u16(instruction.op() as u16);
             out.u16(instruction.a());
             out.u16(instruction.b());
             out.u16(instruction.c());
@@ -371,7 +371,7 @@ pub(super) fn write_program(
     out.u32(program.superinstructions.len() as u32);
     for site in &program.superinstructions {
         for instruction in site.code {
-            out.u8(instruction.op() as u8);
+            out.u16(instruction.op() as u16);
             out.u16(instruction.a());
             out.u16(instruction.b());
             out.u16(instruction.c());
@@ -625,7 +625,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             _ => return Err("invalid residual initial register".into()),
         };
         let code = input.list(|input| {
-            let opcode = input.u8()?;
+            let opcode = input.u16()?;
             let op = Op::from_index(usize::from(opcode))
                 .ok_or_else(|| String::from("invalid residual opcode"))?;
             let a = input.u16()?;
@@ -641,7 +641,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             }
         })?;
         let wide = input.list(|input| {
-            let opcode = input.u8()?;
+            let opcode = input.u16()?;
             let op = Op::from_index(usize::from(opcode))
                 .filter(|op| !op.is_wide_marker())
                 .ok_or_else(|| String::from("invalid residual wide opcode"))?;
@@ -797,12 +797,12 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
     let superinstructions = input.list(|input| {
         let mut code = [Instr::new(Op::Nop, 0, 0, 0, 0); 4];
         for instruction in &mut code {
-            let opcode = input.u8()?;
+            let opcode = input.u16()?;
             if usize::from(opcode) >= Op::COUNT {
                 return Err("invalid residual superinstruction opcode".into());
             }
             // SAFETY: same contiguous repr(u16) invariant as normal code.
-            let op = unsafe { std::mem::transmute::<u16, Op>(u16::from(opcode)) };
+            let op = unsafe { std::mem::transmute::<u16, Op>(opcode) };
             *instruction =
                 Instr::try_new(op, input.u16()?, input.u16()?, input.u16()?, input.u32()?)
                     .ok_or_else(|| {
