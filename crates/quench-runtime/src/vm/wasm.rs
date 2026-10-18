@@ -1689,6 +1689,24 @@ mod tests {
     use super::*;
     use wasmparser::Operator;
 
+    struct GcTestHost;
+
+    impl crate::Host for GcTestHost {
+        fn write_line(&mut self, _: &str) {}
+
+        fn clock_millis(&mut self) -> f64 {
+            0.0
+        }
+
+        fn globals(&self) -> &'static [crate::HostGlobal] {
+            const GLOBALS: &[crate::HostGlobal] = &[crate::HostGlobal {
+                name: "$262",
+                capability: crate::CapabilityId::CreateRealm,
+            }];
+            GLOBALS
+        }
+    }
+
     #[test]
     fn compiled_wasm_first_call_compiles_and_enters_its_root() {
         let function = crate::Engine::lower_wasm_module(
@@ -2829,6 +2847,12 @@ mod tests {
                 *function == 2 && *total == 1 && *native == 1 && *fallback == 0
             }
         ));
+        assert_eq!(compiled.same_artifact_direct_reference_hits(), Some(1));
+        assert!(compiled.reference_call_target_counts().unwrap().iter().any(
+            |(caller, _, target, total, native, same_artifact)| {
+                *caller == 2 && *target == 0 && *total == 1 && *native == 1 && *same_artifact == 1
+            }
+        ));
 
         assert_eq!(
             vm.invoke_wasm(&instance, 3, &[]).unwrap_err().wasm_trap(),
@@ -2839,6 +2863,300 @@ mod tests {
                 *function == 3 && *total == 1 && *native == 0 && *fallback == 1
             }
         ));
+        assert_eq!(compiled.same_artifact_direct_reference_hits(), Some(1));
+        assert!(compiled.reference_call_target_counts().unwrap().iter().any(
+            |(caller, _, target, total, native, same_artifact)| {
+                *caller == 3 && *target == 1 && *total == 1 && *native == 0 && *same_artifact == 0
+            }
+        ));
+    }
+
+    #[test]
+    fn compiled_wasm_indirect_call_reuses_artifact_local_native_target() {
+        let signature = crate::WasmSignature {
+            params: vec![],
+            results: vec![crate::WasmType::I32],
+        };
+        let module = crate::Engine::lower_wasm_module_with_elements(
+            "compiled-indirect-call-artifact-cache",
+            [
+                crate::WasmFunctionBody {
+                    ty: crate::WasmCallableType::Embedded(signature.clone()),
+                    locals: vec![],
+                    operators: vec![Operator::I32Const { value: 21 }, Operator::End]
+                        .into_iter()
+                        .map(Ok),
+                },
+                crate::WasmFunctionBody {
+                    ty: crate::WasmCallableType::Embedded(signature.clone()),
+                    locals: vec![wasmparser::ValType::I32, wasmparser::ValType::I32],
+                    operators: vec![
+                        Operator::I32Const { value: 2 },
+                        Operator::LocalSet { local_index: 0 },
+                        Operator::I32Const { value: 0 },
+                        Operator::LocalSet { local_index: 1 },
+                        Operator::Loop {
+                            blockty: wasmparser::BlockType::Empty,
+                        },
+                        Operator::Call { function_index: 2 },
+                        Operator::LocalGet { local_index: 1 },
+                        Operator::I32Add,
+                        Operator::LocalSet { local_index: 1 },
+                        Operator::LocalGet { local_index: 0 },
+                        Operator::I32Const { value: -1 },
+                        Operator::I32Add,
+                        Operator::LocalTee { local_index: 0 },
+                        Operator::BrIf { relative_depth: 0 },
+                        Operator::End,
+                        Operator::LocalGet { local_index: 1 },
+                        Operator::End,
+                    ]
+                    .into_iter()
+                    .map(Ok),
+                },
+                crate::WasmFunctionBody {
+                    ty: crate::WasmCallableType::Embedded(signature.clone()),
+                    locals: vec![],
+                    operators: vec![
+                        Operator::I32Const { value: 0 },
+                        Operator::CallIndirect {
+                            type_index: 0,
+                            table_index: 0,
+                        },
+                        Operator::End,
+                    ]
+                    .into_iter()
+                    .map(Ok),
+                },
+                crate::WasmFunctionBody {
+                    ty: crate::WasmCallableType::Embedded(signature.clone()),
+                    locals: vec![],
+                    operators: vec![Operator::I32Const { value: 5 }, Operator::End]
+                        .into_iter()
+                        .map(Ok),
+                },
+            ],
+            &crate::WasmTypes::from_functions([wasmparser::FuncType::new(
+                [],
+                [wasmparser::ValType::I32],
+            )]),
+            &[],
+            &[],
+            &[],
+            &[crate::WasmTable {
+                ty: wasmparser::TableType {
+                    element_type: wasmparser::RefType::FUNCREF,
+                    table64: false,
+                    initial: 1,
+                    maximum: Some(1),
+                    shared: false,
+                },
+                initializer: crate::WasmReferenceInitializer::Function(0).into(),
+            }],
+            &[crate::WasmElement {
+                mode: crate::WasmElementMode::Active {
+                    table: 0,
+                    offset: crate::WasmValue::I32(0).into(),
+                },
+                element_type: wasmparser::RefType::FUNCREF,
+                items: vec![crate::WasmReferenceInitializer::Function(0)].into(),
+            }],
+        )
+        .unwrap();
+        let mut vm = Vm::new(crate::SystemHost);
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        let instance = vm.instantiate_wasm_module(&module).unwrap();
+        let program = vm
+            .programs
+            .find_shared(&module.program)
+            .expect("registered Wasm program");
+        let env = vm
+            .root_value(instance.environment)
+            .expect("live Wasm instance environment");
+        assert!(vm.install_compiled_diagnostics_for_test(program, env));
+
+        assert_eq!(
+            vm.invoke_wasm(&instance, 1, &[]).unwrap(),
+            Some(crate::WasmValue::I32(42))
+        );
+        let indirect_callers = [false, false, true, false];
+        let compiled = vm
+            .programs
+            .compiled(program)
+            .flatten()
+            .expect("diagnostic Wasm program")
+            .clone();
+        assert_eq!(
+            compiled.profiled_indirect_targets(&vm, program, env, &indirect_callers),
+            vec![0]
+        );
+        let table = vm.wasm_table(&instance, 0).unwrap();
+        let replacement = vm.wasm_function(&instance, 3).unwrap();
+        vm.wasm_table_fill(table, 0, replacement, 1).unwrap();
+        assert!(compiled
+            .profiled_indirect_targets(&vm, program, env, &indirect_callers)
+            .is_empty());
+        assert_eq!(
+            vm.invoke_wasm(&instance, 1, &[]).unwrap(),
+            Some(crate::WasmValue::I32(10))
+        );
+        assert_eq!(
+            compiled.profiled_indirect_targets(&vm, program, env, &indirect_callers),
+            vec![3]
+        );
+        vm.collect_now(module.residual());
+        assert_eq!(
+            vm.invoke_wasm(&instance, 1, &[]).unwrap(),
+            Some(crate::WasmValue::I32(10))
+        );
+        let compiled = vm
+            .programs
+            .compiled(program)
+            .flatten()
+            .expect("diagnostic Wasm program");
+        assert_eq!(compiled.same_artifact_direct_reference_hits(), Some(3));
+        assert!(compiled.reference_call_site_counts().unwrap().iter().any(
+            |(function, _, total, native, fallback)| {
+                *function == 2 && *total == 3 && *native == 3 && *fallback == 0
+            }
+        ));
+    }
+
+    #[test]
+    fn compiled_wasm_indirect_target_roots_across_reentrant_table_mutation_and_gc() {
+        let signature = crate::WasmSignature {
+            params: vec![],
+            results: vec![crate::WasmType::I32],
+        };
+        let module = crate::Engine::lower_wasm_module_with_imports(
+            "compiled-indirect-reentrant-mutation-gc",
+            [
+                // This target mutates its own table slot and collects while its
+                // direct native body is still active, then returns the old result.
+                crate::WasmFunctionBody {
+                    ty: crate::WasmCallableType::Embedded(signature.clone()),
+                    locals: vec![],
+                    operators: vec![
+                        Operator::Call { function_index: 0 },
+                        Operator::Drop,
+                        Operator::I32Const { value: 42 },
+                        Operator::End,
+                    ]
+                    .into_iter()
+                    .map(Ok),
+                },
+                crate::WasmFunctionBody {
+                    ty: crate::WasmCallableType::Embedded(signature.clone()),
+                    locals: vec![],
+                    operators: vec![Operator::I32Const { value: 9 }, Operator::End]
+                        .into_iter()
+                        .map(Ok),
+                },
+                crate::WasmFunctionBody {
+                    ty: crate::WasmCallableType::Embedded(signature.clone()),
+                    locals: vec![],
+                    operators: vec![
+                        Operator::I32Const { value: 0 },
+                        Operator::CallIndirect {
+                            type_index: 0,
+                            table_index: 0,
+                        },
+                        Operator::End,
+                    ]
+                    .into_iter()
+                    .map(Ok),
+                },
+            ],
+            &crate::WasmTypes::from_functions([wasmparser::FuncType::new(
+                [],
+                [wasmparser::ValType::I32],
+            )]),
+            &[],
+            &[],
+            &[],
+            &[crate::WasmTable {
+                ty: wasmparser::TableType {
+                    element_type: wasmparser::RefType::FUNCREF,
+                    table64: false,
+                    initial: 1,
+                    maximum: Some(1),
+                    shared: false,
+                },
+                // Function index 0 is the import, so the first definition is 1.
+                initializer: crate::WasmReferenceInitializer::Function(1).into(),
+            }],
+            &[],
+            &[crate::WasmFunctionImport {
+                exact: false,
+                ty: crate::WasmCallableType::Embedded(signature.clone()),
+                name: crate::WasmImportName {
+                    index: 0,
+                    module: "env".into(),
+                    name: "mutateAndCollect".into(),
+                },
+            }],
+        )
+        .unwrap();
+
+        let mut vm = Vm::new(GcTestHost);
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        let bootstrap = crate::Engine::specialize("void 0", "jit-indirect-gc-bootstrap.js")
+            .unwrap();
+        vm.execute(&bootstrap).unwrap();
+        let helper = vm
+            .compile_embedding_host_script(
+                "() => { globalThis.__jitIndirectTable.set(0, globalThis.__jitIndirectReplacement); $262.gc(); return 7; }",
+                "jit-indirect-reentrant-mutation-gc.js",
+                (0, 0),
+            )
+            .unwrap();
+        let callback = vm.evaluate_embedding_compiled_script(&helper).unwrap();
+        let imported = vm
+            .create_wasm_host_function(
+                "mutateAndCollect",
+                crate::heap::WasmHostTarget::Js(callback),
+                signature,
+            )
+            .unwrap();
+        let imported_root = vm.root(imported);
+        let instance = vm
+            .instantiate_wasm_module_with_imports(&module, &[imported_root])
+            .unwrap();
+        let table = vm.wasm_table(&instance, 0).unwrap();
+        let replacement = vm.wasm_function(&instance, 2).unwrap();
+        let replacement_wrapper = vm.wasm_js_function(replacement, Some(2)).unwrap();
+        vm.set_named(module.residual(), vm.realm.globals, "__jitIndirectTable", table)
+            .unwrap();
+        vm.set_named(
+            module.residual(),
+            vm.realm.globals,
+            "__jitIndirectReplacement",
+            replacement_wrapper,
+        )
+        .unwrap();
+
+        let roots_before = vm.heap.root_count_for_test();
+        let collections_before = vm.heap.collection_epoch();
+        assert_eq!(
+            vm.invoke_wasm(&instance, 3, &[]).unwrap(),
+            Some(crate::WasmValue::I32(42)),
+            "the active native callee must finish after the callback replaces its table entry"
+        );
+        assert_eq!(vm.heap.collection_epoch(), collections_before + 1);
+        assert_eq!(vm.wasm_table_get(table, 0).unwrap(), replacement);
+        assert_eq!(vm.heap.root_count_for_test(), roots_before);
+
+        assert_eq!(
+            vm.invoke_wasm(&instance, 3, &[]).unwrap(),
+            Some(crate::WasmValue::I32(9))
+        );
+        assert_eq!(vm.heap.root_count_for_test(), roots_before);
+        assert_eq!(
+            vm.invoke_wasm(&instance, 3, &[]).unwrap(),
+            Some(crate::WasmValue::I32(9)),
+            "the warmed direct cache must target the replacement"
+        );
+        assert_eq!(vm.heap.root_count_for_test(), roots_before);
     }
 
     #[test]
@@ -4489,10 +4807,8 @@ mod tests {
         let worker = std::thread::Builder::new()
             .stack_size(crate::WORKER_STACK_SIZE)
             .spawn(move || {
-                let mut vm = Vm::new_with_execution_interrupt(
-                    StartHost(entered_tx),
-                    worker_interrupt,
-                );
+                let mut vm =
+                    Vm::new_with_execution_interrupt(StartHost(entered_tx), worker_interrupt);
                 vm.set_execution_mode(crate::ExecutionMode::Compiled);
                 let signature = crate::WasmSignature {
                     params: vec![],
@@ -4686,7 +5002,12 @@ mod tests {
                     true,
                     vec![Operator::Call { function_index: 3 }, Operator::End],
                 ),
-                (0, 0, true, vec![Operator::I32Const { value: 42 }, Operator::End]),
+                (
+                    0,
+                    0,
+                    true,
+                    vec![Operator::I32Const { value: 42 }, Operator::End],
+                ),
             ]
             .into_iter()
             .map(|(params, locals, result, ops)| (params, locals, result, ops.into_iter().map(Ok))),
@@ -4776,9 +5097,7 @@ mod tests {
 
         for _ in 0..(super::super::program_store::WASM_JIT_PROMOTION_ENTRIES as usize - 2) {
             assert_eq!(
-                vm.execute_wasm_i32(&function, &[])
-                    .unwrap_err()
-                    .wasm_trap(),
+                vm.execute_wasm_i32(&function, &[]).unwrap_err().wasm_trap(),
                 Some(crate::WasmTrap::Unreachable)
             );
         }
@@ -4789,9 +5108,7 @@ mod tests {
         assert_eq!(vm.programs.wasm_tier_attempted(program, 0), Some(false));
         assert!(vm.programs.wasm_tier(program, 0).is_none());
         assert_eq!(
-            vm.execute_wasm_i32(&function, &[])
-                .unwrap_err()
-                .wasm_trap(),
+            vm.execute_wasm_i32(&function, &[]).unwrap_err().wasm_trap(),
             Some(crate::WasmTrap::Unreachable)
         );
         let tier = vm
