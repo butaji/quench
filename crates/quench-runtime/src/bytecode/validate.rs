@@ -530,7 +530,7 @@ impl ResidualProgram {
                 return Err(format!("function {index} has invalid arrow-function facts"));
             }
             if function
-                .global_var_atoms
+                .global_var_atoms()
                 .iter()
                 .any(|atom| !atom_in_bounds(*atom, self.atoms.len()))
             {
@@ -1207,11 +1207,7 @@ mod tests {
             local_registers: vec![],
             inherited_with_scope: false,
             lexical_atoms: vec![],
-            global_lexical_atoms: vec![],
-            global_var_atoms: vec![],
-            global_function_atoms: vec![],
-            global_annex_b_var_atoms: vec![],
-            global_immutable_atoms: vec![],
+            global_declarations: None,
             name_bindings: Default::default(),
             binding_sites: vec![],
             source_positions: Default::default(),

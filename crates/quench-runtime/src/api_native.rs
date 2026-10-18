@@ -335,18 +335,16 @@ impl<'a, H: Host> NativeContext<'a, H> {
     pub const MAX_STRING_CODE_UNITS: usize = crate::vm::wtf16::MAX_STRING_UNITS;
 
     pub(crate) fn new(vm: &'a mut Vm<H>) -> Self {
+        Self::with_new_target(vm, None)
+    }
+
+    /// A callback's context. Its root list comes from the pool `Drop` returns lists to, so
+    /// the pool stays as deep as the native calls nested at once.
+    pub(crate) fn with_new_target(vm: &'a mut Vm<H>, new_target: Option<Value>) -> Self {
         let roots = vm.native_root_lists.pop().unwrap_or_default();
         Self {
             vm,
             roots,
-            new_target: None,
-        }
-    }
-
-    pub(crate) fn with_new_target(vm: &'a mut Vm<H>, new_target: Option<Value>) -> Self {
-        Self {
-            vm,
-            roots: Vec::new(),
             new_target,
         }
     }
@@ -930,6 +928,23 @@ impl<'a, H: Host> NativeContext<'a, H> {
             name,
             Some((line_offset, column_offset)),
         );
+        self.completion(result)
+    }
+
+    /// Compile and evaluate a host wrapper `prefix + body + suffix` whose body is static
+    /// host text (an embedded library module): the program retains the body instead of a
+    /// copy of the wrapped source, and positions start at the wrapper origin.
+    pub fn evaluate_specialized_static_body_rooted(
+        &mut self,
+        prefix: &str,
+        body: &'static str,
+        suffix: &str,
+        name: &str,
+    ) -> Result<RootId, RootedError> {
+        let result = self
+            .vm
+            .prepare_embedding_static_body(prefix, body, suffix, name)
+            .and_then(|prepared| self.vm.evaluate_embedding_prepared_script(&prepared));
         self.completion(result)
     }
 

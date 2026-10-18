@@ -27,6 +27,13 @@ impl<H: Host> Vm<H> {
         if let Some(source) = self.own_property(function, source_atom) {
             return Some(source);
         }
+        if let Some(Cell::Function { kind: FunctionKind::Native(native), .. }) = self.heap.get(function)
+            && *native != Native::FunctionBoundCall
+            && let Some(name) = self.original_function_name(function)
+        {
+            let source = native_function_source(self.atom_name(name));
+            return Some(self.heap.alloc(Cell::String(source.as_str().into())));
+        }
         let Some(Cell::Function {
             kind: FunctionKind::User(program, id) | FunctionKind::NumericUser(program, id),
             ..
@@ -40,11 +47,7 @@ impl<H: Host> Vm<H> {
         }
         let residual = self.programs.residual(program)?;
         let span = residual.functions.get(id as usize)?.source_span?;
-        let text = residual
-            .source
-            .as_ref()?
-            .text
-            .get(span.start as usize..span.end as usize)?;
+        let text = residual.source.as_ref()?.slice(span.start, span.end)?;
         let source = self.heap.alloc(Cell::String(text.into()));
         self.programs
             .cache_function_source(program, id, source)
@@ -307,4 +310,25 @@ impl<H: Host> Vm<H> {
         combined.extend_from_slice(args);
         self.call_value(p, target, receiver, &combined)
     }
+}
+
+/// `NativeFunction` source text (ECMA-262 20.2.3.5) for a builtin named `name`: the name
+/// stands in the text only where it is an identifier, or a `get `/`set ` accessor's or a
+/// well-known symbol's identifier member.
+fn native_function_source(name: &str) -> String {
+    let property_name = name
+        .strip_prefix("get ")
+        .or_else(|| name.strip_prefix("set "))
+        .unwrap_or(name);
+    let symbol_member = property_name
+        .strip_prefix("[Symbol.")
+        .and_then(|name| name.strip_suffix(']'));
+    let source_name = if oxc_syntax::identifier::is_identifier_name(property_name)
+        || symbol_member.is_some_and(oxc_syntax::identifier::is_identifier_name)
+    {
+        name
+    } else {
+        ""
+    };
+    format!("function {source_name}() {{ [native code] }}")
 }
