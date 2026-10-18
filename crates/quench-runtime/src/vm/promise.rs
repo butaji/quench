@@ -1564,12 +1564,6 @@ impl<H: Host> Vm<H> {
             Native::PromiseAggregateJob => {
                 self.promise_aggregate_job(p, args.first().copied().unwrap_or(Value::UNDEFINED))
             }
-            Native::PromiseAsyncResumeFulfilled | Native::PromiseAsyncResumeRejected => self
-                .promise_async_resume_job(
-                    p,
-                    native == Native::PromiseAsyncResumeRejected,
-                    args.first().copied().unwrap_or(Value::UNDEFINED),
-                ),
             Native::ArrayFromAsyncFulfilled | Native::ArrayFromAsyncRejected => self
                 .array_from_async_reaction(
                     p,

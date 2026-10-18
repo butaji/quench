@@ -2630,7 +2630,7 @@ impl Heap {
                 }
             }
             Cell::AwaitState(state) => {
-                work.push(state.promise);
+                work.extend([state.realm, state.promise]);
                 work.extend(state.generator);
                 if let Some(continuation) = &state.continuation {
                     work.extend(continuation.roots());

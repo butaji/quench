@@ -4627,6 +4627,7 @@ fn await_state_traces_its_continuation_until_a_reaction_takes_it() {
     let state = vm.heap.alloc(crate::heap::Cell::AwaitState(Box::new(
         crate::heap::AwaitState {
             continuation: Some(Box::new(continuation)),
+            realm: Value::UNDEFINED,
             promise: Value::UNDEFINED,
             generator: None,
             yielded: false,
@@ -6992,6 +6993,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                 let value = vm.heap.alloc(super::Cell::AwaitState(Box::new(
                     crate::heap::AwaitState {
                         continuation: Some(Box::new(continuation)),
+                        realm: Value::UNDEFINED,
                         promise,
                         generator: None,
                         yielded: false,
