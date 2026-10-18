@@ -1666,7 +1666,7 @@ lane_handler! {
     /// after a probe that cannot hit) inline; any other receiver takes `lane_get_field`.
     fn lane_get_length<>(cx, r, ip, i, view) {
         let Some(length) = (unsafe { vm(cx) }).own_array_length(r.get(i.b)) else {
-            sibling!(lane_get_arguments_length::<H>, r, ip, Carried::SCRIPT)
+            sibling!(lane_get_length_other::<H>, r, ip, Carried::SCRIPT)
         };
         r.set(i.a, Value::number(length as f64));
         next!(cx, r, following(ip), Carried::SCRIPT)
@@ -1674,12 +1674,19 @@ lane_handler! {
 }
 
 lane_handler! {
-    /// `lane_get_length` of an arguments object in its creation layout
-    /// (`Vm::arguments_object_length`): its own data `length`, which the general cached read
-    /// does not hold for arguments objects. Any other receiver takes `lane_get_field`.
+    /// `lane_get_length` of a receiver other than an array, which the general cached read
+    /// does not answer: a string primitive's length (`Vm::string_length`), and an
+    /// arguments object's own data `length` in its creation layout
+    /// (`Vm::arguments_object_length`). Any other receiver takes `lane_get_field`.
     #[inline(never)]
-    fn lane_get_arguments_length<>(cx, r, ip, i, view) {
-        let Some(length) = (unsafe { vm(cx) }).arguments_object_length(r.get(i.b)) else {
+    fn lane_get_length_other<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let base = r.get(i.b);
+        let length = vm
+            .string_length(base)
+            .map(|length| Value::number(length as f64))
+            .or_else(|| vm.arguments_object_length(base));
+        let Some(length) = length else {
             sibling!(lane_get_field::<H>, r, ip, Carried::SCRIPT)
         };
         r.set(i.a, length);
