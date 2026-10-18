@@ -113,7 +113,7 @@ enum RegExpConstructorInput {
     },
 }
 
-/// Receiver and `RegExp.prototype` shapes verified by `regexp_replace_fast_matcher` to leave
+/// Receiver and `RegExp.prototype` shapes verified by `regexp_builtin_receiver_matcher` to leave
 /// exec, flags and every flag accessor builtin. Shapes are immutable and every key or
 /// attribute change, accessor functions included, moves an object to a new shape, so the proof
 /// holds while both shapes match; only the data property `exec`, at `exec_slot` of the
@@ -464,7 +464,7 @@ impl<H: Host> Vm<H> {
                 let input_value =
                     vm.string_value_from(args.first().copied().unwrap_or(Value::UNDEFINED), &input);
                 vm.with_call_roots([input_value], |vm| {
-                    if let Some((matcher, flags)) = vm.regexp_replace_fast_matcher(receiver) {
+                    if let Some((matcher, flags)) = vm.regexp_builtin_receiver_matcher(receiver) {
                         let replacement = match template.as_ref() {
                             Some(template) => FastReplacement::Template(template),
                             None => FastReplacement::Function(replacement),
@@ -611,7 +611,7 @@ impl<H: Host> Vm<H> {
         )
     }
 
-    fn regexp_replace_fast_matcher(
+    fn regexp_builtin_receiver_matcher(
         &mut self,
         receiver: Value,
     ) -> Option<(Rc<quench_regexp::Regex>, String)> {
@@ -715,7 +715,7 @@ impl<H: Host> Vm<H> {
         self.object_property_slot(prototype, key).map(|(_, slot)| slot)
     }
 
-    /// The shape-determined half of `regexp_replace_fast_matcher`'s proof for the RegExp
+    /// The shape-determined half of `regexp_builtin_receiver_matcher`'s proof for the RegExp
     /// `receiver`: its prototype is `RegExp.prototype`, neither shadows `exec`, `flags` or a
     /// flag accessor, and the prototype's accessors are the builtins. Returns the prototype
     /// and the slot of its `exec`, whose value the caller still reads.
@@ -772,7 +772,7 @@ impl<H: Host> Vm<H> {
         self.coerce_js_string(p, value)
     }
 
-    /// Checks the shape-determined half of `regexp_replace_fast_matcher`'s proof and returns
+    /// Checks the shape-determined half of `regexp_builtin_receiver_matcher`'s proof and returns
     /// the slot of `RegExp.prototype.exec`.
     #[cold]
     fn verify_regexp_builtin_layout(&mut self, receiver: Value, prototype: Value) -> Option<usize> {
@@ -970,7 +970,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// `RegExp.prototype[@@replace]` for a receiver whose exec, flags and lastIndex are its
-    /// builtins (`regexp_replace_fast_matcher`). The spec runs every exec before computing
+    /// builtins (`regexp_builtin_receiver_matcher`). The spec runs every exec before computing
     /// any replacement; with the builtin exec those execs run no guest code, so matching
     /// collects the results directly. A replacer then observes the same state: lastIndex
     /// reset by the final failed exec of a global match, and the last match's legacy statics.
@@ -1654,6 +1654,11 @@ impl<H: Host> Vm<H> {
                 }
                 let input =
                     vm.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                if let Some((matcher, flags)) = vm.regexp_builtin_receiver_matcher(receiver)
+                    && flags.contains('g')
+                {
+                    return vm.regexp_symbol_match_global_fast(p, receiver, &input, &matcher, &flags);
+                }
                 let flags = vm.regexp_flags_text(p, receiver)?;
                 if !flags.host_string().contains('g') {
                     let input = vm.string_value_from(
@@ -1713,6 +1718,38 @@ impl<H: Host> Vm<H> {
                 })
             },
         )
+    }
+
+    /// Global `RegExp.prototype[@@match]` for a receiver whose exec, flags and lastIndex are
+    /// its builtins (`regexp_builtin_receiver_matcher`): those execs run no guest code, so the
+    /// matches are collected directly. lastIndex ends at zero and the legacy statics hold
+    /// the last match, as the spec's exec loop leaves them.
+    fn regexp_symbol_match_global_fast(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+        input: &JsString,
+        matcher: &quench_regexp::Regex,
+        flags: &str,
+    ) -> Result<Value, JsError> {
+        let subject = self.regexp_subject(input);
+        let ranges = self.regexp_global_matches(
+            p,
+            receiver,
+            input,
+            flags,
+            |start| matcher.find_in_subject(&subject, start).next(),
+            |found| found.range.clone(),
+        )?;
+        let Some(last) = ranges.last() else {
+            return Ok(Value::NULL);
+        };
+        self.record_regexp_legacy_match(receiver, input.clone(), last.clone())?;
+        let matched = ranges
+            .iter()
+            .map(|found| self.heap.alloc(Cell::String(input.substring(found.range.clone()))))
+            .collect();
+        Ok(self.new_array(matched))
     }
 
     pub(super) fn regexp_exec_value(
