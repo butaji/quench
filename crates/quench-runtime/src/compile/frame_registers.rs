@@ -10,6 +10,7 @@ use super::rewrite::{fixed_width, relocate};
 /// The binding legacy argument reflection looks for.
 const ARGUMENTS_NAME: &str = "arguments";
 
+use crate::bytecode::initialization;
 use crate::bytecode::{
     WITH_ENTER_BINDING, EvalBindingLocation, FieldLayout, Function, ImmediateRole, Instr, InstructionField, Op,
     Operand, OperandKind, REGISTER_MASK, Register, Superinstruction, WideInstruction,
@@ -123,6 +124,18 @@ pub(super) fn promote<'a>(
         if !promotable {
             exclude(slot);
         }
+    }
+    // Frames reuse register files without clearing them (`Frame::prepare_registers_for`), and
+    // a slot starts `undefined` while its register starts stale: a slot moves only when every
+    // read follows a write on every path (TOD-140).
+    let written = initialization::initialized_before_reads(
+        function,
+        superinstructions,
+        &eligible,
+        initialization::EntryState::Uninitialized,
+    );
+    for (eligible, written) in eligible.iter_mut().zip(written) {
+        *eligible &= written;
     }
     // New registers follow the existing ones while liveness still covers the function and
     // operands can name them.
