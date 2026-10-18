@@ -574,6 +574,9 @@ impl<H: Host> Vm<H> {
         target: Value,
         key: Value,
     ) -> Result<Option<bool>, JsError> {
+        // A primitive's own properties are its wrapper's, as GetOwnProperty of ToObject sees
+        // them: a string's indices and `length`.
+        let target = self.box_object(target)?;
         if matches!(self.heap.get(target), Some(Cell::Proxy { .. })) {
             let descriptor = self.object_get_own_property_descriptor(p, &[target, key])?;
             return Ok((!descriptor.is_undefined())
