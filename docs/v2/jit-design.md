@@ -98,3 +98,34 @@ The five-case clean 11-round report for this revision is in `evidence/jit-jetstr
 | zlib | 13.47 / 112.6 | 0.157 [0.148, 0.160] | 1.124 [1.121, 1.133] | 0.155 [0.149, 0.160] | 1.011 [0.992, 1.018] |
 
 gcc-loops and quicksort still beat both RSS bars but remain well below both score bars. HashSet beats Node on RSS only; zlib's Node RSS interval includes parity. This fast path reduces interpreter activation for eligible indirect targets, but the reference-call boundary still enters the VM and does not explain TSF's full score gap. The full candidate result did not change the performance conclusion: native-callout attribution and hot generated-code quality remain the next targets.
+
+## TSF callout attribution
+
+The diagnostic counter was split into imported-function callouts and
+reference/table callouts, retaining the old aggregate as their saturating sum.
+A clean-source one-round TSF diagnostic on revision `adf1b4077464f2b6932d2142a24c36da7cb6336a`
+reports 27,006 import callouts and 2,869,000 reference callouts, for a total
+of 2,896,006. About 99.1% of these boundaries are table/reference calls. The
+run also compiled 156/244 functions, emitted 177,800 bytes, mapped 180,224
+bytes, and reported 137.0 ms compilation time. This is a call-count screen,
+not timing evidence: diagnostics add overhead and the report has one round.
+The signature parameter copy already uses an inline `SmallVec` for up to eight
+types, so a repeated heap clone is not the current bottleneck. The evidence
+points instead to repeated table-target resolution and crossing from generated
+code into the VM. A guarded call-site cache is a plausible next experiment,
+provided table mutation invalidation, bounds/null traps, canonical signature
+checks, and callee instance environments remain correct. Raw diagnostic data
+and reproduction details are in
+`evidence/jit-jetstream3-wasm-2026-10-18/callout-attribution/`.
+
+The remaining design work follows a staged-specialization path: keep validated
+Wasm and residual JS bytecode as the static input, specialize only hot
+operations and call sites whose guards pay for compilation, and make fallback
+an explicit continuation into the existing VM. This is the practical first
+Futamura projection rather than a general-purpose self-applicable partial
+evaluator. V8's official Wasm pipeline likewise separates fast baseline
+compilation from selective top-tier compilation, while the Deegen paper's
+single semantics source and Copy-and-Patch baseline suggest a later route to
+lower compile cost if measurements show compiler allocation is still the RSS
+driver. These sources motivate tiering and specialization; they do not predict
+Quench's benchmark outcome. [V8 Wasm compilation pipeline](https://v8.dev/docs/wasm-compilation-pipeline), [Deegen paper](https://arxiv.org/abs/2411.11469), [Futamura's partial-evaluation paper](https://www.jstage.jst.go.jp/article/jssst/21/5/21_5_343/_article/-char/en).
