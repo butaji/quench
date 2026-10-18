@@ -606,7 +606,7 @@ pub(crate) enum Native {
     PromiseAny,
     PromiseThenableJob,
     PromiseAggregateJob,
-    PromiseAsyncResumeJob, AsyncFromSyncValue, AsyncFromSyncValueRejected, AsyncGeneratorDelegateFulfilled, AsyncGeneratorDelegateRejected,
+    PromiseAsyncResumeFulfilled, PromiseAsyncResumeRejected, AsyncFromSyncValue, AsyncFromSyncValueRejected, AsyncGeneratorDelegateFulfilled, AsyncGeneratorDelegateRejected,
     WithEnter, WithExit,
     WasmHost,
     WebAssemblyValidate, WebAssemblyCompile, WebAssemblyInstantiate,
@@ -704,6 +704,20 @@ pub(crate) struct ArrayFromAsyncState {
     pub(crate) index: usize,
     pub(crate) array_like: Option<(Value, usize)>,
     pub(crate) awaiting: ArrayFromAsyncAwait,
+}
+
+/// One `await`'s suspended activation. Its fulfilled and rejected reactions both name this
+/// cell as their environment, so the continuation is traced while either can still run;
+/// the first to run takes it. The continuation is boxed apart so taking it frees its
+/// storage at once: the spent state waits for a sweep.
+#[derive(Clone, Debug)]
+pub(crate) struct AwaitState {
+    pub(crate) continuation: Option<Box<crate::vm::activation::Continuation>>,
+    /// The async function's promise, or the async generator request's promise.
+    pub(crate) promise: Value,
+    pub(crate) generator: Option<Value>,
+    /// The await of an async generator's `yield`, which settles the request with the value.
+    pub(crate) yielded: bool,
 }
 impl TypedArrayKind {
     pub(crate) const fn is_bigint(self) -> bool {
@@ -1086,7 +1100,8 @@ impl Native {
                 | Self::PromiseAny
                 | Self::PromiseThenableJob
                 | Self::PromiseAggregateJob
-                | Self::PromiseAsyncResumeJob
+                | Self::PromiseAsyncResumeFulfilled
+                | Self::PromiseAsyncResumeRejected
                 | Self::ArrayFromAsyncFulfilled
                 | Self::ArrayFromAsyncRejected
                 | Self::DynamicImport
@@ -1257,6 +1272,8 @@ union ObjectPayload {
 struct ArrayPayload {
     extras: u64,
     elements: std::mem::ManuallyDrop<Rc<Vec<Value>>>,
+    /// The words past the two an array uses, so the payload spans the inline values.
+    _unused: [u64; INLINE_PROPERTY_COUNT - 2],
 }
 
 const _: () = assert!(size_of::<ArrayPayload>() == size_of::<[Value; INLINE_PROPERTY_COUNT]>());
@@ -2025,28 +2042,24 @@ impl Object {
     }
 }
 
-const _: () = assert!(std::mem::size_of::<Object>() == 3 * std::mem::size_of::<Value>());
+const _: () = assert!(std::mem::size_of::<Object>() == (1 + INLINE_PROPERTY_COUNT) * std::mem::size_of::<Value>());
 
 #[cfg(test)]
 mod object_payload_tests {
     use super::Object;
     use crate::value::Value;
-    use crate::value_vec::ValueVec;
+    use crate::value_vec::{INLINE_PROPERTY_COUNT, ValueVec};
 
     #[test]
     fn out_of_line_extras_preserve_inline_values_and_clone_state() {
-        let mut object = Object::with_property_storage(
-            Value::NULL,
-            ValueVec::inline_property_storage(7),
-            [Value::integer(11), Value::integer(13)],
-        );
+        let inline: [Value; INLINE_PROPERTY_COUNT] =
+            std::array::from_fn(|slot| Value::integer(11 + 2 * slot as i32));
+        let mut object =
+            Object::with_property_storage(Value::NULL, ValueVec::inline_property_storage(7), inline);
         object.set_arguments_object();
         assert!(object.is_arguments_object());
         assert_eq!(object.shape(), 7);
-        assert_eq!(
-            object.inline_properties().copied(),
-            Some([Value::integer(11), Value::integer(13)])
-        );
+        assert_eq!(object.inline_properties().copied(), Some(inline));
 
         let mut cloned = object.clone();
         cloned.set_inline_property(0, Value::integer(17));
@@ -2084,7 +2097,7 @@ mod object_payload_tests {
         let mut properties = ValueVec::new();
         properties.set_extensible(false);
         let mut object =
-            Object::with_property_storage(Value::NULL, properties, [Value::UNDEFINED; 2]);
+            Object::with_property_storage(Value::NULL, properties, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]);
         object.set_module_namespace();
         assert!(object.is_module_namespace());
         assert!(!object.properties().has_inline_property_storage());
@@ -2700,6 +2713,7 @@ pub(crate) enum Cell {
         ext: Box<IteratorExt>,
     },
     ArrayFromAsyncState(Box<ArrayFromAsyncState>),
+    AwaitState(Box<AwaitState>),
     Proxy {
         object: Box<Object>,
         kind: ProxyKind,
@@ -2769,10 +2783,7 @@ pub(crate) enum Cell {
     },
     Error(String),
     /// A promise: an ordinary object with its [[PromiseState]] and reactions.
-    Promise {
-        object: Box<Object>,
-        record: Box<super::PromiseRecord>,
-    },
+    Promise(Box<super::PromiseCell>),
     PromiseResolvingState {
         promise: Value,
         already_resolved: bool,
@@ -2852,6 +2863,7 @@ impl Cell {
             Self::FinalizationRegistry { .. } => "finalization_registry",
             Self::Iterator { .. } => "iterator",
             Self::ArrayFromAsyncState(_) => "array_from_async_state",
+            Self::AwaitState(_) => "await_state",
             Self::Proxy { .. } => "proxy",
             Self::Function { .. } => "function",
             Self::BindingReference { .. } => "binding_reference",
@@ -2874,7 +2886,7 @@ impl Cell {
             Self::RegExp { .. } => "regexp",
             Self::Error(_) => "error",
             Self::PromiseResolvingState { .. } => "promise_resolving_state",
-            Self::Promise { .. } => "promise",
+            Self::Promise(_) => "promise",
             Self::TemporalDuration { .. } => "temporal_duration",
             Self::TemporalPlainDate { .. } => "temporal_plain_date",
             Self::TemporalPlainDateTime { .. } => "temporal_plain_date_time",
@@ -2906,6 +2918,11 @@ impl Cell {
                     .as_ref()
                     .and_then(|generator| generator.continuation.as_ref())
                 {
+                    visit(continuation.program);
+                }
+            }
+            Self::AwaitState(state) => {
+                if let Some(continuation) = &state.continuation {
                     visit(continuation.program);
                 }
             }

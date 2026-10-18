@@ -78,7 +78,7 @@ pub(super) fn report(program: &ResidualProgram) {
             + program
                 .literal_templates
                 .iter()
-                .map(|steps| slice_bytes::<crate::bytecode::LiteralStep>(steps))
+                .map(|steps| size_of_val::<[crate::bytecode::LiteralStep]>(steps))
                 .sum::<usize>()
             + bytes::<Superinstruction>(&program.superinstructions),
         sum(|function| function.register_roots.capacity_bytes()),

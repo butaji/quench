@@ -1,8 +1,17 @@
 //! A promise's state ([[PromiseState]], [[PromiseResult]], its reactions and the host's view
 //! of it), owned by its `Cell::Promise` so a collection traces it with the promise and frees it
 //! with the promise.
-use super::Value;
+use super::{Object, Value};
 use crate::HostExecutionContext;
+
+/// What a `Cell::Promise` owns, in one allocation: the promise's ordinary object and its
+/// state. Two boxes cost a promise an allocation header and a rounding more (200k live
+/// promises: 177 -> 186 MiB).
+#[derive(Clone, Debug)]
+pub(crate) struct PromiseCell {
+    pub(crate) object: Object,
+    pub(crate) record: PromiseRecord,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PromiseState {
@@ -24,7 +33,8 @@ pub(crate) struct PromiseRecord {
     pub(crate) result: Value,
     pub(crate) reactions: Vec<PromiseReaction>,
     pub(crate) rejection: PromiseRejectionState,
-    pub(crate) rejection_id: Option<u64>,
+    /// Set once the host is told of the rejection; identifiers start at one.
+    pub(crate) rejection_id: Option<std::num::NonZeroU64>,
     pub(crate) host_context: Option<HostExecutionContext>,
 }
 
@@ -54,3 +64,4 @@ impl PromiseRecord {
         self.reactions.iter().filter_map(|reaction| reaction.execution_context)
     }
 }
+
