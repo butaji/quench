@@ -179,6 +179,10 @@ fn promoted_locals_preserve_order_and_survive_collection() {
       function keyed(x, i) { x[i] = x[++i] * 10; return x.join() + ":" + i; }
       function window(i) { var a = [i, ++i, i++, i]; return a.join() + ":" + i; }
       function compound(i) { i += i++ + ++i; return i; }
+      // A `var` read before its first write is undefined, whatever an earlier frame left
+      // in the register it moved to.
+      function dirty() { var a = "stale", b = "stale"; return a + b; }
+      function unset(o) { var n; (function (e) { e.k = 1; })(n || (o.x = n = {})); return typeof o.x + ":" + n.k; }
       print(read({ answer: 42 }));
       print(ordered(5));
       print(destructured(9));
@@ -186,6 +190,8 @@ fn promoted_locals_preserve_order_and_survive_collection() {
       print(keyed([1, 2, 3, 4], 0));
       print(window(0));
       print(compound(2));
+      dirty();
+      print(unset({}));
     "#;
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(RecordingHost(output.clone()));
@@ -193,7 +199,7 @@ fn promoted_locals_preserve_order_and_survive_collection() {
     vm.execute(&program).unwrap();
     assert_eq!(
         output.borrow().as_slice(),
-        ["42", "3", "3", "602", "20,2,3,4:1", "0,1,1,2:2", "8"]
+        ["42", "3", "3", "602", "20,2,3,4:1", "0,1,1,2:2", "8", "object:1"]
     );
 
     // Every binding here stays in a register, including those written inside expressions.
