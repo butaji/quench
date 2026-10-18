@@ -9,11 +9,11 @@ name = "quench-node"
 path = "src/bin/quench-node.rs"
 
 [features]
-# The Score lane (v2-cloud-c) links quench-alloc by default: paired V8-v7 rounds against
-# glibc, Linux x86_64 4 vCPU, five pairs: RegExp 1174 -> 1301, EarleyBoyer 2281 -> 2515,
-# DeltaBlue 1039 -> 1112, Richards 1344 -> 1364; nine pairs: Splay 5781 -> 5818, RayTrace
-# 2333 -> 2273 (within noise). The trunk keeps it opt-in.
-default = ["quench-alloc"]
+# quench-alloc stays opt-in on the RSS lane (v2-cloud-c2): linked by default it raised V8-v7
+# max RSS (static x86_64, unbolted, 2026-10-18, KiB): Crypto 4272 -> 4640, Richards 3716 ->
+# 4064, RayTrace 3884 -> 4128, DeltaBlue 3840 -> 4120, RegExp 7612 -> 7980. The Score lane
+# (v2-cloud-c) links it by default.
+default = []
 profile-memory = ["quench-runtime/profile-memory"]
 # Quench's size-classed small-object allocator as the global allocator (TOD-137).
 quench-alloc = ["dep:quench-alloc"]
@@ -23,7 +23,7 @@ quench-js-check = { path = "../quench-js-check" }
 quench-runtime = { path = "../quench-runtime" }
 quench-wasm = { path = "../quench-wasm" }
 serde_json = "1"
-regex = { version = "1.11", default-features = false, features = ["std", "unicode-perl", "perf"] }
+regex = { version = "1.11", default-features = false, features = ["std", "unicode-perl", "perf-literal", "perf-onepass", "perf-backtrack"] }
 sha1 = "0.10"
 base64 = "0.22"
 hex = "0.4"

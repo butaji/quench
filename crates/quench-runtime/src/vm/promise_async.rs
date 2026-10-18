@@ -1,6 +1,16 @@
-use super::activation::{Completion, Continuation, ContinuationId};
-use super::promise::{AsyncResumeJob, PromiseReaction, PromiseState};
+use super::activation::{Completion, Continuation};
+use super::promise::{PromiseReaction, PromiseState};
 use super::*;
+use crate::heap::AwaitState;
+
+/// What an await reaction resumes with, read from its `AwaitState`.
+#[derive(Clone, Copy, Debug)]
+struct AwaitResume {
+    promise: Value,
+    generator: Option<Value>,
+    rejected: bool,
+    yielded: bool,
+}
 
 impl<H: Host> Vm<H> {
     pub(super) fn call_user_maybe_async(
@@ -51,8 +61,7 @@ impl<H: Host> Vm<H> {
                         Some(destination),
                         promise,
                     );
-                    let id = vm.suspend_continuation(continuation);
-                    vm.enqueue_async_resume(p, id, promise, None, value, false)?;
+                    vm.enqueue_async_resume(p, continuation, promise, None, value, false)?;
                 }
                 super::FrameOutcome::Await { frame: None, .. } => {
                     return Err(JsError("async frame lost at suspension".into()));
@@ -70,14 +79,36 @@ impl<H: Host> Vm<H> {
         })
     }
 
+    /// Suspends `continuation` on `source`: one `AwaitState` cell holds it, and both
+    /// reactions name that cell, so it lives exactly as long as one of them can run.
     pub(super) fn enqueue_async_resume(
         &mut self,
         p: &ResidualProgram,
-        continuation: ContinuationId,
+        continuation: Continuation,
         promise: Value,
         generator: Option<Value>,
         source: Value,
         yielded: bool,
+    ) -> Result<(), JsError> {
+        let state = self.heap.alloc(Cell::AwaitState(Box::new(AwaitState {
+            continuation: Some(Box::new(continuation)),
+            promise,
+            generator,
+            yielded,
+        })));
+        // Host lifecycle observers can run before a reaction holds the state.
+        self.with_call_roots([state, source], |vm| {
+            vm.attach_await_reactions(p, state, promise, generator, source)
+        })
+    }
+
+    fn attach_await_reactions(
+        &mut self,
+        p: &ResidualProgram,
+        state: Value,
+        promise: Value,
+        generator: Option<Value>,
+        source: Value,
     ) -> Result<(), JsError> {
         let source = if self.host.observes_promise_lifecycle()
             && !self.is_promise(source)
@@ -92,30 +123,8 @@ impl<H: Host> Vm<H> {
         } else {
             source
         };
-        let fulfilled = self.native_with_env(Native::PromiseAsyncResumeJob, Value::NULL);
-        let rejected = self.native_with_env(Native::PromiseAsyncResumeJob, Value::NULL);
-        self.realm.promise.async_resume_jobs.insert(
-            fulfilled,
-            AsyncResumeJob {
-                continuation,
-                promise,
-                generator,
-                rejected: false,
-                yielded,
-                sibling: rejected,
-            },
-        );
-        self.realm.promise.async_resume_jobs.insert(
-            rejected,
-            AsyncResumeJob {
-                continuation,
-                promise,
-                generator,
-                rejected: true,
-                yielded,
-                sibling: fulfilled,
-            },
-        );
+        let fulfilled = self.native_with_env(Native::PromiseAsyncResumeFulfilled, state);
+        let rejected = self.native_with_env(Native::PromiseAsyncResumeRejected, state);
         // Materialize the await reaction's Promise resource for host lifecycle
         // observation, even though the continuation consumes no result value.
         let next = if self.host.observes_promise_lifecycle() {
@@ -157,32 +166,27 @@ impl<H: Host> Vm<H> {
     pub(super) fn promise_async_resume_job(
         &mut self,
         p: &ResidualProgram,
+        rejected: bool,
         value: Value,
     ) -> Result<Value, JsError> {
-        let job = self
-            .active_native_callable()
-            .ok_or_else(|| JsError("Promise async resume without callback".into()))?;
-        let resume = self
-            .realm
-            .promise
-            .async_resume_jobs
-            .remove(&job)
-            .ok_or_else(|| JsError("stale Promise async resume job".into()))?;
-        // The sibling's entry is this await's only if it points back here: a collected
-        // sibling's slot can hold another await's reaction.
-        let jobs = &mut self.realm.promise.async_resume_jobs;
-        if jobs
-            .get(&resume.sibling)
-            .is_some_and(|sibling| sibling.sibling == job)
-        {
-            jobs.remove(&resume.sibling);
-        }
+        let state = self.active_native_env();
+        let Some(Cell::AwaitState(state)) = state.and_then(|state| self.heap.get_mut(state))
+        else {
+            return Err(JsError("Promise async resume without its await".into()));
+        };
+        let continuation = state.continuation.take().map(|continuation| *continuation);
+        let resume = AwaitResume {
+            promise: state.promise,
+            generator: state.generator,
+            rejected,
+            yielded: state.yielded,
+        };
         self.with_call_roots(
             [Some(resume.promise), resume.generator, Some(value)]
                 .into_iter()
                 .flatten(),
             |vm| {
-                vm.resume_async_continuation(p, resume, value)?;
+                vm.resume_async_continuation(p, resume, continuation, value)?;
                 if let Some(generator) = resume.generator {
                     vm.resume_async_generator_queue(p, generator)?;
                 }
@@ -194,10 +198,11 @@ impl<H: Host> Vm<H> {
     fn resume_async_continuation(
         &mut self,
         p: &ResidualProgram,
-        resume: AsyncResumeJob,
+        resume: AwaitResume,
+        continuation: Option<Continuation>,
         value: Value,
     ) -> Result<(), JsError> {
-        let Some(continuation) = self.resume_continuation(resume.continuation) else {
+        let Some(continuation) = continuation else {
             if let Some(generator) = resume.generator {
                 self.fail_async_generator(
                     p,
@@ -222,8 +227,8 @@ impl<H: Host> Vm<H> {
     fn resume_async_continuation_in_program(
         &mut self,
         p: &ResidualProgram,
-        resume: AsyncResumeJob,
-        continuation: super::activation::Continuation,
+        resume: AwaitResume,
+        continuation: Continuation,
         value: Value,
     ) -> Result<(), JsError> {
         if resume.yielded && !resume.rejected {
@@ -298,8 +303,14 @@ impl<H: Host> Vm<H> {
                     Some(destination),
                     resume.promise,
                 );
-                let id = self.suspend_continuation(continuation);
-                self.enqueue_async_resume(p, id, resume.promise, resume.generator, value, false)?;
+                self.enqueue_async_resume(
+                    p,
+                    continuation,
+                    resume.promise,
+                    resume.generator,
+                    value,
+                    false,
+                )?;
             }
             super::FrameOutcome::Await {
                 frame: Some(frame), ..

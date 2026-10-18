@@ -305,7 +305,10 @@ const TRAPS: [crate::WasmTrap; 6] = [
 
 const JIT_ROOT_ENV: &str = "QUENCH_WASM_JIT_ROOT";
 const JIT_ROOT_OPT_LEVEL_ENV: &str = "QUENCH_WASM_JIT_ROOT_OPT_LEVEL";
+const JIT_ROOT_ONLY_ENV: &str = "QUENCH_WASM_JIT_ROOT_ONLY";
+const JIT_ROOT_FIRST_ENV: &str = "QUENCH_WASM_JIT_ROOT_FIRST";
 const JIT_WASM_SELECTIVE_ENV: &str = "QUENCH_WASM_JIT_SELECTIVE";
+const JIT_DIRECT_COMPARE_BRANCHES_ENV: &str = "QUENCH_WASM_JIT_DIRECT_COMPARE_BRANCHES";
 const MAX_JIT_ROOT_FUNCTIONS: usize = 128;
 const MAX_JIT_ROOT_BYTECODES_PER_FUNCTION: usize = 80_000;
 const MAX_JIT_ROOT_CODE_BYTES: usize = 2 * 1024 * 1024;
@@ -316,6 +319,10 @@ const MAX_JIT_PROFILED_INDIRECT_TARGETS: usize = 8;
 pub(super) const MAX_JIT_TIER_BYTECODES_PER_FUNCTION: usize = 2_048;
 
 fn jit_root_override() -> Result<Option<usize>, ()> {
+    #[cfg(test)]
+    if let Some(mode) = WASM_JIT_MODE_TEST_OVERRIDE.with(std::cell::Cell::get) {
+        return Ok(mode.root);
+    }
     let Some(root) = std::env::var_os(JIT_ROOT_ENV) else {
         return Ok(None);
     };
@@ -330,7 +337,98 @@ fn jit_wasm_selective_enabled() -> bool {
     std::env::var(JIT_WASM_SELECTIVE_ENV).is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
 }
 
-fn jit_root_opt_level(root: Option<usize>) -> Result<&'static str, ()> {
+fn jit_direct_compare_branches_enabled() -> bool {
+    #[cfg(test)]
+    if let Some(enabled) = WASM_JIT_DIRECT_COMPARE_BRANCHES_TEST_OVERRIDE.with(std::cell::Cell::get)
+    {
+        return enabled;
+    }
+    std::env::var(JIT_DIRECT_COMPARE_BRANCHES_ENV)
+        .is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+}
+
+fn jit_wasm_root_only_enabled() -> bool {
+    #[cfg(test)]
+    if let Some(mode) = WASM_JIT_MODE_TEST_OVERRIDE.with(std::cell::Cell::get) {
+        return mode.root_only;
+    }
+    std::env::var(JIT_ROOT_ONLY_ENV).is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+}
+
+fn jit_wasm_root_first_enabled() -> bool {
+    #[cfg(test)]
+    if let Some(mode) = WASM_JIT_MODE_TEST_OVERRIDE.with(std::cell::Cell::get) {
+        return mode.root_first;
+    }
+    std::env::var(JIT_ROOT_FIRST_ENV).is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Default)]
+struct WasmJitModeTestOverride {
+    root_only: bool,
+    root_first: bool,
+    root: Option<usize>,
+}
+
+#[cfg(test)]
+thread_local! {
+    static WASM_JIT_MODE_TEST_OVERRIDE: std::cell::Cell<Option<WasmJitModeTestOverride>> =
+        const { std::cell::Cell::new(None) };
+    static WASM_JIT_DIRECT_COMPARE_BRANCHES_TEST_OVERRIDE: std::cell::Cell<Option<bool>> =
+        const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+pub(super) fn with_wasm_jit_mode_for_test<R>(
+    root_only: bool,
+    root_first: bool,
+    root: Option<usize>,
+    run: impl FnOnce() -> R,
+) -> R {
+    struct Restore(Option<WasmJitModeTestOverride>);
+
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            WASM_JIT_MODE_TEST_OVERRIDE.with(|override_mode| override_mode.set(self.0));
+        }
+    }
+
+    let previous = WASM_JIT_MODE_TEST_OVERRIDE.with(|override_mode| {
+        override_mode.replace(Some(WasmJitModeTestOverride {
+            root_only,
+            root_first,
+            root,
+        }))
+    });
+    let _restore = Restore(previous);
+    run()
+}
+
+#[cfg(test)]
+pub(super) fn with_jit_direct_compare_branches_for_test<R>(
+    enabled: bool,
+    run: impl FnOnce() -> R,
+) -> R {
+    struct Restore(Option<bool>);
+
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            WASM_JIT_DIRECT_COMPARE_BRANCHES_TEST_OVERRIDE
+                .with(|override_mode| override_mode.set(self.0));
+        }
+    }
+
+    let previous = WASM_JIT_DIRECT_COMPARE_BRANCHES_TEST_OVERRIDE
+        .with(|override_mode| override_mode.replace(Some(enabled)));
+    let _restore = Restore(previous);
+    run()
+}
+
+fn jit_root_opt_level(root: Option<usize>, root_only: bool) -> Result<&'static str, ()> {
+    if root_only {
+        return Ok("none");
+    }
     if root.is_none() {
         return Ok("speed");
     }
@@ -440,6 +538,12 @@ struct CallContext {
     reference_epoch: *const u64,
     /// Stable per-site cache storage owned by the current compiled artifact.
     reference_fast_caches: *mut FastReferenceCache,
+    /// Diagnostic-only count of direct Emscripten same-memory copies.
+    emscripten_memcpy_fast_path_hits: *mut u64,
+    /// Diagnostic-only count of early raw-i32 Emscripten import copies.
+    emscripten_memcpy_raw_i32_hits: *mut u64,
+    /// Diagnostic-only count proving the early callout handled the copy.
+    emscripten_memcpy_early_import_hits: *mut u64,
 }
 
 impl CallContext {
@@ -476,6 +580,9 @@ impl CallContext {
             poll_end: self.poll_end,
             reference_epoch: self.reference_epoch,
             reference_fast_caches: self.reference_fast_caches,
+            emscripten_memcpy_fast_path_hits: self.emscripten_memcpy_fast_path_hits,
+            emscripten_memcpy_raw_i32_hits: self.emscripten_memcpy_raw_i32_hits,
+            emscripten_memcpy_early_import_hits: self.emscripten_memcpy_early_import_hits,
         }
     }
 }
@@ -1093,10 +1200,39 @@ unsafe extern "C" fn import_callout<H: Host>(
     let active = ACTIVE_CONTEXT.with(|current| current.replace(std::ptr::null_mut()));
     let program = context.program;
     let env = context.env;
+    let current_memory = context.memory;
+    let memcpy_fast_path_hits = context.emscripten_memcpy_fast_path_hits;
+    let memcpy_raw_i32_hits = context.emscripten_memcpy_raw_i32_hits;
+    let memcpy_early_import_hits = context.emscripten_memcpy_early_import_hits;
     let called = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         // SAFETY: compiled code passes one word per parameter and a result
         // word.
-        unsafe { vm.call_import(program, env, function as u32, args, out) }
+        if unsafe {
+            vm.try_early_compiled_emscripten_memcpy_import(
+                program,
+                env,
+                function,
+                current_memory,
+                memcpy_raw_i32_hits,
+                memcpy_early_import_hits,
+                args,
+            )
+        } {
+            Ok(())
+        } else {
+            unsafe {
+                vm.call_import(
+                    program,
+                    env,
+                    function as u32,
+                    current_memory,
+                    memcpy_fast_path_hits,
+                    memcpy_raw_i32_hits,
+                    args,
+                    out,
+                )
+            }
+        }
     }));
     ACTIVE_CONTEXT.with(|current| current.set(active));
     refresh_memory_length(context, vm);
@@ -1369,6 +1505,9 @@ struct WasmJitDiagnostics {
     compiled_import_callouts: std::cell::Cell<u64>,
     compiled_known_callouts: std::cell::Cell<u64>,
     compiled_reference_callouts: std::cell::Cell<u64>,
+    emscripten_memcpy_fast_path_hits: std::cell::Cell<u64>,
+    emscripten_memcpy_raw_i32_hits: std::cell::Cell<u64>,
+    emscripten_memcpy_early_import_hits: std::cell::Cell<u64>,
     reference_call_sites: Vec<ReferenceCallSiteDiagnostics>,
 }
 
@@ -1434,7 +1573,7 @@ impl Drop for CompiledProgram {
             .map(|site| site.counts.get().same_artifact_direct)
             .fold(0u64, u64::saturating_add);
         eprintln!(
-            "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compiled_functions\":{},\"total_functions\":{},\"code_bytes\":{},\"mapped_bytes\":{},\"compile_ns\":{},\"native_entry_requests\":[{}],\"interpreter_fallback_entries\":[{}],\"compiled_to_vm_callouts\":{},\"compiled_import_callouts\":{},\"compiled_known_callouts\":{},\"compiled_reference_callouts\":{},\"reference_call_sites\":[{}],\"same_artifact_direct_reference_hits\":{},\"reference_call_targets\":[{}]}}",
+            "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compiled_functions\":{},\"total_functions\":{},\"code_bytes\":{},\"mapped_bytes\":{},\"compile_ns\":{},\"native_entry_requests\":[{}],\"interpreter_fallback_entries\":[{}],\"compiled_to_vm_callouts\":{},\"compiled_import_callouts\":{},\"compiled_known_callouts\":{},\"compiled_reference_callouts\":{},\"emscripten_memcpy_direct_copy_switch\":\"{}\",\"emscripten_memcpy_direct_copy_enabled\":{},\"emscripten_memcpy_fast_path_hits\":{},\"emscripten_memcpy_raw_i32_switch\":\"{}\",\"emscripten_memcpy_raw_i32_enabled\":{},\"emscripten_memcpy_raw_i32_hits\":{},\"emscripten_memcpy_early_import_switch\":\"{}\",\"emscripten_memcpy_early_import_enabled\":{},\"emscripten_memcpy_early_import_hits\":{},\"reference_call_sites\":[{}],\"same_artifact_direct_reference_hits\":{},\"reference_call_targets\":[{}]}}",
             stats.program,
             stats.compiled_functions,
             stats.total_functions,
@@ -1447,6 +1586,15 @@ impl Drop for CompiledProgram {
             stats.compiled_import_callouts.get(),
             stats.compiled_known_callouts.get(),
             stats.compiled_reference_callouts.get(),
+            super::wasm_js::emscripten_memcpy_direct_copy_switch(),
+            super::wasm_js::emscripten_memcpy_direct_copy_enabled(),
+            stats.emscripten_memcpy_fast_path_hits.get(),
+            super::wasm_js::emscripten_memcpy_raw_i32_switch(),
+            super::wasm_js::emscripten_memcpy_raw_i32_enabled(),
+            stats.emscripten_memcpy_raw_i32_hits.get(),
+            super::wasm_js::emscripten_memcpy_early_import_switch(),
+            super::wasm_js::emscripten_memcpy_early_import_enabled(),
+            stats.emscripten_memcpy_early_import_hits.get(),
             reference_sites,
             same_artifact_direct_hits,
             reference_targets,
@@ -1504,12 +1652,20 @@ impl CompiledProgram {
             .filter_map(|(site, (_, _, table_slot))| {
                 let entry = caches.get(site)?.as_deref()?;
                 let current_table = vm.heap.environment_slot(env, *table_slot as usize)?;
-                (entry.program == program
+                (entry.table_slot == *table_slot
+                    && entry.program == program
                     && entry.env == env
                     && entry.table == current_table
                     && vm.wasm_table_get(current_table, entry.index).ok() == Some(entry.target)
-                    && vm.heap.weak_value(entry.target_weak) == Some(entry.target))
-                    .then_some((entry.function as usize, entry.hits))
+                    && vm.heap.weak_value(entry.target_weak) == Some(entry.target)
+                    && reference_target_matches(
+                        vm,
+                        entry.target,
+                        entry.program,
+                        entry.function,
+                        entry.env,
+                    ))
+                .then_some((entry.function as usize, entry.hits))
             })
             .collect::<Vec<_>>();
         targets.sort_unstable_by_key(|(_, hits)| std::cmp::Reverse(*hits));
@@ -1540,6 +1696,27 @@ impl CompiledProgram {
     #[cfg(test)]
     pub(super) fn reference_cache_hits(&self) -> u64 {
         self.reference_cache_hits.get()
+    }
+
+    #[cfg(test)]
+    pub(super) fn emscripten_memcpy_fast_path_hits(&self) -> u64 {
+        self.diagnostics
+            .as_ref()
+            .map_or(0, |stats| stats.emscripten_memcpy_fast_path_hits.get())
+    }
+
+    #[cfg(test)]
+    pub(super) fn emscripten_memcpy_raw_i32_hits(&self) -> u64 {
+        self.diagnostics
+            .as_ref()
+            .map_or(0, |stats| stats.emscripten_memcpy_raw_i32_hits.get())
+    }
+
+    #[cfg(test)]
+    pub(super) fn emscripten_memcpy_early_import_hits(&self) -> u64 {
+        self.diagnostics
+            .as_ref()
+            .map_or(0, |stats| stats.emscripten_memcpy_early_import_hits.get())
     }
 
     fn note_direct_reference_entry(&self, function: usize) {
@@ -1883,6 +2060,9 @@ struct Analysis<'a, H: Host> {
     /// `unreachable` is enabled only for a bounded, explicitly selected root
     /// experiment until its compile-time memory cost is measured.
     experimental_root_compilation: bool,
+    /// A root-only function may call out only while callouts are safe for its
+    /// current memory view. A VM callee can grow unguarded memory.
+    root_only: bool,
     /// Rejection reasons exist only for explicit diagnostic runs.
     compile_rejections: Option<&'a std::cell::RefCell<Vec<Option<String>>>>,
 }
@@ -2355,7 +2535,7 @@ impl<H: Host> Analysis<'_, H> {
             Op::CallKnown => {
                 let callee = u32::from(instruction.known_function_index());
                 if !callable.get(callee as usize).copied().unwrap_or(false)
-                    && !self.experimental_root_compilation
+                    && (!self.experimental_root_compilation || (self.root_only && !self.callouts))
                 {
                     return None;
                 }
@@ -2753,6 +2933,9 @@ fn dispatch_path(instructions: &[WideInstruction], plan: &Plan, start: usize) ->
 
 struct Emitter<'a, 'b, H: Host> {
     guarded: bool,
+    /// When enabled, branch-only i32 comparisons remain Cranelift booleans
+    /// instead of being extended to a Wasm i32 and tested again.
+    direct_compare_branches: bool,
     /// Per `Region`, its alias region in this function.
     regions: [ir::AliasRegion; Region::COUNT],
     globals: &'a [u32],
@@ -3038,6 +3221,34 @@ impl<H: Host> Emitter<'_, '_, H> {
                 }
             }
         }
+    }
+
+    /// The boolean form of an i32 comparison used only by a conditional
+    /// jump. Keeping this `icmp` result as a Cranelift flag lets the backend
+    /// branch on the comparison directly, without materializing Wasm's 0/1
+    /// value first.
+    fn i32_comparison_condition(
+        &mut self,
+        operator: I32BinaryOperator,
+        left: ir::Value,
+        right: ir::Value,
+    ) -> ir::Value {
+        use I32BinaryOperator as B;
+
+        let condition = match operator {
+            B::Equal => IntCC::Equal,
+            B::NotEqual => IntCC::NotEqual,
+            B::LessSigned => IntCC::SignedLessThan,
+            B::LessUnsigned => IntCC::UnsignedLessThan,
+            B::GreaterSigned => IntCC::SignedGreaterThan,
+            B::GreaterUnsigned => IntCC::UnsignedGreaterThan,
+            B::LessEqualSigned => IntCC::SignedLessThanOrEqual,
+            B::LessEqualUnsigned => IntCC::UnsignedLessThanOrEqual,
+            B::GreaterEqualSigned => IntCC::SignedGreaterThanOrEqual,
+            B::GreaterEqualUnsigned => IntCC::UnsignedGreaterThanOrEqual,
+            _ => unreachable!("only comparison opcodes branch on an i32 comparison"),
+        };
+        self.builder.ins().icmp(condition, left, right)
     }
 
     /// An integer unary operator at the operand's width.
@@ -3832,14 +4043,22 @@ impl<H: Host> Emitter<'_, '_, H> {
         if let Some(operator) = I32BinaryOperator::from_jump_op(op) {
             let left = self.read(a, Kind::I32);
             let right = self.read(b, Kind::I32);
-            let holds = self.integer_binary(widen_binary(operator), left, right);
+            let holds = if self.direct_compare_branches {
+                self.i32_comparison_condition(operator, left, right)
+            } else {
+                self.integer_binary(widen_binary(operator), left, right)
+            };
             self.branch(pc, holds, instruction.jump_target() as usize, pc + 1);
             return false;
         }
         if let Some(operator) = I32BinaryOperator::from_immediate_jump_op(op) {
             let left = self.read(a, Kind::I32);
             let right = self.builder.ins().iconst(types::I32, i64::from(b as i16));
-            let holds = self.integer_binary(widen_binary(operator), left, right);
+            let holds = if self.direct_compare_branches {
+                self.i32_comparison_condition(operator, left, right)
+            } else {
+                self.integer_binary(widen_binary(operator), left, right)
+            };
             self.branch(pc, holds, instruction.jump_target() as usize, pc + 1);
             return false;
         }
@@ -4236,6 +4455,7 @@ impl<'a, H: Host> Analysis<'a, H> {
         selectors.dedup();
         let mut emitter = Emitter {
             guarded,
+            direct_compare_branches: jit_direct_compare_branches_enabled(),
             regions,
             globals,
             analysis: self,
@@ -4821,7 +5041,8 @@ impl<H: Host> Vm<H> {
         if matches!(
             tier.as_ref(),
             Some(super::program_store::JsTierState::Unsupported)
-        ) {
+        ) && !self.programs.js_jit_diagnostics_enabled()
+        {
             return None;
         }
         if tier.is_none() && !super::js_compiled::function_candidate(function, program) {
@@ -4841,6 +5062,10 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
+        if self.programs.js_jit_diagnostics_enabled() {
+            self.programs
+                .record_js_jit_entry(program_id, function_id, numeric);
+        }
 
         let compiled = match tier {
             Some(super::program_store::JsTierState::Compiled(compiled)) => {
@@ -4850,7 +5075,9 @@ impl<H: Host> Vm<H> {
                 compiled
             }
             Some(super::program_store::JsTierState::Unsupported) => return None,
-            Some(super::program_store::JsTierState::Hot { .. }) | None => {
+            Some(super::program_store::JsTierState::Hot { .. })
+            | Some(super::program_store::JsTierState::PromotionPending)
+            | None => {
                 if !self
                     .programs
                     .note_js_function_entry(program_id, function_id, numeric)
@@ -4859,11 +5086,33 @@ impl<H: Host> Vm<H> {
                     return None;
                 }
                 let residual = self.programs.get(program_id)?;
+                let compile_started = self
+                    .programs
+                    .js_jit_diagnostics_enabled()
+                    .then(std::time::Instant::now);
                 let compiled = super::js_compiled::compile(&residual, function_id)
                     .and_then(CompiledJsFunction::from_artifact)
                     .map(Rc::new);
-                self.programs
+                let installed = self
+                    .programs
                     .install_js_tier(program_id, function_id, compiled.clone());
+                if let Some(compile_started) = compile_started {
+                    let code_bytes = if installed {
+                        compiled.as_ref().map_or(0, |compiled| compiled.mapped_bytes())
+                    } else {
+                        0
+                    };
+                    self.programs.record_js_jit_compile(
+                        program_id,
+                        function_id,
+                        u64::try_from(compile_started.elapsed().as_nanos()).unwrap_or(u64::MAX),
+                        code_bytes,
+                        installed,
+                    );
+                }
+                if !installed {
+                    return None;
+                }
                 compiled?
             }
         };
@@ -4872,6 +5121,10 @@ impl<H: Host> Vm<H> {
             return None;
         }
 
+        if self.programs.js_jit_diagnostics_enabled() {
+            self.programs
+                .record_js_jit_native_entry(program_id, function_id);
+        }
         match compiled.call(&arguments) {
             CompiledJsResult::Number(value) => {
                 let last_pc = function.code.len().checked_sub(1)?;
@@ -4917,15 +5170,58 @@ impl<H: Host> Vm<H> {
         diagnostics_enabled: bool,
         root: Option<usize>,
     ) -> Option<CompiledProgram> {
+        self.compile_program_with_diagnostics_and_root_mode(
+            program,
+            env,
+            diagnostics_enabled,
+            root,
+            false,
+        )
+    }
+
+    /// Compile one explicitly selected Wasm function without its static
+    /// `CallKnown` closure. Unselected callees use the existing VM callout
+    /// path. This is an opt-in diagnostic tier; normal root compilation keeps
+    /// its current closure behavior.
+    fn compile_program_with_diagnostics_and_root_mode(
+        &self,
+        program: ProgramId,
+        env: Value,
+        diagnostics_enabled: bool,
+        root: Option<usize>,
+        root_only: bool,
+    ) -> Option<CompiledProgram> {
         let code = self.programs.get(program)?;
         if code.kind != crate::bytecode::ProgramKind::Wasm {
+            return None;
+        }
+        if root_only && root.is_none() {
             return None;
         }
         let compile_started = diagnostics_enabled.then(std::time::Instant::now);
         let compile_rejections =
             diagnostics_enabled.then(|| std::cell::RefCell::new(vec![None; code.functions.len()]));
         let count = code.functions.len();
-        let allowed = if let Some(root) = root {
+        let allowed = if let Some(root) = root.filter(|_| root_only) {
+            let mut selected = vec![false; count];
+            let Some(function) = code.functions.get(root) else {
+                if diagnostics_enabled {
+                    eprintln!("QUENCH_WASM_JIT_ROOT_REJECTION root={root} invalid-function={root}");
+                }
+                return None;
+            };
+            if function.code.len() > MAX_JIT_ROOT_BYTECODES_PER_FUNCTION {
+                if diagnostics_enabled {
+                    eprintln!(
+                        "QUENCH_WASM_JIT_ROOT_REJECTION root={root} function={root} bytecodes={} limit={MAX_JIT_ROOT_BYTECODES_PER_FUNCTION}",
+                        function.code.len()
+                    );
+                }
+                return None;
+            }
+            selected[root] = true;
+            selected
+        } else if let Some(root) = root {
             let mut selected = vec![false; count];
             let mut pending = vec![root];
             while let Some(index) = pending.pop() {
@@ -5030,6 +5326,7 @@ impl<H: Host> Vm<H> {
             env,
             callouts: true,
             experimental_root_compilation: root.is_some(),
+            root_only,
             compile_rejections: compile_rejections.as_ref(),
         };
         // The callable set is the greatest fixpoint: assume every function
@@ -5086,7 +5383,7 @@ impl<H: Host> Vm<H> {
                 displacement_base(guarded_memory(self, binding)?.0)
             })
             .flatten();
-        let opt_level = jit_root_opt_level(root).ok()?;
+        let opt_level = jit_root_opt_level(root, root_only).ok()?;
         if diagnostics_enabled {
             eprintln!("QUENCH_WASM_JIT_OPT_LEVEL {opt_level}");
         }
@@ -5263,6 +5560,9 @@ impl<H: Host> Vm<H> {
             compiled_import_callouts: std::cell::Cell::new(0),
             compiled_known_callouts: std::cell::Cell::new(0),
             compiled_reference_callouts: std::cell::Cell::new(0),
+            emscripten_memcpy_fast_path_hits: std::cell::Cell::new(0),
+            emscripten_memcpy_raw_i32_hits: std::cell::Cell::new(0),
+            emscripten_memcpy_early_import_hits: std::cell::Cell::new(0),
             reference_call_sites,
         });
         Some(CompiledProgram {
@@ -5314,6 +5614,23 @@ impl<H: Host> Vm<H> {
     ) -> bool {
         let Some(compiled) = self
             .compile_program_with_diagnostics_and_root(program, env, true, Some(root))
+            .map(Rc::new)
+        else {
+            return false;
+        };
+        self.programs.set_compiled(program, Some(compiled));
+        true
+    }
+
+    #[cfg(test)]
+    pub(super) fn install_compiled_root_only_for_test(
+        &mut self,
+        program: ProgramId,
+        env: Value,
+        root: usize,
+    ) -> bool {
+        let Some(compiled) = self
+            .compile_program_with_diagnostics_and_root_mode(program, env, true, Some(root), true)
             .map(Rc::new)
         else {
             return false;
@@ -5407,10 +5724,58 @@ impl<H: Host> Vm<H> {
         if self.execution_mode != ExecutionMode::Compiled {
             return None;
         }
+        let wasm_root_only = jit_wasm_root_only_enabled()
+            && self
+                .programs
+                .residual(program)
+                .is_some_and(|code| code.kind == crate::bytecode::ProgramKind::Wasm);
+        let wasm_root_first = jit_wasm_root_first_enabled()
+            && self
+                .programs
+                .residual(program)
+                .is_some_and(|code| code.kind == crate::bytecode::ProgramKind::Wasm);
         let baseline = match self.programs.compiled(program) {
             Some(compiled) => compiled,
             None => {
-                if jit_wasm_selective_enabled()
+                if wasm_root_only || wasm_root_first {
+                    // This explicit diagnostic mode compiles only the
+                    // function named by QUENCH_WASM_JIT_ROOT. Root-only mode
+                    // keeps its callees in the VM; root-first mode allows a
+                    // hot callee to enter the existing bounded tier below.
+                    let diagnose = jit_diagnostics_enabled();
+                    let started = diagnose.then(std::time::Instant::now);
+                    let root = jit_root_override().ok().flatten();
+                    let compiled = root
+                        .and_then(|root| {
+                            self.compile_program_with_diagnostics_and_root_mode(
+                                program,
+                                env,
+                                diagnose,
+                                Some(root),
+                                true,
+                            )
+                        })
+                        .map(Rc::new);
+                    if diagnose && compiled.is_none() {
+                        let mode_field = if wasm_root_first {
+                            "\"root_first\":true"
+                        } else {
+                            "\"root_only\":true"
+                        };
+                        eprintln!(
+                            "QUENCH_WASM_JIT_STATS {{\"program\":{},{},\"compile_failed\":true,\"root\":{},\"compile_ns\":{}}}",
+                            program.raw(),
+                            mode_field,
+                            root.map_or_else(|| "null".to_owned(), |root| root.to_string()),
+                            started
+                                .expect("diagnostic timer started")
+                                .elapsed()
+                                .as_nanos(),
+                        );
+                    }
+                    self.programs.set_compiled(program, compiled.clone());
+                    compiled
+                } else if jit_wasm_selective_enabled()
                     && self
                         .programs
                         .residual(program)
@@ -5449,10 +5814,16 @@ impl<H: Host> Vm<H> {
                 }
             }
         };
+        // Root-first mode earns further tiering only after its selected root
+        // produced an artifact. If admission fails, leave the workload in the
+        // interpreter instead of silently becoming ordinary selective JIT.
+        let root_first_ready = !wasm_root_first || baseline.is_some();
         let mut compiled = baseline
             .filter(|compiled| compiled.has_function(id as usize))
             .or_else(|| self.programs.wasm_tier_containing(program, id));
         if compiled.is_none()
+            && !wasm_root_only
+            && root_first_ready
             && self.programs.residual(program).is_some_and(|code| {
                 code.kind == crate::bytecode::ProgramKind::Wasm
                     && code.functions.get(id as usize).is_some_and(|function| {
@@ -5517,23 +5888,36 @@ impl<H: Host> Vm<H> {
             let mut import_callouts = 0u64;
             let mut known_callouts = 0u64;
             let mut reference_callouts = 0u64;
-            let (import_callouts_ptr, known_callouts_ptr, reference_callouts_ptr): (
-                *mut u64,
-                *mut u64,
-                *mut u64,
-            ) = if compiled.diagnostics.is_some() {
-                (
-                    &mut import_callouts as *mut u64,
-                    &mut known_callouts as *mut u64,
-                    &mut reference_callouts as *mut u64,
-                )
-            } else {
-                (
-                    std::ptr::null_mut(),
-                    std::ptr::null_mut(),
-                    std::ptr::null_mut(),
-                )
-            };
+            let mut emscripten_memcpy_fast_path_hits = 0u64;
+            let mut emscripten_memcpy_raw_i32_hits = 0u64;
+            let mut emscripten_memcpy_early_import_hits = 0u64;
+            let (
+                import_callouts_ptr,
+                known_callouts_ptr,
+                reference_callouts_ptr,
+                emscripten_memcpy_fast_path_hits_ptr,
+                emscripten_memcpy_raw_i32_hits_ptr,
+                emscripten_memcpy_early_import_hits_ptr,
+            ): (*mut u64, *mut u64, *mut u64, *mut u64, *mut u64, *mut u64) =
+                if compiled.diagnostics.is_some() {
+                    (
+                        &mut import_callouts as *mut u64,
+                        &mut known_callouts as *mut u64,
+                        &mut reference_callouts as *mut u64,
+                        &mut emscripten_memcpy_fast_path_hits as *mut u64,
+                        &mut emscripten_memcpy_raw_i32_hits as *mut u64,
+                        &mut emscripten_memcpy_early_import_hits as *mut u64,
+                    )
+                } else {
+                    (
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                    )
+                };
             let poll = self.execution_interrupt.poll_page();
             let mut context = CallContext {
                 stack_limit: stack_pointer.saturating_sub(COMPILED_STACK_BUDGET),
@@ -5572,6 +5956,9 @@ impl<H: Host> Vm<H> {
                 poll_end: poll.map_or(0, |(start, bytes)| start + bytes),
                 reference_epoch: self.wasm_reference_epoch.as_ptr(),
                 reference_fast_caches: compiled.reference_fast_caches_ptr(),
+                emscripten_memcpy_fast_path_hits: emscripten_memcpy_fast_path_hits_ptr,
+                emscripten_memcpy_raw_i32_hits: emscripten_memcpy_raw_i32_hits_ptr,
+                emscripten_memcpy_early_import_hits: emscripten_memcpy_early_import_hits_ptr,
             };
             let mut out = 0u64;
             compiled.note_native_entry(id as usize);
@@ -5630,6 +6017,24 @@ impl<H: Host> Vm<H> {
                         .get()
                         .saturating_add(reference_callouts),
                 );
+                stats.emscripten_memcpy_fast_path_hits.set(
+                    stats
+                        .emscripten_memcpy_fast_path_hits
+                        .get()
+                        .saturating_add(emscripten_memcpy_fast_path_hits),
+                );
+                stats.emscripten_memcpy_raw_i32_hits.set(
+                    stats
+                        .emscripten_memcpy_raw_i32_hits
+                        .get()
+                        .saturating_add(emscripten_memcpy_raw_i32_hits),
+                );
+                stats.emscripten_memcpy_early_import_hits.set(
+                    stats
+                        .emscripten_memcpy_early_import_hits
+                        .get()
+                        .saturating_add(emscripten_memcpy_early_import_hits),
+                );
             }
             if i64::from(status) == TERMINATED_STATUS {
                 return Some(Err(JsError::execution_terminated()));
@@ -5663,6 +6068,137 @@ impl<H: Host> Vm<H> {
 }
 
 impl<H: Host> Vm<H> {
+    /// Try the exact raw-i32 Emscripten copy before the general import
+    /// dispatcher. The import-callout's outer panic/context/memory handling
+    /// still runs on both the fast path and every fallback.
+    ///
+    /// # Safety
+    /// `args` points to the compiled caller's three Wasm ABI words when the
+    /// module and host signatures checked below are exactly (i32, i32, i32).
+    unsafe fn try_early_compiled_emscripten_memcpy_import(
+        &mut self,
+        program: ProgramId,
+        instance_env: Value,
+        function: u64,
+        current_memory: Value,
+        raw_i32_hits: *mut u64,
+        early_import_hits: *mut u64,
+        args: *const u64,
+    ) -> bool {
+        if !super::wasm_js::emscripten_memcpy_raw_i32_enabled()
+            || !super::wasm_js::emscripten_memcpy_early_import_enabled()
+        {
+            return false;
+        }
+        let Ok(function) = u32::try_from(function) else {
+            return false;
+        };
+        if self.programs.get(program).is_none() {
+            return false;
+        }
+        let Some(signatures) = self.programs.wasm_signatures(program) else {
+            return false;
+        };
+        let import_count = signatures.imports().len();
+        let function_index = function as usize;
+        if function_index >= import_count
+            || signatures.defined_index(function).is_some()
+            || !signatures.get(function_index).is_some_and(|signature| {
+                signature.params.as_slice()
+                    == [
+                        crate::WasmType::I32,
+                        crate::WasmType::I32,
+                        crate::WasmType::I32,
+                    ]
+                    && signature.results.is_empty()
+            })
+            || !signatures
+                .imports()
+                .get(function_index)
+                .is_some_and(|import| import.name.name == "_emscripten_memcpy_js")
+        {
+            return false;
+        }
+
+        // Imports are the final slots in the per-instance environment. Match
+        // wasm_function_reference's mapping without switching active program
+        // or constructing a wrapper Value.
+        let Some(Cell::Environment { slots, .. }) = self.heap.get(instance_env) else {
+            return false;
+        };
+        let Some(import_slot) = slots
+            .len()
+            .checked_sub(import_count)
+            .and_then(|base| base.checked_add(function_index))
+        else {
+            return false;
+        };
+        let Some(wrapper) = self.heap.environment_slot(instance_env, import_slot) else {
+            return false;
+        };
+        let Some(Cell::Function {
+            kind: FunctionKind::Native(Native::WasmHost),
+            env: wrapper_env,
+            ..
+        }) = self.heap.get(wrapper)
+        else {
+            return false;
+        };
+        let wrapper_env = *wrapper_env;
+        let Some(Cell::WasmHostFunction {
+            target: crate::heap::WasmHostTarget::JsEmscriptenMemcpy(target),
+            signature,
+        }) = self.heap.get(wrapper_env)
+        else {
+            return false;
+        };
+        if signature.params.as_slice()
+            != [
+                crate::WasmType::I32,
+                crate::WasmType::I32,
+                crate::WasmType::I32,
+            ]
+            || !signature.results.is_empty()
+        {
+            return false;
+        }
+        let view_environment = target.view_environment;
+        let view_slot = target.view_slot;
+
+        // Match the ordinary opaque import's stack and cancellation gate. If
+        // either gate fails, defer to call_import so it creates the error with
+        // the full NativeActivation and realm state installed.
+        let Ok(_stack) = self.enter_stack() else {
+            return false;
+        };
+        if self.check_execution_interrupt().is_err() {
+            return false;
+        }
+        // SAFETY: both Wasm and host signatures above prove exactly three i32
+        // words are available; their low 32 bits are the signed ABI values.
+        let indices = unsafe {
+            [
+                *args.add(0) as u32 as i32,
+                *args.add(1) as u32 as i32,
+                *args.add(2) as u32 as i32,
+            ]
+        };
+        if !self.try_emscripten_memcpy_same_memory_raw_capture(
+            view_environment,
+            view_slot,
+            current_memory,
+            indices,
+            raw_i32_hits,
+        ) {
+            return false;
+        }
+        // This call is invisible to guest code after the complete helper and
+        // memory guards pass; retain optional profile-aggregate accounting.
+        self.profile.call_target(0, 3);
+        note_compiled_callout(early_import_hits);
+        true
+    }
+
     /// Call imported `function` of `program` in instance `env` with the Wasm
     /// bits at `args`, storing its result's bits at `out`.
     ///
@@ -5673,6 +6209,9 @@ impl<H: Host> Vm<H> {
         program: ProgramId,
         env: Value,
         function: u32,
+        current_memory: Value,
+        memcpy_fast_path_hits: *mut u64,
+        memcpy_raw_i32_hits: *mut u64,
         args: *const u64,
         out: *mut u64,
     ) -> Result<(), JsError> {
@@ -5680,7 +6219,7 @@ impl<H: Host> Vm<H> {
             .programs
             .get(program)
             .ok_or_else(|| JsError::validation("missing compiled Wasm program".into()))?;
-        let (params, result_type) = {
+        let (params, result_type, module_signature_is_raw_i32) = {
             let signature = self
                 .programs
                 .wasm_signatures(program)
@@ -5693,20 +6232,19 @@ impl<H: Host> Vm<H> {
                     .copied()
                     .collect::<smallvec::SmallVec<[crate::WasmType; 8]>>(),
                 signature.results.first().copied(),
+                signature.params.as_slice()
+                    == [
+                        crate::WasmType::I32,
+                        crate::WasmType::I32,
+                        crate::WasmType::I32,
+                    ]
+                    && signature.results.is_empty(),
             )
         };
         let active_program = self.replace_active_program(program);
         let callee = self.wasm_function_reference(&code, function, env);
         self.set_active_program(active_program);
         let callee = callee?;
-        // Allocation never collects, so the encoded arguments stay live until
-        // the call roots them.
-        let mut values: smallvec::SmallVec<[Value; 8]> = smallvec::SmallVec::new();
-        for (offset, ty) in params.iter().enumerate() {
-            // SAFETY: the caller passes a word per parameter.
-            let bits = unsafe { *args.add(offset) };
-            values.push(self.encode_wasm_value(crate::WasmValue::from_bits(*ty, bits)));
-        }
         let receiver = self
             .programs
             .constant(program, VOID_RESULT_CONSTANT)
@@ -5715,67 +6253,152 @@ impl<H: Host> Vm<H> {
             .programs
             .wasm_signatures(program)
             .and_then(|signatures| signatures.defined_index(function));
-        if let Some(defined) = defined {
-            let active_program = self.replace_active_program(program);
-            let compiled = self.run_compiled(program, env, defined, &values);
-            self.set_active_program(active_program);
-            if let Some(compiled) = compiled {
-                let result = compiled?;
-                let bits = if let Some(ty) = result_type {
-                    match self.decode_wasm_value(result, ty)?.bits() {
-                        Some(crate::wasm::ScalarBits::Bits32(bits)) => u64::from(bits),
-                        Some(crate::wasm::ScalarBits::Bits64(bits)) => bits,
-                        _ => {
-                            return Err(JsError::validation(
-                                "non-scalar Wasm import result".into(),
-                            ));
-                        }
+        let imported_name_is_emscripten_memcpy = self
+            .programs
+            .wasm_signatures(program)
+            .and_then(|signatures| signatures.imports().get(function as usize))
+            .is_some_and(|import| import.name.name == "_emscripten_memcpy_js");
+        let raw_i32_import = if defined.is_none()
+            && module_signature_is_raw_i32
+            && imported_name_is_emscripten_memcpy
+            && super::wasm_js::emscripten_memcpy_raw_i32_enabled()
+        {
+            match self.heap.get(callee) {
+                Some(Cell::Function {
+                    kind: FunctionKind::Native(Native::WasmHost),
+                    env,
+                    ..
+                }) => match self.heap.get(*env) {
+                    Some(Cell::WasmHostFunction {
+                        target: crate::heap::WasmHostTarget::JsEmscriptenMemcpy(target),
+                        signature,
+                    }) if signature.params.as_slice()
+                        == [
+                            crate::WasmType::I32,
+                            crate::WasmType::I32,
+                            crate::WasmType::I32,
+                        ]
+                        && signature.results.is_empty() =>
+                    {
+                        Some((
+                            target.function,
+                            (target.view_environment, target.view_slot),
+                            signature.clone(),
+                        ))
                     }
-                } else {
-                    0
-                };
-                // SAFETY: the caller passes a result word.
-                unsafe { *out = bits };
-                return Ok(());
-            }
-        }
-        let js_import = match self.heap.get(callee) {
-            Some(Cell::Function {
-                kind: FunctionKind::Native(Native::WasmHost),
-                env,
-                ..
-            }) => match self.heap.get(*env) {
-                Some(Cell::WasmHostFunction {
-                    target,
-                    signature,
-                }) if values.len() == signature.params.len() => match target {
-                    crate::heap::WasmHostTarget::Js(target) => {
-                        Some((*target, None, signature.clone()))
-                    }
-                    crate::heap::WasmHostTarget::JsEmscriptenMemcpy(target) => Some((
-                        target.function,
-                        Some((target.view_environment, target.view_slot)),
-                        signature.clone(),
-                    )),
-                    crate::heap::WasmHostTarget::Host(_) => None,
+                    _ => None,
                 },
                 _ => None,
-            },
-            _ => None,
+            }
+        } else {
+            None
         };
-        let result = if let Some((target, memcpy_capture, signature)) = js_import {
-            self.call_compiled_js_wasm_import(
+        let raw_result = if let Some((target, memcpy_capture, signature)) = raw_i32_import {
+            // SAFETY: the module and host signatures above prove there are
+            // exactly three i32 parameters; raw Wasm ABI words carry the
+            // signed i32 bit patterns in their low 32 bits.
+            let raw_indices = unsafe {
+                [
+                    *args.add(0) as u32 as i32,
+                    *args.add(1) as u32 as i32,
+                    *args.add(2) as u32 as i32,
+                ]
+            };
+            Some(self.call_compiled_js_wasm_import(
                 program,
                 &code,
                 callee,
                 target,
-                memcpy_capture,
+                Some(memcpy_capture),
                 &signature,
                 receiver,
-                &values,
-            )?
+                &[],
+                Some(raw_indices),
+                current_memory,
+                memcpy_fast_path_hits,
+                memcpy_raw_i32_hits,
+            )?)
         } else {
-            self.call_value(&code, callee, receiver, &values)?
+            None
+        };
+        let result = if let Some(result) = raw_result {
+            result
+        } else {
+            // Allocation never collects, so the encoded arguments stay live
+            // until the ordinary callout roots them.
+            let mut values: smallvec::SmallVec<[Value; 8]> = smallvec::SmallVec::new();
+            for (offset, ty) in params.iter().enumerate() {
+                // SAFETY: the caller passes a word per parameter.
+                let bits = unsafe { *args.add(offset) };
+                values.push(self.encode_wasm_value(crate::WasmValue::from_bits(*ty, bits)));
+            }
+            if let Some(defined) = defined {
+                let active_program = self.replace_active_program(program);
+                let compiled = self.run_compiled(program, env, defined, &values);
+                self.set_active_program(active_program);
+                if let Some(compiled) = compiled {
+                    let result = compiled?;
+                    let bits = if let Some(ty) = result_type {
+                        match self.decode_wasm_value(result, ty)?.bits() {
+                            Some(crate::wasm::ScalarBits::Bits32(bits)) => u64::from(bits),
+                            Some(crate::wasm::ScalarBits::Bits64(bits)) => bits,
+                            _ => {
+                                return Err(JsError::validation(
+                                    "non-scalar Wasm import result".into(),
+                                ));
+                            }
+                        }
+                    } else {
+                        0
+                    };
+                    // SAFETY: the caller passes a result word.
+                    unsafe { *out = bits };
+                    return Ok(());
+                }
+            }
+            let js_import = match self.heap.get(callee) {
+                Some(Cell::Function {
+                    kind: FunctionKind::Native(Native::WasmHost),
+                    env,
+                    ..
+                }) => match self.heap.get(*env) {
+                    Some(Cell::WasmHostFunction { target, signature })
+                        if values.len() == signature.params.len() =>
+                    {
+                        match target {
+                            crate::heap::WasmHostTarget::Js(target) => {
+                                Some((*target, None, signature.clone()))
+                            }
+                            crate::heap::WasmHostTarget::JsEmscriptenMemcpy(target) => Some((
+                                target.function,
+                                Some((target.view_environment, target.view_slot)),
+                                signature.clone(),
+                            )),
+                            crate::heap::WasmHostTarget::Host(_) => None,
+                        }
+                    }
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some((target, memcpy_capture, signature)) = js_import {
+                self.call_compiled_js_wasm_import(
+                    program,
+                    &code,
+                    callee,
+                    target,
+                    memcpy_capture,
+                    &signature,
+                    receiver,
+                    &values,
+                    None,
+                    current_memory,
+                    memcpy_fast_path_hits,
+                    memcpy_raw_i32_hits,
+                )?
+            } else {
+                self.call_value(&code, callee, receiver, &values)?
+            }
         };
         if let Some(ty) = result_type {
             let bits = match self.decode_wasm_value(result, ty)?.bits() {
@@ -5799,6 +6422,87 @@ const VOID_RESULT_CONSTANT: usize = 1;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn root_only_jit_forces_cranelift_opt_level_none() {
+        assert_eq!(jit_root_opt_level(Some(0), true), Ok("none"));
+    }
+
+    #[test]
+    fn direct_compare_branches_match_signed_unsigned_extrema_and_fallthrough() {
+        fn comparison_if(
+            comparison: wasmparser::Operator<'static>,
+            immediate_rhs: Option<i32>,
+        ) -> Vec<wasmparser::Operator<'static>> {
+            let mut operators = vec![wasmparser::Operator::LocalGet { local_index: 0 }];
+            if let Some(rhs) = immediate_rhs {
+                operators.push(wasmparser::Operator::I32Const { value: rhs });
+            } else {
+                operators.push(wasmparser::Operator::LocalGet { local_index: 1 });
+            }
+            operators.extend([
+                comparison,
+                wasmparser::Operator::If {
+                    blockty: wasmparser::BlockType::Type(wasmparser::ValType::I32),
+                },
+                wasmparser::Operator::I32Const { value: 1 },
+                wasmparser::Operator::Else,
+                wasmparser::Operator::I32Const { value: 0 },
+                wasmparser::Operator::End,
+                wasmparser::Operator::End,
+            ]);
+            operators
+        }
+
+        let bodies = [
+            comparison_if(wasmparser::Operator::I32LtS, None),
+            comparison_if(wasmparser::Operator::I32LtU, None),
+            comparison_if(wasmparser::Operator::I32LtS, Some(0)),
+            comparison_if(wasmparser::Operator::I32LtU, Some(1)),
+        ]
+        .into_iter()
+        .map(|operators| (2, 0, true, operators.into_iter().map(Ok)));
+        let module = crate::Engine::lower_wasm_i32_module("direct-compare-branches", 0, bodies)
+            .expect("comparison branch fixtures lower");
+
+        // The first two functions exercise register comparisons. The latter
+        // two force immediate comparisons, including unsigned comparison
+        // against a positive signed-field constant.
+        let cases = [
+            (0, i32::MIN, i32::MAX, 1),
+            (0, i32::MAX, i32::MIN, 0),
+            (0, 0, 0, 0),
+            (1, 0, -1, 1),
+            (1, -1, 0, 0),
+            (1, i32::MIN, i32::MAX, 0),
+            (1, i32::MAX, i32::MIN, 1),
+            (2, i32::MIN, 0, 1),
+            (2, 0, 0, 0),
+            (2, i32::MAX, 0, 0),
+            (3, 0, 0, 1),
+            (3, 1, 0, 0),
+            (3, -1, 0, 0),
+        ];
+
+        for direct in [false, true] {
+            let mut vm = Vm::new(crate::SystemHost);
+            vm.set_execution_mode(ExecutionMode::Compiled);
+            for (function_index, left, right, expected) in cases {
+                let function = module
+                    .select_function(function_index)
+                    .expect("comparison fixture function exists");
+                let actual = with_jit_direct_compare_branches_for_test(direct, || {
+                    vm.execute_wasm_i32(&function, &[left, right])
+                        .expect("comparison branch executes")
+                });
+                assert_eq!(
+                    actual,
+                    Some(expected),
+                    "direct={direct}, function={function_index}, lhs={left}, rhs={right}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn sparse_analysis_states_preserve_register_joins() {
