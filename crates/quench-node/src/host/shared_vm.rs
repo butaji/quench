@@ -71,6 +71,9 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "processMetricsResources" (0) => crate::modules::process_metrics_shared_vm::resources,
         #[cfg(target_os = "linux")]
         method "processMetricsRss" (0) => crate::modules::process_metrics_shared_vm::rss,
+        method "processMetricsMemoryUsage" (1) => crate::modules::process_metrics_shared_vm::memory_usage,
+        #[cfg(unix)]
+        method "processExecve" (3) => crate::modules::process_execve_shared_vm::execve,
         method "processExitCodeGet" (0) => crate::modules::process_shared_vm::exit_code_get,
         method "processExitCodeSet" (1) => crate::modules::process_shared_vm::exit_code_set,
         method "processDefaultFatalException" (2) => crate::modules::process_fatal_exception_route::default_handler,
@@ -185,6 +188,9 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "processIpcListenerReference" (1) => crate::modules::child_process_ipc_shared_vm::listener_reference,
         method "require" (1) => commonjs::require,
         method "resolve" (2) => commonjs::resolve,
+        method "resolvePaths" (1) => commonjs::resolve_paths,
+        method "ipcSerdesSerialize" (2) => crate::modules::ipc_serdes_shared_vm::serialize_native,
+        method "ipcSerdesDeserialize" (1) => crate::modules::ipc_serdes_shared_vm::deserialize_native,
         method "childProcessSyncOptions" (2) => crate::modules::child_process_options_shared_vm::sync_options,
         method "childProcessReference" (2) => crate::modules::child_process_shared_vm::reference_child,
         method "childProcessHandleReference" (0) => crate::modules::child_process_shared_vm::reference_handle,
@@ -506,8 +512,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "messagingReceive" (0) => crate::modules::worker_shared_vm::receive,
         method "messagingDrain" (0) => crate::modules::worker_shared_vm::drain,
         method "workerStart" (0) => crate::modules::worker_shared_vm::worker_start,
-        method "workerRef" (0) => crate::modules::worker_shared_vm::worker_ref,
-        method "workerTerminate" (0) => crate::modules::worker_shared_vm::worker_terminate,
+        method "messagingWorkerRef" (0) => crate::modules::worker_shared_vm::worker_ref,
+        method "messagingWorkerTerminate" (0) => crate::modules::worker_shared_vm::worker_terminate,
         method "workerExited" (0) => crate::modules::worker_shared_vm::worker_exited,
         method "workerCaptureError" (0) => crate::modules::worker_shared_vm::capture_error,
         method "eventsAddAbortListener" (2) => crate::modules::events_abort_shared_vm::add_abort_listener,
@@ -708,6 +714,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "fsWriteFilePublic" (3) => crate::modules::fs_shared_vm::write_public::write,
         method "fsAppendFilePublic" (3) => crate::modules::fs_shared_vm::write_public::append,
         method "fsVfsReadlinkPromise" (3) => crate::modules::fs_shared_vm::promise_public::readlink_continuation,
+        method "fsPromisesReadlinkInitialize" (0) => crate::modules::fs_shared_vm::promise_public::initialize,
         method "fsVfsExistsComplete" (1) => crate::modules::fs_shared_vm::callback_public::exists_complete,
         method "fsVfsCallback" (0) => crate::modules::fs_shared_vm::callback_public::dispatch,
         method "fsVfsMetadata" (0) => crate::modules::fs_shared_vm::metadata_public::dispatch,
@@ -988,16 +995,36 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
     ]
 }
 
+/// The host function registered as `name`. Hosts resolve operations per request (an
+/// incoming message's stream methods, an accepted socket's handle), so the names are
+/// indexed once rather than searched among every binding. Each name registers exactly one
+/// function (`operation_names_are_unique`).
 pub(crate) fn operation(name: &str) -> HostFunctionId {
-    let index = bindings()
-        .iter()
-        .position(|binding| binding.name == name)
-        .expect("registered Node operation");
-    HostFunctionId(u32::try_from(index).expect("Node binding index fits u32"))
+    static INDEX: std::sync::OnceLock<std::collections::HashMap<&'static str, u32>> =
+        std::sync::OnceLock::new();
+    let index = INDEX.get_or_init(|| {
+        let mut index = std::collections::HashMap::new();
+        for (position, binding) in bindings().iter().enumerate() {
+            // A repeated name resolves to its first registration.
+            index
+                .entry(binding.name)
+                .or_insert(u32::try_from(position).expect("Node binding index fits u32"));
+        }
+        index
+    });
+    HostFunctionId(*index.get(name).expect("registered Node operation"))
 }
 
 impl quench_runtime::Host for NodeHost {
-    const OBSERVE_PROMISE_LIFECYCLE: bool = true;
+    fn observes_promise_lifecycle(&self) -> bool {
+        self.shared_state.borrow().async_hooks.tracks_promises()
+    }
+
+    /// The code a long run touched once (start-up, set-up, one-time paths) leaves the
+    /// resident set at each full collection; what still runs comes back from the page cache.
+    fn after_full_collection(&mut self) {
+        crate::host::resident_pages::release_read_only_pages();
+    }
 
     fn proper_tail_calls(&self) -> bool {
         false
@@ -1488,4 +1515,15 @@ fn install_gc_global(context: &mut NativeContext<'_, NodeHost>) -> Result<(), Ro
         context.define_data_property_rooted(global, key, gc, true, true, false)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn operation_names_are_unique() {
+        let mut names = std::collections::HashSet::new();
+        for binding in super::bindings() {
+            assert!(names.insert(binding.name), "Node operation {} is registered twice", binding.name);
+        }
+    }
 }

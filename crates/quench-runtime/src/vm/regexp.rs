@@ -479,9 +479,7 @@ impl<H: Host> Vm<H> {
                             &flags,
                         );
                     }
-                    let atom = vm.intern_atom("flags");
-                    let flags = vm.get_property(p, receiver, atom)?;
-                    let flags = vm.coerce_js_string(p, flags)?;
+                    let flags = vm.regexp_flags_text(p, receiver)?;
                     let global = flags.host_string().contains('g');
                     let unicode =
                         flags.host_string().contains('u') || flags.host_string().contains('v');
@@ -627,35 +625,7 @@ impl<H: Host> Vm<H> {
         if !global && flags.contains('y') {
             return None;
         }
-        let prototype = self
-            .realm
-            .intrinsics
-            .regexp_intrinsics
-            .get(&self.realm.globals)?
-            .prototype;
-        let receiver_data = self.object_data(receiver)?;
-        if receiver_data.proto() != prototype {
-            return None;
-        }
-        let receiver_shape = receiver_data.shape();
-        let prototype_data = self.object_data(prototype)?;
-        let prototype_shape = prototype_data.shape();
-        let exec_slot = match self.regexp_builtin_layout {
-            Some(layout)
-                if layout.receiver == receiver_shape && layout.prototype == prototype_shape =>
-            {
-                layout.exec_slot as usize
-            }
-            _ => {
-                let exec_slot = self.verify_regexp_builtin_layout(receiver, prototype)?;
-                self.regexp_builtin_layout = Some(RegExpBuiltinLayout {
-                    receiver: receiver_shape,
-                    prototype: prototype_shape,
-                    exec_slot: exec_slot as u32,
-                });
-                exec_slot
-            }
-        };
+        let (prototype, exec_slot) = self.regexp_builtin_layout_proof(receiver)?;
         let exec = self
             .heap
             .property_get(self.object_data(prototype)?, exec_slot)?;
@@ -743,6 +713,63 @@ impl<H: Host> Vm<H> {
             return None;
         }
         self.object_property_slot(prototype, key).map(|(_, slot)| slot)
+    }
+
+    /// The shape-determined half of `regexp_replace_fast_matcher`'s proof for the RegExp
+    /// `receiver`: its prototype is `RegExp.prototype`, neither shadows `exec`, `flags` or a
+    /// flag accessor, and the prototype's accessors are the builtins. Returns the prototype
+    /// and the slot of its `exec`, whose value the caller still reads.
+    fn regexp_builtin_layout_proof(&mut self, receiver: Value) -> Option<(Value, usize)> {
+        let prototype = self
+            .realm
+            .intrinsics
+            .regexp_intrinsics
+            .get(&self.realm.globals)?
+            .prototype;
+        let receiver_data = self.object_data(receiver)?;
+        if receiver_data.proto() != prototype {
+            return None;
+        }
+        let receiver_shape = receiver_data.shape();
+        let prototype_shape = self.object_data(prototype)?.shape();
+        let exec_slot = match self.regexp_builtin_layout {
+            Some(layout)
+                if layout.receiver == receiver_shape && layout.prototype == prototype_shape =>
+            {
+                layout.exec_slot as usize
+            }
+            _ => {
+                let exec_slot = self.verify_regexp_builtin_layout(receiver, prototype)?;
+                self.regexp_builtin_layout = Some(RegExpBuiltinLayout {
+                    receiver: receiver_shape,
+                    prototype: prototype_shape,
+                    exec_slot: exec_slot as u32,
+                });
+                exec_slot
+            }
+        };
+        Some((prototype, exec_slot))
+    }
+
+    /// `ToString(Get(R, "flags"))`. Where the builtin layout holds
+    /// (`regexp_builtin_layout_proof`), the `flags` getter and each flag getter it calls only
+    /// read the RegExp's own flags, so the result is those flags in the getter's order, the
+    /// order of `REGEXP_FLAG_ACCESSORS`.
+    fn regexp_flags_text(&mut self, p: &ResidualProgram, receiver: Value) -> Result<JsString, JsError> {
+        if matches!(self.heap.get(receiver), Some(Cell::RegExp { .. }))
+            && self.regexp_builtin_layout_proof(receiver).is_some()
+            && let Some(Cell::RegExp { meta, .. }) = self.heap.get(receiver)
+        {
+            let ordered = REGEXP_FLAG_ACCESSORS
+                .iter()
+                .map(|(_, _, flag)| *flag)
+                .filter(|flag| meta.flags.contains(*flag))
+                .collect::<String>();
+            return Ok(JsString::from_str(&ordered));
+        }
+        let atom = self.intern_atom("flags");
+        let value = self.get_property(p, receiver, atom)?;
+        self.coerce_js_string(p, value)
     }
 
     /// Checks the shape-determined half of `regexp_replace_fast_matcher`'s proof and returns
@@ -897,10 +924,16 @@ impl<H: Host> Vm<H> {
     fn regexp_subject(&mut self, input: &JsString) -> Rc<quench_regexp::Subject> {
         let flat = input.flat();
         let text = match flat {
-            // A short subject is copied inline and has no shared storage to recognize it by,
-            // so it neither consults nor displaces the cache; its one slot is reused once no
-            // match holds it.
+            // A short subject is copied inline and has no shared storage to recognize it by, so
+            // it neither consults nor displaces the cache. The last one is kept by content, as
+            // routers match one short path against many patterns; otherwise its slot is reused
+            // once no match holds it.
             FlatUnits::Short(text) => {
+                if let Some(subject) = &self.regexp_short_subject
+                    && subject.spells_ascii(text.as_str())
+                {
+                    return Rc::clone(subject);
+                }
                 let subject = quench_regexp::Subject::short_ascii(text.as_str());
                 if let Some(slot) = self.regexp_short_subject.as_mut()
                     && let Some(reused) = Rc::get_mut(slot)
@@ -1273,9 +1306,7 @@ impl<H: Host> Vm<H> {
                     vm.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 let constructor = vm.regexp_species_constructor(p, receiver)?;
                 let (unicode, splitter) = vm.with_call_roots([constructor], |vm| {
-                    let atom = vm.intern_atom("flags");
-                    let value = vm.get_property(p, receiver, atom)?;
-                    let mut flags = vm.coerce_js_string(p, value)?;
+                    let mut flags = vm.regexp_flags_text(p, receiver)?;
                     let unicode =
                         flags.host_string().contains('u') || flags.host_string().contains('v');
                     if !flags.host_string().contains('y') {
@@ -1527,9 +1558,7 @@ impl<H: Host> Vm<H> {
                     vm.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 let constructor = vm.regexp_species_constructor(p, receiver)?;
                 let (flags, matcher) = vm.with_call_roots([constructor], |vm| {
-                    let atom = vm.intern_atom("flags");
-                    let value = vm.get_property(p, receiver, atom)?;
-                    let flags = vm.coerce_js_string(p, value)?;
+                    let flags = vm.regexp_flags_text(p, receiver)?;
                     let value = vm.heap.alloc(Cell::String(flags.clone()));
                     let matcher = vm.construct_value(p, constructor, &[receiver, value])?;
                     Ok::<_, JsError>((flags, matcher))
@@ -1621,9 +1650,7 @@ impl<H: Host> Vm<H> {
                 }
                 let input =
                     vm.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-                let atom = vm.intern_atom("flags");
-                let value = vm.get_property(p, receiver, atom)?;
-                let flags = vm.coerce_js_string(p, value)?;
+                let flags = vm.regexp_flags_text(p, receiver)?;
                 if !flags.host_string().contains('g') {
                     let input = vm.string_value_from(
                         args.first().copied().unwrap_or(Value::UNDEFINED),
@@ -2427,8 +2454,8 @@ impl<H: Host> Vm<H> {
             Some(Cell::RegExp { meta, .. }) => meta.legacy_constructor,
             _ => return Err(JsError("RegExp instance unavailable after match".into())),
         };
-        let intrinsic = self.regexp_intrinsic_constructor();
-        if self.same_value(owner.constructor(), intrinsic) {
+        // Constructors are objects, whose SameValue is identity.
+        if owner.constructor() == self.regexp_intrinsic_constructor() {
             let state = self
                 .realm
                 .intrinsics

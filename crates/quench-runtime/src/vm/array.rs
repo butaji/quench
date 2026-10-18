@@ -491,6 +491,27 @@ impl<H: Host> Vm<H> {
         true
     }
 
+    /// `this[index] = value` into a hole below a dense array's length (`dense_array_length`):
+    /// OrdinarySet finds no own element there and, while no prototype claims the index
+    /// (`inherited_index_unclaimed`), defines a writable, enumerable, configurable data
+    /// element, which the hole's slot then holds.
+    pub(super) fn fill_dense_hole(&mut self, this: Value, index: usize, value: Value) -> bool {
+        if self.dense_array_length(this).is_none_or(|length| index >= length)
+            || !self
+                .heap
+                .array(this)
+                .is_some_and(|object| object.elements()[index].is_deleted())
+            || !self.inherited_index_unclaimed(this, index)
+        {
+            return false;
+        }
+        let Some(object) = self.heap.array_mut(this) else {
+            unreachable!("matched an array above");
+        };
+        super::index::mutable_array_elements(object.elements_mut())[index] = value;
+        true
+    }
+
     /// `pop` of a dense array (`dense_array_length`) as one removal, when its last element
     /// is present: the generic steps read that own data element, delete it and shorten
     /// `length` by one.

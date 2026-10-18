@@ -7,7 +7,24 @@ const CAPTURES: &[&str] = &[
     "vfsState", "getOptions", "getValidatedPath", "PromisePrototypeThen",
     "PromiseReject", "ErrorCaptureStackTrace", "binding", "kUsePromises",
 ];
+/// Defines `fs.promises.readlink` as a lazy data property: Node's policy loads
+/// `internal/fs/promises.js` and `internal/fs/utils.js` (Buffer, URL, streams), which only a
+/// script that reads `readlink` needs (`initialize`).
 pub(super) fn install(c: &mut Context<'_>, public: RootId) -> Result<(), RootedError> {
+    let original = get(c, public, "readlink")?;
+    let data = c.array_rooted(&[public, original])?;
+    let initialize = c.host_function_with_data(
+        crate::host::shared_vm::operation("fsPromisesReadlinkInitialize"), data,
+    )?;
+    c.define_lazy_data_properties_rooted(public, &["readlink"], true, initialize)
+}
+
+/// Builds Node's async `readlink` over the retained native operation (the lazy member
+/// `install` defines).
+pub(crate) fn initialize(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let data = c.host_function_data()?;
+    let public = get(c, data, "0")?;
+    let original = get(c, data, "1")?;
     c.with_startup_intrinsics(|c| {
         let root = c.host_mut().node_library_root.clone();
         let filename = root.join("lib/internal/fs/promises.js");
@@ -22,7 +39,6 @@ pub(super) fn install(c: &mut Context<'_>, public: RootId) -> Result<(), RootedE
         )?;
         let primordials = commonjs::node_primordials(c)?
             .ok_or_else(|| RootedError::host("SDK promise policy requires primordials"))?;
-        let original = get(c, public, "readlink")?;
         // This unique symbol is a capability for the promise-only native
         // continuation, matching Node's opaque fs_use_promises_symbol role.
         let token = c.symbol_rooted(Some("fs_use_promises_symbol"));
@@ -40,7 +56,8 @@ pub(super) fn install(c: &mut Context<'_>, public: RootId) -> Result<(), RootedE
         let undefined = c.undefined();
         let function = c.call_rooted(factory, undefined, &[state, options, path, then, reject, capture, binding, token, module])?;
         set(c, public, "readlink", function)
-    })
+    })?;
+    Ok(c.undefined())
 }
 
 pub(crate) fn readlink_continuation(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {

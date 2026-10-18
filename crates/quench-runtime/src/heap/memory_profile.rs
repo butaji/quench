@@ -584,9 +584,9 @@ fn cell_bytes(cell: &Cell) -> usize {
             Cell::WeakMap { entries, .. } => entries.allocated_bytes(),
             Cell::WeakSet { entries, .. } => entries.capacity() * size_of::<Value>(),
             Cell::Environment { slots, scope, .. } => {
-                let with_objects = &scope.with_objects;
                 slots.len() * size_of::<super::EnvironmentSlot>()
-                    + with_objects.len() * size_of::<Value>()
+                    + scope.boxed_bytes()
+                    + scope.with_objects().len() * size_of::<Value>()
             }
             Cell::String(value) => value.capacity(),
             Cell::BigInt(value) => crate::bigint::magnitude_bytes(value),

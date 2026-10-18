@@ -96,7 +96,7 @@ impl<H: Host> Vm<H> {
         if let Some(&value) = self.atom_strings.get(&atom) {
             return value;
         }
-        let value = self.heap.alloc(Cell::String(JsString::from_str(self.atom_name(atom))));
+        let value = self.heap.alloc(Cell::String(self.atom_value(atom)));
         if (atom as usize) < self.atom_text.len() || atom == self.runtime_atoms.empty {
             self.atom_strings.insert(atom, value);
         }
@@ -290,7 +290,7 @@ impl<H: Host> Vm<H> {
                 parent: env,
                 function: u32::MAX,
                 slots: Vec::<Value>::new().into_boxed_slice().into(),
-                scope: Box::new(crate::heap::EnvironmentScope {
+                scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
                     program: None,
                     root_eval_scope: false,
                     binding_site_pc: None,
@@ -768,6 +768,39 @@ impl<H: Host> Vm<H> {
             return None;
         }
         self.heap.property_get(object, slot as usize)
+    }
+
+    /// `constructor`'s own shape and the slot of its own data `prototype` there, for a shape
+    /// that fixes both (not a dictionary) once `own_function_prototype_data` has found it.
+    pub(super) fn function_prototype_layout(&self, constructor: Value) -> Option<(u32, usize)> {
+        let Some(cell @ Cell::Function { .. }) = self.heap.get(constructor) else {
+            return None;
+        };
+        let shape = cell.object()?.shape();
+        if self.shape_is_dictionary(shape) {
+            return None;
+        }
+        match self.shapes[shape as usize].prototype_slot.get() {
+            PROTOTYPE_SLOT_UNKNOWN | PROTOTYPE_SLOT_NONE => None,
+            slot => Some((shape, slot as usize)),
+        }
+    }
+
+    /// `constructor`'s own data `prototype` while its own shape is still the one `layout`
+    /// names (`function_prototype_layout`), which fixes the property and its slot.
+    #[inline(always)]
+    pub(super) fn function_prototype_in_layout(
+        &self,
+        constructor: Value,
+        (shape, slot): (u32, usize),
+    ) -> Option<Value> {
+        let Some(Cell::Function { object, .. }) = self.heap.get(constructor) else {
+            return None;
+        };
+        if object.shape() != shape {
+            return None;
+        }
+        self.heap.property_get(object, slot)
     }
 
     fn prototype_from_constructor(

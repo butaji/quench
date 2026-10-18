@@ -3,8 +3,14 @@
 //! Survivors of every collection stay marked (old). A minor collection traces roots and
 //! the old owners the write barriers logged, and sweeps only unmarked (young) cells and
 //! records, so its cost follows survivors and garbage rather than the old heap. A full
-//! collection clears the marks and traces everything. Budgets are in allocation weight:
-//! one per cell or record plus one per `PAYLOAD_BYTES_PER_ALLOCATION` of payload.
+//! collection clears the marks and traces everything. Allocation is charged in weight:
+//! one per cell or record plus one per `PAYLOAD_BYTES_PER_ALLOCATION` of payload
+//! (`Cell::payload_bytes`), recounted from the survivors by every full sweep. Survival
+//! compares live weight with allocated weight, so payload growth of old arrays is not
+//! mistaken for young cells surviving. Budgets stay
+//! proportional to live cells and records: memory the weight does not see (compiled
+//! code, the property arena) is held by cells, and sizing budgets by live weight let it
+//! grow (web-ssr: 123 -> 307 MB).
 
 /// `numerator / denominator` of a live count, without overflow.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -93,11 +99,14 @@ impl PacingState {
 #[derive(Clone, Copy, Debug)]
 pub(super) struct CollectionOutcome {
     pub(super) full: bool,
-    /// Live cells and records after this collection and after the previous one.
+    /// Live cells and records after this collection, which size the budgets.
     pub(super) live: usize,
-    pub(super) previous_live: usize,
+    /// Live weight (cells, records and their payload) after this collection and the
+    /// previous one, which measures survival in the unit allocation is charged in.
+    pub(super) live_weight: usize,
+    pub(super) previous_live_weight: usize,
     pub(super) live_after_full: usize,
-    /// Cells and records allocated between the previous collection and this one.
+    /// Weight allocated between the previous collection and this one.
     pub(super) allocated: usize,
     /// Allocation weight since the last full collection.
     pub(super) since_full: usize,
@@ -114,7 +123,7 @@ impl GenerationalPacing {
     /// The state transition after each collection, and the plan for the next one.
     pub(super) fn plan(&self, state: &mut PacingState, outcome: CollectionOutcome) -> NextCollection {
         if !outcome.full && outcome.allocated > 0 {
-            let promoted = outcome.live.saturating_sub(outcome.previous_live);
+            let promoted = outcome.live_weight.saturating_sub(outcome.previous_live_weight);
             let survival = (promoted.min(outcome.allocated) as u64 * u64::from(SURVIVAL_SCALE)
                 / outcome.allocated as u64) as u32;
             state.survival = (state.survival + survival) / 2;
@@ -192,23 +201,32 @@ impl GenerationalPacing {
     }
 }
 
-/// Production pacing. Starting point for the policy table (TOD-137 stage 3): young
-/// collections every half live set (at least 2^15), a full collection once the old
-/// generation has doubled, and never more than eight live sets of allocation between
-/// full collections. When more than half of young allocations survive, collections are
-/// full with four live sets between them (the 2026-10-16 large-heap factor, which keeps
-/// such heaps' Score), probing survival with a minor collection every fourth one.
+/// Production pacing, memory-first on the owner's direction of 2026-10-17 (TOD-123): young
+/// collections every eighth of a live set (at least 384 weight; from half a live set: V8-v7
+/// max RSS EarleyBoyer 9136 -> 8324 KiB, RegExp 8460 -> 7940, the rest within noise, static
+/// x86_64, 2026-10-18), a full collection once the old
+/// generation has doubled or one live set of allocation has passed since the last one, and,
+/// when more than half of young allocations survive, full collections with one live set
+/// between them, probing survival with a minor collection every fourth one. The minimums are
+/// the pre-generational 384-cell headroom. The Score lane's table (eight live sets per young
+/// collection, four per full one, 2^15 and 2^18 minimums) raised npm peak RSS by up to 17 MiB
+/// per package (semver 27.6 -> 45.2, typescript-eslint 188 -> 226); the owner reaffirmed
+/// memory-first on 2026-10-18.
 pub(super) const PRODUCTION_PACING: GenerationalPacing = GenerationalPacing {
-    young: Ratio::new(1, 2),
-    minimum_young: 1 << 15,
+    young: Ratio::new(1, 8),
+    minimum_young: MEMORY_FIRST_MINIMUM_ALLOCATION,
     old_growth: Ratio::new(1, 1),
-    minimum_old_growth: 1 << 15,
-    allocation_cap: Ratio::new(8, 1),
-    minimum_allocation_cap: 1 << 18,
+    minimum_old_growth: MEMORY_FIRST_MINIMUM_ALLOCATION,
+    allocation_cap: Ratio::new(1, 1),
+    minimum_allocation_cap: MEMORY_FIRST_MINIMUM_ALLOCATION,
     survival_limit: SURVIVAL_SCALE / 2,
-    full_only_headroom: Ratio::new(4, 1),
+    full_only_headroom: Ratio::new(1, 1),
     probe_interval: 4,
 };
+
+/// The fewest allocations between collections, whatever survived: the pre-generational
+/// minimum headroom.
+const MEMORY_FIRST_MINIMUM_ALLOCATION: usize = 384;
 
 #[cfg(not(feature = "gc-tuning"))]
 pub(super) fn pacing() -> GenerationalPacing {
@@ -236,18 +254,20 @@ mod tests {
     fn full_collection_follows_old_growth_or_the_allocation_cap() {
         let pacing = PRODUCTION_PACING;
         let live = 1 << 20;
-        assert!(!pacing.full_due(live, live + (live / 2), 0));
-        assert!(pacing.full_due(live, 2 * live, 0));
-        assert!(pacing.full_due(live, live, 8 * live));
+        let growth = pacing.old_growth.of(live);
+        assert!(!pacing.full_due(live, live + growth - 1, 0));
+        assert!(pacing.full_due(live, live + growth, 0));
+        assert!(pacing.full_due(live, live, pacing.allocation_cap.of(live)));
         assert_eq!(pacing.young_budget(0), pacing.minimum_young);
-        assert_eq!(pacing.young_budget(live), live / 2);
+        assert_eq!(pacing.young_budget(live), pacing.young.of(live));
     }
 
     fn minor(live: usize, previous_live: usize, allocated: usize) -> CollectionOutcome {
         CollectionOutcome {
             full: false,
             live,
-            previous_live,
+            live_weight: live,
+            previous_live_weight: previous_live,
             live_after_full: previous_live,
             allocated,
             since_full: allocated,
@@ -268,7 +288,8 @@ mod tests {
         let next = pacing.plan(&mut state, minor(2 * live, 3 * live / 2, live / 2));
         assert_eq!(state.regime(&pacing), Regime::FullOnly);
         // The next full collection keeps the interval measured from the last full one.
-        assert_eq!(next, NextCollection { threshold: 11 * live / 2, full: true });
+        let interval = pacing.full_only_headroom.of(3 * live / 2) - live / 2;
+        assert_eq!(next, NextCollection { threshold: interval.max(pacing.minimum_young), full: true });
         // After `probe_interval` full collections, a minor probes survival again.
         let full = CollectionOutcome { full: true, since_full: 0, ..minor(live, live, 4 * live) };
         for _ in 1..pacing.probe_interval {

@@ -63,3 +63,48 @@ pub(super) fn is_bounded(function: &Function) -> bool {
     }
     true
 }
+
+/// How control reaches a successor: in order, or by an abrupt completion that a
+/// handler covering the instruction catches (or a `finally` return resumes).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ControlEdge {
+    Normal,
+    Handler,
+}
+
+impl Function {
+    /// The instructions control can reach from `instruction` at `pc`, normally or through a
+    /// handler covering it. `pc + 1` stands for the function's end after its last instruction.
+    pub(crate) fn for_each_successor(
+        &self,
+        pc: usize,
+        instruction: WideInstruction,
+        mut successor: impl FnMut(usize, ControlEdge),
+    ) {
+        match instruction.op().control_flow_layout() {
+            ControlFlowLayout::Jump => {
+                successor(instruction.jump_target() as usize, ControlEdge::Normal)
+            }
+            ControlFlowLayout::ConditionalJump => {
+                successor(pc + 1, ControlEdge::Normal);
+                successor(instruction.jump_target() as usize, ControlEdge::Normal);
+            }
+            ControlFlowLayout::BranchTable => branch_table_entries(pc, instruction)
+                .for_each(|entry| successor(entry, ControlEdge::Normal)),
+            ControlFlowLayout::Terminal => {}
+            ControlFlowLayout::Call | ControlFlowLayout::Fallthrough
+                if instruction.returns_from_frame() => {}
+            ControlFlowLayout::Call | ControlFlowLayout::Fallthrough => {
+                successor(pc + 1, ControlEdge::Normal)
+            }
+        }
+        for handler in &self.handlers {
+            if pc as u32 >= handler.start && (pc as u32) < handler.end {
+                successor(handler.target as usize, ControlEdge::Handler);
+                if let Some(target) = handler.return_target {
+                    successor(target as usize, ControlEdge::Handler);
+                }
+            }
+        }
+    }
+}

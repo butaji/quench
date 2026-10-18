@@ -45,7 +45,7 @@ const MATH_FUNCTIONS: &[(&str, Native)] = &[
 ];
 #[rustfmt::skip]
 const NATIVES: &[Native] = &[
-    Native::Print, Native::HostDone, Native::CreateRealm, Native::IsHTMLDDA, Native::EvalScript, Native::CollectGarbage, Native::RealmTypeError, Native::Eval, Native::ToString, Native::Function, Native::FunctionPrototype, Native::FunctionPrototypeHasInstance, Native::WithEnter, Native::WithExit, Native::Object, Native::AbstractModuleSource, Native::AbstractModuleSourceToStringTag, Native::ShadowRealm, Native::ShadowRealmEvaluate, Native::ShadowRealmImportValue, Native::ShadowRealmImportValueFulfilled, Native::ShadowRealmWrappedFunction,
+    Native::Print, Native::HostDone, Native::CreateRealm, Native::IsHTMLDDA, Native::EvalScript, Native::CollectGarbage, Native::RealmTypeError, Native::Eval, Native::Function, Native::FunctionPrototype, Native::FunctionPrototypeHasInstance, Native::WithEnter, Native::WithExit, Native::Object, Native::AbstractModuleSource, Native::AbstractModuleSourceToStringTag, Native::ShadowRealm, Native::ShadowRealmEvaluate, Native::ShadowRealmImportValue, Native::ShadowRealmImportValueFulfilled, Native::ShadowRealmWrappedFunction,
     Native::ObjectKeys, Native::ForInKeys, Native::ForInKeyIsEnumerable, Native::ObjectValues, Native::ObjectEntries, Native::ObjectGetOwnPropertyNames, Native::ObjectGetOwnPropertySymbols, Native::ObjectGetOwnPropertyDescriptor, Native::ObjectGetOwnPropertyDescriptors,
     Native::ObjectGroupBy,
     Native::ObjectFromEntries, Native::ObjectIs,
@@ -677,11 +677,6 @@ impl<H: Host> Vm<H> {
             );
         }
         self.global(program, "print", self.native_value(Native::Print))?;
-        self.global(
-            program,
-            "\0quench:to-string",
-            self.native_value(Native::ToString),
-        )?;
         self.set_builtin_named(program, self.realm.globals, "eval", Native::Eval)?;
         self.global(
             program,
@@ -1295,31 +1290,9 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
+        // A native function's source text derives from this name when requested
+        // (`function_source_value`), so creating one records no source string.
         self.capture_function_name(function, value);
-        if matches!(
-            self.heap.get(function),
-            Some(Cell::Function { kind: FunctionKind::Native(native), .. })
-                if *native != Native::FunctionBoundCall
-        ) {
-            let property_name = name
-                .strip_prefix("get ")
-                .or_else(|| name.strip_prefix("set "))
-                .unwrap_or(name);
-            let symbol_member = property_name
-                .strip_prefix("[Symbol.")
-                .and_then(|name| name.strip_suffix(']'));
-            let source_name = if oxc_syntax::identifier::is_identifier_name(property_name)
-                || symbol_member.is_some_and(oxc_syntax::identifier::is_identifier_name)
-            {
-                name
-            } else {
-                ""
-            };
-            self.set_function_source(
-                function,
-                &format!("function {source_name}() {{ [native code] }}"),
-            )?;
-        }
         Ok(())
     }
 
@@ -1344,5 +1317,23 @@ impl<H: Host> Vm<H> {
             },
         )?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod math_function_tests {
+    use super::*;
+
+    #[test]
+    fn math_functions_are_the_math_natives() {
+        for (name, native) in MATH_FUNCTIONS {
+            assert!(native.is_math_function(), "Math.{name}");
+        }
+        for native in NATIVES.iter().filter(|native| native.is_math_function()) {
+            assert!(
+                MATH_FUNCTIONS.iter().any(|(_, listed)| listed == native),
+                "{native:?} is a Math function"
+            );
+        }
     }
 }

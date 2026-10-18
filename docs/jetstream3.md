@@ -9,16 +9,16 @@ test per engine process, in the same matched-round runner, report schema,
 checkpoint/resume and analysis as [V8-v7](v8_v7.md):
 
 ```sh
-cargo build --profile production -p quench-node
-cargo run --release -p quench-bench -- --preflight-only --suite jetstream3 \
+cargo build --locked --profile production -p quench-node -p quench-bench
+target/production/quench-bench --preflight-only --suite jetstream3 \
   --quench target/production/quench-node --node node --bun bun
-cargo run --release -p quench-bench -- web-ssr --suite jetstream3 --runs 11 \
+target/production/quench-bench web-ssr --suite jetstream3 --runs 11 \
   --timeout-ms 600000 --quench target/production/quench-node --node node --bun bun \
   --out target/jetstream3-web-ssr.json
-cargo run --release -p quench-bench -- --all --suite jetstream3 --runs 11 \
+target/production/quench-bench --all --suite jetstream3 --runs 11 \
   --timeout-ms 600000 --quench target/production/quench-node --node node --bun bun \
   --checkpoint target/jetstream3.checkpoint.json --out target/jetstream3.json
-cargo run --release -p quench-bench -- --analyze target/jetstream3.json \
+target/production/quench-bench --analyze target/jetstream3.json \
   --out target/jetstream3-analysis.json
 ```
 
@@ -28,12 +28,36 @@ mode, pass `--jit`; the runner launches Quench with `--jit`, runs Node without
 plus Bun's `useJIT=true` option before timing. For example:
 
 ```sh
-cargo run --release -p quench-bench -- --preflight-only --suite jetstream3 --jit \
+target/production/quench-bench --preflight-only --suite jetstream3 --jit \
   --quench target/production/quench-node --node node --bun bun
-cargo run --release -p quench-bench -- web-ssr --suite jetstream3 --jit --runs 11 \
+target/production/quench-bench web-ssr --suite jetstream3 --jit --runs 11 \
   --timeout-ms 600000 --quench target/production/quench-node --node node --bun bun \
   --out target/jetstream3-web-ssr-jit.json
+
+# A confirmatory paired subset (all selected fixtures still need 11+ rounds).
+target/production/quench-bench --fixtures HashSet-wasm,gcc-loops-wasm,quicksort-wasm,tsf-wasm,zlib-wasm \
+  --suite jetstream3 --jit --runs 11 --timeout-ms 600000 \
+  --quench target/production/quench-node --node node --bun bun \
+  --checkpoint target/jetstream3-wasm-jit.checkpoint.json \
+  --out target/jetstream3-wasm-jit.json
+target/production/quench-bench --analyze target/jetstream3-wasm-jit.json \
+  --out target/jetstream3-wasm-jit-analysis.json
 ```
+
+The checkpoint records and verifies the exact selected fixture list so an
+interrupted subset can resume only with that same set. Synthetic Wasm test
+names map to their module input directories (for example, `HashSet-wasm` maps
+to `wasm/HashSet`). A directory digest is SHA-256 over a binary manifest:
+recursively enumerate entries without following symlinks, omit `.git`, sort by
+normalized relative path (UTF-8-lossy components joined with `/`), then emit a
+type tag and length-framed path for each entry. Directory records use `D`;
+regular files use `F` followed by a big-endian 64-bit content length and the
+file bytes; symlinks use `L` followed by a big-endian 64-bit target length and
+the UTF-8-lossy link target. Path and target lengths are also big-endian
+64-bit values. The final digest is computed with `sha256sum`, falling back to
+`shasum -a 256`. The report retains the benchmark test path while its digest
+binds the mapped module directory, and the analyzer checks that digest before
+producing comparisons.
 
 `--jit` is currently restricted to `--suite jetstream3`. The report records a
 top-level `jit_mode` (`no-jit` or `jit`) and each engine's version, effective
@@ -42,9 +66,13 @@ mode, so resume a run with the same `--jit` setting.
 Quench's proof records that `--jit` selected the shared VM's compiled mode; it
 does not currently count whether a benchmark function entered native code.
 
-A fixture is a JetStream test name. `--all` selects the lane's test list in
-`quench-bench/src/jetstream.rs`: the server-side JavaScript tests first, then the
-server-side Wasm tests. The Score is the test's own JetStream line
+A fixture is a JetStream test name. `--all` selects the lane's full test list;
+`--fixtures NAME,NAME,...` selects a pinned subset for paired measurement and
+subset analysis. Both forms use the same test order, validation, score parsing,
+and per-process maximum-RSS accounting. A subset can qualify its selected cases
+without claiming suite-wide parity. The lane's test list in
+`quench-bench/src/jetstream.rs` runs the server-side JavaScript tests first,
+then the server-side Wasm tests. The Score is the test's own JetStream line
 (`<test> Score <value> pts`): the geometric mean of its First, Worst and
 Average scores, computed by JetStream's driver. Maximum RSS comes from the
 runner's process accounting, as for V8-v7.

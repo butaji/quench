@@ -400,6 +400,7 @@ fn heap_memory_census_tracks_rooted_records_and_collection_without_guest_hooks()
     assert!(allocated.object_headers >= before.object_headers + roots.len());
     assert!(allocated.object_record_reserved_bytes >= before.object_record_reserved_bytes);
     assert_eq!(allocated.cell_counts.iter().sum::<usize>(), allocated.occupied_slots);
+    assert!(allocated.used_bytes() <= allocated.reserved_bytes());
     let repeated = runtime.heap_memory_composition();
     assert_eq!(repeated.occupied_slots, allocated.occupied_slots);
     assert_eq!(repeated.object_headers, allocated.object_headers);
