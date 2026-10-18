@@ -2793,7 +2793,7 @@ impl<H: Host> Vm<H> {
             parent: Value::NULL,
             function: super::ROOT_FUNCTION_ID,
             slots: slots.into(),
-            scope: Box::new(crate::heap::EnvironmentScope {
+            scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
                 program: Some(program.raw()),
                 root_eval_scope: false,
                 binding_site_pc: None,

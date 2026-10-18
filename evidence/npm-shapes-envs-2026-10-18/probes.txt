@@ -1,0 +1,10 @@
+peak RSS MiB (wait4 ru_maxrss); base = v2-npm 8d0bcd033 release, candidate = this change (m13) release
+probe                            base     cand     node      bun
+importstar.cjs 80               153.3     81.6    128.6     74.6
+variants.cjs data               133.4     13.3     69.1     39.5
+variants.cjs sharedget           45.3     13.6     74.0     49.4
+variants.cjs function           121.7     74.0    116.5     66.9
+variants.cjs closures            78.3     59.4     91.9     54.3
+variants.cjs arrowclosures       66.1     47.3     97.6     52.6
+closures.cjs plain               95.0     58.6     99.2     49.3
+closures.cjs arrowWrap           75.2     55.4    100.0     50.9
