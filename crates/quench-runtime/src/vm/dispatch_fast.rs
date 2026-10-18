@@ -4181,8 +4181,9 @@ lane_handler! {
         // A call that returns its result completes its caller: an activation in the lane, or
         // the frame in the general loop (`lane_frame_return`).
         let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
-        let frame_returns = returns && vm.lane_stack.activations.is_empty();
-        if frame_returns && !lane_returning_call_admitted(cx) {
+        // The running function is the same activation or, once the call made activations
+        // frames (`lane_call_native`), the frame it became.
+        if returns && !lane_returning_call_admitted(cx) {
             return exit(ip);
         }
         let receiver = r.get(i.c);
@@ -4221,18 +4222,18 @@ lane_handler! {
         let Some(value) = value else {
             return exit(ip);
         };
-        if frame_returns {
-            return lane_frame_return(vm, ip, value);
-        }
+        // The call may have made the lane's activations frames, so the running function's
+        // registers and caller are read again.
         if returns {
             let Some((registers, next, view)) = lane_complete_activation(cx, value) else {
-                unreachable!("a returning lane call has an activation caller");
+                return lane_frame_return(vm, ip, value);
             };
             if is_exit(next) {
                 return next;
             }
             next!(cx, registers, next, view)
         }
+        let r = unsafe { (*cx).registers };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::SCRIPT)
     }
@@ -4277,9 +4278,13 @@ fn lane_call_native<H: Host>(
     {
         return Some(Value::number(result));
     }
-    if !unsafe { (*cx).script_calls } || !vm.lane_stack.activations.is_empty() {
+    if !unsafe { (*cx).script_calls } {
         return None;
     }
+    // The callee observes the frame stack: lane activations become frames first, as leaving
+    // the lane would make them, and the call runs from the innermost one.
+    vm.materialize_lane_activations(cx);
+    let r = unsafe { (*cx).registers };
     // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
     // active view, which is the running frame's.
     let (code, frame, call_pc) = unsafe {
@@ -5196,6 +5201,10 @@ lane_handler! {
                 return next;
             }
             next!(cx, registers, next, view)
+        }
+        // A VM frame returns the value as `Return` would (`lane_return_frame`).
+        if !unsafe { (*cx).inline_calls } && unsafe { (*cx).script_calls } {
+            return lane_return_script_frame(cx, ip, value);
         }
         exit(ip)
     }
