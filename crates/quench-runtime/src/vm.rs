@@ -715,6 +715,9 @@ const FIELD_MEGAMORPHIC_INLINE: usize = 4;
 const FIELD_MEGAMORPHIC_LIMIT: usize = 256;
 struct FieldCacheSet {
     len: u8,
+    /// Whether any entry recorded an own field (`NO_FIELD_HOLDER`); a set without one names
+    /// only prototype holders, so a read probes no own entry.
+    holds_own: bool,
     entries: [FieldCache; FIELD_MEGAMORPHIC_INLINE],
     overflow: Option<Box<FxHashMap<u64, FieldCache>>>,
 }
