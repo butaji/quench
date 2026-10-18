@@ -1343,7 +1343,6 @@ impl Iterator for SourcePositionIter<'_> {
         Some(self.previous)
     }
 }
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PlainLocalContextIneligibility {
     RootFunction,
