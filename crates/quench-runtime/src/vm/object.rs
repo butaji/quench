@@ -1406,7 +1406,13 @@ impl<H: Host> Vm<H> {
         atom: Atom,
     ) -> Option<FieldCacheHit> {
         let holder_value = receiver.proto();
-        let holder = self.shape_property_lookup(holder_value, atom)?;
+        // An ordinary record prototype is the holder as it stands: entries record only holder
+        // shapes whose lookup answered the atom (`shape_property_lookup`), and a shape fixes
+        // its dictionary state and keys, so a matching entry proves what the lookup would.
+        let holder = match self.heap.object_record(holder_value) {
+            Some(holder) if !holder.is_module_namespace() => holder,
+            _ => self.shape_property_lookup(holder_value, atom)?,
+        };
         // SAFETY: the active program's layout reserves every compiler-emitted site.
         let cache = unsafe { *self.field_caches.get_unchecked(site) };
         let (cache, tier) = if cache.receiver == receiver.shape() && cache.holder == holder.shape()
