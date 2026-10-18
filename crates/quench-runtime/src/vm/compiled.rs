@@ -5059,7 +5059,8 @@ impl<H: Host> Vm<H> {
         if matches!(
             tier.as_ref(),
             Some(super::program_store::JsTierState::Unsupported)
-        ) {
+        ) && !self.programs.js_jit_diagnostics_enabled()
+        {
             return None;
         }
         if tier.is_none() && !super::js_compiled::function_candidate(function, program) {
@@ -5079,6 +5080,10 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
+        if self.programs.js_jit_diagnostics_enabled() {
+            self.programs
+                .record_js_jit_entry(program_id, function_id, numeric);
+        }
 
         let compiled = match tier {
             Some(super::program_store::JsTierState::Compiled(compiled)) => {
@@ -5088,7 +5093,9 @@ impl<H: Host> Vm<H> {
                 compiled
             }
             Some(super::program_store::JsTierState::Unsupported) => return None,
-            Some(super::program_store::JsTierState::Hot { .. }) | None => {
+            Some(super::program_store::JsTierState::Hot { .. })
+            | Some(super::program_store::JsTierState::PromotionPending)
+            | None => {
                 if !self
                     .programs
                     .note_js_function_entry(program_id, function_id, numeric)
@@ -5097,11 +5104,33 @@ impl<H: Host> Vm<H> {
                     return None;
                 }
                 let residual = self.programs.get(program_id)?;
+                let compile_started = self
+                    .programs
+                    .js_jit_diagnostics_enabled()
+                    .then(std::time::Instant::now);
                 let compiled = super::js_compiled::compile(&residual, function_id)
                     .and_then(CompiledJsFunction::from_artifact)
                     .map(Rc::new);
-                self.programs
+                let installed = self
+                    .programs
                     .install_js_tier(program_id, function_id, compiled.clone());
+                if let Some(compile_started) = compile_started {
+                    let code_bytes = if installed {
+                        compiled.as_ref().map_or(0, |compiled| compiled.mapped_bytes())
+                    } else {
+                        0
+                    };
+                    self.programs.record_js_jit_compile(
+                        program_id,
+                        function_id,
+                        u64::try_from(compile_started.elapsed().as_nanos()).unwrap_or(u64::MAX),
+                        code_bytes,
+                        installed,
+                    );
+                }
+                if !installed {
+                    return None;
+                }
                 compiled?
             }
         };
@@ -5110,6 +5139,10 @@ impl<H: Host> Vm<H> {
             return None;
         }
 
+        if self.programs.js_jit_diagnostics_enabled() {
+            self.programs
+                .record_js_jit_native_entry(program_id, function_id);
+        }
         match compiled.call(&arguments) {
             CompiledJsResult::Number(value) => {
                 let last_pc = function.code.len().checked_sub(1)?;
