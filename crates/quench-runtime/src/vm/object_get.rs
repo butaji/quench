@@ -92,13 +92,7 @@ impl<H: Host> Vm<H> {
             .module_binding_value(object, atom)
             .or_else(|| self.own_property(object, atom));
         if value.is_some_and(Value::is_deleted) {
-            return Err(self.reference_error(
-                p,
-                format!(
-                    "Cannot access '{}' before initialization",
-                    self.atom_name(atom)
-                ),
-            ));
+            return Err(self.uninitialized_binding_error(p, atom));
         }
         Ok(value)
     }
@@ -442,10 +436,37 @@ impl<H: Host> Vm<H> {
         self.plain_property_get(object, PropertyKey::string(atom))
     }
 
+    /// A keyed read of a public symbol, or of a string naming an existing non-index atom,
+    /// that the plain chain walk answers: what `get_index` returns for it before any lookup
+    /// that can run guest code. A host-private symbol names only an own property, so its
+    /// read is left to `get_index` with every other `None`.
+    pub(super) fn plain_keyed_get(&self, object: Value, key: Value) -> Option<Value> {
+        match self.heap.get(key)? {
+            Cell::Symbol(data) if data.kind != crate::heap::SymbolKind::HostPrivate => {
+                self.plain_property_get(object, PropertyKey::symbol(key))
+            }
+            Cell::String(text) => self.plain_named_get(object, self.lookup_js_atom(text)?),
+            _ => None,
+        }
+    }
+
     /// `plain_named_get`'s chain walk for a key it admits, or any symbol key: symbols name
     /// no exotic, index or virtual property.
     #[inline]
     fn plain_property_get(&self, object: Value, key: PropertyKey) -> Option<Value> {
+        self.plain_property_lookup(object, key)
+            .map(|found| found.unwrap_or(Value::UNDEFINED))
+    }
+
+    /// The chain walk of `plain_property_get`, telling an absent key (`Some(None)`) from a
+    /// present one: `HasProperty` and `Get` together where neither can run guest code.
+    /// `None` leaves both to the general path.
+    #[inline]
+    pub(super) fn plain_property_lookup(
+        &self,
+        object: Value,
+        key: PropertyKey,
+    ) -> Option<Option<Value>> {
         let mut current = object;
         loop {
             let data = self.heap.ordinary_object(current)?;
@@ -457,14 +478,14 @@ impl<H: Host> Vm<H> {
                 if self.slot_attributes(data, slot)?.accessor {
                     return None;
                 }
-                return self.heap.property_get(data, slot);
+                return self.heap.property_get(data, slot).map(Some);
             }
             if self.descriptors.contains_key(&(current, key)) {
                 return None;
             }
             let proto = data.proto();
             if proto.is_null() {
-                return Some(Value::UNDEFINED);
+                return Some(None);
             }
             current = proto;
         }

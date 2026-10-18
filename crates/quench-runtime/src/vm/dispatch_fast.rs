@@ -892,6 +892,23 @@ lane_handler! {
 }
 
 lane_handler! {
+    /// `InitializeTdz`: opens the binding's dead zone wherever the frame keeps it, as the
+    /// general path does (`Vm::frame_binding_mut`).
+    fn lane_initialize_tdz<>(cx, r, ip, i, view) {
+        // SAFETY: the context's program outlives the lane run.
+        let Some(binding) = (unsafe { vm(cx) }).frame_binding_mut(
+            unsafe { &*(*cx).code },
+            unsafe { (*cx).frame },
+            i.imm() as usize,
+        ) else {
+            return exit(ip);
+        };
+        *binding = Value::DELETED;
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
     fn lane_load_this<>(cx, r, ip, i, view) {
         // An uninitialized `this` throws on the general path.
         let Some(value) = (unsafe { lane_this(cx) }) else {
@@ -1134,7 +1151,12 @@ lane_handler! {
         else {
             return exit(ip);
         };
-        let Some(value) = (unsafe { vm(cx) }).dense_array_element(base, key) else {
+        let vm = unsafe { vm(cx) };
+        let Some(value) = vm
+            .dense_array_element(base, key)
+            .or_else(|| vm.plain_keyed_get(base, key))
+            .or_else(|| vm.plain_typed_element(base, key))
+        else {
             return exit(ip);
         };
         r.set(i.a, value);
@@ -1160,7 +1182,13 @@ lane_handler! {
     /// `lane_get_index_registers` past a record array.
     #[inline(never)]
     fn lane_get_index_slot<>(cx, r, ip, i, view) {
-        let Some(value) = (unsafe { vm(cx) }).dense_array_element(r.get(i.b), r.get(i.c)) else {
+        let vm = unsafe { vm(cx) };
+        let (base, key) = (r.get(i.b), r.get(i.c));
+        let Some(value) = vm
+            .dense_array_element(base, key)
+            .or_else(|| vm.plain_keyed_get(base, key))
+            .or_else(|| vm.plain_typed_element(base, key))
+        else {
             return exit(ip);
         };
         r.set(i.a, value);
@@ -3881,7 +3909,7 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let body = code.functions.get(function as usize)?;
-        let plan = body.call_plan(&code.atoms);
+        let plan = body.call_plan(code);
         if !plan.registers_only {
             return None;
         }
@@ -5345,6 +5373,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::StoreLocalPlain => Some(lane_store_local_plain::<H>),
         Op::StoreLocal | Op::StoreEnvLocal => Some(lane_store_local::<H>),
         Op::LoadThis => Some(lane_load_this::<H>),
+        Op::InitializeTdz => Some(lane_initialize_tdz::<H>),
         Op::GetField => Some(lane_get_field_first::<H>),
         Op::SetField | Op::SetFieldStrict => Some(lane_set_object_field_own::<H>),
         Op::SetThisField | Op::SetThisFieldStrict => Some(lane_set_this_field_own::<H>),
