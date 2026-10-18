@@ -18,15 +18,23 @@ fn atom_bytes(function: &Function) -> usize {
         &function.local_atoms,
         &function.environment_atoms,
         &function.lexical_atoms,
-        &function.global_lexical_atoms,
-        &function.global_var_atoms,
-        &function.global_function_atoms,
-        &function.global_annex_b_var_atoms,
-        &function.global_immutable_atoms,
     ]
     .into_iter()
     .map(|atoms: &Vec<Atom>| bytes(atoms))
-    .sum()
+    .sum::<usize>()
+        + function.global_declarations.as_deref().map_or(0, |declarations| {
+            size_of::<crate::bytecode::GlobalDeclarations>()
+                + [
+                    &declarations.lexical,
+                    &declarations.var,
+                    &declarations.function,
+                    &declarations.annex_b_var,
+                    &declarations.immutable,
+                ]
+                .into_iter()
+                .map(bytes)
+                .sum::<usize>()
+        })
 }
 
 /// Layout tables beside the code: registers, capture slots, binding sites and clones.

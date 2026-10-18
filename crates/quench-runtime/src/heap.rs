@@ -155,6 +155,7 @@ impl<'slots> ParallelSweepSlab<'slots> {
             let index = self.base + offset;
             if Heap::marked(marks, index) {
                 result.live += 1;
+                result.live_payload_bytes += cell.payload_bytes();
                 if let Some(object) = cell.object() {
                     if object.properties().has_compact_range() {
                         result
@@ -167,7 +168,6 @@ impl<'slots> ParallelSweepSlab<'slots> {
 
             let cell = slot.cell.take().expect("occupied dead sweep slot");
             result.external_bytes = result.external_bytes.saturating_add(cell.external_bytes());
-            result.payload_bytes = result.payload_bytes.saturating_add(cell.payload_bytes());
             if let Some(object) = cell.object() {
                 result.released_properties.push(object.properties());
             }
@@ -196,13 +196,15 @@ struct ParallelSweepResult {
     sparse_arrays: Vec<u32>,
     rc_cells: Vec<StoppedCellDrop>,
     external_bytes: usize,
-    payload_bytes: usize,
+    live_payload_bytes: usize,
     swept_slots: usize,
 }
 
 #[derive(Default)]
 struct SweepOutput {
     live: usize,
+    /// Payload of the surviving cells, summed by full sweeps only.
+    live_payload_bytes: usize,
     property_owners: Vec<u64>,
     freed_cells: usize,
     swept_slots: usize,
@@ -326,7 +328,8 @@ pub(crate) struct Heap {
     /// The next collection traces the whole heap.
     full_due: bool,
     pacing_state: pacing::PacingState,
-    /// Live weight after the previous collection.
+    /// Live cells and records, and their weight, after the previous collection.
+    live_after_previous: usize,
     live_weight_after_previous: usize,
     /// Backing-store bytes allocated since the last collection, against its budget.
     external_since_collection: usize,
@@ -1047,6 +1050,7 @@ impl Heap {
         self.live_after_full = 0;
         self.full_due = false;
         self.pacing_state = pacing::PacingState::default();
+        self.live_after_previous = 0;
         self.live_weight_after_previous = 0;
         self.old_live = 0;
         self.threshold = pacing().minimum_young;
@@ -1101,6 +1105,7 @@ impl Heap {
     pub(crate) fn should_full_collect(&self) -> bool {
         self.full_due
             || pacing().allocation_cap_reached(
+                &self.pacing_state,
                 self.live_after_full,
                 self.allocations_since_full,
             )
@@ -1320,6 +1325,7 @@ impl Heap {
         };
         let SweepOutput {
             mut live,
+            mut live_payload_bytes,
             property_owners,
             freed_cells,
             swept_slots,
@@ -1364,6 +1370,9 @@ impl Heap {
             let mut dead_arrays = Vec::new();
             let (array_live, array_freed) = self.array_records.sweep(|record| match record {
                 RecordSweep::Keep(record_id, array) => {
+                    if full {
+                        live_payload_bytes += array_payload_bytes(array);
+                    }
                     if full && array.properties().has_compact_range() {
                         direct_property_owners.push((
                             array.properties().start_offset(),
@@ -1404,6 +1413,9 @@ impl Heap {
         }
         let _ = (freed_cells, swept_slots);
         if full {
+            // A full sweep recounts the ledger from the survivors: shrinking a live array
+            // (truncation, `pop`, `splice`) is not charged back between full collections.
+            self.payload_bytes = live_payload_bytes;
             self.property_owner_counts = (property_owners.len(), direct_property_owners.len());
             self.compact_property_arena(property_owners, direct_property_owners);
         }
@@ -1433,6 +1445,7 @@ impl Heap {
                 full,
                 live,
                 live_weight,
+                previous_live: self.live_after_previous,
                 previous_live_weight: self.live_weight_after_previous,
                 live_after_full: self.live_after_full,
                 allocated,
@@ -1451,6 +1464,7 @@ impl Heap {
         if std::env::var_os("QUENCH_GC_TRACE").is_some() {
             eprintln!("gc full={full} live={live} prev={} after_full={} alloc={} since_full={} next={next:?} state={:?}", self.live_weight_after_previous, self.live_after_full, allocated, self.allocations_since_full, self.pacing_state);
         }
+        self.live_after_previous = live;
         self.live_weight_after_previous = live_weight;
         self.threshold = next.threshold;
         self.full_due = next.full;
@@ -1517,7 +1531,7 @@ impl Heap {
                     sparse_arrays,
                     rc_cells,
                     external_bytes,
-                    payload_bytes,
+                    live_payload_bytes,
                     swept_slots,
                 } = result;
                 let freed_cells = free_slots.len();
@@ -1537,12 +1551,12 @@ impl Heap {
                         }
                     }
                     self.external_bytes = self.external_bytes.saturating_sub(external_bytes);
-                    self.payload_bytes = self.payload_bytes.saturating_sub(payload_bytes);
                 }
                 for cell in rc_cells {
                     cell.drop_on_owner();
                 }
                 output.live += live;
+                output.live_payload_bytes += live_payload_bytes;
                 output.property_owners.extend(property_owners);
                 output.freed_cells += freed_cells;
                 output.swept_slots += swept_slots;
@@ -1554,6 +1568,7 @@ impl Heap {
 
     fn sweep_serial(&mut self, full: bool) -> SweepOutput {
         let mut live = 0;
+        let mut live_payload_bytes = 0;
         let mut freed_cells = 0;
         let mut swept_slots = 0;
         let properties = &mut self.properties;
@@ -1605,6 +1620,7 @@ impl Heap {
                         swept_slots += 1;
                         if Self::marked(&self.marks, index) {
                             live += 1;
+                            live_payload_bytes += slot.cell.as_ref().map_or(0, Cell::payload_bytes);
                             if let Some(object) = slot.cell.as_ref().and_then(Cell::object) {
                                 if properties.has_compact_range(object.properties()) {
                                     property_owners_for_sweep.push(pack_offset_owner(
@@ -1646,6 +1662,7 @@ impl Heap {
         }
         SweepOutput {
             live,
+            live_payload_bytes,
             property_owners: property_owners_for_sweep,
             freed_cells,
             swept_slots,

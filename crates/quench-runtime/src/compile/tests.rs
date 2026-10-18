@@ -24,11 +24,11 @@ fn regression_global_var_lowering_checks_instruction_roles_before_slots() {
                     .iter()
                     .any(|instruction| instruction.op() == Op::StoreEnvLocal)
             );
-            assert!(!root.global_lexical_atoms.is_empty());
+            assert!(!root.global_lexical_atoms().is_empty());
             assert!(
-                root.global_lexical_atoms
+                root.global_lexical_atoms()
                     .iter()
-                    .all(|atom| !root.global_var_atoms.contains(atom))
+                    .all(|atom| !root.global_var_atoms().contains(atom))
             );
             assert_eq!(!root.wide.is_empty(), !suffix.is_empty());
             program.validate().unwrap();
