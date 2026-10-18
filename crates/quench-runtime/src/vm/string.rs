@@ -507,21 +507,12 @@ impl<H: Host> Vm<H> {
             }
             Native::StringLocaleCompare => {
                 let other = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-                let collator_args = [
+                let collation = self.locale_compare_collation(
+                    p,
                     args.get(1).copied().unwrap_or(Value::UNDEFINED),
                     args.get(2).copied().unwrap_or(Value::UNDEFINED),
-                ];
-                let constructor = self
-                    .realm
-                    .intrinsics
-                    .intl_collator_constructors
-                    .get(&self.realm.globals)
-                    .copied()
-                    .ok_or_else(|| JsError("Intl.Collator intrinsic is not installed".into()))?;
-                let collator = self.intl_collator_construct(p, &collator_args, constructor)?;
-                let left = self.heap.alloc(Cell::String(receiver));
-                let right = self.heap.alloc(Cell::String(other.into()));
-                self.intl_collator_native(p, Native::IntlCollatorCompare, collator, &[left, right])
+                )?;
+                Ok(Value::number(collation.compare(&receiver.to_string(), &other)))
             }
             Native::StringConcat => {
                 let mut text = receiver;

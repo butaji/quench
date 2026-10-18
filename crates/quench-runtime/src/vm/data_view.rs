@@ -371,7 +371,7 @@ impl<H: Host> Vm<H> {
                     } else {
                         unsigned
                     };
-                    return Ok(self.heap.alloc(Cell::BigInt(value.to_string())));
+                    return Ok(self.heap.alloc(Cell::bigint(value)));
                 }
                 let value = match native {
                     Native::DataViewGetInt16 => (bits as u16 as i16) as f64,

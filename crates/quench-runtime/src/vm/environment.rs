@@ -1523,7 +1523,7 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        let value = match slots.slot(usize::from(slot))?.state() {
+        let value = match slots.slot(usize::from(slot))? {
             crate::heap::EnvironmentSlotState::Owned(value) => value,
             // A shared slot names its owner, which holds the slot itself.
             crate::heap::EnvironmentSlotState::Shared(owner) => {

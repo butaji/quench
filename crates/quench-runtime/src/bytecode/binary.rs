@@ -167,7 +167,7 @@ pub(super) fn write_program(
             }
             Constant::BigInt(value) => {
                 out.u8(6);
-                out.string(value);
+                out.string(&value.to_string());
             }
             Constant::Boolean(value) => {
                 out.u8(if *value { 2 } else { 3 });
@@ -456,7 +456,10 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         0 => Ok(Constant::Number(f64::from_bits(input.u64()?))),
         1 => Ok(Constant::String(input.string()?)),
         7 => Ok(Constant::StringUnits(input.u16s()?)),
-        6 => Ok(Constant::BigInt(input.string()?)),
+        6 => Ok(Constant::BigInt(input
+            .string()?
+            .parse()
+            .map_err(|_| "invalid residual BigInt constant")?)),
         2 => Ok(Constant::Boolean(true)),
         3 => Ok(Constant::Boolean(false)),
         4 => Ok(Constant::Null),

@@ -45,9 +45,19 @@ target/production/quench-bench --analyze target/jetstream3-wasm-jit.json \
 ```
 
 The checkpoint records and verifies the exact selected fixture list so an
-interrupted subset can resume only with that same set. Fixture directories
-are hashed deterministically from sorted relative paths and file contents;
-the analyzer uses that digest to bind each result to the pinned test input.
+interrupted subset can resume only with that same set. Synthetic Wasm test
+names map to their module input directories (for example, `HashSet-wasm` maps
+to `wasm/HashSet`). A directory digest is SHA-256 over a binary manifest:
+recursively enumerate entries without following symlinks, omit `.git`, sort by
+normalized relative path (UTF-8-lossy components joined with `/`), then emit a
+type tag and length-framed path for each entry. Directory records use `D`;
+regular files use `F` followed by a big-endian 64-bit content length and the
+file bytes; symlinks use `L` followed by a big-endian 64-bit target length and
+the UTF-8-lossy link target. Path and target lengths are also big-endian
+64-bit values. The final digest is computed with `sha256sum`, falling back to
+`shasum -a 256`. The report retains the benchmark test path while its digest
+binds the mapped module directory, and the analyzer checks that digest before
+producing comparisons.
 
 `--jit` is currently restricted to `--suite jetstream3`. The report records a
 top-level `jit_mode` (`no-jit` or `jit`) and each engine's version, effective

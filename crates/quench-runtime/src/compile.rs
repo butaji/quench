@@ -24,8 +24,8 @@ mod capture_layout;
 mod capture_profile;
 mod class;
 mod early;
-mod syntax_message;
 mod frame_registers;
+mod syntax_message;
 pub(crate) mod liveness;
 mod locals;
 mod numeric;
@@ -1551,7 +1551,7 @@ enum ConstantKey {
     WasmV128([u8; crate::wasm::V128_BYTES]),
     String(String),
     StringUnits(Vec<u16>),
-    BigInt(String),
+    BigInt(num_bigint::BigInt),
     Boolean(bool),
     Null,
     Undefined,
@@ -1580,8 +1580,8 @@ impl<'a> Compiler<'a> {
     /// (`capture_layout::dynamic_name_scopes`), of every function private member access
     /// resolves through, and of the root; the rest keep their direct bindings, as no lookup
     /// reaches their captured names.
-    fn resolve_name_bindings(&mut self, functions: &mut [BcFunction]) {
-        let reachable = capture_layout::dynamic_name_scopes(functions, &self.atoms);
+    fn resolve_name_bindings(&mut self, functions: &mut [BcFunction], dynamic: &[bool]) {
+        let reachable = capture_layout::dynamic_name_scopes(functions, dynamic);
         for (id, function) in functions.iter_mut().enumerate() {
             let Some(deferred) = self.deferred_name_bindings.remove(&(id as u32)) else {
                 continue;
@@ -2089,8 +2089,9 @@ impl<'a> Compiler<'a> {
         // Functions the compiler synthesizes (class constructors and initializers) may have
         // grown the reservation.
         functions.shrink_to_fit();
-        self.resolve_name_bindings(&mut functions);
-        capture_layout::apply(&mut functions, &self.atoms);
+        let dynamic = capture_layout::dynamic_name_resolution(&functions, &self.atoms);
+        self.resolve_name_bindings(&mut functions, &dynamic);
+        capture_layout::apply(&mut functions, &self.atoms, &dynamic);
         if self.mode == SpecializationMode::Enabled {
             Self::apply_rewrites(
                 &mut functions,
@@ -2560,7 +2561,9 @@ impl<'a> Compiler<'a> {
         let annex_b_collisions = self.annex_b_collisions(body);
         let arguments_slot = if let Some(slot) = parameter_arguments_slot {
             Some(slot)
-        } else if parent.is_none() {
+        } else if parent.is_none() || options.class_initializer {
+            // Field initializers and static blocks cannot name `arguments` (an early error),
+            // so they have no binding to materialize.
             None
         } else {
             if parameter_shadows_arguments {
