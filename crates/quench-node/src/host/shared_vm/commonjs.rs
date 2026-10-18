@@ -1278,6 +1278,7 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("internal/crypto/keys", BuiltinModule::Internal("internal/crypto/keys")),
     ("internal/abort_controller", BuiltinModule::Internal("internal/abort_controller")),
     ("internal/worker/io", BuiltinModule::Internal("internal/worker/io")),
+    ("internal/worker", BuiltinModule::Internal("internal/worker")),
     ("constants", BuiltinModule::Internal("constants")),
     ("node:constants", BuiltinModule::Internal("constants")),
     ("dns/promises", BuiltinModule::DnsPromises),
@@ -1732,6 +1733,20 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         }
         BuiltinModule::Internal("internal/worker/io") =>
             native_global_namespace(context, &["MessageChannel", "MessagePort"]),
+        // Node's lib reads its thread facts here (`process.execve`, `crypto.setFips`,
+        // `trace_events`, Web Locks); they are the public `worker_threads` module's.
+        BuiltinModule::Internal("internal/worker") => {
+            let threads = cached_builtin(context, BuiltinModule::WorkerThreads)?;
+            let module = context.object_rooted()?;
+            for name in ["isMainThread", "isInternalThread", "threadId", "threadName", "resourceLimits"] {
+                let value = get(context, threads, name)?;
+                set(context, module, name, value)?;
+            }
+            // Only the main thread owns process-wide state (Node's `ownsProcessState`).
+            let main = get(context, threads, "isMainThread")?;
+            set(context, module, "ownsProcessState", main)?;
+            Ok(module)
+        }
         BuiltinModule::Internal("internal/abort_controller") => {
             let module=native_global_namespace(context, &["AbortController", "AbortSignal"])?;
             let data=context.host_mut().shared_state().borrow().event_targets_api
