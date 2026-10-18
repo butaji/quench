@@ -575,5 +575,6 @@ The first all-register companion screen scored 198.98 versus 194.34 with the
 feature off, a paired ratio of 1.0395 [0.8684, 1.1094]; RSS rose 0.19 MiB.
 This failed the predeclared gate, so no confirmation ran. A narrower
 backward-liveness variant that tracks only registers feeding shift-by-two
-operations is under development. The complete report and raw rounds are in
+operations has been implemented and is awaiting its own screen. The complete
+report and raw rounds are in
 `evidence/jit-jetstream3-wasm-2026-10-18/indexed-offset-reuse/`.
