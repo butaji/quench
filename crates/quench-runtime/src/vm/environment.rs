@@ -1523,9 +1523,14 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        slots
-            .owned(usize::from(slot))
-            .filter(|value| !value.is_deleted())
+        let value = match slots.slot(usize::from(slot))?.state() {
+            crate::heap::EnvironmentSlotState::Owned(value) => value,
+            // A shared slot names its owner, which holds the slot itself.
+            crate::heap::EnvironmentSlotState::Shared(owner) => {
+                self.heap.environment_slot(owner, usize::from(slot))?
+            }
+        };
+        (!value.is_deleted()).then_some(value)
     }
 
     /// The slots a direct capture at `depth` reads, and the program of a root environment
@@ -1744,13 +1749,7 @@ impl<H: Host> Vm<H> {
                         .copied()
                 })
                 .unwrap_or_default();
-            return Err(self.reference_error(
-                p,
-                format!(
-                    "Cannot access '{}' before initialization",
-                    self.atom_name(atom)
-                ),
-            ));
+            return Err(self.uninitialized_binding_error(p, atom));
         }
         Ok(value)
     }
@@ -1855,13 +1854,7 @@ impl<H: Host> Vm<H> {
                 .and_then(|metadata| metadata.local_atoms.get(usize::from(slot)))
                 .copied()
                 .unwrap_or_default();
-            return Err(self.reference_error(
-                p,
-                format!(
-                    "Cannot access '{}' before initialization",
-                    self.atom_name(atom)
-                ),
-            ));
+            return Err(self.uninitialized_binding_error(p, atom));
         }
         if atom.is_some_and(|atom| self.is_self_binding(atom)) {
             if p.functions[self.frames[frame].function as usize].strict {
@@ -2102,13 +2095,7 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<Value, JsError> {
         if value.is_deleted() {
-            return Err(self.reference_error(
-                p,
-                format!(
-                    "Cannot access '{}' before initialization",
-                    self.atom_name(atom)
-                ),
-            ));
+            return Err(self.uninitialized_binding_error(p, atom));
         }
         Ok(value)
     }

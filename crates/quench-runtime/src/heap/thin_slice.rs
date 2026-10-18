@@ -106,6 +106,38 @@ impl<T> ThinBoxSlice<T> {
     }
 }
 
+impl<T> Default for ThinBoxSlice<T> {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
+impl<T> From<Vec<T>> for ThinBoxSlice<T> {
+    fn from(values: Vec<T>) -> Self {
+        values.into_boxed_slice().into()
+    }
+}
+
+impl<'a, T> IntoIterator for &'a ThinBoxSlice<T> {
+    type Item = &'a T;
+    type IntoIter = std::slice::Iter<'a, T>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl<T> FromIterator<T> for ThinBoxSlice<T> {
+    fn from_iter<I: IntoIterator<Item = T>>(values: I) -> Self {
+        values.into_iter().collect::<Vec<_>>().into()
+    }
+}
+
+impl<T: PartialEq> PartialEq for ThinBoxSlice<T> {
+    fn eq(&self, other: &Self) -> bool {
+        **self == **other
+    }
+}
+
 impl<T> From<Box<[T]>> for ThinBoxSlice<T> {
     fn from(values: Box<[T]>) -> Self {
         let len = values.len();

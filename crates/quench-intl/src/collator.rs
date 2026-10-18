@@ -2,7 +2,7 @@ use icu_collator::provider::CollationTailoringV1;
 use icu_collator::{
     options::{AlternateHandling, CaseLevel, CollatorOptions as IcuOptions, Strength},
     preferences::{CollationCaseFirst, CollationNumericOrdering, CollationType},
-    Collator, CollatorPreferences,
+    Collator, CollatorBorrowed, CollatorPreferences,
 };
 use icu_provider::{
     marker::DataMarkerExt, DataIdentifierBorrowed, DataMarkerAttributes, DataProvider, DataRequest,
@@ -45,6 +45,11 @@ fn icu_ordering(
     {
         return None;
     }
+    let collator = recent_collator(locale, options)?;
+    Some(ordering_number(collator.compare(left, right)))
+}
+
+fn build_collator(locale: &str, options: &CollatorOptions<'_>) -> Option<CollatorBorrowed<'static>> {
     if options.usage == "search" && !provider_has_collation(locale, "search") {
         return None;
     }
@@ -70,8 +75,67 @@ fn icu_ordering(
             }
         }
     }
-    let collator = Collator::try_new(preferences, icu_options(options)).ok()?;
-    Some(ordering_number(collator.compare(left, right)))
+    Collator::try_new(preferences, icu_options(options)).ok()
+}
+
+
+/// Collators built recently, most recent first: building one resolves the locale's fallback
+/// chain and loads its data, while a program compares strings with only a few collations
+/// (`String.prototype.localeCompare` builds the default one for every call). A collator is
+/// a pure function of its locale and options, so a cached one compares exactly as a new one.
+const RECENT_COLLATORS: usize = 8;
+
+struct CollatorKey {
+    locale: String,
+    ignore_punctuation: bool,
+    sensitivity: String,
+    usage: String,
+    numeric: bool,
+    case_first: String,
+}
+
+impl CollatorKey {
+    fn matches(&self, locale: &str, options: &CollatorOptions<'_>) -> bool {
+        self.locale == locale
+            && self.ignore_punctuation == options.ignore_punctuation
+            && self.sensitivity == options.sensitivity
+            && self.usage == options.usage
+            && self.numeric == options.numeric
+            && self.case_first == options.case_first
+    }
+}
+
+thread_local! {
+    static COLLATORS: std::cell::RefCell<Vec<(CollatorKey, Option<std::rc::Rc<CollatorBorrowed<'static>>>)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// `icu_ordering`'s collator for `locale` and `options`, `None` when ICU has none for them.
+fn recent_collator(
+    locale: &str,
+    options: &CollatorOptions<'_>,
+) -> Option<std::rc::Rc<CollatorBorrowed<'static>>> {
+    COLLATORS.with(|recent| {
+        let mut recent = recent.borrow_mut();
+        if let Some(index) = recent.iter().position(|(key, _)| key.matches(locale, options)) {
+            let entry = recent.remove(index);
+            let collator = entry.1.clone();
+            recent.insert(0, entry);
+            return collator;
+        }
+        let collator = build_collator(locale, options).map(std::rc::Rc::new);
+        let key = CollatorKey {
+            locale: locale.to_owned(),
+            ignore_punctuation: options.ignore_punctuation,
+            sensitivity: options.sensitivity.to_owned(),
+            usage: options.usage.to_owned(),
+            numeric: options.numeric,
+            case_first: options.case_first.to_owned(),
+        };
+        recent.truncate(RECENT_COLLATORS - 1);
+        recent.insert(0, (key, collator.clone()));
+        collator
+    })
 }
 
 fn provider_has_collation(locale: &str, collation: &str) -> bool {

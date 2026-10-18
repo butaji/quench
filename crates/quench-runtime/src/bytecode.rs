@@ -14,6 +14,7 @@ pub type Register = u16;
 
 mod atoms;
 mod control_flow;
+mod initialization;
 mod instruction;
 mod name_bindings;
 pub(crate) use name_bindings::{CapturedNames, NameBindings};
@@ -27,6 +28,11 @@ pub(crate) const SELF_BINDING_MARKER: &str = "\0quench:self-binding:";
 /// same-named binding of its function: `{BLOCK_BINDING_MARKER}{name}`.
 pub(crate) const BLOCK_BINDING_MARKER: &str = "\0quench:block-binding:";
 
+/// The name a hidden renamed block binding has in source; other names are unchanged.
+pub(crate) fn source_binding_name(name: &str) -> &str {
+    name.strip_prefix(BLOCK_BINDING_MARKER).unwrap_or(name)
+}
+
 /// Whether a local named `name` must live in its function's environment whatever its
 /// captures: other hidden bindings (lexical `this`, `new.target`, home objects, private
 /// names, ...) are reached by name, not only through capture slots. A renamed block binding
@@ -34,7 +40,7 @@ pub(crate) const BLOCK_BINDING_MARKER: &str = "\0quench:block-binding:";
 pub(crate) fn local_name_requires_environment(name: &str) -> bool {
     name.starts_with('\0') && !name.starts_with(BLOCK_BINDING_MARKER)
 }
-pub(crate) use control_flow::branch_table_entries;
+pub(crate) use control_flow::{ControlEdge, branch_table_entries};
 pub use instruction::Instr;
 pub(crate) use instruction::{ConstructArguments, RegisterWindow, WideInstruction};
 pub(crate) use numeric_ops::specialized_numeric_op;
@@ -47,7 +53,6 @@ pub(crate) const SET_THIS_REGISTER: Register = 1 << 14;
 pub(crate) const REGISTER_MASK: Register = SET_THIS_REGISTER - 1;
 pub(crate) const INLINE_OBJECT_SITE_ATOMS: usize = 2;
 pub(crate) const MAX_ARRAY_LENGTH: usize = u32::MAX as usize;
-pub(crate) const NO_REGISTER_ROOT_MAP: u32 = u32::MAX;
 pub(crate) const NO_OPTIONAL_REGISTER: Register = 0;
 pub(crate) const OPTIONAL_REGISTER_BIAS: Register = 1;
 
@@ -984,61 +989,6 @@ impl HotDecoding {
     }
 }
 
-/// The basic blocks of decoded code: a block starts at the entry, at each jump, branch and
-/// handler target, at each handler bound, and after every instruction that does not fall
-/// through alone, so control enters a block only at its start and each block lies wholly
-/// inside or outside each handler range.
-struct BasicBlocks {
-    /// Sorted, distinct block starts; the first is 0.
-    starts: Vec<usize>,
-}
-
-impl BasicBlocks {
-    fn of(code: &[WideInstruction], handlers: &[Handler]) -> Self {
-        let mut starts = vec![0];
-        for (pc, instruction) in code.iter().enumerate() {
-            match instruction.op().control_flow_layout() {
-                ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump => {
-                    starts.extend([instruction.jump_target() as usize, pc + 1]);
-                }
-                ControlFlowLayout::BranchTable => {
-                    starts.extend(branch_table_entries(pc, *instruction));
-                    starts.push(pc + 1);
-                }
-                ControlFlowLayout::Terminal => starts.push(pc + 1),
-                ControlFlowLayout::Call | ControlFlowLayout::Fallthrough
-                    if instruction.returns_from_frame() =>
-                {
-                    starts.push(pc + 1);
-                }
-                ControlFlowLayout::Call | ControlFlowLayout::Fallthrough => {}
-            }
-        }
-        for handler in handlers {
-            starts.extend([handler.start, handler.end, handler.target].map(|pc| pc as usize));
-            starts.extend(handler.return_target.map(|pc| pc as usize));
-        }
-        starts.retain(|start| *start < code.len());
-        starts.sort_unstable();
-        starts.dedup();
-        Self { starts }
-    }
-
-    fn len(&self) -> usize {
-        self.starts.len()
-    }
-
-    /// The block that starts at `pc`, if one does.
-    fn containing(&self, pc: usize) -> Option<usize> {
-        self.starts.binary_search(&pc).ok()
-    }
-
-    /// The instructions of `block` in code of length `len`.
-    fn range(&self, block: usize, len: usize) -> std::ops::Range<usize> {
-        self.starts[block]..self.starts.get(block + 1).copied().unwrap_or(len)
-    }
-}
-
 /// Whether some jump in `code` targets its own or an earlier instruction: a loop.
 fn has_backward_branch(code: &[Instr], wide: &[WideInstruction]) -> bool {
     code.iter().enumerate().any(|(pc, packed)| {
@@ -1120,7 +1070,7 @@ pub struct Function {
     pub params: u16,
     pub length: u16,
     pub parameter_end_pc: u32,
-    pub parameter_atoms: Vec<Atom>,
+    pub(crate) parameter_atoms: crate::heap::ThinBoxSlice<Atom>,
     pub rest: bool,
     pub is_async: bool,
     pub is_generator: bool,
@@ -1137,29 +1087,29 @@ pub struct Function {
     pub simple_parameters: bool,
     pub strict: bool,
     pub locals: u16,
-    pub local_atoms: Vec<Atom>,
+    pub(crate) local_atoms: crate::heap::ThinBoxSlice<Atom>,
     /// Names visible through this function's captured declarative environment.
-    pub environment_atoms: Vec<Atom>,
+    pub(crate) environment_atoms: crate::heap::ThinBoxSlice<Atom>,
     /// Source local slots owned by a closure environment when this activation
     /// escapes. `None` retains legacy whole-frame promotion; `Some` is the
     /// selective layout, including an empty set for closure-only activations.
     pub(crate) selective_capture_slots: Option<Vec<u16>>,
     /// Binding slots assigned stable frame registers by lowering.
-    pub(crate) local_registers: Vec<LocalRegister>,
+    pub(crate) local_registers: crate::heap::ThinBoxSlice<LocalRegister>,
     /// The function was created while an enclosing `with` scope was active,
     /// so unresolved names in descendants can still observe its outer locals.
     pub(crate) inherited_with_scope: bool,
-    pub lexical_atoms: Vec<Atom>,
+    pub(crate) lexical_atoms: crate::heap::ThinBoxSlice<Atom>,
     /// What a Script or eval body declares in the global scope; `None` for every other
     /// function, which declares nothing there.
     pub global_declarations: Option<Box<GlobalDeclarations>>,
     /// Bindings a dynamic name lookup in this function can see.
     pub(crate) name_bindings: NameBindings,
     /// Lexical projections at eval calls and dynamic name operations.
-    pub binding_sites: Vec<BindingSite>,
+    pub binding_sites: crate::heap::ThinBoxSlice<BindingSite>,
     pub(crate) source_positions: SourcePositions,
     /// The plan of each CloneEnv instruction.
-    pub environment_clones: Vec<EnvironmentClone>,
+    pub environment_clones: crate::heap::ThinBoxSlice<EnvironmentClone>,
     pub code: Vec<Instr>,
     pub(crate) wide: Vec<WideInstruction>,
     pub registers: u16,
@@ -1178,8 +1128,8 @@ pub struct Function {
     pub(crate) static_name_scope: std::cell::OnceCell<bool>,
     /// Lazily derived `call_plan`; never serialized.
     pub(crate) call_plan: std::cell::OnceCell<CallPlan>,
-    pub(crate) handlers: Vec<Handler>,
-    pub(crate) register_root_offset: u32,
+    pub(crate) handlers: crate::heap::ThinBoxSlice<Handler>,
+    pub(crate) register_roots: RegisterRoots,
     /// A register that holds `undefined` for the whole activation, set at frame entry and
     /// never written by code: the receiver of plain calls.
     pub(crate) undefined_register: Option<Register>,
@@ -1233,6 +1183,33 @@ pub(crate) struct SourcePosition {
     pub(crate) line: u32,
     pub(crate) column: u32,
 }
+
+/// Whether register liveness covers a function's register forms, so a frame may leave its
+/// dead registers stale; and the per-pc live register masks the collector scans, derived
+/// when a collection first finds the function on the stack. Most of a program's functions
+/// never run during a collection, so their masks are never built.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct RegisterRoots {
+    covered: bool,
+    masks: std::cell::OnceCell<Box<[u64]>>,
+}
+
+impl RegisterRoots {
+    pub(crate) fn new(covered: bool) -> Self {
+        Self { covered, masks: std::cell::OnceCell::new() }
+    }
+
+    pub(crate) fn covered(&self) -> bool {
+        self.covered
+    }
+
+    /// The masks a collection derived so far; none until one finds the function running.
+    #[cfg(feature = "profile-memory")]
+    pub(crate) fn capacity_bytes(&self) -> usize {
+        self.masks.get().map_or(0, |masks| size_of_val::<[u64]>(masks))
+    }
+}
+
 
 /// A function's source positions in increasing pc order, each delta-coded against the one
 /// before it as LEB128 varints: the pc advance, the line change (zigzag), then the column,
@@ -1370,11 +1347,6 @@ impl Iterator for SourcePositionIter<'_> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PlainLocalContextIneligibility {
     RootFunction,
-    AsyncFunction,
-    GeneratorFunction,
-    ClassConstructor,
-    ClassInitializer,
-    NonSimpleParameters,
     LegacyCaptureLayout,
     DynamicNameResolution,
 }
@@ -1383,10 +1355,8 @@ pub(crate) enum PlainLocalContextIneligibility {
 pub(crate) enum PlainLocalSlotIneligibility {
     MissingAtom,
     MappedArgument,
-    Tdz,
     SelfBinding,
     Captured,
-    HiddenName,
 }
 
 impl Function {
@@ -1464,21 +1434,6 @@ impl Function {
         if self.parent.is_none() {
             return Some(PlainLocalContextIneligibility::RootFunction);
         }
-        if self.is_async {
-            return Some(PlainLocalContextIneligibility::AsyncFunction);
-        }
-        if self.is_generator {
-            return Some(PlainLocalContextIneligibility::GeneratorFunction);
-        }
-        if self.is_class_constructor {
-            return Some(PlainLocalContextIneligibility::ClassConstructor);
-        }
-        if self.class_initializer {
-            return Some(PlainLocalContextIneligibility::ClassInitializer);
-        }
-        if !self.simple_parameters {
-            return Some(PlainLocalContextIneligibility::NonSimpleParameters);
-        }
         let selective = self.selective_capture_slots.is_some();
         let has_legacy_environment_access = self.code.iter().any(|instruction| {
             instruction.op() == Op::MakeClosure && !selective
@@ -1502,38 +1457,32 @@ impl Function {
     }
 
     /// Which local slots are plain: read and written only through the frame's local array,
-    /// with no environment, TDZ, mapped-argument or dynamic-scope observer. Compilation
-    /// specializes these slots' operations, validation re-derives the same proof, and the
-    /// interpreter memoizes it in `plain_locals` to read plain local operands directly.
-    pub(crate) fn plain_local_slots<'a>(
-        &self,
-        atom_name: impl Fn(Atom) -> Option<&'a str>,
-    ) -> Vec<bool> {
+    /// with no environment, mapped-argument or dynamic-scope observer, and no read inside a
+    /// temporal dead zone (`initialization`). Compilation specializes these slots'
+    /// operations, validation re-derives the same proof, and the interpreter memoizes it in
+    /// `plain_locals` to read plain local operands directly.
+    pub(crate) fn plain_local_slots(&self, superinstructions: &[Superinstruction]) -> Vec<bool> {
         let mut plain = vec![false; usize::from(self.locals)];
         if !self.plain_local_context_is_safe() {
             return plain;
         }
-        let mut tdz_slots = vec![false; usize::from(self.locals)];
-        for instruction in &self.code {
+        let mut dead_zone = vec![false; usize::from(self.locals)];
+        for instruction in self.instructions() {
             if instruction.op() == Op::InitializeTdz
-                && let Some(slot) = tdz_slots.get_mut(instruction.local_slot())
-            {
-                *slot = true;
-            }
-        }
-        for instruction in &self.wide {
-            if instruction.op() == Op::InitializeTdz
-                && let Some(slot) = tdz_slots.get_mut(instruction.local_slot())
+                && let Some(slot) = dead_zone.get_mut(instruction.local_slot())
             {
                 *slot = true;
             }
         }
         for (slot, plain) in plain.iter_mut().enumerate() {
-            *plain = self
-                .local_atoms
-                .get(slot)
-                .and_then(|atom| atom_name(*atom))
-                .is_some_and(|name| self.plain_local_slot_is_safe(slot, name, tdz_slots[slot]));
+            *plain = self.plain_local_slot_is_safe(slot);
+        }
+        for (slot, dead_zone) in dead_zone.iter_mut().enumerate() {
+            *dead_zone &= plain[slot];
+        }
+        let initialized = initialization::initialized_before_reads(self, superinstructions, &dead_zone);
+        for (slot, plain) in plain.iter_mut().enumerate() {
+            *plain &= !dead_zone[slot] || initialized[slot];
         }
         plain
     }
@@ -1589,140 +1538,6 @@ impl Function {
     /// Whether `atom` is among `environment_atoms`.
     pub(crate) fn declares_environment_atom(&self, atom: Atom) -> bool {
         self.declared_atoms().environment.contains(&atom)
-    }
-
-    /// Slots whose uninitialized state no access can observe: in a plain-local context, each
-    /// slot that is plain but for its TDZ, and whose every access other than a TDZ reset
-    /// (`InitializeTdz`) or an initializing store runs, on every normal and exceptional path
-    /// from entry, only after an initializing store with no reset since. Resetting such a
-    /// slot to its uninitialized hole then changes nothing any access sees.
-    pub(crate) fn unobservable_tdz_slots<'a>(
-        &self,
-        atom_name: impl Fn(Atom) -> Option<&'a str>,
-    ) -> Vec<bool> {
-        let locals = usize::from(self.locals);
-        let mut candidates = vec![false; locals];
-        if !self.plain_local_context_is_safe() {
-            return candidates;
-        }
-        let decoded = self.instructions().collect::<Vec<_>>();
-        for instruction in &decoded {
-            if instruction.op() == Op::InitializeTdz
-                && let Some(candidate) = candidates.get_mut(instruction.local_slot())
-            {
-                *candidate = true;
-            }
-        }
-        for (slot, candidate) in candidates.iter_mut().enumerate() {
-            *candidate = *candidate
-                && self
-                    .local_atoms
-                    .get(slot)
-                    .and_then(|atom| atom_name(*atom))
-                    .is_some_and(|name| self.plain_local_slot_is_safe(slot, name, false));
-        }
-        if !candidates.contains(&true) {
-            return candidates;
-        }
-        let initializing = |instruction: WideInstruction| {
-            matches!(instruction.op(), Op::StoreLocal | Op::StoreLocalPlain)
-                && instruction.boolean_field(InstructionField::C) == Some(true)
-        };
-        let slot_bit = |slot: usize| (slot / u64::BITS as usize, 1u64 << (slot % u64::BITS as usize));
-        let transfer = |state: &mut [u64], instruction: WideInstruction| {
-            if instruction.op() == Op::InitializeTdz || initializing(instruction) {
-                let (word, bit) = slot_bit(instruction.local_slot());
-                if instruction.op() == Op::InitializeTdz {
-                    state[word] &= !bit;
-                } else {
-                    state[word] |= bit;
-                }
-            }
-        };
-        // Must-initialized slots on entry to each basic block, one row of `words` per block:
-        // a state per instruction would cost the code length times the locals. A block no
-        // path reaches keeps every slot (it never runs).
-        let words = locals.div_ceil(u64::BITS as usize);
-        let len = decoded.len();
-        let blocks = BasicBlocks::of(&decoded, &self.handlers);
-        let mut entry = vec![u64::MAX; blocks.len() * words];
-        entry[..words].fill(0);
-        let mut visited = vec![false; blocks.len()];
-        visited[0] = true;
-        let mut work = vec![0];
-        let mut state = vec![0u64; words];
-        while let Some(block) = work.pop() {
-            state.copy_from_slice(&entry[block * words..(block + 1) * words]);
-            let mut meet = |target: usize, state: &[u64]| {
-                // Control reaches only block starts; past the code nothing runs.
-                let Some(target) = blocks.containing(target).filter(|_| target < len) else {
-                    return;
-                };
-                let current = &mut entry[target * words..(target + 1) * words];
-                let mut changed = false;
-                for (word, incoming) in current.iter_mut().zip(state) {
-                    let next = *word & incoming;
-                    changed |= next != *word;
-                    *word = next;
-                }
-                if changed || !visited[target] {
-                    visited[target] = true;
-                    work.push(target);
-                }
-            };
-            let range = blocks.range(block, len);
-            for pc in range.clone() {
-                let instruction = decoded[pc];
-                for handler in &self.handlers {
-                    if pc as u32 >= handler.start && (pc as u32) < handler.end {
-                        meet(handler.target as usize, &state);
-                        if let Some(target) = handler.return_target {
-                            meet(target as usize, &state);
-                        }
-                    }
-                }
-                transfer(&mut state, instruction);
-                if pc + 1 < range.end {
-                    continue;
-                }
-                match instruction.op().control_flow_layout() {
-                    ControlFlowLayout::Jump => meet(instruction.jump_target() as usize, &state),
-                    ControlFlowLayout::ConditionalJump => {
-                        meet(pc + 1, &state);
-                        meet(instruction.jump_target() as usize, &state);
-                    }
-                    ControlFlowLayout::BranchTable => {
-                        for target in branch_table_entries(pc, instruction) {
-                            meet(target, &state);
-                        }
-                    }
-                    ControlFlowLayout::Terminal => {}
-                    ControlFlowLayout::Call | ControlFlowLayout::Fallthrough
-                        if instruction.returns_from_frame() => {}
-                    ControlFlowLayout::Call | ControlFlowLayout::Fallthrough => meet(pc + 1, &state),
-                }
-            }
-        }
-        for block in (0..blocks.len()).filter(|block| visited[*block]) {
-            state.copy_from_slice(&entry[block * words..(block + 1) * words]);
-            for pc in blocks.range(block, len) {
-                let instruction = decoded[pc];
-                if instruction.op().immediate_role() == ImmediateRole::LocalSlot
-                    && instruction.op() != Op::InitializeTdz
-                    && !initializing(instruction)
-                {
-                    let slot = instruction.local_slot();
-                    let (word, bit) = slot_bit(slot);
-                    if state[word] & bit == 0
-                        && let Some(candidate) = candidates.get_mut(slot)
-                    {
-                        *candidate = false;
-                    }
-                }
-                transfer(&mut state, instruction);
-            }
-        }
-        candidates
     }
 
     /// Whether anything can read an activation's implicit `new.target` and lexical-this
@@ -1814,8 +1629,9 @@ impl Function {
     /// does for parameters that live only in the frame: no code or closure uses an `arguments`
     /// binding, the parameters are simple, and each is a plain or register-promoted local.
     /// Otherwise the arguments are reflected as passed.
-    pub(crate) fn reflects_live_parameters(&self, atoms: &AtomTable) -> bool {
+    pub(crate) fn reflects_live_parameters(&self, program: &ResidualProgram) -> bool {
         *self.live_parameter_reflection.get_or_init(|| {
+            let atoms = &program.atoms;
             let arguments_used = self.local_atoms.iter().enumerate().any(|(slot, &atom)| {
                 usize::try_from(atom)
                     .is_ok_and(|atom| atom < atoms.len() && &atoms[atom] == "arguments")
@@ -1830,7 +1646,7 @@ impl Function {
                 && self.simple_parameters
                 && !self.rest
                 && (0..self.params).all(|parameter| {
-                    self.plain_local(atoms, usize::from(parameter))
+                    self.plain_local(program, usize::from(parameter))
                         || self
                             .local_registers
                             .iter()
@@ -1845,14 +1661,15 @@ impl Function {
     /// `with` scope or observable implicit bindings. Such a frame needs only its storage sized
     /// (cleared when no root map lets the collector skip stale registers), its parameters
     /// placed and its scalar state set; see `activate_plain_frame`.
-    pub(crate) fn plain_activation(&self, atoms: &AtomTable) -> bool {
-        self.call_plan(atoms).plain
+    pub(crate) fn plain_activation(&self, program: &ResidualProgram) -> bool {
+        self.call_plan(program).plain
     }
 
     /// The function's `CallPlan`, derived on first use.
     #[inline(always)]
-    pub(crate) fn call_plan(&self, atoms: &AtomTable) -> CallPlan {
+    pub(crate) fn call_plan(&self, program: &ResidualProgram) -> CallPlan {
         *self.call_plan.get_or_init(|| {
+            let atoms = &program.atoms;
             let promoted_parameters = self
                 .local_registers
                 .iter()
@@ -1879,7 +1696,7 @@ impl Function {
                 && !self.class_initializer
                 && !self.parameter_eval_arguments_error;
             let legacy_reflection = !self.has_restricted_legacy_caller_access();
-            let live_parameters = self.reflects_live_parameters(atoms);
+            let live_parameters = self.reflects_live_parameters(program);
             let forwards_arguments = self.forwards_arguments_only();
             let addresses_locals = self.instructions().any(|instruction| {
                 matches!(instruction.op(), Op::MakeClosure | Op::CloneEnv)
@@ -2048,43 +1865,27 @@ impl Function {
 
     /// The memoized `plain_local_slots` projection for this residual's atoms.
     #[inline(always)]
-    pub(crate) fn plain_local(&self, atoms: &AtomTable, slot: usize) -> bool {
+    pub(crate) fn plain_local(&self, program: &ResidualProgram, slot: usize) -> bool {
         self.plain_locals
             .get_or_init(|| {
-                self.plain_local_slots(|atom| {
-                    usize::try_from(atom)
-                        .ok()
-                        .filter(|atom| *atom < atoms.len())
-                        .map(|atom| &atoms[atom])
-                })
-                .into_boxed_slice()
+                self.plain_local_slots(&program.superinstructions)
+                    .into_boxed_slice()
             })
             .get(slot)
             .copied()
             .unwrap_or(false)
     }
 
-    pub(crate) fn plain_local_slot_is_safe(
-        &self,
-        slot: usize,
-        atom_name: &str,
-        has_tdz: bool,
-    ) -> bool {
-        self.plain_local_slot_ineligibility(slot, atom_name, has_tdz)
-            .is_none()
+    pub(crate) fn plain_local_slot_is_safe(&self, slot: usize) -> bool {
+        self.plain_local_slot_ineligibility(slot).is_none()
     }
 
     pub(crate) fn plain_local_slot_ineligibility(
         &self,
         slot: usize,
-        atom_name: &str,
-        has_tdz: bool,
     ) -> Option<PlainLocalSlotIneligibility> {
         if self.local_atoms.get(slot).is_none() {
             return Some(PlainLocalSlotIneligibility::MissingAtom);
-        }
-        if has_tdz {
-            return Some(PlainLocalSlotIneligibility::Tdz);
         }
         if self.is_self_binding_slot(slot) {
             return Some(PlainLocalSlotIneligibility::SelfBinding);
@@ -2103,9 +1904,6 @@ impl Function {
             && self.arguments_are_mapped()
         {
             return Some(PlainLocalSlotIneligibility::MappedArgument);
-        }
-        if local_name_requires_environment(atom_name) {
-            return Some(PlainLocalSlotIneligibility::HiddenName);
         }
         None
     }
@@ -2315,7 +2113,7 @@ impl OperandKind {
 
 impl Operand {
     const TAG_SHIFT: u16 = 14;
-    const PAYLOAD_MASK: u16 = (1 << Self::TAG_SHIFT) - 1;
+    pub(crate) const PAYLOAD_MASK: u16 = (1 << Self::TAG_SHIFT) - 1;
 
     pub(crate) const fn kind(self) -> Option<OperandKind> {
         match self.0 >> Self::TAG_SHIFT {
@@ -2644,80 +2442,6 @@ pub struct ResidualProgram {
     pub(crate) object_sites: Vec<ObjectSite>,
     pub(crate) regexp_literal_sites: Vec<RegExpLiteralSite>,
     pub(crate) superinstructions: Vec<Superinstruction>,
-    pub(crate) register_roots: RegisterRoots,
-}
-
-/// The live-register masks of every function whose registers fit a mask, concatenated: one
-/// per instruction and one at the end of its code, each `root_mask_bytes` of the function's
-/// registers wide, little-endian. A function's `register_root_offset` is the byte offset of
-/// its first mask. Most functions keep at most sixteen registers, so their masks take two
-/// bytes, a quarter of a `u64`, beside code that takes eight per instruction.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct RegisterRoots {
-    bytes: Vec<u8>,
-}
-
-/// The bytes of one live-register mask of a function with `registers` registers.
-pub(crate) fn root_mask_bytes(registers: u16) -> usize {
-    usize::from(registers).div_ceil(u8::BITS as usize).max(1)
-}
-
-impl RegisterRoots {
-    pub(crate) fn from_bytes(bytes: Vec<u8>) -> Self {
-        Self { bytes }
-    }
-
-    pub(crate) fn bytes(&self) -> &[u8] {
-        &self.bytes
-    }
-
-    /// Appends one function's masks and returns their offset. Each mask names only the
-    /// function's registers, so it fits its width.
-    pub(crate) fn append(&mut self, registers: u16, masks: impl IntoIterator<Item = u64>) -> u32 {
-        let offset = u32::try_from(self.bytes.len()).unwrap_or(NO_REGISTER_ROOT_MAP);
-        let width = root_mask_bytes(registers);
-        for mask in masks {
-            self.bytes.extend_from_slice(&mask.to_le_bytes()[..width]);
-        }
-        offset
-    }
-
-    /// The mask before the `index`th instruction of the function whose masks start at
-    /// `offset`, or `None` past the table.
-    pub(crate) fn mask(&self, offset: u32, registers: u16, index: usize) -> Option<u64> {
-        let width = root_mask_bytes(registers);
-        let start = (offset as usize).checked_add(index.checked_mul(width)?)?;
-        let bytes = self.bytes.get(start..start.checked_add(width)?)?;
-        let mut mask = [0; size_of::<u64>()];
-        mask[..width].copy_from_slice(bytes);
-        Some(u64::from_le_bytes(mask))
-    }
-
-    /// The function's `count` masks from `offset`, or `None` when they leave the table.
-    pub(crate) fn masks(
-        &self,
-        offset: u32,
-        registers: u16,
-        count: usize,
-    ) -> Option<impl Iterator<Item = u64> + Clone + '_> {
-        let width = root_mask_bytes(registers);
-        let end = (offset as usize).checked_add(count.checked_mul(width)?)?;
-        let bytes = self.bytes.get(offset as usize..end)?;
-        Some(bytes.chunks_exact(width).map(|chunk| {
-            let mut mask = [0; size_of::<u64>()];
-            mask[..chunk.len()].copy_from_slice(chunk);
-            u64::from_le_bytes(mask)
-        }))
-    }
-
-    pub(crate) fn shrink_to_fit(&mut self) {
-        self.bytes.shrink_to_fit();
-    }
-
-    #[cfg(feature = "profile-memory")]
-    pub(crate) fn capacity_bytes(&self) -> usize {
-        self.bytes.capacity()
-    }
 }
 
 #[cold]
@@ -2737,6 +2461,34 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
 }
 
 impl ResidualProgram {
+    /// The registers live at `pc` in `function`, when liveness covers it.
+    pub(crate) fn register_root_mask(&self, function: u32, pc: usize) -> Option<u64> {
+        self.register_root_masks(function)?.get(pc).copied()
+    }
+
+    /// `function`'s live register masks by pc, one past its last instruction included, when
+    /// liveness covers it.
+    pub(crate) fn register_root_masks(&self, function: u32) -> Option<&[u64]> {
+        let function = self.functions.get(function as usize)?;
+        if !function.register_roots.covered {
+            return None;
+        }
+        let masks = function
+            .register_roots
+            .masks
+            .get_or_init(|| {
+                crate::compile::liveness::analyze(
+                    function,
+                    self,
+                    &self.field_sites,
+                    &self.superinstructions,
+                )
+                .expect("a covered function's liveness is derivable")
+                .into_boxed_slice()
+            });
+        Some(masks)
+    }
+
     pub(crate) fn source_position(&self, function: u32, pc: u32) -> Option<SourcePosition> {
         let position = self.functions.get(function as usize)?.source_positions.at(pc)?;
         self.adjust_source_position(position)
@@ -2758,7 +2510,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 96;
+    pub const FORMAT_VERSION: u8 = 97;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

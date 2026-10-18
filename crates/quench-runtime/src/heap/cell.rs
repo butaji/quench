@@ -2225,6 +2225,10 @@ impl EnvironmentSlots {
             EnvironmentSlotState::Shared(_) => None,
         }
     }
+
+    pub(crate) fn slot(&self, slot: usize) -> Option<&EnvironmentSlot> {
+        self.0.get(slot)
+    }
     pub(crate) fn roots(&self) -> impl Iterator<Item = Value> + '_ {
         self.0.iter().map(|slot| match slot.state() {
             EnvironmentSlotState::Owned(value) | EnvironmentSlotState::Shared(value) => value,

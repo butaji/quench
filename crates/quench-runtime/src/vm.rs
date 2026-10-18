@@ -357,7 +357,7 @@ impl Frame {
     #[inline(always)]
     fn prepare_registers_for(&mut self, function: &crate::bytecode::Function) {
         let register_count = usize::from(function.registers);
-        if function.register_root_offset == crate::bytecode::NO_REGISTER_ROOT_MAP
+        if !function.register_roots.covered()
             || function.is_generator
             || function.is_async
             || function.initial_register != crate::bytecode::InitialRegister::Undefined
@@ -1340,6 +1340,8 @@ pub(crate) struct Vm<H> {
     pub(crate) native_root_lists: Vec<Vec<RootId>>,
     /// The roots the last collection gathered, which sizes the next one's root vector.
     gc_root_count: usize,
+    /// Owners with out-of-cell edges at the previous collection, which sizes the next index.
+    gc_owned_root_count: usize,
     frame_pool: Vec<Box<Frame>>,
     /// Activations a running lane holds without frames.
     lane_stack: dispatch_fast::LaneStack,
@@ -1396,7 +1398,8 @@ pub(crate) struct Vm<H> {
     /// The strings most recently matched by a RegExp, most recent first, each prepared once
     /// for repeated matching (`Vm::regexp_subject`).
     regexp_subjects: Vec<Rc<quench_regexp::Subject>>,
-    /// The subject of the last short string matched, reused in place once no match holds it.
+    /// The last short subject matched, recognized by content and otherwise reused in place
+    /// once no match holds it (`Vm::regexp_subject`).
     regexp_short_subject: Option<Rc<quench_regexp::Subject>>,
     regexp_matchers: regexp::RegExpMatcherCache,
     // One lazily derived class byte per atom; length tracks `atom_sequence`.
@@ -1469,6 +1472,9 @@ pub(crate) struct Vm<H> {
     /// Private-name home objects found by `private_name_home`, kept while their starting
     /// environment is live.
     private_homes: FxHashMap<PrivateHomeKey, Value>,
+    /// The collation `String.prototype.localeCompare` resolves without locales or options
+    /// (`Vm::locale_compare_collation`); the host's default locale fixes it.
+    default_collation: Option<std::rc::Rc<intl_collator::Collation>>,
     wasm_js: wasm_js::WasmJsIntrinsics,
     direct_eval: bool,
     direct_eval_var_program: Option<ProgramId>,
@@ -1896,9 +1902,9 @@ impl<H: Host> Vm<H> {
         let (_, collections, _, _, _, _) = self.heap.stats();
         let gc = self.heap.gc_profile();
         eprintln!(
-            "{{\"kind\":\"quench-gc-time\",\"collections\":{collections},\"full_collections\":{},\"full_mark_nanos\":{},\"minor_mark_nanos\":{},\"mark_nanos\":{},\"sweep_nanos\":{},\"mark_clear_nanos\":{},\"vm_owner_edges_nanos\":{},\"vm_roots_nanos\":{},\"vm_shape_setup_nanos\":{},\"vm_after_nanos\":{}}}",
+            "{{\"kind\":\"quench-gc-time\",\"collections\":{collections},\"full_collections\":{},\"full_mark_nanos\":{},\"minor_mark_nanos\":{},\"mark_nanos\":{},\"sweep_nanos\":{},\"sweep_phase_nanos\":{:?},\"mark_clear_nanos\":{},\"vm_owner_edges_nanos\":{},\"vm_roots_nanos\":{},\"vm_shape_setup_nanos\":{},\"vm_after_nanos\":{}}}",
             gc.full_collections, gc.full_mark_nanos, gc.minor_mark_nanos,
-            gc.mark_nanos, gc.sweep_nanos, gc.mark_clear_nanos, gc.vm_phase_nanos[0], gc.vm_phase_nanos[1], gc.vm_phase_nanos[2], gc.vm_phase_nanos[3],
+            gc.mark_nanos, gc.sweep_nanos, gc.sweep_phase_nanos, gc.mark_clear_nanos, gc.vm_phase_nanos[0], gc.vm_phase_nanos[1], gc.vm_phase_nanos[2], gc.vm_phase_nanos[3],
         );
         // Sizes of the VM-side tables beside the heap: a table that grows with work done
         // rather than with live data is retention.
