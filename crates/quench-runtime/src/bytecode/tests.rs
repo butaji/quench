@@ -179,6 +179,7 @@ fn decoder_rejects_out_of_range_local_load() {
         field_sites: vec![],
         object_sites: vec![],
         regexp_literal_sites: vec![],
+        literal_templates: Vec::new(),
         superinstructions: vec![],
     };
     let path = std::env::temp_dir().join(format!("quench-invalid-local-{}", std::process::id()));
@@ -259,6 +260,7 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
         field_sites: vec![],
         object_sites: vec![],
         regexp_literal_sites: vec![],
+        literal_templates: Vec::new(),
         superinstructions: vec![],
     };
     let path = std::env::temp_dir().join(format!("quench-invalid-abi-{}", std::process::id()));

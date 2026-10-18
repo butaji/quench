@@ -3,7 +3,7 @@ use super::{
     EvalBindingLocation, FieldBase, FieldSite, Function, Handler, InitialRegister, Instr,
     LexicalBindingKind, LocalRegister, MethodSite, ModuleImportBinding, ModuleImportName,
     ModuleImportNameKind, ModuleLinkPlan, ModuleReexport, ModuleReexportKind, ModuleRequest,
-    ModuleRequestPhase, ObjectSite, Op, RegExpLiteralSite, SourcePosition, Superinstruction,
+    LiteralStep, ModuleRequestPhase, ObjectSite, Op, RegExpLiteralSite, SourcePosition, Superinstruction,
     WideInstruction,
 };
 
@@ -30,6 +30,9 @@ const OPTIONAL_STRING_NONE: u8 = 0;
 const OPTIONAL_STRING_SOME: u8 = 1;
 const MODULE_LINK_PLAN_NONE: u8 = 0;
 const MODULE_LINK_PLAN_SOME: u8 = 1;
+const LITERAL_STEP_CONSTANT: u8 = 0;
+const LITERAL_STEP_ARRAY: u8 = 1;
+const LITERAL_STEP_OBJECT: u8 = 2;
 
 fn read_eval_binding(input: &mut BinaryReader<'_>) -> Result<EvalBinding, String> {
     Ok(EvalBinding {
@@ -351,6 +354,19 @@ pub(super) fn write_program(
     for site in &program.regexp_literal_sites {
         out.u32(site.pattern_constant);
         out.u32(site.flags_constant);
+    }
+    out.u32(program.literal_templates.len() as u32);
+    for template in &program.literal_templates {
+        out.u32(template.len() as u32);
+        for step in template {
+            let (tag, operand) = match *step {
+                LiteralStep::Constant(index) => (LITERAL_STEP_CONSTANT, index),
+                LiteralStep::Array(count) => (LITERAL_STEP_ARRAY, count),
+                LiteralStep::Object(site) => (LITERAL_STEP_OBJECT, site),
+            };
+            out.u8(tag);
+            out.u32(operand);
+        }
     }
     out.u32(program.superinstructions.len() as u32);
     for site in &program.superinstructions {
@@ -764,6 +780,20 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             flags_constant: input.u32()?,
         })
     })?;
+    let literal_templates = input.list(|input| {
+        Ok(input
+            .list(|input| {
+                let tag = input.u8()?;
+                let operand = input.u32()?;
+                Ok(match tag {
+                    LITERAL_STEP_CONSTANT => LiteralStep::Constant(operand),
+                    LITERAL_STEP_ARRAY => LiteralStep::Array(operand),
+                    LITERAL_STEP_OBJECT => LiteralStep::Object(operand),
+                    _ => return Err("invalid residual literal template step".into()),
+                })
+            })?
+            .into_boxed_slice())
+    })?;
     let superinstructions = input.list(|input| {
         let mut code = [Instr::new(Op::Nop, 0, 0, 0, 0); 4];
         for instruction in &mut code {
@@ -804,6 +834,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         field_sites,
         object_sites,
         regexp_literal_sites,
+        literal_templates,
         superinstructions,
     };
     program.validate()?;
