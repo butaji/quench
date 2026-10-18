@@ -107,6 +107,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "processKillNative" (2) => crate::modules::process_shared_vm::kill_native,
         method "processKill" (2) => crate::modules::process_shared_vm::kill,
         method "bufferConstructor" (0) => crate::modules::buffer_shared_vm::constructor,
+        method "bufferPrototypeInitialize" (0) => crate::modules::buffer_shared_vm::initialize_prototype,
         method "encodingToAscii" (0) => crate::modules::encoding_binding_shared_vm::to_ascii,
         method "encodingToUnicode" (0) => crate::modules::encoding_binding_shared_vm::to_unicode,
         method "urlBindingDomainToAscii" (0) => crate::modules::url_binding_shared_vm::domain_to_ascii,
