@@ -389,3 +389,46 @@ RSS did not materially change. The candidate still scores below Bun and Node
 on both fixtures, while keeping lower peak RSS. The raw reports, executable
 hashes, peer-normalized comparison, and machine-code notes are in
 `evidence/jit-jetstream3-wasm-2026-10-18/indexed-address-zeroextend/`.
+
+## Persistent same-artifact indirect dispatch
+
+The artifact-local `call_indirect` cache now keeps a per-site monomorphic
+certificate in native code. A resolver miss still performs the VM's full table,
+null, and Wasm signature checks; it seeds the certificate only after a
+successful same-artifact call, a strong root across re-entrant VM execution,
+and a final live-function and table-slot identity check. The native fast path
+guards the VM epoch, environment, and dynamic table index before loading the
+cached function entry. Table writes and collection advance the epoch, so a
+mutation or GC during a re-entrant call falls back to the resolver on the next
+execution. This is a small feedback-directed partial evaluation of a stable
+site, in the direction of Futamura's first projection, while preserving the
+validated bytecode and ordinary resolver as semantic authority. The cache is
+monomorphic; JetStream 3's polymorphic-call work points toward bounded
+multi-target inlining only after profiling and code-size payback justify it.
+
+The final 11-round five-fixture screen is recorded in
+`evidence/jit-jetstream3-wasm-2026-10-18/persistent-indirect-cache/`. Quench
+retains an RSS advantage over Bun on HashSet, gcc-loops, QuickSort, and zlib,
+but its Score remains below both Bun and Node on all five fixtures. TSF is
+still the memory outlier at 225.62 MiB versus Bun's 126.09 MiB and Node's
+145.27 MiB. Thus this cache reduces repeated resolver boundaries, but does not
+yet meet the JIT score-and-RSS goal. A one-round selective-tier diagnostic
+screen reported 8.32 Score / 226.0 MiB; that run is not comparable to the
+non-diagnostic 11-round default report and establishes no selective-mode
+effect. Selective mode remains experimental and needs a matched screen before
+any memory claim.
+
+The regression suite checks the JS import boundary with three inline i32
+arguments and an i32 result. The direct-cache publication path keeps the
+target rooted across native execution, including re-entrant VM calls. The
+mechanism keeps the state relation explicit: cached dispatch must commute with
+slow resolution for the same environment, index, epoch, table target,
+signature, and compiled entry. This is a local correctness argument, not a
+claim that category theory or the cache itself guarantees a benchmark win.
+The next optimization needs to target the dominant generated-code or runtime
+cost rather than adding speculative tiers. JetStream 3 emphasizes polymorphic
+indirect-call inlining and code-size-aware decisions; Deegen and Copy-and-Patch
+motivate a future single-source, low-cost baseline compiler if Cranelift
+compilation remains a measured cost. [JetStream 3](https://webkit.org/blog/17899/introducing-the-jetstream-3-benchmark-suite/),
+[Deegen](https://compilers.stanford.edu/software/deegen/),
+[Copy-and-Patch](https://compilers.stanford.edu/software/copy-and-patch/).
