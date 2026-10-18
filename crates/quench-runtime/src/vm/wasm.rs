@@ -2017,10 +2017,10 @@ mod tests {
             .compiled(program)
             .flatten()
             .expect("indirect caller compiled");
-        // The nine-parameter callee remains interpreted by its current
-        // register-cap admission rule, while the native caller exercises the
-        // callout's spilled signature and argument buffers.
-        assert_eq!(compiled.native_entries(0), Some(0));
+        // The indirect call enters the eligible nine-parameter callee in
+        // native code, exercising the callout's spilled signature and
+        // argument buffers on both sides of the boundary.
+        assert_eq!(compiled.native_entries(0), Some(1));
         assert_eq!(compiled.native_entries(1), Some(1));
     }
 
