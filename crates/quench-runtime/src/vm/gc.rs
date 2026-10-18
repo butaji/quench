@@ -875,6 +875,9 @@ impl<H: Host> Vm<H> {
         }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         self.heap.record_vm_gc_phase(3, after_collection_started);
+        if full {
+            self.host.after_full_collection();
+        }
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("QUENCH_MEMORY_PEAK").is_some() {
             let phase = format!("gc_{}_after", self.heap.collection_count());
