@@ -1479,12 +1479,7 @@ impl Function {
         for (slot, dead_zone) in dead_zone.iter_mut().enumerate() {
             *dead_zone &= plain[slot];
         }
-        let initialized = initialization::initialized_before_reads(
-            self,
-            superinstructions,
-            &dead_zone,
-            initialization::EntryState::Initialized,
-        );
+        let initialized = initialization::initialized_before_reads(self, superinstructions, &dead_zone, &[]);
         for (slot, plain) in plain.iter_mut().enumerate() {
             *plain &= !dead_zone[slot] || initialized[slot];
         }

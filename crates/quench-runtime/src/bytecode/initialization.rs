@@ -49,24 +49,15 @@ impl Rows {
     }
 }
 
-/// What a candidate slot holds when the function starts.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum EntryState {
-    /// Frame setup fills every local slot with `undefined`, so only `InitializeTdz` makes a
-    /// slot maybe-uninitialized.
-    Initialized,
-    /// Nothing is written before the code runs: a register that replaces a slot starts with
-    /// whatever its pooled frame held.
-    Uninitialized,
-}
-
-/// Of `candidates`, the slots that no read can reach while maybe-uninitialized: from entry
-/// (`EntryState::Uninitialized`) or inside a dead zone opened by `InitializeTdz`.
+/// Of `candidates`, the slots that no read can reach while maybe-uninitialized. Function
+/// entry leaves a slot initialized unless `uninitialized_at_entry` names it, as for a
+/// register that replaces a slot and starts with whatever its pooled frame held; after that
+/// only `InitializeTdz` makes a slot maybe-uninitialized.
 pub(crate) fn initialized_before_reads(
     function: &Function,
     superinstructions: &[Superinstruction],
     candidates: &[bool],
-    entry: EntryState,
+    uninitialized_at_entry: &[bool],
 ) -> Vec<bool> {
     let mut proven = candidates.to_vec();
     let dense: Vec<Option<usize>> = {
@@ -91,9 +82,15 @@ pub(crate) fn initialized_before_reads(
     // States are kept per basic block, not per instruction: a row per instruction grows with
     // code length times candidates (lucide-react's 1.2 MB bundle: tens of MiB, TOD-140).
     let mut maybe_uninitialized = Rows::new(blocks.count, words);
-    if entry == EntryState::Uninitialized {
-        maybe_uninitialized.join(0, &vec![u64::MAX; words]);
+    let mut entry = vec![0; words];
+    for (slot, index) in dense.iter().enumerate() {
+        if let Some(index) = index
+            && uninitialized_at_entry.get(slot) == Some(&true)
+        {
+            entry[index / u64::BITS as usize] |= 1 << (index % u64::BITS as usize);
+        }
     }
+    maybe_uninitialized.join(0, &entry);
     let mut state = vec![0; words];
     let mut abrupt = vec![0; words];
     let mut changed = true;
@@ -128,13 +125,13 @@ pub(crate) fn initialized_before_reads(
                                     apply(slot, Access::Opaque, &mut state, &mut abrupt);
                                 }
                             } else {
-                                accesses(member.as_wide(), entry, |slot, access| {
+                                accesses(member.as_wide(), uninitialized_at_entry, |slot, access| {
                                     apply(slot, access, &mut state, &mut abrupt)
                                 });
                             }
                         }
                     }
-                    _ => accesses(instruction, entry, |slot, access| {
+                    _ => accesses(instruction, uninitialized_at_entry, |slot, access| {
                         apply(slot, access, &mut state, &mut abrupt)
                     }),
                 }
@@ -219,7 +216,7 @@ impl BasicBlocks {
 }
 
 /// The local slots `instruction` touches, in execution order.
-fn accesses(instruction: WideInstruction, entry: EntryState, mut access: impl FnMut(usize, Access)) {
+fn accesses(instruction: WideInstruction, uninitialized_at_entry: &[bool], mut access: impl FnMut(usize, Access)) {
     for &field in InstructionField::ALL {
         if matches!(
             instruction.op().field_layout(field),
@@ -236,9 +233,10 @@ fn accesses(instruction: WideInstruction, entry: EntryState, mut access: impl Fn
         match instruction.op() {
             Op::InitializeTdz => access(slot, Access::Uninitialize),
             Op::LoadLocal | Op::LoadLocalPlain => access(slot, Access::Read),
-            // From an uninitialized entry the question is only whether a value was written:
-            // a plain slot's assigning store never meets a dead zone (`plain_local_slots`).
-            Op::StoreLocalPlain if entry == EntryState::Uninitialized => {
+            // For a slot uninitialized at entry the question is only whether a value was
+            // written: a plain slot's assigning store never meets a dead zone
+            // (`plain_local_slots`).
+            Op::StoreLocalPlain if uninitialized_at_entry.get(slot) == Some(&true) => {
                 access(slot, Access::Initialize)
             }
             Op::StoreLocal | Op::StoreLocalPlain => access(

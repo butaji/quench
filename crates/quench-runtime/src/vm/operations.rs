@@ -404,7 +404,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         // The string and RegExp methods belong to none of the families below.
-        if native.runs_from_lane() {
+        if native.is_string_regexp_or_math() {
             return self.call_native_table(p, native, this, args);
         }
         if let Some(result) = self.string_html_method(p, native, this, args) {

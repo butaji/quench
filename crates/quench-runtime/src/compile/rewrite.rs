@@ -865,10 +865,10 @@ fn relocate_source_positions(
         {
             origin_pc += 1;
         }
-        assert_eq!(
-            map[origin_pc], new_pc,
-            "compacted instruction has an origin"
-        );
+        // An instruction a rewrite inserted after its origin's first shares its position.
+        if map.get(origin_pc) != Some(&new_pc) {
+            continue;
+        }
         let anchor = origin_pc;
         origin_pc += 1;
         while surviving_positions
