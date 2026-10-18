@@ -1577,8 +1577,8 @@ impl<'a> Compiler<'a> {
     /// (`capture_layout::dynamic_name_scopes`), of every function private member access
     /// resolves through, and of the root; the rest keep their direct bindings, as no lookup
     /// reaches their captured names.
-    fn resolve_name_bindings(&mut self, functions: &mut [BcFunction]) {
-        let reachable = capture_layout::dynamic_name_scopes(functions, &self.atoms);
+    fn resolve_name_bindings(&mut self, functions: &mut [BcFunction], dynamic: &[bool]) {
+        let reachable = capture_layout::dynamic_name_scopes(functions, dynamic);
         for (id, function) in functions.iter_mut().enumerate() {
             let Some(deferred) = self.deferred_name_bindings.remove(&(id as u32)) else {
                 continue;
@@ -2082,8 +2082,9 @@ impl<'a> Compiler<'a> {
         // Functions the compiler synthesizes (class constructors and initializers) may have
         // grown the reservation.
         functions.shrink_to_fit();
-        self.resolve_name_bindings(&mut functions);
-        capture_layout::apply(&mut functions, &self.atoms);
+        let dynamic = capture_layout::dynamic_name_resolution(&functions, &self.atoms);
+        self.resolve_name_bindings(&mut functions, &dynamic);
+        capture_layout::apply(&mut functions, &self.atoms, &dynamic);
         for function in &mut functions {
             Self::elide_unobservable_tdz(function, &self.atoms);
         }
