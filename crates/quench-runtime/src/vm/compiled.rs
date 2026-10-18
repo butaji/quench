@@ -527,6 +527,8 @@ struct CallContext {
     emscripten_memcpy_fast_path_hits: *mut u64,
     /// Diagnostic-only count of early raw-i32 Emscripten import copies.
     emscripten_memcpy_raw_i32_hits: *mut u64,
+    /// Diagnostic-only count proving the early callout handled the copy.
+    emscripten_memcpy_early_import_hits: *mut u64,
 }
 
 impl CallContext {
@@ -563,6 +565,7 @@ impl CallContext {
             reference_fast_caches: self.reference_fast_caches,
             emscripten_memcpy_fast_path_hits: self.emscripten_memcpy_fast_path_hits,
             emscripten_memcpy_raw_i32_hits: self.emscripten_memcpy_raw_i32_hits,
+            emscripten_memcpy_early_import_hits: self.emscripten_memcpy_early_import_hits,
         }
     }
 }
@@ -1183,6 +1186,7 @@ unsafe extern "C" fn import_callout<H: Host>(
     let current_memory = context.memory;
     let memcpy_fast_path_hits = context.emscripten_memcpy_fast_path_hits;
     let memcpy_raw_i32_hits = context.emscripten_memcpy_raw_i32_hits;
+    let memcpy_early_import_hits = context.emscripten_memcpy_early_import_hits;
     let called = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         // SAFETY: compiled code passes one word per parameter and a result
         // word.
@@ -1193,6 +1197,7 @@ unsafe extern "C" fn import_callout<H: Host>(
                 function,
                 current_memory,
                 memcpy_raw_i32_hits,
+                memcpy_early_import_hits,
                 args,
             )
         } {
@@ -1490,6 +1495,7 @@ struct WasmJitDiagnostics {
     compiled_reference_callouts: std::cell::Cell<u64>,
     emscripten_memcpy_fast_path_hits: std::cell::Cell<u64>,
     emscripten_memcpy_raw_i32_hits: std::cell::Cell<u64>,
+    emscripten_memcpy_early_import_hits: std::cell::Cell<u64>,
     reference_call_sites: Vec<ReferenceCallSiteDiagnostics>,
 }
 
@@ -1555,7 +1561,7 @@ impl Drop for CompiledProgram {
             .map(|site| site.counts.get().same_artifact_direct)
             .fold(0u64, u64::saturating_add);
         eprintln!(
-            "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compiled_functions\":{},\"total_functions\":{},\"code_bytes\":{},\"mapped_bytes\":{},\"compile_ns\":{},\"native_entry_requests\":[{}],\"interpreter_fallback_entries\":[{}],\"compiled_to_vm_callouts\":{},\"compiled_import_callouts\":{},\"compiled_known_callouts\":{},\"compiled_reference_callouts\":{},\"emscripten_memcpy_direct_copy_switch\":\"{}\",\"emscripten_memcpy_direct_copy_enabled\":{},\"emscripten_memcpy_fast_path_hits\":{},\"emscripten_memcpy_raw_i32_switch\":\"{}\",\"emscripten_memcpy_raw_i32_enabled\":{},\"emscripten_memcpy_raw_i32_hits\":{},\"emscripten_memcpy_early_import_switch\":\"{}\",\"emscripten_memcpy_early_import_enabled\":{},\"reference_call_sites\":[{}],\"same_artifact_direct_reference_hits\":{},\"reference_call_targets\":[{}]}}",
+            "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compiled_functions\":{},\"total_functions\":{},\"code_bytes\":{},\"mapped_bytes\":{},\"compile_ns\":{},\"native_entry_requests\":[{}],\"interpreter_fallback_entries\":[{}],\"compiled_to_vm_callouts\":{},\"compiled_import_callouts\":{},\"compiled_known_callouts\":{},\"compiled_reference_callouts\":{},\"emscripten_memcpy_direct_copy_switch\":\"{}\",\"emscripten_memcpy_direct_copy_enabled\":{},\"emscripten_memcpy_fast_path_hits\":{},\"emscripten_memcpy_raw_i32_switch\":\"{}\",\"emscripten_memcpy_raw_i32_enabled\":{},\"emscripten_memcpy_raw_i32_hits\":{},\"emscripten_memcpy_early_import_switch\":\"{}\",\"emscripten_memcpy_early_import_enabled\":{},\"emscripten_memcpy_early_import_hits\":{},\"reference_call_sites\":[{}],\"same_artifact_direct_reference_hits\":{},\"reference_call_targets\":[{}]}}",
             stats.program,
             stats.compiled_functions,
             stats.total_functions,
@@ -1576,6 +1582,7 @@ impl Drop for CompiledProgram {
             stats.emscripten_memcpy_raw_i32_hits.get(),
             super::wasm_js::emscripten_memcpy_early_import_switch(),
             super::wasm_js::emscripten_memcpy_early_import_enabled(),
+            stats.emscripten_memcpy_early_import_hits.get(),
             reference_sites,
             same_artifact_direct_hits,
             reference_targets,
@@ -1691,6 +1698,13 @@ impl CompiledProgram {
         self.diagnostics
             .as_ref()
             .map_or(0, |stats| stats.emscripten_memcpy_raw_i32_hits.get())
+    }
+
+    #[cfg(test)]
+    pub(super) fn emscripten_memcpy_early_import_hits(&self) -> u64 {
+        self.diagnostics
+            .as_ref()
+            .map_or(0, |stats| stats.emscripten_memcpy_early_import_hits.get())
     }
 
     fn note_direct_reference_entry(&self, function: usize) {
@@ -5463,6 +5477,7 @@ impl<H: Host> Vm<H> {
             compiled_reference_callouts: std::cell::Cell::new(0),
             emscripten_memcpy_fast_path_hits: std::cell::Cell::new(0),
             emscripten_memcpy_raw_i32_hits: std::cell::Cell::new(0),
+            emscripten_memcpy_early_import_hits: std::cell::Cell::new(0),
             reference_call_sites,
         });
         Some(CompiledProgram {
@@ -5794,13 +5809,15 @@ impl<H: Host> Vm<H> {
             let mut reference_callouts = 0u64;
             let mut emscripten_memcpy_fast_path_hits = 0u64;
             let mut emscripten_memcpy_raw_i32_hits = 0u64;
+            let mut emscripten_memcpy_early_import_hits = 0u64;
             let (
                 import_callouts_ptr,
                 known_callouts_ptr,
                 reference_callouts_ptr,
                 emscripten_memcpy_fast_path_hits_ptr,
                 emscripten_memcpy_raw_i32_hits_ptr,
-            ): (*mut u64, *mut u64, *mut u64, *mut u64, *mut u64) =
+                emscripten_memcpy_early_import_hits_ptr,
+            ): (*mut u64, *mut u64, *mut u64, *mut u64, *mut u64, *mut u64) =
                 if compiled.diagnostics.is_some() {
                     (
                         &mut import_callouts as *mut u64,
@@ -5808,9 +5825,11 @@ impl<H: Host> Vm<H> {
                         &mut reference_callouts as *mut u64,
                         &mut emscripten_memcpy_fast_path_hits as *mut u64,
                         &mut emscripten_memcpy_raw_i32_hits as *mut u64,
+                        &mut emscripten_memcpy_early_import_hits as *mut u64,
                     )
                 } else {
                     (
+                        std::ptr::null_mut(),
                         std::ptr::null_mut(),
                         std::ptr::null_mut(),
                         std::ptr::null_mut(),
@@ -5855,6 +5874,7 @@ impl<H: Host> Vm<H> {
                 reference_fast_caches: compiled.reference_fast_caches_ptr(),
                 emscripten_memcpy_fast_path_hits: emscripten_memcpy_fast_path_hits_ptr,
                 emscripten_memcpy_raw_i32_hits: emscripten_memcpy_raw_i32_hits_ptr,
+                emscripten_memcpy_early_import_hits: emscripten_memcpy_early_import_hits_ptr,
             };
             let mut out = 0u64;
             compiled.note_native_entry(id as usize);
@@ -5925,6 +5945,12 @@ impl<H: Host> Vm<H> {
                         .get()
                         .saturating_add(emscripten_memcpy_raw_i32_hits),
                 );
+                stats.emscripten_memcpy_early_import_hits.set(
+                    stats
+                        .emscripten_memcpy_early_import_hits
+                        .get()
+                        .saturating_add(emscripten_memcpy_early_import_hits),
+                );
             }
             if i64::from(status) == TERMINATED_STATUS {
                 return Some(Err(JsError::execution_terminated()));
@@ -5972,6 +5998,7 @@ impl<H: Host> Vm<H> {
         function: u64,
         current_memory: Value,
         raw_i32_hits: *mut u64,
+        early_import_hits: *mut u64,
         args: *const u64,
     ) -> bool {
         if !super::wasm_js::emscripten_memcpy_raw_i32_enabled()
@@ -6084,6 +6111,7 @@ impl<H: Host> Vm<H> {
         // This call is invisible to guest code after the complete helper and
         // memory guards pass; retain optional profile-aggregate accounting.
         self.profile.call_target(0, 3);
+        note_compiled_callout(early_import_hits);
         true
     }
 

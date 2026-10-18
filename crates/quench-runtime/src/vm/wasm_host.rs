@@ -936,6 +936,11 @@ mod tests {
             cases.len() as u64
         );
         assert_eq!(
+            compiled.emscripten_memcpy_early_import_hits(),
+            0,
+            "the raw-i32 fallback must not count as early admission"
+        );
+        assert_eq!(
             compiled.emscripten_memcpy_fast_path_hits(),
             cases.len() as u64,
             "raw hits must bypass the late-bound W-08 counter"
@@ -967,6 +972,11 @@ mod tests {
         assert_eq!(
             compiled.emscripten_memcpy_raw_i32_hits(),
             cases.len() as u64 * 2
+        );
+        assert_eq!(
+            compiled.emscripten_memcpy_early_import_hits(),
+            cases.len() as u64,
+            "the diagnostic must distinguish successful early admission"
         );
         assert_eq!(
             compiled.emscripten_memcpy_fast_path_hits(),
