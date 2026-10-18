@@ -2117,7 +2117,7 @@ impl<H: Host> Vm<H> {
         }
         match module_type {
             "bytes" => {
-                let bytes = module.bytes.clone();
+                let bytes = module.bytes().to_vec();
                 let length = bytes.len();
                 let kind = crate::heap::TypedArrayKind::Uint8;
                 let buffer = self.heap.alloc(Cell::ArrayBuffer {
@@ -2578,11 +2578,7 @@ impl<H: Host> Vm<H> {
         if !p.is_module() {
             return Ok(());
         }
-        let root = ModuleSource {
-            name: p.source_name.clone(),
-            source: String::new(),
-            bytes: Vec::new(),
-        };
+        let root = ModuleSource::text(p.source_name.clone(), "");
         let namespace = self.module_namespace(Vec::new())?;
         self.realm.promise.modules.insert(
             module_cache_key(&p.source_name, "javascript"),
@@ -4355,11 +4351,7 @@ impl<H: Host> Vm<H> {
                 .position(|request| request.source == source)
             && let Some(name) = record.resolved_requests.get(index)
         {
-            return Ok(Some(ModuleSource {
-                name: name.clone(),
-                source: String::new(),
-                bytes: Vec::new(),
-            }));
+            return Ok(Some(ModuleSource::text(name.clone(), "")));
         }
         self.host
             .resolve_dynamic_import(referrer, source)
