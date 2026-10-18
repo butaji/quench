@@ -297,7 +297,7 @@ const JIT_WASM_SELECTIVE_ENV: &str = "QUENCH_WASM_JIT_SELECTIVE";
 const MAX_JIT_ROOT_FUNCTIONS: usize = 128;
 const MAX_JIT_ROOT_BYTECODES_PER_FUNCTION: usize = 80_000;
 const MAX_JIT_ROOT_CODE_BYTES: usize = 2 * 1024 * 1024;
-const MAX_JIT_TIER_BYTECODES_PER_FUNCTION: usize = 2_048;
+pub(super) const MAX_JIT_TIER_BYTECODES_PER_FUNCTION: usize = 2_048;
 
 fn jit_root_override() -> Result<Option<usize>, ()> {
     let Some(root) = std::env::var_os(JIT_ROOT_ENV) else {
