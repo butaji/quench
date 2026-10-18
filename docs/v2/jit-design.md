@@ -355,6 +355,18 @@ semantics. The early-import switch is opt-in and the experiment is diagnostic;
 it qualifies only if paired Score improves with its confidence interval above
 a tie and peak RSS stays within the predeclared 0.5 MiB budget.
 
+The early path was exercised on the target: a separate counter recorded
+307,300 successful early admissions among 308,232 compiled import callouts.
+Despite that coverage, the three-round paired screen regressed: Score was
+50.51 with early admission vs. 56.48 without, a ratio of 0.9527 (95% interval
+0.8943–0.9661). Peak RSS was effectively unchanged at ratio 1.0004
+(0.9996–1.0027). This fails the predeclared keep threshold, so no 11-round
+confirmation was run. Leave the switch disabled and do not count the feature
+as a win. The result shows that resolving and checking the early binding costs
+more than the generic import setup it avoids on gcc-loops. Raw samples, paired
+analysis, and path-coverage diagnostics are in
+`evidence/jit-jetstream3-wasm-2026-10-18/early-emscripten-copy/`.
+
 ## Sparse analysis and compile-cost screens
 
 Commit `v2-jit` replaces the per-PC dense register-state vectors in Wasm JIT
