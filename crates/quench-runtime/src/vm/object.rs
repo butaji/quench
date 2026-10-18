@@ -2604,9 +2604,7 @@ impl<H: Host> Vm<H> {
             self.prove_field_add_chain(set as usize, shape, atom, proto, depth, epoch);
         }
         debug_assert_eq!(slot as usize, self.shapes[shape as usize].storage_len());
-        if !self.heap.add_inline_property(object, usize::from(slot), value, target_shape) {
-            self.heap.property_add(object, value, target_shape);
-        }
+        self.heap.property_add(object, value, target_shape);
         if self.method_caches_may_name(atom) {
             self.invalidate_method_caches_for_prototype_add(object, atom);
         }
