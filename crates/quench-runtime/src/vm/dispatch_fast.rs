@@ -4375,6 +4375,9 @@ lane_handler! {
             sibling!(lane_native_construct::<H>, r, ip, Carried::SCRIPT)
         };
         if target.forwards {
+            // The site constructs a forwarding target: later runs enter the keeping
+            // construction directly, which moves the record back for any other target.
+            requicken(ip, lane_script_construct_keeping::<H>);
             sibling!(lane_script_construct_keeping::<H>, r, ip, Carried::SCRIPT)
         }
         let built = if target.initializes {
@@ -4440,14 +4443,23 @@ lane_handler! {
 
 lane_handler! {
     /// `lane_script_construct` of a target that keeps its passed values
-    /// (`ScriptCallTarget::forwards`); out of line, so ordinary constructions keep their
-    /// code.
+    /// (`ScriptCallTarget::forwards`), which `lane_script_construct` moves a site to: the same
+    /// admission, then the keeping activation. Any other construction moves the record back
+    /// to `lane_script_construct`. Out of line, so ordinary constructions keep their code.
     #[inline(never)]
     fn lane_script_construct_keeping<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let callee = r.get(i.b);
-        let Some(target) = lane_script_target(cx, callee) else {
+        if !unsafe { (*cx).script_calls && (*cx).script_constructs }
+            || vm.construct_target.is_some()
+        {
             return exit(ip);
+        }
+        let Some(target) =
+            lane_script_target(cx, callee).filter(|target| target.constructs && target.forwards)
+        else {
+            requicken(ip, lane_script_construct::<H>);
+            sibling!(lane_script_construct::<H>, r, ip, Carried::SCRIPT)
         };
         let Some(this) = lane_planned_receiver(vm, callee) else {
             return exit(ip);
