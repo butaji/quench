@@ -2284,59 +2284,30 @@ impl Heap {
         unsafe { self.properties.set_flat_unchecked(vector, slot, value) };
         true
     }
-    /// `property_add` of the next property of a direct object that keeps inline storage, at
-    /// inline `slot`, the object's storage length that its shape records. `false`, changing
-    /// nothing, for any other owner or slot, which `property_add` takes.
+    /// Appends `value` as the next property of `object`, which moves to `shape`, whose
+    /// storage length is one more than the object's: inline while the values fit, otherwise
+    /// in the arena, into which the add that outgrows the inline values moves them. One owner
+    /// lookup, which passes the write barrier only for a stored reference; the arena borrow
+    /// is disjoint from the owner.
     #[inline(always)]
-    pub(crate) fn add_inline_property(&mut self, object: Value, slot: usize, value: Value, shape: u32) -> bool {
-        let Some(record_id) = object.direct_object_index() else {
-            return false;
-        };
-        // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
-        let data = unsafe { self.object_records.get_live_mut_storing(record_id, value) };
-        if slot >= INLINE_PROPERTY_COUNT || data.inline_properties().is_none() {
-            return false;
-        }
-        debug_assert_eq!(slot, self.properties.len(data.properties()));
-        data.set_inline_property(slot, value);
-        data.set_shape(shape);
-        #[cfg(feature = "profile-memory")]
-        self.note_object_slots(object, slot + 1);
-        true
-    }
-
-    /// One cached property add: appends `value` at `slot`, the object's current storage
-    /// length, and moves the object to `shape`, whose storage length is `slot + 1`.
-    #[inline(always)]
-    /// Appends `value` as the next property of `object`, which moves to `shape`: inline while
-    /// the values fit, otherwise in the arena, into which the add that outgrows the inline
-    /// values moves them. One owner lookup; the arena borrow is disjoint from the owner.
     pub(crate) fn property_add(&mut self, object: Value, value: Value, shape: u32) {
-        let (data, properties) = self
-            .object_and_arena_mut(object)
-            .expect("property owner is an object");
-        let vector = data.properties();
-        let slot = properties.len(vector);
-        match data.inline_properties().copied() {
-            Some(_) if slot < INLINE_PROPERTY_COUNT => data.set_inline_property(slot, value),
-            Some(inline) => {
-                debug_assert_eq!(slot, INLINE_PROPERTY_COUNT);
-                // One arena range sized for the grown shape, not one for the inline values
-                // that the add then outgrows at once.
-                let mut grown = [value; INLINE_PROPERTY_COUNT + 1];
-                grown[..INLINE_PROPERTY_COUNT].copy_from_slice(&inline);
-                let moved = properties.with_values(shape, &grown);
-                data.replace_property_storage(moved, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]);
-            }
-            None => {
-                let mut vector = vector;
-                properties.push(&mut vector, value);
-                data.set_properties(vector);
-            }
-        }
-        data.set_shape(shape);
+        let _slot = if let Some(record_id) = object.direct_object_index() {
+            let Self {
+                object_records,
+                properties,
+                ..
+            } = &mut *self;
+            // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
+            let data = unsafe { object_records.get_live_mut_storing(record_id, value) };
+            append_property(data, properties, value, shape)
+        } else {
+            let (data, properties) = self
+                .object_and_arena_mut(object)
+                .expect("property owner is an object");
+            append_property(data, properties, value, shape)
+        };
         #[cfg(feature = "profile-memory")]
-        self.note_object_slots(object, slot + 1);
+        self.note_object_slots(object, _slot + 1);
     }
 
     #[cfg(feature = "profile-memory")]
@@ -2897,4 +2868,31 @@ mod offset_order_tests {
         super::sort_by_unique_offset(&mut keys);
         assert_eq!(keys, expected);
     }
+}
+
+/// `Heap::property_add` on the owner's storage: writes `value` at the next slot, the
+/// owner's storage length, moves the owner to `shape` and returns that slot.
+#[inline(always)]
+fn append_property(data: &mut Object, properties: &mut ValueArena, value: Value, shape: u32) -> usize {
+    let vector = data.properties();
+    let slot = properties.len(vector);
+    match data.inline_properties().copied() {
+        Some(_) if slot < INLINE_PROPERTY_COUNT => data.set_inline_property(slot, value),
+        Some(inline) => {
+            debug_assert_eq!(slot, INLINE_PROPERTY_COUNT);
+            // One arena range sized for the grown shape, not one for the inline values that
+            // the add then outgrows at once.
+            let mut grown = [value; INLINE_PROPERTY_COUNT + 1];
+            grown[..INLINE_PROPERTY_COUNT].copy_from_slice(&inline);
+            let moved = properties.with_values(shape, &grown);
+            data.replace_property_storage(moved, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]);
+        }
+        None => {
+            let mut vector = vector;
+            properties.push(&mut vector, value);
+            data.set_properties(vector);
+        }
+    }
+    data.set_shape(shape);
+    slot
 }
