@@ -25,6 +25,19 @@ fn from_raw(raw: Option<&str>, fallback: &str, quoted: bool) -> Constant {
     let Some(raw) = raw else {
         return Constant::String(fallback.into());
     };
+    // Without an escape the value is the literal's text between its quotes, as
+    // `decode_units` would spell it unit by unit.
+    let body = if quoted {
+        let mut chars = raw.chars();
+        chars.next();
+        let rest = chars.as_str();
+        rest.strip_suffix(['\'', '"']).unwrap_or(rest)
+    } else {
+        raw
+    };
+    if !body.contains('\\') {
+        return Constant::String(body.to_owned());
+    }
     let units = decode_units(raw, quoted);
     match String::from_utf16(&units) {
         Ok(value) => Constant::String(value),

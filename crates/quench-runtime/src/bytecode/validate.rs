@@ -225,6 +225,7 @@ struct ValidationBounds {
     method_sites: usize,
     object_sites: usize,
     regexp_literal_sites: usize,
+    literal_templates: usize,
     superinstructions: usize,
     code_len: u32,
 }
@@ -409,6 +410,9 @@ fn immediate_domains_in_bounds(
         super::ImmediateRole::RegExpLiteralSiteIndex => {
             instruction.regexp_literal_site_index() < bounds.regexp_literal_sites
         }
+        super::ImmediateRole::LiteralTemplateIndex => {
+            instruction.literal_template_index() < bounds.literal_templates
+        }
         super::ImmediateRole::SuperinstructionIndex => {
             (instruction.superinstruction_index() as usize) < bounds.superinstructions
         }
@@ -493,9 +497,6 @@ impl ResidualProgram {
         if self.functions.is_empty() && self.kind != super::ProgramKind::Wasm {
             return Err("program has no entry function".into());
         }
-        if self.register_roots.bytes().len() >= super::NO_REGISTER_ROOT_MAP as usize {
-            return Err("register root table is too large".into());
-        }
         let selective_capture_scope_unsafe =
             selective_capture_scope_unsafe(&self.functions, &self.atoms);
         // Captured name scopes are shared by sibling functions: each is checked once per
@@ -577,12 +578,7 @@ impl ResidualProgram {
             let plain_local_slots = if self.kind == super::ProgramKind::Wasm {
                 vec![true; usize::from(function.locals)]
             } else {
-                function.plain_local_slots(|atom| {
-                    usize::try_from(atom)
-                        .ok()
-                        .filter(|atom| *atom < self.atoms.len())
-                        .map(|atom| &self.atoms[atom])
-                })
+function.plain_local_slots(&self.superinstructions)
             };
             if let Some(initializer) = function.instance_initializer {
                 let valid = self
@@ -673,6 +669,7 @@ impl ResidualProgram {
                 method_sites: self.method_sites.len(),
                 object_sites: self.object_sites.len(),
                 regexp_literal_sites: self.regexp_literal_sites.len(),
+                literal_templates: self.literal_templates.len(),
                 superinstructions: self.superinstructions.len(),
                 code_len,
             };
@@ -697,26 +694,6 @@ impl ResidualProgram {
                 return Err(format!(
                     "function {index} undefined register is out of bounds"
                 ));
-            }
-            if function.register_root_offset != super::NO_REGISTER_ROOT_MAP {
-                if u32::from(function.registers) > u64::BITS {
-                    return Err(format!("function {index} registers exceed a root map"));
-                }
-                let Some(mut masks) = self.register_roots.masks(
-                    function.register_root_offset,
-                    function.registers,
-                    code_len as usize + 1,
-                ) else {
-                    return Err(format!("function {index} root map is out of bounds"));
-                };
-                let mask = if function.registers == 0 {
-                    0
-                } else {
-                    u64::MAX >> (u64::BITS - u32::from(function.registers))
-                };
-                if masks.any(|roots| roots & !mask != 0) {
-                    return Err(format!("function {index} root map has an invalid register"));
-                }
             }
             for packed in &function.code {
                 let Some(instruction) = instruction_at(function, *packed) else {
@@ -904,6 +881,11 @@ impl ResidualProgram {
                 return Err("invalid object site".into());
             }
         }
+        for template in &self.literal_templates {
+            if !self.literal_template_is_valid(template) {
+                return Err("invalid literal template".into());
+            }
+        }
         for site in &self.regexp_literal_sites {
             if !matches!(
                 self.constants.get(site.pattern_constant as usize),
@@ -923,6 +905,29 @@ impl ResidualProgram {
             return Err("invalid method argument register".into());
         }
         Ok(())
+    }
+
+    /// Whether `steps` name only this program's constants and object sites and, run over
+    /// a stack, never take more values than it holds and leave exactly one.
+    fn literal_template_is_valid(&self, steps: &[super::LiteralStep]) -> bool {
+        let mut depth = 0usize;
+        for step in steps {
+            let (taken, valid) = match *step {
+                super::LiteralStep::Constant(index) => {
+                    (0, (index as usize) < self.constants.len())
+                }
+                super::LiteralStep::Array(count) => (count as usize, true),
+                super::LiteralStep::Object(site) => match self.object_sites.get(site as usize) {
+                    Some(site) => (site.atoms.len(), true),
+                    None => (0, false),
+                },
+            };
+            if !valid || taken > depth {
+                return false;
+            }
+            depth = depth - taken + 1;
+        }
+        depth == 1
     }
 
     fn validate_selective_capture_owners(&self) -> Result<(), String> {
@@ -1171,7 +1176,7 @@ mod tests {
             assert!(invalid.validate().is_err());
         }
         let mut invalid = program;
-        invalid.functions[0].environment_clones.clear();
+        invalid.functions[0].environment_clones = Default::default();
         assert!(invalid.validate().is_err());
     }
 
@@ -1186,7 +1191,7 @@ mod tests {
             params: 0,
             length: 0,
             parameter_end_pc: 0,
-            parameter_atoms: vec![],
+            parameter_atoms: vec![].into(),
             rest: false,
             is_async: false,
             is_generator: false,
@@ -1201,17 +1206,17 @@ mod tests {
             simple_parameters: true,
             strict: false,
             locals: 0,
-            local_atoms: vec![],
-            environment_atoms: vec![],
+            local_atoms: vec![].into(),
+            environment_atoms: vec![].into(),
             selective_capture_slots: None,
-            local_registers: vec![],
+            local_registers: vec![].into(),
             inherited_with_scope: false,
-            lexical_atoms: vec![],
+            lexical_atoms: vec![].into(),
             global_declarations: None,
             name_bindings: Default::default(),
-            binding_sites: vec![],
+            binding_sites: vec![].into(),
             source_positions: Default::default(),
-            environment_clones: vec![],
+            environment_clones: vec![].into(),
             code,
             wide: vec![],
             registers,
@@ -1223,17 +1228,15 @@ mod tests {
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
             call_plan: Default::default(),
-            handlers: vec![],
-            register_root_offset: root,
+            handlers: vec![].into(),
+            register_roots: crate::bytecode::RegisterRoots::new(root != u32::MAX),
             undefined_register: None,
             parameter_registers: None,
             initial_register: Default::default(),
         }
     }
 
-    fn program(function: Function, roots: Vec<u64>) -> ResidualProgram {
-        let mut register_roots = crate::bytecode::RegisterRoots::default();
-        register_roots.append(function.registers, roots);
+    fn program(function: Function) -> ResidualProgram {
         ResidualProgram {
             specialized: true,
             kind: crate::bytecode::ProgramKind::Script,
@@ -1251,33 +1254,9 @@ mod tests {
             field_sites: vec![],
             object_sites: vec![],
             regexp_literal_sites: vec![],
+            literal_templates: Vec::new(),
             superinstructions: vec![],
-            register_roots,
         }
-    }
-
-    #[test]
-    fn unmapped_functions_are_valid_and_mapped_roots_cover_each_pc() {
-        let unmapped = program(
-            function(vec![Instr::new(Op::Return, 0, 0, 0, 0)], 1, u32::MAX),
-            vec![],
-        );
-        assert!(unmapped.validate().is_ok());
-
-        let mapped = program(
-            function(vec![Instr::new(Op::Return, 0, 0, 0, 0)], 1, 0),
-            vec![1, 0],
-        );
-        assert!(mapped.validate().is_ok());
-    }
-
-    #[test]
-    fn root_maps_reject_out_of_range_register_bits() {
-        let invalid = program(
-            function(vec![Instr::new(Op::Return, 0, 0, 0, 0)], 1, 0),
-            vec![2, 0],
-        );
-        assert!(invalid.validate().is_err());
     }
 
     #[test]
@@ -1305,9 +1284,7 @@ mod tests {
                         ],
                         1,
                         u32::MAX,
-                    ),
-                    vec![],
-                );
+                    ));
                 assert_eq!(constructor.validate().is_ok(), count != 0);
             }
         }
@@ -1330,9 +1307,7 @@ mod tests {
                         ],
                         expected + 1,
                         u32::MAX,
-                    ),
-                    vec![],
-                );
+                    ));
                 assert_eq!(access.validate().is_ok(), count == expected);
             }
         }
@@ -1344,14 +1319,10 @@ mod tests {
                 ],
                 4,
                 u32::MAX,
-            ),
-            vec![],
-        );
+            ));
         assert!(invalid_atomic.validate().is_err());
         let invalid_constant = program(
-            function(vec![Instr::new(Op::LoadConst, 0, 0, 0, 0)], 1, u32::MAX),
-            vec![],
-        );
+            function(vec![Instr::new(Op::LoadConst, 0, 0, 0, 0)], 1, u32::MAX));
         assert!(invalid_constant.validate().is_err());
 
         let mut invalid_shuffle = program(
@@ -1362,9 +1333,7 @@ mod tests {
                 ],
                 1,
                 u32::MAX,
-            ),
-            vec![],
-        );
+            ));
         invalid_shuffle
             .constants
             .push(super::super::Constant::WasmV128(
@@ -1382,9 +1351,7 @@ mod tests {
                 ],
                 1,
                 u32::MAX,
-            ),
-            vec![],
-        );
+            ));
         assert!(invalid_selector.validate().is_err());
         invalid_selector.functions[0].code[0] =
             Instr::new(Op::WasmI31, 0, 0, 0, u32::from(u8::MAX));
@@ -1425,9 +1392,7 @@ mod tests {
         assert!(invalid_selector.validate().is_ok());
 
         let invalid_field = program(
-            function(vec![Instr::new(Op::GetField, 0, 0, 0, 0)], 1, u32::MAX),
-            vec![],
-        );
+            function(vec![Instr::new(Op::GetField, 0, 0, 0, 0)], 1, u32::MAX));
         assert!(invalid_field.validate().is_err());
 
         let invalid_call = program(
@@ -1441,30 +1406,22 @@ mod tests {
                 )],
                 1,
                 u32::MAX,
-            ),
-            vec![],
-        );
+            ));
         assert!(invalid_call.validate().is_err());
     }
 
     #[test]
     fn reachable_control_flow_cannot_fall_off_code() {
         let fallthrough = program(
-            function(vec![Instr::new(Op::Nop, 0, 0, 0, 0)], 1, u32::MAX),
-            vec![],
-        );
+            function(vec![Instr::new(Op::Nop, 0, 0, 0, 0)], 1, u32::MAX));
         assert!(fallthrough.validate().is_err());
 
         let branch_fallthrough = program(
-            function(vec![Instr::new(Op::JumpFalse, 0, 0, 0, 0)], 1, u32::MAX),
-            vec![],
-        );
+            function(vec![Instr::new(Op::JumpFalse, 0, 0, 0, 0)], 1, u32::MAX));
         assert!(branch_fallthrough.validate().is_err());
 
         let loop_forever = program(
-            function(vec![Instr::new(Op::Jump, 0, 0, 0, 0)], 1, u32::MAX),
-            vec![],
-        );
+            function(vec![Instr::new(Op::Jump, 0, 0, 0, 0)], 1, u32::MAX));
         assert!(loop_forever.validate().is_ok());
     }
 }

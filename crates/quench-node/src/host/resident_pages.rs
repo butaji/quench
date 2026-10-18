@@ -54,6 +54,19 @@ pub fn release_read_only_pages() {
     }
 }
 
+/// Returns the allocator's free pages to the system: a compilation frees its syntax tree
+/// and passes, whose pages would otherwise stay resident beside the program.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+pub fn release_free_heap_pages() {
+    // SAFETY: `malloc_trim` only advises the kernel about free allocator memory.
+    unsafe {
+        libc::malloc_trim(0);
+    }
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+pub fn release_free_heap_pages() {}
+
 /// The address ranges of the process's file mappings (not the kernel's bracketed ones) whose
 /// permissions are one of `permissions`.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]

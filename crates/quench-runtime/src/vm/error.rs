@@ -987,6 +987,17 @@ impl<H: Host> Vm<H> {
         JsError::thrown(object, text)
     }
 
+    /// The ReferenceError for reading `atom` in its temporal dead zone, naming the binding as
+    /// the source spells it.
+    pub(super) fn uninitialized_binding_error(
+        &mut self,
+        program: &ResidualProgram,
+        atom: Atom,
+    ) -> JsError {
+        let name = crate::bytecode::source_binding_name(self.atom_name(atom)).to_owned();
+        self.reference_error(program, format!("Cannot access '{name}' before initialization"))
+    }
+
     /// A host's module-load failure as its error object, with the host's `code` as an
     /// ordinary data property.
     pub(super) fn module_load_error(&mut self, program: &ResidualProgram, error: crate::ModuleLoadError) -> JsError {
@@ -1497,15 +1508,15 @@ impl<H: Host> Vm<H> {
                     "cannot convert non-integral Number to BigInt".into(),
                 ));
             };
-            return Ok(self.heap.alloc(Cell::BigInt(integer.to_string())));
+            return Ok(self.heap.alloc(Cell::bigint(integer)));
         }
         if let Some(value) = primitive.as_bool() {
-            return Ok(self.heap.alloc(Cell::BigInt(i32::from(value).to_string())));
+            return Ok(self.heap.alloc(Cell::bigint(u8::from(value).into())));
         }
         if let Some(Cell::String(text)) = self.heap.get(primitive) {
             let parsed = crate::bigint::parse_string(text.host_string());
             return match parsed {
-                Some(value) => Ok(self.heap.alloc(Cell::BigInt(value.to_string()))),
+                Some(value) => Ok(self.heap.alloc(Cell::bigint(value))),
                 None => self.syntax_error_result(program, "invalid BigInt value"),
             };
         }
