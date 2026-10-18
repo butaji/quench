@@ -2099,6 +2099,112 @@ mod tests {
     }
 
     #[test]
+    fn compiled_wasm_hot_indirect_target_is_tiered_and_table_stays_dynamic() {
+        let signature = crate::WasmSignature {
+            params: vec![],
+            results: vec![crate::WasmType::I32],
+        };
+        let module = crate::Engine::lower_wasm_module_with_tables(
+            "compiled-hot-indirect-target-tier",
+            [
+                crate::WasmFunctionBody {
+                    ty: crate::WasmCallableType::Embedded(signature.clone()),
+                    locals: vec![],
+                    operators: vec![Operator::Unreachable, Operator::End]
+                        .into_iter()
+                        .map(Ok),
+                },
+                crate::WasmFunctionBody {
+                    ty: crate::WasmCallableType::Embedded(signature.clone()),
+                    locals: vec![],
+                    operators: vec![
+                        Operator::I32Const { value: 0 },
+                        Operator::CallIndirect {
+                            type_index: 0,
+                            table_index: 0,
+                        },
+                        Operator::End,
+                    ]
+                    .into_iter()
+                    .map(Ok),
+                },
+                crate::WasmFunctionBody {
+                    ty: crate::WasmCallableType::Embedded(signature),
+                    locals: vec![],
+                    operators: vec![Operator::I32Const { value: 9 }, Operator::End]
+                        .into_iter()
+                        .map(Ok),
+                },
+            ],
+            &crate::WasmTypes::from_functions([wasmparser::FuncType::new(
+                [],
+                [wasmparser::ValType::I32],
+            )]),
+            &[],
+            &[],
+            &[],
+            &[crate::WasmTable {
+                ty: wasmparser::TableType {
+                    element_type: wasmparser::RefType::FUNCREF,
+                    table64: false,
+                    initial: 1,
+                    maximum: Some(1),
+                    shared: false,
+                },
+                initializer: crate::WasmReferenceInitializer::Function(0).into(),
+            }],
+        )
+        .unwrap();
+        let mut vm = Vm::new(crate::SystemHost);
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        let instance = vm.instantiate_wasm_module(&module).unwrap();
+        let promotion_entries = super::super::program_store::WASM_JIT_PROMOTION_ENTRIES;
+        for _ in 0..promotion_entries {
+            assert_eq!(
+                vm.invoke_wasm(&instance, 1, &[])
+                    .unwrap_err()
+                    .wasm_trap(),
+                Some(crate::WasmTrap::Unreachable)
+            );
+        }
+
+        let program = vm
+            .programs
+            .find_shared(&module.program)
+            .expect("registered Wasm program");
+        let baseline = vm
+            .programs
+            .compiled(program)
+            .flatten()
+            .expect("indirect caller installed the eager artifact");
+        let tier = vm
+            .programs
+            .wasm_tier(program, 0)
+            .expect("hot indirect target received a root tier");
+        assert_eq!(baseline.native_entries(1), Some(promotion_entries as u64));
+        assert_eq!(tier.native_entries(0), Some(1));
+        assert_eq!(tier.direct_reference_entries(0), Some(0));
+        assert_eq!(
+            vm.invoke_wasm(&instance, 1, &[])
+                .unwrap_err()
+                .wasm_trap(),
+            Some(crate::WasmTrap::Unreachable)
+        );
+        assert_eq!(tier.native_entries(0), Some(2));
+        assert_eq!(tier.direct_reference_entries(0), Some(1));
+
+        // The root artifact only accelerates code. Every indirect call still
+        // resolves the current mutable table element before entering native code.
+        let table = vm.wasm_table(&instance, 0).unwrap();
+        let replacement = vm.wasm_function(&instance, 2).unwrap();
+        vm.wasm_table_fill(table, 0, replacement, 1).unwrap();
+        assert_eq!(
+            vm.invoke_wasm(&instance, 1, &[]).unwrap(),
+            Some(crate::WasmValue::I32(9))
+        );
+    }
+
+    #[test]
     fn compiled_wasm_indirect_call_propagates_native_oob_trap() {
         let signature = crate::WasmSignature {
             params: vec![],
@@ -4238,7 +4344,35 @@ mod tests {
             .compiled(program)
             .flatten()
             .expect("default Wasm compilation installed");
-        assert_eq!(compiled.native_entries(0), Some(1));
+        assert_eq!(compiled.native_entries(0), None);
+        assert_eq!(vm.programs.wasm_tier_entry_count(program, 0), Some(1));
+
+        for _ in 0..(super::super::program_store::WASM_JIT_PROMOTION_ENTRIES as usize - 2) {
+            assert_eq!(
+                vm.execute_wasm_i32(&function, &[])
+                    .unwrap_err()
+                    .wasm_trap(),
+                Some(crate::WasmTrap::Unreachable)
+            );
+        }
+        assert_eq!(
+            vm.programs.wasm_tier_entry_count(program, 0),
+            Some(super::super::program_store::WASM_JIT_PROMOTION_ENTRIES - 1)
+        );
+        assert_eq!(vm.programs.wasm_tier_attempted(program, 0), Some(false));
+        assert!(vm.programs.wasm_tier(program, 0).is_none());
+        assert_eq!(
+            vm.execute_wasm_i32(&function, &[])
+                .unwrap_err()
+                .wasm_trap(),
+            Some(crate::WasmTrap::Unreachable)
+        );
+        let tier = vm
+            .programs
+            .wasm_tier(program, 0)
+            .expect("hot Wasm root is tiered after the entry threshold");
+        assert_eq!(tier.native_entries(0), Some(1));
+        assert_eq!(vm.programs.wasm_tier_attempted(program, 0), Some(true));
 
         let mut root_vm = Vm::new(crate::SystemHost);
         assert_eq!(
