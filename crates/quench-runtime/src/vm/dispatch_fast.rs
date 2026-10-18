@@ -436,7 +436,7 @@ pub(super) struct LaneStack {
     activations: Vec<Activation>,
     /// Resolved targets of lane `Call` records (`Vm::script_call_target`).
     script_targets: Box<[ScriptCallTarget; SCRIPT_CALL_TARGETS]>,
-    /// Initializer constructors' plans (`lane_initialize_fields`).
+    /// Constructors' plans (`lane_initialize_fields`, `lane_planned_receiver`).
     construct_plans: Box<[ConstructPlan; CONSTRUCT_PLANS]>,
     /// Names the collection epoch, realm and program of the running lane, which no lane
     /// instruction changes: a target resolved under another generation is stale.
@@ -4449,7 +4449,7 @@ lane_handler! {
         let Some(target) = lane_script_target(cx, callee) else {
             return exit(ip);
         };
-        let Some(this) = vm.inline_construct_receiver(callee) else {
+        let Some(this) = lane_planned_receiver(vm, callee) else {
             return exit(ip);
         };
         // Allocating the receiver can make a collection due.
@@ -4697,24 +4697,18 @@ fn lane_initialize_fields<H: Host>(
     };
     // A plan holds while its callee's layout and `prototype` do: the receiver's template is
     // derived from those alone, and the epoch keeps the adds it planned free of setters.
-    let plan_index = callee.heap_index().map(|index| index as usize & (CONSTRUCT_PLANS - 1));
-    if let Some(index) = plan_index {
-        let plan = vm.lane_stack.construct_plans[index];
-        if plan.callee == callee
-            && plan.epoch == crate::heap::prototype_layout_epoch()
-            && vm.function_prototype_in_layout(callee, plan.callee_layout) == Some(plan.prototype)
-        {
-            let mut values = [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS];
-            for (value, parameter) in values.iter_mut().zip(&plan.parameters[..usize::from(plan.fields)]) {
-                *value = argument(*parameter);
-            }
-            let this = vm.heap.alloc_object_with_properties(
-                plan.prototype,
-                plan.shape,
-                &values[..usize::from(plan.fields)],
-            );
-            return Some((this, true));
+    let plan_index = construct_plan_index(callee);
+    if let Some(plan) = holding_construct_plan(vm, callee) {
+        let mut values = [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS];
+        for (value, parameter) in values.iter_mut().zip(&plan.parameters[..usize::from(plan.fields)]) {
+            *value = argument(*parameter);
         }
+        let this = vm.heap.alloc_object_with_properties(
+            plan.prototype,
+            plan.shape,
+            &values[..usize::from(plan.fields)],
+        );
+        return Some((this, true));
     }
     let template = vm.inline_construct_template(callee)?;
     let (prototype, source_shape) = (template.proto(), template.shape());
@@ -4755,6 +4749,50 @@ fn lane_initialize_fields<H: Host>(
         vm.lane_stack.construct_plans[index] = plan;
     }
     Some((this, true))
+}
+
+/// The construct plan cache entry `callee` owns, when it names a heap cell.
+fn construct_plan_index(callee: Value) -> Option<usize> {
+    callee.heap_index().map(|index| index as usize & (CONSTRUCT_PLANS - 1))
+}
+
+/// `callee`'s construct plan while it holds: the entry names `callee`, the prototype
+/// layout keeps the plan's epoch and `callee`'s own layout still yields the planned
+/// `prototype`, from which the receiver's template is derived.
+#[inline(always)]
+fn holding_construct_plan<H: Host>(vm: &Vm<H>, callee: Value) -> Option<ConstructPlan> {
+    let plan = vm.lane_stack.construct_plans[construct_plan_index(callee)?];
+    (plan.callee == callee
+        && plan.epoch == crate::heap::prototype_layout_epoch()
+        && vm.function_prototype_in_layout(callee, plan.callee_layout) == Some(plan.prototype))
+    .then_some(plan)
+}
+
+/// The receiver `Vm::inline_construct_receiver` allocates for a constructor that forwards its
+/// arguments (`lane_script_construct_keeping`): from `callee`'s plan of no fields while it
+/// holds, else from the template, which leaves that plan. `lane_script_construct` sends a
+/// forwarding target here before it tests `ScriptCallTarget::initializes`, so a callee's plan
+/// is only ever this one or `lane_initialize_fields`'s.
+fn lane_planned_receiver<H: Host>(vm: &mut Vm<H>, callee: Value) -> Option<Value> {
+    if let Some(plan) = holding_construct_plan(vm, callee).filter(|plan| plan.fields == 0) {
+        return Some(vm.heap.alloc_object_with_properties(plan.prototype, plan.shape, &[]));
+    }
+    let template = vm.inline_construct_template(callee)?;
+    let (prototype, shape) = (template.proto(), template.shape());
+    let this = vm.heap.alloc_object(template);
+    if let Some(index) = construct_plan_index(callee)
+        && let Some(callee_layout) = vm.function_prototype_layout(callee)
+    {
+        vm.lane_stack.construct_plans[index] = ConstructPlan {
+            callee,
+            epoch: crate::heap::prototype_layout_epoch(),
+            callee_layout,
+            prototype,
+            shape,
+            ..EMPTY_CONSTRUCT_PLAN
+        };
+    }
+    Some(this)
 }
 
 /// `lane_activate` for a target that keeps its passed values, or for values a forwarding
