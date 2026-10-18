@@ -243,7 +243,7 @@ impl<H: Host> Vm<H> {
                 if start >= end {
                     return self.string_from_units(&[]);
                 }
-                self.string_from_unit_run(units.slice(start as usize..end as usize))
+                self.string_substring(&text, start as usize..end as usize)
             }
             Native::StringSubstring => {
                 let text = self.string_receiver_text(this)?;
@@ -254,7 +254,7 @@ impl<H: Host> Vm<H> {
                 if start > end {
                     std::mem::swap(&mut start, &mut end);
                 }
-                self.string_from_unit_run(units.slice(start as usize..end as usize))
+                self.string_substring(&text, start as usize..end as usize)
             }
             Native::StringSubstr => {
                 let text = self.string_receiver_text(this)?;
@@ -268,7 +268,7 @@ impl<H: Host> Vm<H> {
                 };
                 let count = self.argument_integer(p, args, 1, length - start)?.max(0);
                 let end = start.saturating_add(count).min(length);
-                self.string_from_unit_run(units.slice(start as usize..end as usize))
+                self.string_substring(&text, start as usize..end as usize)
             }
             Native::StringIncludes | Native::StringStartsWith | Native::StringEndsWith => {
                 let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
@@ -363,7 +363,7 @@ impl<H: Host> Vm<H> {
                         .rposition(|unit| !is_ecma_whitespace(unit))
                         .map_or(start, |i| i + 1)
                 };
-                self.string_from_unit_run(units.slice(start..end))
+                self.string_substring(&receiver, start..end)
             }
             Native::StringMatch | Native::StringSearch => {
                 self.string_match_or_search_native(p, native, this, args)
@@ -668,13 +668,13 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    pub(super) fn string_from_unit_run(
+    /// The string value of `text`'s units `range`, sharing long ASCII storage.
+    pub(super) fn string_substring(
         &mut self,
-        units: super::wtf16::Units<'_>,
+        text: &super::wtf16::JsString,
+        range: std::ops::Range<usize>,
     ) -> Result<Value, JsError> {
-        Ok(self
-            .heap
-            .alloc(Cell::String(super::wtf16::JsString::from_unit_run(units))))
+        Ok(self.heap.alloc(Cell::String(text.substring(range))))
     }
 
     pub(super) fn string_from_units(&mut self, units: &[u16]) -> Result<Value, JsError> {

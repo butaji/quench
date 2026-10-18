@@ -945,19 +945,23 @@ impl<H: Host> Vm<H> {
                 self.regexp_short_subject = Some(Rc::clone(&subject));
                 return subject;
             }
-            FlatUnits::Ascii(_) | FlatUnits::Wide(_) => flat,
+            FlatUnits::Ascii(_) | FlatUnits::AsciiSlice(_) | FlatUnits::Wide(_) => flat,
         };
         let cached = self.regexp_subjects.iter().position(|subject| match text {
-            FlatUnits::Ascii(text) => subject.is_ascii_text_of(text),
             FlatUnits::Wide(units) => subject.is_text_of(units),
-            FlatUnits::Short(_) => false,
+            ascii => ascii
+                .shared_ascii()
+                .is_some_and(|(text, range)| subject.is_ascii_text_of(text, &range)),
         });
         let subject = match cached {
             Some(position) => self.regexp_subjects.remove(position),
             None => Rc::new(match text {
-                FlatUnits::Ascii(text) => quench_regexp::Subject::from_ascii(Rc::clone(text)),
                 FlatUnits::Wide(units) => quench_regexp::Subject::new(Rc::clone(units)),
-                FlatUnits::Short(_) => unreachable!("short subjects returned above"),
+                ascii => {
+                    let (text, range) =
+                        ascii.shared_ascii().expect("short subjects returned above");
+                    quench_regexp::Subject::from_ascii(Rc::clone(text), range)
+                }
             }),
         };
         self.regexp_subjects.insert(0, Rc::clone(&subject));
