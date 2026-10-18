@@ -1527,6 +1527,7 @@ fn quench_engine(options: &Options) -> EngineSpec {
     let mut environment = BTreeMap::new();
     if options.jit_diagnostics {
         environment.insert("QUENCH_WASM_JIT_STATS".into(), "1".into());
+        environment.insert("QUENCH_JS_JIT_STATS".into(), "1".into());
     }
     if options.jit_wasm_selective {
         environment.insert("QUENCH_WASM_JIT_SELECTIVE".into(), "1".into());
@@ -1551,7 +1552,7 @@ fn quench_engine(options: &Options) -> EngineSpec {
         quench.jit_proof_command.push("--jit".into());
         quench.jit_mode = "enabled-by-cli-flag";
         quench.jit_proof = if options.jit_diagnostics {
-            "the measured Quench process is launched with --jit and QUENCH_WASM_JIT_STATS=1; diagnostic-only, not for qualification".into()
+            "the measured Quench process is launched with --jit and opt-in JavaScript/WebAssembly JIT counters; diagnostic-only, not for qualification".into()
         } else {
             "the measured Quench process is launched with --jit".into()
         };
