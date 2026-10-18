@@ -1357,6 +1357,24 @@ impl<H: Host> Vm<H> {
         )
     }
 
+    pub(crate) fn pending_lazy_data_property_rooted(
+        &mut self,
+        holder: RootId,
+        key: RootId,
+        listener: RootId,
+        index: u32,
+    ) -> Result<Option<Value>, JsError> {
+        let holder = self.embedding_value(holder)?;
+        let key = self.embedding_value(key)?;
+        let listener = self.embedding_value(listener)?;
+        // Lazy data properties have string keys.
+        let Some(Cell::String(name)) = self.heap.get(key).cloned() else {
+            return Ok(None);
+        };
+        let key = PropertyKey::string(self.intern_js_atom(&name));
+        Ok(self.pending_lazy_data_property(holder, key, listener, index))
+    }
+
     pub(crate) fn materialize_lazy_data_property_rooted(
         &mut self,
         holder: RootId,
