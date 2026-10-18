@@ -4808,27 +4808,77 @@ mod tests {
 
     #[test]
     fn sparse_analysis_states_preserve_register_joins() {
-        let mut left = AnalysisState::new();
-        left.set(1, 4, Slot::Value(Kind::I64))
+        const FACTS: [Slot; 7] = [
+            Slot::DEFAULT,
+            Slot::Value(Kind::I64),
+            Slot::Binding(7),
+            Slot::Memory,
+            Slot::Import(9),
+            Slot::IndirectReference {
+                signature: 11,
+                table: 13,
+            },
+            Slot::Conflict,
+        ];
+        let states = FACTS
+            .iter()
+            .flat_map(|first| {
+                FACTS.iter().flat_map(move |second| {
+                    FACTS.iter().map(move |third| vec![*first, *second, *third])
+                })
+            })
+            .collect::<Vec<_>>();
+        let sparse = |dense: &[Slot]| {
+            let registers = u16::try_from(dense.len()).expect("small test state");
+            let mut state = AnalysisState::new();
+            for (index, slot) in dense.iter().copied().enumerate() {
+                state
+                    .set(
+                        u16::try_from(index).expect("small test register"),
+                        registers,
+                        slot,
+                    )
+                    .expect("register in range");
+            }
+            state
+        };
+
+        for left in &states {
+            for right in &states {
+                let mut expected = left.clone();
+                let mut changed = false;
+                for (slot, incoming) in expected.iter_mut().zip(right) {
+                    let joined = slot.join(*incoming);
+                    changed |= joined != *slot;
+                    *slot = joined;
+                }
+
+                let mut actual = sparse(left);
+                assert_eq!(actual.join_from(&sparse(right)), changed);
+                for (index, expected) in expected.iter().copied().enumerate() {
+                    assert_eq!(actual.get(index as u16, 3), Some(expected));
+                }
+            }
+        }
+
+        // Once a loop backedge turns a fact into Conflict, later iterations
+        // must not make it precise again.
+        let mut loop_state = AnalysisState::new();
+        let mut incoming = AnalysisState::new();
+        incoming
+            .set(0, 1, Slot::Value(Kind::I64))
             .expect("register in range");
-        left.set(3, 4, Slot::Binding(7)).expect("register in range");
+        assert!(loop_state.join_from(&incoming));
+        assert_eq!(loop_state.get(0, 1), Some(Slot::Conflict));
+        assert!(!loop_state.join_from(&AnalysisState::new()));
+        assert!(!loop_state.join_from(&incoming));
+        assert_eq!(loop_state.get(0, 1), Some(Slot::Conflict));
+        assert_eq!(loop_state.get(1, 1), None);
 
-        let mut identical = left.clone();
-        assert!(!identical.join_from(&left));
-        assert_eq!(identical.get(0, 4), Some(Slot::DEFAULT));
-        assert_eq!(identical.get(1, 4), Some(Slot::Value(Kind::I64)));
-
-        let mut other_path = AnalysisState::new();
-        other_path
-            .set(3, 4, Slot::Binding(8))
+        loop_state
+            .set(0, 1, Slot::DEFAULT)
             .expect("register in range");
-        assert!(left.join_from(&other_path));
-        assert_eq!(left.get(1, 4), Some(Slot::Conflict));
-        assert_eq!(left.get(3, 4), Some(Slot::Conflict));
-        assert_eq!(left.get(4, 4), None);
-
-        left.set(1, 4, Slot::DEFAULT).expect("register in range");
-        assert_eq!(left.get(1, 4), Some(Slot::DEFAULT));
+        assert_eq!(loop_state.get(0, 1), Some(Slot::DEFAULT));
     }
 
     /// Each i32 integer operator widens to its namesake, and each f32 float
