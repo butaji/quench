@@ -231,3 +231,51 @@ useful for pinpointing the hot caller, but this Cranelift admission strategy is
 not suitable for the requested score-and-RSS win. Lower-memory baseline code
 generation or reducing Quench's JIT-mode base footprint is the next research
 direction.
+
+## Sparse analysis and compile-cost screens
+
+Commit `v2-jit` replaces the per-PC dense register-state vectors in Wasm JIT
+analysis with sorted sparse deviations from the default i32 slot. Joins retain
+the same `Slot` lattice: a deviation meeting the default or a different value
+becomes `Conflict`. A focused unit test covers equal facts, differing facts,
+default-path disagreement, out-of-range registers, and resetting a slot to its
+default. Linux-only, opt-in JIT diagnostics now report the analyzer's modeled
+state storage and elapsed time, plus per-function Cranelift compile time and
+process RSS/high-water snapshots.
+
+For HashSet `main` (function 3), the diagnostic measured 66,145 reachable
+bytecodes and 97 registers. The dense-equivalent state payload is 76,992,780
+bytes; sparse states and allocated capacities use 6,962,568 bytes, about 11.1x
+less. Planning takes 6.9-10.2 ms. The Cranelift body remains the large cost:
+with optimization disabled it takes 866 ms and the process reaches
+265,424 KiB high-water RSS. Cranelift's `none` setting reduces compile time and
+RSS, but its one-round root-3 screen is only 49.04 Score / 259.1 MiB. The
+`speed_and_size` screen is 56.20 / 284.2 MiB, and default `speed` is 56.77 /
+308.7 MiB. These are root-selected one-round screens, not matched comparisons
+or qualification results.
+
+JetStream includes the first, worst, and average per-fixture scores in its
+geometric-mean Score. The diagnostic root-3 run spends 941 ms compiling and
+emits 1,544,754 bytes. Its first timed iteration takes 1,005 ms (Score 4.98),
+while the later average is 23.99 ms (Score 208.41). HashSet loads its Wasm
+binary in `init()` but first initializes the Emscripten module inside the first
+timed `runIteration()`. Quench then compiles the whole eligible program on the
+first exported-function entry. This identifies cold compile latency, as well
+as Cranelift's transient memory, as the immediate blocker; eager compilation
+at instantiation would only move this cost because instantiation itself is in
+the timed interval. The direct next compiler milestone is a fast single-pass
+baseline tier with interpreter fallback, followed by selective Cranelift tier
+up when expected execution savings justify code size and promotion cost. This
+matches the division of work in V8 Liftoff/TurboFan and Wasmtime Winch, and the
+low runtime compiler cost targeted by Deegen/Copy-and-Patch; those systems do
+not predict Quench's performance. [Cranelift optimization levels](https://docs.rs/cranelift-codegen/latest/cranelift_codegen/settings/struct.Flags.html),
+[Wasmtime fast compilation](https://docs.wasmtime.dev/examples-fast-compilation.html),
+[V8 Liftoff](https://v8.dev/blog/liftoff),
+[Deegen](https://compilers.stanford.edu/software/deegen/).
+
+Narrower root-31 (`operator new`) and root-27 screens use about 44 MiB RSS,
+below both JIT peers in these one-round runs, but score only 23.49 and 22.57.
+They therefore confirm a memory opportunity without a score win. Full commands,
+environment wrapper, diagnostic details, and raw reports are in
+`evidence/jit-jetstream3-wasm-2026-10-18/sparse-analysis-baseline-screen/`.
+No case has yet met the paired score-and-RSS rule; the target remains open.
