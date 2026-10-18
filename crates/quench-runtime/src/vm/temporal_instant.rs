@@ -300,7 +300,7 @@ impl<H: Host> Vm<H> {
         let epoch = self.temporal_instant_epoch(p, this)?;
         match native {
             Native::TemporalInstantEpochNanosecondsGetter => {
-                Ok(self.heap.alloc(Cell::BigInt(epoch.to_string())))
+                Ok(self.heap.alloc(Cell::bigint(epoch.into())))
             }
             Native::TemporalInstantEpochMillisecondsGetter => Ok(Value::number(
                 epoch.div_euclid(INSTANT_NANOSECONDS_PER_MILLISECOND) as f64,

@@ -1548,7 +1548,7 @@ enum ConstantKey {
     WasmV128([u8; crate::wasm::V128_BYTES]),
     String(String),
     StringUnits(Vec<u16>),
-    BigInt(String),
+    BigInt(num_bigint::BigInt),
     Boolean(bool),
     Null,
     Undefined,

@@ -2351,7 +2351,9 @@ pub(crate) enum Cell {
         element_type: wasmparser::RefType,
         declarations: Box<crate::WasmTypes>,
     },
-    String(JsString), BigInt(String),
+    String(JsString),
+    /// Boxed so a slot stays one tag word plus the object layout (`cells_stay_compact`).
+    BigInt(Box<num_bigint::BigInt>),
     Symbol(SymbolData),
     Date { milliseconds: f64, object: Box<Object> },
     RegExp {
@@ -2406,6 +2408,10 @@ pub(crate) enum Cell {
 }
 
 impl Cell {
+    pub(crate) fn bigint(value: num_bigint::BigInt) -> Self {
+        Self::BigInt(Box::new(value))
+    }
+
     /// Whether a collection prunes this cell's entries by the liveness of their targets
     /// (`Heap::prune_weak_cell`).
     pub(crate) fn has_weak_entries(&self) -> bool {
