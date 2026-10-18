@@ -327,7 +327,7 @@ impl<H: Host> Vm<H> {
                 let Some(Cell::BigInt(text)) = self.heap.get(value) else {
                     unreachable!()
                 };
-                text.parse::<i128>()
+                i128::try_from(text.as_ref())
                     .map_err(|_| self.range_error(p, "Invalid epochNanoseconds".into()))?
             }
             value if value.as_bool().is_some() => i128::from(value.as_bool().unwrap_or(false)),
@@ -627,7 +627,7 @@ impl<H: Host> Vm<H> {
         );
         match native {
             Native::TemporalZonedDateTimeEpochNanosecondsGetter => {
-                Ok(self.heap.alloc(Cell::BigInt(epoch.to_string())))
+                Ok(self.heap.alloc(Cell::bigint(epoch.into())))
             }
             Native::TemporalZonedDateTimeEpochMillisecondsGetter => Ok(Value::number(
                 epoch.div_euclid(i128::from(NANOSECONDS_PER_MILLISECOND)) as f64,

@@ -2167,7 +2167,7 @@ impl<H: Host> Vm<H> {
             Constant::WasmV128(bits) => self.heap.alloc(Cell::WasmV128(*bits)),
             Constant::String(v) => self.heap.alloc(Cell::String(v.clone().into())),
             Constant::StringUnits(v) => self.heap.alloc(Cell::String(JsString::from_units(v))),
-            Constant::BigInt(v) => self.heap.alloc(Cell::BigInt(v.clone())),
+            Constant::BigInt(v) => self.heap.alloc(Cell::bigint(v.clone())),
             Constant::Boolean(true) => Value::TRUE,
             Constant::Boolean(false) => Value::FALSE,
             Constant::Null => Value::NULL,

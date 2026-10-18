@@ -653,7 +653,7 @@ impl<H: Host> Vm<H> {
                 if Self::detail_bigint_is_too_large(integer) {
                     "<a very large BigInt>".into()
                 } else {
-                    integer.clone()
+                    integer.to_string()
                 }
             }
             Some(Cell::Symbol(description)) => Self::detail_symbol(description.as_deref()),
@@ -665,36 +665,9 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn detail_bigint_is_too_large(integer: &str) -> bool {
-        const MAX_V8_DETAIL_BIGINT_LIMBS: usize = 100;
-
-        let digits = integer
-            .strip_prefix('-')
-            .unwrap_or(integer)
-            .trim_start_matches('0');
-        if digits.is_empty() || digits.parse::<usize>().is_ok() {
-            return false;
-        }
-
-        let mut limbs = vec![0usize];
-        for byte in digits.bytes() {
-            let Some(digit) = byte.checked_sub(b'0').filter(|digit| *digit <= 9) else {
-                return false;
-            };
-            let mut carry = u128::from(digit);
-            for limb in &mut limbs {
-                let product = (*limb as u128) * 10 + carry;
-                *limb = product as usize;
-                carry = product >> usize::BITS;
-            }
-            if carry != 0 {
-                limbs.push(carry as usize);
-                if limbs.len() > MAX_V8_DETAIL_BIGINT_LIMBS {
-                    return true;
-                }
-            }
-        }
-        limbs.len() > MAX_V8_DETAIL_BIGINT_LIMBS
+    fn detail_bigint_is_too_large(integer: &num_bigint::BigInt) -> bool {
+        const MAX_V8_DETAIL_BIGINT_LIMBS: u64 = 100;
+        integer.bits() > MAX_V8_DETAIL_BIGINT_LIMBS * u64::from(usize::BITS)
     }
 
     fn detail_symbol(description: Option<&str>) -> String {
@@ -1050,7 +1023,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(crate) fn bigint_rooted(&mut self, integer: i128) -> RootId {
-        let value = self.heap.alloc(Cell::BigInt(integer.to_string()));
+        let value = self.heap.alloc(Cell::bigint(integer.into()));
         self.root(value)
     }
 

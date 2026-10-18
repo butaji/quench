@@ -364,9 +364,7 @@ impl<H: Host> Vm<H> {
                     value
                 };
                 let number = match self.heap.get(primitive) {
-                    Some(Cell::BigInt(value)) => value.parse::<f64>().map_err(|_| {
-                        self.type_error(p, "invalid BigInt numeric representation".into())
-                    })?,
+                    Some(Cell::BigInt(value)) => crate::bigint::to_f64(value),
                     _ => self.to_number(p, primitive)?,
                 };
                 Value::number(number)
