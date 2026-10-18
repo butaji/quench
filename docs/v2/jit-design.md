@@ -112,12 +112,8 @@ not timing evidence: diagnostics add overhead and the report has one round.
 The signature parameter copy already uses an inline `SmallVec` for up to eight
 types, so a repeated heap clone is not the current bottleneck. The split
 counter distinguishes reference/table calls from statically imported calls,
-but it does not yet show which reference calls enter compiled callees versus
-interpreter fallback. The evidence points instead to repeated table-target
-resolution and crossing from generated code into the VM. A guarded call-site
-cache is a plausible next experiment, provided table mutation invalidation,
-bounds/null traps, canonical signature checks, and callee instance environments
-remain correct. Raw diagnostic data and reproduction details are in
+but does not show which reference calls enter compiled callees versus VM
+fallback. Raw diagnostic data and reproduction details are in
 `evidence/jit-jetstream3-wasm-2026-10-18/callout-attribution/`.
 
 ## Deferred indirect-call fallback lookups
@@ -144,11 +140,11 @@ parity with Bun or Node:
 gcc-loops and quicksort beat both RSS bars but remain far below both score
 bars; HashSet beats Node on RSS only; TSF loses on both metrics; zlib's Node
 RSS interval contains parity. This keeps the requested JIT score-and-RSS goal
-open. The next experiment should first split reference callouts into compiled
-callee hits and interpreter fallbacks, ideally by call site. TSF's C source has
-candidate writer/reader callback loops, but the aggregate counts do not prove
-their share. A monomorphic cache must retain the existing resolver as the miss
-path and invalidate for every Wasm and JavaScript table mutation.
+open. The next experiment should bypass the VM argument boxing and nested
+`run_compiled` setup for same-instance compiled targets, while retaining table
+bounds, null, signature, and cross-instance checks. Per-site attribution should
+determine whether reducing repeated table resolution is still worthwhile after
+that boundary is removed.
 
 The remaining design work follows a staged-specialization path: keep validated
 Wasm and residual JS bytecode as the static input, specialize only hot
@@ -161,3 +157,23 @@ single semantics source and Copy-and-Patch baseline suggest a later route to
 lower compile cost if measurements show compiler allocation is still the RSS
 driver. These sources motivate tiering and specialization; they do not predict
 Quench's benchmark outcome. [V8 Wasm compilation pipeline](https://v8.dev/docs/wasm-compilation-pipeline), [Deegen paper](https://arxiv.org/abs/2411.11469), [Futamura's partial-evaluation paper](https://www.jstage.jst.go.jp/article/jssst/21/5/21_5_343/_article/-char/en).
+
+## Per-site TSF indirect-call attribution
+
+An opt-in diagnostic ABI records each compiled indirect call site's total,
+same-program native-target hits, and VM fallback/trap resolutions. The ordinary
+JIT ABI and generated call path remain unchanged, and the diagnostic report is
+excluded from qualification. A one-round TSF diagnostic reports 2,869,000
+reference calls: 2,859,000 (99.65%) reached same-program compiled functions,
+while 10,000 used VM fallback/trap handling. The hottest site is runtime
+function 221 at PC 63 (`read` in the pinned TSF symbols), with 2,663,108 native
+target hits and no fallback. The complete report and source/binary hashes are in
+`evidence/jit-jetstream3-wasm-2026-10-18/site-attribution/README.md`.
+
+This confirms a high-volume VM transition even when both caller and target are
+compiled. The next implementation experiment calls the existing fixed native
+entry directly for same-program, same-instance targets using the raw Wasm words.
+It keeps table validation in the VM resolver and retains the existing slow path
+for another instance or an uncompiled target. One-round diagnostic Score/RSS
+are not qualification evidence, and the separate clean 11-round results still
+show no JIT Score wins.
