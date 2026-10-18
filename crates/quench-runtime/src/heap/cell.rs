@@ -606,7 +606,7 @@ pub(crate) enum Native {
     PromiseAny,
     PromiseThenableJob,
     PromiseAggregateJob,
-    PromiseAsyncResumeJob, AsyncFromSyncValue, AsyncFromSyncValueRejected, AsyncGeneratorDelegateFulfilled, AsyncGeneratorDelegateRejected,
+    PromiseAsyncResumeFulfilled, PromiseAsyncResumeRejected, AsyncFromSyncValue, AsyncFromSyncValueRejected, AsyncGeneratorDelegateFulfilled, AsyncGeneratorDelegateRejected,
     WithEnter, WithExit,
     WasmHost,
     WebAssemblyValidate, WebAssemblyCompile, WebAssemblyInstantiate,
@@ -704,6 +704,19 @@ pub(crate) struct ArrayFromAsyncState {
     pub(crate) index: usize,
     pub(crate) array_like: Option<(Value, usize)>,
     pub(crate) awaiting: ArrayFromAsyncAwait,
+}
+
+/// One `await`'s suspended activation. Its fulfilled and rejected reactions both name this
+/// cell as their environment, so the continuation is traced while either can still run;
+/// the first to run takes it.
+#[derive(Clone, Debug)]
+pub(crate) struct AwaitState {
+    pub(crate) continuation: Option<crate::vm::activation::Continuation>,
+    /// The async function's promise, or the async generator request's promise.
+    pub(crate) promise: Value,
+    pub(crate) generator: Option<Value>,
+    /// The await of an async generator's `yield`, which settles the request with the value.
+    pub(crate) yielded: bool,
 }
 impl TypedArrayKind {
     pub(crate) const fn is_bigint(self) -> bool {
@@ -1086,7 +1099,8 @@ impl Native {
                 | Self::PromiseAny
                 | Self::PromiseThenableJob
                 | Self::PromiseAggregateJob
-                | Self::PromiseAsyncResumeJob
+                | Self::PromiseAsyncResumeFulfilled
+                | Self::PromiseAsyncResumeRejected
                 | Self::ArrayFromAsyncFulfilled
                 | Self::ArrayFromAsyncRejected
                 | Self::DynamicImport
@@ -2698,6 +2712,7 @@ pub(crate) enum Cell {
         ext: Box<IteratorExt>,
     },
     ArrayFromAsyncState(Box<ArrayFromAsyncState>),
+    AwaitState(Box<AwaitState>),
     Proxy {
         object: Box<Object>,
         kind: ProxyKind,
@@ -2847,6 +2862,7 @@ impl Cell {
             Self::FinalizationRegistry { .. } => "finalization_registry",
             Self::Iterator { .. } => "iterator",
             Self::ArrayFromAsyncState(_) => "array_from_async_state",
+            Self::AwaitState(_) => "await_state",
             Self::Proxy { .. } => "proxy",
             Self::Function { .. } => "function",
             Self::BindingReference { .. } => "binding_reference",
@@ -2901,6 +2917,11 @@ impl Cell {
                     .as_ref()
                     .and_then(|generator| generator.continuation.as_ref())
                 {
+                    visit(continuation.program);
+                }
+            }
+            Self::AwaitState(state) => {
+                if let Some(continuation) = &state.continuation {
                     visit(continuation.program);
                 }
             }
