@@ -1656,6 +1656,7 @@ dependencies = [
  "libc",
  "libm",
  "num-bigint 0.4.8",
+ "num-traits",
  "oxc_allocator",
  "oxc_ast",
  "oxc_ast_visit",
