@@ -25,6 +25,9 @@ const MEMCPY_EARLY_ENV: &str = "QUENCH_WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT";
 const DIRECT_COMPARE_BRANCHES_OFF: &str = "quench_direct_compare_branches_off";
 const DIRECT_COMPARE_BRANCHES_ON: &str = "quench_direct_compare_branches_on";
 const DIRECT_COMPARE_BRANCHES_ENV: &str = "QUENCH_WASM_JIT_DIRECT_COMPARE_BRANCHES";
+const INDEXED_OFFSET_REUSE_OFF: &str = "quench_indexed_offset_reuse_off";
+const INDEXED_OFFSET_REUSE_ON: &str = "quench_indexed_offset_reuse_on";
+const INDEXED_OFFSET_REUSE_ENV: &str = "QUENCH_WASM_JIT_INDEXED_OFFSET_REUSE";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DiagnosticAbMode {
@@ -32,6 +35,7 @@ enum DiagnosticAbMode {
     RawI32Memcpy,
     EarlyImportMemcpy,
     DirectCompareBranches,
+    IndexedOffsetReuse,
 }
 
 #[derive(Clone, Copy)]
@@ -105,6 +109,20 @@ static DIRECT_COMPARE_BRANCHES_CONFIG: DiagnosticAbConfig = DiagnosticAbConfig {
     minimum_rounds: MIN_DIAGNOSTIC_SCREEN_ROUNDS,
 };
 
+static INDEXED_OFFSET_REUSE_CONFIG: DiagnosticAbConfig = DiagnosticAbConfig {
+    mode: DiagnosticAbMode::IndexedOffsetReuse,
+    report_kind: "jit_wasm_indexed_offset_reuse_ab_diagnostic",
+    off_engine: INDEXED_OFFSET_REUSE_OFF,
+    on_engine: INDEXED_OFFSET_REUSE_ON,
+    switch_env: INDEXED_OFFSET_REUSE_ENV,
+    off_value: "0",
+    on_value: "1",
+    fixed_env: None,
+    fixed_env2: None,
+    fixture_name: "quicksort-wasm",
+    minimum_rounds: MIN_DIAGNOSTIC_SCREEN_ROUNDS,
+};
+
 fn diagnostic_ab_engines(config: DiagnosticAbConfig) -> [&'static str; 4] {
     [config.off_engine, config.on_engine, "bun", "node"]
 }
@@ -114,14 +132,26 @@ fn selected_diagnostic_ab_config(
     raw_i32: bool,
     compare_branches: bool,
     early_import: bool,
+    indexed_offset_reuse: bool,
 ) -> Result<DiagnosticAbConfig, String> {
-    if [direct_copy, raw_i32, compare_branches, early_import]
+    if [
+        direct_copy,
+        raw_i32,
+        compare_branches,
+        early_import,
+        indexed_offset_reuse,
+    ]
         .into_iter()
         .filter(|selected| *selected)
         .count()
         != 1
     {
-        return Err(if direct_copy || raw_i32 || compare_branches || early_import {
+        return Err(if direct_copy
+            || raw_i32
+            || compare_branches
+            || early_import
+            || indexed_offset_reuse
+        {
             "Wasm diagnostic A/B modes are mutually exclusive".into()
         } else {
             "no Wasm diagnostic A/B mode was selected".into()
@@ -133,8 +163,10 @@ fn selected_diagnostic_ab_config(
         MEMCPY_RAW_CONFIG
     } else if compare_branches {
         DIRECT_COMPARE_BRANCHES_CONFIG
-    } else {
+    } else if early_import {
         MEMCPY_EARLY_CONFIG
+    } else {
+        INDEXED_OFFSET_REUSE_CONFIG
     })
 }
 
@@ -163,6 +195,8 @@ struct SuiteInput {
     jit_wasm_memcpy_early_ab: bool,
     #[serde(default)]
     jit_wasm_compare_branch_ab: bool,
+    #[serde(default)]
+    jit_wasm_indexed_offset_reuse_ab: bool,
     rounds_requested: usize,
     timeout_ms: u64,
     source_revision: String,
@@ -397,12 +431,14 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         || input.jit_wasm_memcpy_raw_ab
         || input.jit_wasm_memcpy_early_ab
         || input.jit_wasm_compare_branch_ab
+        || input.jit_wasm_indexed_offset_reuse_ab
     {
         let config = selected_diagnostic_ab_config(
             input.jit_wasm_memcpy_ab,
             input.jit_wasm_memcpy_raw_ab,
             input.jit_wasm_compare_branch_ab,
             input.jit_wasm_memcpy_early_ab,
+            input.jit_wasm_indexed_offset_reuse_ab,
         )?;
         validate_diagnostic_ab(&input, config)?;
         return run_diagnostic_ab_analysis(&input, &input_path, output_path.as_deref(), config);
@@ -659,10 +695,12 @@ fn validate_diagnostic_ab(
     let early_import = config.mode == DiagnosticAbMode::EarlyImportMemcpy;
     let raw_i32_enabled = raw_i32 || early_import;
     let compare_branches = config.mode == DiagnosticAbMode::DirectCompareBranches;
+    let indexed_offset_reuse = config.mode == DiagnosticAbMode::IndexedOffsetReuse;
     if input.jit_wasm_memcpy_ab != direct_copy
         || input.jit_wasm_memcpy_raw_ab != raw_i32
         || input.jit_wasm_memcpy_early_ab != early_import
         || input.jit_wasm_compare_branch_ab != compare_branches
+        || input.jit_wasm_indexed_offset_reuse_ab != indexed_offset_reuse
         || input.jit_diagnostics
         || input.jit_wasm_root.is_some()
         || input.jit_wasm_root_only
@@ -1091,6 +1129,9 @@ fn validate_suite(input: &SuiteInput) -> Result<(), String> {
     }
     if input.jit_wasm_compare_branch_ab {
         return Err("Wasm compare-branch A/B diagnostic reports cannot be used for qualification analysis".into());
+    }
+    if input.jit_wasm_indexed_offset_reuse_ab {
+        return Err("Wasm indexed-offset-reuse A/B diagnostic reports cannot be used for qualification analysis".into());
     }
     if !input.qualification_ready || !input.complete {
         return Err("benchmark report is incomplete or not qualification_ready".to_string());
@@ -1528,7 +1569,8 @@ mod tests {
         DIRECT_COMPARE_BRANCHES_ENV, DIRECT_COMPARE_BRANCHES_OFF, DIRECT_COMPARE_BRANCHES_ON,
         MEMCPY_DIRECT_CONFIG, MEMCPY_DIRECT_ENV, MEMCPY_DIRECT_OFF, MEMCPY_DIRECT_ON,
         MEMCPY_EARLY_CONFIG, MEMCPY_EARLY_ENV, MEMCPY_EARLY_OFF, MEMCPY_EARLY_ON,
-        MEMCPY_RAW_CONFIG, MEMCPY_RAW_ENV,
+        MEMCPY_RAW_CONFIG, MEMCPY_RAW_ENV, INDEXED_OFFSET_REUSE_CONFIG, INDEXED_OFFSET_REUSE_ENV,
+        INDEXED_OFFSET_REUSE_OFF, INDEXED_OFFSET_REUSE_ON,
     };
     use crate::{JitMode, Suite};
     use std::collections::BTreeMap;
@@ -1678,6 +1720,8 @@ mod tests {
             jit_wasm_memcpy_early_ab: config.mode == DiagnosticAbMode::EarlyImportMemcpy,
             jit_wasm_compare_branch_ab:
                 config.mode == DiagnosticAbMode::DirectCompareBranches,
+            jit_wasm_indexed_offset_reuse_ab:
+                config.mode == DiagnosticAbMode::IndexedOffsetReuse,
             rounds_requested: config.minimum_rounds,
             timeout_ms: 1_000,
             source_revision: "a".repeat(40),
@@ -1751,6 +1795,7 @@ mod tests {
             jit_wasm_memcpy_raw_ab: false,
             jit_wasm_memcpy_early_ab: false,
             jit_wasm_compare_branch_ab: false,
+            jit_wasm_indexed_offset_reuse_ab: false,
             rounds_requested: 11,
             timeout_ms: 1_000,
             source_revision: "test".into(),
@@ -1798,6 +1843,7 @@ mod tests {
             jit_wasm_memcpy_raw_ab: false,
             jit_wasm_memcpy_early_ab: false,
             jit_wasm_compare_branch_ab: false,
+            jit_wasm_indexed_offset_reuse_ab: false,
             rounds_requested: 11,
             timeout_ms: 1_000,
             source_revision: "test".into(),
@@ -1845,6 +1891,7 @@ mod tests {
             jit_wasm_memcpy_raw_ab: false,
             jit_wasm_memcpy_early_ab: false,
             jit_wasm_compare_branch_ab: false,
+            jit_wasm_indexed_offset_reuse_ab: false,
             rounds_requested: 11,
             timeout_ms: 1_000,
             source_revision: "test".into(),
@@ -1970,10 +2017,10 @@ mod tests {
             .insert(MEMCPY_DIRECT_ENV.into(), "0".into());
         assert!(validate_diagnostic_ab(&invalid_provenance, MEMCPY_RAW_CONFIG).is_err());
 
-        let config = selected_diagnostic_ab_config(false, true, false, false)
+        let config = selected_diagnostic_ab_config(false, true, false, false, false)
             .expect("raw mode selected");
         assert_eq!(config.mode, DiagnosticAbMode::RawI32Memcpy);
-        assert!(selected_diagnostic_ab_config(true, true, false, false).is_err());
+        assert!(selected_diagnostic_ab_config(true, true, false, false, false).is_err());
         assert_eq!(MEMCPY_RAW_ENV, "QUENCH_WASM_EMSCRIPTEN_MEMCPY_RAW_I32");
     }
 
@@ -2014,14 +2061,14 @@ mod tests {
             .insert(MEMCPY_RAW_ENV.into(), "0".into());
         assert!(validate_diagnostic_ab(&invalid_provenance, MEMCPY_EARLY_CONFIG).is_err());
 
-        let config = selected_diagnostic_ab_config(false, false, false, true)
+        let config = selected_diagnostic_ab_config(false, false, false, true, false)
             .expect("early-import mode selected");
         assert_eq!(config.mode, DiagnosticAbMode::EarlyImportMemcpy);
         assert_eq!(config.off_engine, MEMCPY_EARLY_OFF);
         assert_eq!(config.on_engine, MEMCPY_EARLY_ON);
         assert_eq!(config.minimum_rounds, 3);
         assert_eq!(MEMCPY_EARLY_ENV, "QUENCH_WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT");
-        assert!(selected_diagnostic_ab_config(false, true, false, true).is_err());
+        assert!(selected_diagnostic_ab_config(false, true, false, true, false).is_err());
     }
 
     #[test]
@@ -2079,7 +2126,7 @@ mod tests {
         )
         .is_err());
 
-        let selected = selected_diagnostic_ab_config(false, false, true, false)
+        let selected = selected_diagnostic_ab_config(false, false, true, false, false)
             .expect("compare-branch mode selected");
         assert_eq!(selected.report_kind, "jit_wasm_compare_branch_ab_diagnostic");
         assert_eq!(selected.minimum_rounds, 3);
@@ -2088,7 +2135,7 @@ mod tests {
             DIRECT_COMPARE_BRANCHES_OFF
         );
         assert_eq!(selected.on_engine, DIRECT_COMPARE_BRANCHES_ON);
-        assert!(selected_diagnostic_ab_config(true, false, true, false).is_err());
+        assert!(selected_diagnostic_ab_config(true, false, true, false, false).is_err());
 
         let mut different_binary = memcpy_ab_input_for(&DIRECT_COMPARE_BRANCHES_CONFIG);
         different_binary
@@ -2098,6 +2145,56 @@ mod tests {
             .unwrap()
             .executable = "/different-quench-node".into();
         assert!(validate_diagnostic_ab(&different_binary, DIRECT_COMPARE_BRANCHES_CONFIG).is_err());
+    }
+
+    #[test]
+    fn indexed_offset_reuse_ab_accepts_three_rounds_and_is_never_qualifying() {
+        let input = memcpy_ab_input_for(&INDEXED_OFFSET_REUSE_CONFIG);
+        validate_diagnostic_ab(&input, INDEXED_OFFSET_REUSE_CONFIG)
+            .expect("three-round QuickSort indexed-offset-reuse provenance");
+        assert!(validate_suite(&input).is_err());
+        let fixture = input.fixtures.values().next().expect("one QuickSort fixture");
+        let analysis = analyze_diagnostic_ab_fixture(
+            "quench-bench/jetstream/quicksort-wasm",
+            fixture,
+            3,
+            INDEXED_OFFSET_REUSE_CONFIG,
+        )
+        .expect("paired indexed-offset-reuse screen analysis");
+
+        assert!(!analysis.qualified);
+        assert_eq!(analysis.paired_rounds, 3);
+        let on_vs_off = analysis
+            .comparisons
+            .get("quench_indexed_offset_reuse_on_vs_quench_indexed_offset_reuse_off")
+            .expect("indexed-offset-reuse on/off comparison");
+        assert!((on_vs_off.score.median_ratio - 1.1).abs() < 1e-12);
+        assert!((on_vs_off.max_rss.median_ratio - 0.9).abs() < 1e-12);
+        assert!(analysis
+            .comparisons
+            .contains_key("quench_indexed_offset_reuse_on_vs_bun"));
+        assert!(analysis
+            .comparisons
+            .contains_key("quench_indexed_offset_reuse_on_vs_node"));
+
+        let mut invalid_switch = memcpy_ab_input_for(&INDEXED_OFFSET_REUSE_CONFIG);
+        invalid_switch
+            .engines
+            .iter_mut()
+            .find(|engine| engine.name == INDEXED_OFFSET_REUSE_ON)
+            .unwrap()
+            .environment
+            .insert(INDEXED_OFFSET_REUSE_ENV.into(), "0".into());
+        assert!(validate_diagnostic_ab(&invalid_switch, INDEXED_OFFSET_REUSE_CONFIG).is_err());
+
+        let selected = selected_diagnostic_ab_config(false, false, false, false, true)
+            .expect("indexed-offset-reuse mode selected");
+        assert_eq!(selected.mode, DiagnosticAbMode::IndexedOffsetReuse);
+        assert_eq!(selected.fixture_name, "quicksort-wasm");
+        assert_eq!(selected.minimum_rounds, 3);
+        assert_eq!(selected.off_engine, INDEXED_OFFSET_REUSE_OFF);
+        assert_eq!(selected.on_engine, INDEXED_OFFSET_REUSE_ON);
+        assert!(selected_diagnostic_ab_config(false, false, true, false, true).is_err());
     }
 
     #[test]
