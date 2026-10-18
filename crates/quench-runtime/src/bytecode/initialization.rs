@@ -49,12 +49,24 @@ impl Rows {
     }
 }
 
-/// Of `candidates`, the slots that no read can reach inside a dead zone. Function entry
-/// leaves every local initialized, so only `InitializeTdz` makes a slot maybe-uninitialized.
-pub(super) fn initialized_before_reads(
+/// What a candidate slot holds when the function starts.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EntryState {
+    /// Frame setup fills every local slot with `undefined`, so only `InitializeTdz` makes a
+    /// slot maybe-uninitialized.
+    Initialized,
+    /// Nothing is written before the code runs: a register that replaces a slot starts with
+    /// whatever its pooled frame held.
+    Uninitialized,
+}
+
+/// Of `candidates`, the slots that no read can reach while maybe-uninitialized: from entry
+/// (`EntryState::Uninitialized`) or inside a dead zone opened by `InitializeTdz`.
+pub(crate) fn initialized_before_reads(
     function: &Function,
     superinstructions: &[Superinstruction],
     candidates: &[bool],
+    entry: EntryState,
 ) -> Vec<bool> {
     let mut proven = candidates.to_vec();
     let dense: Vec<Option<usize>> = {
@@ -77,6 +89,10 @@ pub(super) fn initialized_before_reads(
     let decoded: Vec<WideInstruction> = function.instructions().collect();
     // One row past the last instruction stands for the function's end.
     let mut maybe_uninitialized = Rows::new(decoded.len() + 1, words);
+    if entry == EntryState::Uninitialized {
+        let all = vec![u64::MAX; words];
+        maybe_uninitialized.join(0, &all);
+    }
     let mut state = vec![0; words];
     let mut abrupt = vec![0; words];
     let mut changed = true;
@@ -109,13 +125,13 @@ pub(super) fn initialized_before_reads(
                                 apply(slot, Access::Opaque, &mut state, &mut abrupt);
                             }
                         } else {
-                            accesses(member.as_wide(), |slot, access| {
+                            accesses(member.as_wide(), entry, |slot, access| {
                                 apply(slot, access, &mut state, &mut abrupt)
                             });
                         }
                     }
                 }
-                _ => accesses(instruction, |slot, access| {
+                _ => accesses(instruction, entry, |slot, access| {
                     apply(slot, access, &mut state, &mut abrupt)
                 }),
             }
@@ -134,7 +150,7 @@ pub(super) fn initialized_before_reads(
 }
 
 /// The local slots `instruction` touches, in execution order.
-fn accesses(instruction: WideInstruction, mut access: impl FnMut(usize, Access)) {
+fn accesses(instruction: WideInstruction, entry: EntryState, mut access: impl FnMut(usize, Access)) {
     for &field in InstructionField::ALL {
         if matches!(
             instruction.op().field_layout(field),
@@ -151,6 +167,11 @@ fn accesses(instruction: WideInstruction, mut access: impl FnMut(usize, Access))
         match instruction.op() {
             Op::InitializeTdz => access(slot, Access::Uninitialize),
             Op::LoadLocal | Op::LoadLocalPlain => access(slot, Access::Read),
+            // From an uninitialized entry the question is only whether a value was written:
+            // a plain slot's assigning store never meets a dead zone (`plain_local_slots`).
+            Op::StoreLocalPlain if entry == EntryState::Uninitialized => {
+                access(slot, Access::Initialize)
+            }
             Op::StoreLocal | Op::StoreLocalPlain => access(
                 slot,
                 if instruction.boolean_field(InstructionField::C) == Some(true) {
