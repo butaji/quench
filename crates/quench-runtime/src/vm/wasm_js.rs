@@ -1054,7 +1054,7 @@ impl<H: Host> Vm<H> {
             .programs
             .get(self.active_program)
             .ok_or_else(|| JsError::validation("missing host caller program".into()))?;
-        let mut arguments = Vec::with_capacity(args.len());
+        let mut arguments: smallvec::SmallVec<[Value; 8]> = smallvec::SmallVec::new();
         for (&value, &ty) in args.iter().zip(&signature.params) {
             arguments.push(self.wasm_to_js(&program, value, ty)?);
         }

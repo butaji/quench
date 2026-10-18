@@ -332,3 +332,31 @@ boundary costs for gcc-loops, and improve generated code or native-entry
 overhead for QuickSort, whose hot sort path has few callouts. Selective tier-up
 is only an admission mechanism; it does not by itself solve either runtime
 cost and it does not satisfy the requested peer-score target.
+
+## Safepoints on compiled control-flow cycles
+
+Commit `e955cff99` retains the native function-entry poll and checks a
+conditional branch only when its taken edge moves to an earlier bytecode PC.
+For a finite bytecode graph, every cycle contains such a backward edge; a
+forward-only path cannot remain in the loop indefinitely. This moves the
+interrupt effect onto cycle-crossing edges, preserving cancellation at loop
+iteration granularity while removing atomic loads from forward exits. The
+native-loop cancellation regression requests termination from a second thread
+after the Wasm loop reaches an imported callback.
+
+The clean 11-round comparison still confirms lower RSS than Bun and Node on
+gcc-loops and QuickSort, but its Score intervals remain below parity. Quench's
+medians are 59.80 / 47.79 MiB and 173.19 / 42.43 MiB respectively. Because the
+earlier report used a separate sampling window, these runs do not establish a
+causal before/after gain from safepoint placement. Full rounds, paired
+intervals, and reproduction commands are in
+`evidence/jit-jetstream3-wasm-2026-10-18/backedge-safepoints/`.
+
+The gcc-loops diagnostic attributes 307,270 of its 309,039 imported callouts
+to `_emscripten_memcpy_js`. The generic boundary was cloning parameter and
+result vectors and allocating converted JS arguments on each call. The next
+experiment stores the small Wasm signature and argument lists inline with
+`SmallVec`, spilling for larger imports while retaining the per-instance
+target, normal JavaScript conversion, dynamic helper lookup, and fallback
+semantics. It avoids specializing behavior by import name, since Emscripten's
+helper reads the current memory view and property target on every call.

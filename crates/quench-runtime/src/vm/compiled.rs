@@ -5069,12 +5069,21 @@ impl<H: Host> Vm<H> {
             .programs
             .get(program)
             .ok_or_else(|| JsError::validation("missing compiled Wasm program".into()))?;
-        let signature = self
-            .programs
-            .wasm_signatures(program)
-            .and_then(|signatures| signatures.get(function as usize))
-            .cloned()
-            .ok_or_else(|| JsError::validation("missing Wasm import signature".into()))?;
+        let (params, result_type) = {
+            let signature = self
+                .programs
+                .wasm_signatures(program)
+                .and_then(|signatures| signatures.get(function as usize))
+                .ok_or_else(|| JsError::validation("missing Wasm import signature".into()))?;
+            (
+                signature
+                    .params
+                    .iter()
+                    .copied()
+                    .collect::<smallvec::SmallVec<[crate::WasmType; 8]>>(),
+                signature.results.first().copied(),
+            )
+        };
         let active_program = self.replace_active_program(program);
         let callee = self.wasm_function_reference(&code, function, env);
         self.set_active_program(active_program);
@@ -5082,7 +5091,7 @@ impl<H: Host> Vm<H> {
         // Allocation never collects, so the encoded arguments stay live until
         // the call roots them.
         let mut values: smallvec::SmallVec<[Value; 8]> = smallvec::SmallVec::new();
-        for (offset, ty) in signature.params.iter().enumerate() {
+        for (offset, ty) in params.iter().enumerate() {
             // SAFETY: the caller passes a word per parameter.
             let bits = unsafe { *args.add(offset) };
             values.push(self.encode_wasm_value(crate::WasmValue::from_bits(*ty, bits)));
@@ -5101,8 +5110,8 @@ impl<H: Host> Vm<H> {
             self.set_active_program(active_program);
             if let Some(compiled) = compiled {
                 let result = compiled?;
-                let bits = if let Some(ty) = signature.results.first() {
-                    match self.decode_wasm_value(result, *ty)?.bits() {
+                let bits = if let Some(ty) = result_type {
+                    match self.decode_wasm_value(result, ty)?.bits() {
                         Some(crate::wasm::ScalarBits::Bits32(bits)) => u64::from(bits),
                         Some(crate::wasm::ScalarBits::Bits64(bits)) => bits,
                         _ => {
@@ -5120,8 +5129,8 @@ impl<H: Host> Vm<H> {
             }
         }
         let result = self.call_value(&code, callee, receiver, &values)?;
-        if let Some(ty) = signature.results.first() {
-            let bits = match self.decode_wasm_value(result, *ty)?.bits() {
+        if let Some(ty) = result_type {
+            let bits = match self.decode_wasm_value(result, ty)?.bits() {
                 Some(crate::wasm::ScalarBits::Bits32(bits)) => u64::from(bits),
                 Some(crate::wasm::ScalarBits::Bits64(bits)) => bits,
                 _ => return Err(JsError::validation("non-scalar Wasm import result".into())),
