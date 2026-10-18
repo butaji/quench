@@ -2253,11 +2253,25 @@ lane_handler! {
     /// (`Vm::ordinary_instanceof`), which runs no guest code. Any other case, which the full
     /// algorithm decides, takes the general path.
     fn lane_instanceof_value<>(cx, r, ip, i, view) {
+        let Some(holds) = (unsafe { vm(cx) }).steady_instanceof(r.get(i.b), r.get(i.c)) else {
+            sibling!(lane_instanceof_value_walk::<H>, r, ip, Carried::SCRIPT)
+        };
+        r.set(i.a, if holds { Value::TRUE } else { Value::FALSE });
+        // `instanceof` is a JavaScript record, which carries the script state.
+        next!(cx, r, following(ip), Carried::SCRIPT)
+    }
+}
+
+lane_handler! {
+    /// `lane_instanceof_value` that its steady case leaves (`Vm::steady_instanceof`): the
+    /// whole ordinary walk, out of line so the steady case calls nothing.
+    #[inline(never)]
+    fn lane_instanceof_value_walk<>(cx, r, ip, i, view) {
         let Some(holds) = (unsafe { vm(cx) }).ordinary_instanceof(r.get(i.b), r.get(i.c)) else {
             return exit(ip);
         };
         r.set(i.a, if holds { Value::TRUE } else { Value::FALSE });
-        next!(cx, r, following(ip), view)
+        next!(cx, r, following(ip), Carried::SCRIPT)
     }
 }
 
@@ -2265,13 +2279,29 @@ lane_handler! {
     /// `lane_jump_binary_false` of `instanceof` with register operands, decoded when the view
     /// was derived (`specialize_register_operands`), as `lane_instanceof_value` decides it.
     fn lane_jump_instanceof_false<BACKWARD: bool>(cx, r, ip, i, view) {
+        let Some(holds) = (unsafe { vm(cx) }).steady_instanceof(r.get(i.b), r.get(i.c)) else {
+            sibling!(lane_jump_instanceof_false_walk::<H, BACKWARD>, r, ip, Carried::SCRIPT)
+        };
+        // `instanceof` is a JavaScript record, which carries the script state.
+        if !holds {
+            return lane_jump(cx, r, ip, BACKWARD, Carried::SCRIPT, None);
+        }
+        next!(cx, r, following(ip), Carried::SCRIPT)
+    }
+}
+
+lane_handler! {
+    /// `lane_jump_instanceof_false` that its steady case leaves: the whole ordinary walk, out
+    /// of line so the steady case calls nothing.
+    #[inline(never)]
+    fn lane_jump_instanceof_false_walk<BACKWARD: bool>(cx, r, ip, i, view) {
         let Some(holds) = (unsafe { vm(cx) }).ordinary_instanceof(r.get(i.b), r.get(i.c)) else {
             return exit(ip);
         };
         if !holds {
-            return lane_jump(cx, r, ip, BACKWARD, view, None);
+            return lane_jump(cx, r, ip, BACKWARD, Carried::SCRIPT, None);
         }
-        next!(cx, r, following(ip), view)
+        next!(cx, r, following(ip), Carried::SCRIPT)
     }
 }
 
