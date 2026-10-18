@@ -91,7 +91,7 @@ impl<H: Host> Vm<H> {
         yielded: bool,
     ) -> Result<(), JsError> {
         let state = self.heap.alloc(Cell::AwaitState(Box::new(AwaitState {
-            continuation: Some(continuation),
+            continuation: Some(Box::new(continuation)),
             promise,
             generator,
             yielded,
@@ -174,7 +174,7 @@ impl<H: Host> Vm<H> {
         else {
             return Err(JsError("Promise async resume without its await".into()));
         };
-        let continuation = state.continuation.take();
+        let continuation = state.continuation.take().map(|continuation| *continuation);
         let resume = AwaitResume {
             promise: state.promise,
             generator: state.generator,

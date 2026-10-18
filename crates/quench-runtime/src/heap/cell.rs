@@ -708,10 +708,11 @@ pub(crate) struct ArrayFromAsyncState {
 
 /// One `await`'s suspended activation. Its fulfilled and rejected reactions both name this
 /// cell as their environment, so the continuation is traced while either can still run;
-/// the first to run takes it.
+/// the first to run takes it. The continuation is boxed apart so taking it frees its
+/// storage at once: the spent state waits for a sweep.
 #[derive(Clone, Debug)]
 pub(crate) struct AwaitState {
-    pub(crate) continuation: Option<crate::vm::activation::Continuation>,
+    pub(crate) continuation: Option<Box<crate::vm::activation::Continuation>>,
     /// The async function's promise, or the async generator request's promise.
     pub(crate) promise: Value,
     pub(crate) generator: Option<Value>,
