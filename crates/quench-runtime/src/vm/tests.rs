@@ -6616,7 +6616,7 @@ fn equality_roots_the_opposite_primitive_during_object_coercion() {
                         .call_value(&program, factory, Value::UNDEFINED, &[])
                         .unwrap();
                     let primitive = vm.heap.alloc(if bigint {
-                        super::Cell::BigInt("42".into())
+                        super::Cell::bigint(42.into())
                     } else {
                         super::Cell::String("ab".into())
                     });

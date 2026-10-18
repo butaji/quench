@@ -1398,7 +1398,8 @@ pub(crate) struct Vm<H> {
     /// The strings most recently matched by a RegExp, most recent first, each prepared once
     /// for repeated matching (`Vm::regexp_subject`).
     regexp_subjects: Vec<Rc<quench_regexp::Subject>>,
-    /// The subject of the last short string matched, reused in place once no match holds it.
+    /// The last short subject matched, recognized by content and otherwise reused in place
+    /// once no match holds it (`Vm::regexp_subject`).
     regexp_short_subject: Option<Rc<quench_regexp::Subject>>,
     regexp_matchers: regexp::RegExpMatcherCache,
     // One lazily derived class byte per atom; length tracks `atom_sequence`.
@@ -1471,6 +1472,9 @@ pub(crate) struct Vm<H> {
     /// Private-name home objects found by `private_name_home`, kept while their starting
     /// environment is live.
     private_homes: FxHashMap<PrivateHomeKey, Value>,
+    /// The collation `String.prototype.localeCompare` resolves without locales or options
+    /// (`Vm::locale_compare_collation`); the host's default locale fixes it.
+    default_collation: Option<std::rc::Rc<intl_collator::Collation>>,
     wasm_js: wasm_js::WasmJsIntrinsics,
     direct_eval: bool,
     direct_eval_var_program: Option<ProgramId>,
@@ -2284,7 +2288,7 @@ impl<H: Host> Vm<H> {
             Constant::WasmV128(bits) => self.heap.alloc(Cell::WasmV128(*bits)),
             Constant::String(v) => self.heap.alloc(Cell::String(v.clone().into())),
             Constant::StringUnits(v) => self.heap.alloc(Cell::String(JsString::from_units(v))),
-            Constant::BigInt(v) => self.heap.alloc(Cell::BigInt(v.clone())),
+            Constant::BigInt(v) => self.heap.alloc(Cell::bigint(v.clone())),
             Constant::Boolean(true) => Value::TRUE,
             Constant::Boolean(false) => Value::FALSE,
             Constant::Null => Value::NULL,

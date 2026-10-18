@@ -744,7 +744,7 @@ impl<H: Host> Vm<H> {
             let converted = if matches!(kind, TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64)
             {
                 let value = self.to_bigint(p, value)?;
-                self.heap.alloc(Cell::BigInt(value.to_string()))
+                self.heap.alloc(Cell::bigint(value))
             } else {
                 Value::number(self.to_number(p, value)?)
             };
@@ -837,9 +837,7 @@ impl<H: Host> Vm<H> {
         if let (Some(Cell::BigInt(left)), Some(Cell::BigInt(right))) =
             (self.heap.get(left), self.heap.get(right))
         {
-            let left = left.parse::<i128>().unwrap_or_default();
-            let right = right.parse::<i128>().unwrap_or_default();
-            return left.cmp(&right);
+            return left.cmp(right);
         }
         let left = left.as_number().unwrap_or(f64::NAN);
         let right = right.as_number().unwrap_or(f64::NAN);

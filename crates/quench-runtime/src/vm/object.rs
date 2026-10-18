@@ -1360,7 +1360,10 @@ impl<H: Host> Vm<H> {
         Some(self.cached_field_value(self.field_cache_index(site), receiver))
     }
 
-    /// `string_field_cache_read`'s hit for a cached site reading a string primitive `object`.
+    /// A string primitive's `GetField` where no lookup can run guest code, in the order
+    /// `get_field_cached` takes: its `length`, then the `String.prototype` data property
+    /// its site cache holds (`string_field_cache_read`). An index, or any other key, is
+    /// left to the general path.
     pub(super) fn cached_string_field_hit(
         &self,
         p: &ResidualProgram,
@@ -1368,8 +1371,14 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         site: u16,
     ) -> Option<Value> {
+        let Some(Cell::String(text)) = self.heap.get(object) else {
+            return None;
+        };
+        if atom == self.length_atom {
+            return Some(Value::number(text.len() as f64));
+        }
         if !(self.specialized && p.specialized)
-            || !matches!(self.heap.get(object), Some(Cell::String(_)))
+            || self.atom_class(atom).contains(AtomClass::ARRAY_INDEX)
         {
             return None;
         }
