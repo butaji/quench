@@ -682,9 +682,7 @@ impl<H: Host> Vm<H> {
             if big {
                 let n = vm.to_bigint(p, value)?;
                 store_result = Some(vm.heap.alloc(Cell::bigint(n.clone())));
-                vm.normalize_atomic_bigint(n)
-                    .to_string()
-                    .parse::<u64>()
+                u64::try_from(vm.normalize_atomic_bigint(n))
                     .map_err(|_| vm.type_error(p, "Invalid atomic BigInt".into()))
             } else {
                 let n = vm.to_number(p, value)?;
