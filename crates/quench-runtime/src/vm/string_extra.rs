@@ -236,16 +236,13 @@ pub(super) fn parse_integer(text: &str, mut radix: i32) -> f64 {
             .or_else(|| input.strip_prefix("0X"))
             .unwrap_or(input);
     }
-    let mut result = 0.0;
-    let mut digits = 0;
-    for digit in input
-        .chars()
-        .map_while(|character| character.to_digit(radix as u32))
-    {
-        result = result * f64::from(radix) + f64::from(digit);
-        digits += 1;
+    let digits_end = input
+        .find(|character: char| !character.is_digit(radix as u32))
+        .unwrap_or(input.len());
+    if digits_end == 0 {
+        return f64::NAN;
     }
-    if digits == 0 { f64::NAN } else { sign * result }
+    sign * super::number::integer_digits_value(&input[..digits_end], radix as u32)
 }
 
 pub(super) fn number_to_radix(number: f64, radix: u32) -> String {
