@@ -55,7 +55,7 @@ pub(super) fn compile(program: &ResidualProgram, function_id: u32) -> Option<JsJ
 
 fn compile_numeric(program: &ResidualProgram, function_id: u32) -> Option<JsJitArtifact> {
     let function = program.functions.get(function_id as usize)?;
-    if !function_candidate(function, &program.atoms)
+    if !function_candidate(function, program)
         || function
             .code
             .iter()
@@ -217,7 +217,7 @@ fn compile_string_branches(
     function_id: u32,
     function: &Function,
 ) -> Option<JsJitArtifact> {
-    if !function_candidate(function, &program.atoms)
+    if !function_candidate(function, program)
         || usize::from(function.registers) > MAX_REGISTERS
         || function
             .code
@@ -495,16 +495,16 @@ fn numeric_operand(
 /// Cheap activation-level filter used before retaining hotness state. The
 /// bytecode scan remains deferred until the function actually crosses the
 /// statistical promotion gate.
-pub(super) fn function_candidate(function: &Function, atoms: &crate::bytecode::AtomTable) -> bool {
+pub(super) fn function_candidate(function: &Function, program: &crate::bytecode::ResidualProgram) -> bool {
     !function.code.is_empty()
         && function.code.len() <= MAX_INSTRUCTIONS
         && function.wide.is_empty()
         && usize::from(function.registers) <= MAX_REGISTERS
         && usize::from(function.params) <= MAX_PARAMETERS
-        && eligible(function, atoms)
+        && eligible(function, program)
 }
 
-fn eligible(function: &Function, atoms: &crate::bytecode::AtomTable) -> bool {
+fn eligible(function: &Function, program: &crate::bytecode::ResidualProgram) -> bool {
     if function.parent.is_none()
         || function.is_async
         || function.is_generator
@@ -515,7 +515,7 @@ fn eligible(function: &Function, atoms: &crate::bytecode::AtomTable) -> bool {
         || function.rest
         || !function.simple_parameters
         || !function.handlers.is_empty()
-        || !function.plain_activation(atoms)
+        || !function.plain_activation(program)
     {
         return false;
     }

@@ -72,6 +72,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         #[cfg(target_os = "linux")]
         method "processMetricsRss" (0) => crate::modules::process_metrics_shared_vm::rss,
         method "processMetricsMemoryUsage" (1) => crate::modules::process_metrics_shared_vm::memory_usage,
+        #[cfg(unix)]
+        method "processExecve" (3) => crate::modules::process_execve_shared_vm::execve,
         method "processExitCodeGet" (0) => crate::modules::process_shared_vm::exit_code_get,
         method "processExitCodeSet" (1) => crate::modules::process_shared_vm::exit_code_set,
         method "processDefaultFatalException" (2) => crate::modules::process_fatal_exception_route::default_handler,
@@ -712,6 +714,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "fsWriteFilePublic" (3) => crate::modules::fs_shared_vm::write_public::write,
         method "fsAppendFilePublic" (3) => crate::modules::fs_shared_vm::write_public::append,
         method "fsVfsReadlinkPromise" (3) => crate::modules::fs_shared_vm::promise_public::readlink_continuation,
+        method "fsPromisesReadlinkInitialize" (0) => crate::modules::fs_shared_vm::promise_public::initialize,
         method "fsVfsExistsComplete" (1) => crate::modules::fs_shared_vm::callback_public::exists_complete,
         method "fsVfsCallback" (0) => crate::modules::fs_shared_vm::callback_public::dispatch,
         method "fsVfsMetadata" (0) => crate::modules::fs_shared_vm::metadata_public::dispatch,
@@ -1017,6 +1020,12 @@ impl quench_runtime::Host for NodeHost {
         self.shared_state.borrow().async_hooks.tracks_promises()
     }
 
+    /// The code a long run touched once (start-up, set-up, one-time paths) leaves the
+    /// resident set at each full collection; what still runs comes back from the page cache.
+    fn after_full_collection(&mut self) {
+        crate::host::resident_pages::release_read_only_pages();
+    }
+
     fn proper_tail_calls(&self) -> bool {
         false
     }
@@ -1093,15 +1102,22 @@ impl quench_runtime::Host for NodeHost {
                 serde_json::to_string(require_specifier).map_err(|error| error.to_string())?
             );
             // lib/internal/bootstrap/realm.js `syncExports`: each name is read with `getOwn`,
-            // in the order the module lists its own keys (`builtin_export_values`).
+            // in the order the module lists its own keys (`builtin_export_values`). A member
+            // still a pending lazy data property is bound to its pending value instead, and
+            // the listener gives the binding the member's value when its group materializes.
+            let assignments: String = exports
+                .iter()
+                .enumerate()
+                .map(|(index, name)| format!("case {index}: {name} = value; break; "))
+                .collect();
             source.push_str(&format!(
-                "const __quenchExports = globalThis[{}](__quenchModule, {});\n",
+                "const __quenchExports = globalThis[{}](__quenchModule, {}, (index, value) => {{ switch (index) {{ {assignments}}} }});\n",
                 serde_json::to_string(crate::host::shared_vm::commonjs::BUILTIN_EXPORT_VALUES)
                     .map_err(|error| error.to_string())?,
                 serde_json::to_string(exports).map_err(|error| error.to_string())?
             ));
             for (index, name) in exports.iter().enumerate() {
-                source.push_str(&format!("export const {name} = __quenchExports[{index}];\n"));
+                source.push_str(&format!("export let {name} = __quenchExports[{index}];\n"));
             }
             return Ok(Some(quench_runtime::ModuleSource {
                 name: format!("node:quench-builtin/{builtin_name}"),

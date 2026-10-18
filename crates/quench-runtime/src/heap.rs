@@ -21,6 +21,7 @@ mod records;
 mod root;
 mod slots;
 mod thin_slice;
+pub(crate) use thin_slice::ThinBoxSlice;
 mod weak;
 pub(crate) use cell::*;
 pub(crate) use buffer_bytes::{BufferBytes,BufferRead};
@@ -155,6 +156,7 @@ impl<'slots> ParallelSweepSlab<'slots> {
             let index = self.base + offset;
             if Heap::marked(marks, index) {
                 result.live += 1;
+                result.live_payload_bytes += cell.payload_bytes();
                 if let Some(object) = cell.object() {
                     if object.properties().has_compact_range() {
                         result
@@ -167,7 +169,6 @@ impl<'slots> ParallelSweepSlab<'slots> {
 
             let cell = slot.cell.take().expect("occupied dead sweep slot");
             result.external_bytes = result.external_bytes.saturating_add(cell.external_bytes());
-            result.payload_bytes = result.payload_bytes.saturating_add(cell.payload_bytes());
             if let Some(object) = cell.object() {
                 result.released_properties.push(object.properties());
             }
@@ -196,13 +197,15 @@ struct ParallelSweepResult {
     sparse_arrays: Vec<u32>,
     rc_cells: Vec<StoppedCellDrop>,
     external_bytes: usize,
-    payload_bytes: usize,
+    live_payload_bytes: usize,
     swept_slots: usize,
 }
 
 #[derive(Default)]
 struct SweepOutput {
     live: usize,
+    /// Payload of the surviving cells, summed by full sweeps only.
+    live_payload_bytes: usize,
     property_owners: Vec<u64>,
     freed_cells: usize,
     swept_slots: usize,
@@ -498,6 +501,8 @@ pub(crate) struct GcProfile {
     pub full_mark_nanos: u64,
     pub minor_mark_nanos: u64,
     pub sweep_nanos: u64,
+    /// The sweep's phases: slot cells, direct records, and property-arena compaction.
+    pub sweep_phase_nanos: [u64; 3],
     pub mark_clear_nanos: u64,
     /// VM-side collection phases: owner edges, root gathering, shape-trace setup, and
     /// the work after the heap collection.
@@ -549,6 +554,7 @@ impl Default for GcProfile {
             full_mark_nanos: 0,
             minor_mark_nanos: 0,
             sweep_nanos: 0,
+            sweep_phase_nanos: [0; 3],
             mark_clear_nanos: 0,
             vm_phase_nanos: [0; 4],
             full_collections: 0,
@@ -720,7 +726,7 @@ impl Heap {
     }
 
     /// Every live legacy cell, without needing `&mut` (census and diagnostics).
-    #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+    #[cfg(feature = "profile-gc-time")]
     pub(crate) fn for_each_live_cell(&self, mut visit: impl FnMut(&Cell)) {
         for slot in self.slots.iter() {
             if let Some(cell) = &slot.cell {
@@ -989,7 +995,7 @@ impl Heap {
         slot_owners: Vec<u64>,
         direct_owners: Vec<(usize, Value)>,
     ) {
-        if !self.properties.has_released_ranges() {
+        if !self.properties.compaction_due() {
             return;
         }
         #[cfg(feature = "profile-memory")]
@@ -1204,9 +1210,10 @@ impl Heap {
         if full {
             self.gc_profile.mark_clear_nanos += mark_clear_started.elapsed().as_nanos() as u64;
         }
-        let roots = roots.into_iter();
-        let mut work = Vec::with_capacity(roots.size_hint().0 + self.roots.slot_count());
-        work.extend(roots);
+        // The roots become the mark stack: collecting a vector's own iterator keeps its
+        // buffer, so a collection holds one root-sized buffer, not a copy beside it.
+        let mut work: Vec<Value> = roots.into_iter().collect();
+        work.reserve(self.roots.slot_count());
         work.extend(self.roots.values());
         #[cfg(debug_assertions)]
         let verify_roots = work.clone();
@@ -1329,6 +1336,7 @@ impl Heap {
         };
         let SweepOutput {
             mut live,
+            mut live_payload_bytes,
             property_owners,
             freed_cells,
             swept_slots,
@@ -1343,6 +1351,13 @@ impl Heap {
             0
         });
         let legacy_live = live;
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        let records_started = std::time::Instant::now();
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        {
+            self.gc_profile.sweep_phase_nanos[0] +=
+                (records_started - sweep_started).as_nanos() as u64;
+        }
         {
             #[cfg(feature = "profile-aggregate")]
             {
@@ -1373,6 +1388,9 @@ impl Heap {
             let mut dead_arrays = Vec::new();
             let (array_live, array_freed) = self.array_records.sweep(|record| match record {
                 RecordSweep::Keep(record_id, array) => {
+                    if full {
+                        live_payload_bytes += array_payload_bytes(array);
+                    }
                     if full && array.properties().has_compact_range() {
                         direct_property_owners.push((
                             array.properties().start_offset(),
@@ -1412,12 +1430,22 @@ impl Heap {
             self.gc_profile.freed += freed_cells as u64;
         }
         let _ = (freed_cells, swept_slots);
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        {
+            self.gc_profile.sweep_phase_nanos[1] += records_started.elapsed().as_nanos() as u64;
+        }
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        let compaction_started = std::time::Instant::now();
         if full {
+            // A full sweep recounts the ledger from the survivors: shrinking a live array
+            // (truncation, `pop`, `splice`) is not charged back between full collections.
+            self.payload_bytes = live_payload_bytes;
             self.property_owner_counts = (property_owners.len(), direct_property_owners.len());
             self.compact_property_arena(property_owners, direct_property_owners);
         }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         {
+            self.gc_profile.sweep_phase_nanos[2] += compaction_started.elapsed().as_nanos() as u64;
             self.gc_profile.sweep_nanos += sweep_started.elapsed().as_nanos() as u64;
         }
         // Live weight in the units allocation is charged in: one per cell or record plus
@@ -1526,7 +1554,7 @@ impl Heap {
                     sparse_arrays,
                     rc_cells,
                     external_bytes,
-                    payload_bytes,
+                    live_payload_bytes,
                     swept_slots,
                 } = result;
                 let freed_cells = free_slots.len();
@@ -1546,12 +1574,12 @@ impl Heap {
                         }
                     }
                     self.external_bytes = self.external_bytes.saturating_sub(external_bytes);
-                    self.payload_bytes = self.payload_bytes.saturating_sub(payload_bytes);
                 }
                 for cell in rc_cells {
                     cell.drop_on_owner();
                 }
                 output.live += live;
+                output.live_payload_bytes += live_payload_bytes;
                 output.property_owners.extend(property_owners);
                 output.freed_cells += freed_cells;
                 output.swept_slots += swept_slots;
@@ -1563,6 +1591,7 @@ impl Heap {
 
     fn sweep_serial(&mut self, full: bool) -> SweepOutput {
         let mut live = 0;
+        let mut live_payload_bytes = 0;
         let mut freed_cells = 0;
         let mut swept_slots = 0;
         let properties = &mut self.properties;
@@ -1614,6 +1643,7 @@ impl Heap {
                         swept_slots += 1;
                         if Self::marked(&self.marks, index) {
                             live += 1;
+                            live_payload_bytes += slot.cell.as_ref().map_or(0, Cell::payload_bytes);
                             if let Some(object) = slot.cell.as_ref().and_then(Cell::object) {
                                 if properties.has_compact_range(object.properties()) {
                                     property_owners_for_sweep.push(pack_offset_owner(
@@ -1655,6 +1685,7 @@ impl Heap {
         }
         SweepOutput {
             live,
+            live_payload_bytes,
             property_owners: property_owners_for_sweep,
             freed_cells,
             swept_slots,
@@ -2612,11 +2643,7 @@ impl Heap {
             } => {
                 work.push(*parent);
                 work.extend(slots.roots());
-                let crate::heap::EnvironmentScope {
-                    dynamic_bindings,
-                    with_objects,
-                    ..
-                } = &**scope;
+                let (dynamic_bindings, with_objects) = (scope.dynamic_bindings(), scope.with_objects());
                 match dynamic_bindings {
                     EnvironmentBindings::Owned(bindings) => {
                         work.extend(bindings.iter().map(|(_, value)| *value));
@@ -2803,12 +2830,13 @@ impl Heap {
                 Cell::WeakSet { entries, .. } => entries.capacity() * size_of::<Value>(),
                 Cell::Function { .. } => size_of::<Object>(),
                 Cell::Environment { slots, scope, .. } => {
-                    let with_objects = &scope.with_objects;
+                    let with_objects = scope.with_objects();
                     slots.len() * size_of::<EnvironmentSlot>()
                         + with_objects.len() * size_of::<Value>()
                 }
                 Cell::String(value) => value.capacity(),
-                Cell::BigInt(value) | Cell::Error(value) => value.capacity(),
+                Cell::BigInt(value) => crate::bigint::magnitude_bytes(value),
+                Cell::Error(value) => value.capacity(),
                 Cell::Symbol(value) => value.as_ref().map_or(0, |description| description.len()),
             }
     }

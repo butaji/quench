@@ -96,6 +96,8 @@ pub(crate) mod perf_hooks;
 pub(crate) mod performance_binding_shared_vm;
 pub(crate) mod perf_timeline_query;
 pub(crate) mod process_binding_shared_vm;
+#[cfg(unix)]
+pub(crate) mod process_execve_shared_vm;
 pub(crate) mod process_memory_shared_vm;
 #[cfg(target_os = "linux")]
 pub(crate) mod process_metrics_shared_vm;

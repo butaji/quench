@@ -14,12 +14,25 @@ pub(super) const JS_JIT_PROMOTION_LOOKS: [(u8, u8); 4] =
 const JS_JIT_MAX_FUNCTIONS: usize = 8;
 const JS_JIT_MAX_TRACKED_FUNCTIONS: usize = 256;
 const JS_JIT_MAX_MAPPED_BYTES: usize = 64 * 1024;
+/// Promote a Wasm function only after repeated interpreter entries. Wasm
+/// signatures and bytecode are fixed, so this is a call-hotness gate.
+pub(super) const WASM_JIT_PROMOTION_ENTRIES: u8 = 32;
+const WASM_JIT_MAX_TIER_ROOTS: usize = 32;
+const WASM_JIT_MAX_TIER_MAPPED_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Clone)]
 pub(super) enum JsTierState {
     Hot { observations: u8, numeric: u8 },
     Unsupported,
     Compiled(Rc<super::compiled::CompiledJsFunction>),
+}
+
+#[derive(Default)]
+struct WasmTierState {
+    /// The high bit records a one-shot promotion attempt; low bits hold the
+    /// number of interpreter entries observed before that attempt.
+    hotness: u8,
+    compiled: Option<Rc<super::compiled::CompiledProgram>>,
 }
 
 struct ProgramEntry {
@@ -41,6 +54,9 @@ struct ProgramEntry {
     /// Sparse, lazy JavaScript tiers. A program only pays for this map when
     /// JIT mode actually enters one of its functions.
     js_tiers: FxHashMap<u32, JsTierState>,
+    /// Sparse hotness state and bounded root-closure artifacts for Wasm
+    /// functions the eager baseline compiler could not lower.
+    wasm_tiers: FxHashMap<u32, WasmTierState>,
     /// The environment the program's root body evaluates in.
     scope: ProgramScope,
     /// Source provenance is independent of the root binding environment.
@@ -138,6 +154,8 @@ pub(crate) struct ProgramStore {
     js_jit_tracked_functions: usize,
     js_jit_compiled_functions: usize,
     js_jit_mapped_bytes: usize,
+    wasm_jit_tier_roots: usize,
+    wasm_jit_tier_mapped_bytes: usize,
 }
 
 impl ProgramStore {
@@ -209,6 +227,7 @@ impl ProgramStore {
         self.reclaim_passes += 1;
         let mut reclaimed = Vec::new();
         let mut reclaimed_tiers = (0usize, 0usize, 0usize);
+        let mut reclaimed_wasm_tiers = (0usize, 0usize);
         let mut pending = 0;
         for (index, slot) in self.programs.iter_mut().enumerate() {
             let Some(entry) = slot else { continue };
@@ -226,6 +245,17 @@ impl ProgramStore {
                     reclaimed_tiers.2 += compiled.mapped_bytes();
                 }
             }
+            reclaimed_wasm_tiers.1 += entry
+                .wasm_tiers
+                .values()
+                .filter_map(|state| state.compiled.as_ref())
+                .map(|compiled| compiled.mapped_bytes())
+                .sum::<usize>();
+            reclaimed_wasm_tiers.0 += entry
+                .wasm_tiers
+                .values()
+                .filter(|state| state.compiled.is_some())
+                .count();
             *slot = None;
             reclaimed.extend(ProgramId::from_index(index));
         }
@@ -236,6 +266,12 @@ impl ProgramStore {
             .js_jit_compiled_functions
             .saturating_sub(reclaimed_tiers.1);
         self.js_jit_mapped_bytes = self.js_jit_mapped_bytes.saturating_sub(reclaimed_tiers.2);
+        self.wasm_jit_tier_roots = self
+            .wasm_jit_tier_roots
+            .saturating_sub(reclaimed_wasm_tiers.0);
+        self.wasm_jit_tier_mapped_bytes = self
+            .wasm_jit_tier_mapped_bytes
+            .saturating_sub(reclaimed_wasm_tiers.1);
         self.unchecked_reclaimable = pending;
         if !reclaimed.is_empty() {
             let programs = &self.programs;
@@ -253,6 +289,8 @@ impl ProgramStore {
         self.js_jit_tracked_functions = 0;
         self.js_jit_compiled_functions = 0;
         self.js_jit_mapped_bytes = 0;
+        self.wasm_jit_tier_roots = 0;
+        self.wasm_jit_tier_mapped_bytes = 0;
         let module = main.is_module();
         let id = self.insert_shared(main).unwrap_or(ProgramId::MAIN);
         if module && let Some(entry) = self.entry_mut(id) {
@@ -313,6 +351,21 @@ impl ProgramStore {
             let before = script.instances.len();
             script.instances.retain(|(realm, _)| live(*realm));
             self.unchecked_reclaimable += before - script.instances.len();
+        }
+    }
+
+    /// Clear call-site caches holding non-owning heap identities before swept
+    /// slots can be reused for a different function Value.
+    pub(super) fn clear_wasm_reference_caches(&self) {
+        for entry in self.programs.iter().flatten() {
+            if let Some(Some(compiled)) = &entry.compiled {
+                compiled.clear_indirect_call_caches();
+            }
+            for state in entry.wasm_tiers.values() {
+                if let Some(compiled) = &state.compiled {
+                    compiled.clear_indirect_call_caches();
+                }
+            }
         }
     }
 
@@ -418,6 +471,7 @@ impl ProgramStore {
             lane_views,
             compiled: None,
             js_tiers: FxHashMap::default(),
+            wasm_tiers: FxHashMap::default(),
             scope: ProgramScope::Own,
             origin,
             script_or_module: None,
@@ -684,6 +738,34 @@ impl ProgramStore {
         self.entry(id)?.compiled.clone()
     }
 
+    pub(super) fn has_compiled_function_or_note_fallback(
+        &self,
+        id: ProgramId,
+        function: usize,
+    ) -> bool {
+        self.entry(id)
+            .and_then(|entry| entry.compiled.as_ref()?.as_ref())
+            .is_some_and(|program| program.has_function_or_note_fallback(function))
+    }
+
+    /// Whether an already retained selective-tier artifact contains this
+    /// function. This check is intentionally borrow-only so lane dispatches
+    /// do not clone its `Rc` on every call.
+    pub(super) fn has_wasm_tier_containing(&self, id: ProgramId, function: usize) -> bool {
+        let Some(tiers) = self.entry(id).map(|entry| &entry.wasm_tiers) else {
+            return false;
+        };
+        tiers
+            .get(&(function as u32))
+            .is_some_and(|state| state.compiled.is_some())
+            || tiers.values().any(|state| {
+                state
+                    .compiled
+                    .as_ref()
+                    .is_some_and(|compiled| compiled.has_function(function))
+            })
+    }
+
     pub(super) fn set_compiled(
         &mut self,
         id: ProgramId,
@@ -692,6 +774,140 @@ impl ProgramStore {
         if let Some(entry) = self.entry_mut(id) {
             entry.compiled = Some(compiled);
         }
+    }
+
+    /// Record another interpreter entry and return true exactly once when a
+    /// cold unsupported root reaches the threshold. Terminal attempt state
+    /// prevents repeated compile failures from turning hot calls into work.
+    pub(super) fn note_wasm_tier_entry(&mut self, id: ProgramId, function: u32) -> bool {
+        let Some(entry) = self.entry_mut(id) else {
+            return false;
+        };
+        let state = entry.wasm_tiers.entry(function).or_default();
+        if state.compiled.is_some() {
+            return false;
+        }
+        if state.hotness & 0x80 != 0 {
+            return false;
+        }
+        let count = (state.hotness & 0x7f).saturating_add(1);
+        state.hotness = count;
+        if count < WASM_JIT_PROMOTION_ENTRIES {
+            return false;
+        }
+        state.hotness |= 0x80;
+        true
+    }
+
+    /// Count a nonterminal `CallKnown` activation that stays in the fast
+    /// interpreter lane. On the threshold call, leave the count unchanged and
+    /// hand it to the general dispatcher, whose normal entry hook records the
+    /// final observation and claims the one-shot compile attempt.
+    pub(super) fn note_wasm_tier_lane_entry(&mut self, id: ProgramId, function: u32) -> bool {
+        let Some(entry) = self.entry_mut(id) else {
+            return false;
+        };
+        if !entry
+            .residual
+            .functions
+            .get(function as usize)
+            .is_some_and(|function| {
+                function.code.len() <= super::compiled::MAX_JIT_TIER_BYTECODES_PER_FUNCTION
+            })
+        {
+            return false;
+        }
+        let state = entry.wasm_tiers.entry(function).or_default();
+        if state.compiled.is_some() || state.hotness & 0x80 != 0 {
+            return false;
+        }
+        let count = state.hotness & 0x7f;
+        if count.saturating_add(1) >= WASM_JIT_PROMOTION_ENTRIES {
+            return true;
+        }
+        state.hotness = count.saturating_add(1);
+        false
+    }
+
+    pub(super) fn wasm_tier(
+        &self,
+        id: ProgramId,
+        function: u32,
+    ) -> Option<Rc<super::compiled::CompiledProgram>> {
+        self.entry(id)?
+            .wasm_tiers
+            .get(&function)?
+            .compiled
+            .clone()
+    }
+
+    /// Find a root artifact whose static closure includes this function.
+    pub(super) fn wasm_tier_containing(
+        &self,
+        id: ProgramId,
+        function: u32,
+    ) -> Option<Rc<super::compiled::CompiledProgram>> {
+        let tiers = &self.entry(id)?.wasm_tiers;
+        tiers
+            .get(&function)
+            .and_then(|state| state.compiled.clone())
+            .or_else(|| {
+                tiers
+                    .values()
+                    .filter_map(|state| state.compiled.as_ref())
+                    .find(|compiled| compiled.has_function(function as usize))
+                    .cloned()
+            })
+    }
+
+    /// Retain one compiled root closure if the VM-wide tier budget permits
+    /// it. Active calls retain their own Rc through native return.
+    pub(super) fn install_wasm_tier(
+        &mut self,
+        id: ProgramId,
+        root: u32,
+        compiled: Rc<super::compiled::CompiledProgram>,
+    ) -> bool {
+        if !compiled.has_function(root as usize) {
+            return false;
+        }
+        if self
+            .entry(id)
+            .and_then(|entry| entry.wasm_tiers.get(&root))
+            .is_some_and(|state| state.compiled.is_some())
+        {
+            return true;
+        }
+        let bytes = compiled.mapped_bytes();
+        if self.wasm_jit_tier_roots >= WASM_JIT_MAX_TIER_ROOTS
+            || self
+                .wasm_jit_tier_mapped_bytes
+                .saturating_add(bytes)
+                > WASM_JIT_MAX_TIER_MAPPED_BYTES
+        {
+            return false;
+        }
+        let Some(entry) = self.entry_mut(id) else {
+            return false;
+        };
+        entry.wasm_tiers.entry(root).or_default().compiled = Some(compiled);
+        self.wasm_jit_tier_roots += 1;
+        self.wasm_jit_tier_mapped_bytes += bytes;
+        true
+    }
+
+    #[cfg(test)]
+    pub(super) fn wasm_tier_entry_count(&self, id: ProgramId, function: u32) -> Option<u8> {
+        self.entry(id)
+            .and_then(|entry| entry.wasm_tiers.get(&function))
+            .map(|state| state.hotness & 0x7f)
+    }
+
+    #[cfg(test)]
+    pub(super) fn wasm_tier_attempted(&self, id: ProgramId, function: u32) -> Option<bool> {
+        self.entry(id)
+            .and_then(|entry| entry.wasm_tiers.get(&function))
+            .map(|state| state.hotness & 0x80 != 0)
     }
 
     pub(super) fn js_tier(&self, id: ProgramId, function: u32) -> Option<JsTierState> {

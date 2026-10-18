@@ -2363,6 +2363,11 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         context.evaluate_script_rooted(OPEN_CLOSE_FACTORY, "node:fs/shared-open-close.js")?;
     let undefined = context.undefined();
     let read_sync = get(context, module, "readSync")?;
+    let shared = context.host_mut().shared_state();
+    for (name, function) in READ_FILE_CALLS.iter().zip([open_sync, read_sync, close_sync]) {
+        let retained = context.retain(function)?;
+        shared.borrow_mut().builtin_cache.insert(read_file_call_key(name), retained);
+    }
     let open_close = context.call_rooted(
         factory,
         undefined,
@@ -2534,7 +2539,9 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     )?;
     let undefined = context.undefined();
     context.call_rooted(install_missing_fs_methods, undefined, &[module])?;
-    for name in ["lutimesSync", "futimesSync", "createReadStream", "createWriteStream"] {
+    // `createReadStream` and `createWriteStream` take the same wrapper when their lazy groups
+    // materialize (`initialize_read_stream`, `write_stream::initialize`).
+    for name in ["lutimesSync", "futimesSync"] {
         let original = get(context, module, name)?;
         let function = metadata_public::wrap(context, original, name)?;
         set(context, module, name, function)?;
@@ -2747,6 +2754,58 @@ pub(crate) fn complete_read_file(
     Ok(undefined)
 }
 
+/// The members of `fs` Node's `readFileSync` calls through the module object to read a file
+/// into a new Buffer; a script that replaces one of them observes its calls.
+const READ_FILE_CALLS: [&str; 3] = ["openSync", "readSync", "closeSync"];
+
+fn read_file_call_key(name: &str) -> String {
+    format!("\0builtin:fs/readFileSync/{name}")
+}
+
+/// Whether `fs` still holds the members Node's `readFileSync` calls, so reading natively
+/// observes nothing those calls would.
+fn read_file_calls_are_builtin(context: &mut NativeContext<'_, NodeHost>) -> Result<bool, RootedError> {
+    let module = crate::host::shared_vm::commonjs::fs_module(context)?;
+    let shared = context.host_mut().shared_state();
+    for name in READ_FILE_CALLS {
+        let Some(original) = shared.borrow().builtin_cache.get(&read_file_call_key(name)).copied() else {
+            return Ok(false);
+        };
+        let current = get(context, module, name)?;
+        if !context.strict_equal_rooted(current, original)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Node's `readFileSync` of a regular file of known size without options: the bytes go into
+/// `Buffer.allocUnsafe(size)` (its pooled allocation), cut to the bytes read when the file
+/// shrank since its size was taken.
+fn read_into_unsafe_buffer(context: &mut NativeContext<'_, NodeHost>, bytes: Vec<u8>, size: u64) -> Result<RootId, RootedError> {
+    let buffer_module = crate::host::shared_vm::commonjs::buffer_module(context)?;
+    let constructor = get(context, buffer_module, "Buffer")?;
+    let allocate = get(context, constructor, "allocUnsafe")?;
+    let length = context.number(size as f64);
+    let buffer = context.call_rooted(allocate, constructor, &[length])?;
+    let Some(storage) = context.buffer_storage_rooted(buffer)? else {
+        return Err(RootedError::host("Buffer.allocUnsafe returned no buffer"));
+    };
+    let copied = bytes.len().min(storage.byte_length);
+    if copied > 0 {
+        // SAFETY: the view's pinned storage holds `byte_length` bytes and `bytes` is a separate
+        // allocation.
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), storage.data, copied) };
+    }
+    if (bytes.len() as u64) >= size {
+        return Ok(buffer);
+    }
+    let slice = get(context, buffer, "slice")?;
+    let start = context.number(0.0);
+    let end = context.number(bytes.len() as f64);
+    context.call_rooted(slice, buffer, &[start, end])
+}
+
 pub(crate) fn read_file_sync(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
@@ -2762,9 +2821,20 @@ pub(crate) fn read_file_sync(
     let key = context.string_rooted("flag");
     let read_flag = context.string_rooted("r");
     context.define_data_property_rooted(defaults, key, read_flag, true, true, true)?;
-    let options =
-        super::fs_policy_shared_vm::call(context, "getOptions", &[provided_options, defaults])?;
-    super::fs_policy_shared_vm::call(context, "validateReadFileBufferOptions", &[options])?;
+    // Node's `getOptions(undefined | null, defaults)` returns the defaults, which pass
+    // `validateReadFileBufferOptions`: such a call reads with flag `r` into a new Buffer, and
+    // needs none of Node's option policy.
+    let defaulted = context
+        .rooted_value(provided_options)
+        .is_some_and(|value| value.is_undefined() || value.is_null());
+    let options = if defaulted {
+        defaults
+    } else {
+        let options =
+            super::fs_policy_shared_vm::call(context, "getOptions", &[provided_options, defaults])?;
+        super::fs_policy_shared_vm::call(context, "validateReadFileBufferOptions", &[options])?;
+        options
+    };
     let user_buffer = get(context, options, "buffer")?;
     let has_user_buffer = !context
         .rooted_value(user_buffer)
@@ -2786,7 +2856,14 @@ pub(crate) fn read_file_sync(
     } else {
         None
     };
-    if !fast_utf8 {
+    // Without an encoding, only a primitive path (whose validation reads nothing) is read here,
+    // while `fs` holds the members Node's reads call.
+    let native_buffer = !fast_utf8
+        && defaulted
+        && fd.is_none()
+        && context.string_text(input)?.is_some()
+        && read_file_calls_are_builtin(context)?;
+    if !fast_utf8 && !native_buffer {
         return super::fs_read_file_shared_vm::read_general(
             context,
             input,
@@ -2797,8 +2874,10 @@ pub(crate) fn read_file_sync(
     }
     let mut filename = None;
     let bytes = if let Some(fd) = fd {
-        let flag = get(context, options, "flag")?;
-        super::fs_policy_shared_vm::call(context, "stringToFlags", &[flag])?;
+        if !defaulted {
+            let flag = get(context, options, "flag")?;
+            super::fs_policy_shared_vm::call(context, "stringToFlags", &[flag])?;
+        }
         let fs = context.host_mut().shared_state().borrow().fs.clone();
         fs.with_descriptor(fd, |file| Ok(fs_ops::read_file(file, MAX_READ_FILE_BYTES)))
             .unwrap_or_else(|error| {
@@ -2807,12 +2886,26 @@ pub(crate) fn read_file_sync(
                     error,
                 })
             })
+            .map(|bytes| {
+                let size = bytes.len() as u64;
+                (bytes, size)
+            })
     } else {
+        let original = input;
         let input = super::fs_path::validate(context, input, "path")?;
         let flag = get(context, options, "flag")?;
-        let flags = super::fs_policy_shared_vm::call(context, "stringToFlags", &[flag])?;
-        let flags = context.to_number(flags)? as i32;
         let path = super::fs_path::resolve(context, input)?;
+        // Node reads a file of unknown size in chunks it concatenates into a pooled Buffer;
+        // only a regular file of known size reads into a Buffer of its own.
+        if !fast_utf8 && !std::fs::metadata(&path).is_ok_and(|metadata| metadata.is_file() && metadata.len() > 0) {
+            return super::fs_read_file_shared_vm::read_general(context, original, options, false, false);
+        }
+        let flags = if defaulted {
+            libc::O_RDONLY
+        } else {
+            let flags = super::fs_policy_shared_vm::call(context, "stringToFlags", &[flag])?;
+            context.to_number(flags)? as i32
+        };
         filename = Some(super::fs_path::display(context, input)?);
         #[cfg(unix)]
         let opened = fs_ops::open_numeric(&path, flags, None);
@@ -2822,7 +2915,11 @@ pub(crate) fn read_file_sync(
             fs_ops::open(&path, context.string_text(flag)?.as_deref(), None)
         };
         match opened {
-            Ok(mut file) => fs_ops::read_file(&mut file, MAX_READ_FILE_BYTES),
+            Ok(mut file) if native_buffer => fs_ops::read_sized_file(&mut file, MAX_READ_FILE_BYTES),
+            Ok(mut file) => fs_ops::read_file(&mut file, MAX_READ_FILE_BYTES).map(|bytes| {
+                let size = bytes.len() as u64;
+                (bytes, size)
+            }),
             Err(error) => Err(ReadFileFailure::Io {
                 syscall: "open",
                 error,
@@ -2830,7 +2927,8 @@ pub(crate) fn read_file_sync(
         }
     };
     match bytes {
-        Ok(bytes) => super::buffer_binding_shared_vm::decode_bytes(context, &bytes, "utf8"),
+        Ok((bytes, _)) if fast_utf8 => super::buffer_binding_shared_vm::decode_bytes(context, &bytes, "utf8"),
+        Ok((bytes, size)) => read_into_unsafe_buffer(context, bytes, size),
         Err(ReadFileFailure::TooLarge(size)) => {
             let error =
                 context.range_error_rooted(&format!("File size ({size}) is greater than 2 GiB"))?;
@@ -2995,6 +3093,7 @@ pub(crate) fn initialize_read_stream(
         ],
     )?;
     let create_read_stream = get(context, read_stream_api, "createReadStream")?;
+    let create_read_stream = metadata_public::wrap(context, create_read_stream, "createReadStream")?;
     let read_stream = get(context, read_stream_api, "ReadStream")?;
     set(context, module, "createReadStream", create_read_stream)?;
     set(context, module, "ReadStream", read_stream)?;

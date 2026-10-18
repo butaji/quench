@@ -28,13 +28,17 @@ impl<T> ThinBoxSlice<T> {
         }
     }
 
+    /// Where the elements start: after the header, at `T`'s alignment. `layout` derives the
+    /// same offset for every length.
+    const ELEMENTS_OFFSET: usize = size_of::<usize>().next_multiple_of(align_of::<T>());
+
     fn elements(&self) -> *mut T {
         if self.len() == 0 {
             return NonNull::dangling().as_ptr();
         }
-        let (_, offset) = Self::layout(self.len());
-        // SAFETY: the allocation spans the header and `len` elements from `offset`.
-        unsafe { self.header.as_ptr().cast::<u8>().add(offset).cast::<T>() }
+        debug_assert_eq!(Self::layout(self.len()).1, Self::ELEMENTS_OFFSET);
+        // SAFETY: the allocation spans the header and `len` elements from `ELEMENTS_OFFSET`.
+        unsafe { self.header.as_ptr().cast::<u8>().add(Self::ELEMENTS_OFFSET).cast::<T>() }
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -99,6 +103,38 @@ impl<T> ThinBoxSlice<T> {
             .expect("exact-size iterator yielded less than its length");
         assert!(values.next().is_none(), "exact-size iterator yielded more than its length");
         slice
+    }
+}
+
+impl<T> Default for ThinBoxSlice<T> {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
+impl<T> From<Vec<T>> for ThinBoxSlice<T> {
+    fn from(values: Vec<T>) -> Self {
+        values.into_boxed_slice().into()
+    }
+}
+
+impl<'a, T> IntoIterator for &'a ThinBoxSlice<T> {
+    type Item = &'a T;
+    type IntoIter = std::slice::Iter<'a, T>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl<T> FromIterator<T> for ThinBoxSlice<T> {
+    fn from_iter<I: IntoIterator<Item = T>>(values: I) -> Self {
+        values.into_iter().collect::<Vec<_>>().into()
+    }
+}
+
+impl<T: PartialEq> PartialEq for ThinBoxSlice<T> {
+    fn eq(&self, other: &Self) -> bool {
+        **self == **other
     }
 }
 

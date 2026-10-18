@@ -290,7 +290,7 @@ impl<H: Host> Vm<H> {
                 parent: env,
                 function: u32::MAX,
                 slots: Vec::<Value>::new().into_boxed_slice().into(),
-                scope: Box::new(crate::heap::EnvironmentScope {
+                scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
                     program: None,
                     root_eval_scope: false,
                     binding_site_pc: None,
@@ -1181,9 +1181,7 @@ impl<H: Host> Vm<H> {
                     argument
                 };
                 let number = match self.heap.get(primitive) {
-                    Some(Cell::BigInt(value)) => value.parse::<f64>().map_err(|_| {
-                        self.type_error(p, "invalid BigInt numeric representation".into())
-                    })?,
+                    Some(Cell::BigInt(value)) => crate::bigint::to_f64(value),
                     _ => self.to_number(p, primitive)?,
                 };
                 let value = Value::number(number);

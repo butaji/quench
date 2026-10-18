@@ -213,7 +213,7 @@ fn scope_slot_owners_survive_collection_and_release() {
         parent: Value::NULL,
         function: 0,
         slots: vec![Value::number(1.0), kept].into_boxed_slice().into(),
-        scope: Box::new(crate::heap::EnvironmentScope {
+        scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
             program: None,
             root_eval_scope: false,
             binding_site_pc: None,
@@ -226,7 +226,7 @@ fn scope_slot_owners_survive_collection_and_release() {
         parent: Value::NULL,
         function: 0,
         slots,
-        scope: Box::new(crate::heap::EnvironmentScope {
+        scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
             program: None,
             root_eval_scope: false,
             binding_site_pc: None,
@@ -829,7 +829,7 @@ fn resolved_binding_reference_keeps_its_slot_owner_alive() {
         parent: Value::NULL,
         function: 0,
         slots: vec![value].into_boxed_slice().into(),
-        scope: Box::new(crate::heap::EnvironmentScope {
+        scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
             program: None,
             root_eval_scope: false,
             binding_site_pc: None,
