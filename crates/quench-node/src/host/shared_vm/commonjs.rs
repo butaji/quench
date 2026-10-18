@@ -2655,6 +2655,7 @@ const getLinkedBinding = () => ({});
                 drop(wrapper_source);
                 if parent.is_none() {
                     crate::host::resident_pages::release_read_only_pages();
+                    crate::host::resident_pages::release_free_heap_pages();
                     crate::host::resident_pages::quench_entry_compiled();
                 } else if in_node_internal {
                     crate::host::resident_pages::release_read_only_pages();
