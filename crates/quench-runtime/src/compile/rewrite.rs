@@ -810,20 +810,6 @@ pub(super) fn relocate(
     source_positions: &mut crate::bytecode::SourcePositions,
     old_code: &[Instr],
 ) {
-    relocate_targets(code, wide, map, handlers, parameter_end_pc, binding_sites);
-    relocate_source_positions(code.len(), source_positions, old_code, wide, map);
-}
-
-/// Moves every code position that `code` and the function's tables name (jump targets,
-/// handlers, the parameter end and binding-site resume points) from its old pc to `map`'s.
-pub(super) fn relocate_targets(
-    code: &mut [Instr],
-    wide: &mut [WideInstruction],
-    map: &[usize],
-    handlers: &mut [crate::bytecode::Handler],
-    parameter_end_pc: &mut u32,
-    binding_sites: &mut [crate::bytecode::BindingSite],
-) {
     for instruction in code.iter_mut() {
         let decoded = fixed_width(*instruction, wide);
         if decoded.op().immediate_role() != ImmediateRole::JumpTarget {
@@ -853,6 +839,7 @@ pub(super) fn relocate_targets(
     for site in binding_sites {
         site.resume_pc = map[site.resume_pc as usize] as u32;
     }
+    relocate_source_positions(code.len(), source_positions, old_code, wide, map);
 }
 
 fn relocate_source_positions(
@@ -878,10 +865,10 @@ fn relocate_source_positions(
         {
             origin_pc += 1;
         }
-        assert_eq!(
-            map[origin_pc], new_pc,
-            "compacted instruction has an origin"
-        );
+        // An instruction a rewrite inserted after its origin's first shares its position.
+        if map.get(origin_pc) != Some(&new_pc) {
+            continue;
+        }
         let anchor = origin_pc;
         origin_pc += 1;
         while surviving_positions

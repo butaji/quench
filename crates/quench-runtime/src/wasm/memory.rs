@@ -691,29 +691,24 @@ lane_accesses! {
     V128Store64Lane, WasmMemoryStore, MemoryStore::I64Store, I64x2ExtractLane;
 }
 
-/// Memory32 bindings shared by direct accesses, `memory.size`, and
-/// `memory.fill` within this function body.
-pub(super) fn direct_access_memories(
+/// The Memory32 binding `operator` shares with the body's other direct accesses,
+/// `memory.size` and `memory.fill`, by memory index.
+pub(super) fn direct_access_memory(
     memories: &[WasmMemory],
-    operators: &[wasmparser::Operator<'_>],
-) -> Vec<bool> {
-    let mut used = vec![false; memories.len()];
-    for operator in operators {
-        let index = direct_access(operator)
-            .map(|(_, memarg)| memarg.memory)
-            .or_else(|| match operator {
-                wasmparser::Operator::MemorySize { mem }
-                | wasmparser::Operator::MemoryFill { mem } => Some(*mem),
-                _ => None,
-            });
-        if let Some(memory_index) = index
-            && let Some(memory) = memories.get(memory_index as usize)
-            && !memory.ty.memory64
-        {
-            used[memory_index as usize] = true;
-        }
-    }
-    used
+    operator: &wasmparser::Operator<'_>,
+) -> Option<usize> {
+    let index = direct_access(operator)
+        .map(|(_, memarg)| memarg.memory)
+        .or_else(|| match operator {
+            wasmparser::Operator::MemorySize { mem } | wasmparser::Operator::MemoryFill { mem } => {
+                Some(*mem)
+            }
+            _ => None,
+        })? as usize;
+    memories
+        .get(index)
+        .is_some_and(|memory| !memory.ty.memory64)
+        .then_some(index)
 }
 
 impl super::Lowering<'_> {

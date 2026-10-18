@@ -750,11 +750,17 @@ fn unreachable_promise_callback_and_aggregate_cycles_are_collected() {
     let values = vm
         .call_value(&program, factory, Value::UNDEFINED, &[])
         .unwrap();
-    let owners: Vec<_> = vm
-        .realm
-        .promise
-        .records
-        .keys()
+    let promises: Vec<_> = vm
+        .heap
+        .array_elements(values)
+        .unwrap()
+        .iter()
+        .copied()
+        .filter(|value| vm.is_promise(*value))
+        .collect();
+    assert_eq!(promises.len(), 6);
+    let owners: Vec<_> = promises
+        .iter()
         .chain(vm.realm.promise.finally_handler_callbacks.keys())
         .chain(vm.realm.promise.aggregates.keys())
         .chain(vm.realm.promise.aggregate_jobs.keys())
@@ -781,7 +787,6 @@ fn unreachable_promise_callback_and_aggregate_cycles_are_collected() {
         weak.iter()
             .all(|handle| vm.heap.weak_value(*handle).is_none())
     );
-    assert!(vm.realm.promise.records.is_empty());
     assert!(vm.realm.promise.finally_handler_callbacks.is_empty());
     assert!(vm.realm.promise.aggregates.is_empty());
     assert!(vm.realm.promise.aggregate_jobs.is_empty());
@@ -1187,10 +1192,7 @@ fn promise_record_edges_follow_promise_and_resolver_lifetime() {
     assert!(vm.heap.is_live(promise));
     assert!(vm.heap.is_live(result));
     assert_eq!(
-        vm.realm
-            .promise
-            .records
-            .get(&promise)
+        vm.promise_record(promise)
             .map(|record| record.result),
         Some(result)
     );
@@ -1204,7 +1206,7 @@ fn promise_record_edges_follow_promise_and_resolver_lifetime() {
     vm.collect_now(&program);
     assert!(vm.heap.weak_value(promise_weak).is_none());
     assert!(vm.heap.weak_value(result_weak).is_none());
-    assert!(!vm.realm.promise.records.contains_key(&promise));
+    assert!(!vm.is_promise(promise));
 }
 
 #[test]
@@ -4512,14 +4514,14 @@ fn dynamic_import_waiters_are_rooted_while_queued_and_during_batch_evaluation() 
         for (promise, weak) in &promises {
             assert_eq!(vm.heap.weak_value(*weak), Some(*promise));
             assert_eq!(
-                vm.realm.promise.records[promise].state,
+                vm.promise_record(*promise).expect("promise record").state,
                 PromiseState::Fulfilled
             );
         }
         vm.collect_now(&program);
         for (promise, weak) in promises {
             assert!(vm.heap.weak_value(weak).is_none());
-            assert!(!vm.realm.promise.records.contains_key(&promise));
+            assert!(!vm.is_promise(promise));
         }
     }
 }
@@ -10771,4 +10773,21 @@ fn anonymous_function_definitions_are_named_by_their_plan() {
         output.borrow().as_slice(),
         ["arrow,expression,fallback,method,computed,field,klass"]
     );
+}
+
+#[test]
+fn promoted_var_locals_read_undefined_before_their_first_store() {
+    // A frame's registers start stale from its pool, so a `var` promoted to a register that
+    // a read reaches before any store must still read undefined on every call.
+    let source = r#"
+      function H(m) { this.message = m; }
+      function f() { var err; var msg; msg = arguments[1]; if (!err) { err = new H(msg); } return err; }
+      const first = f(404, 'config');
+      const second = f(404, 'again');
+      print([first.message, second.message, first !== second].join(','));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "promoted-var-entry.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["config,again,true"]);
 }

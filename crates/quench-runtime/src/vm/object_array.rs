@@ -33,6 +33,33 @@ impl<H: Host> Vm<H> {
         })
     }
 
+    /// The length of a string primitive, in UTF-16 code units: its own `length`, which no
+    /// prototype can shadow.
+    pub(super) fn string_length(&self, value: Value) -> Option<usize> {
+        match self.heap.get(value) {
+            Some(Cell::String(string)) => Some(string.len()),
+            _ => None,
+        }
+    }
+
+    /// The own data `length` of an arguments object that keeps the layout it was made with
+    /// (a realm's `ArgumentsObjectTemplate` shape, which fixes the property, its attributes
+    /// and its slot); `None` for any other value or layout.
+    pub(super) fn arguments_object_length(&self, target: Value) -> Option<Value> {
+        let object = self.heap.object(target)?;
+        if !self.heap.array(target)?.is_arguments_object() {
+            return None;
+        }
+        let shape = object.shape();
+        [true, false].into_iter().find_map(|expose_callee| {
+            let template =
+                self.realm.intrinsics.arguments_objects.get(&(self.realm.globals, expose_callee))?;
+            (self.heap.object(template.anchor)?.shape() == shape)
+                .then(|| self.heap.property_get(object, template.length_slot))
+                .flatten()
+        })
+    }
+
     pub(super) fn has_own_array_index(&self, target: Value, index: usize) -> bool {
         self.array_descriptor(target, index).is_some()
             || self.heap.array_elements(target).is_some() && self.own_element_present(target, index)

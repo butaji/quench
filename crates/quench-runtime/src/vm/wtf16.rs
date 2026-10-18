@@ -459,9 +459,13 @@ impl JsStringInner {
     }
 }
 
-/// A concatenation this short is copied flat instead of becoming a rope: a rope node and the
-/// halves it keeps alive cost more than the copied units.
-const FLAT_CONCAT_MAX_UNITS: usize = 256;
+/// Concatenation copies a piece at most this long into its flat neighbor instead of making a
+/// rope node: a node and the separate halves it keeps alive cost more than copying a short
+/// piece, and a rope's leaves then hold at least this many units each.
+const ROPE_LEAF_MAX_UNITS: usize = 512;
+/// A flat left side at most this long takes a short right side by copy, so text built by
+/// appends stays flat until it is long; past it, an append copies at most a leaf.
+const FLAT_PREFIX_MAX_UNITS: usize = 8192;
 
 /// Flat UTF-16 strings retain the existing Node-compatible length policy.
 /// V8's public String::kMaxLength on the supported 64-bit host is this limit;
@@ -582,6 +586,34 @@ impl JsString {
 
     fn shared(inner: JsStringInner) -> Self {
         Self { repr: Repr::Shared(Rc::new(inner)) }
+    }
+
+    /// The string a rope node holds.
+    fn from_node(node: Rc<JsStringInner>) -> Self {
+        match node.flat.get() {
+            Some(units @ (FlatUnits::Short(_) | FlatUnits::Ascii(_) | FlatUnits::AsciiSlice(_))) => Self {
+                repr: Repr::Flat(units.clone()),
+            },
+            Some(FlatUnits::Wide(_)) | None => Self { repr: Repr::Shared(node) },
+        }
+    }
+
+    /// The halves of a string that is still a rope.
+    fn rope_halves(&self) -> Option<(Self, Self)> {
+        match &self.repr {
+            Repr::Flat(_) => None,
+            Repr::Shared(inner) => inner
+                .halves()
+                .map(|(left, right)| (Self::from_node(left), Self::from_node(right))),
+        }
+    }
+
+    /// Whether the units are flat: not a rope, or a rope already flattened.
+    fn is_flat(&self) -> bool {
+        match &self.repr {
+            Repr::Flat(_) => true,
+            Repr::Shared(inner) => inner.flat.get().is_some(),
+        }
     }
 
     /// The string as a node a rope can hold.
@@ -742,16 +774,33 @@ impl JsString {
         if text.len() == 0 {
             return;
         }
-        if self.len() + text.len() <= FLAT_CONCAT_MAX_UNITS {
+        let short = |piece: &Self| piece.len() <= ROPE_LEAF_MAX_UNITS;
+        let joined = |left: &Self, right: &Self| {
             let mut flat = JsStringBuilder::default();
-            flat.append(self);
-            flat.append(text);
-            *self = flat
-                .finish()
-                .expect("a short concatenation is within the string length limit");
-            return;
-        }
-        *self = Self::shared(JsStringInner::concat(self.node(), text.node()));
+            flat.append(left);
+            flat.append(right);
+            flat.finish()
+                .expect("a copied concatenation is within the string length limit")
+        };
+        let rope = |left: &Self, right: &Self| {
+            Self::shared(JsStringInner::concat(left.node(), right.node()))
+        };
+        // The QuickJS policy: a short flat piece joins the flat side it meets, whether that
+        // is the other operand or the facing half of a rope operand.
+        *self = match (self.rope_halves(), text.rope_halves()) {
+            (None, None) if short(text) && self.len() <= FLAT_PREFIX_MAX_UNITS => {
+                joined(self, text)
+            }
+            (Some((left, right)), None) if short(text) && right.is_flat() && short(&right) => {
+                rope(&left, &joined(&right, text))
+            }
+            (None, Some((left, right)))
+                if self.len() <= FLAT_PREFIX_MAX_UNITS && left.is_flat() && short(&left) =>
+            {
+                rope(&joined(self, &left), &right)
+            }
+            _ => rope(self, text),
+        };
     }
 
     pub(crate) fn repeat(&self, count: usize) -> Self {

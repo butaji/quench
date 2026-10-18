@@ -17,7 +17,8 @@ use std::ops::Range;
 
 use super::{
     class_is_single_unit, class_matches, equal, is_line_terminator, is_word_mode, merge_flags,
-    Assertion, Backreference, ClassExpr, Expr, Flags, Lookaround, Unit, ASCII_MAX,
+    literal_finder, Assertion, Backreference, ClassExpr, Expr, Flags, LiteralFinder, Lookaround,
+    Unit, ASCII_MAX,
 };
 
 /// A register holding no position: an unset capture bound.
@@ -316,17 +317,22 @@ struct Workspace {
 }
 
 pub(crate) struct Program {
-    instructions: Vec<Inst>,
-    sets: Vec<UnitSet>,
+    instructions: Box<[Inst]>,
+    sets: Box<[UnitSet]>,
     /// Capture index lists for `ResetCaptures` and `Backreference`.
-    lists: Vec<u32>,
+    lists: Box<[u32]>,
     capture_count: usize,
     register_count: usize,
     /// Where matches can start; `None` where any position can.
     starts: Option<Starts>,
     /// The literal bytes every match begins with, searched for directly in ASCII subjects.
-    prefix: Option<memchr::memmem::Finder<'static>>,
-    workspace: RefCell<Workspace>,
+    prefix: Option<LiteralFinder>,
+}
+
+thread_local! {
+    /// The registers and stack of the running search. A search never starts another, so
+    /// every program on a thread shares one workspace, sized by the largest search so far.
+    static WORKSPACE: RefCell<Workspace> = RefCell::default();
 }
 
 /// The compiled form of a construct this matcher does not run.
@@ -687,18 +693,17 @@ impl Program {
         compiler.compile(expr, flags).ok()?;
         compiler.emit(Inst::Match);
         Some(Self {
-            instructions: compiler.instructions,
-            sets: compiler.sets,
-            lists: compiler.lists,
+            instructions: compiler.instructions.into_boxed_slice(),
+            sets: compiler.sets.into_boxed_slice(),
+            lists: compiler.lists.into_boxed_slice(),
             capture_count,
             register_count: compiler.registers as usize,
             starts: starts(expr, flags),
             prefix: {
                 let mut prefix = Vec::new();
                 literal_prefix(expr, flags, &mut prefix);
-                (!prefix.is_empty()).then(|| memchr::memmem::Finder::new(&prefix).into_owned())
+                (!prefix.is_empty()).then(|| literal_finder(&prefix))
             },
-            workspace: RefCell::default(),
         })
     }
 
@@ -724,34 +729,35 @@ impl Program {
         sticky: bool,
         budget: Option<usize>,
     ) -> Result<Option<Found>, Exhausted> {
-        let mut workspace = self.workspace.borrow_mut();
-        let Workspace { registers, stack } = &mut *workspace;
-        // A failed run restores every register it set, so one reset serves every start.
-        registers.clear();
-        registers.resize(self.register_count, UNSET);
-        let mut steps = budget.unwrap_or(usize::MAX);
-        let search = Search {
-            last: if sticky { first } else { text.len() },
-        };
-        let Some(start) = self.next_start(text, first, search.last) else {
-            return Ok(None);
-        };
-        stack.clear();
-        stack.push(Frame::Barrier);
-        let Some((start, end)) =
-            self.run(text, 0, start, Some(search), registers, stack, &mut steps)?
-        else {
-            return Ok(None);
-        };
-        let captures = registers[..2 * self.capture_count]
-            .chunks_exact(2)
-            .map(|bounds| (bounds[0] != UNSET).then(|| bounds[0]..bounds[1]))
-            .collect();
-        Ok(Some(Found {
-            start,
-            end,
-            captures,
-        }))
+        WORKSPACE.with_borrow_mut(|workspace| {
+            let Workspace { registers, stack } = &mut *workspace;
+            // A failed run restores every register it set, so one reset serves every start.
+            registers.clear();
+            registers.resize(self.register_count, UNSET);
+            let mut steps = budget.unwrap_or(usize::MAX);
+            let search = Search {
+                last: if sticky { first } else { text.len() },
+            };
+            let Some(start) = self.next_start(text, first, search.last) else {
+                return Ok(None);
+            };
+            stack.clear();
+            stack.push(Frame::Barrier);
+            let Some((start, end)) =
+                self.run(text, 0, start, Some(search), registers, stack, &mut steps)?
+            else {
+                return Ok(None);
+            };
+            let captures = registers[..2 * self.capture_count]
+                .chunks_exact(2)
+                .map(|bounds| (bounds[0] != UNSET).then(|| bounds[0]..bounds[1]))
+                .collect();
+            Ok(Some(Found {
+                start,
+                end,
+                captures,
+            }))
+        })
     }
 
     /// The first position from `from` through `last` where a match can start.

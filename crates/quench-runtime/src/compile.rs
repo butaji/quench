@@ -25,8 +25,8 @@ mod capture_profile;
 mod capture_scope;
 mod class;
 mod early;
-mod syntax_message;
 mod frame_registers;
+mod syntax_message;
 pub(crate) mod liveness;
 mod locals;
 mod numeric;
@@ -2107,7 +2107,6 @@ impl<'a> Compiler<'a> {
         if std::env::var_os("QUENCH_MEMORY").is_some() {
             capture_profile::report(&functions);
         }
-        // A promoted local's register starts undefined where its frame slot would have.
         let undefined_constant = self.constant(Constant::Undefined);
         for function in &mut functions {
             rewrite::return_through_shared_returns(function);
@@ -2129,8 +2128,6 @@ impl<'a> Compiler<'a> {
             Self::specialize_plain_local_operations(function, &self.superinstructions);
             frame_registers::promote(
                 function,
-                self.method_sites.as_slice(),
-                &self.field_sites,
                 &self.superinstructions,
                 undefined_constant,
                 |atom| self.atoms.get(atom),

@@ -786,7 +786,7 @@ impl<H: Host> Vm<H> {
             if object.has_error_data() {
                 return self.wire_error(program, serializer, hooks, value);
             }
-            if object.is_module_namespace() || self.realm.promise.records.contains_key(&value) {
+            if object.is_module_namespace() || self.is_promise(value) {
                 return Err(self.uncloneable_with(program, hooks, value));
             }
             if let Some((_, inner)) = self.boxed_primitive_data(value) {
@@ -1898,7 +1898,7 @@ impl<H: Host> Vm<H> {
         if self.object_data(value).is_some_and(Object::has_error_data) {
             return "Error";
         }
-        if self.realm.promise.records.contains_key(&value) {
+        if self.is_promise(value) {
             return "Promise";
         }
         if self.heap.array(value).is_some() {
