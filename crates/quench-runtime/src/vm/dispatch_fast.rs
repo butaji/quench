@@ -1694,7 +1694,7 @@ lane_handler! {
     /// after a probe that cannot hit) inline; any other receiver takes `lane_get_field`.
     fn lane_get_length<>(cx, r, ip, i, view) {
         let Some(length) = (unsafe { vm(cx) }).own_array_length(r.get(i.b)) else {
-            sibling!(lane_get_arguments_length::<H>, r, ip, Carried::SCRIPT)
+            sibling!(lane_get_length_other::<H>, r, ip, Carried::SCRIPT)
         };
         r.set(i.a, Value::number(length as f64));
         next!(cx, r, following(ip), Carried::SCRIPT)
@@ -1702,12 +1702,19 @@ lane_handler! {
 }
 
 lane_handler! {
-    /// `lane_get_length` of an arguments object in its creation layout
-    /// (`Vm::arguments_object_length`): its own data `length`, which the general cached read
-    /// does not hold for arguments objects. Any other receiver takes `lane_get_field`.
+    /// `lane_get_length` of a receiver other than an array, which the general cached read
+    /// does not answer: a string primitive's length (`Vm::string_length`), and an
+    /// arguments object's own data `length` in its creation layout
+    /// (`Vm::arguments_object_length`). Any other receiver takes `lane_get_field`.
     #[inline(never)]
-    fn lane_get_arguments_length<>(cx, r, ip, i, view) {
-        let Some(length) = (unsafe { vm(cx) }).arguments_object_length(r.get(i.b)) else {
+    fn lane_get_length_other<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let base = r.get(i.b);
+        let length = vm
+            .string_length(base)
+            .map(|length| Value::number(length as f64))
+            .or_else(|| vm.arguments_object_length(base));
+        let Some(length) = length else {
             sibling!(lane_get_field::<H>, r, ip, Carried::SCRIPT)
         };
         r.set(i.a, length);
@@ -4209,8 +4216,9 @@ lane_handler! {
         // A call that returns its result completes its caller: an activation in the lane, or
         // the frame in the general loop (`lane_frame_return`).
         let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
-        let frame_returns = returns && vm.lane_stack.activations.is_empty();
-        if frame_returns && !lane_returning_call_admitted(cx) {
+        // The running function is the same activation or, once the call made activations
+        // frames (`lane_call_native`), the frame it became.
+        if returns && !lane_returning_call_admitted(cx) {
             return exit(ip);
         }
         let receiver = r.get(i.c);
@@ -4249,18 +4257,18 @@ lane_handler! {
         let Some(value) = value else {
             return exit(ip);
         };
-        if frame_returns {
-            return lane_frame_return(vm, ip, value);
-        }
+        // The call may have made the lane's activations frames, so the running function's
+        // registers and caller are read again.
         if returns {
             let Some((registers, next, view)) = lane_complete_activation(cx, value) else {
-                unreachable!("a returning lane call has an activation caller");
+                return lane_frame_return(vm, ip, value);
             };
             if is_exit(next) {
                 return next;
             }
             next!(cx, registers, next, view)
         }
+        let r = unsafe { (*cx).registers };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::SCRIPT)
     }
@@ -4305,9 +4313,13 @@ fn lane_call_native<H: Host>(
     {
         return Some(Value::number(result));
     }
-    if !unsafe { (*cx).script_calls } || !vm.lane_stack.activations.is_empty() {
+    if !unsafe { (*cx).script_calls } {
         return None;
     }
+    // The callee observes the frame stack: lane activations become frames first, as leaving
+    // the lane would make them, and the call runs from the innermost one.
+    vm.materialize_lane_activations(cx);
+    let r = unsafe { (*cx).registers };
     // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
     // active view, which is the running frame's.
     let (code, frame, call_pc) = unsafe {
@@ -5237,6 +5249,10 @@ lane_handler! {
                 return next;
             }
             next!(cx, registers, next, view)
+        }
+        // A VM frame returns the value as `Return` would (`lane_return_frame`).
+        if !unsafe { (*cx).inline_calls } && unsafe { (*cx).script_calls } {
+            return lane_return_script_frame(cx, ip, value);
         }
         exit(ip)
     }
