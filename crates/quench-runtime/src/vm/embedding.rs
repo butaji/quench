@@ -1212,10 +1212,15 @@ impl<H: Host> Vm<H> {
         result
     }
 
-    fn is_realm_global(&self, value: Value) -> bool {
+    /// Whether `value` is a realm's global object, live or parked.
+    pub(super) fn is_global_object(&self, value: Value) -> bool {
         value == self.realm.globals
             || self.realm.global_lexical_states.contains_key(&value)
             || self.realm.parked.as_ref().is_some_and(|parked| parked.global == value)
+    }
+
+    fn is_realm_global(&self, value: Value) -> bool {
+        self.is_global_object(value)
             || self
                 .realm
                 .intrinsics
