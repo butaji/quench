@@ -8,6 +8,7 @@ impl Cell {
         }
     }
 
+    #[inline]
     pub(crate) fn object(&self) -> Option<&Object> {
         match self {
             // The hot object kinds keep their object inline; the rest box it so the
@@ -44,6 +45,7 @@ impl Cell {
         }
     }
 
+    #[inline]
     pub(crate) fn object_mut(&mut self) -> Option<&mut Object> {
         match self {
             // The hot object kinds keep their object inline; the rest box it so the
