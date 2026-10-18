@@ -1740,58 +1740,6 @@ mod tests {
     /// Compiled code checks for an interrupt on each backward edge and at each function entry:
     /// a run stops whether it repeats through a loop or only through calls.
     #[test]
-    fn compiled_wasm_unrolled_loops_leave_from_every_copy() {
-        use wasmparser::{BlockType, ValType};
-        // sum(n) = 0 + 1 + ... + (n - 1): `loop { sum += i; i += 1; br_if 0 (i < n) }`, an
-        // innermost straight-line loop the compiler unrolls, left after each copy in turn.
-        let sum = vec![
-            Operator::Loop {
-                blockty: BlockType::Empty,
-            },
-            Operator::LocalGet { local_index: 2 },
-            Operator::LocalGet { local_index: 1 },
-            Operator::I32Add,
-            Operator::LocalSet { local_index: 2 },
-            Operator::LocalGet { local_index: 1 },
-            Operator::I32Const { value: 1 },
-            Operator::I32Add,
-            Operator::LocalTee { local_index: 1 },
-            Operator::LocalGet { local_index: 0 },
-            Operator::I32LtU,
-            Operator::BrIf { relative_depth: 0 },
-            Operator::End,
-            Operator::LocalGet { local_index: 2 },
-            Operator::End,
-        ];
-        let function = crate::Engine::lower_wasm_module_with_state(
-            "compiled-wasm-unrolled-sum",
-            [crate::WasmFunctionBody {
-                ty: crate::WasmCallableType::Embedded(crate::WasmSignature {
-                    params: vec![crate::WasmType::I32],
-                    results: vec![crate::WasmType::I32],
-                }),
-                locals: vec![ValType::I32, ValType::I32],
-                operators: sum.into_iter().map(Ok),
-            }],
-            &crate::WasmTypes::default(),
-            &[],
-            &[],
-            &[],
-        )
-        .unwrap();
-        let mut vm = Vm::new(crate::SystemHost);
-        vm.set_execution_mode(crate::ExecutionMode::Compiled);
-        let instance = vm.instantiate_wasm_module(&function).unwrap();
-        for n in 1..=9 {
-            assert_eq!(
-                vm.invoke_wasm(&instance, 0, &[crate::WasmValue::I32(n)]).unwrap(),
-                Some(crate::WasmValue::I32(n * (n - 1) / 2)),
-                "sum({n})"
-            );
-        }
-    }
-
-    #[test]
     fn compiled_wasm_observes_termination_in_loops_and_loop_free_recursion() {
         use wasmparser::BlockType;
         let spin = vec![

@@ -1,4 +1,4 @@
-# Compiled Wasm: guard-only addresses, zero-extended i32 views, unrolled innermost loops (Linux x86_64, 2026-10-18)
+# Compiled Wasm: guard-only addresses and zero-extended i32 views (Linux x86_64, 2026-10-18)
 
 Intel Xeon @ 2.10 GHz, 4 vCPUs, 15 GiB, Linux 6.18.44 (no PMU: `perf` samples `cpu-clock`
 only), no cgroup limits. Static production `quench-node --jit`; base `v2-merged` `d91e131e6`.
@@ -29,12 +29,8 @@ real run:
   whole 4 GiB).
 - A register's i32 view is held zero-extended in 64 bits (`view_ir`); reading it is free, and
   an access uses it as its offset directly (`zero_extend`).
-- An innermost loop whose body runs straight through but for branches out of it, with no
-  other entry, no call and no VM callout, and that fits the budget at least twice, is
-  unrolled up to four times (`unrollable_loops`, `UNROLL_BUDGET`, `MAX_UNROLL_FACTOR`): the
-  latch's back edge enters the next copy without an interrupt check, and the last copy's back
-  edge returns to the header with it, so a loop that never stops still checks every four
-  iterations. Branches out of the loop leave every copy through the original blocks.
+
+Unrolling innermost loops was tried and withdrawn (below).
 
 ## Results
 
@@ -45,7 +41,6 @@ CoreMark fixed work, Callgrind instructions:
 | base `d91e131e6` | 4,332M |
 | guard-only addresses | 4,083M |
 | + zero-extended i32 views | 3,821M |
-| + unrolled innermost loops | 3,559M (−17.8%) |
 
 `run-js.mjs` Score, five interleaved rounds per campaign (`run-coremark.sh`, `ONLY` selecting
 the engines):
@@ -54,12 +49,48 @@ the engines):
 | -- | --: | --: | --: |
 | base | 18,545 (3 rounds) | 19,594 | 18,353 |
 | + guard-only addresses and zero-extended views | 18,860 | 19,827 | 18,240 |
-| + unrolled innermost loops | 19,326 | 19,699 | 18,216 |
 
 Max RSS is unchanged (8.7–8.8 MB).
 
-JetStream 3 Wasm fixtures (`quench-bench --suite jetstream3 --jit --runs 3`), see
-`jetstream3-*.json`.
+JetStream 3 Wasm fixtures, Callgrind instructions of the fixtures' own iterations
+(`jetstream-fixed.cjs`, below), base `d91e131e6` against this change:
+
+| Fixture | 1 iteration (with compile) | 3 iterations |
+| -- | --: | --: |
+| HashSet | -3.35% | -3.92% |
+| gcc-loops | -1.75% | -1.74% |
+| quicksort | +0.04% | +0.10% |
+| richards | -1.49% | -1.58% |
+| TSF | -2.83% | -2.23% |
+| zlib | -1.56% | -1.96% |
+
+## Withdrawn: unrolling innermost loops
+
+Innermost straight-line loops unrolled up to four times (budget 48 instructions, the
+interrupt check kept on the last copy's back edge) cut CoreMark's fixed work to 3,559M and
+raised its Score to 19,326 (Node 19,699), but failed the JetStream gate. Wall-clock rounds
+on this host vary by up to 30% per run, so the decision used Callgrind counts of the
+fixtures' own iterations (`jetstream-fixed.cjs <glue.js> <module.wasm> <benchmark.js> <N>`
+runs the fixture's emscripten glue and `benchmark.js` and calls `runIteration` N times; one
+and three or four iterations separate compilation from each further iteration), with and
+without unrolling:
+
+| Fixture | 1 iteration (with compile) | each further iteration |
+| -- | --: | --: |
+| gcc-loops | +2.5% | -6.6% |
+| HashSet | +1.3% | +1.2% |
+| quicksort | -0.9% | - |
+| richards | +0.1% | 0.0% |
+| TSF | +6.0% | 0.0% |
+| zlib | +1.0% | 0.0% |
+
+Wasm modules compile eagerly at first call, so every innermost loop pays Cranelift for its
+copies whether it runs or not; JetStream scores the first iteration as a third of each
+fixture's Score, and TSF's first iteration grows 6%. In HashSet's rehash, unrolling a
+probe loop of about 1.2 iterations raised register pressure across the function, and the
+outer loop reloads the memory base and table bounds from the stack. Unrolling needs a
+hotness signal (a loop's trip counts before a recompilation) before it can pay; the
+version measured is kept outside the tree.
 
 An experiment rejected along the way: inlining leaves up to the interpreter's 512-operator
 budget in compiled mode too cut CoreMark's fixed work 4.1% and scored about 3% higher, but
@@ -68,7 +99,5 @@ compiled lowering keeps every call.
 
 ## Checks
 
-Wasm testsuite: no JIT 65,188/65,188; JIT 65,016/65,016 with `call_indirect.wast`'s worker
-failing as before (TOD-121). Runtime lib 733/733, including
-`compiled_wasm_unrolled_loops_leave_from_every_copy` and the termination test (its spin loops
-are unrolled and still stop).
+Wasm testsuite (the whole `testsuite` directory): no JIT 67,124/67,124; JIT 66,952/66,952
+with `call_indirect.wast`'s worker failing as before (TOD-121). Runtime lib 732/732.

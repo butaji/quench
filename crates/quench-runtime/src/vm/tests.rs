@@ -4493,11 +4493,7 @@ fn dynamic_import_waiters_are_rooted_while_queued_and_during_batch_evaluation() 
             let source = "$262.gc(); export const value = 57;".to_owned();
             vm.realm.promise.dynamic_import_jobs.push(DynamicImportJob {
                 cache_key: format!("{name}:javascript"),
-                module: crate::ModuleSource {
-                    name,
-                    bytes: source.as_bytes().to_vec(),
-                    source,
-                },
+                module: crate::ModuleSource::text(name, source),
                 promise,
             });
         }
