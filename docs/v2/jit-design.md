@@ -81,7 +81,7 @@ The ratios below compare Quench JIT with each JIT-enabled peer. They are paired 
 | tsf | 13.38 / 224.8 | 0.068 [0.062, 0.072] | 1.677 [1.611, 1.692] | 0.071 [0.067, 0.073] | 1.614 [1.547, 1.631] |
 | zlib | 13.62 / 112.9 | 0.156 [0.151, 0.162] | 1.126 [1.116, 1.134] | 0.154 [0.151, 0.158] | 1.018 [0.998, 1.021] |
 
-No case wins both metrics against either peer. gcc-loops and quicksort are the only cases that beat both RSS bars; both still lose Score decisively. HashSet's two hot `HashTable::add` functions do enter native code (9.49M and 39.53M entries in the separate diagnostics), yet its Score is 0.147 of Bun's. Quicksort runs native code with no VM callouts in its hot sorting function but reaches only 0.605 of Bun's Score, which points to native code quality or runtime overhead rather than interpreter dispatch alone. TSF records 2,816,456 compiled-to-VM callouts and 224.8 MiB RSS; reducing those boundaries and attributing non-code RSS are higher-value next steps than broadening the eager supported-opcode set. The attempted broad `unreachable` lowering illustrates the admission risk: it expanded TSF from 156 to 244 compiled functions and code from 178 KiB to 9.2 MiB, while the one-round score fell and RSS rose. That change was reverted. These data keep the requested JIT score-and-RSS goal open; they do not support a win claim.
+No case wins both metrics against either peer. gcc-loops and quicksort are the only cases that beat both RSS bars; both still lose Score decisively. HashSet's two hot `HashTable::add` functions do enter native code (9.49M and 39.53M entries in the separate diagnostics), yet its Score is 0.147 of Bun's. Quicksort runs native code with no VM callouts in its hot sorting function but reaches only 0.605 of Bun's Score, which points to native code quality or runtime overhead rather than interpreter dispatch alone. The earlier TSF combined counter recorded 2,816,456 compiled-to-VM callouts and 224.8 MiB RSS; reducing those boundaries and attributing non-code RSS are higher-value next steps than broadening the eager supported-opcode set. The attempted broad `unreachable` lowering illustrates the admission risk: it expanded TSF from 156 to 244 compiled functions and code from 178 KiB to 9.2 MiB, while the one-round score fell and RSS rose. That change was reverted. These data keep the requested JIT score-and-RSS goal open; they do not support a win claim.
 
 ## Same-program indirect-callee fast path
 
@@ -110,13 +110,45 @@ run also compiled 156/244 functions, emitted 177,800 bytes, mapped 180,224
 bytes, and reported 137.0 ms compilation time. This is a call-count screen,
 not timing evidence: diagnostics add overhead and the report has one round.
 The signature parameter copy already uses an inline `SmallVec` for up to eight
-types, so a repeated heap clone is not the current bottleneck. The evidence
-points instead to repeated table-target resolution and crossing from generated
-code into the VM. A guarded call-site cache is a plausible next experiment,
-provided table mutation invalidation, bounds/null traps, canonical signature
-checks, and callee instance environments remain correct. Raw diagnostic data
-and reproduction details are in
+types, so a repeated heap clone is not the current bottleneck. The split
+counter distinguishes reference/table calls from statically imported calls,
+but it does not yet show which reference calls enter compiled callees versus
+interpreter fallback. The evidence points instead to repeated table-target
+resolution and crossing from generated code into the VM. A guarded call-site
+cache is a plausible next experiment, provided table mutation invalidation,
+bounds/null traps, canonical signature checks, and callee instance environments
+remain correct. Raw diagnostic data and reproduction details are in
 `evidence/jit-jetstream3-wasm-2026-10-18/callout-attribution/`.
+
+## Deferred indirect-call fallback lookups
+
+Commit `ba75d8978` moved residual-program and void-receiver lookup into the
+`call_value` fallback branch of `reference_callout`, so a compiled same-program
+target avoids those two unused lookups and an `Rc` clone per call. A new test
+covers a compiled zero-argument indirect callee with no result. The full runtime
+suite passes (702 unit and 18 integration tests).
+
+The clean-source 11-round follow-up is preserved in
+`evidence/jit-jetstream3-wasm-2026-10-18/indirect-call-fallback-cleanup/`.
+Every fixture validated and produced equal output, but no Score ratio reached
+parity with Bun or Node:
+
+| Fixture | Quench Score / RSS MiB | Score vs Bun | RSS vs Bun | Score vs Node | RSS vs Node |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| HashSet | 32.51 / 113.2 | 0.153 [0.148, 0.172] | 2.033 [2.026, 2.045] | 0.133 [0.125, 0.134] | 0.892 [0.892, 0.893] |
+| gcc-loops | 71.53 / 48.1 | 0.398 [0.384, 0.415] | 0.853 [0.847, 0.867] | 0.391 [0.367, 0.425] | 0.524 [0.522, 0.526] |
+| quicksort | 189.91 / 41.9 | 0.549 [0.526, 0.601] | 0.860 [0.858, 0.862] | 0.481 [0.432, 0.509] | 0.475 [0.474, 0.475] |
+| tsf | 14.41 / 224.7 | 0.070 [0.066, 0.080] | 1.689 [1.624, 1.695] | 0.072 [0.072, 0.074] | 1.552 [1.536, 1.626] |
+| zlib | 13.38 / 112.8 | 0.155 [0.150, 0.160] | 1.125 [1.117, 1.129] | 0.157 [0.146, 0.161] | 0.996 [0.992, 1.015] |
+
+gcc-loops and quicksort beat both RSS bars but remain far below both score
+bars; HashSet beats Node on RSS only; TSF loses on both metrics; zlib's Node
+RSS interval contains parity. This keeps the requested JIT score-and-RSS goal
+open. The next experiment should first split reference callouts into compiled
+callee hits and interpreter fallbacks, ideally by call site. TSF's C source has
+candidate writer/reader callback loops, but the aggregate counts do not prove
+their share. A monomorphic cache must retain the existing resolver as the miss
+path and invalidate for every Wasm and JavaScript table mutation.
 
 The remaining design work follows a staged-specialization path: keep validated
 Wasm and residual JS bytecode as the static input, specialize only hot

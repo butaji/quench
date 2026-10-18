@@ -142,9 +142,9 @@ intervals.
 No fixture beats both Score and RSS against either peer. gcc-loops and
 quicksort remain below both score bars while beating both RSS bars; TSF loses
 on both metrics. The code change removes an interpreter activation for some
-indirect calls, but each call still crosses into the VM. The 2.8 million TSF
-callout counter therefore remains a useful, though currently unattributed,
-target for profiling.
+indirect calls, but each call still crosses into the VM. The split TSF
+diagnostic records 2.869 million table/reference calls and 27 thousand imports;
+it still does not separate compiled-callee hits from interpreter fallbacks.
 
 Reproduction:
 
@@ -159,3 +159,10 @@ target/production/quench-bench --fixtures HashSet-wasm,gcc-loops-wasm,quicksort-
 target/production/quench-bench --analyze target/jetstream3-wasm-jit-744f2f9.json \
   --out target/jetstream3-wasm-jit-744f2f9-analysis.json
 ```
+
+The next clean-source 11-round report is under
+`indirect-call-fallback-cleanup/` for commit `ba75d8978`. It moves two unused
+fallback lookups out of the compiled-target path and adds a no-result compiled
+indirect-call test. All five fixtures remain far below both peer score bars;
+no JIT score-and-RSS win was established. The new diagnostic split and its
+callout counts are under `callout-attribution/`.
