@@ -2393,9 +2393,17 @@ mod tests {
                 crate::WasmFunctionBody {
                     ty: crate::WasmCallableType::Embedded(signature.clone()),
                     locals: vec![],
-                    operators: vec![Operator::Unreachable, Operator::End]
-                        .into_iter()
-                        .map(Ok),
+                    // TableSize stays interpreter-only, preserving a target
+                    // that exercises the diagnostic fallback path even when
+                    // small unconditional traps compile natively.
+                    operators: vec![
+                        Operator::TableSize { table: 0 },
+                        Operator::Drop,
+                        Operator::Unreachable,
+                        Operator::End,
+                    ]
+                    .into_iter()
+                    .map(Ok),
                 },
                 crate::WasmFunctionBody {
                     ty: crate::WasmCallableType::Embedded(signature.clone()),
@@ -4221,8 +4229,6 @@ mod tests {
             .find_shared(&function.module.program)
             .expect("registered Wasm program");
         vm.set_execution_mode(crate::ExecutionMode::Compiled);
-        assert!(vm.install_compiled_root_for_test(program, Value::NULL, 0));
-
         assert_eq!(
             vm.execute_wasm_i32(&function, &[]).unwrap_err().wasm_trap(),
             Some(crate::WasmTrap::Unreachable)
@@ -4231,8 +4237,36 @@ mod tests {
             .programs
             .compiled(program)
             .flatten()
-            .expect("root closure installed");
+            .expect("default Wasm compilation installed");
         assert_eq!(compiled.native_entries(0), Some(1));
+
+        let mut root_vm = Vm::new(crate::SystemHost);
+        assert_eq!(
+            root_vm
+                .execute_wasm_i32(&function, &[])
+                .unwrap_err()
+                .wasm_trap(),
+            Some(crate::WasmTrap::Unreachable)
+        );
+        let root_program = root_vm
+            .programs
+            .find_shared(&function.module.program)
+            .expect("registered root Wasm program");
+        root_vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        assert!(root_vm.install_compiled_root_for_test(root_program, Value::NULL, 0));
+        assert_eq!(
+            root_vm
+                .execute_wasm_i32(&function, &[])
+                .unwrap_err()
+                .wasm_trap(),
+            Some(crate::WasmTrap::Unreachable)
+        );
+        let root_compiled = root_vm
+            .programs
+            .compiled(root_program)
+            .flatten()
+            .expect("experimental root compilation installed");
+        assert_eq!(root_compiled.native_entries(0), Some(1));
     }
 
     #[test]

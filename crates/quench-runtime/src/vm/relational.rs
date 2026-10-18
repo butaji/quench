@@ -445,11 +445,11 @@ fn compare_bigint_string(heap: &Heap, left: Value, right: Value) -> Option<Optio
     match (heap.get(left), heap.get(right)) {
         (Some(Cell::BigInt(bigint)), Some(Cell::String(string))) => Some(
             crate::bigint::parse_string(string.host_string())
-                .and_then(|right| Some(bigint.parse::<BigInt>().ok()?.cmp(&right))),
+                .map(|right| bigint.as_ref().cmp(&right)),
         ),
         (Some(Cell::String(string)), Some(Cell::BigInt(bigint))) => Some(
             crate::bigint::parse_string(string.host_string())
-                .and_then(|left| Some(left.cmp(&bigint.parse::<BigInt>().ok()?))),
+                .map(|left| left.cmp(bigint)),
         ),
         _ => None,
     }
@@ -462,11 +462,7 @@ fn compare_bigint_values(heap: &Heap, left: Value, right: Value) -> Option<Optio
         left.as_number(),
         right.as_number(),
     ) {
-        (Some(Cell::BigInt(left)), Some(Cell::BigInt(right)), _, _) => Some(Some(
-            left.parse::<BigInt>()
-                .ok()?
-                .cmp(&right.parse::<BigInt>().ok()?),
-        )),
+        (Some(Cell::BigInt(left)), Some(Cell::BigInt(right)), _, _) => Some(Some(left.cmp(right))),
         (Some(Cell::BigInt(bigint)), _, _, Some(number)) => {
             Some(bigint_number_ordering(bigint, number))
         }
@@ -477,11 +473,10 @@ fn compare_bigint_values(heap: &Heap, left: Value, right: Value) -> Option<Optio
     }
 }
 
-fn bigint_number_ordering(bigint: &str, number: f64) -> Option<Ordering> {
+fn bigint_number_ordering(integer: &BigInt, number: f64) -> Option<Ordering> {
     if number.is_nan() {
         return None;
     }
-    let integer = bigint.parse::<BigInt>().ok()?;
     if number == f64::INFINITY {
         return Some(Ordering::Less);
     }
@@ -490,7 +485,7 @@ fn bigint_number_ordering(bigint: &str, number: f64) -> Option<Ordering> {
     }
     let sign = integer.sign();
     if number == 0.0 {
-        return Some(integer.cmp(&BigInt::from(0)));
+        return Some(integer.cmp(&BigInt::ZERO));
     }
     if sign == Sign::Minus && number.is_sign_positive() {
         return Some(Ordering::Less);
@@ -498,12 +493,7 @@ fn bigint_number_ordering(bigint: &str, number: f64) -> Option<Ordering> {
     if sign != Sign::Minus && number.is_sign_negative() {
         return Some(Ordering::Greater);
     }
-    let magnitude = if sign == Sign::Minus {
-        -integer
-    } else {
-        integer
-    };
-    let ordering = compare_positive_bigint_number(magnitude, number.abs());
+    let ordering = compare_positive_bigint_number(BigInt::from(integer.magnitude().clone()), number.abs());
     Some(if number.is_sign_negative() {
         ordering.reverse()
     } else {
