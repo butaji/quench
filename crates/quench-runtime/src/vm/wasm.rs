@@ -2192,15 +2192,35 @@ mod tests {
         );
         assert_eq!(tier.native_entries(0), Some(2));
         assert_eq!(tier.direct_reference_entries(0), Some(1));
+        assert_eq!(
+            vm.invoke_wasm(&instance, 1, &[])
+                .unwrap_err()
+                .wasm_trap(),
+            Some(crate::WasmTrap::Unreachable)
+        );
+        assert_eq!(tier.native_entries(0), Some(3));
+        assert_eq!(tier.direct_reference_entries(0), Some(2));
 
-        // The root artifact only accelerates code. Every indirect call still
-        // resolves the current mutable table element before entering native code.
+        // The call-site cache has warmed with the exact table target. It must
+        // notice replacement before entering native code, then cache the new
+        // identity. Null still takes the authoritative resolver's trap path.
         let table = vm.wasm_table(&instance, 0).unwrap();
+        let original = vm.wasm_function(&instance, 0).unwrap();
+        assert_eq!(baseline.reference_call_cache_target(0), Some(original));
+        assert!(baseline.reference_cache_hits() > 0);
         let replacement = vm.wasm_function(&instance, 2).unwrap();
         vm.wasm_table_fill(table, 0, replacement, 1).unwrap();
         assert_eq!(
             vm.invoke_wasm(&instance, 1, &[]).unwrap(),
             Some(crate::WasmValue::I32(9))
+        );
+        assert_eq!(baseline.reference_call_cache_target(0), Some(replacement));
+        vm.wasm_table_fill(table, 0, Value::NULL, 1).unwrap();
+        assert_eq!(
+            vm.invoke_wasm(&instance, 1, &[])
+                .unwrap_err()
+                .wasm_trap(),
+            Some(crate::WasmTrap::UninitializedElement)
         );
     }
 
@@ -4233,6 +4253,114 @@ mod tests {
     }
 
     #[test]
+    fn compiled_wasm_loop_backedge_polls_execution_interrupt() {
+        struct StartHost(std::sync::mpsc::Sender<()>);
+        impl crate::Host for StartHost {
+            fn write_line(&mut self, _: &str) {}
+            fn clock_millis(&mut self) -> f64 {
+                0.0
+            }
+            fn call_wasm(
+                &mut self,
+                _: crate::WasmHostFunctionId,
+                _: &[crate::WasmHostValue],
+            ) -> Result<Vec<crate::WasmHostValue>, String> {
+                self.0.send(()).map_err(|error| error.to_string())?;
+                Ok(Vec::new())
+            }
+        }
+
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (finished_tx, finished_rx) = std::sync::mpsc::channel();
+        let interrupt = crate::ExecutionInterrupt::default();
+        let worker_interrupt = interrupt.clone();
+        let worker = std::thread::Builder::new()
+            .stack_size(crate::WORKER_STACK_SIZE)
+            .spawn(move || {
+                let mut vm = Vm::new_with_execution_interrupt(
+                    StartHost(entered_tx),
+                    worker_interrupt,
+                );
+                vm.set_execution_mode(crate::ExecutionMode::Compiled);
+                let signature = crate::WasmSignature {
+                    params: vec![],
+                    results: vec![],
+                };
+                let module = crate::Engine::lower_wasm_module_with_imports(
+                    "compiled-wasm-interrupt-backedge",
+                    [crate::WasmFunctionBody {
+                        ty: crate::WasmCallableType::Embedded(signature.clone()),
+                        locals: vec![],
+                        operators: [
+                            Operator::Call { function_index: 0 },
+                            Operator::Loop {
+                                blockty: wasmparser::BlockType::Empty,
+                            },
+                            Operator::Br { relative_depth: 0 },
+                            Operator::End,
+                            Operator::End,
+                        ]
+                        .into_iter()
+                        .map(Ok),
+                    }],
+                    &crate::WasmTypes::default(),
+                    &[],
+                    &[],
+                    &[],
+                    &[],
+                    &[],
+                    &[crate::WasmFunctionImport {
+                        exact: false,
+                        ty: crate::WasmCallableType::Embedded(signature.clone()),
+                        name: crate::WasmImportName {
+                            index: 0,
+                            module: "interrupt-test".into(),
+                            name: "started".into(),
+                        },
+                    }],
+                )
+                .unwrap();
+                let host_function = vm
+                    .create_wasm_host_function(
+                        "started",
+                        crate::heap::WasmHostTarget::Host(crate::WasmHostFunctionId(0)),
+                        signature,
+                    )
+                    .unwrap();
+                let host_root = vm.root(host_function);
+                let instance = vm
+                    .instantiate_wasm_module_with_imports(&module, &[host_root])
+                    .unwrap();
+                assert!(
+                    vm.invoke_wasm(&instance, 1, &[])
+                        .unwrap_err()
+                        .is_execution_terminated()
+                );
+                let program = vm
+                    .programs
+                    .find_shared(&module.program)
+                    .expect("registered interrupt-test module");
+                let compiled = vm
+                    .programs
+                    .compiled(program)
+                    .flatten()
+                    .expect("compiled loop remains installed");
+                assert_eq!(compiled.native_entries(0), Some(1));
+                finished_tx.send(()).unwrap();
+            })
+            .unwrap();
+
+        entered_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("native loop reached its import callout");
+        interrupt.request_termination();
+        finished_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("compiled loop observed termination at its backedge");
+        worker.join().unwrap();
+    }
+
+    #[test]
     fn unreachable_trap_unwinds_the_shared_activation() {
         let function = crate::Engine::lower_wasm_i32_function(
             "unreachable-unwind",
@@ -4304,6 +4432,93 @@ mod tests {
         assert_eq!(compiled.native_entries(0), Some(1));
         assert_eq!(compiled.native_entries(1), None);
         assert_eq!(compiled.native_entries(2), None);
+    }
+
+    #[test]
+    fn compiled_wasm_selective_tiering_promotes_a_hot_fast_call_known() {
+        let root = vec![
+            Operator::I32Const { value: 40 },
+            Operator::LocalSet { local_index: 0 },
+            Operator::I32Const { value: 0 },
+            Operator::LocalSet { local_index: 1 },
+            Operator::Loop {
+                blockty: wasmparser::BlockType::Empty,
+            },
+            Operator::LocalGet { local_index: 1 },
+            Operator::Call { function_index: 1 },
+            Operator::I32Add,
+            Operator::LocalSet { local_index: 1 },
+            Operator::LocalGet { local_index: 0 },
+            Operator::I32Const { value: -1 },
+            Operator::I32Add,
+            Operator::LocalTee { local_index: 0 },
+            Operator::BrIf { relative_depth: 0 },
+            Operator::End,
+            Operator::LocalGet { local_index: 1 },
+            Operator::End,
+        ];
+        let module = crate::Engine::lower_wasm_i32_module(
+            "compiled-wasm-selective-fast-call-known",
+            0,
+            [
+                (0, 2, true, root),
+                (
+                    0,
+                    0,
+                    true,
+                    vec![Operator::Call { function_index: 2 }, Operator::End],
+                ),
+                (
+                    0,
+                    0,
+                    true,
+                    vec![Operator::Call { function_index: 3 }, Operator::End],
+                ),
+                (0, 0, true, vec![Operator::I32Const { value: 42 }, Operator::End]),
+            ]
+            .into_iter()
+            .map(|(params, locals, result, ops)| (params, locals, result, ops.into_iter().map(Ok))),
+        )
+        .unwrap();
+        let root_code = &module.module.program.functions[0];
+        let root_instructions = root_code
+            .code
+            .iter()
+            .map(|packed| super::super::dispatch_fast::decoded_instruction(root_code, *packed))
+            .collect::<Vec<_>>();
+        assert!(
+            root_instructions
+                .iter()
+                .any(|instruction| instruction.op() == Op::CallKnown
+                    && instruction.known_function_index() == 1),
+            "root instructions: {root_instructions:?}"
+        );
+        let function = module.select_function(0).unwrap();
+        let mut vm = Vm::new(crate::SystemHost);
+        assert_eq!(vm.execute_wasm_i32(&function, &[]).unwrap(), Some(1_680));
+        let program = vm
+            .programs
+            .find_shared(&function.module.program)
+            .expect("registered Wasm program");
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        // Selective mode has no eager artifact. Recreate that state directly
+        // so this regression test does not depend on process environment.
+        vm.programs.set_compiled(program, None);
+
+        assert_eq!(vm.execute_wasm_i32(&function, &[]).unwrap(), Some(1_680));
+        assert!(matches!(vm.programs.compiled(program), Some(None)));
+        assert_eq!(
+            vm.programs.wasm_tier_entry_count(program, 1),
+            Some(super::super::program_store::WASM_JIT_PROMOTION_ENTRIES)
+        );
+        assert_eq!(vm.programs.wasm_tier_attempted(program, 1), Some(true));
+        let tier = vm
+            .programs
+            .wasm_tier(program, 1)
+            .expect("hot `CallKnown` target was promoted");
+        // The threshold call enters native code, and the remaining calls in
+        // the same loop are routed back through the general native path.
+        assert_eq!(tier.native_entries(1), Some(9));
     }
 
     #[test]
