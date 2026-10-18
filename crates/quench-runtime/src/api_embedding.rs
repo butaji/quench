@@ -181,6 +181,18 @@ impl<H: Host> Runtime<H> {
         result.map_err(|error| self.retain_error(error))
     }
 
+    /// `set_property_rooted` with the receiver `object` and a string key the host spells,
+    /// without allocating the key.
+    pub fn set_named_property_rooted(
+        &mut self,
+        object: RootId,
+        name: &str,
+        value: RootId,
+    ) -> Result<bool, RootedError> {
+        let result = self.vm.set_named_property_rooted(object, name, value);
+        result.map_err(|error| self.retain_error(error))
+    }
+
     /// Apply shared subtraction, retaining guest coercion results and exceptions.
     pub fn subtract_rooted(&mut self, left: RootId, right: RootId) -> Result<RootId, RootedError> {
         let result = self.vm.embedding_subtract(left, right);
