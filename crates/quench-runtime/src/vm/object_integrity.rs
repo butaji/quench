@@ -77,6 +77,7 @@ impl<H: Host> Vm<H> {
                 });
             }
             let property_key = if matches!(vm.heap.get(key), Some(Cell::Symbol(_))) {
+                vm.materialize_watched_lazy_member(p, target, PropertyKey::symbol(key))?;
                 PropertyKey::symbol(key)
             } else {
                 let Some(Cell::String(key)) = vm.heap.get(key).cloned() else {
