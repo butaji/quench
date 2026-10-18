@@ -2542,20 +2542,28 @@ fn load_with_resolution(
             set(context, module, "loaded", loaded)?;
             return Ok(exports);
         }
-        let file_text = match std::fs::read(filename) {
+        let file_text: std::borrow::Cow<'static, str> = match std::fs::read(filename) {
             Ok(bytes) => String::from_utf8(bytes)
-                .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned()),
+                .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned())
+                .into(),
             Err(error) => crate::node_sources::source(filename, &context.host_mut().node_library_root)
-                .ok_or_else(|| RootedError::host(error.to_string()))?.to_owned(),
+                .ok_or_else(|| RootedError::host(error.to_string()))?
+                .into(),
         };
-        let file_text = match library_relative {
+        let file_text: std::borrow::Cow<'static, str> = match library_relative {
             Some(path) if path == Path::new("lib/internal/child_process.js") =>
-                super::policy_projection::project(&file_text, &["setupChannel", "kChannelHandle"]).map_err(RootedError::host)?,
+                super::policy_projection::project(&file_text, &["setupChannel", "kChannelHandle"]).map_err(RootedError::host)?.into(),
             Some(path) if path == Path::new("lib/net.js") =>
-                super::policy_projection::project(&file_text, &["BoundSocket"]).map_err(RootedError::host)?,
+                super::policy_projection::project(&file_text, &["BoundSocket"]).map_err(RootedError::host)?.into(),
             Some(path) if path == Path::new("lib/child_process.js") =>
-                super::policy_projection::project(&file_text, &["_forkChild"]).map_err(RootedError::host)?,
+                super::policy_projection::project(&file_text, &["_forkChild"]).map_err(RootedError::host)?.into(),
             _ => file_text,
+        };
+        // An embedded library file is static text the compiled program can retain as is;
+        // a projected one is new text.
+        let embedded = match file_text {
+            std::borrow::Cow::Borrowed(text) => Some(script_body(text)),
+            std::borrow::Cow::Owned(_) => None,
         };
         let text = file_text.strip_prefix('\u{feff}').unwrap_or(&file_text);
         match filename
@@ -2572,11 +2580,7 @@ fn load_with_resolution(
                 ));
             }
             _ => {
-                let text = if text.starts_with("#!") {
-                    text.find('\n').map_or("", |end| &text[end..])
-                } else {
-                    text
-                };
+                let text = script_body(text);
                 let primordial_seed = if is_primordials {
                     Some(context.object_rooted()?)
                 } else {
@@ -2639,15 +2643,29 @@ const getLinkedBinding = () => ({});
                 } else {
                     format!("{WRAPPER_PREFIX}{internal_binding}")
                 };
-                // Sized exactly: a formatted string grows by doubling, copying the module text each time.
-                let wrapper_source = [prefix.as_str(), &text, WRAPPER_SUFFIX].concat();
-                // The wrapper holds the text now, so the file is released before compiling it.
-                drop(text);
-                drop(file_text);
-                let wrapper = evaluate_wrapper(context, &prefix, &wrapper_source, &key)?;
-                // The compiled program keeps its own source; the module body runs inside this
-                // call, so the wrapper is released before it.
-                drop(wrapper_source);
+                if parent.is_none() {
+                    // The entry's compilation is the start-up peak: only the parser's and
+                    // compiler's pages, not the bootstrap's, need be resident across it.
+                    crate::host::resident_pages::release_read_only_pages();
+                }
+                let wrapper = match embedded.filter(|_| !is_primordials) {
+                    // The program retains the embedded text itself, not a wrapped copy.
+                    Some(body) => context
+                        .evaluate_specialized_static_body_rooted(&prefix, body, WRAPPER_SUFFIX, &key)?,
+                    None => {
+                        // Sized exactly: a formatted string grows by doubling, copying the module text each time.
+                        let wrapper_source = [prefix.as_str(), &text, WRAPPER_SUFFIX].concat();
+                        // The wrapper holds the text now, so the file is released before
+                        // compiling it.
+                        drop(text);
+                        drop(file_text);
+                        let wrapper = evaluate_wrapper(context, &prefix, &wrapper_source, &key)?;
+                        // The compiled program keeps its own source; the module body runs
+                        // inside this call, so the wrapper is released before it.
+                        drop(wrapper_source);
+                        wrapper
+                    }
+                };
                 if parent.is_none() {
                     crate::host::resident_pages::release_read_only_pages();
                     crate::host::resident_pages::quench_entry_compiled();
@@ -2731,11 +2749,20 @@ const getLinkedBinding = () => ({});
     result
 }
 
+/// A CommonJS module's executed text: its file without a byte-order mark or a leading
+/// `#!` line, which keeps the line terminator so positions stay on their lines.
+fn script_body(text: &str) -> &str {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    if text.starts_with("#!") {
+        text.find('\n').map_or("", |end| &text[end..])
+    } else {
+        text
+    }
+}
+
 fn evaluate_wrapper(context: &mut Context<'_>, prefix: &str, source: &str, filename: &str) -> Result<RootId, RootedError> {
-    let line_offset = u32::try_from(prefix.bytes().filter(|byte| *byte == b'\n').count())
-        .map_err(|_| RootedError::host("CommonJS wrapper line origin exceeds compiler positions"))?;
-    let column_offset = u32::try_from(prefix.rsplit('\n').next().unwrap_or("").encode_utf16().count())
-        .map_err(|_| RootedError::host("CommonJS wrapper column origin exceeds compiler positions"))?;
+    let (line_offset, column_offset) = quench_runtime::wrapper_origin(prefix)
+        .ok_or_else(|| RootedError::host("CommonJS wrapper origin exceeds compiler positions"))?;
     context.evaluate_specialized_script_with_origin_rooted(source, filename, line_offset, column_offset)
 }
 
@@ -2945,10 +2972,8 @@ pub(crate) fn node_library_module_in_realm(
         node_internal_binding_source(),
     );
     let wrapper = format!("{prefix}{source}\n}})");
-    let line_offset = u32::try_from(prefix.bytes().filter(|byte| *byte == b'\n').count())
-        .map_err(|_| RootedError::host("realm wrapper line origin exceeds compiler positions"))?;
-    let column_offset = u32::try_from(prefix.rsplit('\n').next().unwrap_or("").encode_utf16().count())
-        .map_err(|_| RootedError::host("realm wrapper column origin exceeds compiler positions"))?;
+    let (line_offset, column_offset) = quench_runtime::wrapper_origin(prefix.as_str())
+        .ok_or_else(|| RootedError::host("realm wrapper origin exceeds compiler positions"))?;
     let shared = context.host_mut().shared_state();
     let cached = shared.borrow().realm_module_programs.get(&path)
         .filter(|cached| cached.source.as_ref() == wrapper)

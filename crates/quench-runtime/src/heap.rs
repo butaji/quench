@@ -53,11 +53,6 @@ pub(crate) const FULL_COLLECTION_ALLOCATION_BOUND: usize =
 /// allocation toward the next collection.
 #[cfg(not(feature = "gc-tuning"))]
 const PAYLOAD_BYTES_PER_ALLOCATION: usize = 64;
-/// Diagnostic builds read the unit from `QUENCH_GC_PAYLOAD_UNIT` to measure it.
-#[cfg(feature = "gc-tuning")]
-static PAYLOAD_BYTES_PER_ALLOCATION_TUNED: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
-    std::env::var("QUENCH_GC_PAYLOAD_UNIT").ok().and_then(|v| v.parse().ok()).unwrap_or(64)
-});
 /// Backing-store bytes (ArrayBuffer contents) allocated since the last collection that
 /// make the next one due, at least; the budget grows to the live external bytes a
 /// collection leaves. Buffers die only with their cells, so streaming code that drops
@@ -66,6 +61,11 @@ static PAYLOAD_BYTES_PER_ALLOCATION_TUNED: std::sync::LazyLock<usize> = std::syn
 /// SaltyAom video route (64 KiB chunks, Linux x86_64, 4 vCPU) one collection per
 /// 64 KiB buffer cut peak RSS 112 -> 47 MB and throughput by two thirds.
 const MINIMUM_EXTERNAL_COLLECTION_BUDGET: usize = 8 << 20;
+/// Diagnostic builds read the unit from `QUENCH_GC_PAYLOAD_UNIT` to measure it.
+#[cfg(feature = "gc-tuning")]
+static PAYLOAD_BYTES_PER_ALLOCATION_TUNED: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
+    std::env::var("QUENCH_GC_PAYLOAD_UNIT").ok().and_then(|v| v.parse().ok()).unwrap_or(64)
+});
 const PARALLEL_MARK_MINIMUM_SLOTS: usize = 50_000;
 const PARALLEL_MARK_MAX_THREADS: usize = 4;
 // Paired Splay screens on the 4-vCPU Linux host favored the collector thread;
