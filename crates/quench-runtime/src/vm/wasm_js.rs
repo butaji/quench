@@ -876,15 +876,17 @@ impl<H: Host> Vm<H> {
             .position(|atom| atom == "HEAPU8")?
             .try_into()
             .ok()?;
-        let binding = metadata.name_bindings.get(view_atom)?;
-        if binding.with_depth != 0
-            || binding.kind != crate::bytecode::LexicalBindingKind::Mutable
-        {
+        // The exact source reads one captured name, HEAPU8, so its one capture load names the
+        // binding's depth and slot; name bindings are kept only for functions that resolve
+        // names dynamically.
+        let mut captures = metadata
+            .instructions()
+            .filter(|instruction| instruction.op() == crate::bytecode::Op::LoadCapture);
+        let load = captures.next()?;
+        if captures.next().is_some() {
             return None;
         }
-        let crate::bytecode::EvalBindingLocation::Capture { depth, slot } = binding.location else {
-            return None;
-        };
+        let (depth, slot) = (load.capture_depth(), load.capture_slot());
         let owner_environment = self.environment_capture_env(*env, false, depth)?;
 
         // Verify that the statically resolved binding still names this slot in a
