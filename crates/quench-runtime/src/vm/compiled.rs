@@ -292,13 +292,11 @@ const TRAPS: [crate::WasmTrap; 6] = [
 
 const JIT_ROOT_ENV: &str = "QUENCH_WASM_JIT_ROOT";
 const JIT_ROOT_OPT_LEVEL_ENV: &str = "QUENCH_WASM_JIT_ROOT_OPT_LEVEL";
+const JIT_WASM_SELECTIVE_ENV: &str = "QUENCH_WASM_JIT_SELECTIVE";
 const MAX_JIT_ROOT_FUNCTIONS: usize = 128;
 const MAX_JIT_ROOT_BYTECODES_PER_FUNCTION: usize = 80_000;
 const MAX_JIT_ROOT_CODE_BYTES: usize = 2 * 1024 * 1024;
-/// Keep unconditional trap lowering from admitting very large functions
-/// whose unreachable regions can make native code much larger than the
-/// useful live path. Root experiments have their own larger explicit cap.
-const MAX_JIT_UNREACHABLE_BYTECODES: usize = 2_048;
+const MAX_JIT_TIER_BYTECODES_PER_FUNCTION: usize = 2_048;
 
 fn jit_root_override() -> Result<Option<usize>, ()> {
     let Some(root) = std::env::var_os(JIT_ROOT_ENV) else {
@@ -309,6 +307,11 @@ fn jit_root_override() -> Result<Option<usize>, ()> {
         .parse::<usize>()
         .map(Some)
         .map_err(|_| ())
+}
+
+fn jit_wasm_selective_enabled() -> bool {
+    std::env::var(JIT_WASM_SELECTIVE_ENV)
+        .is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
 }
 
 fn jit_root_opt_level(root: Option<usize>) -> Result<&'static str, ()> {
@@ -663,15 +666,20 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
                     *target_program == program && *target_env == context.env
                 })
                 .and_then(|(_, function, _)| {
-                    let compiled = vm.programs.compiled(program)??;
+                    let compiled = vm
+                        .programs
+                        .compiled(program)
+                        .flatten()
+                        .filter(|compiled| compiled.has_function(function as usize))
+                        .or_else(|| vm.programs.wasm_tier_containing(program, function))?;
                     let native = compiled.functions.get(function as usize)?.as_ref()?;
                     if native.params.as_slice() != params.as_slice() || native.result != result_type
                     {
                         return None;
                     }
                     let entry = native.entry;
-                    let memory = match compiled.memory_slot {
-                        None => Some((0, 0)),
+                    let (memory, memory_binding, guard) = match compiled.memory_slot {
+                        None => Some(((0, 0), Value::UNDEFINED, None)),
                         Some(slot) => {
                             let binding = vm.heap.environment_slot(context.env, slot as usize)?;
                             if binding != context.memory {
@@ -689,10 +697,27 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
                             {
                                 return None;
                             }
-                            Some((base as u64, length as u64))
+                            Some(((base as u64, length as u64), binding, guard))
                         }
                     }?;
-                    Some((compiled, function as usize, entry, memory))
+                    let mut globals: smallvec::SmallVec<[*mut Value; 8]> =
+                        smallvec::SmallVec::new();
+                    for slot in &compiled.globals {
+                        let binding = vm.heap.environment_slot(context.env, *slot as usize)?;
+                        match vm.heap.get_mut(binding)? {
+                            Cell::WasmGlobal { value, .. } => globals.push(value),
+                            _ => return None,
+                        }
+                    }
+                    Some((
+                        compiled,
+                        function as usize,
+                        entry,
+                        memory,
+                        memory_binding,
+                        guard,
+                        globals,
+                    ))
                 });
             (
                 callee,
@@ -702,10 +727,31 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
                 direct_entry,
             )
         };
-        if let Some((compiled, function, entry, (base, length))) = direct_entry {
+        if let Some((compiled, function, entry, (base, length), memory_binding, guard, globals)) =
+            direct_entry
+        {
             compiled.note_direct_reference_entry(function);
             let mut nested = context.nested_entry();
+            nested.table = compiled.table.as_ptr();
+            nested.globals = globals.as_ptr();
+            nested.memory = memory_binding;
             nested.memory_length = length;
+            let (guard_start, guard_end) = guard.map_or((0, 0), |(start, size)| {
+                (start as usize, start as usize + size)
+            });
+            nested.guard_start = guard_start;
+            nested.guard_end = guard_end;
+            nested.call_reference_diagnostic = compiled.diagnostics.as_ref().map_or(0, |_| {
+                diagnostic_reference_callout::<H> as DiagnosticReferenceCallout as usize
+            });
+            nested.reference_call_sites = compiled
+                .diagnostics
+                .as_ref()
+                .map_or(std::ptr::null(), |stats| stats.reference_call_sites.as_ptr());
+            nested.reference_call_site_count = compiled
+                .diagnostics
+                .as_ref()
+                .map_or(0, |stats| stats.reference_call_sites.len());
             // SAFETY: the table/signature resolver ran first; same program,
             // exact instance environment, and exact scalar signature were
             // checked above. The caller's raw argument/result buffers have
@@ -987,6 +1033,10 @@ impl CompiledProgram {
 
     pub(super) fn has_function(&self, function: usize) -> bool {
         self.functions.get(function).is_some_and(Option::is_some)
+    }
+
+    pub(super) fn mapped_bytes(&self) -> usize {
+        self._code.length
     }
 
     #[cfg(test)]
@@ -1784,10 +1834,7 @@ impl<H: Host> Analysis<'_, H> {
                 };
                 set(state, instruction.result_register(), Slot::Value(kind))
             }
-            Op::WasmUnreachable
-                if self.experimental_root_compilation
-                    || function.code.len() <= MAX_JIT_UNREACHABLE_BYTECODES =>
-            {
+            Op::WasmUnreachable if self.experimental_root_compilation => {
                 Some(())
             }
             Op::Return => match result {
@@ -4543,34 +4590,77 @@ impl<H: Host> Vm<H> {
         if self.execution_mode != ExecutionMode::Compiled {
             return None;
         }
-        let compiled = match self.programs.compiled(program) {
-            Some(compiled) => compiled?,
+        let baseline = match self.programs.compiled(program) {
+            Some(compiled) => compiled,
             None => {
-                let diagnose = jit_diagnostics_enabled()
-                    && self
-                        .programs
-                        .get(program)
-                        .is_some_and(|code| code.kind == crate::bytecode::ProgramKind::Wasm);
-                let started = diagnose.then(std::time::Instant::now);
-                let compiled = self.compile_program(program, env).map(Rc::new);
-                if diagnose && compiled.is_none() {
-                    let total_functions = self
-                        .programs
-                        .get(program)
-                        .map_or(0, |code| code.functions.len());
-                    eprintln!(
-                        "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compile_failed\":true,\"total_functions\":{},\"compile_ns\":{}}}",
-                        program.raw(),
-                        total_functions,
-                        started
-                            .expect("diagnostic timer started")
-                            .elapsed()
-                            .as_nanos(),
-                    );
+                if jit_wasm_selective_enabled()
+                    && self.programs.residual(program).is_some_and(|code| {
+                        code.kind == crate::bytecode::ProgramKind::Wasm
+                    })
+                {
+                    // Selective mode starts cold Wasm functions in the
+                    // interpreter. Hot roots are promoted after the entry
+                    // gate below, avoiding module-wide cold compilation.
+                    self.programs.set_compiled(program, None);
+                    None
+                } else {
+                    let diagnose = jit_diagnostics_enabled()
+                        && self
+                            .programs
+                            .get(program)
+                            .is_some_and(|code| code.kind == crate::bytecode::ProgramKind::Wasm);
+                    let started = diagnose.then(std::time::Instant::now);
+                    let compiled = self.compile_program(program, env).map(Rc::new);
+                    if diagnose && compiled.is_none() {
+                        let total_functions = self
+                            .programs
+                            .get(program)
+                            .map_or(0, |code| code.functions.len());
+                        eprintln!(
+                            "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compile_failed\":true,\"total_functions\":{},\"compile_ns\":{}}}",
+                            program.raw(),
+                            total_functions,
+                            started
+                                .expect("diagnostic timer started")
+                                .elapsed()
+                                .as_nanos(),
+                        );
+                    }
+                    self.programs.set_compiled(program, compiled.clone());
+                    compiled
                 }
-                self.programs.set_compiled(program, compiled.clone());
-                compiled?
             }
+        };
+        let mut compiled = baseline
+            .filter(|compiled| compiled.has_function(id as usize))
+            .or_else(|| self.programs.wasm_tier_containing(program, id));
+        if compiled.is_none()
+            && self.programs.residual(program).is_some_and(|code| {
+                code.kind == crate::bytecode::ProgramKind::Wasm
+                    && code.functions.get(id as usize).is_some_and(|function| {
+                        function.code.len() <= MAX_JIT_TIER_BYTECODES_PER_FUNCTION
+                    })
+            })
+            && self.programs.note_wasm_tier_entry(program, id)
+        {
+            let tier = self
+                .compile_program_with_diagnostics_and_root(
+                    program,
+                    env,
+                    jit_diagnostics_enabled(),
+                    Some(id as usize),
+                )
+                .map(Rc::new);
+            if let Some(tier) = tier
+                && self.programs.install_wasm_tier(program, id, tier)
+            {
+                compiled = self.programs.wasm_tier(program, id);
+            }
+        }
+        let Some(compiled) = compiled else {
+            self.programs
+                .has_compiled_function_or_note_fallback(program, id as usize);
+            return None;
         };
         let result = (|| {
             let function = compiled.functions.get(id as usize)?.as_ref()?;
@@ -4791,6 +4881,34 @@ impl<H: Host> Vm<H> {
             .programs
             .constant(program, VOID_RESULT_CONSTANT)
             .ok_or_else(|| JsError::validation("missing Wasm void constant".into()))?;
+        let defined = self
+            .programs
+            .wasm_signatures(program)
+            .and_then(|signatures| signatures.defined_index(function));
+        if let Some(defined) = defined {
+            let active_program = self.replace_active_program(program);
+            let compiled = self.run_compiled(program, env, defined, &values);
+            self.set_active_program(active_program);
+            if let Some(compiled) = compiled {
+                let result = compiled?;
+                let bits = if let Some(ty) = signature.results.first() {
+                    match self.decode_wasm_value(result, *ty)?.bits() {
+                        Some(crate::wasm::ScalarBits::Bits32(bits)) => u64::from(bits),
+                        Some(crate::wasm::ScalarBits::Bits64(bits)) => bits,
+                        _ => {
+                            return Err(JsError::validation(
+                                "non-scalar Wasm import result".into(),
+                            ));
+                        }
+                    }
+                } else {
+                    0
+                };
+                // SAFETY: the caller passes a result word.
+                unsafe { *out = bits };
+                return Ok(());
+            }
+        }
         let result = self.call_value(&code, callee, receiver, &values)?;
         if let Some(ty) = signature.results.first() {
             let bits = match self.decode_wasm_value(result, *ty)?.bits() {
