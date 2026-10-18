@@ -387,6 +387,9 @@ struct SuiteRecord {
     /// qualification measurements.
     #[serde(default)]
     jit_diagnostics: bool,
+    /// Experimental bounded root compilation; never qualification mode.
+    #[serde(default)]
+    jit_wasm_root: Option<u32>,
     created_unix_ns: u128,
     rounds_requested: usize,
     timeout_ms: u64,
@@ -534,6 +537,7 @@ struct Options {
     suite: Suite,
     jit_mode: JitMode,
     jit_diagnostics: bool,
+    jit_wasm_root: Option<u32>,
     fixture: Option<String>,
     fixtures: Option<Vec<String>>,
     all: bool,
@@ -605,6 +609,7 @@ fn main() {
         suite,
         jit_mode: options.jit_mode,
         jit_diagnostics: options.jit_diagnostics,
+        jit_wasm_root: options.jit_wasm_root,
         created_unix_ns: now_ns(),
         rounds_requested: options.rounds,
         timeout_ms: options.timeout_ms,
@@ -685,6 +690,7 @@ fn main() {
     report.qualification_ready = complete
         && options.rounds >= MIN_QUALIFYING_ROUNDS
         && !options.jit_diagnostics
+        && options.jit_wasm_root.is_none()
         && report
             .fixtures
             .values()
@@ -774,6 +780,7 @@ fn validate_resume(saved: &SuiteRecord, expected: &SuiteRecord, files: &[PathBuf
         && saved.suite == expected.suite
         && saved.jit_mode == expected.jit_mode
         && saved.jit_diagnostics == expected.jit_diagnostics
+        && saved.jit_wasm_root == expected.jit_wasm_root
         && saved.rounds_requested == expected.rounds_requested
         && saved.timeout_ms == expected.timeout_ms
         && saved.source_revision == expected.source_revision
@@ -851,6 +858,7 @@ fn parse_options() -> Options {
         suite: Suite::V8V7,
         jit_mode: JitMode::NoJit,
         jit_diagnostics: false,
+        jit_wasm_root: None,
         fixture: None,
         fixtures: None,
         all: first == "--all",
@@ -894,6 +902,12 @@ fn parse_options() -> Options {
             }
             "--jit" => options.jit_mode = JitMode::Jit,
             "--jit-diagnostics" => options.jit_diagnostics = true,
+            "--jit-wasm-root" => {
+                options.jit_wasm_root = Some(
+                    u32::try_from(required_number(&mut args, "--jit-wasm-root"))
+                        .unwrap_or_else(|_| usage("--jit-wasm-root is too large")),
+                )
+            }
             "--node" => options.node = required_path(&mut args, "--node"),
             "--bun" => options.bun = required_path(&mut args, "--bun"),
             "--qjs" => options.qjs = required_path(&mut args, "--qjs"),
@@ -951,6 +965,11 @@ fn parse_options() -> Options {
     }
     if options.jit_diagnostics && options.jit_mode != JitMode::Jit {
         usage("--jit-diagnostics requires --suite jetstream3 --jit");
+    }
+    if options.jit_wasm_root.is_some()
+        && (options.jit_mode != JitMode::Jit || options.suite != Suite::JetStream3)
+    {
+        usage("--jit-wasm-root requires --suite jetstream3 --jit");
     }
     if options.quench_peer.is_some() && !options.fixed_work {
         usage("--quench-peer requires --fixed-work");
@@ -1152,6 +1171,9 @@ fn quench_engine(options: &Options) -> EngineSpec {
     if options.jit_diagnostics {
         environment.insert("QUENCH_WASM_JIT_STATS".into(), "1".into());
     }
+    if let Some(root) = options.jit_wasm_root {
+        environment.insert("QUENCH_WASM_JIT_ROOT".into(), root.to_string());
+    }
     let mut quench = spec("quench", &options.quench, argv, environment);
     let execution_tier = if jit_enabled { "JIT" } else { "interpreter" };
     quench.version = format!(
@@ -1167,6 +1189,12 @@ fn quench_engine(options: &Options) -> EngineSpec {
         } else {
             "the measured Quench process is launched with --jit".into()
         };
+        if let Some(root) = options.jit_wasm_root {
+            quench.jit_proof = format!(
+                "{}; bounded experimental root compilation selected residual function {root} via QUENCH_WASM_JIT_ROOT; not qualification mode",
+                quench.jit_proof
+            );
+        }
     } else {
         quench.jit_proof =
             "the measured shared VM executes interpreter bytecode; no guest JIT path is enabled"
@@ -2575,7 +2603,7 @@ pub(crate) fn now_ns() -> u128 {
 
 fn usage(message: &str) -> ! {
     eprintln!(
-        "{message}\nusage: quench-bench <fixture.js>|--all|--fixtures NAME,NAME,... [--suite v8-v7|jetstream3] [--jit] [--jit-diagnostics] [--fixed-work] [--quench PATH] [--quench-peer PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--checkpoint PATH|--resume PATH] [--out PATH]\n       quench-bench --preflight-only [--suite v8-v7|jetstream3] [--jit] [--jit-diagnostics] [engine options]\n       quench-bench --analyze REPORT [--out JSON]"
+        "{message}\nusage: quench-bench <fixture.js>|--all|--fixtures NAME,NAME,... [--suite v8-v7|jetstream3] [--jit] [--jit-diagnostics] [--jit-wasm-root ID] [--fixed-work] [--quench PATH] [--quench-peer PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--checkpoint PATH|--resume PATH] [--out PATH]\n       quench-bench --preflight-only [--suite v8-v7|jetstream3] [--jit] [--jit-diagnostics] [--jit-wasm-root ID] [engine options]\n       quench-bench --analyze REPORT [--out JSON]"
     );
     std::process::exit(2)
 }
@@ -2587,7 +2615,7 @@ fn fail(message: &str) -> ! {
 
 #[cfg(test)]
 mod fixture_selection_tests {
-    use super::{fixture_selection_is_valid, Suite};
+    use super::{Suite, fixture_selection_is_valid};
 
     #[test]
     fn jetstream_subset_accepts_only_unique_pinned_lane_fixtures() {
@@ -2622,8 +2650,8 @@ mod fixture_selection_tests {
 #[cfg(test)]
 mod fixed_work_tests {
     use super::{
-        contention, fixed_work_marker, fixed_work_runner, parse_cpu_consumers, parse_load_average,
-        FixedWorkPlan, HostSnapshot, LoadAverage, Sample, FIXED_WORK_PLANS, FIXTURES,
+        FIXED_WORK_PLANS, FIXTURES, FixedWorkPlan, HostSnapshot, LoadAverage, Sample, contention,
+        fixed_work_marker, fixed_work_runner, parse_cpu_consumers, parse_load_average,
     };
     use std::collections::BTreeMap;
 
@@ -2835,8 +2863,8 @@ mod fixed_work_tests {
 #[cfg(all(test, unix, not(target_os = "macos")))]
 mod tests {
     use super::{
-        artifact, fixture_artifact, now_ns, peak_rss_bytes, read_checkpoint, validate_resume,
-        wait_child, write_checkpoint, CorpusRecord, FixtureRecord, HostRecord, SuiteRecord,
+        CorpusRecord, FixtureRecord, HostRecord, SuiteRecord, artifact, fixture_artifact, now_ns,
+        peak_rss_bytes, read_checkpoint, validate_resume, wait_child, write_checkpoint,
     };
     use std::process::Command;
     use std::{
@@ -2897,6 +2925,7 @@ mod tests {
             suite: super::Suite::V8V7,
             jit_mode: super::JitMode::NoJit,
             jit_diagnostics: false,
+            jit_wasm_root: None,
             created_unix_ns: now_ns(),
             rounds_requested: 11,
             timeout_ms: 300_000,

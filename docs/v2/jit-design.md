@@ -193,7 +193,41 @@ and produced equal output, but no fixture passed the Score-and-RSS rule:
 gcc-loops and quicksort retain their RSS wins but remain far behind on Score.
 The direct-entry optimization does not materially close the TSF score or RSS
 gap. The next target is HashSet's interpreted `main`: its compiled callees
-receive 49 million `CallKnown` entries across the benchmark. Test a low-overhead
-known-callee entry path or a narrowly admitted caller closure under a strict
-native-byte cap; do not enable `WasmUnreachable` globally, since the prior
-experiment expanded TSF code about 52× and increased both compile time and RSS.
+receive 49 million `CallKnown` entries across the benchmark. The bounded root
+compilation screen below tests that caller path; `WasmUnreachable` remains
+opt-in because the prior global experiment expanded TSF code about 52× and
+increased both compile time and RSS.
+
+## Bounded HashSet root compilation
+
+Commit `ea7c76c6c327f76f18376b75ab278c22ce7c585e` adds an explicitly selected,
+bounded Wasm root mode. It compiles the transitive `CallKnown` closure for the
+requested residual function and permits `WasmUnreachable` only in that mode,
+lowering it to the ordinary Wasm trap. Known callees outside the native plan
+use the existing VM callout and may re-enter another compiled function. The
+callout converts defined-local IDs to absolute Wasm function indices; a
+regression covers an imported function before the defined root. Multi-result
+fallbacks are rejected because the current callout ABI returns at most one
+value. The direct-entry raw argument path also marshals directly from the
+caller register window into owned Wasm words before native entry.
+
+The root mode has limits of 32 selected functions, 80,000 bytecodes per
+function, and 2 MiB emitted code. It is opt-in with
+`--jit-wasm-root <residual-function-id>` and never marks a report eligible for
+qualification. The one-round HashSet diagnostic confirms root 3 entered native
+code (50 times); functions 22 and 23 also entered. It compiled 22 of 35
+functions, emitted 1.30 MiB (1,357,938 bytes) of code, and took 1.28 seconds
+to compile.
+
+The clean, uninstrumented one-round screen is in
+`evidence/jit-jetstream3-wasm-2026-10-18/root3-bounded-experiment/`. It passed
+validation and output equality, but measured Quench at 54.45 Score / 305.3 MiB
+RSS, Bun 1.4.3 at 207.01 / 50.6 MiB, and Node 26.12.0 at 202.50 / 110.9 MiB.
+The score rises relative to the earlier HashSet JIT result, but this is an
+unpaired one-round screen; the RSS cost grows by about 190 MiB, consistent with
+a large compilation-footprint cost. It loses both metrics against both peers,
+so it was not expanded to 11 rounds. This Futamura-style specialization is
+useful for pinpointing the hot caller, but this Cranelift admission strategy is
+not suitable for the requested score-and-RSS win. Lower-memory baseline code
+generation or reducing Quench's JIT-mode base footprint is the next research
+direction.
