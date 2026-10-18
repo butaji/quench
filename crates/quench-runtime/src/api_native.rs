@@ -1557,6 +1557,18 @@ impl<'a, H: Host> NativeContext<'a, H> {
         result.map_err(|error| self.error(error))
     }
 
+    /// `set_property_rooted` with the receiver `object` and a string key the host spells,
+    /// without allocating the key.
+    pub fn set_named_property_rooted(
+        &mut self,
+        object: RootId,
+        name: &str,
+        value: RootId,
+    ) -> Result<bool, RootedError> {
+        let result = self.vm.set_named_property_rooted(object, name, value);
+        result.map_err(|error| self.error(error))
+    }
+
     pub fn define_data_property_rooted(
         &mut self,
         object: RootId,

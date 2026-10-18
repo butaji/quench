@@ -1332,6 +1332,24 @@ impl<H: Host> Vm<H> {
         Ok(accepted.as_bool().expect("Reflect.set returns a boolean"))
     }
 
+    /// `Reflect.set(object, name, value)` for a string key the host spells, without
+    /// allocating the key: the same `[[Set]]` that `Reflect.set` makes after `ToPropertyKey`.
+    pub(crate) fn set_named_property_rooted(
+        &mut self,
+        object: RootId,
+        name: &str,
+        value: RootId,
+    ) -> Result<bool, JsError> {
+        let object = self.embedding_value(object)?;
+        let value = self.embedding_value(value)?;
+        let program = self.embedding_program()?;
+        if !self.is_object_like(object) {
+            return Err(self.type_error(&program, "Reflect target is not an object".into()));
+        }
+        let atom = self.intern_atom(name);
+        self.set_property_with_receiver(&program, object, atom, value, object)
+    }
+
     pub(crate) fn define_data_property_rooted(
         &mut self,
         object: RootId,
