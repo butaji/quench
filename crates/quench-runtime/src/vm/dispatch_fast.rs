@@ -1528,7 +1528,7 @@ lane_handler! {
 
 lane_handler! {
     /// `GetField` of a register or `this` at a site past one shape
-    /// (`Vm::field_site_polymorphic`): its inline entries; any other read takes
+    /// (`Vm::field_site_polymorphic`): its megamorphic entries; any other read takes
     /// `lane_get_field`.
     fn lane_get_field_polymorphic<THIS: bool>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
