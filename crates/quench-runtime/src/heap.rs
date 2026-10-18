@@ -21,6 +21,7 @@ mod records;
 mod root;
 mod slots;
 mod thin_slice;
+pub(crate) use thin_slice::ThinBoxSlice;
 mod weak;
 pub(crate) use cell::*;
 pub(crate) use buffer_bytes::{BufferBytes,BufferRead};
@@ -725,7 +726,7 @@ impl Heap {
     }
 
     /// Every live legacy cell, without needing `&mut` (census and diagnostics).
-    #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+    #[cfg(feature = "profile-gc-time")]
     pub(crate) fn for_each_live_cell(&self, mut visit: impl FnMut(&Cell)) {
         for slot in self.slots.iter() {
             if let Some(cell) = &slot.cell {
@@ -2634,11 +2635,7 @@ impl Heap {
             } => {
                 work.push(*parent);
                 work.extend(slots.roots());
-                let crate::heap::EnvironmentScope {
-                    dynamic_bindings,
-                    with_objects,
-                    ..
-                } = &**scope;
+                let (dynamic_bindings, with_objects) = (scope.dynamic_bindings(), scope.with_objects());
                 match dynamic_bindings {
                     EnvironmentBindings::Owned(bindings) => {
                         work.extend(bindings.iter().map(|(_, value)| *value));
@@ -2825,7 +2822,7 @@ impl Heap {
                 Cell::WeakSet { entries, .. } => entries.capacity() * size_of::<Value>(),
                 Cell::Function { .. } => size_of::<Object>(),
                 Cell::Environment { slots, scope, .. } => {
-                    let with_objects = &scope.with_objects;
+                    let with_objects = scope.with_objects();
                     slots.len() * size_of::<EnvironmentSlot>()
                         + with_objects.len() * size_of::<Value>()
                 }

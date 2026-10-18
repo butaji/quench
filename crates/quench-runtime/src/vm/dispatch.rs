@@ -192,7 +192,7 @@ impl<H: Host> Vm<H> {
             || !owner
                 .functions
                 .get(function as usize)
-                .is_some_and(|function| function.call_plan(&owner.atoms).in_loop)
+                .is_some_and(|function| function.call_plan(p).in_loop)
         {
             return None;
         }
@@ -266,7 +266,7 @@ impl<H: Host> Vm<H> {
             || !p
                 .functions
                 .get(id as usize)
-                .is_some_and(|function| function.call_plan(&p.atoms).in_loop)
+                .is_some_and(|function| function.call_plan(p).in_loop)
         {
             return None;
         }
@@ -730,7 +730,12 @@ impl<H: Host> Vm<H> {
                         {
                             return result;
                         }
-                        self.get_field_cached(p, base, atom, cache_site)?
+                        // A private field reads straight from the object's private elements;
+                        // methods, accessors and a missing brand take the ordinary [[Get]].
+                        match self.is_private_name(atom).then(|| self.private_field_value(p, base, atom)).flatten() {
+                            Some(value) => value,
+                            None => self.get_field_cached(p, base, atom, cache_site)?,
+                        }
                     }
                 };
                 if i.writes_current_this() {
@@ -759,6 +764,10 @@ impl<H: Host> Vm<H> {
             Op::CheckPrivate => {
                 let object = self.read(f, i.register_a());
                 let atom = i.atom_index();
+                // A private field found under its home's brand proves the brand check.
+                if self.private_field_value(p, object, atom).is_some() {
+                    return Ok(StepResult::Continue);
+                }
                 self.check_private_brand(p, object, atom)?;
                 if self.private_field_value(p, object, atom).is_none()
                     && self.own_property(object, atom).is_none()
@@ -1608,7 +1617,7 @@ impl<H: Host> Vm<H> {
             Some(crate::bytecode::OperandKind::Local) => {
                 let slot = operand.payload() as usize;
                 // A plain slot is exactly what `LoadLocalPlain` reads.
-                if p.functions[self.frames[frame].function as usize].plain_local(&p.atoms, slot) {
+                if p.functions[self.frames[frame].function as usize].plain_local(p, slot) {
                     return Ok(self.frames[frame].locals[slot]);
                 }
                 self.load_local_binding(p, frame, slot, None)
