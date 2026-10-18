@@ -839,6 +839,7 @@ impl Native {
             || matches!(
                 self,
                 Self::ArrayIsArray
+                    | Self::ArrayIteratorNext
                     | Self::ArrayIndexOf
                     | Self::ArrayLastIndexOf
                     | Self::ArrayIncludes
