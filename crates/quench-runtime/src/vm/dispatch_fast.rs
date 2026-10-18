@@ -2223,6 +2223,37 @@ lane_handler! {
     }
 }
 
+/// The `instanceof` operator as a `Binary` immediate or a test's operator field.
+const INSTANCEOF_OPERATOR: u32 = oxc_ast::ast::BinaryOperator::Instanceof as u32;
+
+lane_handler! {
+    /// `Binary` `instanceof` of two registers, decoded when the view was derived
+    /// (`specialize_register_operands`): the ordinary prototype-chain walk
+    /// (`Vm::ordinary_instanceof`), which runs no guest code. Any other case, which the full
+    /// algorithm decides, takes the general path.
+    fn lane_instanceof_value<>(cx, r, ip, i, view) {
+        let Some(holds) = (unsafe { vm(cx) }).ordinary_instanceof(r.get(i.b), r.get(i.c)) else {
+            return exit(ip);
+        };
+        r.set(i.a, if holds { Value::TRUE } else { Value::FALSE });
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `lane_jump_binary_false` of `instanceof` with register operands, decoded when the view
+    /// was derived (`specialize_register_operands`), as `lane_instanceof_value` decides it.
+    fn lane_jump_instanceof_false<BACKWARD: bool>(cx, r, ip, i, view) {
+        let Some(holds) = (unsafe { vm(cx) }).ordinary_instanceof(r.get(i.b), r.get(i.c)) else {
+            return exit(ip);
+        };
+        if !holds {
+            return lane_jump(cx, r, ip, BACKWARD, view, None);
+        }
+        next!(cx, r, following(ip), view)
+    }
+}
+
 lane_handler! {
     /// `lane_jump_binary_false` with register operands, decoded when the view was derived
     /// (`specialize_register_operands`).
@@ -6581,6 +6612,12 @@ fn specialize_register_operands<H: Host>(
                 continue;
             }
             let operator = instruction.binary_operator();
+            if operator == INSTANCEOF_OPERATOR && right_kind == Register {
+                record.handler = lane_instanceof_value::<H> as Handler as *const ();
+                record.b = left.payload();
+                record.c = right.payload();
+                continue;
+            }
             let compares = operator <= super::operations::LAST_COMPARISON_OPERATOR;
             match right_kind {
                 Register => {
@@ -6620,6 +6657,20 @@ fn specialize_register_operands<H: Host>(
             continue;
         }
         let backward = record.handler == backward_test;
+        if record.handler != get_index
+            && u32::from(instruction.a()) == INSTANCEOF_OPERATOR
+            && right_kind == Register
+        {
+            let handler: Handler = if backward {
+                lane_jump_instanceof_false::<H, true>
+            } else {
+                lane_jump_instanceof_false::<H, false>
+            };
+            record.handler = handler as *const ();
+            record.b = left.payload();
+            record.c = right.payload();
+            continue;
+        }
         let nullish = (right_kind == Constant && record.handler != get_index)
             .then(|| constants.get(usize::from(right.payload())))
             .flatten()
