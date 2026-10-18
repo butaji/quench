@@ -326,11 +326,44 @@ struct ScriptActivation {
     caller_capture: *const crate::heap::EnvironmentSlots,
     /// The guest-call budget the activation holds, as its frame push would.
     guard: crate::stack::GuestCallGuard,
-    /// A `new` made it: its completion is `this` unless it returns an object.
-    constructs: bool,
+    /// What its return yields to the call.
+    completion: Completion,
     /// The `argc` values passed follow the registers in the window, for a forwarded
-    /// `arguments` (`ScriptCallTarget::forwards`).
+    /// `arguments` (`ScriptCallTarget::forwards`), or for the construction a skipped
+    /// forwarding constructor passed on (`Completion::Forwarder`).
     forwards: bool,
+}
+
+/// What a JavaScript activation's return yields to its call: one byte, so a plain return
+/// tests it once.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum Completion {
+    /// The returned value.
+    Plain,
+    /// A `new` made it: `this` unless it returns an object.
+    Constructs,
+    /// It runs the method a forwarding constructor's body would have called
+    /// (`ScriptCallTarget::forwarded_method`), whose frame `LaneStack::forwarders` keeps the
+    /// last entry of: the construction yields `this`, the receiver, whatever it returns.
+    Forwarder,
+}
+
+impl Completion {
+    fn of(constructs: bool) -> Self {
+        if constructs { Self::Constructs } else { Self::Plain }
+    }
+}
+
+/// A forwarding constructor whose activation a construction skipped
+/// (`lane_forwarded_construction`): what its frame holds when activations become frames,
+/// pending at its forwarding call.
+#[derive(Clone, Copy)]
+struct SkippedForwarder {
+    function: u32,
+    callee: Value,
+    env: Value,
+    method: crate::bytecode::ForwardedThisMethod,
 }
 
 /// Where a lane activation's arguments come from: a window of the caller's registers, or
@@ -365,7 +398,15 @@ pub(super) struct ScriptCallTarget {
     /// does not end at a function environment. The storage of a live environment never
     /// moves, and the generation retires the target at the next collection.
     capture: *const crate::heap::EnvironmentSlots,
+    /// The `LaneStack::forwarded_methods` index of a constructor body forwarding to a method
+    /// of `this` (`Function::forwarded_this_method`), which a construction may activate
+    /// directly, or `NO_FORWARDED_METHOD`. An index, not the record, keeps every target's
+    /// cache entry its size.
+    forwarded_method: u32,
 }
+
+/// A `ScriptCallTarget::forwarded_method` that names no record.
+const NO_FORWARDED_METHOD: u32 = u32::MAX;
 
 const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
     callee: Value::UNDEFINED,
@@ -380,6 +421,7 @@ const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
     initializes: false,
     forwards: false,
     capture: std::ptr::null(),
+    forwarded_method: NO_FORWARDED_METHOD,
 };
 
 /// Entries of the script call cache, indexed by the callee's heap index.
@@ -438,6 +480,12 @@ pub(super) struct LaneStack {
     script_targets: Box<[ScriptCallTarget; SCRIPT_CALL_TARGETS]>,
     /// Constructors' plans (`lane_initialize_fields`, `lane_planned_receiver`).
     construct_plans: Box<[ConstructPlan; CONSTRUCT_PLANS]>,
+    /// The forwarding constructors whose activations constructions skipped, one per
+    /// `Completion::Forwarder` activation, innermost last.
+    forwarders: Vec<SkippedForwarder>,
+    /// The forwarding constructor bodies call targets name (`ScriptCallTarget::forwarded_method`),
+    /// each once: a program's bodies are fixed, so the table only grows with distinct ones.
+    forwarded_methods: Vec<crate::bytecode::ForwardedThisMethod>,
     /// Names the collection epoch, realm and program of the running lane, which no lane
     /// instruction changes: a target resolved under another generation is stale.
     generation: u64,
@@ -455,6 +503,8 @@ impl Default for LaneStack {
             activations: Vec::new(),
             script_targets: Box::new([EMPTY_SCRIPT_CALL_TARGET; SCRIPT_CALL_TARGETS]),
             construct_plans: Box::new([EMPTY_CONSTRUCT_PLAN; CONSTRUCT_PLANS]),
+            forwarders: Vec::new(),
+            forwarded_methods: Vec::new(),
             generation: NO_SCRIPT_GENERATION,
             generation_key: (0, Value::UNDEFINED, ProgramId::MAIN),
         }
@@ -465,6 +515,17 @@ impl LaneStack {
     /// Forget resolved call targets, as the general loop's call target cache is reset.
     pub(super) fn clear_script_targets(&mut self) {
         *self.script_targets = [EMPTY_SCRIPT_CALL_TARGET; SCRIPT_CALL_TARGETS];
+    }
+
+    /// The index of `method` in `forwarded_methods`, recording it when new.
+    fn forwarded_method_index(&mut self, method: crate::bytecode::ForwardedThisMethod) -> u32 {
+        match self.forwarded_methods.iter().position(|known| *known == method) {
+            Some(index) => index as u32,
+            None => {
+                self.forwarded_methods.push(method);
+                (self.forwarded_methods.len() - 1) as u32
+            }
+        }
     }
 
     /// Push `activation` onto the stack's reserved capacity, without `Vec::push`'s growth.
@@ -3940,17 +4001,18 @@ impl<H: Host> Vm<H> {
         let pending = unsafe { &mut *(*cx).pending };
         let mut caller = unsafe { (*cx).frame };
         let registers = std::mem::take(&mut self.lane_stack.values);
+        let mut forwarders = std::mem::take(&mut self.lane_stack.forwarders).into_iter();
         for activation in activations.drain(..) {
             // SAFETY: a call record lies in its caller's view.
-            let call_pc = unsafe { activation.call.offset_from(activation.caller_base) } as usize;
-            let result = unsafe { (*activation.call).a };
+            let mut call_pc = unsafe { activation.call.offset_from(activation.caller_base) } as usize;
+            let mut result = unsafe { (*activation.call).a };
             self.frames[caller].pc = call_pc + 1;
             self.frames[caller].pc_is_resume = true;
             let count = usize::from(code.functions[activation.function as usize].registers);
             let window = &registers[activation.window..activation.window + count];
             let construct_this = activation
                 .script()
-                .and_then(|script| script.constructs.then_some(script.this));
+                .and_then(|script| (script.completion == Completion::Constructs).then_some(script.this));
             let call_guard = match activation.kind {
                 ActivationKind::Script(script) => {
                     let argc = usize::from(script.argc);
@@ -3961,12 +4023,48 @@ impl<H: Host> Vm<H> {
                     } else {
                         &window[..argc]
                     };
+                    if script.completion == Completion::Forwarder {
+                        // The construction's skipped forwarding constructor becomes the frame
+                        // it would have been, pending at its forwarding call, whose dead
+                        // registers hold `undefined`; the method's frame runs inside it.
+                        let forwarder = forwarders
+                            .next()
+                            .expect("each forwarder activation has its skipped constructor");
+                        let constructor_registers = vec![
+                            Value::UNDEFINED;
+                            usize::from(code.functions[forwarder.function as usize].registers)
+                        ];
+                        self.push_script_frame_with_registers(
+                            code,
+                            forwarder.function,
+                            forwarder.env,
+                            script.this,
+                            CallContext::user_function(forwarder.function, forwarder.callee).constructed(),
+                            passed,
+                            &constructor_registers,
+                        );
+                        pending.push(PendingGeneralCall {
+                            caller,
+                            caller_cursor: None,
+                            call_pc: call_pc as u32,
+                            destination: result & crate::bytecode::REGISTER_MASK,
+                            construct_this: Some(script.this),
+                            returns: result & crate::bytecode::RETURN_REGISTER != 0,
+                            call_guard: crate::stack::GuestCallGuard::enter().ok(),
+                            caller_program: None,
+                        });
+                        caller += 1;
+                        call_pc = forwarder.method.call_pc as usize;
+                        result = forwarder.method.call_result;
+                        self.frames[caller].pc = call_pc + 1;
+                        self.frames[caller].pc_is_resume = true;
+                    }
                     self.push_script_frame_with_registers(
                         code,
                         activation.function,
                         script.env,
                         script.this,
-                        if script.constructs {
+                        if script.completion == Completion::Constructs {
                             CallContext::user_function(activation.function, script.callee).constructed()
                         } else {
                             CallContext::user_function(activation.function, script.callee)
@@ -4061,6 +4159,13 @@ impl<H: Host> Vm<H> {
                 && body.only_initializes_this_fields(&code.constants),
             forwards: plan.forwards_arguments,
             capture,
+            forwarded_method: match (plan.forwards_arguments && Self::inline_constructible(body))
+                .then(|| body.forwarded_this_method(&code.constants))
+                .flatten()
+            {
+                Some(method) => self.lane_stack.forwarded_method_index(method),
+                None => NO_FORWARDED_METHOD,
+            },
         };
         self.lane_stack.script_targets[index] = target;
         Some(target)
@@ -4298,7 +4403,7 @@ fn lane_function_call_activation<H: Host>(
     // activation copies before anything can move them.
     let rest = unsafe { r.0.add(usize::from(window) + 1) };
     let arguments = ActivationArguments::Kept(rest, argc.saturating_sub(1));
-    lane_activate_keeping(cx, r, ip, target, arguments, this, false)
+    lane_activate_keeping(cx, r, ip, target, arguments, this, false, None)
 }
 
 lane_handler! {
@@ -4563,7 +4668,7 @@ fn lane_call_keeping_activation<H: Host>(
         return Err(exit(ip));
     };
     let arguments = ActivationArguments::Window(ImmediateLayout::call_window_base(i.imm()));
-    lane_activate_keeping(cx, r, ip, target, arguments, this, false)
+    lane_activate_keeping(cx, r, ip, target, arguments, this, false, None)
 }
 
 lane_handler! {
@@ -4610,7 +4715,51 @@ fn lane_construct_keeping_activation<H: Host>(
     };
     // Allocating the receiver can make a collection due.
     note_allocation(vm);
-    lane_activate_keeping(cx, r, ip, target, ActivationArguments::Window(i.c), this, true).map_err(Some)
+    let arguments = ActivationArguments::Window(i.c);
+    if let Some(&method) = vm.lane_stack.forwarded_methods.get(target.forwarded_method as usize)
+        && let Some(forwarded) = lane_forwarded_construction(cx, target, method, this)
+    {
+        let forwarder = SkippedForwarder {
+            function: target.function,
+            callee,
+            env: target.env,
+            method,
+        };
+        return lane_activate_keeping(cx, r, ip, forwarded, arguments, this, false, Some(forwarder))
+            .map_err(Some);
+    }
+    lane_activate_keeping(cx, r, ip, target, arguments, this, true, None).map_err(Some)
+}
+
+/// The method a forwarding constructor's body (`ScriptCallTarget::forwarded_method`) would
+/// call on the receiver `this`, which a construction may activate in its place: the body's
+/// two reads, `this.<method>` and its `apply`, as cached hits that run no guest code, the
+/// intrinsic `Function.prototype.apply`, and a frameless target. `None` leaves the
+/// construction to the constructor's own activation, which makes the reads itself.
+#[inline(never)]
+fn lane_forwarded_construction<H: Host>(
+    cx: *mut LaneContext<H>,
+    constructor: ScriptCallTarget,
+    method: crate::bytecode::ForwardedThisMethod,
+    this: Value,
+) -> Option<ScriptCallTarget> {
+    // SAFETY: the context's program outlives the lane run, and the constructor belongs to it
+    // (`Vm::resolve_script_call_target`), so the body's sites index the run's caches.
+    let code = unsafe { &*(*cx).code };
+    let function = lane_cached_field(cx, code, this, method.method.0, method.method.1)?;
+    let apply = lane_cached_field(cx, code, function, method.apply.0, method.apply.1)?;
+    let vm = unsafe { vm(cx) };
+    if !matches!(
+        vm.heap.get(apply),
+        Some(Cell::Function {
+            kind: FunctionKind::Native(Native::FunctionApply),
+            ..
+        })
+    ) || function == constructor.callee
+    {
+        return None;
+    }
+    lane_script_target(cx, function)
 }
 
 lane_handler! {
@@ -4667,11 +4816,10 @@ fn lane_forward_activation<H: Host>(
     } else {
         return Err(exit(ip));
     };
-    lane_activate_keeping(cx, r, ip, target, kept, this, false)
+    lane_activate_keeping(cx, r, ip, target, kept, this, false, None)
 }
 
-/// The argument count of a forwarding `apply` call: the receiver and `arguments`.
-const FORWARDED_APPLY_ARGUMENTS: u16 = 2;
+use crate::bytecode::FORWARDED_APPLY_ARGUMENTS;
 
 /// The values the running function kept for its forwarded `arguments`: a forwarding
 /// activation's, after its registers, or a frame's `original_arguments`.
@@ -4802,7 +4950,7 @@ fn lane_activate<H: Host>(
             caller_env: unsafe { (*cx).env },
             caller_capture: unsafe { (*cx).capture },
             guard,
-            constructs,
+            completion: Completion::of(constructs),
             forwards: false,
         }),
     };
@@ -4961,6 +5109,7 @@ fn lane_activate_keeping<H: Host>(
     arguments: ActivationArguments,
     this: Value,
     constructs: bool,
+    forwarder: Option<SkippedForwarder>,
 ) -> Result<(Registers, Ip), Ip> {
     let vm = unsafe { vm(cx) };
     // SAFETY: `ip` is a record of the running view.
@@ -4970,8 +5119,10 @@ fn lane_activate_keeping<H: Host>(
         ActivationArguments::Kept(_, count) => count,
     };
     let count = usize::from(target.registers);
-    // A forwarding activation keeps every value passed after its registers.
-    let window_size = if target.forwards { count + argc } else { count };
+    // A forwarding activation keeps every value passed after its registers, as does one for
+    // a skipped forwarding constructor, whose frame passed them on.
+    let keeps = target.forwards || forwarder.is_some();
+    let window_size = if keeps { count + argc } else { count };
     // A call that returns its callee's completion completes its caller too, which only an
     // activation's return does in the lane. A host permitting proper tail calls
     // sends strict terminal calls to the general dispatch path instead.
@@ -4979,7 +5130,7 @@ fn lane_activate_keeping<H: Host>(
     if returns && !lane_returning_call_admitted(cx) {
         return Err(exit(ip));
     }
-    if (argc > usize::from(target.params) && !target.forwards)
+    if (argc > usize::from(target.params) && !keeps)
         || argc > usize::from(u16::MAX)
         || vm.with_scope_entered
         || LANE_FLOOR.with(std::cell::Cell::get) == COLLECTION_DUE_FLOOR
@@ -5013,7 +5164,7 @@ fn lane_activate_keeping<H: Host>(
                 lane_place_kept(registers, values, argc, usize::from(target.params));
             }
         }
-        if target.forwards {
+        if keeps {
             lane_keep_arguments(registers.add(count), r, arguments, argc);
         }
         stack.values.set_len(window + window_size);
@@ -5034,12 +5185,15 @@ fn lane_activate_keeping<H: Host>(
             caller_env: unsafe { (*cx).env },
             caller_capture: unsafe { (*cx).capture },
             guard,
-            constructs,
-            forwards: target.forwards,
+            completion: if forwarder.is_some() { Completion::Forwarder } else { Completion::of(constructs) },
+            forwards: keeps,
         }),
     };
     // SAFETY: the capacity check above leaves room for the activation.
     unsafe { stack.push_activation(activation) };
+    if let Some(forwarder) = forwarder {
+        stack.forwarders.push(forwarder);
+    }
     // SAFETY: the program store keeps a derived view alive with its program.
     let base = unsafe { (*target.view).records() };
     unsafe {
@@ -5335,9 +5489,19 @@ fn lane_complete_activation<H: Host>(
                 (*cx).capture = script.caller_capture;
             }
             // [[Construct]] of an ordinary constructor yields its returned object,
-            // otherwise the receiver it allocated.
-            if script.constructs && !vm.is_object_like(value) {
-                value = script.this;
+            // otherwise the receiver it allocated. A skipped forwarding constructor returns
+            // `undefined` after the method, so its construction yields the receiver.
+            match script.completion {
+                Completion::Plain => {}
+                Completion::Constructs => {
+                    if !vm.is_object_like(value) {
+                        value = script.this;
+                    }
+                }
+                Completion::Forwarder => {
+                    value = script.this;
+                    vm.lane_stack.forwarders.pop();
+                }
             }
             drop(script.guard);
         }
