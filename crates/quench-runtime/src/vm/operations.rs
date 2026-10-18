@@ -1763,17 +1763,22 @@ impl<H: Host> Vm<H> {
             .then_some(negated)
     }
 
-    /// `==`, `!=`, `===` or `!==` of non-number operands when no conversion can decide it:
-    /// equal bits are the same value; distinct strict operands are equal only as strings or
-    /// BigInts of equal contents, as are loose operands of one of those types; a loose null or
-    /// undefined equals only null, undefined and [[IsHTMLDDA]] objects; two distinct objects
-    /// are loosely unequal. `None` leaves numbers and every comparison that may coerce to the
-    /// full algorithm.
+    /// `==`, `!=`, `===` or `!==` when no conversion can decide it: a Number is strictly
+    /// equal only to a Number; equal bits are the same value; distinct strict operands are
+    /// equal only as strings or BigInts of equal contents, as are loose operands of one of
+    /// those types; a loose null or undefined equals only null, undefined and [[IsHTMLDDA]]
+    /// objects; two distinct objects are loosely unequal. `None` leaves two Numbers, which
+    /// Number comparison decides, and every comparison that may coerce to the full algorithm.
     #[inline(always)]
     pub(super) fn identity_equality(&self, op: u32, left: Value, right: Value) -> Option<bool> {
         let (strict, negated) = equality_operator(op)?;
-        if left.as_number().is_some() || right.as_number().is_some() {
-            return None;
+        match (left.as_number().is_some(), right.as_number().is_some()) {
+            // Number comparison decides two Numbers (NaN, signed zeros).
+            (true, true) => return None,
+            // A Number is strictly equal only to a Number; loose equality converts the other
+            // operand, which can run guest code.
+            (true, false) | (false, true) => return strict.then_some(negated),
+            (false, false) => {}
         }
         let equal = if left == right {
             true
