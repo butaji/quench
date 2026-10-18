@@ -354,9 +354,17 @@ intervals, and reproduction commands are in
 
 The gcc-loops diagnostic attributes 307,270 of its 309,039 imported callouts
 to `_emscripten_memcpy_js`. The generic boundary was cloning parameter and
-result vectors and allocating converted JS arguments on each call. The next
-experiment stores the small Wasm signature and argument lists inline with
-`SmallVec`, spilling for larger imports while retaining the per-instance
-target, normal JavaScript conversion, dynamic helper lookup, and fallback
-semantics. It avoids specializing behavior by import name, since Emscripten's
-helper reads the current memory view and property target on every call.
+result vectors and allocating converted JS arguments on each call. Commit
+`280b9a011` stores these small lists inline with `SmallVec`, spilling for
+larger imports while retaining the per-instance target, normal JavaScript
+conversion, dynamic helper lookup, and fallback semantics. It avoids
+specializing behavior by import name, since Emscripten's helper reads the
+current memory view and property target on every call. The consecutive
+same-host 11-round A/B screen is inconclusive for Score: the medians shift down
+1.3% on gcc-loops and 3.2% on QuickSort, but Bun's scores also fall between
+runs. Peak RSS is lower by 0.83 MiB and 1.06 MiB; Quench still loses Score to
+both engines. Full reports and executable hashes are in
+`evidence/jit-jetstream3-wasm-2026-10-18/import-alloc-smallvec/`. The
+optimization removes container churn, not the Wasm-to-VM-to-JS callout;
+reducing that boundary remains a separate opportunity with realm, caller
+masking, and dynamic property semantics to preserve.
