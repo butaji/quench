@@ -347,16 +347,14 @@ impl<H: Host> Vm<H> {
                         let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get(buffer) else {
                             unreachable!("validated typed array backing buffer");
                         };
-                        let source_bytes = bytes.to_vec();
+                        let source_bytes = bytes.read()[source_offset..source_offset + byte_count].to_vec();
                         let Some(Cell::ArrayBuffer { bytes, .. }) =
                             self.heap.get_mut(target_buffer)
                         else {
                             unreachable!("validated species backing buffer");
                         };
                         bytes.make_mut()[target_offset..target_offset + byte_count]
-                            .copy_from_slice(
-                                &source_bytes[source_offset..source_offset + byte_count],
-                            );
+                            .copy_from_slice(&source_bytes);
                     }
                 } else {
                     for index in 0..copy_count {
