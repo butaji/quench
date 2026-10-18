@@ -54,12 +54,6 @@ pub(super) struct GenerationalPacing {
     /// property-arena compaction run only on full collections.
     pub(super) allocation_cap: Ratio,
     pub(super) minimum_allocation_cap: usize,
-    /// A full collection that frees less than this share of what it kept from the old
-    /// generation doubles the allocation cap, up to `2^maximum_cap_backoff` times; one that
-    /// frees more restores it. Old growth still makes a collection full, so the old
-    /// generation stays bounded while full collections find nothing to reclaim.
-    pub(super) idle_full_reclaim: Ratio,
-    pub(super) maximum_cap_backoff: u32,
     /// Smoothed young survival, in `SURVIVAL_SCALE` parts, above which minor collections
     /// stop paying: they would mark nearly everything they were meant to skip. The heap
     /// then collects fully, with `full_only_headroom` between collections.
@@ -89,8 +83,6 @@ pub(super) struct PacingState {
     survival: u32,
     /// Full collections left before a minor collection probes survival again.
     probe_in: u32,
-    /// Doublings of the allocation cap after full collections that freed little old memory.
-    cap_backoff: u32,
 }
 
 impl PacingState {
@@ -109,8 +101,6 @@ pub(super) struct CollectionOutcome {
     pub(super) full: bool,
     /// Live cells and records after this collection, which size the budgets.
     pub(super) live: usize,
-    /// Old cells and records a full collection freed, at least.
-    pub(super) old_freed: usize,
     /// Live weight (cells, records and their payload) after this collection and the
     /// previous one, which measures survival in the unit allocation is charged in.
     pub(super) live_weight: usize,
@@ -138,16 +128,9 @@ impl GenerationalPacing {
                 / outcome.allocated as u64) as u32;
             state.survival = (state.survival + survival) / 2;
         }
-        if outcome.full {
-            state.cap_backoff = if outcome.old_freed < self.idle_full_reclaim.of(outcome.live) {
-                (state.cap_backoff + 1).min(self.maximum_cap_backoff)
-            } else {
-                0
-            };
-        }
         let young = NextCollection {
             threshold: self.young_budget(outcome.live),
-            full: self.full_due(state, outcome.live_after_full, outcome.live, outcome.since_full),
+            full: self.full_due(outcome.live_after_full, outcome.live, outcome.since_full),
         };
         match state.regime(self) {
             Regime::Generational => young,
@@ -178,26 +161,14 @@ impl GenerationalPacing {
         self.young.of(live).max(self.minimum_young)
     }
 
-    pub(super) fn full_due(
-        &self,
-        state: &PacingState,
-        live_after_full: usize,
-        live: usize,
-        since_full: usize,
-    ) -> bool {
+    pub(super) fn full_due(&self, live_after_full: usize, live: usize, since_full: usize) -> bool {
         live.saturating_sub(live_after_full)
             >= self.old_growth.of(live_after_full).max(self.minimum_old_growth)
-            || self.allocation_cap_reached(state, live_after_full, since_full)
+            || self.allocation_cap_reached(live_after_full, since_full)
     }
 
-    pub(super) fn allocation_cap_reached(
-        &self,
-        state: &PacingState,
-        live_after_full: usize,
-        since_full: usize,
-    ) -> bool {
-        let cap = self.allocation_cap.of(live_after_full).max(self.minimum_allocation_cap);
-        since_full >= cap.saturating_mul(1 << state.cap_backoff)
+    pub(super) fn allocation_cap_reached(&self, live_after_full: usize, since_full: usize) -> bool {
+        since_full >= self.allocation_cap.of(live_after_full).max(self.minimum_allocation_cap)
     }
 
     /// Diagnostic builds may override each knob from the environment to measure a policy
@@ -223,8 +194,6 @@ impl GenerationalPacing {
             minimum_old_growth: read("QUENCH_GC_MIN_OLD_GROWTH", self.minimum_old_growth),
             allocation_cap: ratio("QUENCH_GC_ALLOCATION_CAP", self.allocation_cap),
             minimum_allocation_cap: read("QUENCH_GC_MIN_ALLOCATION_CAP", self.minimum_allocation_cap),
-            idle_full_reclaim: ratio("QUENCH_GC_IDLE_FULL_RECLAIM", self.idle_full_reclaim),
-            maximum_cap_backoff: read("QUENCH_GC_MAX_CAP_BACKOFF", self.maximum_cap_backoff as usize) as u32,
             survival_limit: read("QUENCH_GC_SURVIVAL_LIMIT", self.survival_limit as usize) as u32,
             full_only_headroom: ratio("QUENCH_GC_FULL_ONLY", self.full_only_headroom),
             probe_interval: read("QUENCH_GC_PROBE_INTERVAL", self.probe_interval as usize) as u32,
@@ -236,10 +205,7 @@ impl GenerationalPacing {
 /// collections every half live set (at least 384 weight), a full collection once the old
 /// generation has doubled or one live set of allocation has passed since the last one, and,
 /// when more than half of young allocations survive, full collections with one live set
-/// between them, probing survival with a minor collection every fourth one. Full collections
-/// that find under a sixteenth of the live set dead in the old generation double the
-/// allocation cap, up to eightfold (TOD-137: source-map-wtb ran a full collection every
-/// second collection, each freeing only what a minor would). The minimums are
+/// between them, probing survival with a minor collection every fourth one. The minimums are
 /// the pre-generational 384-cell headroom; the TOD-137 starting point's 2^15 and 2^18 minimums
 /// and its eight- and four-live-set factors keep more garbage resident on V8-v7's small heaps.
 pub(super) const PRODUCTION_PACING: GenerationalPacing = GenerationalPacing {
@@ -249,8 +215,6 @@ pub(super) const PRODUCTION_PACING: GenerationalPacing = GenerationalPacing {
     minimum_old_growth: MEMORY_FIRST_MINIMUM_ALLOCATION,
     allocation_cap: Ratio::new(1, 1),
     minimum_allocation_cap: MEMORY_FIRST_MINIMUM_ALLOCATION,
-    idle_full_reclaim: Ratio::new(1, 16),
-    maximum_cap_backoff: 3,
     survival_limit: SURVIVAL_SCALE / 2,
     full_only_headroom: Ratio::new(1, 1),
     probe_interval: 4,
@@ -286,10 +250,9 @@ mod tests {
     fn full_collection_follows_old_growth_or_the_allocation_cap() {
         let pacing = PRODUCTION_PACING;
         let live = 1 << 20;
-        let state = PacingState::default();
-        assert!(!pacing.full_due(&state, live, live + (live / 2), 0));
-        assert!(pacing.full_due(&state, live, 2 * live, 0));
-        assert!(pacing.full_due(&state, live, live, 8 * live));
+        assert!(!pacing.full_due(live, live + (live / 2), 0));
+        assert!(pacing.full_due(live, 2 * live, 0));
+        assert!(pacing.full_due(live, live, 8 * live));
         assert_eq!(pacing.young_budget(0), pacing.minimum_young);
         assert_eq!(pacing.young_budget(live), live / 2);
     }
@@ -298,7 +261,6 @@ mod tests {
         CollectionOutcome {
             full: false,
             live,
-            old_freed: 0,
             live_weight: live,
             previous_live_weight: previous_live,
             live_after_full: previous_live,
@@ -333,32 +295,5 @@ mod tests {
         pacing.plan(&mut state, minor(live, live, live / 2));
         pacing.plan(&mut state, minor(live, live, live / 2));
         assert_eq!(state.regime(&pacing), Regime::Generational);
-    }
-
-    #[test]
-    fn idle_full_collections_back_off_the_allocation_cap_until_one_reclaims() {
-        let pacing = PRODUCTION_PACING;
-        let mut state = PacingState::default();
-        let live = 1 << 20;
-        let cap = pacing.allocation_cap.of(live);
-        let full = |old_freed| CollectionOutcome {
-            full: true,
-            old_freed,
-            since_full: 0,
-            ..minor(live, live, live / 2)
-        };
-        assert!(pacing.allocation_cap_reached(&state, live, cap));
-        // Full collections that free no old memory double the cap, up to the maximum.
-        for backoff in 1..=pacing.maximum_cap_backoff + 1 {
-            pacing.plan(&mut state, full(0));
-            let scale = 1 << backoff.min(pacing.maximum_cap_backoff);
-            assert!(!pacing.allocation_cap_reached(&state, live, scale * cap - 1));
-            assert!(pacing.allocation_cap_reached(&state, live, scale * cap));
-        }
-        // Old growth still makes the next collection full.
-        assert!(pacing.full_due(&state, live, 2 * live, 0));
-        // A full collection that reclaims old memory restores the cap.
-        pacing.plan(&mut state, full(live / 2));
-        assert!(pacing.allocation_cap_reached(&state, live, cap));
     }
 }

@@ -330,8 +330,6 @@ pub(crate) struct Heap {
     pacing_state: pacing::PacingState,
     /// Live weight after the previous collection.
     live_weight_after_previous: usize,
-    /// `total_allocations` at the previous collection.
-    total_allocations_at_previous: u64,
     /// Backing-store bytes allocated since the last collection, against its budget.
     external_since_collection: usize,
     external_collection_budget: usize,
@@ -1052,7 +1050,6 @@ impl Heap {
         self.full_due = false;
         self.pacing_state = pacing::PacingState::default();
         self.live_weight_after_previous = 0;
-        self.total_allocations_at_previous = 0;
         self.old_live = 0;
         self.threshold = pacing().minimum_young;
         self.total_allocations = 0;
@@ -1106,7 +1103,6 @@ impl Heap {
     pub(crate) fn should_full_collect(&self) -> bool {
         self.full_due
             || pacing().allocation_cap_reached(
-                &self.pacing_state,
                 self.live_after_full,
                 self.allocations_since_full,
             )
@@ -1341,7 +1337,6 @@ impl Heap {
             0
         });
         let legacy_live = live;
-        let mut freed = freed_cells;
         {
             #[cfg(feature = "profile-aggregate")]
             {
@@ -1401,11 +1396,12 @@ impl Heap {
                 }
             }
             live += object_live + array_live;
-            freed += object_freed + array_freed;
             #[cfg(feature = "profile-aggregate")]
             {
                 self.gc_profile.freed += (object_freed + array_freed) as u64;
             }
+            #[cfg(not(feature = "profile-aggregate"))]
+            let _ = (object_freed, array_freed);
         }
         #[cfg(feature = "profile-aggregate")]
         {
@@ -1446,14 +1442,6 @@ impl Heap {
                 full,
                 live,
                 live_weight,
-                old_freed: if full {
-                    // Cells and records freed beyond everything allocated since the previous
-                    // collection were old: a lower bound on the old memory this one found.
-                    let young = self.total_allocations - self.total_allocations_at_previous;
-                    freed.saturating_sub(young as usize)
-                } else {
-                    0
-                },
                 previous_live_weight: self.live_weight_after_previous,
                 live_after_full: self.live_after_full,
                 allocated,
@@ -1473,7 +1461,6 @@ impl Heap {
             eprintln!("gc full={full} live={live} prev={} after_full={} alloc={} since_full={} next={next:?} state={:?}", self.live_weight_after_previous, self.live_after_full, allocated, self.allocations_since_full, self.pacing_state);
         }
         self.live_weight_after_previous = live_weight;
-        self.total_allocations_at_previous = self.total_allocations;
         self.threshold = next.threshold;
         self.full_due = next.full;
         #[cfg(feature = "profile-aggregate")]
