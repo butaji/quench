@@ -1351,6 +1351,9 @@ pub(crate) struct Vm<H> {
     /// Whether Wasm functions with a compiled denotation run as native code.
     execution_mode: ExecutionMode,
     execution_interrupt: crate::ExecutionInterrupt,
+    /// Invalidates monomorphic `call_indirect` certificates after a table
+    /// mutation or collection that can change target identity.
+    wasm_reference_epoch: std::cell::Cell<u64>,
     active_call_roots: Vec<Value>,
     with_stack: Vec<Value>,
     /// The realm's intrinsics as the host bootstrap left them (`seal_startup_intrinsics`).

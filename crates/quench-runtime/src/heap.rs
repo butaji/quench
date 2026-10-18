@@ -2690,6 +2690,13 @@ impl Heap {
                 target: crate::heap::WasmHostTarget::Js(target),
                 ..
             } => work.push(*target),
+            Cell::WasmHostFunction {
+                target: crate::heap::WasmHostTarget::JsEmscriptenMemcpy(target),
+                ..
+            } => {
+                work.push(target.function);
+                work.push(target.view_environment);
+            }
             Cell::WasmObject { object: value, slot } => {
                 object(value);
                 if let crate::heap::WasmObjectSlot::Instance { exports } = slot {
@@ -2805,10 +2812,15 @@ impl Heap {
                 | Cell::WasmExtern(_)
                 | Cell::WasmTag { .. } => 0,
                 Cell::WasmException { payload, .. } => payload.capacity() * size_of::<Value>(),
-                Cell::WasmHostFunction { signature, .. } => {
+                Cell::WasmHostFunction { target, signature } => {
                     size_of::<crate::WasmSignature>()
                         + (signature.params.capacity() + signature.results.capacity())
                             * size_of::<crate::WasmType>()
+                        + if matches!(target, crate::heap::WasmHostTarget::JsEmscriptenMemcpy(_)) {
+                            size_of::<crate::heap::WasmHostMemcpyTarget>()
+                        } else {
+                            0
+                        }
                 }
                 Cell::WasmElements(elements) => elements.capacity() * size_of::<Value>(),
                 Cell::WasmTable { elements, .. } => elements.capacity() * size_of::<Value>(),
