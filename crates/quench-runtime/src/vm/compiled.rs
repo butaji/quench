@@ -41,6 +41,7 @@ use cranelift_codegen::ir::{
 };
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
+use std::rc::{Rc, Weak};
 
 /// How the shared VM executes JavaScript and Wasm functions. Compiled code is
 /// lazy and falls back to the interpreter; both modes use the same VM, heap,
@@ -310,8 +311,7 @@ fn jit_root_override() -> Result<Option<usize>, ()> {
 }
 
 fn jit_wasm_selective_enabled() -> bool {
-    std::env::var(JIT_WASM_SELECTIVE_ENV)
-        .is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+    std::env::var(JIT_WASM_SELECTIVE_ENV).is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
 }
 
 fn jit_root_opt_level(root: Option<usize>) -> Result<&'static str, ()> {
@@ -393,6 +393,9 @@ struct CallContext {
     callout: usize,
     /// VM helper for indirect calls, including table checks and invocation.
     call_reference: usize,
+    /// The artifact containing the currently executing call site. The active
+    /// entry (or its caller) keeps this artifact strongly owned for the callout.
+    compiled: *const CompiledProgram,
     // Fields below are the VM's, never read by compiled code.
     program: ProgramId,
     /// Number of Wasm-to-host callouts made by this native invocation.
@@ -433,6 +436,7 @@ impl CallContext {
             globals: self.globals,
             callout: self.callout,
             call_reference: self.call_reference,
+            compiled: self.compiled,
             program: self.program,
             import_callouts: self.import_callouts,
             known_callouts: self.known_callouts,
@@ -469,7 +473,7 @@ const CONTEXT_CALL_REFERENCE_DIAGNOSTIC: i32 =
 /// status; arguments and result are Wasm bits, one word each.
 type Callout = unsafe extern "C" fn(*mut CallContext, u64, *const u64, *mut u64) -> i64;
 type ReferenceCallout =
-    unsafe extern "C" fn(*mut CallContext, u64, u64, u64, *const u64, *mut u64) -> i64;
+    unsafe extern "C" fn(*mut CallContext, u64, u64, u64, u64, *const u64, *mut u64) -> i64;
 type DiagnosticReferenceCallout =
     unsafe extern "C" fn(*mut CallContext, u64, u64, u64, u64, *const u64, *mut u64) -> i64;
 
@@ -560,18 +564,19 @@ unsafe extern "C" fn reference_callout<H: Host>(
     table_slot: u64,
     index: u64,
     signature_index: u64,
+    site: u64,
     args: *const u64,
     out: *mut u64,
 ) -> i64 {
-    // Keep the production callout ABI and generated hot path unchanged. The
-    // diagnostic instantiation below carries a call-site id in its own ABI.
+    // A stable call-site id is present even without diagnostics so the VM can
+    // find the per-site monomorphic cache without a hash lookup.
     unsafe {
         reference_callout_inner::<H, false>(
             context,
             table_slot,
             index,
             signature_index,
-            0,
+            site,
             args,
             out,
         )
@@ -624,114 +629,142 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
     let mut native_target_hit = false;
     let mut direct_status = None;
     let called = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let (callee, params, result_type, same_program_function, direct_entry) = {
+        let (
+            callee,
+            params,
+            result_type,
+            same_program_function,
+            direct_entry,
+            cache_hit,
+            table,
+            table_slot,
+            signature_index,
+        ) = {
             // Do all heap/program inspection before entering native code. The
             // VM is re-entered through callouts, so no `&mut Vm` may live
             // across that boundary.
             let vm = unsafe { &mut *vm_pointer };
-            let table_slot = usize::try_from(table_slot)
+            let table_slot = u32::try_from(table_slot)
                 .map_err(|_| JsError::validation("invalid Wasm table binding".into()))?;
             let signature_index = u32::try_from(signature_index)
                 .map_err(|_| JsError::validation("invalid Wasm signature index".into()))?;
             let table = vm
                 .heap
-                .environment_slot(context.env, table_slot)
+                .environment_slot(context.env, table_slot as usize)
                 .ok_or_else(|| JsError::validation("invalid Wasm table binding".into()))?;
-            let callee = vm.wasm_indirect_target(program, table, index, signature_index)?;
-            let (params, result_type) = {
-                let signature = vm
-                    .programs
-                    .wasm_signatures(program)
-                    .and_then(|signatures| signatures.type_signature(signature_index))
-                    .ok_or_else(|| JsError::validation("invalid Wasm signature index".into()))?;
-                (
-                    signature
-                        .params
-                        .iter()
-                        .copied()
-                        .collect::<smallvec::SmallVec<[crate::WasmType; 8]>>(),
-                    signature.results.first().copied(),
+            let cached = usize::try_from(site).ok().and_then(|site| {
+                cached_direct_reference(
+                    vm,
+                    context,
+                    table_slot,
+                    table,
+                    index,
+                    signature_index,
+                    site,
                 )
-            };
-            let same_program_function = match vm.heap.get(callee) {
-                Some(Cell::Function {
-                    kind: crate::heap::FunctionKind::User(target_program, function),
-                    env,
-                    ..
-                }) if *target_program == program => Some((*target_program, *function, *env)),
-                _ => None,
-            };
-            let direct_entry = same_program_function
-                .filter(|(target_program, _, target_env)| {
-                    *target_program == program && *target_env == context.env
-                })
-                .and_then(|(_, function, _)| {
-                    let compiled = vm
+            });
+            if let Some((callee, direct_entry)) = cached {
+                (
+                    callee,
+                    smallvec::SmallVec::new(),
+                    None,
+                    None,
+                    Some(direct_entry),
+                    true,
+                    table,
+                    table_slot,
+                    signature_index,
+                )
+            } else {
+                let callee = vm.wasm_indirect_target(program, table, index, signature_index)?;
+                let (params, result_type) = {
+                    let signature = vm
                         .programs
-                        .compiled(program)
-                        .flatten()
-                        .filter(|compiled| compiled.has_function(function as usize))
-                        .or_else(|| vm.programs.wasm_tier_containing(program, function))?;
-                    let native = compiled.functions.get(function as usize)?.as_ref()?;
-                    if native.params.as_slice() != params.as_slice() || native.result != result_type
-                    {
-                        return None;
-                    }
-                    let entry = native.entry;
-                    let (memory, memory_binding, guard) = match compiled.memory_slot {
-                        None => Some(((0, 0), Value::UNDEFINED, None)),
-                        Some(slot) => {
-                            let binding = vm.heap.environment_slot(context.env, slot as usize)?;
-                            if binding != context.memory {
-                                return None;
-                            }
-                            let (base, length) =
-                                super::dispatch_fast::unshared_memory(vm, binding)?;
-                            let guard = guarded_memory(vm, binding);
-                            if compiled.guarded && guard.is_none()
-                                || compiled.wraps && !wrapping_memory(vm, binding)
-                                || compiled.fixed_base.is_some_and(|fixed| {
-                                    guard.map(|(base, _)| displacement_base(base))
-                                        != Some(Some(fixed))
-                                })
-                            {
-                                return None;
-                            }
-                            Some(((base as u64, length as u64), binding, guard))
-                        }
-                    }?;
-                    let mut globals: smallvec::SmallVec<[*mut Value; 8]> =
-                        smallvec::SmallVec::new();
-                    for slot in &compiled.globals {
-                        let binding = vm.heap.environment_slot(context.env, *slot as usize)?;
-                        match vm.heap.get_mut(binding)? {
-                            Cell::WasmGlobal { value, .. } => globals.push(value),
-                            _ => return None,
-                        }
-                    }
-                    Some((
-                        compiled,
-                        function as usize,
-                        entry,
-                        memory,
-                        memory_binding,
-                        guard,
-                        globals,
-                    ))
-                });
-            (
-                callee,
-                params,
-                result_type,
-                same_program_function,
-                direct_entry,
-            )
+                        .wasm_signatures(program)
+                        .and_then(|signatures| signatures.type_signature(signature_index))
+                        .ok_or_else(|| {
+                            JsError::validation("invalid Wasm signature index".into())
+                        })?;
+                    (
+                        signature
+                            .params
+                            .iter()
+                            .copied()
+                            .collect::<smallvec::SmallVec<[crate::WasmType; 8]>>(),
+                        signature.results.first().copied(),
+                    )
+                };
+                let same_program_function = match vm.heap.get(callee) {
+                    Some(Cell::Function {
+                        kind: crate::heap::FunctionKind::User(target_program, function),
+                        env,
+                        ..
+                    }) if *target_program == program => Some((*target_program, *function, *env)),
+                    _ => None,
+                };
+                let direct_entry = same_program_function
+                    .filter(|(target_program, _, target_env)| {
+                        *target_program == program && *target_env == context.env
+                    })
+                    .and_then(|(_, function, _)| {
+                        let compiled = vm
+                            .programs
+                            .compiled(program)
+                            .flatten()
+                            .filter(|compiled| compiled.has_function(function as usize))
+                            .or_else(|| vm.programs.wasm_tier_containing(program, function))?;
+                        direct_reference_entry(
+                            vm,
+                            compiled,
+                            function as usize,
+                            context.env,
+                            context.memory,
+                            Some((&params, result_type)),
+                        )
+                    });
+                (
+                    callee,
+                    params,
+                    result_type,
+                    same_program_function,
+                    direct_entry,
+                    false,
+                    table,
+                    table_slot,
+                    signature_index,
+                )
+            }
         };
         if let Some((compiled, function, entry, (base, length), memory_binding, guard, globals)) =
             direct_entry
         {
+            if !cache_hit
+                && let Ok(site) = usize::try_from(site)
+                && !context.compiled.is_null()
+            {
+                let target_weak = unsafe { &*vm_pointer }.heap.weak_handle(callee);
+                if let Some(target_weak) = target_weak {
+                    let caller = unsafe { &*context.compiled };
+                    caller.cache_indirect_call(
+                        site,
+                        IndirectCallCacheEntry {
+                            table_slot,
+                            table,
+                            index,
+                            signature_index,
+                            target: callee,
+                            target_weak,
+                            program,
+                            function: function as u32,
+                            env: context.env,
+                            compiled: Rc::downgrade(&compiled),
+                        },
+                    );
+                }
+            }
             compiled.note_direct_reference_entry(function);
             let mut nested = context.nested_entry();
+            nested.compiled = Rc::as_ptr(&compiled);
             nested.table = compiled.table.as_ptr();
             nested.globals = globals.as_ptr();
             nested.memory = memory_binding;
@@ -747,7 +780,9 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
             nested.reference_call_sites = compiled
                 .diagnostics
                 .as_ref()
-                .map_or(std::ptr::null(), |stats| stats.reference_call_sites.as_ptr());
+                .map_or(std::ptr::null(), |stats| {
+                    stats.reference_call_sites.as_ptr()
+                });
             nested.reference_call_site_count = compiled
                 .diagnostics
                 .as_ref()
@@ -903,6 +938,143 @@ pub(super) struct CompiledFunction {
 
 /// A program's compiled functions, sharing one code mapping and one call
 /// table.
+#[derive(Clone)]
+struct IndirectCallCacheEntry {
+    table_slot: u32,
+    table: Value,
+    index: u64,
+    signature_index: u32,
+    target: Value,
+    target_weak: crate::heap::WeakHandle,
+    program: ProgramId,
+    function: u32,
+    env: Value,
+    compiled: Weak<CompiledProgram>,
+}
+
+type DirectReferenceEntry = (
+    Rc<CompiledProgram>,
+    usize,
+    Entry,
+    (u64, u64),
+    Value,
+    Option<(*mut u8, usize)>,
+    smallvec::SmallVec<[*mut Value; 8]>,
+);
+
+/// Build the per-invocation activation for a same-instance compiled indirect
+/// target. Even a monomorphic cache hit comes through here so memory, guards,
+/// and mutable global addresses always reflect the current instance state.
+fn direct_reference_entry<H: Host>(
+    vm: &mut Vm<H>,
+    compiled: Rc<CompiledProgram>,
+    function: usize,
+    env: Value,
+    context_memory: Value,
+    signature: Option<(&[crate::WasmType], Option<crate::WasmType>)>,
+) -> Option<DirectReferenceEntry> {
+    let native = compiled.functions.get(function)?.as_ref()?;
+    if signature.is_some_and(|(params, result)| {
+        native.params.as_slice() != params || native.result != result
+    }) {
+        return None;
+    }
+    let entry = native.entry;
+    let (memory, memory_binding, guard) = match compiled.memory_slot {
+        None => ((0, 0), Value::UNDEFINED, None),
+        Some(slot) => {
+            let binding = vm.heap.environment_slot(env, slot as usize)?;
+            if binding != context_memory {
+                return None;
+            }
+            let (base, length) = super::dispatch_fast::unshared_memory(vm, binding)?;
+            let guard = guarded_memory(vm, binding);
+            if compiled.guarded && guard.is_none()
+                || compiled.wraps && !wrapping_memory(vm, binding)
+                || compiled.fixed_base.is_some_and(|fixed| {
+                    guard.map(|(base, _)| displacement_base(base)) != Some(Some(fixed))
+                })
+            {
+                return None;
+            }
+            ((base as u64, length as u64), binding, guard)
+        }
+    };
+    let mut globals: smallvec::SmallVec<[*mut Value; 8]> = smallvec::SmallVec::new();
+    for slot in &compiled.globals {
+        let binding = vm.heap.environment_slot(env, *slot as usize)?;
+        match vm.heap.get_mut(binding)? {
+            Cell::WasmGlobal { value, .. } => globals.push(value),
+            _ => return None,
+        }
+    }
+    Some((
+        compiled,
+        function,
+        entry,
+        memory,
+        memory_binding,
+        guard,
+        globals,
+    ))
+}
+
+/// Check the cache's guards without turning any miss into a Wasm trap. The
+/// ordinary resolver below remains authoritative for OOB, null, and mismatch
+/// cases, and for artifacts that cannot currently activate the cached target.
+fn cached_direct_reference<H: Host>(
+    vm: &mut Vm<H>,
+    context: &CallContext,
+    table_slot: u32,
+    table: Value,
+    index: u64,
+    signature_index: u32,
+    site: usize,
+) -> Option<(Value, DirectReferenceEntry)> {
+    if context.compiled.is_null() {
+        return None;
+    }
+    let caller = unsafe { &*context.compiled };
+    let cache = caller.indirect_call_cache(site)?;
+    if cache.table_slot != table_slot
+        || cache.table != table
+        || cache.index != index
+        || cache.signature_index != signature_index
+        || cache.program != context.program
+        || cache.env != context.env
+    {
+        return None;
+    }
+    let element = usize::try_from(index)
+        .ok()
+        .and_then(|index| vm.wasm_table_elements(table).ok()?.get(index).copied())?;
+    if element != cache.target || vm.heap.weak_value(cache.target_weak) != Some(element) {
+        return None;
+    }
+    match vm.heap.get(element) {
+        Some(Cell::Function {
+            kind: crate::heap::FunctionKind::User(program, function),
+            env,
+            ..
+        }) if *program == cache.program && *function == cache.function && *env == cache.env => {}
+        _ => return None,
+    }
+    let compiled = cache.compiled.upgrade()?;
+    let direct = direct_reference_entry(
+        vm,
+        compiled,
+        cache.function as usize,
+        context.env,
+        context.memory,
+        None,
+    )?;
+    #[cfg(test)]
+    caller
+        .reference_cache_hits
+        .set(caller.reference_cache_hits.get().saturating_add(1));
+    Some((element, direct))
+}
+
 pub(super) struct CompiledProgram {
     _code: CodeMemory,
     table: Box<[usize]>,
@@ -924,6 +1096,12 @@ pub(super) struct CompiledProgram {
     /// order of the context's global addresses.
     globals: Vec<u32>,
     diagnostics: Option<WasmJitDiagnostics>,
+    /// One optional monomorphic cache per actual compiled `call_indirect`
+    /// site. The vector is only pointers until a site becomes hot, and each
+    /// cache weakly references its callee artifact to avoid Rc cycles.
+    reference_call_caches: std::cell::RefCell<Vec<Option<Box<IndirectCallCacheEntry>>>>,
+    #[cfg(test)]
+    reference_cache_hits: std::cell::Cell<u64>,
 }
 
 /// Counters allocated only for opt-in benchmark diagnostics. These runs are
@@ -1007,6 +1185,37 @@ fn jit_diagnostics_enabled() -> bool {
 }
 
 impl CompiledProgram {
+    fn indirect_call_cache(&self, site: usize) -> Option<IndirectCallCacheEntry> {
+        self.reference_call_caches
+            .borrow()
+            .get(site)?
+            .as_deref()
+            .cloned()
+    }
+
+    fn cache_indirect_call(&self, site: usize, entry: IndirectCallCacheEntry) {
+        if let Some(slot) = self.reference_call_caches.borrow_mut().get_mut(site) {
+            *slot = Some(Box::new(entry));
+        }
+    }
+
+    pub(super) fn clear_indirect_call_caches(&self) {
+        self.reference_call_caches
+            .borrow_mut()
+            .iter_mut()
+            .for_each(|slot| *slot = None);
+    }
+
+    #[cfg(test)]
+    pub(super) fn reference_call_cache_target(&self, site: usize) -> Option<Value> {
+        self.indirect_call_cache(site).map(|entry| entry.target)
+    }
+
+    #[cfg(test)]
+    pub(super) fn reference_cache_hits(&self) -> u64 {
+        self.reference_cache_hits.get()
+    }
+
     fn note_direct_reference_entry(&self, function: usize) {
         self.note_native_entry(function);
         #[cfg(test)]
@@ -1834,9 +2043,7 @@ impl<H: Host> Analysis<'_, H> {
                 };
                 set(state, instruction.result_register(), Slot::Value(kind))
             }
-            Op::WasmUnreachable if self.experimental_root_compilation => {
-                Some(())
-            }
+            Op::WasmUnreachable if self.experimental_root_compilation => Some(()),
             Op::Return => match result {
                 Some(ty) => (value(state, instruction.a())? == Kind::of(ty)?).then_some(()),
                 None => Some(()),
@@ -2192,9 +2399,10 @@ struct Emitter<'a, 'b, H: Host> {
     variables: Vec<[Variable; VIEW_TYPES.len()]>,
     blocks: Vec<Option<ir::Block>>,
     context: ir::Value,
-    /// Present only for opt-in reference-call attribution; ids index the
-    /// diagnostic site's counter array stored in CallContext.
-    reference_site_ids: Option<&'a [Option<usize>]>,
+    /// Dense ids for the compiled artifact's actual indirect call sites.
+    reference_site_ids: &'a [(usize, usize)],
+    /// Selects the diagnostics ABI at compile time; both ABIs carry site ids.
+    diagnostics_enabled: bool,
     base: ir::Value,
     /// The memory's exact length for checked accesses and bulk operations.
     length: Option<ir::Value>,
@@ -2911,57 +3119,41 @@ impl<H: Host> Emitter<'_, '_, H> {
             .builder
             .ins()
             .iconst(types::I64, i64::from(signature_index));
-        let call = if let Some(site_id) = self
+        let site_id = self
             .reference_site_ids
-            .and_then(|sites| sites.get(pc))
-            .copied()
-            .flatten()
-        {
-            let target = self.builder.ins().load(
-                types::I64,
-                invariant(),
-                self.context,
-                CONTEXT_CALL_REFERENCE_DIAGNOSTIC,
-            );
-            let mut call_signature = Signature::new(self.call_conv);
-            for _ in 0..7 {
-                call_signature.params.push(AbiParam::new(types::I64));
-            }
-            call_signature.returns.push(AbiParam::new(types::I64));
-            let call_signature = self.builder.import_signature(call_signature);
-            let site_id = self.builder.ins().iconst(types::I64, site_id as i64);
-            self.builder.ins().call_indirect(
-                call_signature,
-                target,
-                &[
-                    self.context,
-                    table_slot,
-                    index,
-                    signature_index,
-                    site_id,
-                    args,
-                    out,
-                ],
-            )
+            .binary_search_by_key(&pc, |(site_pc, _)| *site_pc)
+            .ok()
+            .map(|index| self.reference_site_ids[index].1)
+            .expect("compiled indirect call has a cache site id");
+        let target_offset = if self.diagnostics_enabled {
+            CONTEXT_CALL_REFERENCE_DIAGNOSTIC
         } else {
-            let target = self.builder.ins().load(
-                types::I64,
-                invariant(),
-                self.context,
-                CONTEXT_CALL_REFERENCE,
-            );
-            let mut call_signature = Signature::new(self.call_conv);
-            for _ in 0..6 {
-                call_signature.params.push(AbiParam::new(types::I64));
-            }
-            call_signature.returns.push(AbiParam::new(types::I64));
-            let call_signature = self.builder.import_signature(call_signature);
-            self.builder.ins().call_indirect(
-                call_signature,
-                target,
-                &[self.context, table_slot, index, signature_index, args, out],
-            )
+            CONTEXT_CALL_REFERENCE
         };
+        let target = self
+            .builder
+            .ins()
+            .load(types::I64, invariant(), self.context, target_offset);
+        let mut call_signature = Signature::new(self.call_conv);
+        for _ in 0..7 {
+            call_signature.params.push(AbiParam::new(types::I64));
+        }
+        call_signature.returns.push(AbiParam::new(types::I64));
+        let call_signature = self.builder.import_signature(call_signature);
+        let site_id = self.builder.ins().iconst(types::I64, site_id as i64);
+        let call = self.builder.ins().call_indirect(
+            call_signature,
+            target,
+            &[
+                self.context,
+                table_slot,
+                index,
+                signature_index,
+                site_id,
+                args,
+                out,
+            ],
+        );
         let status = self.builder.inst_results(call)[0];
         self.propagate(status);
         let destination = instruction.result_register();
@@ -3459,7 +3651,8 @@ impl<'a, H: Host> Analysis<'a, H> {
         wraps: bool,
         fixed_base: Option<i32>,
         globals: &[u32],
-        reference_site_ids: Option<&'a [Option<usize>]>,
+        reference_site_ids: &'a [(usize, usize)],
+        diagnostics_enabled: bool,
     ) -> Option<(Vec<u8>, Vec<Call>)> {
         let function = &self.code.functions[index];
         let call_conv = isa.default_call_conv();
@@ -3524,6 +3717,7 @@ impl<'a, H: Host> Analysis<'a, H> {
             blocks: vec![None; function.code.len()],
             context,
             reference_site_ids,
+            diagnostics_enabled,
             base,
             length,
             memory,
@@ -4285,27 +4479,24 @@ impl<H: Host> Vm<H> {
         let isa = target_isa(opt_level)?;
         // The full plan of a callable function, derived again where needed.
         let plan = |index: usize| analysis.plan(index, &callable, &mut memory_slot.clone());
-        let mut reference_site_ids = diagnostics_enabled.then(|| {
-            code.functions
-                .iter()
-                .map(|function| vec![None; function.code.len()])
-                .collect::<Vec<_>>()
-        });
+        let mut reference_site_ids = vec![Vec::new(); count];
         let mut reference_call_sites = Vec::new();
-        if let Some(reference_site_ids) = &mut reference_site_ids {
-            for index in 0..count {
-                if plans[index].is_none() {
-                    continue;
-                }
-                let full_plan = plan(index)?;
-                let function = &code.functions[index];
-                for (pc, packed) in function.code.iter().enumerate() {
-                    let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
-                    if instruction.op() == Op::Call
-                        && matches!(full_plan.operand(pc), Slot::IndirectReference { .. })
-                    {
-                        let site_id = reference_call_sites.len();
-                        reference_site_ids[index][pc] = Some(site_id);
+        let mut reference_cache_count = 0usize;
+        for index in 0..count {
+            if plans[index].is_none() {
+                continue;
+            }
+            let full_plan = plan(index)?;
+            let function = &code.functions[index];
+            for (pc, packed) in function.code.iter().enumerate() {
+                let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
+                if instruction.op() == Op::Call
+                    && matches!(full_plan.operand(pc), Slot::IndirectReference { .. })
+                {
+                    let site_id = reference_cache_count;
+                    reference_cache_count += 1;
+                    reference_site_ids[index].push((pc, site_id));
+                    if diagnostics_enabled {
                         reference_call_sites.push(ReferenceCallSiteDiagnostics {
                             function: index,
                             pc,
@@ -4367,9 +4558,8 @@ impl<H: Host> Vm<H> {
                 wraps,
                 fixed_base,
                 &globals,
-                reference_site_ids
-                    .as_ref()
-                    .map(|site_ids| site_ids[index].as_slice()),
+                &reference_site_ids[index],
+                diagnostics_enabled,
             );
             if let Some(started) = body_compile_started {
                 let memory_after = jit_memory_snapshot();
@@ -4469,6 +4659,13 @@ impl<H: Host> Vm<H> {
             wraps,
             globals,
             diagnostics,
+            reference_call_caches: std::cell::RefCell::new(
+                std::iter::repeat_with(|| None)
+                    .take(reference_cache_count)
+                    .collect(),
+            ),
+            #[cfg(test)]
+            reference_cache_hits: std::cell::Cell::new(0),
         })
     }
 
@@ -4594,9 +4791,10 @@ impl<H: Host> Vm<H> {
             Some(compiled) => compiled,
             None => {
                 if jit_wasm_selective_enabled()
-                    && self.programs.residual(program).is_some_and(|code| {
-                        code.kind == crate::bytecode::ProgramKind::Wasm
-                    })
+                    && self
+                        .programs
+                        .residual(program)
+                        .is_some_and(|code| code.kind == crate::bytecode::ProgramKind::Wasm)
                 {
                     // Selective mode starts cold Wasm functions in the
                     // interpreter. Hot roots are promoted after the entry
@@ -4731,6 +4929,7 @@ impl<H: Host> Vm<H> {
                 globals: globals.as_ptr(),
                 callout: import_callout::<H> as Callout as usize,
                 call_reference: reference_callout::<H> as ReferenceCallout as usize,
+                compiled: Rc::as_ptr(&compiled),
                 program,
                 import_callouts: import_callouts_ptr,
                 known_callouts: known_callouts_ptr,
