@@ -2920,11 +2920,20 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn append_cached_shape_transition(&mut self, shape: u32, transition: ShapeTransition) -> u32 {
         let key = transition.cache_key();
-        if let Some(key) = key
-            && let Some(next) = self.transitions.get(&self.shapes, shape, key)
-        {
-            self.profile.shape_transition(true);
-            return next;
+        if let Some(key) = key {
+            let last = self.shapes[shape as usize].last_child.get();
+            let next = if last != NO_LAST_CHILD
+                && super::shape_transitions::is_transition(&self.shapes, last, shape, key)
+            {
+                Some(last)
+            } else {
+                self.transitions.get(&self.shapes, shape, key)
+            };
+            if let Some(next) = next {
+                self.shapes[shape as usize].last_child.set(next);
+                self.profile.shape_transition(true);
+                return next;
+            }
         }
         if key.is_some() || matches!(transition, ShapeTransition::Add { .. }) {
             self.profile.shape_transition(false);
@@ -2960,6 +2969,7 @@ impl<H: Host> Vm<H> {
         }
         if let Some(key) = key {
             self.transitions.insert(&self.shapes, shape, key, next);
+            self.shapes[shape as usize].last_child.set(next);
         }
         next
     }
