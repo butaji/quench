@@ -14,6 +14,11 @@ const MIN_CAPACITY: usize = 2;
 const BUCKETS: usize = 32;
 const DENSE_ARENA_RESERVE_THRESHOLD: usize = 65_536;
 const DENSE_ARENA_GROWTH_DIVISOR: usize = 3;
+/// Released values on the free lists, as a share (`1 / divisor`) of the arena's length, that
+/// make a full collection compact the arena. Freed ranges are reused within their size class,
+/// so compaction recovers only what other classes leave idle; rewriting every live object's
+/// storage on each full collection cost source-map-wtb 3 s of 27 (TOD-137).
+const COMPACTION_RELEASED_SHARE_DIVISOR: usize = 4;
 
 /// Compact per-object shape, integrity, and property-storage metadata.
 #[derive(Clone, Copy, Debug)]
@@ -140,6 +145,8 @@ impl Default for ValueVec {
 pub(crate) struct ValueArena {
     values: Vec<Value>,
     free: [Vec<u32>; BUCKETS],
+    /// Values held by the ranges on `free`.
+    released_values: usize,
     shape_lengths: Vec<u32>,
     dictionaries: FxHashMap<u32, FxHashMap<u32, Value>>,
     free_dictionaries: Vec<u32>,
@@ -151,6 +158,7 @@ impl Default for ValueArena {
         Self {
             values: vec![],
             free: Default::default(),
+            released_values: 0,
             shape_lengths: vec![0],
             dictionaries: FxHashMap::default(),
             free_dictionaries: Vec::new(),
@@ -165,6 +173,7 @@ impl ValueArena {
         for bucket in &mut self.free {
             bucket.clear();
         }
+        self.released_values = 0;
         self.shape_lengths.truncate(1);
         self.shape_lengths[0] = 0;
         self.dictionaries.clear();
@@ -405,11 +414,15 @@ impl ValueArena {
         let capacity = self.capacity(vector);
         if capacity != 0 {
             self.free[Self::bucket(capacity)].push(vector.start & START_MASK);
+            self.released_values += capacity;
         }
     }
 
-    pub(crate) fn has_released_ranges(&self) -> bool {
-        self.free.iter().any(|bucket| !bucket.is_empty())
+    /// Whether released ranges have grown enough that compaction is worth rewriting every
+    /// live object's storage.
+    pub(crate) fn compaction_due(&self) -> bool {
+        self.released_values > 0
+            && self.released_values >= self.values.len() / COMPACTION_RELEASED_SHARE_DIVISOR
     }
 
     pub(crate) fn has_compact_range(&self, vector: ValueVec) -> bool {
@@ -439,6 +452,7 @@ impl ValueArena {
         for bucket in &mut self.free {
             bucket.clear();
         }
+        self.released_values = 0;
     }
 
     pub(crate) fn memory_bytes(&self) -> usize {
@@ -535,6 +549,7 @@ impl ValueArena {
     fn allocate(&mut self, capacity: usize, max_start: usize) -> Option<usize> {
         let bucket = Self::bucket(capacity);
         if let Some(start) = self.free[bucket].pop() {
+            self.released_values -= capacity;
             return Some(start as usize);
         }
         let start = self.values.len();

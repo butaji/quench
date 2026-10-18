@@ -1275,6 +1275,8 @@ pub(crate) struct Vm<H> {
     pub(crate) native_root_lists: Vec<Vec<RootId>>,
     /// The roots the last collection gathered, which sizes the next one's root vector.
     gc_root_count: usize,
+    /// Owners with out-of-cell edges at the previous collection, which sizes the next index.
+    gc_owned_root_count: usize,
     frame_pool: Vec<Box<Frame>>,
     /// Activations a running lane holds without frames.
     lane_stack: dispatch_fast::LaneStack,
@@ -1831,9 +1833,9 @@ impl<H: Host> Vm<H> {
         let (_, collections, _, _, _, _) = self.heap.stats();
         let gc = self.heap.gc_profile();
         eprintln!(
-            "{{\"kind\":\"quench-gc-time\",\"collections\":{collections},\"full_collections\":{},\"full_mark_nanos\":{},\"minor_mark_nanos\":{},\"mark_nanos\":{},\"sweep_nanos\":{},\"mark_clear_nanos\":{},\"vm_owner_edges_nanos\":{},\"vm_roots_nanos\":{},\"vm_shape_setup_nanos\":{},\"vm_after_nanos\":{}}}",
+            "{{\"kind\":\"quench-gc-time\",\"collections\":{collections},\"full_collections\":{},\"full_mark_nanos\":{},\"minor_mark_nanos\":{},\"mark_nanos\":{},\"sweep_nanos\":{},\"sweep_phase_nanos\":{:?},\"mark_clear_nanos\":{},\"vm_owner_edges_nanos\":{},\"vm_roots_nanos\":{},\"vm_shape_setup_nanos\":{},\"vm_after_nanos\":{}}}",
             gc.full_collections, gc.full_mark_nanos, gc.minor_mark_nanos,
-            gc.mark_nanos, gc.sweep_nanos, gc.mark_clear_nanos, gc.vm_phase_nanos[0], gc.vm_phase_nanos[1], gc.vm_phase_nanos[2], gc.vm_phase_nanos[3],
+            gc.mark_nanos, gc.sweep_nanos, gc.sweep_phase_nanos, gc.mark_clear_nanos, gc.vm_phase_nanos[0], gc.vm_phase_nanos[1], gc.vm_phase_nanos[2], gc.vm_phase_nanos[3],
         );
         // Sizes of the VM-side tables beside the heap: a table that grows with work done
         // rather than with live data is retention.
