@@ -439,7 +439,7 @@ impl<H: Host> Vm<H> {
     /// Whether `atom` names a property that ordinary shapes alone decide: no private, index,
     /// `length` or legacy function key.
     #[inline]
-    fn plain_named_key(&self, atom: Atom) -> bool {
+    pub(super) fn plain_named_key(&self, atom: Atom) -> bool {
         const GENERAL_KEYS: u8 = AtomClass::PRIVATE
             | AtomClass::ARRAY_INDEX
             | AtomClass::TYPED_ARRAY_INDEX
