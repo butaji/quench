@@ -1,0 +1,248 @@
+diff --git a/crates/quench-runtime/src/vm/compiled.rs b/crates/quench-runtime/src/vm/compiled.rs
+index 1dcedd0dd..09d948ff6 100644
+--- a/crates/quench-runtime/src/vm/compiled.rs
++++ b/crates/quench-runtime/src/vm/compiled.rs
+@@ -298,6 +298,7 @@ const JIT_ROOT_ONLY_ENV: &str = "QUENCH_WASM_JIT_ROOT_ONLY";
+ const JIT_ROOT_FIRST_ENV: &str = "QUENCH_WASM_JIT_ROOT_FIRST";
+ const JIT_WASM_SELECTIVE_ENV: &str = "QUENCH_WASM_JIT_SELECTIVE";
+ const JIT_DIRECT_COMPARE_BRANCHES_ENV: &str = "QUENCH_WASM_JIT_DIRECT_COMPARE_BRANCHES";
++const JIT_REFERENCE_SSA_ARGS_ENV: &str = "QUENCH_WASM_JIT_REFERENCE_SSA_ARGS";
+ const MAX_JIT_ROOT_FUNCTIONS: usize = 128;
+ const MAX_JIT_ROOT_BYTECODES_PER_FUNCTION: usize = 80_000;
+ const MAX_JIT_ROOT_CODE_BYTES: usize = 2 * 1024 * 1024;
+@@ -326,6 +327,11 @@ fn jit_wasm_selective_enabled() -> bool {
+     std::env::var(JIT_WASM_SELECTIVE_ENV).is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+ }
+ 
++fn jit_reference_ssa_args_enabled() -> bool {
++    std::env::var(JIT_REFERENCE_SSA_ARGS_ENV)
++        .is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
++}
++
+ fn jit_direct_compare_branches_enabled() -> bool {
+     #[cfg(test)]
+     if let Some(enabled) = WASM_JIT_DIRECT_COMPARE_BRANCHES_TEST_OVERRIDE.with(std::cell::Cell::get)
+@@ -3616,20 +3622,25 @@ impl<H: Host> Emitter<'_, '_, H> {
+             word.trailing_zeros() as u8,
+         ));
+         let window = instruction.call_window();
++        let ssa_args = jit_reference_ssa_args_enabled();
++        let mut typed_args = Vec::with_capacity(wasm_signature.params.len());
+         for (offset, ty) in wasm_signature.params.iter().enumerate() {
+             let kind = Kind::of(*ty).expect("planned");
+             let value = self.read(window.base + offset as u16, kind);
+-            let value = match kind {
+-                Kind::I32 => self.builder.ins().uextend(types::I64, value),
+-                Kind::I64 => value,
+-            };
+-            let address =
++            typed_args.push((kind, value));
++            if !ssa_args {
++                let value = match kind {
++                    Kind::I32 => self.builder.ins().uextend(types::I64, value),
++                    Kind::I64 => value,
++                };
++                let address =
++                    self.builder
++                        .ins()
++                        .stack_addr(types::I64, slot, (offset as u32 * word) as i32);
+                 self.builder
+                     .ins()
+-                    .stack_addr(types::I64, slot, (offset as u32 * word) as i32);
+-            self.builder
+-                .ins()
+-                .store(MemFlagsData::trusted(), value, address, 0);
++                    .store(MemFlagsData::trusted(), value, address, 0);
++            }
+         }
+         let result_offset = (wasm_signature.params.len() as u32 * word) as i32;
+         let args = self.builder.ins().stack_addr(types::I64, slot, 0);
+@@ -3773,16 +3784,22 @@ impl<H: Host> Emitter<'_, '_, H> {
+         }
+         direct_args.extend(self.length);
+         for (offset, ty) in wasm_signature.params.iter().enumerate() {
+-            let raw = self.builder.ins().load(
+-                types::I64,
+-                MemFlagsData::trusted(),
+-                args,
+-                (offset as u32 * word) as i32,
+-            );
+-            direct_args.push(match Kind::of(*ty).expect("planned") {
+-                Kind::I32 => self.builder.ins().ireduce(types::I32, raw),
+-                Kind::I64 => raw,
+-            });
++            let kind = Kind::of(*ty).expect("planned");
++            let value = if ssa_args {
++                typed_args[offset].1
++            } else {
++                let raw = self.builder.ins().load(
++                    types::I64,
++                    MemFlagsData::trusted(),
++                    args,
++                    (offset as u32 * word) as i32,
++                );
++                match kind {
++                    Kind::I32 => self.builder.ins().ireduce(types::I32, raw),
++                    Kind::I64 => raw,
++                }
++            };
++            direct_args.push(value);
+         }
+         let entry_signature = self.builder.import_signature(internal_signature(
+             self.memory,
+@@ -3814,6 +3831,21 @@ impl<H: Host> Emitter<'_, '_, H> {
+ 
+         self.builder.switch_to_block(slow_call);
+         self.builder.set_cold_block(slow_call);
++        if ssa_args {
++            for (offset, (kind, value)) in typed_args.iter().copied().enumerate() {
++                let value = match kind {
++                    Kind::I32 => self.builder.ins().uextend(types::I64, value),
++                    Kind::I64 => value,
++                };
++                let address =
++                    self.builder
++                        .ins()
++                        .stack_addr(types::I64, slot, (offset as u32 * word) as i32);
++                self.builder
++                    .ins()
++                    .store(MemFlagsData::trusted(), value, address, 0);
++            }
++        }
+         let target_offset = if self.diagnostics_enabled {
+             CONTEXT_CALL_REFERENCE_DIAGNOSTIC
+         } else {
+diff --git a/crates/quench-runtime/src/vm/wasm.rs b/crates/quench-runtime/src/vm/wasm.rs
+index 3fe8854fb..88dcec698 100644
+--- a/crates/quench-runtime/src/vm/wasm.rs
++++ b/crates/quench-runtime/src/vm/wasm.rs
+@@ -2454,6 +2454,129 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn compiled_wasm_indirect_cache_passes_typed_ssa_arguments() {
++        let signature = crate::WasmSignature {
++            params: vec![crate::WasmType::I32, crate::WasmType::I64],
++            results: vec![crate::WasmType::I64],
++        };
++        let mut sum = vec![
++            Operator::LocalGet { local_index: 0 },
++            Operator::I64ExtendI32S,
++            Operator::LocalGet { local_index: 1 },
++            Operator::I64Add,
++        ];
++        let increment = {
++            let mut body = sum.clone();
++            body.extend([
++                Operator::I64Const { value: 1 },
++                Operator::I64Add,
++                Operator::End,
++            ]);
++            body
++        };
++        sum.push(Operator::End);
++        let caller = vec![
++            Operator::LocalGet { local_index: 0 },
++            Operator::LocalGet { local_index: 1 },
++            Operator::I32Const { value: 0 },
++            Operator::CallIndirect {
++                type_index: 0,
++                table_index: 0,
++            },
++            Operator::End,
++        ];
++        let module = crate::Engine::lower_wasm_module_with_elements(
++            "compiled-indirect-cache-typed-ssa-arguments",
++            [
++                crate::WasmFunctionBody {
++                    ty: crate::WasmCallableType::Embedded(signature.clone()),
++                    locals: vec![],
++                    operators: sum.into_iter().map(Ok),
++                },
++                crate::WasmFunctionBody {
++                    ty: crate::WasmCallableType::Embedded(signature.clone()),
++                    locals: vec![],
++                    operators: increment.into_iter().map(Ok),
++                },
++                crate::WasmFunctionBody {
++                    ty: crate::WasmCallableType::Embedded(signature),
++                    locals: vec![],
++                    operators: caller.into_iter().map(Ok),
++                },
++            ],
++            &crate::WasmTypes::from_functions([wasmparser::FuncType::new(
++                [wasmparser::ValType::I32, wasmparser::ValType::I64],
++                [wasmparser::ValType::I64],
++            )]),
++            &[],
++            &[],
++            &[],
++            &[crate::WasmTable {
++                ty: wasmparser::TableType {
++                    element_type: wasmparser::RefType::FUNCREF,
++                    table64: false,
++                    initial: 1,
++                    maximum: Some(1),
++                    shared: false,
++                },
++                initializer: crate::WasmReferenceInitializer::Function(0).into(),
++            }],
++            &[crate::WasmElement {
++                mode: crate::WasmElementMode::Active {
++                    table: 0,
++                    offset: crate::WasmValue::I32(0).into(),
++                },
++                element_type: wasmparser::RefType::FUNCREF,
++                items: vec![crate::WasmReferenceInitializer::Function(0)].into(),
++            }],
++        )
++        .unwrap();
++        let mut vm = Vm::new(crate::SystemHost);
++        vm.set_execution_mode(crate::ExecutionMode::Compiled);
++        let instance = vm.instantiate_wasm_module(&module).unwrap();
++        let argument32 = i32::MIN + 7;
++        let argument64 = i64::MIN + 123;
++        let expected = i64::from(argument32).wrapping_add(argument64);
++        let args = [
++            crate::WasmValue::I32(argument32),
++            crate::WasmValue::I64(argument64),
++        ];
++
++        assert_eq!(
++            vm.invoke_wasm(&instance, 2, &args).unwrap(),
++            Some(crate::WasmValue::I64(expected))
++        );
++        assert_eq!(
++            vm.invoke_wasm(&instance, 2, &args).unwrap(),
++            Some(crate::WasmValue::I64(expected))
++        );
++        let program = vm
++            .programs
++            .find_shared(&module.program)
++            .expect("registered Wasm program");
++        let compiled = vm
++            .programs
++            .compiled(program)
++            .flatten()
++            .expect("indirect caller compiled");
++        assert!(compiled.reference_cache_hits() > 0);
++
++        let table = vm.wasm_table(&instance, 0).unwrap();
++        let replacement = vm.wasm_function(&instance, 1).unwrap();
++        vm.wasm_table_fill(table, 0, replacement, 1).unwrap();
++        let replaced_expected = expected.wrapping_add(1);
++        assert_eq!(
++            vm.invoke_wasm(&instance, 2, &args).unwrap(),
++            Some(crate::WasmValue::I64(replaced_expected))
++        );
++        assert_eq!(
++            vm.invoke_wasm(&instance, 2, &args).unwrap(),
++            Some(crate::WasmValue::I64(replaced_expected))
++        );
++        assert_eq!(compiled.reference_call_cache_target(0), Some(replacement));
++    }
++
+     #[test]
+     fn compiled_wasm_indirect_call_propagates_native_oob_trap() {
+         let signature = crate::WasmSignature {
