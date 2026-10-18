@@ -2577,6 +2577,11 @@ pub(crate) enum Cell {
         matcher: Rc<quench_regexp::Regex>,
     },
     Error(String),
+    /// A promise: an ordinary object with its [[PromiseState]] and reactions.
+    Promise {
+        object: Box<Object>,
+        record: Box<super::PromiseRecord>,
+    },
     PromiseResolvingState {
         promise: Value,
         already_resolved: bool,
@@ -2678,6 +2683,7 @@ impl Cell {
             Self::RegExp { .. } => "regexp",
             Self::Error(_) => "error",
             Self::PromiseResolvingState { .. } => "promise_resolving_state",
+            Self::Promise { .. } => "promise",
             Self::TemporalDuration { .. } => "temporal_duration",
             Self::TemporalPlainDate { .. } => "temporal_plain_date",
             Self::TemporalPlainDateTime { .. } => "temporal_plain_date_time",

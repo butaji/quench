@@ -967,40 +967,7 @@ fn native_length(kind: Native) -> Option<f64> {
     })
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum PromiseState {
-    Pending,
-    Fulfilled,
-    Rejected,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(super) struct PromiseReaction {
-    pub(super) on_fulfilled: Value,
-    pub(super) on_rejected: Value,
-    pub(super) next: Value,
-    pub(super) execution_context: Option<HostExecutionContext>,
-}
-#[derive(Clone, Debug)]
-pub(super) struct PromiseRecord {
-    pub(super) state: PromiseState,
-    pub(super) result: Value,
-    pub(super) reactions: Vec<PromiseReaction>,
-    pub(super) rejection: PromiseRejectionState,
-    pub(super) rejection_id: Option<u64>,
-    pub(super) host_context: Option<HostExecutionContext>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum PromiseRejectionState {
-    Unobserved,
-    Observed,
-    AwaitingReport,
-    Reporting,
-    Reported,
-    HandledReported,
-    Handled,
-}
+pub(super) use crate::heap::{PromiseReaction, PromiseRecord, PromiseRejectionState, PromiseState};
 
 #[derive(Clone, Copy, Debug)]
 pub(super) enum RejectionNotification {
@@ -1008,15 +975,6 @@ pub(super) enum RejectionNotification {
     Handled(Value),
 }
 
-impl PromiseRecord {
-    pub(super) fn roots(&self) -> impl Iterator<Item = Value> + '_ {
-        std::iter::once(self.result).chain(
-            self.reactions
-                .iter()
-                .flat_map(|reaction| [reaction.on_fulfilled, reaction.on_rejected, reaction.next]),
-        )
-    }
-}
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct PromiseJob {
@@ -1113,7 +1071,6 @@ pub(super) struct DynamicImportJob {
 
 #[derive(Default)]
 pub(super) struct PromiseRuntime {
-    pub(super) records: FxHashMap<Value, PromiseRecord>,
     pub(super) rejection_notifications: VecDeque<RejectionNotification>,
     pub(super) last_rejection_id: u64,
     pub(super) thenable_jobs: FxHashMap<Value, ThenableJob>,
@@ -1145,7 +1102,6 @@ impl PromiseRuntime {
                 }
             };
         }
-        edges!(self.records, |record| record.roots());
         edges!(self.thenable_jobs, |job| [job.then, job.thenable, job.promise]);
         edges!(self.finally_handler_callbacks, |callback| [
             callback.handler,
@@ -1384,23 +1340,22 @@ impl<H: Host> Vm<H> {
             .get(&(self.realm.globals, Native::Promise))
             .copied()
             .unwrap_or(Value::NULL);
-        let promise = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
         let host_context = if self.host.observes_promise_lifecycle() {
             self.host.create_promise_context(parent)
         } else {
             None
         };
-        self.realm.promise.records.insert(
-            promise,
-            PromiseRecord {
+        let promise = self.heap.alloc(Cell::Promise {
+            object: Box::new(Self::empty_object(prototype)),
+            record: Box::new(PromiseRecord {
                 state: PromiseState::Pending,
                 result: Value::UNDEFINED,
                 reactions: vec![],
                 rejection: PromiseRejectionState::Unobserved,
                 rejection_id: None,
                 host_context,
-            },
-        );
+            }),
+        });
         if let Some(identity) = host_context {
             let mut context = crate::NativeContext::new(self);
             let resource = context.scoped_value(promise);
@@ -2084,7 +2039,7 @@ impl<H: Host> Vm<H> {
         key: &str,
         promise: Value,
     ) -> Result<(), JsError> {
-        let Some(completion) = self.realm.promise.records.get(&promise).cloned() else {
+        let Some(completion) = self.promise_record(promise).cloned() else {
             return Err(self.type_error(p, "module completion promise is unavailable".into()));
         };
         match completion.state {
@@ -3731,10 +3686,7 @@ impl<H: Host> Vm<H> {
                 .get(cache_key)
                 .and_then(ModuleRecord::evaluation_promise)
                 .is_some_and(|promise| {
-                    self.realm
-                        .promise
-                        .records
-                        .get(&promise)
+                    self.promise_record(promise)
                         .is_some_and(|record| record.state == PromiseState::Pending)
                 })
         {
@@ -3925,7 +3877,7 @@ impl<H: Host> Vm<H> {
             })
             .collect::<Vec<_>>();
         for (key, promise, namespace) in pending {
-            let Some(record) = self.realm.promise.records.get(&promise).cloned() else {
+            let Some(record) = self.promise_record(promise).cloned() else {
                 continue;
             };
             match record.state {
@@ -4109,10 +4061,7 @@ impl<H: Host> Vm<H> {
                 .is_some_and(|function| function.is_async)
             {
                 let pending = self
-                    .realm
-                    .promise
-                    .records
-                    .get(&evaluation)
+                    .promise_record(evaluation)
                     .is_some_and(|record| record.state == PromiseState::Pending);
                 if pending && self.deferred_dependency_batch {
                     let key = module_cache_key(&module.name, "javascript");
@@ -4126,7 +4075,7 @@ impl<H: Host> Vm<H> {
                 } else if pending {
                     self.drain_jobs_until_promise(&residual, evaluation)?;
                 }
-                let Some(record) = self.realm.promise.records.get(&evaluation).cloned() else {
+                let Some(record) = self.promise_record(evaluation).cloned() else {
                     return Err(
                         self.type_error(p, "module evaluation promise is unavailable".into())
                     );
@@ -5109,7 +5058,7 @@ impl<H: Host> Vm<H> {
                 then,
                 thenable: value,
                 promise,
-                execution_context: self.host.capture_job_context(self.realm.promise.records.get(&promise).and_then(|record| record.host_context)),
+                execution_context: self.host.capture_job_context(self.promise_record(promise).and_then(|record| record.host_context)),
             },
         );
         self.enqueue_job(job, vec![]);
@@ -5132,7 +5081,7 @@ impl<H: Host> Vm<H> {
         on_rejected: Value,
     ) -> Result<Value, JsError> {
         self.with_call_roots([promise, on_fulfilled, on_rejected], |vm| {
-            if !vm.realm.promise.records.contains_key(&promise) {
+            if !vm.is_promise(promise) {
                 return Err(
                     vm.type_error(p, "Promise.prototype method called on non-Promise".into())
                 );
@@ -5141,7 +5090,7 @@ impl<H: Host> Vm<H> {
             // A %Promise% capability has no guest executor (see `promise_resolve_for_constructor`):
             // its promise is settled directly when the reaction runs.
             let next = if constructor == vm.intrinsic_promise_constructor() {
-                vm.promise_object_with_parent(vm.realm.promise.records[&promise].host_context)?
+                vm.promise_object_with_parent(vm.promise_record(promise).expect("promise record").host_context)?
             } else {
                 let (next, resolve, reject) = vm.new_promise_capability(p, constructor)?;
                 vm.realm
@@ -5162,11 +5111,11 @@ impl<H: Host> Vm<H> {
         on_fulfilled: Value,
         on_rejected: Value,
     ) -> Result<Value, JsError> {
-        if !self.realm.promise.records.contains_key(&promise) {
+        if !self.is_promise(promise) {
             return Err(self.type_error(p, "Promise.prototype method called on non-Promise".into()));
         }
         let next = self.with_call_roots([promise, on_fulfilled, on_rejected], |vm| {
-            vm.promise_object_with_parent(vm.realm.promise.records[&promise].host_context)
+            vm.promise_object_with_parent(vm.promise_record(promise).expect("promise record").host_context)
         })?;
         let (resolve, reject) = self.promise_resolving_functions(next);
         self.realm
@@ -5198,11 +5147,11 @@ impl<H: Host> Vm<H> {
                 Value::UNDEFINED
             },
             next,
-            execution_context: self.host.capture_job_context(self.realm.promise.records.get(&next).and_then(|record| record.host_context)),
+            execution_context: self.host.capture_job_context(self.promise_record(next).and_then(|record| record.host_context)),
         };
         // Species selection and capability construction may settle the source.
         // Read its authoritative state only when installing this reaction.
-        let record = self.realm.promise.records.get_mut(&promise).unwrap();
+        let record = self.promise_record_mut(promise).unwrap();
         if record.state == PromiseState::Pending {
             record.reactions.push(reaction);
         } else {
@@ -5248,7 +5197,7 @@ impl<H: Host> Vm<H> {
         let value = self.heap.root(value);
         let outcome = (|| {
             let input = self.heap.root_value(value).unwrap();
-            if self.realm.promise.records.contains_key(&input) {
+            if self.is_promise(input) {
                 let constructor_atom = self.runtime_atoms.constructor;
                 let observed = self.get_property(p, input, constructor_atom)?;
                 if observed == self.heap.root_value(constructor).unwrap() {
