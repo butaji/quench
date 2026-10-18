@@ -1980,7 +1980,9 @@ impl<'a> Compiler<'a> {
                 numeric::apply(function, live.as_deref());
             }
             Self::specialize_plain_local_operations(function, &self.superinstructions);
-            frame_registers::promote(function, &self.superinstructions);
+            frame_registers::promote(function, &self.superinstructions, |atom| {
+                self.atoms.get(atom) == Some(crate::bytecode::WITH_ENTER_BINDING)
+            });
             if function
                 .code
                 .iter()
