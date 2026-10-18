@@ -82,3 +82,19 @@ The ratios below compare Quench JIT with each JIT-enabled peer. They are paired 
 | zlib | 13.62 / 112.9 | 0.156 [0.151, 0.162] | 1.126 [1.116, 1.134] | 0.154 [0.151, 0.158] | 1.018 [0.998, 1.021] |
 
 No case wins both metrics against either peer. gcc-loops and quicksort are the only cases that beat both RSS bars; both still lose Score decisively. HashSet's two hot `HashTable::add` functions do enter native code (9.49M and 39.53M entries in the separate diagnostics), yet its Score is 0.147 of Bun's. Quicksort runs native code with no VM callouts in its hot sorting function but reaches only 0.605 of Bun's Score, which points to native code quality or runtime overhead rather than interpreter dispatch alone. TSF records 2,816,456 compiled-to-VM callouts and 224.8 MiB RSS; reducing those boundaries and attributing non-code RSS are higher-value next steps than broadening the eager supported-opcode set. The attempted broad `unreachable` lowering illustrates the admission risk: it expanded TSF from 156 to 244 compiled functions and code from 178 KiB to 9.2 MiB, while the one-round score fell and RSS rose. That change was reverted. These data keep the requested JIT score-and-RSS goal open; they do not support a win claim.
+
+## Same-program indirect-callee fast path
+
+Revision `744f2f9c9` extends the fused Wasm reference-call helper to invoke an eligible same-program target through `run_compiled` directly. Table bounds, nullability, and canonical signature checks still run first; the target's own instance environment is used, and a missing compiled entry falls back to the ordinary VM call path. The regression test verifies a native caller invokes a nine-parameter native callee and returns the same result. The focused Wasm tests and full runtime suite pass (701 unit tests, 18 integration tests).
+
+The five-case clean 11-round report for this revision is in `evidence/jit-jetstream3-wasm-2026-10-18/indirect-call-followup/`. It is complete and qualification-ready, but no score interval reaches parity with Bun or Node, and no case wins both Score and RSS against either peer:
+
+| Fixture | Quench median Score / RSS MiB | Score vs Bun | RSS vs Bun | Score vs Node | RSS vs Node |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| HashSet | 30.69 / 113.1 | 0.157 [0.153, 0.174] | 2.028 [2.014, 2.034] | 0.144 [0.137, 0.157] | 0.891 [0.891, 0.892] |
+| gcc-loops | 71.94 / 47.9 | 0.417 [0.398, 0.455] | 0.859 [0.847, 0.870] | 0.409 [0.379, 0.443] | 0.522 [0.521, 0.523] |
+| quicksort | 184.60 / 41.7 | 0.590 [0.539, 0.607] | 0.853 [0.851, 0.859] | 0.455 [0.391, 0.466] | 0.473 [0.472, 0.473] |
+| tsf | 14.28 / 224.6 | 0.074 [0.073, 0.079] | 1.670 [1.650, 1.703] | 0.074 [0.072, 0.079] | 1.542 [1.532, 1.546] |
+| zlib | 13.47 / 112.6 | 0.157 [0.148, 0.160] | 1.124 [1.121, 1.133] | 0.155 [0.149, 0.160] | 1.011 [0.992, 1.018] |
+
+gcc-loops and quicksort still beat both RSS bars but remain well below both score bars. HashSet beats Node on RSS only; zlib's Node RSS interval includes parity. This fast path reduces interpreter activation for eligible indirect targets, but the reference-call boundary still enters the VM and does not explain TSF's full score gap. The full candidate result did not change the performance conclusion: native-callout attribution and hot generated-code quality remain the next targets.
