@@ -235,10 +235,9 @@ fn put_string(output: &WireOutput, units: crate::vm::wtf16::Units<'_>) {
     }
 }
 
-fn put_bigint_contents(output: &WireOutput, decimal: &str) {
-    let value: num_bigint::BigInt = decimal.parse().unwrap_or_default();
+fn put_bigint_contents(output: &WireOutput, value: &num_bigint::BigInt) {
     let (sign, mut magnitude) = value.to_bytes_le();
-    if value == num_bigint::BigInt::default() {
+    if sign == num_bigint::Sign::NoSign {
         magnitude.clear();
     }
     let digits = magnitude.len().div_ceil(BIGINT_DIGIT_BYTES);
@@ -735,9 +734,9 @@ impl<H: Host> Vm<H> {
                 put_string(&output, text.units());
                 Ok(())
             }
-            Some(Cell::BigInt(decimal)) => {
+            Some(Cell::BigInt(value)) => {
                 put_tag(&output, tag::BIGINT);
-                put_bigint_contents(&output, decimal);
+                put_bigint_contents(&output, value);
                 Ok(())
             }
             Some(Cell::TypedArray { buffer, .. } | Cell::DataView { buffer, .. }) => {
@@ -909,9 +908,9 @@ impl<H: Host> Vm<H> {
             put_double(output, number);
         } else {
             match self.heap.get(inner) {
-                Some(Cell::BigInt(decimal)) => {
+                Some(Cell::BigInt(value)) => {
                     put_tag(output, tag::BIGINT_OBJECT);
-                    put_bigint_contents(output, decimal);
+                    put_bigint_contents(output, value);
                 }
                 Some(Cell::String(text)) => {
                     put_tag(output, tag::STRING_OBJECT);
@@ -1364,7 +1363,7 @@ impl<H: Host> Vm<H> {
         let sign = if bitfield & BIGINT_SIGN_BIT != 0 { num_bigint::Sign::Minus } else { num_bigint::Sign::Plus };
         let value = num_bigint::BigInt::from_biguint(sign, magnitude);
         drop(input);
-        Ok(self.heap.alloc(Cell::BigInt(value.to_string())))
+        Ok(self.heap.alloc(Cell::bigint(value)))
     }
 
     fn wire_read_internal<D: ReadHooks<H> + ?Sized>(&mut self, program: &ResidualProgram, deserializer: &mut ValueDeserializer, hooks: &mut D) -> Read<Value> {
@@ -1972,8 +1971,8 @@ mod tests {
 
     #[test]
     fn bigints_carry_sign_and_byte_length() {
-        assert_eq!(bytes(|out| put_bigint_contents(out, "0")), [0]);
-        assert_eq!(bytes(|out| put_bigint_contents(out, "-1")), [0x11, 1, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(bytes(|out| put_bigint_contents(out, &0.into())), [0]);
+        assert_eq!(bytes(|out| put_bigint_contents(out, &(-1).into())), [0x11, 1, 0, 0, 0, 0, 0, 0, 0]);
     }
 
     #[test]

@@ -1508,15 +1508,15 @@ impl<H: Host> Vm<H> {
                     "cannot convert non-integral Number to BigInt".into(),
                 ));
             };
-            return Ok(self.heap.alloc(Cell::BigInt(integer.to_string())));
+            return Ok(self.heap.alloc(Cell::bigint(integer)));
         }
         if let Some(value) = primitive.as_bool() {
-            return Ok(self.heap.alloc(Cell::BigInt(i32::from(value).to_string())));
+            return Ok(self.heap.alloc(Cell::bigint(u8::from(value).into())));
         }
         if let Some(Cell::String(text)) = self.heap.get(primitive) {
             let parsed = crate::bigint::parse_string(text.host_string());
             return match parsed {
-                Some(value) => Ok(self.heap.alloc(Cell::BigInt(value.to_string()))),
+                Some(value) => Ok(self.heap.alloc(Cell::bigint(value))),
                 None => self.syntax_error_result(program, "invalid BigInt value"),
             };
         }
