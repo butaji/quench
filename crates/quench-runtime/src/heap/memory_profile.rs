@@ -563,6 +563,10 @@ fn cell_bytes(cell: &Cell) -> usize {
             | Cell::WasmTag { .. }
             | Cell::WasmGlobal { .. }
             | Cell::BindingReference { .. } => 0,
+            Cell::Promise { record, .. } => {
+                size_of::<crate::heap::PromiseRecord>()
+                    + record.reactions.capacity() * size_of::<crate::heap::PromiseReaction>()
+            }
             Cell::WasmHostFunction { .. } | Cell::WasmException { .. } => {
                 Heap::cell_payload_bytes(cell)
             }
