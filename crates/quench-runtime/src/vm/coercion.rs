@@ -91,9 +91,7 @@ impl<H: Host> Vm<H> {
             value
         };
         match self.heap.get(primitive) {
-            Some(Cell::BigInt(value)) => value
-                .parse::<num_bigint::BigInt>()
-                .map_err(|_| self.type_error(p, "invalid BigInt value".into())),
+            Some(Cell::BigInt(value)) => Ok(value.as_ref().clone()),
             Some(Cell::String(value)) => {
                 let Some(value) = crate::bigint::parse_string(&value.host_string()) else {
                     return self
@@ -175,18 +173,16 @@ impl<H: Host> Vm<H> {
             value
         };
         if numeric && let Some(Cell::BigInt(value)) = self.heap.get(value) {
-            let value = value.clone();
             if op == UNARY_PLUS {
                 return Err(self.type_error(p, BIGINT_TO_NUMBER.into()));
             }
-            let value = value
-                .parse::<num_bigint::BigInt>()
-                .map_err(|_| self.type_error(p, "Invalid BigInt value".into()))?;
             if op == UNARY_NEGATION {
-                return Ok(self.heap.alloc(Cell::BigInt((-value).to_str_radix(10))));
+                let negated = -value.as_ref();
+                return Ok(self.heap.alloc(Cell::bigint(negated)));
             }
             if op == BITWISE_NOT {
-                return Ok(self.heap.alloc(Cell::BigInt((!value).to_str_radix(10))));
+                let complement = !value.as_ref();
+                return Ok(self.heap.alloc(Cell::bigint(complement)));
             }
         }
         Ok(match op {
@@ -281,7 +277,7 @@ impl<H: Host> Vm<H> {
             Some(Cell::Function { .. }) => return Ok("function () { [native code] }".into()),
             Some(Cell::String(value)) => return Ok(value.to_string()),
             Some(Cell::Error(value)) => return Ok(value.clone()),
-            Some(Cell::BigInt(value)) => return Ok(value.clone()),
+            Some(Cell::BigInt(value)) => return Ok(value.to_string()),
             Some(Cell::Symbol(_)) => {
                 return Err(
                     self.type_error(program, "Cannot convert a Symbol value to a string".into())
@@ -389,7 +385,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn heap_cell_truthy(&self, v: Value) -> bool {
         match self.heap.get(v) {
             Some(Cell::String(text)) => !text.units().is_empty(),
-            Some(Cell::BigInt(value)) => value != "0",
+            Some(Cell::BigInt(value)) => value.sign() != num_bigint::Sign::NoSign,
             Some(Cell::Function {
                 kind: FunctionKind::Native(Native::IsHTMLDDA),
                 ..

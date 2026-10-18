@@ -24,8 +24,8 @@ mod capture_layout;
 mod capture_profile;
 mod class;
 mod early;
-mod syntax_message;
 mod frame_registers;
+mod syntax_message;
 pub(crate) mod liveness;
 mod locals;
 mod numeric;
@@ -1551,7 +1551,7 @@ enum ConstantKey {
     WasmV128([u8; crate::wasm::V128_BYTES]),
     String(String),
     StringUnits(Vec<u16>),
-    BigInt(String),
+    BigInt(num_bigint::BigInt),
     Boolean(bool),
     Null,
     Undefined,

@@ -188,8 +188,94 @@ enum Slot {
 }
 
 impl Slot {
+    const DEFAULT: Self = Self::Value(Kind::I32);
+
     fn join(self, other: Self) -> Self {
         if self == other { self } else { Self::Conflict }
+    }
+}
+
+/// Register facts at one bytecode position. Most Wasm temporaries have the
+/// default i32 representation, so retaining a full `registers`-sized vector
+/// at every reachable instruction wastes memory. This stores only deviations
+/// from that default; joins still apply the same `Slot` lattice to every
+/// register because two different deviations meet at `Conflict`.
+#[derive(Clone, Debug)]
+struct AnalysisState {
+    slots: Vec<(u16, Slot)>,
+}
+
+impl AnalysisState {
+    fn new() -> Self {
+        Self { slots: Vec::new() }
+    }
+
+    fn get(&self, register: u16, registers: u16) -> Option<Slot> {
+        if register >= registers {
+            return None;
+        }
+        Some(
+            self.slots
+                .binary_search_by_key(&register, |(index, _)| *index)
+                .map(|index| self.slots[index].1)
+                .unwrap_or(Slot::DEFAULT),
+        )
+    }
+
+    fn set(&mut self, register: u16, registers: u16, slot: Slot) -> Option<()> {
+        if register >= registers {
+            return None;
+        }
+        match self
+            .slots
+            .binary_search_by_key(&register, |(index, _)| *index)
+        {
+            Ok(index) if slot == Slot::DEFAULT => {
+                self.slots.remove(index);
+            }
+            Ok(index) => self.slots[index].1 = slot,
+            Err(index) if slot != Slot::DEFAULT => {
+                self.slots.insert(index, (register, slot));
+            }
+            Err(_) => {}
+        }
+        Some(())
+    }
+
+    fn join_from(&mut self, incoming: &Self) -> bool {
+        let mut joined = Vec::with_capacity(self.slots.len() + incoming.slots.len());
+        let (mut left, mut right) = (0, 0);
+        while left < self.slots.len() || right < incoming.slots.len() {
+            let left_index = self.slots.get(left).map(|(index, _)| *index);
+            let right_index = incoming.slots.get(right).map(|(index, _)| *index);
+            let register = match (left_index, right_index) {
+                (Some(a), Some(b)) => a.min(b),
+                (Some(a), None) => a,
+                (None, Some(b)) => b,
+                (None, None) => unreachable!(),
+            };
+            let current = if left_index == Some(register) {
+                let slot = self.slots[left].1;
+                left += 1;
+                slot
+            } else {
+                Slot::DEFAULT
+            };
+            let other = if right_index == Some(register) {
+                let slot = incoming.slots[right].1;
+                right += 1;
+                slot
+            } else {
+                Slot::DEFAULT
+            };
+            let slot = current.join(other);
+            if slot != Slot::DEFAULT {
+                joined.push((register, slot));
+            }
+        }
+        let changed = joined != self.slots;
+        self.slots = joined;
+        changed
     }
 }
 
@@ -205,9 +291,14 @@ const TRAPS: [crate::WasmTrap; 6] = [
 ];
 
 const JIT_ROOT_ENV: &str = "QUENCH_WASM_JIT_ROOT";
-const MAX_JIT_ROOT_FUNCTIONS: usize = 32;
+const JIT_ROOT_OPT_LEVEL_ENV: &str = "QUENCH_WASM_JIT_ROOT_OPT_LEVEL";
+const MAX_JIT_ROOT_FUNCTIONS: usize = 128;
 const MAX_JIT_ROOT_BYTECODES_PER_FUNCTION: usize = 80_000;
 const MAX_JIT_ROOT_CODE_BYTES: usize = 2 * 1024 * 1024;
+/// Keep unconditional trap lowering from admitting very large functions
+/// whose unreachable regions can make native code much larger than the
+/// useful live path. Root experiments have their own larger explicit cap.
+const MAX_JIT_UNREACHABLE_BYTECODES: usize = 2_048;
 
 fn jit_root_override() -> Result<Option<usize>, ()> {
     let Some(root) = std::env::var_os(JIT_ROOT_ENV) else {
@@ -218,6 +309,45 @@ fn jit_root_override() -> Result<Option<usize>, ()> {
         .parse::<usize>()
         .map(Some)
         .map_err(|_| ())
+}
+
+fn jit_root_opt_level(root: Option<usize>) -> Result<&'static str, ()> {
+    if root.is_none() {
+        return Ok("speed");
+    }
+    let Some(level) = std::env::var_os(JIT_ROOT_OPT_LEVEL_ENV) else {
+        return Ok("speed");
+    };
+    match level.to_str().ok_or(())? {
+        "none" => Ok("none"),
+        "speed" => Ok("speed"),
+        "speed_and_size" => Ok("speed_and_size"),
+        _ => Err(()),
+    }
+}
+
+/// Linux process RSS and high-water mark, in KiB, for opt-in JIT diagnostics.
+#[cfg(target_os = "linux")]
+fn jit_memory_snapshot() -> Option<(u64, u64)> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    let mut rss = None;
+    let mut high_water = None;
+    for line in status.lines() {
+        if let Some(value) = line.strip_prefix("VmRSS:") {
+            rss = value.split_whitespace().next()?.parse().ok();
+        } else if let Some(value) = line.strip_prefix("VmHWM:") {
+            high_water = value.split_whitespace().next()?.parse().ok();
+        }
+        if rss.is_some() && high_water.is_some() {
+            break;
+        }
+    }
+    Some((rss?, high_water?))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn jit_memory_snapshot() -> Option<(u64, u64)> {
+    None
 }
 
 /// The status of a callout that raised: the VM's error (or panic) waits in
@@ -1237,6 +1367,11 @@ impl<H: Host> Analysis<'_, H> {
 
     /// The function's plan, assuming every function in `callable` compiles.
     fn plan(&self, index: usize, callable: &[bool], memory_slot: &mut Option<u32>) -> Option<Plan> {
+        let plan_started = self
+            .compile_rejections
+            .as_ref()
+            .map(|_| std::time::Instant::now());
+        let memory_before = plan_started.and_then(|_| jit_memory_snapshot());
         let function = &self.code.functions[index];
         let Some(signature) = self.signature(index as u32) else {
             self.reject(index, || "missing-signature".into());
@@ -1277,11 +1412,15 @@ impl<H: Host> Analysis<'_, H> {
             .iter()
             .map(|packed| super::dispatch_fast::decoded_instruction(function, *packed))
             .collect();
-        let mut entry = vec![Slot::Value(Kind::I32); registers];
+        let mut entry = AnalysisState::new();
         for (offset, ty) in params.iter().enumerate() {
-            entry[parameter_base + offset] = Slot::Value(Kind::of(*ty)?);
+            entry.set(
+                u16::try_from(parameter_base + offset).ok()?,
+                function.registers,
+                Slot::Value(Kind::of(*ty)?),
+            )?;
         }
-        let mut states: Vec<Option<Vec<Slot>>> = vec![None; instructions.len()];
+        let mut states: Vec<Option<AnalysisState>> = vec![None; instructions.len()];
         states[0] = Some(entry);
         let mut work = vec![0usize];
         while let Some(pc) = work.pop() {
@@ -1322,15 +1461,7 @@ impl<H: Host> Analysis<'_, H> {
                     return None;
                 }
                 let changed = match &mut states[successor] {
-                    Some(existing) => {
-                        let mut changed = false;
-                        for (slot, incoming) in existing.iter_mut().zip(&state) {
-                            let joined = slot.join(*incoming);
-                            changed |= joined != *slot;
-                            *slot = joined;
-                        }
-                        changed
-                    }
+                    Some(existing) => existing.join_from(&state),
                     target @ None => {
                         *target = Some(state.clone());
                         true
@@ -1348,12 +1479,37 @@ impl<H: Host> Analysis<'_, H> {
                 let state = state.as_ref()?;
                 Some(
                     state
-                        .get(usize::from(instruction.b()))
-                        .copied()
+                        .get(instruction.b(), function.registers)
                         .unwrap_or(Slot::Conflict),
                 )
             })
             .collect();
+        if let Some(started) = plan_started {
+            let reachable = states.iter().flatten().count();
+            let stored_slots: usize = states.iter().flatten().map(|state| state.slots.len()).sum();
+            let slot_capacity: usize = states
+                .iter()
+                .flatten()
+                .map(|state| state.slots.capacity())
+                .sum();
+            let dense_state_bytes = reachable
+                .saturating_mul(registers)
+                .saturating_mul(std::mem::size_of::<Slot>());
+            let sparse_state_bytes = states
+                .len()
+                .saturating_mul(std::mem::size_of::<Option<AnalysisState>>())
+                .saturating_add(slot_capacity.saturating_mul(std::mem::size_of::<(u16, Slot)>()));
+            let memory_after = jit_memory_snapshot();
+            eprintln!(
+                "QUENCH_WASM_JIT_PLAN_MEMORY function={index} bytecodes={} registers={registers} reachable={reachable} stored_slots={stored_slots} dense_state_bytes={dense_state_bytes} sparse_state_bytes={sparse_state_bytes} elapsed_us={} rss_kib_before={:?} rss_kib_after={:?} hwm_kib_before={:?} hwm_kib_after={:?}",
+                instructions.len(),
+                started.elapsed().as_micros(),
+                memory_before.map(|memory| memory.0),
+                memory_after.map(|memory| memory.0),
+                memory_before.map(|memory| memory.1),
+                memory_after.map(|memory| memory.1),
+            );
+        }
         Some(Plan {
             params,
             result,
@@ -1368,7 +1524,7 @@ impl<H: Host> Analysis<'_, H> {
         &self,
         function: &Function,
         instruction: WideInstruction,
-        state: &mut [Slot],
+        state: &mut AnalysisState,
         callable: &[bool],
         memory_register: Option<u16>,
         memory_slot: &mut Option<u32>,
@@ -1381,15 +1537,16 @@ impl<H: Host> Analysis<'_, H> {
         if !super::dispatch_fast::lane_fields_fit(instruction, function) {
             return None;
         }
-        let value = |state: &[Slot], register: u16| match state.get(usize::from(register))? {
-            Slot::Value(kind) => Some(*kind),
-            _ => None,
+        let value =
+            |state: &AnalysisState, register: u16| match state.get(register, function.registers)? {
+                Slot::Value(kind) => Some(kind),
+                _ => None,
+            };
+        let i32_value = |state: &AnalysisState, register: u16| {
+            (value(state, register)? == Kind::I32).then_some(())
         };
-        let i32_value =
-            |state: &[Slot], register: u16| (value(state, register)? == Kind::I32).then_some(());
-        let set = |state: &mut [Slot], register: u16, slot: Slot| -> Option<()> {
-            *state.get_mut(usize::from(register))? = slot;
-            Some(())
+        let set = |state: &mut AnalysisState, register: u16, slot: Slot| {
+            state.set(register, function.registers, slot)
         };
         // The memory register is read only by direct accesses through it.
         if memory_register.is_some_and(|memory| {
@@ -1421,7 +1578,7 @@ impl<H: Host> Analysis<'_, H> {
         }
         if let Some(load) = MemoryLoad::from_direct_op(op) {
             if Some(instruction.b()) != memory_register
-                || state.get(usize::from(instruction.b())) != Some(&Slot::Memory)
+                || state.get(instruction.b(), function.registers) != Some(Slot::Memory)
             {
                 return None;
             }
@@ -1434,7 +1591,7 @@ impl<H: Host> Analysis<'_, H> {
         }
         if let Some(store) = MemoryStore::from_direct_op(op) {
             if Some(instruction.b()) != memory_register
-                || state.get(usize::from(instruction.b())) != Some(&Slot::Memory)
+                || state.get(instruction.b(), function.registers) != Some(Slot::Memory)
             {
                 return None;
             }
@@ -1531,7 +1688,7 @@ impl<H: Host> Analysis<'_, H> {
             Op::WasmMemorySize => {
                 let memory = instruction.b();
                 if Some(memory) != memory_register
-                    || state.get(usize::from(memory)) != Some(&Slot::Memory)
+                    || state.get(memory, function.registers) != Some(Slot::Memory)
                     || !memory_slot.is_some_and(|slot| self.supports_compiled_memory(slot))
                 {
                     return None;
@@ -1542,7 +1699,7 @@ impl<H: Host> Analysis<'_, H> {
                 let memory = instruction.a();
                 let (destination, _) = instruction.register_pair();
                 if Some(memory) != memory_register
-                    || state.get(usize::from(memory)) != Some(&Slot::Memory)
+                    || state.get(memory, function.registers) != Some(Slot::Memory)
                     || !memory_slot.is_some_and(|slot| self.supports_compiled_memory(slot))
                 {
                     return None;
@@ -1552,7 +1709,7 @@ impl<H: Host> Analysis<'_, H> {
                 i32_value(state, destination)
             }
             Op::WasmIndirectTarget if self.callouts => {
-                let Slot::Binding(table) = *state.get(usize::from(instruction.b()))? else {
+                let Slot::Binding(table) = state.get(instruction.b(), function.registers)? else {
                     return None;
                 };
                 if !self.binds_table32(table) {
@@ -1604,7 +1761,7 @@ impl<H: Host> Analysis<'_, H> {
                 set(state, instruction.a(), Slot::Import(function))
             }
             Op::Call => {
-                let slot = *state.get(usize::from(instruction.b()))?;
+                let slot = state.get(instruction.b(), function.registers)?;
                 let signature = match slot {
                     Slot::Import(function) => self.import_signature(function)?,
                     Slot::IndirectReference { signature, .. } if self.callouts => {
@@ -1627,7 +1784,12 @@ impl<H: Host> Analysis<'_, H> {
                 };
                 set(state, instruction.result_register(), Slot::Value(kind))
             }
-            Op::WasmUnreachable if self.experimental_root_compilation => Some(()),
+            Op::WasmUnreachable
+                if self.experimental_root_compilation
+                    || function.code.len() <= MAX_JIT_UNREACHABLE_BYTECODES =>
+            {
+                Some(())
+            }
             Op::Return => match result {
                 Some(ty) => (value(state, instruction.a())? == Kind::of(ty)?).then_some(()),
                 None => Some(()),
@@ -1647,14 +1809,14 @@ impl<H: Host> Analysis<'_, H> {
             // in place; a 64-bit global's value is a box, so it stays
             // interpreted.
             Op::WasmGlobalGet => {
-                let Slot::Binding(slot) = *state.get(usize::from(instruction.b()))? else {
+                let Slot::Binding(slot) = state.get(instruction.b(), function.registers)? else {
                     return None;
                 };
                 (Kind::of(self.global_type(slot)?)? == Kind::I32).then_some(())?;
                 set(state, instruction.a(), Slot::Value(Kind::I32))
             }
             Op::WasmGlobalSet => {
-                let Slot::Binding(slot) = *state.get(usize::from(instruction.b()))? else {
+                let Slot::Binding(slot) = state.get(instruction.b(), function.registers)? else {
                     return None;
                 };
                 (Kind::of(self.global_type(slot)?)? == Kind::I32).then_some(())?;
@@ -3809,9 +3971,9 @@ fn link(bytes: &mut [u8], body: usize, call: &Call, callee: usize) -> Option<()>
 /// Code alignment for each compiled function.
 const FUNCTION_ALIGNMENT: usize = 64;
 
-fn target_isa() -> Option<std::sync::Arc<dyn cranelift_codegen::isa::TargetIsa>> {
+fn target_isa(opt_level: &str) -> Option<std::sync::Arc<dyn cranelift_codegen::isa::TargetIsa>> {
     let mut flags = settings::builder();
-    flags.set("opt_level", "speed").ok()?;
+    flags.set("opt_level", opt_level).ok()?;
     flags.set("enable_verifier", "false").ok()?;
     let builder = cranelift_native::builder().ok()?;
     builder.finish(settings::Flags::new(flags)).ok()
@@ -4069,7 +4231,11 @@ impl<H: Host> Vm<H> {
             && memory_slot
                 .and_then(|slot| self.heap.environment_slot(env, slot as usize))
                 .is_some_and(|binding| wrapping_memory(self, binding));
-        let isa = target_isa()?;
+        let opt_level = jit_root_opt_level(root).ok()?;
+        if diagnostics_enabled {
+            eprintln!("QUENCH_WASM_JIT_OPT_LEVEL {opt_level}");
+        }
+        let isa = target_isa(opt_level)?;
         // The full plan of a callable function, derived again where needed.
         let plan = |index: usize| analysis.plan(index, &callable, &mut memory_slot.clone());
         let mut reference_site_ids = diagnostics_enabled.then(|| {
@@ -4142,10 +4308,13 @@ impl<H: Host> Vm<H> {
             if plans[index].is_none() {
                 continue;
             }
-            let (body, function_calls) = analysis.compile_function(
+            let full_plan = plan(index)?;
+            let body_compile_started = diagnostics_enabled.then(std::time::Instant::now);
+            let body_memory_before = body_compile_started.and_then(|_| jit_memory_snapshot());
+            let body_result = analysis.compile_function(
                 &*isa,
                 index,
-                &plan(index)?,
+                &full_plan,
                 &plans,
                 guarded,
                 wraps,
@@ -4154,7 +4323,19 @@ impl<H: Host> Vm<H> {
                 reference_site_ids
                     .as_ref()
                     .map(|site_ids| site_ids[index].as_slice()),
-            )?;
+            );
+            if let Some(started) = body_compile_started {
+                let memory_after = jit_memory_snapshot();
+                eprintln!(
+                    "QUENCH_WASM_JIT_BODY_MEMORY function={index} elapsed_us={} rss_kib_before={:?} rss_kib_after={:?} hwm_kib_before={:?} hwm_kib_after={:?}",
+                    started.elapsed().as_micros(),
+                    body_memory_before.map(|memory| memory.0),
+                    memory_after.map(|memory| memory.0),
+                    body_memory_before.map(|memory| memory.1),
+                    memory_after.map(|memory| memory.1),
+                );
+            }
+            let (body, function_calls) = body_result?;
             let body_projected_len = projected_code_len(bytes.len(), body.len())?;
             if root.is_some() && body_projected_len > MAX_JIT_ROOT_CODE_BYTES {
                 if diagnostics_enabled {
@@ -4633,6 +4814,81 @@ const VOID_RESULT_CONSTANT: usize = 1;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sparse_analysis_states_preserve_register_joins() {
+        const FACTS: [Slot; 7] = [
+            Slot::DEFAULT,
+            Slot::Value(Kind::I64),
+            Slot::Binding(7),
+            Slot::Memory,
+            Slot::Import(9),
+            Slot::IndirectReference {
+                signature: 11,
+                table: 13,
+            },
+            Slot::Conflict,
+        ];
+        let states = FACTS
+            .iter()
+            .flat_map(|first| {
+                FACTS.iter().flat_map(move |second| {
+                    FACTS.iter().map(move |third| vec![*first, *second, *third])
+                })
+            })
+            .collect::<Vec<_>>();
+        let sparse = |dense: &[Slot]| {
+            let registers = u16::try_from(dense.len()).expect("small test state");
+            let mut state = AnalysisState::new();
+            for (index, slot) in dense.iter().copied().enumerate() {
+                state
+                    .set(
+                        u16::try_from(index).expect("small test register"),
+                        registers,
+                        slot,
+                    )
+                    .expect("register in range");
+            }
+            state
+        };
+
+        for left in &states {
+            for right in &states {
+                let mut expected = left.clone();
+                let mut changed = false;
+                for (slot, incoming) in expected.iter_mut().zip(right) {
+                    let joined = slot.join(*incoming);
+                    changed |= joined != *slot;
+                    *slot = joined;
+                }
+
+                let mut actual = sparse(left);
+                assert_eq!(actual.join_from(&sparse(right)), changed);
+                for (index, expected) in expected.iter().copied().enumerate() {
+                    assert_eq!(actual.get(index as u16, 3), Some(expected));
+                }
+            }
+        }
+
+        // Once a loop backedge turns a fact into Conflict, later iterations
+        // must not make it precise again.
+        let mut loop_state = AnalysisState::new();
+        let mut incoming = AnalysisState::new();
+        incoming
+            .set(0, 1, Slot::Value(Kind::I64))
+            .expect("register in range");
+        assert!(loop_state.join_from(&incoming));
+        assert_eq!(loop_state.get(0, 1), Some(Slot::Conflict));
+        assert!(!loop_state.join_from(&AnalysisState::new()));
+        assert!(!loop_state.join_from(&incoming));
+        assert_eq!(loop_state.get(0, 1), Some(Slot::Conflict));
+        assert_eq!(loop_state.get(1, 1), None);
+
+        loop_state
+            .set(0, 1, Slot::DEFAULT)
+            .expect("register in range");
+        assert_eq!(loop_state.get(0, 1), Some(Slot::DEFAULT));
+    }
 
     /// Each i32 integer operator widens to its namesake, and each f32 float
     /// operator to its f64 namesake.

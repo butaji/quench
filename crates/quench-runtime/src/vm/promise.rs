@@ -5048,7 +5048,7 @@ impl<H: Host> Vm<H> {
             Constant::StringUnits(value) => {
                 self.heap.alloc(Cell::String(JsString::from_units(&value)))
             }
-            Constant::BigInt(value) => self.heap.alloc(Cell::BigInt(value)),
+            Constant::BigInt(value) => self.heap.alloc(Cell::bigint(value)),
             Constant::Boolean(true) => Value::TRUE,
             Constant::Boolean(false) => Value::FALSE,
             Constant::Null => Value::NULL,

@@ -270,11 +270,11 @@ impl<H: Host> Vm<H> {
         }
         let bytes = &element;
         Some(match kind {
-            TypedArrayKind::BigInt64 => self.heap.alloc(Cell::BigInt(
-                i64::from_ne_bytes(bytes[..8].try_into().unwrap()).to_string(),
+            TypedArrayKind::BigInt64 => self.heap.alloc(Cell::bigint(
+                i64::from_ne_bytes(bytes[..8].try_into().unwrap()).into(),
             )),
-            TypedArrayKind::BigUint64 => self.heap.alloc(Cell::BigInt(
-                u64::from_ne_bytes(bytes[..8].try_into().unwrap()).to_string(),
+            TypedArrayKind::BigUint64 => self.heap.alloc(Cell::bigint(
+                u64::from_ne_bytes(bytes[..8].try_into().unwrap()).into(),
             )),
             _ => Value::number(match kind {
                 TypedArrayKind::Uint8 | TypedArrayKind::Uint8Clamped => bytes[0] as f64,
