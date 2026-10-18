@@ -546,3 +546,27 @@ motivate a future single-source, low-cost baseline compiler if Cranelift
 compilation remains a measured cost. [JetStream 3](https://webkit.org/blog/17899/introducing-the-jetstream-3-benchmark-suite/),
 [Deegen](https://compilers.stanford.edu/software/deegen/),
 [Copy-and-Patch](https://compilers.stanford.edu/software/copy-and-patch/).
+
+## Indexed i32 offset reuse experiment
+
+The opt-in `QUENCH_WASM_JIT_INDEXED_OFFSET_REUSE=1` candidate maintains an
+exact companion `x * 4 mod 2^32` for i32 register views in structurally
+matching Wasm functions. It substitutes that value for `i32.shl 2`; add,
+subtract, move, and every other register definition preserve or rebuild the
+companion. Memory address formation, bounds checks, trap order, and loop
+safepoints stay on the existing path. The feature is disabled by default.
+
+The algebraic relation is exact under Wasm wraparound:
+`(x ± y) * 4 mod 2^32 = (x * 4 ± y * 4) mod 2^32`. Differential smoke runs
+matched interpreter, compiled-off, and compiled-on results for ordinary,
+wrapped, and out-of-bounds indices. `cargo check --tests` type-checks the
+focused regression. The unit-test executable could not be built within the
+container's memory limit, so its assertions remain unrun.
+
+The candidate is screened only on JetStream 3 `quicksort-wasm` using the
+paired `--jit-wasm-indexed-offset-reuse-ab` diagnostic. A three-round screen
+advances to an 11-round confirmation only if the paired on/off Score ratio is
+at least 1.05 with its 95% interval above 1, and peak RSS grows by no more than
+0.5 MiB. The diagnostic report is never qualification-ready. Keep the code
+only if the measured result supports it; a local gain is not a peer win unless
+the same 11-round report also clears both Bun and Node Score and RSS bars.

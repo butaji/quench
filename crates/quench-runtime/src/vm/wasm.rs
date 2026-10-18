@@ -1849,6 +1849,153 @@ mod tests {
     }
 
     #[test]
+    fn compiled_wasm_indexed_offset_reuse_preserves_unit_stride_loop_addresses() {
+        let memarg = wasmparser::MemArg {
+            align: 2,
+            max_align: 2,
+            offset: 0,
+            memory: 0,
+        };
+        let module = crate::Engine::lower_wasm_module_with_state(
+            "compiled-indexed-offset-reuse-loop",
+            [crate::WasmFunctionBody {
+                ty: crate::WasmCallableType::Embedded(crate::WasmSignature {
+                    params: vec![crate::WasmType::I32, crate::WasmType::I32],
+                    results: vec![crate::WasmType::I32],
+                }),
+                locals: vec![wasmparser::ValType::I32; 3],
+                operators: vec![
+                    // Save the count for a second scan in the opposite direction.
+                    Operator::LocalGet { local_index: 1 },
+                    Operator::LocalSet { local_index: 3 },
+                    Operator::Loop {
+                        blockty: wasmparser::BlockType::Empty,
+                    },
+                    Operator::LocalGet { local_index: 0 },
+                    Operator::I32Const { value: 2 },
+                    Operator::I32Shl,
+                    Operator::I32Load { memarg },
+                    Operator::LocalSet { local_index: 4 },
+                    Operator::LocalGet { local_index: 0 },
+                    Operator::I32Const { value: 2 },
+                    Operator::I32Shl,
+                    Operator::LocalGet { local_index: 4 },
+                    Operator::I32Const { value: 1 },
+                    Operator::I32Add,
+                    Operator::I32Store { memarg },
+                    Operator::LocalGet { local_index: 0 },
+                    Operator::I32Const { value: 1 },
+                    Operator::I32Add,
+                    Operator::LocalSet { local_index: 0 },
+                    Operator::LocalGet { local_index: 1 },
+                    Operator::I32Const { value: 1 },
+                    Operator::I32Sub,
+                    Operator::LocalTee { local_index: 1 },
+                    Operator::BrIf { relative_depth: 0 },
+                    Operator::End,
+                    // j = the last i read; restore the count, then scan backwards.
+                    Operator::LocalGet { local_index: 0 },
+                    Operator::I32Const { value: 1 },
+                    Operator::I32Sub,
+                    Operator::LocalSet { local_index: 2 },
+                    Operator::LocalGet { local_index: 3 },
+                    Operator::LocalSet { local_index: 1 },
+                    Operator::Loop {
+                        blockty: wasmparser::BlockType::Empty,
+                    },
+                    Operator::LocalGet { local_index: 2 },
+                    Operator::I32Const { value: 2 },
+                    Operator::I32Shl,
+                    Operator::I32Load { memarg },
+                    Operator::LocalSet { local_index: 4 },
+                    Operator::LocalGet { local_index: 2 },
+                    Operator::I32Const { value: 1 },
+                    Operator::I32Sub,
+                    Operator::LocalSet { local_index: 2 },
+                    Operator::LocalGet { local_index: 1 },
+                    Operator::I32Const { value: 1 },
+                    Operator::I32Sub,
+                    Operator::LocalTee { local_index: 1 },
+                    Operator::BrIf { relative_depth: 0 },
+                    Operator::End,
+                    Operator::LocalGet { local_index: 4 },
+                    Operator::End,
+                ]
+                .into_iter()
+                .map(Ok),
+            }],
+            &crate::WasmTypes::default(),
+            &[],
+            &[crate::WasmMemory {
+                ty: wasmparser::MemoryType {
+                    initial: 1,
+                    maximum: Some(1),
+                    memory64: false,
+                    shared: false,
+                    page_size_log2: None,
+                },
+                import: None,
+            }],
+            &[crate::WasmData {
+                mode: crate::WasmDataMode::Active {
+                    memory: 0,
+                    offset: crate::WasmValue::I32(0).into(),
+                },
+                bytes: std::rc::Rc::new(
+                    [10_i32, 20, 30, 40]
+                        .into_iter()
+                        .flat_map(i32::to_le_bytes)
+                        .collect(),
+                ),
+            }],
+        )
+        .unwrap();
+
+        let run = |mode: crate::ExecutionMode, reuse: bool, index: i32, count: i32| {
+            super::super::compiled::with_jit_indexed_offset_reuse_for_test(reuse, || {
+                let mut vm = Vm::new(crate::SystemHost);
+                vm.set_execution_mode(mode);
+                let instance = vm.instantiate_wasm_module(&module).unwrap();
+                let result = vm.invoke_wasm(
+                    &instance,
+                    0,
+                    &[crate::WasmValue::I32(index), crate::WasmValue::I32(count)],
+                );
+                assert!(vm.frames.is_empty());
+                result
+            })
+        };
+
+        // Every run gets a fresh instance because the scan increments each
+        // visited element. Compare the interpreter and both compiled paths.
+        for (index, count) in [(0, 4), (0x4000_0000, 1)] {
+            for (mode, reuse) in [
+                (crate::ExecutionMode::Interpreted, false),
+                (crate::ExecutionMode::Compiled, false),
+                (crate::ExecutionMode::Compiled, true),
+            ] {
+                assert_eq!(
+                    run(mode, reuse, index, count).unwrap(),
+                    Some(crate::WasmValue::I32(11))
+                );
+            }
+        }
+        for (mode, reuse) in [
+            (crate::ExecutionMode::Interpreted, false),
+            (crate::ExecutionMode::Compiled, false),
+            (crate::ExecutionMode::Compiled, true),
+        ] {
+            assert_eq!(
+                run(mode, reuse, 16_384, 1)
+                    .unwrap_err()
+                    .wasm_trap(),
+                Some(crate::WasmTrap::OutOfBoundsMemory)
+            );
+        }
+    }
+
+
+    #[test]
     fn compiled_wasm_wrapping_addresses_preserve_load_store_and_traps() {
         let memarg = |offset| wasmparser::MemArg {
             align: 2,
