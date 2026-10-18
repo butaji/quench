@@ -199,7 +199,7 @@ fn field_uses(instruction: WideInstruction, field: InstructionField, fields: &[F
             operand(input_operand.0, fields)
         }
         FieldLayout::FieldBase => field_base(instruction, fields),
-        FieldLayout::OptionalSourceRegister => instruction.optional_register_b().map_or(0, bit),
+        FieldLayout::OptionalReadRegister => instruction.optional_register_b().map_or(0, bit),
         FieldLayout::ConstructArguments => match instruction.construct_arguments() {
             crate::bytecode::ConstructArguments::Registers(window) => {
                 range(window.base, window.count)
@@ -324,6 +324,7 @@ mod tests {
         let function = Function {
             parent: None,
             name: None,
+            inferred_name: None,
             is_arrow: false,
             self_binding_slot: None,
             source_span: None,
@@ -351,11 +352,7 @@ mod tests {
             local_registers: Vec::new().into(),
             inherited_with_scope: false,
             lexical_atoms: vec![].into(),
-            global_lexical_atoms: vec![].into(),
-            global_var_atoms: vec![].into(),
-            global_function_atoms: vec![].into(),
-            global_annex_b_var_atoms: vec![].into(),
-            global_immutable_atoms: vec![].into(),
+            global_declarations: None,
             name_bindings: Default::default(),
             binding_sites: vec![].into(),
             source_positions: Default::default(),
@@ -371,6 +368,7 @@ mod tests {
             dispatch: crate::bytecode::DispatchClass::General,
             decoded: Default::default(),
             plain_locals: Default::default(),
+            declared_atom_sets: Default::default(),
             activation_bindings: Default::default(),
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),

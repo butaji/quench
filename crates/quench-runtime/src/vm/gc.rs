@@ -67,7 +67,8 @@ fn append_shape_roots(
             .into_iter()
             .flatten()
             .flat_map(|(key, attributes)| {
-                let (getter, setter) = attributes.functions(accessors);
+                // A slot getter is traced with its object's slots.
+                let (getter, setter) = attributes.functions(accessors, || None);
                 key.symbol_value()
                     .into_iter()
                     .chain([getter, setter].into_iter().flatten())
@@ -125,12 +126,12 @@ impl ParallelShapeTrace<'_> {
         let word = shape_index / u64::BITS as usize;
         let mask = 1_u64 << (shape_index % u64::BITS as usize);
         if trace_kind == GcTraceKind::VerifyFull {
-            if shapes[shape_index].may_have_gc_roots {
+            if shapes[shape_index].facts.may_have_gc_roots() {
                 append_shape_roots(shapes, self.accessors, shape, roots);
             }
         } else if self.marked_shapes[word].load(Ordering::Relaxed) & mask == 0
             && self.marked_shapes[word].fetch_or(mask, Ordering::Relaxed) & mask == 0
-            && shapes[shape_index].may_have_gc_roots
+            && shapes[shape_index].facts.may_have_gc_roots()
         {
             append_shape_roots(shapes, self.accessors, shape, roots);
         }
@@ -165,13 +166,13 @@ fn append_compacted_shape(
         ShapeTransition::Dictionary { trigger } => Some(trigger),
         _ => shapes[parent as usize].dictionary_trigger,
     };
-    let parent_may_have_gc_roots = shapes[parent as usize].may_have_gc_roots;
+    let parent_facts = shapes[parent as usize].facts;
     shapes.push(Shape::child(
         Some(parent),
         transition,
         storage_len,
         dictionary_trigger,
-        parent_may_have_gc_roots,
+        parent_facts,
     ));
     if let Some(key) = cache_key {
         transitions.insert(shapes, parent, key, shape);
@@ -219,7 +220,7 @@ fn rebuild_shape(
         if let Some((_, attributes)) = entry
             && data.is_none()
         {
-            let attributes = ShapeAttributes::record(attributes.attributes(old_accessors), accessors);
+            let attributes = attributes.rehomed(old_accessors, accessors);
             parent = append_compacted_shape(
                 shapes,
                 transitions,
@@ -255,7 +256,7 @@ impl<H: Host> Vm<H> {
         if !self.heap.should_collect() {
             return;
         }
-        let full = !self.heap.next_collection_is_minor();
+        let full = self.heap.should_full_collect();
         self.collect_slow(program, full);
     }
 
@@ -298,6 +299,13 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn collect_slow(&mut self, _program: &ResidualProgram, full: bool) {
+        let full = self.heap.collection_is_full(full);
+        #[cfg(feature = "profile-memory")]
+        if std::env::var_os("QUENCH_FUNCTION_USE").is_some() {
+            self.report_function_use();
+        }
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        let mut phase_started = std::time::Instant::now();
         self.constructed_shapes.fill(super::provenance::ConstructedShape::EMPTY);
         #[cfg(feature = "profile-aggregate")]
         for (index, frame) in self.frames.iter().enumerate() {
@@ -354,11 +362,16 @@ impl<H: Host> Vm<H> {
                 .flat_map(|(_, edges)| edges.iter().copied())
                 .collect::<Vec<_>>()
         };
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        {
+            self.heap.record_vm_gc_phase(0, phase_started);
+            phase_started = std::time::Instant::now();
+        }
         // Roots are gathered source by source: a single iterator chain over
         // every source costs each root a step through every nesting level. The previous
         // collection's count sizes the vector, which otherwise regrows from empty each time.
         let mut roots = Vec::with_capacity(self.gc_root_count);
-        self.programs.extend_roots(&mut roots);
+        self.programs.extend_roots(&mut roots, full);
         roots.extend(self.wasm_js.roots());
         roots.extend([
             self.realm.globals,
@@ -408,6 +421,7 @@ impl<H: Host> Vm<H> {
             self.realm
                 .global_lexical_states
                 .iter()
+                .chain(self.realm.parked.iter().map(|parked| (&parked.global, &parked.state)))
                 .flat_map(|(global, state)| {
                     std::iter::once(*global).chain(state.bindings.values().copied())
                 }),
@@ -606,6 +620,7 @@ impl<H: Host> Vm<H> {
             },
         ));
         roots.extend(self.test262_agent.roots());
+        roots.extend(self.shared_async_waiters.iter().map(|w|w.promise));
         roots.extend(
             self.realm
                 .promise
@@ -700,6 +715,11 @@ impl<H: Host> Vm<H> {
             let phase = format!("gc_{}_before", self.heap.collection_count() + 1);
             self.report_memory_snapshot(&phase);
         }
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        {
+            self.heap.record_vm_gc_phase(1, phase_started);
+            phase_started = std::time::Instant::now();
+        }
         let shape_count = self.shapes.len();
         let shape_word_count = shape_count.div_ceil(u64::BITS as usize);
         let marked_shape_bits = (0..shape_word_count)
@@ -728,6 +748,8 @@ impl<H: Host> Vm<H> {
             |trace_kind: GcTraceKind, owner: Value, shape: u32, prototype: bool, roots: &mut Vec<Value>| {
                 shape_trace.append(trace_kind, owner, shape, prototype, roots);
             };
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        self.heap.record_vm_gc_phase(2, phase_started);
         let finalization_jobs = self.heap.collect_with_object_roots(
             roots,
             |trace_kind, owner, shape, prototype, roots| {
@@ -736,6 +758,8 @@ impl<H: Host> Vm<H> {
             Some(&parallel_object_roots),
             full,
         );
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        let after_collection_started = std::time::Instant::now();
         let mut live_shapes = shape_trace.live_shapes();
         // The startup snapshot reads its holders' sealed shapes, which no object may hold now.
         live_shapes.extend(self.startup_intrinsics.sealed_shapes());
@@ -841,6 +865,11 @@ impl<H: Host> Vm<H> {
         if let Some(concats) = &mut self.string_concats {
             concats.fill(EMPTY_STRING_CONCAT_CACHE);
         }
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        self.heap.record_vm_gc_phase(3, after_collection_started);
+        if full {
+            self.host.after_full_collection();
+        }
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("QUENCH_MEMORY_PEAK").is_some() {
             let phase = format!("gc_{}_after", self.heap.collection_count());
@@ -941,12 +970,44 @@ impl<H: Host> Vm<H> {
     }
 
     pub(crate) fn drain_jobs(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
-        while let Some(job) = self.realm.jobs.pop_front() {
-            self.run_pending_job(program, job)?;
-            self.advance_static_module_jobs(program)?;
-            self.advance_dynamic_import_jobs(program, true)?;
+        self.check_execution_interrupt()?;
+        loop{
+            self.drain_pending_microtasks(program)?;
+            // Async futex completion is an agent task: settle only after the
+            // existing microtask queue drains, then run its Promise reactions.
+            self.poll_shared_async_waiters(program)?;
+            if self.realm.jobs.is_empty(){break}
         }
         Ok(Value::UNDEFINED)
+    }
+
+    /// Preserve existing internal drains, including recursive promise/module
+    /// drains. Only NativeContext checkpoint admission checks the running flag.
+    fn drain_pending_microtasks(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
+        let previous = std::mem::replace(&mut self.native_microtask_running, true);
+        let result = (|| {
+            self.check_execution_interrupt()?;
+            while let Some(job) = self.realm.jobs.pop_front() {
+                self.check_execution_interrupt()?;
+                self.run_pending_job(program, job)?;
+                self.advance_static_module_jobs(program)?;
+                self.advance_dynamic_import_jobs(program, true)?;
+            }
+            Ok(Value::UNDEFINED)
+        })();
+        self.native_microtask_running = previous;
+        result
+    }
+
+    /// The VM-wide admission fact shared with native embedder task checkpoints.
+    pub(crate) fn native_microtask_checkpoint_is_active(&self) -> bool {
+        self.native_microtask_running
+    }
+
+    /// A native microtask-only checkpoint, with no native agent-task polling.
+    pub(crate) fn native_microtask_checkpoint(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
+        if self.native_microtask_running { return Ok(Value::UNDEFINED); }
+        self.drain_pending_microtasks(program)
     }
 
     /// Runs a job already taken off the queue: a finished job roots nothing, so a drain
@@ -957,14 +1018,17 @@ impl<H: Host> Vm<H> {
         job: PendingJob,
     ) -> Result<(), JsError> {
         let roots = job.roots();
-        self.with_call_roots(roots, |vm| match job {
+        let previous = std::mem::replace(&mut self.native_microtask_running, true);
+        let result = self.with_call_roots(roots, |vm| match job {
             PendingJob::Call {
                 callback,
                 this,
                 args,
             } => vm.call_value(program, callback, this, &args).map(|_| ()),
             PendingJob::Reaction(reaction) => vm.run_promise_reaction(program, reaction),
-        })
+        });
+        self.native_microtask_running = previous;
+        result
     }
 
 
@@ -1039,7 +1103,7 @@ mod tests {
     #[test]
     fn shape_gc_root_fact_is_inherited_from_symbol_and_accessor_transitions() {
         let root = Shape::root();
-        assert!(!root.may_have_gc_roots);
+        assert!(!root.facts.may_have_gc_roots());
         let string_key = Shape::child(
             Some(0),
             ShapeTransition::Add {
@@ -1049,9 +1113,9 @@ mod tests {
             },
             1,
             None,
-            root.may_have_gc_roots,
+            root.facts,
         );
-        assert!(!string_key.may_have_gc_roots);
+        assert!(!string_key.facts.may_have_gc_roots());
 
         let symbol_key = PropertyKey::symbol(Value::heap(1));
         let symbol_shape = Shape::child(
@@ -1063,9 +1127,9 @@ mod tests {
             },
             1,
             None,
-            root.may_have_gc_roots,
+            root.facts,
         );
-        assert!(symbol_shape.may_have_gc_roots);
+        assert!(symbol_shape.facts.may_have_gc_roots());
         let deleted_symbol_shape = Shape::child(
             Some(1),
             ShapeTransition::Delete {
@@ -1074,27 +1138,38 @@ mod tests {
             },
             1,
             None,
-            symbol_shape.may_have_gc_roots,
+            symbol_shape.facts,
         );
-        assert!(deleted_symbol_shape.may_have_gc_roots);
+        assert!(deleted_symbol_shape.facts.may_have_gc_roots());
 
-        let attributes = ShapeAttributes::record(
-            PropertyAttributes {
-                getter: Some(Value::heap(2)),
-                ..DEFAULT_PROPERTY_ATTRIBUTES
-            },
-            &mut Vec::new(),
-        );
-        let accessor_shape = Shape::child(
-            Some(1),
-            ShapeTransition::Descriptor {
-                slot: 0,
-                attributes,
-            },
-            1,
-            Some(DictionaryTrigger::PropertyCount),
-            string_key.may_have_gc_roots,
-        );
-        assert!(accessor_shape.may_have_gc_roots);
+        let accessor_shape = |getter, setter| {
+            let attributes = ShapeAttributes::record(
+                PropertyAttributes {
+                    accessor: true,
+                    getter,
+                    setter,
+                    ..DEFAULT_PROPERTY_ATTRIBUTES
+                },
+                &mut Vec::new(),
+            );
+            Shape::child(
+                Some(1),
+                ShapeTransition::Descriptor {
+                    slot: 0,
+                    attributes,
+                },
+                1,
+                Some(DictionaryTrigger::PropertyCount),
+                string_key.facts,
+            )
+        };
+        // A getter and a setter live in the shape's accessor table, which the shape roots.
+        let table_accessor = accessor_shape(Some(Value::heap(2)), Some(Value::heap(3)));
+        assert!(table_accessor.facts.may_have_gc_roots());
+        assert!(!table_accessor.facts.slot_getters());
+        // A lone getter lives in its object's slot, traced with the object.
+        let slot_getter = accessor_shape(Some(Value::heap(2)), None);
+        assert!(!slot_getter.facts.may_have_gc_roots());
+        assert!(slot_getter.facts.slot_getters());
     }
 }

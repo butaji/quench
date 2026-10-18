@@ -1,4 +1,4 @@
-//! Default Node IPC serialization and duplex channel lifecycle.
+//! Node IPC serialization (`json` and `advanced`) and duplex channel lifecycle.
 use crate::host::{NodeHost, SharedNodeState};
 use quench_runtime::{NativeContext, RootId, RootedError, Value};
 use std::{
@@ -14,7 +14,48 @@ const SEND_QUEUE_HIGH_WATER_MARK: usize = 128 * 1024;
 const IMMEDIATE_STRING_STORAGE_BYTES: usize = 16 * 1024;
 const UTF8_BYTES_PER_UTF16_UNIT: usize = 3;
 const PROCESS_OWNER: u64 = 0;
+/// The child bootstrap variable naming the channel's serialization mode.
+pub(crate) const SERIALIZATION_MODE_VARIABLE: &str = "NODE_CHANNEL_SERIALIZATION_MODE";
 const INTERNAL_MESSAGE_PREFIX: &str = "NODE_";
+
+/// `options.serialization`: how messages are framed and encoded on the channel.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Serialization {
+    /// JSON text frames, each ended by a newline.
+    #[default]
+    Json,
+    /// Length-prefixed V8 value payloads (`internalBinding('ipc_serdes')`).
+    Advanced,
+}
+
+impl Serialization {
+    pub(crate) fn from_mode(mode: &str) -> Option<Self> {
+        [Self::Json, Self::Advanced].into_iter().find(|serialization| serialization.mode() == mode)
+    }
+
+    pub(crate) fn mode(self) -> &'static str {
+        match self {
+            Self::Json => "json",
+            Self::Advanced => "advanced",
+        }
+    }
+
+    /// The length of the next complete frame in `input` and its payload range.
+    fn frame(self, input: &[u8]) -> Option<(usize, std::ops::Range<usize>)> {
+        match self {
+            Self::Json => input
+                .iter()
+                .position(|byte| *byte == JSON_FRAME_DELIMITER)
+                .map(|end| (end + 1, 0..end)),
+            Self::Advanced => {
+                let header = input.get(..super::ipc_serdes_shared_vm::FRAME_HEADER_BYTES)?;
+                let payload = u32::from_be_bytes(header.try_into().ok()?) as usize;
+                let size = super::ipc_serdes_shared_vm::FRAME_HEADER_BYTES + payload;
+                (input.len() >= size).then_some((size, super::ipc_serdes_shared_vm::FRAME_HEADER_BYTES..size))
+            }
+        }
+    }
+}
 
 struct Transport {
     #[cfg(unix)]
@@ -76,6 +117,7 @@ impl CountedReferences {
 
 pub(crate) struct IpcChannel {
     phase: Phase,
+    serialization: Serialization,
     input: Vec<u8>,
     writes: VecDeque<PendingWrite>,
     completed: VecDeque<(RootId, bool)>,
@@ -89,9 +131,8 @@ pub(crate) struct State {
     pub(crate) channel: Option<IpcChannel>,
     parse: Option<RootId>,
     stringify: Option<RootId>,
-    /// The `EventEmitter` the IPC surface extends, kept until a channel needs it.
-    emitter: Option<RootId>,
-    api_factory: Option<RootId>,
+    /// Received payloads, consumed in order by `ipcDecode`.
+    received: VecDeque<(Serialization, Vec<u8>)>,
 }
 
 struct Progress {
@@ -101,6 +142,13 @@ struct Progress {
 }
 
 impl IpcChannel {
+    fn take_socket(&mut self)->Option<std::os::unix::net::UnixStream>{
+        self.disconnected=true;
+        match std::mem::replace(&mut self.phase,Phase::Closed){
+            Phase::Open(transport)|Phase::Disconnecting(transport)=>Some(transport.socket),
+            Phase::Closed=>None,
+        }
+    }
     pub(crate) fn parent_has_work(&self) -> bool {
         !self.closed()
             && (!self.writes.is_empty()
@@ -112,9 +160,10 @@ impl IpcChannel {
     }
 
     #[cfg(unix)]
-    pub(crate) fn new(socket: std::os::unix::net::UnixStream) -> Self {
+    pub(crate) fn new(socket: std::os::unix::net::UnixStream, serialization: Serialization) -> Self {
         Self {
             phase: Phase::Open(Transport { socket }),
+            serialization,
             input: Vec::new(),
             writes: VecDeque::new(),
             completed: VecDeque::new(),
@@ -245,11 +294,9 @@ impl IpcChannel {
             self.close();
         }
         let mut start = 0;
-        for (index, byte) in self.input.iter().enumerate() {
-            if *byte == JSON_FRAME_DELIMITER {
-                result.frames.push(self.input[start..index].to_vec());
-                start = index + 1;
-            }
+        while let Some((size, payload)) = self.serialization.frame(&self.input[start..]) {
+            result.frames.push(self.input[start + payload.start..start + payload.end].to_vec());
+            start += size;
         }
         if start != 0 {
             self.input.drain(..start);
@@ -340,7 +387,11 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
             socket
                 .set_nonblocking(true)
                 .map_err(|error| RootedError::host(error.to_string()))?;
-            let mut channel = IpcChannel::new(socket);
+            let serialization = std::env::var(SERIALIZATION_MODE_VARIABLE)
+                .ok()
+                .and_then(|mode| Serialization::from_mode(&mode))
+                .unwrap_or_default();
+            let mut channel = IpcChannel::new(socket, serialization);
             channel.counted_references = CountedReferences::Process { count: 0.0 };
             state.borrow_mut().process_ipc.channel = Some(channel);
         }
@@ -348,128 +399,40 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     Ok(())
 }
 
-const API_FACTORY: &str = quench_js_check::checked_js!(
-    r#"(EventEmitter) => {
-  class Control extends EventEmitter {
-    #backend;
-    constructor(backend) { super(); this.#backend=backend; }
-    ref() { return this.#backend.reference(); }
-    unref() { return this.#backend.unreference(); }
-    refCounted() { return this.#backend.refCounted(); }
-    unrefCounted() { return this.#backend.unrefCounted(); }
-    get fd() { return this.#backend.descriptor(); }
-  }
-  return (send,disconnect,reference,unreference,descriptor,refCounted,unrefCounted) => {
-    const api={};
-    api.send=function(message,handle,options,callback) { return send(message,handle,options,callback); };
-    api.disconnect=function() { return disconnect(); };
-    Object.defineProperty(api.send,'name',{value:''});
-    Object.defineProperty(api.disconnect,'name',{value:''});
-    api.channel=new Control({reference,unreference,descriptor,refCounted,unrefCounted});
-    return api;
-  };
-}"#
-);
-
-pub(crate) fn install_process(
-    context: &mut NativeContext<'_, NodeHost>,
-    process: RootId,
-    emitter: RootId,
-) -> Result<(), RootedError> {
-    let emitter = context.retain(emitter)?;
-    let state = context.host_mut().shared_state();
-    let previous = state.borrow_mut().process_ipc.emitter.replace(emitter);
-    if let Some(previous) = previous {
-        context.release_root(previous);
+pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>, owner:u64, target:RootId) -> Result<(),RootedError> {
+    let taken={let state=context.host_mut().shared_state();let mut state=state.borrow_mut();channel(&mut state,owner).and_then(|channel|{let serialization=channel.serialization;channel.take_socket().map(|socket|(socket,serialization))})};
+    let Some((socket,serialization))=taken else {return Ok(())};
+    let constructor=super::pipe_binding::constructor(context)?;
+    let kind=context.number(2.0);
+    let pipe=context.construct_rooted(constructor,constructor,&[kind])?;
+    super::pipe_binding::adopt(context,pipe,socket)?;
+    let resource=super::pipe_binding::resource_view(context,pipe)?;
+    if let super::native_async_wrap::View::Active(resource)=resource {
+        if let Some(child)=context.host_mut().shared_state().borrow_mut().child_processes.get_mut(&owner){child.ipc_pipe=Some(resource.id);}
     }
-    install(context, PROCESS_OWNER, process)?;
-    if state.borrow().process_ipc.channel.is_some() {
-        let control = super::event_constructor_shared_vm::get(context, process, "channel")?;
-        let on = super::event_constructor_shared_vm::get(context, process, "on")?;
-        for (event, name, add) in [("newListener", "onNewListener", true), ("removeListener", "onRemoveListener", false)] {
-            let event = context.string_rooted(event);
-            let add = context.boolean(add);
-            let data = context.array_rooted(&[control, add])?;
-            let callback = context.host_constructor_named_with_data(crate::host::shared_vm::operation("processIpcListenerReference"), name, data)?;
-            context.call_rooted(on, process, &[event, callback])?;
-        }
-    }
+    let policy=crate::host::shared_vm::commonjs::node_library_module(context,"child_process.js","internal/child_process.js")?;
+    let setup=super::event_constructor_shared_vm::get(context,policy,"setupChannel")?;
+    let mode=context.string_rooted(serialization.mode());let undefined=context.undefined();
+    let count=context.number(2.0);set(context,target,"_closesNeeded",count)?;
+    let count=context.number(0.0);set(context,target,"_closesGot",count)?;
+    context.call_rooted(setup,undefined,&[target,pipe,mode])?;
     Ok(())
 }
 
-/// The IPC surface factory, evaluated under the startup intrinsics when the
-/// first channel needs it: most processes never have one.
-fn api_factory(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    let state = context.host_mut().shared_state();
-    let (factory, emitter) = {
-        let state = state.borrow();
-        (state.process_ipc.api_factory, state.process_ipc.emitter)
-    };
-    if let Some(factory) = factory {
-        return Ok(factory);
-    }
-    let emitter = emitter.ok_or_else(|| RootedError::host("IPC event emitter missing"))?;
-    let factory = context.with_startup_intrinsics(|context| {
-        let factory =
-            context.evaluate_script_rooted(API_FACTORY, "node:child_process/ipc-surface.js")?;
-        let undefined = context.undefined();
-        context.call_rooted(factory, undefined, &[emitter])
-    })?;
-    let factory = context.retain(factory)?;
-    state.borrow_mut().process_ipc.api_factory = Some(factory);
-    Ok(factory)
+pub(crate) fn activate_process(context:&mut NativeContext<'_,NodeHost>)->Result<(),RootedError>{
+    let (process,channel)={let shared=context.host_mut().shared_state();let state=shared.borrow();(state.process_module,state.process_ipc.channel.as_ref().filter(|c|!c.closed()).map(|c|(c.fd(),c.serialization)))};
+    let (Some(process),Some((fd,serialization)))=(process,channel) else{return Ok(())};
+    let policy=crate::host::shared_vm::commonjs::node_library_module(context,"child_process.js","child_process.js")?;
+    let fork=super::event_constructor_shared_vm::get(context,policy,"_forkChild")?;
+    let fd=context.number(fd as f64);let mode=context.string_rooted(serialization.mode());
+    context.call_rooted(fork,process,&[fd,mode])?;Ok(())
 }
 
-pub(crate) fn install(
-    context: &mut NativeContext<'_, NodeHost>,
-    owner: u64,
-    target: RootId,
-) -> Result<(), RootedError> {
-    let state = context.host_mut().shared_state();
-    if channel(&mut state.borrow_mut(), owner).is_none() {
-        return Ok(());
-    }
-    let factory = api_factory(context)?;
-    let owner = context.number(owner as f64);
-    let data = context.array_rooted(&[owner, target])?;
-    let send =
-        context.host_function_with_data(crate::host::shared_vm::operation("ipcSend"), data)?;
-    let disconnect = context
-        .host_function_with_data(crate::host::shared_vm::operation("ipcDisconnect"), data)?;
-    let descriptor = context
-        .host_function_with_data(crate::host::shared_vm::operation("ipcDescriptor"), data)?;
-    let mut references = Vec::new();
-    for operation in ["ipcReference", "ipcReferenceCounted"] {
-        for refed in [true, false] {
-            let refed = context.boolean(refed);
-            let data = context.array_rooted(&[owner, target, refed])?;
-            references.push(
-                context
-                    .host_function_with_data(crate::host::shared_vm::operation(operation), data)?,
-            );
-        }
-    }
-    let undefined = context.undefined();
-    let api = context.call_rooted(
-        factory,
-        undefined,
-        &[
-            send,
-            disconnect,
-            references[0],
-            references[1],
-            descriptor,
-            references[2],
-            references[3],
-        ],
-    )?;
-    for name in ["send", "disconnect", "channel"] {
-        let key = context.string_rooted(name);
-        let value = context.get_property_rooted(api, key)?;
-        set(context, target, name, value)?;
-    }
-    let connected = context.boolean(true);
-    set(context, target, "connected", connected)
+pub(crate) fn take_socket(context:&mut NativeContext<'_,NodeHost>,fd:i32)->Option<std::os::unix::net::UnixStream>{
+    let shared=context.host_mut().shared_state();let mut state=shared.borrow_mut();
+    if let Some(channel)=state.process_ipc.channel.as_mut().filter(|c|c.fd()==fd){return channel.take_socket();}
+    for child in state.child_processes.values_mut(){if let Some(channel)=child.ipc.as_mut().filter(|c|c.fd()==fd){return channel.take_socket();}}
+    None
 }
 
 pub(crate) fn descriptor(
@@ -581,18 +544,31 @@ pub(crate) fn send(
             return Err(context.throw(error));
         }
     }
-    let stringify = state
-        .borrow()
-        .process_ipc
-        .stringify
-        .ok_or_else(|| RootedError::host("IPC JSON serializer is missing"))?;
-    let undefined = context.undefined();
-    let serialized = context.call_rooted(stringify, undefined, &[message])?;
-    let text = context.to_string(serialized)?;
-    let immediate = (text.encode_utf16().count() + 1).saturating_mul(UTF8_BYTES_PER_UTF16_UNIT)
-        <= IMMEDIATE_STRING_STORAGE_BYTES;
-    let mut bytes = text.into_bytes();
-    bytes.push(JSON_FRAME_DELIMITER);
+    let serialization = channel(&mut state.borrow_mut(), owner)
+        .map_or(Serialization::Json, |channel| channel.serialization);
+    let (bytes, immediate) = match serialization {
+        Serialization::Json => {
+            let stringify = state
+                .borrow()
+                .process_ipc
+                .stringify
+                .ok_or_else(|| RootedError::host("IPC JSON serializer is missing"))?;
+            let undefined = context.undefined();
+            let serialized = context.call_rooted(stringify, undefined, &[message])?;
+            let text = context.to_string(serialized)?;
+            let immediate = (text.encode_utf16().count() + 1).saturating_mul(UTF8_BYTES_PER_UTF16_UNIT)
+                <= IMMEDIATE_STRING_STORAGE_BYTES;
+            let mut bytes = text.into_bytes();
+            bytes.push(JSON_FRAME_DELIMITER);
+            (bytes, immediate)
+        }
+        // Buffer writes always attempt a synchronous write first.
+        Serialization::Advanced => {
+            let undefined = context.undefined();
+            let buffer = super::buffer_shared_vm::constructor(context, undefined, &[])?;
+            (super::ipc_serdes_shared_vm::serialize(context, message, buffer)?, true)
+        }
+    };
     let callback = callback
         .map(|callback| context.retain(callback))
         .transpose()?;
@@ -740,9 +716,11 @@ pub(crate) fn poll(
     };
     let mut progressed = false;
     for (owner, target) in owners {
-        let progress = channel(&mut state.borrow_mut(), owner)
-            .expect("IPC owner snapshot")
-            .progress();
+        let (progress, serialization) = {
+            let mut state = state.borrow_mut();
+            let channel = channel(&mut state, owner).expect("IPC owner snapshot");
+            (channel.progress(), channel.serialization)
+        };
         progressed |=
             !progress.frames.is_empty() || !progress.callbacks.is_empty() || progress.disconnected;
         for (callback, failed) in progress.callbacks {
@@ -769,12 +747,13 @@ pub(crate) fn poll(
                     .rooted_value(target)
                     .ok_or("IPC message target missing")?,
             );
-            let text = runtime.string_rooted(&String::from_utf8_lossy(&bytes));
-            state.borrow_mut().scheduler.queue_shared_next_tick(
+            let mut state = state.borrow_mut();
+            state.process_ipc.received.push_back((serialization, bytes));
+            state.scheduler.queue_shared_next_tick(
                 super::shared_event_loop::SharedCallback { execution: None,
                     callback: decode,
                     receiver,
-                    args: vec![target, text],
+                    args: vec![target],
                 },
             );
         }
@@ -868,19 +847,29 @@ pub(crate) fn decode(
         .first()
         .copied()
         .ok_or_else(|| RootedError::host("IPC decode target missing"))?;
-    let text = args
-        .get(1)
-        .copied()
-        .ok_or_else(|| RootedError::host("IPC decode frame missing"))?;
-    let parse = context
-        .host_mut()
-        .shared_state()
-        .borrow()
+    let state = context.host_mut().shared_state();
+    let (serialization, bytes) = state
+        .borrow_mut()
         .process_ipc
-        .parse
-        .ok_or_else(|| RootedError::host("IPC JSON parser missing"))?;
+        .received
+        .pop_front()
+        .ok_or_else(|| RootedError::host("IPC decode frame missing"))?;
     let undefined = context.undefined();
-    let message = context.call_rooted(parse, undefined, &[text])?;
+    let message = match serialization {
+        Serialization::Json => {
+            let parse = state
+                .borrow()
+                .process_ipc
+                .parse
+                .ok_or_else(|| RootedError::host("IPC JSON parser missing"))?;
+            let text = context.string_rooted(&String::from_utf8_lossy(&bytes));
+            context.call_rooted(parse, undefined, &[text])?
+        }
+        Serialization::Advanced => {
+            let payload = super::buffer_shared_vm::from_bytes(context, &bytes)?;
+            super::ipc_serdes_shared_vm::deserialize(context, payload)?
+        }
+    };
     let mut event = "message";
     if context.is_object_rooted(message)? {
         let key = context.string_rooted("cmd");

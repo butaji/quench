@@ -16,6 +16,7 @@ mod memory_stats;
 pub use memory_stats::HeapMemoryComposition;
 #[cfg(feature = "profile-memory")]
 mod memory_profile;
+mod pacing;
 mod records;
 mod root;
 mod slots;
@@ -23,9 +24,10 @@ mod thin_slice;
 pub(crate) use thin_slice::ThinBoxSlice;
 mod weak;
 pub(crate) use cell::*;
-pub(crate) use buffer_bytes::BufferBytes;
+pub(crate) use buffer_bytes::{BufferBytes,BufferRead};
 pub(crate) use collection_entries::CollectionEntries;
-use records::{ArrayRecordSpace, ObjectRecordSpace, RecordGeneration, RecordSweep};
+use external::array_payload_bytes;
+use records::{ArrayRecordSpace, ObjectRecordSpace, RecordSweep};
 pub use root::RootId;
 pub(crate) use root::{RootTable, WeakHandle};
 use slots::{FreeSlotBitmap, SLOTS_PER_SLAB, SlotArena};
@@ -36,16 +38,21 @@ use slots::{FreeSlotBitmap, SLOTS_PER_SLAB, SlotArena};
 // representation. The slot limit is derived from Value's representation.
 const DENSE_ARRAY_HOLE_BUDGET_BYTES: usize = 256 * 1024;
 const MAX_DENSE_ARRAY_HOLE_LENGTH: usize = DENSE_ARRAY_HOLE_BUDGET_BYTES / size_of::<Value>();
-const LARGE_HEAP_MINIMUM_LIVE_CELLS: usize = 1 << 16;
-/// Allocations a collection allows at least, whatever survived. The trunk owns this
-/// headroom with the factors below (decision 21), and it stays at 384 cells until a change
-/// wins one bar without losing the other (decision 5). The Score lane measured 2^16 cells
-/// (2 MB of 32-byte cells): RayTrace +20% Score, the others even or better, 2^17 and 2^18 no
-/// further gain (Linux x86_64, 4 vCPU, paired non-PGO rounds); at that minimum, fixed-work
-/// max RSS rose 22% to 36% on DeltaBlue, EarleyBoyer and RayTrace.
-const MINIMUM_GC_ALLOCATION_HEADROOM: usize = 384;
+use pacing::pacing;
+#[inline(always)]
+fn payload_unit() -> usize {
+    #[cfg(feature = "gc-tuning")]
+    return *PAYLOAD_BYTES_PER_ALLOCATION_TUNED;
+    #[cfg(not(feature = "gc-tuning"))]
+    PAYLOAD_BYTES_PER_ALLOCATION
+}
+/// The fewest allocations after which a collection is full on a small heap.
+#[cfg(test)]
+pub(crate) const FULL_COLLECTION_ALLOCATION_BOUND: usize =
+    pacing::PRODUCTION_PACING.minimum_allocation_cap;
 /// Payload bytes beside a cell (string units, array elements) that weigh as one more
 /// allocation toward the next collection.
+#[cfg(not(feature = "gc-tuning"))]
 const PAYLOAD_BYTES_PER_ALLOCATION: usize = 64;
 /// Backing-store bytes (ArrayBuffer contents) allocated since the last collection that
 /// make the next one due, at least; the budget grows to the live external bytes a
@@ -55,6 +62,11 @@ const PAYLOAD_BYTES_PER_ALLOCATION: usize = 64;
 /// SaltyAom video route (64 KiB chunks, Linux x86_64, 4 vCPU) one collection per
 /// 64 KiB buffer cut peak RSS 112 -> 47 MB and throughput by two thirds.
 const MINIMUM_EXTERNAL_COLLECTION_BUDGET: usize = 8 << 20;
+/// Diagnostic builds read the unit from `QUENCH_GC_PAYLOAD_UNIT` to measure it.
+#[cfg(feature = "gc-tuning")]
+static PAYLOAD_BYTES_PER_ALLOCATION_TUNED: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
+    std::env::var("QUENCH_GC_PAYLOAD_UNIT").ok().and_then(|v| v.parse().ok()).unwrap_or(64)
+});
 const PARALLEL_MARK_MINIMUM_SLOTS: usize = 50_000;
 const PARALLEL_MARK_MAX_THREADS: usize = 4;
 // Paired Splay screens on the 4-vCPU Linux host favored the collector thread;
@@ -75,66 +87,6 @@ fn mark_word_if_new(word: &AtomicU64, mask: u64) -> bool {
     word.fetch_or(mask, Ordering::Relaxed) & mask == 0
 }
 
-#[derive(Clone, Copy)]
-struct GcHeadroomFactor {
-    numerator: usize,
-    denominator: usize,
-}
-
-impl GcHeadroomFactor {
-    fn allocation_headroom(self, live_cells: usize) -> usize {
-        debug_assert!(self.denominator > 0);
-        let whole = live_cells / self.denominator;
-        let remainder = live_cells % self.denominator;
-        whole * self.numerator + remainder * self.numerator / self.denominator
-    }
-}
-
-// Half a live set of new cells before the next collection on small heaps. The Score lane
-// measured 1/1 with the 2^16 minimum at RayTrace +20% Score, for more max RSS (above).
-const SMALL_HEAP_GC_HEADROOM: GcHeadroomFactor = GcHeadroomFactor {
-    numerator: 1,
-    denominator: 2,
-};
-// This is the sweep variable for large-heap RSS/Score measurements. A factor
-// of 1/1 allows one live set's worth of new cells before collection (2x total
-// occupied high-water); 3/4 targets 1.75x and 1/2 targets 1.5x. The trunk
-// owns this factor (decision 21) and it stays 1/1 until a change wins one bar
-// without losing the other (decision 5). Lane measurements on Linux x86_64:
-// RSS lane 1/2, stock Splay max RSS 66.3 -> 54.5 MB for -14% Score (one run);
-// Score lane, Splay paired non-PGO rounds: 1/1 3542, 2/1 3638, 4/1 4023, 8/1
-// below 4/1, at a higher max RSS.
-const LARGE_HEAP_GC_HEADROOM: GcHeadroomFactor = GcHeadroomFactor {
-    numerator: 1,
-    denominator: 1,
-};
-
-#[derive(Clone, Copy)]
-struct FullCollectionGrowthFactor {
-    numerator: usize,
-    denominator: usize,
-}
-
-impl FullCollectionGrowthFactor {
-    fn allocation_limit(self, live_cells: usize) -> usize {
-        debug_assert!(self.denominator > 0);
-        let whole = live_cells / self.denominator;
-        let remainder = live_cells % self.denominator;
-        whole
-            .saturating_mul(self.numerator)
-            .saturating_add(remainder.saturating_mul(self.numerator) / self.denominator)
-    }
-}
-
-// Bound the old generation's growth between full collections: cells promoted by minor
-// collections since the last full one, against the live set it left. Garbage that dies
-// young never counts, so a steady request loop runs minor collections only; old garbage
-// stays below one live set's worth.
-const FULL_COLLECTION_GROWTH: FullCollectionGrowthFactor = FullCollectionGrowthFactor {
-    numerator: 1,
-    denominator: 8,
-};
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum CollectionState {
     #[default]
@@ -152,17 +104,6 @@ pub(crate) enum GcTraceKind {
 
 pub(crate) type ParallelObjectRootTrace<'a> =
     dyn Fn(GcTraceKind, Value, u32, bool, &mut Vec<Value>) + Sync + 'a;
-
-fn gc_allocation_headroom(live_cells: usize) -> usize {
-    let factor = if live_cells >= LARGE_HEAP_MINIMUM_LIVE_CELLS {
-        LARGE_HEAP_GC_HEADROOM
-    } else {
-        SMALL_HEAP_GC_HEADROOM
-    };
-    factor
-        .allocation_headroom(live_cells)
-        .max(MINIMUM_GC_ALLOCATION_HEADROOM)
-}
 
 pub(super) struct Slot {
     cell: Option<Cell>,
@@ -215,6 +156,7 @@ impl<'slots> ParallelSweepSlab<'slots> {
             let index = self.base + offset;
             if Heap::marked(marks, index) {
                 result.live += 1;
+                result.live_payload_bytes += cell.payload_bytes();
                 if let Some(object) = cell.object() {
                     if object.properties().has_compact_range() {
                         result
@@ -255,12 +197,15 @@ struct ParallelSweepResult {
     sparse_arrays: Vec<u32>,
     rc_cells: Vec<StoppedCellDrop>,
     external_bytes: usize,
+    live_payload_bytes: usize,
     swept_slots: usize,
 }
 
 #[derive(Default)]
 struct SweepOutput {
     live: usize,
+    /// Payload of the surviving cells, summed by full sweeps only.
+    live_payload_bytes: usize,
     property_owners: Vec<u64>,
     freed_cells: usize,
     swept_slots: usize,
@@ -360,37 +305,46 @@ pub(crate) struct Heap {
     slots: SlotArena,
     object_records: ObjectRecordSpace,
     array_records: ArrayRecordSpace,
-    object_generation: RecordGeneration,
-    array_generation: RecordGeneration,
     marks: Vec<AtomicU64>,
     remembered_marks: Vec<u64>,
     remembered: Vec<u32>,
     young: Vec<u32>,
+    /// The young cells with weak entries (weak maps and sets, weak refs, finalization
+    /// registries): a minor collection prunes only these and the remembered cells.
+    young_weak: Vec<u32>,
     free_by_slab: Vec<FreeSlotBitmap>,
     free_slabs: Vec<u32>,
     free_slots: usize,
     external_bytes: usize,
     allocations: usize,
+    allocations_since_full: usize,
+    /// Payload the live and not yet swept cells and records own (`Cell::payload_bytes`):
+    /// allocation and growth add it, reclamation subtracts it. Pacing measures live
+    /// weight with it, in the units allocation is charged in.
+    payload_bytes: usize,
     /// Payload bytes grown since the last charge, below one allocation's weight.
     uncharged_payload_bytes: usize,
+    /// What the last full collection kept, which the generational pacing grows from.
+    live_after_full: usize,
+    /// The next collection traces the whole heap.
+    full_due: bool,
+    pacing_state: pacing::PacingState,
+    /// Live weight after the previous collection.
+    live_weight_after_previous: usize,
     /// Backing-store bytes allocated since the last collection, against its budget.
     external_since_collection: usize,
     external_collection_budget: usize,
     /// The slot and record property owners the last full sweep listed, which size the next
     /// sweep's lists so they do not regrow from empty (and reallocate) every collection.
     property_owner_counts: (usize, usize),
-    full_collection_growth_limit: usize,
     old_live: usize,
-    /// The live cells and backing-store bytes the last full collection left.
-    live_after_full: usize,
-    external_after_full: usize,
-    /// Whether the coming collection is minor, so allocations and barriers track young
-    /// cells: decided when a collection ends, withdrawn when backing-store growth makes a
-    /// full collection due (`should_full_collect`).
-    young_tracking: bool,
     threshold: usize,
     total_allocations: u64,
     collections: u64,
+    /// The prototype `mark_prototype` marked last, which keeps its mark for life: an
+    /// allocation with the same prototype needs no lookup. A collection may free it and
+    /// reuse its handle, so each one forgets it.
+    marked_prototype: Option<Value>,
     peak_live: usize,
     peak_survivors: usize,
     max_threshold: usize,
@@ -548,9 +502,10 @@ pub(crate) struct GcProfile {
     pub minor_mark_nanos: u64,
     pub sweep_nanos: u64,
     pub mark_clear_nanos: u64,
-    #[cfg(feature = "profile-aggregate")]
+    /// VM-side collection phases: owner edges, root gathering, shape-trace setup, and
+    /// the work after the heap collection.
+    pub vm_phase_nanos: [u64; 4],
     pub full_collections: u64,
-    #[cfg(feature = "profile-aggregate")]
     pub minor_collections: u64,
     #[cfg(feature = "profile-aggregate")]
     pub remembered_owner_scans: u64,
@@ -598,9 +553,8 @@ impl Default for GcProfile {
             minor_mark_nanos: 0,
             sweep_nanos: 0,
             mark_clear_nanos: 0,
-            #[cfg(feature = "profile-aggregate")]
+            vm_phase_nanos: [0; 4],
             full_collections: 0,
-            #[cfg(feature = "profile-aggregate")]
             minor_collections: 0,
             #[cfg(feature = "profile-aggregate")]
             remembered_owner_scans: 0,
@@ -719,8 +673,8 @@ impl Heap {
             free_by_slab: Vec::with_capacity(12),
             free_slabs: Vec::with_capacity(12),
             free_slots: 0,
-            threshold: MINIMUM_GC_ALLOCATION_HEADROOM,
-            max_threshold: MINIMUM_GC_ALLOCATION_HEADROOM,
+            threshold: pacing().minimum_young,
+            max_threshold: pacing().minimum_young,
             external_collection_budget: MINIMUM_EXTERNAL_COLLECTION_BUDGET,
             ..Self::default()
         }
@@ -768,6 +722,16 @@ impl Heap {
         }
     }
 
+    /// Every live legacy cell, without needing `&mut` (census and diagnostics).
+    #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+    pub(crate) fn for_each_live_cell(&self, mut visit: impl FnMut(&Cell)) {
+        for slot in self.slots.iter() {
+            if let Some(cell) = &slot.cell {
+                visit(cell);
+            }
+        }
+    }
+
     pub(crate) fn live_slots(&self) -> usize {
         self.slots.len() - self.free_slots
             + self.object_records.live_count()
@@ -803,7 +767,19 @@ impl Heap {
     }
 
     pub(crate) fn mark_prototype(&mut self, prototype: Value) {
-        if let Some(object) = self.object_mut(prototype) { object.mark_as_prototype(); }
+        if self.marked_prototype == Some(prototype) {
+            return;
+        }
+        // A flag, not an edge: no write barrier for record prototypes.
+        let object = match prototype.direct_object_index() {
+            // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
+            Some(record_id) => Some(unsafe { self.object_records.get_live_mut_unbarriered(record_id) }),
+            None => self.object_mut(prototype),
+        };
+        if let Some(object) = object {
+            object.mark_as_prototype();
+            self.marked_prototype = Some(prototype);
+        }
     }
 
     pub fn alloc(&mut self, cell: Cell) -> Value {
@@ -816,23 +792,17 @@ impl Heap {
             self.gc_profile.allocated_payload_bytes[kind] += bytes as u64;
             self.gc_profile.allocated_size_buckets[kind][Self::size_bucket(bytes)] += 1;
         }
-        let weight = 1 + match &cell {
-            Cell::String(text) => text.flat_unit_bytes() / PAYLOAD_BYTES_PER_ALLOCATION,
-            Cell::Array { object } => {
-                object.elements().capacity() * size_of::<Value>() / PAYLOAD_BYTES_PER_ALLOCATION
-            }
-            _ => 0,
-        };
+        let payload = cell.payload_bytes();
+        let weight = 1 + payload / payload_unit();
+        self.payload_bytes = self.payload_bytes.saturating_add(payload);
         self.allocations += weight;
+        self.allocations_since_full = self.allocations_since_full.saturating_add(weight);
         let track_young = self.tracks_young_cells();
         self.total_allocations += 1;
         self.charge_external_growth(cell.external_bytes());
         let cell = match cell {
             Cell::Object(object) => match self.object_records.try_insert(object) {
                 Ok(record_id) => {
-                    if track_young {
-                        self.object_generation.young.push(record_id);
-                    }
                     let value = Value::direct_object(record_id);
                     #[cfg(feature = "profile-memory")]
                     self.profile_allocation(value);
@@ -842,9 +812,6 @@ impl Heap {
             },
             Cell::Array { object } => match self.array_records.try_insert(object) {
                 Ok(record_id) => {
-                    if track_young {
-                        self.array_generation.young.push(record_id);
-                    }
                     let value = Value::direct_array(record_id);
                     #[cfg(feature = "profile-memory")]
                     self.profile_allocation(value);
@@ -854,6 +821,35 @@ impl Heap {
             },
             cell => cell,
         };
+        self.alloc_in_slot(cell, track_young)
+    }
+
+    /// `alloc(Cell::Object(object))` without the dispatch on the cell's kind, which an
+    /// ordinary object's construction knows: a direct record while one is free.
+    #[inline(always)]
+    pub(crate) fn alloc_object(&mut self, object: Object) -> Value {
+        if cfg!(feature = "profile-aggregate") {
+            return self.alloc(Cell::Object(object));
+        }
+        self.mark_prototype(object.proto());
+        // An object's weight is one allocation, and it holds no external bytes.
+        self.allocations += 1;
+        self.allocations_since_full = self.allocations_since_full.saturating_add(1);
+        self.total_allocations += 1;
+        match self.object_records.try_insert(object) {
+            Ok(record_id) => {
+                let value = Value::direct_object(record_id);
+                #[cfg(feature = "profile-memory")]
+                self.profile_allocation(value);
+                value
+            }
+            Err(object) => self.alloc_in_slot(Cell::Object(object), self.tracks_young_cells()),
+        }
+    }
+
+    /// The slot part of `alloc`, for a cell no record space takes.
+    fn alloc_in_slot(&mut self, cell: Cell, track_young: bool) -> Value {
+        let weak = cell.has_weak_entries();
         while let Some(slab) = self.free_slabs.last().copied() {
             let slab_index = slab as usize;
             let Some(offset) = self.free_by_slab[slab_index].pop() else {
@@ -869,6 +865,9 @@ impl Heap {
             self.slots.get_mut(slot).unwrap().cell = Some(cell);
             if track_young {
                 self.young.push(index);
+            }
+            if weak {
+                self.young_weak.push(index);
             }
             #[cfg(feature = "profile-memory")]
             self.profile_allocation(Value::heap(index));
@@ -887,6 +886,9 @@ impl Heap {
         }
         if track_young {
             self.young.push(index as u32);
+        }
+        if weak {
+            self.young_weak.push(index as u32);
         }
         Value::heap(index as u32)
     }
@@ -907,11 +909,7 @@ impl Heap {
         values: &[Value],
     ) -> Value {
         let (properties, inline_properties) = self.initial_object_storage(shape, values, true);
-        self.alloc(Cell::Object(Object::with_property_storage(
-            proto,
-            properties,
-            inline_properties,
-        )))
+        self.alloc_object(Object::with_property_storage(proto, properties, inline_properties))
     }
     pub(crate) fn initialize_object_properties(
         &mut self,
@@ -1009,10 +1007,10 @@ impl Heap {
         for (_, owner) in owners {
             let object = if let Some(record_id) = owner.direct_object_index() {
                 // SAFETY: direct owners were collected from live marked records.
-                Some(unsafe { object_records.get_live_mut(record_id) })
+                Some(unsafe { object_records.get_live_mut_unbarriered(record_id) })
             } else if let Some(record_id) = owner.direct_array_index() {
                 // SAFETY: array owners were collected from live array records.
-                Some(&mut **unsafe { array_records.get_live_mut(record_id) })
+                Some(&mut **unsafe { array_records.get_live_mut_unbarriered(record_id) })
             } else {
                 owner
                     .legacy_heap_index()
@@ -1039,8 +1037,6 @@ impl Heap {
         self.slots.clear();
         self.object_records = ObjectRecordSpace::default();
         self.array_records = ArrayRecordSpace::default();
-        self.object_generation = RecordGeneration::default();
-        self.array_generation = RecordGeneration::default();
         self.marks.clear();
         self.free_by_slab.clear();
         self.free_slabs.clear();
@@ -1048,22 +1044,25 @@ impl Heap {
         self.external_bytes = 0;
         self.external_since_collection = 0;
         self.external_collection_budget = MINIMUM_EXTERNAL_COLLECTION_BUDGET;
+        self.payload_bytes = 0;
         self.allocations = 0;
-        self.full_collection_growth_limit = 0;
-        self.old_live = 0;
+        self.allocations_since_full = 0;
         self.live_after_full = 0;
-        self.external_after_full = 0;
-        self.young_tracking = false;
-        self.threshold = MINIMUM_GC_ALLOCATION_HEADROOM;
+        self.full_due = false;
+        self.pacing_state = pacing::PacingState::default();
+        self.live_weight_after_previous = 0;
+        self.old_live = 0;
+        self.threshold = pacing().minimum_young;
         self.total_allocations = 0;
         self.collections = 0;
         self.peak_live = 0;
         self.peak_survivors = 0;
-        self.max_threshold = MINIMUM_GC_ALLOCATION_HEADROOM;
+        self.max_threshold = pacing().minimum_young;
         self.properties.reset();
         self.remembered_marks.clear();
         self.remembered.clear();
         self.young.clear();
+        self.young_weak.clear();
         self.roots.clear();
         self.sparse_arrays = None;
         self.collection_state = CollectionState::Idle;
@@ -1084,17 +1083,16 @@ impl Heap {
     /// Charges payload a live cell grew outside `alloc` (array elements) toward the next
     /// collection, at the weight `alloc` gives a cell's own payload.
     pub(crate) fn charge_payload_growth(&mut self, bytes: usize) {
+        self.payload_bytes = self.payload_bytes.saturating_add(bytes);
         let pending = self.uncharged_payload_bytes.saturating_add(bytes);
-        let weight = pending / PAYLOAD_BYTES_PER_ALLOCATION;
-        self.uncharged_payload_bytes = pending % PAYLOAD_BYTES_PER_ALLOCATION;
+        let weight = pending / payload_unit();
+        self.uncharged_payload_bytes = pending % payload_unit();
         self.allocations += weight;
+        self.allocations_since_full = self.allocations_since_full.saturating_add(weight);
     }
     /// Accounts new backing-store bytes; past the external budget a collection is due.
     pub(crate) fn charge_external_growth(&mut self, bytes: usize) {
         self.external_bytes += bytes;
-        if bytes != 0 && self.young_tracking && self.should_full_collect() {
-            self.young_tracking = false;
-        }
         self.external_since_collection = self.external_since_collection.saturating_add(bytes);
         if self.external_since_collection >= self.external_collection_budget {
             self.threshold = self.threshold.min(self.allocations);
@@ -1103,36 +1101,28 @@ impl Heap {
     pub fn should_collect(&self) -> bool {
         self.allocations >= self.threshold
     }
-    /// Promotion since the last full collection reached its growth limit, or backing
-    /// stores outgrew what it left by more than the external budget: old garbage that only
-    /// a full collection reclaims is due.
     pub(crate) fn should_full_collect(&self) -> bool {
-        self.full_collection_growth_limit == 0
-            || self.old_live.saturating_sub(self.live_after_full) >= self.full_collection_growth_limit
-            || self.external_bytes.saturating_sub(self.external_after_full)
-                >= self.external_after_full.max(MINIMUM_EXTERNAL_COLLECTION_BUDGET)
+        self.full_due
+            || pacing().allocation_cap_reached(
+                self.live_after_full,
+                self.allocations_since_full,
+            )
     }
-    fn minor_collection_scheduled(&self) -> bool {
-        !self.should_full_collect()
-    }
+    /// Every collection may be minor, so the legacy young list and barrier are always kept.
     fn tracks_young_cells(&self) -> bool {
-        cfg!(test) || self.young_tracking
+        true
     }
-    /// Whether the coming collection may be minor: young cells were tracked since the last
-    /// one and no full collection became due.
-    pub(crate) fn next_collection_is_minor(&self) -> bool {
-        self.tracks_young_cells() && self.minor_collection_scheduled()
-    }
-    /// The value survived a collection: its mark is kept until the next full collection.
     pub(crate) fn is_old(&self, value: Value) -> bool {
-        match value.heap_reference() {
-            Some(HeapReference::ObjectRecord(record_id)) => self.object_records.is_marked(record_id),
-            Some(HeapReference::ArrayRecord(record_id)) => self.array_records.is_marked(record_id),
-            Some(HeapReference::LegacySlot(index)) => {
-                self.get(value).is_some() && Self::marked(&self.marks, index as usize)
-            }
-            None => false,
+        if let Some(record_id) = value.direct_object_index() {
+            return self.object_records.is_marked(record_id);
         }
+        if let Some(record_id) = value.direct_array_index() {
+            return self.array_records.is_marked(record_id);
+        }
+        value
+            .legacy_heap_index()
+            .map(|index| index as usize)
+            .is_some_and(|index| self.get(value).is_some() && Self::marked(&self.marks, index))
     }
     /// Make a collection due at the next safepoint.
     #[cfg(test)]
@@ -1152,6 +1142,13 @@ impl Heap {
     pub fn collect(&mut self, roots: impl IntoIterator<Item = Value>) -> Vec<(Value, Value)> {
         self.collect_with_object_roots(roots, |_, _, _, _, _| {}, None, true)
     }
+    /// Whether a collection requested as `full` traces and sweeps the whole heap. Records
+    /// and legacy cells share one generation rule: survivors stay marked (old), the write
+    /// barriers log old owners they write, and a minor traces roots and that log only.
+    pub(crate) fn collection_is_full(&self, full: bool) -> bool {
+        full
+    }
+
     pub(crate) fn collect_with_object_roots(
         &mut self,
         roots: impl IntoIterator<Item = Value>,
@@ -1159,6 +1156,9 @@ impl Heap {
         parallel_object_roots: Option<&ParallelObjectRootTrace<'_>>,
         full: bool,
     ) -> Vec<(Value, Value)> {
+        let full = self.collection_is_full(full);
+        // The sweep may free a prototype whose record a later object reuses.
+        advance_prototype_layout_epoch();
         debug_assert_eq!(self.collection_state, CollectionState::Idle);
         self.collection_state = if full {
             CollectionState::FullMarking
@@ -1169,19 +1169,23 @@ impl Heap {
         // observed here and when it is reported rather than on every allocation.
         self.peak_live = self.peak_live.max(self.live_slots());
         self.collections += 1;
+        self.marked_prototype = None;
         #[cfg(feature = "profile-aggregate")]
         let allocations_between_collections = self.allocations as u64;
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         let mark_started = std::time::Instant::now();
         #[cfg(feature = "profile-aggregate")]
         let mark_clear_started = std::time::Instant::now();
-        #[cfg(feature = "profile-aggregate")]
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         if full {
             self.gc_profile.full_collections += 1;
         } else {
             self.gc_profile.minor_collections += 1;
-            self.gc_profile.remembered_owner_scans += self.remembered.len() as u64;
-            self.gc_profile.young_cells_swept += self.young.len() as u64;
+            #[cfg(feature = "profile-aggregate")]
+            {
+                self.gc_profile.remembered_owner_scans += self.remembered.len() as u64;
+                self.gc_profile.young_cells_swept += self.young.len() as u64;
+            }
         }
         if full {
             Self::clear_marks(&self.marks);
@@ -1189,7 +1193,6 @@ impl Heap {
             self.remembered_marks.fill(0);
             self.object_records.clear_marks();
             self.array_records.clear_marks();
-            self.forget_remembered_records();
         }
         #[cfg(feature = "profile-aggregate")]
         if full {
@@ -1201,6 +1204,41 @@ impl Heap {
         work.extend(self.roots.values());
         #[cfg(debug_assertions)]
         let verify_roots = work.clone();
+        #[cfg(debug_assertions)]
+        let verify_old_records = (!full).then(|| {
+            let mut old = Vec::new();
+            self.object_records
+                .for_each_marked(|id| old.push(Value::direct_object(id)));
+            self.array_records
+                .for_each_marked(|id| old.push(Value::direct_array(id)));
+            old
+        });
+        if !full {
+            #[cfg(feature = "profile-aggregate")]
+            {
+                self.gc_profile.remembered_owner_scans += (self.object_records.remembered_count()
+                    + self.array_records.remembered_count())
+                    as u64;
+            }
+            work.extend(
+                self.object_records
+                    .take_remembered()
+                    .into_iter()
+                    .map(Value::direct_object),
+            );
+            work.extend(
+                self.array_records
+                    .take_remembered()
+                    .into_iter()
+                    .map(Value::direct_array),
+            );
+        }
+        #[cfg(debug_assertions)]
+        let verify_remembered_records: Vec<Value> = if full {
+            Vec::new()
+        } else {
+            work[verify_roots.len()..].to_vec()
+        };
         #[cfg(feature = "profile-aggregate")]
         {
             self.gc_profile.roots += work.len() as u64;
@@ -1242,39 +1280,6 @@ impl Heap {
                         );
                     }
                 }
-                for &record_id in &self.object_generation.remembered {
-                    // SAFETY: a remembered record was old and live when written, and only
-                    // sweeps retire records.
-                    let object = unsafe { self.object_records.get_live(record_id) };
-                    Self::object_children(
-                        Value::direct_object(record_id),
-                        object,
-                        properties,
-                        &mut work,
-                        &mut object_roots,
-                        GcTraceKind::Collection,
-                        &mut last_proto,
-                    );
-                }
-                for &record_id in &self.array_generation.remembered {
-                    let value = Value::direct_array(record_id);
-                    // SAFETY: as for remembered objects.
-                    let array = unsafe { self.array_records.get_live(record_id) };
-                    Self::array_children(
-                        value,
-                        array,
-                        properties,
-                        &mut work,
-                        &mut object_roots,
-                        GcTraceKind::Collection,
-                        &mut last_proto,
-                    );
-                    if let Some(arrays) = &self.sparse_arrays
-                        && let Some(elements) = arrays.get(&value)
-                    {
-                        work.extend(elements.values.values().copied());
-                    }
-                }
             }
             self.mark_work_parallel_or_serial(
                 &mut work,
@@ -1289,7 +1294,9 @@ impl Heap {
             if full {
                 self.debug_verify_full(&verify_roots, &mut object_roots);
             } else {
-                self.debug_verify_minor(&verify_roots, &mut object_roots);
+                let mut pinned = verify_old_records.unwrap_or_default();
+                pinned.extend(verify_remembered_records);
+                self.debug_verify_minor(&verify_roots, &pinned, &mut object_roots);
             }
         }
         let finalization_jobs = self.prune_weak_entries(full);
@@ -1314,25 +1321,24 @@ impl Heap {
         } else {
             None
         };
-        // Compaction answers the fragmentation earlier sweeps left, so a sweep lists the
-        // owners of live property ranges only when a compaction will follow it.
-        let compaction_due = full && self.properties.fragmented();
         let SweepOutput {
             mut live,
+            mut live_payload_bytes,
             property_owners,
             freed_cells,
             swept_slots,
         } = if let Some(pool) = sweep_pool {
             self.sweep_full_parallel(pool)
         } else {
-            self.sweep_serial(full, compaction_due)
+            self.sweep_serial(full)
         };
-        let mut direct_property_owners = Vec::with_capacity(if compaction_due {
+        let mut direct_property_owners = Vec::with_capacity(if full {
             self.property_owner_counts.1
         } else {
             0
         });
-        if full {
+        let legacy_live = live;
+        {
             #[cfg(feature = "profile-aggregate")]
             {
                 self.gc_profile.sweep_slots +=
@@ -1341,9 +1347,10 @@ impl Heap {
             #[cfg(feature = "profile-memory")]
             let memory_profile = &mut self.memory_profile;
             let properties = &mut self.properties;
+            let payload_bytes = &mut self.payload_bytes;
             let (object_live, object_freed) = self.object_records.sweep(|record| match record {
                 RecordSweep::Keep(record_id, object) => {
-                    if compaction_due && object.properties().has_compact_range() {
+                    if full && object.properties().has_compact_range() {
                         direct_property_owners.push((
                             object.properties().start_offset(),
                             Value::direct_object(record_id),
@@ -1361,7 +1368,10 @@ impl Heap {
             let mut dead_arrays = Vec::new();
             let (array_live, array_freed) = self.array_records.sweep(|record| match record {
                 RecordSweep::Keep(record_id, array) => {
-                    if compaction_due && array.properties().has_compact_range() {
+                    if full {
+                        live_payload_bytes += array_payload_bytes(array);
+                    }
+                    if full && array.properties().has_compact_range() {
                         direct_property_owners.push((
                             array.properties().start_offset(),
                             Value::direct_array(record_id),
@@ -1369,6 +1379,7 @@ impl Heap {
                     }
                 }
                 RecordSweep::Dead(record_id, array) => {
+                    *payload_bytes = payload_bytes.saturating_sub(array_payload_bytes(&array));
                     #[cfg(feature = "profile-memory")]
                     let slots = properties.len(array.properties());
                     properties.release(array.properties());
@@ -1392,14 +1403,6 @@ impl Heap {
             }
             #[cfg(not(feature = "profile-aggregate"))]
             let _ = (object_freed, array_freed);
-        } else {
-            let (promoted, _freed) = self.sweep_young_records();
-            #[cfg(feature = "profile-aggregate")]
-            {
-                self.gc_profile.freed += _freed as u64;
-            }
-            self.old_live = self.old_live.saturating_add(promoted);
-            live = self.old_live;
         }
         #[cfg(feature = "profile-aggregate")]
         {
@@ -1407,7 +1410,10 @@ impl Heap {
             self.gc_profile.freed += freed_cells as u64;
         }
         let _ = (freed_cells, swept_slots);
-        if compaction_due {
+        if full {
+            // A full sweep recounts the ledger from the survivors: shrinking a live array
+            // (truncation, `pop`, `splice`) is not charged back between full collections.
+            self.payload_bytes = live_payload_bytes;
             self.property_owner_counts = (property_owners.len(), direct_property_owners.len());
             self.compact_property_arena(property_owners, direct_property_owners);
         }
@@ -1415,26 +1421,49 @@ impl Heap {
         {
             self.gc_profile.sweep_nanos += sweep_started.elapsed().as_nanos() as u64;
         }
-        self.allocations = 0;
+        // Live weight in the units allocation is charged in: one per cell or record plus
+        // its payload.
+        let live_weight = live + self.payload_bytes / payload_unit();
+        let allocated = std::mem::take(&mut self.allocations);
         self.external_since_collection = 0;
         self.external_collection_budget = self.external_bytes.max(MINIMUM_EXTERNAL_COLLECTION_BUDGET);
         if full {
-            self.old_live = live;
-            self.live_after_full = live;
-            self.external_after_full = self.external_bytes;
-            self.full_collection_growth_limit = FULL_COLLECTION_GROWTH
-                .allocation_limit(live)
-                .max(MINIMUM_GC_ALLOCATION_HEADROOM);
+            self.allocations_since_full = 0;
+            self.old_live = legacy_live;
             self.young.clear();
             self.remembered.clear();
             self.remembered_marks.fill(0);
-            self.object_generation.young.clear();
-            self.array_generation.young.clear();
         }
-        self.young_tracking = self.minor_collection_scheduled();
-        // A minor collection's live count includes old garbage awaiting the next full one;
-        // the nursery stays sized by the live set that full collection measured.
-        self.threshold = gc_allocation_headroom(self.live_after_full);
+        if full {
+            self.live_after_full = live;
+        }
+        let next = pacing().plan(
+            &mut self.pacing_state,
+            pacing::CollectionOutcome {
+                full,
+                live,
+                live_weight,
+                previous_live_weight: self.live_weight_after_previous,
+                live_after_full: self.live_after_full,
+                allocated,
+                since_full: self.allocations_since_full,
+            },
+        );
+        #[cfg(all(feature = "gc-tuning", feature = "profile-gc-time"))]
+        if full && std::env::var_os("QUENCH_GC_TRACE").is_some() {
+            // Diagnostic recount of the payload ledger after a full sweep.
+            let mut exact = 0;
+            self.for_each_live_cell(|cell| exact += cell.payload_bytes());
+            self.array_records.for_each_live(|_, array| exact += array_payload_bytes(array));
+            eprintln!("gc payload ledger={} exact={exact}", self.payload_bytes);
+        }
+        #[cfg(feature = "gc-tuning")]
+        if std::env::var_os("QUENCH_GC_TRACE").is_some() {
+            eprintln!("gc full={full} live={live} prev={} after_full={} alloc={} since_full={} next={next:?} state={:?}", self.live_weight_after_previous, self.live_after_full, allocated, self.allocations_since_full, self.pacing_state);
+        }
+        self.live_weight_after_previous = live_weight;
+        self.threshold = next.threshold;
+        self.full_due = next.full;
         #[cfg(feature = "profile-aggregate")]
         {
             self.gc_profile.allocations_between_collections_total +=
@@ -1498,6 +1527,7 @@ impl Heap {
                     sparse_arrays,
                     rc_cells,
                     external_bytes,
+                    live_payload_bytes,
                     swept_slots,
                 } = result;
                 let freed_cells = free_slots.len();
@@ -1522,6 +1552,7 @@ impl Heap {
                     cell.drop_on_owner();
                 }
                 output.live += live;
+                output.live_payload_bytes += live_payload_bytes;
                 output.property_owners.extend(property_owners);
                 output.freed_cells += freed_cells;
                 output.swept_slots += swept_slots;
@@ -1531,82 +1562,20 @@ impl Heap {
         output
     }
 
-    /// Empties both record families' remembered sets.
-    fn forget_remembered_records(&mut self) {
-        self.object_records
-            .forget_remembered(&self.object_generation.remembered);
-        self.object_generation.remembered.clear();
-        self.array_records
-            .forget_remembered(&self.array_generation.remembered);
-        self.array_generation.remembered.clear();
-    }
-
-    /// A minor collection's record sweep: frees the unmarked young records, promotes the
-    /// rest, and empties the remembered sets. Returns the promoted and freed counts.
-    fn sweep_young_records(&mut self) -> (usize, usize) {
-        let properties = &mut self.properties;
-        let (object_promoted, object_freed) = self.object_records.sweep_young(
-            &self.object_generation.young,
-            |_record_id, object| {
-                properties.release(object.properties());
-            },
-        );
-        let mut dead_arrays = Vec::new();
-        let (array_promoted, array_freed) = self.array_records.sweep_young(
-            &self.array_generation.young,
-            |record_id, array| {
-                properties.release(array.properties());
-                dead_arrays.push(Value::direct_array(record_id));
-            },
-        );
-        if let Some(arrays) = &mut self.sparse_arrays {
-            for array in dead_arrays {
-                arrays.remove(&array);
-            }
-            if arrays.is_empty() {
-                self.sparse_arrays = None;
-            }
-        }
-        self.object_generation.young.clear();
-        self.array_generation.young.clear();
-        self.forget_remembered_records();
-        (object_promoted + array_promoted, object_freed + array_freed)
-    }
-
-    /// The generational write barrier for a record about to be written: an old record joins
-    /// its family's remembered set, so a minor collection traces the young values it gains.
-    #[inline(always)]
-    fn remember_record(&mut self, reference: HeapReference) {
-        let (record_id, generation) = match reference {
-            HeapReference::ObjectRecord(record_id) => {
-                if !self.tracks_young_cells() || !self.object_records.remember(record_id) {
-                    return;
-                }
-                (record_id, &mut self.object_generation)
-            }
-            HeapReference::ArrayRecord(record_id) => {
-                if !self.tracks_young_cells() || !self.array_records.remember(record_id) {
-                    return;
-                }
-                (record_id, &mut self.array_generation)
-            }
-            HeapReference::LegacySlot(_) => return,
-        };
-        generation.remembered.push(record_id);
-    }
-
-    fn sweep_serial(&mut self, full: bool, list_property_owners: bool) -> SweepOutput {
+    fn sweep_serial(&mut self, full: bool) -> SweepOutput {
         let mut live = 0;
+        let mut live_payload_bytes = 0;
         let mut freed_cells = 0;
         let mut swept_slots = 0;
         let properties = &mut self.properties;
-        let mut property_owners_for_sweep = Vec::with_capacity(if list_property_owners {
+        let mut property_owners_for_sweep = Vec::with_capacity(if full {
             self.property_owner_counts.0
         } else {
             0
         });
         {
             let external_bytes = &mut self.external_bytes;
+            let payload_bytes = &mut self.payload_bytes;
             let free_by_slab = &mut self.free_by_slab;
             let free_slabs = &mut self.free_slabs;
             let free_slot_count = &mut self.free_slots;
@@ -1615,6 +1584,7 @@ impl Heap {
             let memory_profile = &mut self.memory_profile;
             let mut reclaim = |properties: &mut ValueArena, index: usize, cell: Cell| {
                 *external_bytes = external_bytes.saturating_sub(cell.external_bytes());
+                *payload_bytes = payload_bytes.saturating_sub(cell.payload_bytes());
                 #[cfg(feature = "profile-memory")]
                 {
                     let object_slots = cell
@@ -1646,9 +1616,7 @@ impl Heap {
                         swept_slots += 1;
                         if Self::marked(&self.marks, index) {
                             live += 1;
-                            if !list_property_owners {
-                                continue;
-                            }
+                            live_payload_bytes += slot.cell.as_ref().map_or(0, Cell::payload_bytes);
                             if let Some(object) = slot.cell.as_ref().and_then(Cell::object) {
                                 if properties.has_compact_range(object.properties()) {
                                     property_owners_for_sweep.push(pack_offset_owner(
@@ -1690,6 +1658,7 @@ impl Heap {
         }
         SweepOutput {
             live,
+            live_payload_bytes,
             property_owners: property_owners_for_sweep,
             freed_cells,
             swept_slots,
@@ -1899,21 +1868,19 @@ impl Heap {
     fn debug_verify_minor(
         &mut self,
         roots: &[Value],
+        old_records: &[Value],
         object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
     ) {
         let minor_marks = Self::snapshot_marks(&self.marks);
         let minor_object_marks = self.object_records.snapshot_marks();
         let minor_array_marks = self.array_records.snapshot_marks();
         let young = self.young.clone();
-        let young_objects: rustc_hash::FxHashSet<u32> =
-            self.object_generation.young.iter().copied().collect();
-        let young_arrays: rustc_hash::FxHashSet<u32> =
-            self.array_generation.young.iter().copied().collect();
         #[cfg(feature = "profile-aggregate")]
         let profile = self.gc_profile;
         Self::clear_marks(&self.marks);
         self.object_records.clear_marks();
         self.array_records.clear_marks();
+        let pinned_records: rustc_hash::FxHashSet<Value> = old_records.iter().copied().collect();
         let mut young_slots = vec![false; self.slots.len()];
         for index in young.iter().copied() {
             young_slots[index as usize] = true;
@@ -1923,21 +1890,7 @@ impl Heap {
             (slot.cell.is_some() && !young_slots[index] && Self::marked_words(&minor_marks, index))
                 .then_some(Value::heap(index as u32))
         }));
-        // Old records are pinned too: each is traced, so a young value only an unremembered
-        // old record reaches shows up as a mark the minor collection missed.
-        let record_marked = |marks: &[u64], id: u32| {
-            marks[id as usize / u64::BITS as usize] & (1 << (id % u64::BITS)) != 0
-        };
-        self.object_records.for_each_live(|id, _| {
-            if !young_objects.contains(&id) && record_marked(&minor_object_marks, id) {
-                work.push(Value::direct_object(id));
-            }
-        });
-        self.array_records.for_each_live(|id, _| {
-            if !young_arrays.contains(&id) && record_marked(&minor_array_marks, id) {
-                work.push(Value::direct_array(id));
-            }
-        });
+        work.extend(old_records.iter().copied());
         let mut ephemerons = weak::EphemeronWork::default();
         self.collection_state = CollectionState::FullMarking;
         self.mark_work(
@@ -1946,6 +1899,28 @@ impl Heap {
             &mut ephemerons,
             GcTraceKind::VerifyFull,
         );
+        let verified_object_marks = self.object_records.snapshot_marks();
+        let verified_array_marks = self.array_records.snapshot_marks();
+        let young_record_mismatch = |identity: Value, id: u32, minor: &[u64], verified: &[u64]| {
+            let word = id as usize / u64::BITS as usize;
+            let mask = 1_u64 << (id as usize % u64::BITS as usize);
+            !pinned_records.contains(&identity)
+                && (minor[word] & mask != 0) != (verified[word] & mask != 0)
+        };
+        self.object_records.for_each_live(|id, _| {
+            assert!(
+                !young_record_mismatch(Value::direct_object(id), id, &minor_object_marks, &verified_object_marks),
+                "minor collection's young object records differ from a full mark with old records pinned: {id}"
+            );
+        });
+        self.array_records.for_each_live(|id, _| {
+            assert!(
+                !young_record_mismatch(Value::direct_array(id), id, &minor_array_marks, &verified_array_marks),
+                "minor collection's young array records differ from a full mark with old records pinned: {id}"
+            );
+        });
+        self.object_records.restore_marks(&minor_object_marks);
+        self.array_records.restore_marks(&minor_array_marks);
         for index in young {
             let index = index as usize;
             if self.get(Value::heap(index as u32)).is_some() {
@@ -1956,21 +1931,7 @@ impl Heap {
                 );
             }
         }
-        for (family, young, minor, current) in [
-            ("object", &young_objects, &minor_object_marks, self.object_records.snapshot_marks()),
-            ("array", &young_arrays, &minor_array_marks, self.array_records.snapshot_marks()),
-        ] {
-            for &id in young {
-                assert_eq!(
-                    record_marked(&current, id),
-                    record_marked(minor, id),
-                    "minor collection's young {family} records differ from a full mark with old values pinned: {id}"
-                );
-            }
-        }
         Self::restore_marks(&self.marks, &minor_marks);
-        self.object_records.restore_marks(&minor_object_marks);
-        self.array_records.restore_marks(&minor_array_marks);
         self.collection_state = CollectionState::MinorMarking;
         #[cfg(feature = "profile-aggregate")]
         {
@@ -2152,6 +2113,10 @@ impl Heap {
         }
     }
     #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+    pub(crate) fn record_vm_gc_phase(&mut self, phase: usize, started: std::time::Instant) {
+        self.gc_profile.vm_phase_nanos[phase] += started.elapsed().as_nanos() as u64;
+    }
+    #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
     pub(crate) const fn gc_profile(&self) -> GcProfile {
         self.gc_profile
     }
@@ -2169,12 +2134,18 @@ impl Heap {
             .get(&array)
             .map(|elements| elements.length)
     }
-    pub(crate) fn sparse_set(&mut self, array: Value, index: usize, value: Value) {
-        match array.heap_reference() {
-            Some(HeapReference::LegacySlot(owner)) => self.remember(owner as usize),
-            Some(reference) => self.remember_record(reference),
+    /// The write barrier for an edge stored outside `owner`'s own storage (sparse elements,
+    /// owner-attached VM tables): `owner` is logged as if it had been written.
+    pub(crate) fn write_barrier(&mut self, owner: Value) {
+        match owner.heap_reference() {
+            Some(HeapReference::ObjectRecord(record_id)) => self.object_records.remember(record_id),
+            Some(HeapReference::ArrayRecord(record_id)) => self.array_records.remember(record_id),
+            Some(HeapReference::LegacySlot(index)) => self.remember(index as usize),
             None => {}
         }
+    }
+    pub(crate) fn sparse_set(&mut self, array: Value, index: usize, value: Value) {
+        self.write_barrier(array);
         let arrays = self
             .sparse_arrays
             .get_or_insert_with(|| Box::new(FxHashMap::default()));
@@ -2267,7 +2238,7 @@ impl Heap {
     pub(crate) fn property_set(&mut self, object: Value, slot: usize, value: Value) {
         let vector = {
             let data = self
-                .object_mut(object)
+                .object_store_mut(object, value)
                 .expect("property owner is an object");
             if data.inline_properties().is_some() {
                 data.set_inline_property(slot, value);
@@ -2286,7 +2257,7 @@ impl Heap {
     ) {
         let vector = {
             let data = self
-                .object_mut(object)
+                .object_store_mut(object, value)
                 .expect("property owner is an object");
             if data.inline_properties().is_some() {
                 debug_assert!(slot < INLINE_PROPERTY_COUNT);
@@ -2311,9 +2282,8 @@ impl Heap {
         slot: usize,
         value: Value,
     ) -> bool {
-        self.remember_record(HeapReference::ObjectRecord(record_id));
         // SAFETY: the caller proves the record live; `&mut self` is exclusive.
-        let data = unsafe { self.object_records.get_live_mut(record_id) };
+        let data = unsafe { self.object_records.get_live_mut_storing(record_id, value) };
         if data.inline_properties().is_some() {
             debug_assert!(slot < INLINE_PROPERTY_COUNT);
             data.set_inline_property(slot, value);
@@ -2327,6 +2297,27 @@ impl Heap {
         unsafe { self.properties.set_flat_unchecked(vector, slot, value) };
         true
     }
+    /// `property_add` of the next property of a direct object that keeps inline storage, at
+    /// inline `slot`, the object's storage length that its shape records. `false`, changing
+    /// nothing, for any other owner or slot, which `property_add` takes.
+    #[inline(always)]
+    pub(crate) fn add_inline_property(&mut self, object: Value, slot: usize, value: Value, shape: u32) -> bool {
+        let Some(record_id) = object.direct_object_index() else {
+            return false;
+        };
+        // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
+        let data = unsafe { self.object_records.get_live_mut_storing(record_id, value) };
+        if slot >= INLINE_PROPERTY_COUNT || data.inline_properties().is_none() {
+            return false;
+        }
+        debug_assert_eq!(slot, self.properties.len(data.properties()));
+        data.set_inline_property(slot, value);
+        data.set_shape(shape);
+        #[cfg(feature = "profile-memory")]
+        self.note_object_slots(object, slot + 1);
+        true
+    }
+
     /// One cached property add: appends `value` at `slot`, the object's current storage
     /// length, and moves the object to `shape`, whose storage length is `slot + 1`.
     #[inline(always)]
@@ -2627,11 +2618,7 @@ impl Heap {
             } => {
                 work.push(*parent);
                 work.extend(slots.roots());
-                let crate::heap::EnvironmentScope {
-                    dynamic_bindings,
-                    with_objects,
-                    ..
-                } = &**scope;
+                let (dynamic_bindings, with_objects) = (scope.dynamic_bindings(), scope.with_objects());
                 match dynamic_bindings {
                     EnvironmentBindings::Owned(bindings) => {
                         work.extend(bindings.iter().map(|(_, value)| *value));
@@ -2818,13 +2805,13 @@ impl Heap {
                 Cell::WeakSet { entries, .. } => entries.capacity() * size_of::<Value>(),
                 Cell::Function { .. } => size_of::<Object>(),
                 Cell::Environment { slots, scope, .. } => {
-                    let with_objects = &scope.with_objects;
+                    let with_objects = scope.with_objects();
                     slots.len() * size_of::<EnvironmentSlot>()
                         + with_objects.len() * size_of::<Value>()
                 }
                 Cell::String(value) => value.capacity(),
                 Cell::BigInt(value) | Cell::Error(value) => value.capacity(),
-                Cell::Symbol(value) => value.as_ref().map_or(0, String::capacity),
+                Cell::Symbol(value) => value.as_ref().map_or(0, |description| description.len()),
             }
     }
     #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]

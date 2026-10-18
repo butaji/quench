@@ -116,6 +116,9 @@ pub(crate) fn on_connection(context: &mut NativeContext<'_, NodeHost>, _: RootId
     shared.borrow_mut().net_sockets.insert(id, crate::host::node_host::NetSocket {
         root: retained, encoding: None, parent_server: None, write_callbacks: Default::default(),
     });
+    // Socket construction can request reads before public ownership is tagged.
+    // Transfer that read interest without retaining a second raw callback owner.
+    super::stream_binding::release_reader(context, id);
     super::net_socket_options::apply_accepted(context, server, socket, handle)?;
     let count = get(context, server, "_connections")?;
     let count = context.numeric_update_rooted(count, false)?;

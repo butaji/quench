@@ -45,10 +45,15 @@ fn create_binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
             ("threadCpuUsage", "processMetricsThreadCpu"),
             ("resourceUsage", "processMetricsResources"),
             ("rss", "processMetricsRss"),
+            ("memoryUsage", "processMetricsMemoryUsage"),
         ] {
             let function =
                 c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
             put(c, module, name, function)?;
+        }
+        for (name,operation) in [("cwd","processCwd"),("umask","workerRawUmask")] {
+            let function=c.host_function_named(crate::host::shared_vm::operation(operation),name)?;
+            put(c,module,name,function)?;
         }
         Ok(module)
     })
@@ -179,7 +184,8 @@ pub(crate) fn resources(
     )?;
     Ok(c.undefined())
 }
-pub(crate) fn rss(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+/// The process's resident set from `/proc/self/statm`, in bytes.
+fn resident_bytes() -> Result<f64, RootedError> {
     let text = std::fs::read_to_string("/proc/self/statm")
         .map_err(|error| RootedError::host(error.to_string()))?;
     let pages = text
@@ -191,9 +197,49 @@ pub(crate) fn rss(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId
     if page_size <= 0 {
         return Err(os_error("sysconf(_SC_PAGESIZE)"));
     }
-    Ok(c.number(pages as f64 * page_size as f64))
+    Ok(pages as f64 * page_size as f64)
+}
+pub(crate) fn rss(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    Ok(c.number(resident_bytes()?))
+}
+/// `binding.memoryUsage(values)` (src/node_process_methods.cc): fills `rss, heapTotal,
+/// heapUsed, external, arrayBuffers`. ArrayBuffer backing stores are V8's only external
+/// memory here, so `external` and `arrayBuffers` agree.
+pub(crate) fn memory_usage(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let target = args
+        .first()
+        .copied()
+        .ok_or_else(|| RootedError::host("memory usage result is absent"))?;
+    let heap = c.heap_memory_composition();
+    let external = heap.array_buffer_bytes as f64;
+    write_values(
+        c,
+        target,
+        &[resident_bytes()?, heap.reserved_bytes() as f64, heap.used_bytes() as f64, external, external],
+    )?;
+    Ok(c.undefined())
 }
 pub(crate) fn install(c: &mut Context<'_>) -> Result<(), RootedError> {
+    let process = process(c)?;
+    // Node's wrappers load with `internal/process/per_thread.js` on the first read of one.
+    let initializer = c.host_function(crate::host::shared_vm::operation("processMethodsInitialize"))?;
+    c.define_lazy_data_properties_rooted(process, &WRAPPED_METHODS, true, initializer)?;
+    Ok(())
+}
+
+/// The process methods Node's `wrapProcessMethods` makes over the native binding.
+const WRAPPED_METHODS: [&str; 4] = ["cpuUsage", "threadCpuUsage", "memoryUsage", "resourceUsage"];
+
+fn process(c: &mut Context<'_>) -> Result<RootId, RootedError> {
+    c.host_mut()
+        .shared_state()
+        .borrow()
+        .process_module
+        .ok_or_else(|| RootedError::host("process is not initialized"))
+}
+
+/// Defines the wrapped process methods as Node's.
+pub(crate) fn initialize_methods(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     let native = binding(c)?;
     let wrapper = crate::host::shared_vm::commonjs::node_library_export(
         c,
@@ -203,19 +249,10 @@ pub(crate) fn install(c: &mut Context<'_>) -> Result<(), RootedError> {
     )?;
     let undefined = c.undefined();
     let methods = c.call_rooted(wrapper, undefined, &[native])?;
-    let process = c
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .process_module
-        .ok_or_else(|| RootedError::host("process is not initialized"))?;
-    for name in ["cpuUsage", "threadCpuUsage", "resourceUsage"] {
+    let process = process(c)?;
+    for name in WRAPPED_METHODS {
         let function = get(c, methods, name)?;
         put(c, process, name, function)?;
     }
-    // Only install native RSS; heap metrics require the Runtime's real accounting.
-    let memory = get(c, process, "memoryUsage")?;
-    let rss = get(c, native, "rss")?;
-    put(c, memory, "rss", rss)?;
-    Ok(())
+    Ok(c.undefined())
 }

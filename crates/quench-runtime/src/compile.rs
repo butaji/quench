@@ -25,10 +25,13 @@ mod capture_profile;
 mod class;
 mod early;
 mod frame_registers;
+mod syntax_message;
 pub(crate) mod liveness;
 mod locals;
 mod numeric;
 pub(crate) mod regexp;
+#[cfg(feature = "profile-memory")]
+mod program_profile;
 #[cfg(feature = "profile-memory")]
 mod register_profile;
 mod rewrite;
@@ -113,6 +116,24 @@ impl Diagnostic {
         }
     }
 
+    /// The message of the SyntaxError this diagnostic throws, without the class name some
+    /// compiler messages carry.
+    pub fn syntax_message(&self) -> &str {
+        let message = self.message();
+        message.strip_prefix(SYNTAX_ERROR_PREFIX).unwrap_or(message)
+    }
+
+    /// A parse failure, reported with V8's message at OXC's position.
+    fn parse_failure(source_name: &str, source: &str, error: &oxc_diagnostics::OxcDiagnostic) -> Self {
+        let offset = error.labels.first().map_or(0, |label| label.offset());
+        Self {
+            kind: DiagnosticKind::Compilation,
+            source: source_name.into(),
+            message: syntax_message::parse_failure(source, error),
+            span: Span::new(offset, offset),
+        }
+    }
+
     pub(crate) fn is_stack_exhausted(&self) -> bool {
         self.kind == DiagnosticKind::StackExhausted
     }
@@ -157,6 +178,9 @@ impl fmt::Display for Diagnostic {
     }
 }
 pub struct Engine;
+
+/// The class name some compiler messages lead with.
+const SYNTAX_ERROR_PREFIX: &str = "SyntaxError: ";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DynamicFunctionKind {
@@ -280,22 +304,23 @@ impl Engine {
             .is_some_and(|body| early::class_eval_references_arguments(&body.statements))
     }
 
-    pub(crate) fn static_module_has_early_error(source: &str) -> bool {
+    /// The SyntaxError message of a module source's first early error, if it has one.
+    pub(crate) fn static_module_early_error(source: &str) -> Option<String> {
         let normalized = early::normalize_hashbang(source);
         let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
         let parsed = Parser::new(&allocator, &normalized, SourceType::mjs()).parse();
         if stack::validate_parsed(&parsed).is_err() {
-            return false;
+            return None;
         }
-        if !parsed.diagnostics.is_empty() {
-            return true;
+        if let Some(error) = parsed.diagnostics.first() {
+            return Some(syntax_message::parse_failure(&normalized, error));
         }
         oxc_semantic::SemanticBuilder::new()
             .with_check_syntax_error(true)
             .build(&parsed.program)
             .diagnostics
-            .len()
-            != 0
+            .first()
+            .map(|error| error.message.to_string())
     }
 
     pub(crate) fn static_module_plan(source: &str, module_name: &str) -> Option<StaticModulePlan> {
@@ -755,13 +780,8 @@ impl Engine {
         if !parsed.diagnostics.is_empty() {
             return Err(parsed
                 .diagnostics
-                .into_iter()
-                .map(|error| Diagnostic {
-                    kind: DiagnosticKind::Compilation,
-                    source: name.into(),
-                    message: error.to_string(),
-                    span: Span::default(),
-                })
+                .iter()
+                .map(|error| Diagnostic::parse_failure(name, &normalized, error))
                 .collect());
         }
         stack::validate(&parsed.program).map_err(|()| vec![Diagnostic::stack_exhausted(name)])?;
@@ -931,7 +951,7 @@ impl Engine {
             .into_iter()
             .filter_map(|(span, name)| annex_b_forbidden_names.contains(&name).then_some(span))
             .collect();
-        let program = compiler.program(&parsed.program, module_goal, inherited_strict);
+        let emitted = compiler.program(&parsed.program, module_goal, inherited_strict);
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("QUENCH_MEMORY").is_some() {
             eprintln!(
@@ -940,7 +960,12 @@ impl Engine {
                 allocator.capacity(),
             );
         }
-        program
+        // The tree is the largest structure of a compilation; the passes that finish the
+        // program do not read it.
+        drop(parsed);
+        drop(allocator);
+        let (compiler, module) = emitted?;
+        compiler.finish(module)
     }
 
     pub(crate) fn strict_eval_syntax_error(source: &str, in_function: bool) -> Option<String> {
@@ -961,7 +986,7 @@ impl Engine {
             return None;
         }
         if !parsed.diagnostics.is_empty() {
-            return Some(format!("SyntaxError: {}", parsed.diagnostics[0]));
+            return Some(format!("{SYNTAX_ERROR_PREFIX}{}", syntax_message::parse_failure(source, &parsed.diagnostics[0])));
         }
         oxc_semantic::SemanticBuilder::new()
             .with_check_syntax_error(true)
@@ -1103,6 +1128,36 @@ fn push_module_request(
             module_type,
         });
     }
+}
+
+/// The functions and arrows written in `program`, each of which the compiler emits.
+/// The module records `Compiler::program` reads from the tree for `Compiler::finish`.
+struct ModuleParts {
+    requests: Vec<crate::bytecode::ModuleRequest>,
+    imports: Vec<crate::bytecode::ModuleImportBinding>,
+    link_plan: Option<crate::bytecode::ModuleLinkPlan>,
+}
+
+fn source_function_count(program: &Program<'_>) -> usize {
+    struct Counter(usize);
+    impl<'a> oxc_ast_visit::Visit<'a> for Counter {
+        fn visit_function(
+            &mut self,
+            function: &oxc_ast::ast::Function<'a>,
+            flags: oxc_syntax::scope::ScopeFlags,
+        ) {
+            self.0 += 1;
+            oxc_ast_visit::walk::walk_function(self, function, flags);
+        }
+
+        fn visit_arrow_function_expression(&mut self, arrow: &ArrowFunctionExpression<'a>) {
+            self.0 += 1;
+            oxc_ast_visit::walk::walk_arrow_function_expression(self, arrow);
+        }
+    }
+    let mut counter = Counter(0);
+    oxc_ast_visit::Visit::visit_program(&mut counter, program);
+    counter.0
 }
 
 fn has_top_level_await(statements: &[Statement<'_>]) -> bool {
@@ -1339,6 +1394,12 @@ struct Compiler<'a> {
     eval_context: Option<EvalContext>,
     eval_annex_b_collisions: FxHashSet<u32>,
     atoms: CompilerAtoms<'a>,
+    /// The capture markers made so far by binding kind (`None` for a catch parameter's) and
+    /// source atom (`capture_marker`).
+    capture_markers: FxHashMap<(Option<crate::bytecode::LexicalBindingKind>, Atom), Atom>,
+    /// Private names resolved so far (`private_name_atom`): private member access resolves
+    /// through name bindings, so functions resolving one keep theirs.
+    private_name_references: u64,
     private_name_ids: FxHashMap<(u32, u32), u32>,
     private_name_labels: FxHashMap<(u32, u32), String>,
     private_name_overrides: FxHashMap<u32, String>,
@@ -1355,6 +1416,9 @@ struct Compiler<'a> {
     superinstructions: Vec<Superinstruction>,
     /// Distinct `name_bindings` lists: sibling functions that see the same bindings,
     /// such as every function declared in one module scope, share one list.
+    /// The captured scopes and declared names of each function's name bindings, resolved
+    /// in `finish` for the functions dynamic name resolution can reach.
+    deferred_name_bindings: FxHashMap<u32, DeferredNameBindings>,
     /// Resolved captured scopes keyed by (scope, enclosing chain) addresses; see `captured_names`.
     captured_name_scopes: FxHashMap<
         (usize, Option<usize>),
@@ -1366,6 +1430,20 @@ struct Compiler<'a> {
 }
 
 type MethodSiteSpec = (Atom, u16, Vec<Register>, Option<(Atom, u16)>);
+
+/// The name prefix of a catch parameter's capture marker (`Compiler::capture_marker`).
+const CATCH_CAPTURE_PREFIX: &str = "\0quench:catch-capture:";
+
+/// A function's name bindings before its captured names are resolved: its direct bindings,
+/// the scopes it closes over and the names it declares.
+struct DeferredNameBindings {
+    /// Whether the function or one it encloses names a private member, which resolves its
+    /// home through these bindings.
+    names_private_members: bool,
+    direct: Vec<crate::bytecode::EvalBinding>,
+    scopes: Vec<std::rc::Rc<FxHashMap<Atom, u16>>>,
+    function_scope: Vec<Atom>,
+}
 
 fn private_name_ids(semantic: &oxc_semantic::Semantic<'_>) -> FxHashMap<(u32, u32), u32> {
     let classes = semantic.classes();
@@ -1498,6 +1576,33 @@ impl From<&Constant> for ConstantKey {
 impl<'a> Compiler<'a> {
     /// The captured scopes of `scopes`, innermost first. A scope's names are resolved once per
     /// enclosing chain and shared by every function closing over it.
+    /// Completes the name bindings of every function a dynamic name lookup may consult
+    /// (`capture_layout::dynamic_name_scopes`), of every function private member access
+    /// resolves through, and of the root; the rest keep their direct bindings, as no lookup
+    /// reaches their captured names.
+    fn resolve_name_bindings(&mut self, functions: &mut [BcFunction]) {
+        let reachable = capture_layout::dynamic_name_scopes(functions, &self.atoms);
+        for (id, function) in functions.iter_mut().enumerate() {
+            let Some(deferred) = self.deferred_name_bindings.remove(&(id as u32)) else {
+                continue;
+            };
+            if id != crate::vm::ROOT_FUNCTION_ID as usize
+                && !reachable[id]
+                && !deferred.names_private_members
+            {
+                continue;
+            }
+            let captured = self.captured_names(&deferred.scopes);
+            let mut hidden: Vec<Atom> = deferred
+                .function_scope
+                .into_iter()
+                .filter(|atom| captured.as_ref().is_some_and(|names| names.contains(*atom)))
+                .collect();
+            hidden.sort_unstable();
+            function.name_bindings = crate::bytecode::NameBindings::new(deferred.direct, hidden, captured);
+        }
+    }
+
     fn captured_names(
         &mut self,
         scopes: &[std::rc::Rc<FxHashMap<Atom, u16>>],
@@ -1562,7 +1667,7 @@ impl<'a> Compiler<'a> {
             if !visible.insert(atom) {
                 continue;
             }
-            let catch_marker = format!("\0quench:catch-capture:{name}");
+            let catch_marker = format!("{CATCH_CAPTURE_PREFIX}{name}");
             bindings.push(crate::bytecode::EvalBinding {
                 atom,
                 location: capture(*slot),
@@ -1632,6 +1737,8 @@ impl<'a> Compiler<'a> {
             eval_context: None,
             eval_annex_b_collisions: FxHashSet::default(),
             atoms,
+            capture_markers: FxHashMap::default(),
+            private_name_references: 0,
             private_name_ids,
             private_name_labels: FxHashMap::default(),
             private_name_overrides: FxHashMap::default(),
@@ -1646,6 +1753,7 @@ impl<'a> Compiler<'a> {
             object_sites: vec![],
             regexp_literal_sites: vec![],
             superinstructions: vec![],
+            deferred_name_bindings: FxHashMap::default(),
             captured_name_scopes: FxHashMap::default(),
         }
     }
@@ -1694,13 +1802,18 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    /// Emits every function of `program`: all the compiler reads of its tree. `finish` makes
+    /// the residual program from what this leaves, after the caller has dropped the tree.
     fn program(
         mut self,
         program: &Program<'_>,
         module_goal: bool,
         inherited_strict: bool,
-    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+    ) -> Result<(Self, ModuleParts), Vec<Diagnostic>> {
         self.source_comments = program.comments.iter().map(|comment| comment.span).collect();
+        // One slot per source function and the root, reserved once: grown by doubling, the
+        // slots of a large script stood up to twice its functions beside its tree.
+        self.functions.reserve_exact(source_function_count(program) + 1);
         self.module_goal = module_goal;
         let module_requests = if module_goal {
             module_requests(&program.body)
@@ -1901,11 +2014,14 @@ impl<'a> Compiler<'a> {
             .filter_map(|name| self.atoms.find(name))
             .collect();
         if let Some(Some(root)) = self.functions.first_mut() {
-            root.global_lexical_atoms = global_lexical_atoms.into();
-            root.global_immutable_atoms = global_immutable_atoms.into();
-            root.global_var_atoms = global_var_atoms;
-            root.global_function_atoms = global_function_atoms;
-            root.global_annex_b_var_atoms = global_annex_b_var_atoms;
+            root.global_declarations = crate::bytecode::GlobalDeclarations {
+                lexical: global_lexical_atoms,
+                var: global_var_atoms,
+                function: global_function_atoms,
+                annex_b_var: global_annex_b_var_atoms,
+                immutable: global_immutable_atoms,
+            }
+            .boxed();
             if !self.module_goal {
                 fn lower_global_var(
                     op: Op,
@@ -1923,12 +2039,13 @@ impl<'a> Compiler<'a> {
                         .is_some_and(|atom| global_var_atoms.contains(atom))
                         .then_some(replacement)
                 }
+                let global_var_atoms = root.global_var_atoms().to_vec();
                 for instruction in &mut root.code {
                     if let Some(op) = lower_global_var(
                         instruction.op(),
                         || instruction.local_slot(),
                         &root.local_atoms,
-                        &root.global_var_atoms,
+                        &global_var_atoms,
                     ) {
                         instruction.set_op(op);
                     }
@@ -1938,7 +2055,7 @@ impl<'a> Compiler<'a> {
                         instruction.op(),
                         || instruction.local_slot(),
                         &root.local_atoms,
-                        &root.global_var_atoms,
+                        &global_var_atoms,
                     ) {
                         instruction.set_op(op);
                     }
@@ -1948,7 +2065,31 @@ impl<'a> Compiler<'a> {
         if !self.errors.is_empty() {
             return Err(self.errors);
         }
-        let mut functions: Vec<_> = self.functions.into_iter().map(Option::unwrap).collect();
+        Ok((
+            self,
+            ModuleParts {
+                requests: module_requests,
+                imports: module_imports,
+                link_plan: module_link_plan,
+            },
+        ))
+    }
+
+    /// The residual program of the functions `program` emitted.
+    fn finish(mut self, module: ModuleParts) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        let ModuleParts {
+            requests: module_requests,
+            imports: module_imports,
+            link_plan: module_link_plan,
+        } = module;
+        let mut functions: Vec<_> = std::mem::take(&mut self.functions)
+            .into_iter()
+            .map(Option::unwrap)
+            .collect();
+        // Functions the compiler synthesizes (class constructors and initializers) may have
+        // grown the reservation.
+        functions.shrink_to_fit();
+        self.resolve_name_bindings(&mut functions);
         capture_layout::apply(&mut functions, &self.atoms);
         if self.mode == SpecializationMode::Enabled {
             Self::apply_rewrites(
@@ -2012,6 +2153,8 @@ impl<'a> Compiler<'a> {
         }
         for function in &mut functions {
             function.code.shrink_to_fit();
+            function.wide.shrink_to_fit();
+            function.source_positions.shrink_to_fit();
         }
         let (mut method_sites, mut method_arguments) =
             Self::flatten_method_sites(self.method_sites);
@@ -2055,6 +2198,10 @@ impl<'a> Compiler<'a> {
         };
         #[cfg(feature = "profile-aggregate")]
         debug_assert!(crate::profile::instruction_word_domains_fit(&program));
+        #[cfg(feature = "profile-memory")]
+        if std::env::var_os("QUENCH_MEMORY").is_some() {
+            program_profile::report(&program);
+        }
         Ok(program)
     }
 
@@ -2062,7 +2209,24 @@ impl<'a> Compiler<'a> {
         self.atoms.intern(text)
     }
 
+    /// The atom marking a captured binding of `source` with `kind` (`None` for a catch
+    /// parameter's), recorded so the capture scope finds it without spelling it again.
+    fn capture_marker(
+        &mut self,
+        kind: Option<crate::bytecode::LexicalBindingKind>,
+        source: Atom,
+    ) -> Atom {
+        if let Some(marker) = self.capture_markers.get(&(kind, source)) {
+            return *marker;
+        }
+        let prefix = kind.map_or(CATCH_CAPTURE_PREFIX, |kind| kind.capture_prefix());
+        let marker = self.atom(&format!("{prefix}{}", &self.atoms[source as usize]));
+        self.capture_markers.insert((kind, source), marker);
+        marker
+    }
+
     fn private_name_atom(&mut self, span: Span) -> Atom {
+        self.private_name_references += 1;
         let name = match self.private_name_ids.get(&(span.start, span.end)) {
             Some(id) => {
                 let label = self.private_name_label(span, *id);
@@ -2544,7 +2708,7 @@ impl<'a> Compiler<'a> {
                 .iter()
                 .any(|instruction| instruction.op() == Op::MakeClosure);
         let arguments_slot = arguments_slot.filter(|slot| {
-            captures_locals
+            (captures_locals && function.owner.arrows_reach_arguments(id, *slot))
                 || function.dynamic_eval
                 || function.code.iter().any(|instruction| {
                     instruction.op() == Op::LoadLocal
@@ -2567,6 +2731,7 @@ impl<'a> Compiler<'a> {
         let result = BcFunction {
             parent,
             name: name.map(|value| function.owner.atom(value)),
+            inferred_name: None,
             is_arrow: false,
             self_binding_slot,
             source_span: options.source_span,
@@ -2604,11 +2769,7 @@ impl<'a> Compiler<'a> {
             local_registers: function.promoted_local_layout().into(),
             inherited_with_scope: options.with_depth != 0,
             lexical_atoms: lexical_atoms.into(),
-            global_lexical_atoms: Vec::new().into(),
-            global_var_atoms: Vec::new().into(),
-            global_function_atoms: Vec::new().into(),
-            global_annex_b_var_atoms: Vec::new().into(),
-            global_immutable_atoms: Vec::new().into(),
+            global_declarations: None,
             name_bindings,
             binding_sites: function.binding_sites.into(),
             source_positions: function.source_positions.into(),
@@ -2619,6 +2780,7 @@ impl<'a> Compiler<'a> {
             dispatch: DispatchClass::General,
             decoded: Default::default(),
             plain_locals: Default::default(),
+            declared_atom_sets: Default::default(),
             activation_bindings: Default::default(),
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
@@ -2631,6 +2793,41 @@ impl<'a> Compiler<'a> {
         };
         self.functions[id as usize] = Some(result);
         id
+    }
+
+    /// Whether code nested in function `owner` can reach its `arguments` binding in local
+    /// `slot`. Only an arrow shares its enclosing function's `arguments`; every other function
+    /// binds its own. So the binding is reachable exactly where a function nested in `owner`
+    /// through arrows alone captures the slot, or resolves names at run time (direct eval, a
+    /// `with` statement or an enclosing one), which may denote it.
+    fn arrows_reach_arguments(&self, owner: u32, slot: u16) -> bool {
+        let is_with_enter = |atom: usize| self.atoms.get(atom) == Some(crate::bytecode::WITH_ENTER_BINDING);
+        self.functions.iter().flatten().any(|function| {
+            // The function levels between `function` and `owner`, along arrows alone.
+            let mut distance = 0;
+            let mut current = function;
+            loop {
+                if !current.is_arrow {
+                    return false;
+                }
+                distance += 1;
+                match current.parent {
+                    Some(parent) if parent == owner => break,
+                    Some(parent) => match self.functions.get(parent as usize) {
+                        Some(Some(parent)) => current = parent,
+                        _ => return false,
+                    },
+                    None => return false,
+                }
+            }
+            function.has_dynamic_scope_access()
+                || function.contains_with_statement(is_with_enter)
+                || function.instructions().any(|instruction| {
+                    matches!(instruction.op(), Op::LoadCapture | Op::StoreCapture)
+                        && usize::from(instruction.capture_depth()) + 1 == distance
+                        && instruction.capture_slot() == slot
+                })
+        })
     }
 
     fn formal_length(params: &oxc_ast::ast::FormalParameters<'_>) -> usize {

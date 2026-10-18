@@ -29,6 +29,13 @@ impl<H: Host> Vm<H> {
             let value = self.get_property(p, value, next_atom)?;
             let next_root = self.heap.root(value);
             next = Some(next_root);
+            let iterator = self.heap.root_value(iterator_root).unwrap();
+            if self.steps_as_array_iterator(iterator, value)
+                && let Some(rest) = self.take_present_array_values(iterator)
+            {
+                values.extend(rest.into_iter().map(|value| self.heap.root(value)));
+                return Ok(());
+            }
             loop {
                 let outcome = self.rooted_iterator_step_value(p, iterator_root, next_root);
                 match outcome? {

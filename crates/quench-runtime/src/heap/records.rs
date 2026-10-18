@@ -1,4 +1,5 @@
 use super::{ArrayObject, Object};
+use crate::value::Value;
 use std::alloc::Layout;
 use std::alloc::{alloc, dealloc};
 use std::mem::MaybeUninit;
@@ -7,14 +8,6 @@ use std::mem::size_of;
 use std::ptr::NonNull;
 
 pub(super) type RecordId = u32;
-
-/// One record family's generational state between collections: the records allocated since
-/// the last collection and the old records written since then (their `remembered` bits).
-#[derive(Default)]
-pub(super) struct RecordGeneration {
-    pub(super) young: Vec<RecordId>,
-    pub(super) remembered: Vec<RecordId>,
-}
 
 pub(super) type ObjectRecordSpace = RecordSpace<Object>;
 pub(super) type ArrayRecordSpace = RecordSpace<ArrayObject>;
@@ -43,6 +36,8 @@ pub(super) struct RecordSpace<T> {
     free_word: u64,
     free_word_base: RecordId,
     live: usize,
+    /// Old records written since the last collection, each logged once by the write barrier.
+    remembered: Vec<RecordId>,
 }
 
 impl<T> Default for RecordSpace<T> {
@@ -57,16 +52,14 @@ impl<T> Default for RecordSpace<T> {
             free_word: 0,
             free_word_base: 0,
             live: 0,
+            remembered: Vec::new(),
         }
     }
 }
 
 struct RecordBlock {
     occupied: [u64; RECORDS_PER_BLOCK / OCCUPANCY_WORD_BITS],
-    /// Set by marking and kept after the sweep: between collections a marked record is old.
     marked: [u64; RECORDS_PER_BLOCK / OCCUPANCY_WORD_BITS],
-    /// Old records written since the last collection, whose edges a minor collection traces.
-    remembered: [u64; RECORDS_PER_BLOCK / OCCUPANCY_WORD_BITS],
 }
 
 pub(super) enum RecordSweep<'a, T> {
@@ -79,7 +72,6 @@ impl RecordBlock {
         Self {
             occupied: [0; RECORDS_PER_BLOCK / OCCUPANCY_WORD_BITS],
             marked: [0; RECORDS_PER_BLOCK / OCCUPANCY_WORD_BITS],
-            remembered: [0; RECORDS_PER_BLOCK / OCCUPANCY_WORD_BITS],
         }
     }
 
@@ -233,14 +225,69 @@ impl<T> RecordSpace<T> {
     /// # Safety
     /// `id` must come from a live direct Value of this record family, and
     /// the caller must have exclusive access to the heap.
+    /// Mutable access for the mutator. This is the record write barrier: an old (marked)
+    /// record is unmarked and logged once, so the next minor collection traces it again.
+    ///
+    /// # Safety
+    /// As for `get_live_mut_unbarriered`.
     #[inline(always)]
     pub(super) unsafe fn get_live_mut(&mut self, id: RecordId) -> &mut T {
+        self.remember(id);
+        // SAFETY: the caller's contract.
+        unsafe { self.get_live_mut_unbarriered(id) }
+    }
+
+    /// Mutable access for a store of `stored` into the record. Only a heap reference can
+    /// make an old record point at a young one, so other values skip the write barrier.
+    ///
+    /// # Safety
+    /// As for `get_live_mut_unbarriered`.
+    #[inline(always)]
+    pub(super) unsafe fn get_live_mut_storing(&mut self, id: RecordId, stored: Value) -> &mut T {
+        if stored.heap_index().is_some() {
+            self.remember(id);
+        }
+        // SAFETY: the caller's contract.
+        unsafe { self.get_live_mut_unbarriered(id) }
+    }
+
+    /// Mutable access that writes no reference into the record (the collector's own
+    /// compaction and remapping). It does not pass the write barrier.
+    ///
+    /// # Safety
+    /// `id` must come from a live direct Value of this record family, and
+    /// the caller must have exclusive access to the heap.
+    #[inline(always)]
+    pub(super) unsafe fn get_live_mut_unbarriered(&mut self, id: RecordId) -> &mut T {
         debug_assert!(
             self.is_occupied(id),
             "live slot names an initialized record"
         );
         // SAFETY: guaranteed by the caller's live-slot and exclusive-access invariants.
         unsafe { (*self.base.as_ptr().add(id as usize)).assume_init_mut() }
+    }
+
+    #[inline(always)]
+    pub(super) fn remember(&mut self, id: RecordId) {
+        let (block_index, record_index) = Self::split_id(id);
+        // SAFETY: a live id belongs to an initialized block.
+        let block = unsafe { self.blocks.get_unchecked_mut(block_index) };
+        let word = &mut block.marked[record_index / OCCUPANCY_WORD_BITS];
+        let mask = 1_u64 << (record_index % OCCUPANCY_WORD_BITS);
+        if *word & mask != 0 {
+            *word &= !mask;
+            self.remembered.push(id);
+        }
+    }
+
+    /// The records the barrier logged since the last collection; each is unmarked.
+    pub(super) fn take_remembered(&mut self) -> Vec<RecordId> {
+        std::mem::take(&mut self.remembered)
+    }
+
+    #[cfg(any(test, feature = "profile-aggregate"))]
+    pub(super) fn remembered_count(&self) -> usize {
+        self.remembered.len()
     }
 
     #[cfg(test)]
@@ -264,33 +311,6 @@ impl<T> RecordSpace<T> {
             .is_some_and(|block| block.is_occupied(record_index) && block.mark(record_index))
     }
 
-    /// Adds an old record to the remembered set once; `true` when the caller must list it.
-    #[inline(always)]
-    pub(super) fn remember(&mut self, id: RecordId) -> bool {
-        let (block_index, record_index) = Self::split_id(id);
-        let Some(block) = self.blocks.get_mut(block_index) else {
-            return false;
-        };
-        let word_index = record_index / OCCUPANCY_WORD_BITS;
-        let mask = 1_u64 << (record_index % OCCUPANCY_WORD_BITS);
-        if block.marked[word_index] & mask == 0 || block.remembered[word_index] & mask != 0 {
-            return false;
-        }
-        block.remembered[word_index] |= mask;
-        true
-    }
-
-    /// Empties the remembered set whose members `ids` lists.
-    pub(super) fn forget_remembered(&mut self, ids: &[RecordId]) {
-        for &id in ids {
-            let (block_index, record_index) = Self::split_id(id);
-            if let Some(block) = self.blocks.get_mut(block_index) {
-                block.remembered[record_index / OCCUPANCY_WORD_BITS] &=
-                    !(1_u64 << (record_index % OCCUPANCY_WORD_BITS));
-            }
-        }
-    }
-
     pub(super) fn is_marked(&self, id: RecordId) -> bool {
         let (block_index, record_index) = Self::split_id(id);
         self.blocks
@@ -306,11 +326,28 @@ impl<T> RecordSpace<T> {
             .collect()
     }
 
-    /// Starts a full collection, which re-derives every record's age from reachability.
+    /// Visits every old (marked) record.
+    #[cfg(debug_assertions)]
+    pub(super) fn for_each_marked(&self, mut visit: impl FnMut(RecordId)) {
+        for (block_index, block) in self.blocks.iter().enumerate() {
+            for (word_index, word) in block.marked.iter().copied().enumerate() {
+                let mut marked = word;
+                while marked != 0 {
+                    let bit = marked.trailing_zeros() as usize;
+                    let record_index = word_index * OCCUPANCY_WORD_BITS + bit;
+                    visit((block_index * RECORDS_PER_BLOCK + record_index) as RecordId);
+                    marked &= marked - 1;
+                }
+            }
+        }
+    }
+
+    /// Every record becomes young: a full collection's starting state.
     pub(super) fn clear_marks(&mut self) {
         for block in &mut self.blocks {
             block.marked.fill(0);
         }
+        self.remembered.clear();
     }
 
     #[cfg(debug_assertions)]
@@ -336,7 +373,8 @@ impl<T> RecordSpace<T> {
     }
 
     /// Sweeps by bitmap word. Dead occupied records are transferred to the
-    /// callback exactly once; marked records survive and stay marked as old.
+    /// callback exactly once; marked records survive and keep their mark bit,
+    /// which makes them old for the next minor collection.
     pub(super) fn sweep(&mut self, mut visit: impl FnMut(RecordSweep<'_, T>)) -> (usize, usize) {
         let mut live_count = 0;
         let mut freed_count = 0;
@@ -380,41 +418,6 @@ impl<T> RecordSpace<T> {
         };
         self.free_word = 0;
         (live_count, freed_count)
-    }
-
-    /// A minor collection's sweep: of the records allocated since the last collection
-    /// (`young`), unmarked ones are transferred to `dead` and marked ones become old.
-    /// Returns the promoted and freed counts.
-    pub(super) fn sweep_young(
-        &mut self,
-        young: &[RecordId],
-        mut dead: impl FnMut(RecordId, T),
-    ) -> (usize, usize) {
-        let mut promoted = 0;
-        let mut freed = 0;
-        for &id in young {
-            let (block_index, record_index) = Self::split_id(id);
-            let block = &mut self.blocks[block_index];
-            if !block.is_occupied(record_index) {
-                continue;
-            }
-            if block.is_marked(record_index) {
-                promoted += 1;
-                continue;
-            }
-            block.occupied[record_index / OCCUPANCY_WORD_BITS] &=
-                !(1_u64 << (record_index % OCCUPANCY_WORD_BITS));
-            // SAFETY: the occupied bit proved initialization and its removal transfers the
-            // record to the callback exactly once.
-            dead(id, unsafe { self.base.as_ptr().add(id as usize).read().assume_init() });
-            freed += 1;
-        }
-        if freed > 0 {
-            self.live -= freed;
-            self.free_cursor = self.next_id;
-            self.free_word = 0;
-        }
-        (promoted, freed)
     }
 
     pub(super) fn for_each_live(&self, mut visit: impl FnMut(RecordId, &T)) {
@@ -600,29 +603,6 @@ mod tests {
     }
 
     #[test]
-    fn young_sweep_frees_unmarked_young_and_remembers_only_old_records() {
-        let mut arena = RecordSpace::default();
-        let old = arena.try_insert(String::from("old")).unwrap();
-        assert!(arena.mark(old));
-        arena.sweep(|_| {});
-        assert!(arena.remember(old));
-        assert!(!arena.remember(old));
-        let survivor = arena.try_insert(String::from("survivor")).unwrap();
-        let garbage = arena.try_insert(String::from("garbage")).unwrap();
-        assert!(!arena.remember(survivor));
-        assert!(arena.mark(survivor));
-        let mut dropped = Vec::new();
-        let counts = arena.sweep_young(&[survivor, garbage], |id, value| dropped.push((id, value)));
-        assert_eq!(counts, (1, 1));
-        assert_eq!(dropped, [(garbage, String::from("garbage"))]);
-        assert!(arena.is_live(old) && arena.is_live(survivor) && !arena.is_live(garbage));
-        assert_eq!(arena.live_count(), 2);
-        arena.forget_remembered(&[old]);
-        assert!(arena.remember(old));
-        assert_eq!(arena.try_insert(String::from("reused")).unwrap(), garbage);
-    }
-
-    #[test]
     fn bitmap_reuse_preserves_descending_free_id_order_across_sweeps() {
         use super::RecordSweep;
 
@@ -643,8 +623,6 @@ mod tests {
         assert_eq!(dead_ids, [ids[0], ids[2], ids[3], ids[5]]);
 
         assert_eq!(arena.try_insert(10).unwrap(), ids[5]);
-        // Survivors stay marked as old until the next full collection clears them.
-        assert!(arena.is_marked(ids[1]) && !arena.is_marked(ids[5]));
         arena.clear_marks();
         for &live in &[ids[1], ids[4], ids[5]] {
             assert!(arena.mark(live));

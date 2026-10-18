@@ -577,6 +577,21 @@ impl<H: Host> Vm<H> {
         }))
     }
 
+    /// `GetMethod(value, symbol)` for the RegExp protocol methods a string method consults,
+    /// read from its proven slot when `value` is an ordinary RegExp
+    /// (`Vm::regexp_proven_symbol_method`).
+    fn string_protocol_method(
+        &mut self,
+        p: &ResidualProgram,
+        value: Value,
+        symbol: Value,
+    ) -> Result<Value, JsError> {
+        if let Some(method) = self.regexp_proven_symbol_method(value, symbol) {
+            return Ok(method);
+        }
+        self.get_index(p, value, symbol)
+    }
+
     pub(super) fn string_split_native(
         &mut self,
         p: &ResidualProgram,
@@ -592,7 +607,7 @@ impl<H: Host> Vm<H> {
                     vm.well_known_symbols.get("split").copied().ok_or_else(|| {
                         vm.type_error(p, "RegExp split symbol is unavailable".into())
                     })?;
-                let method = vm.get_index(p, separator, symbol)?;
+                let method = vm.string_protocol_method(p, separator, symbol)?;
                 if !method.is_undefined() && !method.is_null() {
                     if !vm.is_function(method) {
                         return Err(vm.type_error(p, "String split method is not callable".into()));
@@ -650,7 +665,7 @@ impl<H: Host> Vm<H> {
                     vm.type_error(p, "RegExp method symbol is unavailable".into())
                 })?;
             if vm.is_object_like(pattern) {
-                let method = vm.get_index(p, pattern, symbol)?;
+                let method = vm.string_protocol_method(p, pattern, symbol)?;
                 if !method.is_undefined() && !method.is_null() {
                     if !vm.is_function(method) {
                         return Err(vm.type_error(p, "RegExp method is not callable".into()));
@@ -689,7 +704,7 @@ impl<H: Host> Vm<H> {
                         ));
                     }
                 }
-                let method = vm.get_index(p, pattern, symbol)?;
+                let method = vm.string_protocol_method(p, pattern, symbol)?;
                 if !method.is_undefined() && !method.is_null() {
                     if !vm.is_function(method) {
                         return Err(vm.type_error(p, "@@matchAll is not callable".into()));
@@ -757,7 +772,7 @@ impl<H: Host> Vm<H> {
                     .ok_or_else(|| {
                         vm.type_error(p, "RegExp replace symbol is unavailable".into())
                     })?;
-                let method = vm.get_index(p, search_value, symbol)?;
+                let method = vm.string_protocol_method(p, search_value, symbol)?;
                 if !method.is_undefined() && !method.is_null() {
                     if !vm.is_function(method) {
                         return Err(

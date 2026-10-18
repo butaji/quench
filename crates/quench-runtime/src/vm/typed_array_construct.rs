@@ -198,10 +198,10 @@ impl<H: Host> Vm<H> {
                     .filter(|source| {
                         matches!(self.heap.get(*source), Some(Cell::TypedArray { kind: source_kind, .. }) if *source_kind == kind)
                     })
-                    .and_then(|source| self.embedding_view_slice(source)?.get(..byte_length).map(<[u8]>::to_vec));
+                    .and_then(|source| self.embedding_with_view_bytes(source, |bytes| bytes.get(..byte_length).map(<[u8]>::to_vec))?);
                 let source_copied = copied.is_some();
                 let buffer = match copied {
-                    Some(bytes) => self.fixed_array_buffer_from(bytes, false),
+                    Some(bytes) => self.fixed_array_buffer_from(bytes.into(), false),
                     None => self.new_fixed_array_buffer(p, byte_length, false)?,
                 };
                 let buffer_root = self.heap.root(buffer);

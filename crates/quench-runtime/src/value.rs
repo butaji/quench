@@ -33,6 +33,9 @@ const _: () = {
     assert!(tags[0] == FIRST_TAG && tags[tags.len() - 1] == LAST_TAG);
 };
 const DIRECT_OBJECT_HANDLE_BIT: u64 = 1 << 47;
+/// The `TAG_DELETED` payload bit of `Value::shared_environment_slot`. Environments are legacy
+/// slot cells, whose payload never sets the direct-handle bits.
+const SHARED_ENVIRONMENT_SLOT_BIT: u64 = DIRECT_OBJECT_HANDLE_BIT;
 const DIRECT_ARRAY_HANDLE_BIT: u64 = 1 << 46;
 /// The bits that name a heap value's reference family (`Value::heap_reference`).
 const HEAP_FAMILY_MASK: u64 = TAG_MASK | DIRECT_OBJECT_HANDLE_BIT | DIRECT_ARRAY_HANDLE_BIT;
@@ -116,6 +119,21 @@ impl Value {
     /// (`CallPlan::forwards_arguments`). Not a heap reference, and distinct from every value a
     /// guest operation produces.
     pub(crate) const UNMATERIALIZED_ARGUMENTS: Self = Self(TAG_DELETED | 1);
+
+    /// An environment slot that shares its owner environment's slot of the same index
+    /// (`EnvironmentSlot::shared`): a `TAG_DELETED` payload of `SHARED_ENVIRONMENT_SLOT_BIT`
+    /// and the owner's heap payload, which no guest operation produces.
+    pub(crate) fn shared_environment_slot(owner: Self) -> Self {
+        debug_assert!(owner.is_heap() && owner.0 & SHARED_ENVIRONMENT_SLOT_BIT == 0);
+        Self(TAG_DELETED | SHARED_ENVIRONMENT_SLOT_BIT | (owner.0 & PAYLOAD_MASK))
+    }
+
+    /// The owner environment of a `shared_environment_slot`.
+    #[inline(always)]
+    pub(crate) fn shared_environment_owner(self) -> Option<Self> {
+        (self.0 & (TAG_MASK | SHARED_ENVIRONMENT_SLOT_BIT) == TAG_DELETED | SHARED_ENVIRONMENT_SLOT_BIT)
+            .then(|| Self(TAG_HEAP | (self.0 & PAYLOAD_MASK & !SHARED_ENVIRONMENT_SLOT_BIT)))
+    }
 
     /// A Number: integral values in `i32` range other than -0 are stored as integers, NaN
     /// canonically. A value is integral exactly when its truncation converts back to the

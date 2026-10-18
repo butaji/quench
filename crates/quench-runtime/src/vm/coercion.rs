@@ -2,6 +2,8 @@ use super::wtf16::JsString;
 use super::*;
 use oxc_ast::ast::UnaryOperator;
 
+/// V8's TypeError for ToNumber of a BigInt, unary plus included.
+const BIGINT_TO_NUMBER: &str = "Cannot convert a BigInt value to a number";
 const UNARY_PLUS: u32 = UnaryOperator::UnaryPlus as u32;
 const UNARY_NEGATION: u32 = UnaryOperator::UnaryNegation as u32;
 pub(super) const LOGICAL_NOT: u32 = UnaryOperator::LogicalNot as u32;
@@ -16,25 +18,43 @@ pub(super) fn numeric_unary(op: u32) -> bool {
 }
 
 impl<H: Host> Vm<H> {
+    /// The ECMAScript language type of `value`, with callable objects distinguished.
+    pub(crate) fn value_type(&self, value: Value) -> crate::ValueType {
+        use crate::ValueType as T;
+        if value.is_undefined() || value.is_deleted() {
+            T::Undefined
+        } else if value.is_null() {
+            T::Null
+        } else if value.as_bool().is_some() {
+            T::Boolean
+        } else if value.as_number().is_some() {
+            T::Number
+        } else {
+            match self.heap.get(value) {
+                Some(Cell::String(_)) => T::String,
+                Some(Cell::BigInt(_)) => T::BigInt,
+                Some(Cell::Symbol(_)) => T::Symbol,
+                _ if self.is_function(value) => T::Function,
+                _ => T::Object,
+            }
+        }
+    }
+
     pub(super) fn typeof_value(&mut self, value: Value) -> Value {
+        use crate::ValueType as T;
         let text = if self.is_html_dda(value) {
             "undefined"
-        } else if value.is_undefined() || value.is_deleted() {
-            "undefined"
-        } else if value.as_bool().is_some() {
-            "boolean"
-        } else if value.as_number().is_some() {
-            "number"
-        } else if matches!(self.heap.get(value), Some(Cell::String(_))) {
-            "string"
-        } else if matches!(self.heap.get(value), Some(Cell::BigInt(_))) {
-            "bigint"
-        } else if matches!(self.heap.get(value), Some(Cell::Symbol(_))) {
-            "symbol"
-        } else if self.is_function(value) {
-            "function"
         } else {
-            "object"
+            match self.value_type(value) {
+                T::Undefined => "undefined",
+                T::Null | T::Object => "object",
+                T::Boolean => "boolean",
+                T::Number => "number",
+                T::String => "string",
+                T::BigInt => "bigint",
+                T::Symbol => "symbol",
+                T::Function => "function",
+            }
         };
         self.intern_dynamic_ascii(text)
     }
@@ -157,7 +177,7 @@ impl<H: Host> Vm<H> {
         if numeric && let Some(Cell::BigInt(value)) = self.heap.get(value) {
             let value = value.clone();
             if op == UNARY_PLUS {
-                return Err(self.type_error(p, "Cannot convert BigInt value to number".into()));
+                return Err(self.type_error(p, BIGINT_TO_NUMBER.into()));
             }
             let value = value
                 .parse::<num_bigint::BigInt>()
@@ -220,7 +240,7 @@ impl<H: Host> Vm<H> {
             }
             Some(Cell::BigInt(_)) => {
                 return Err(
-                    self.type_error(program, "Cannot convert a BigInt value to a number".into())
+                    self.type_error(program, BIGINT_TO_NUMBER.into())
                 );
             }
             _ => {}

@@ -400,7 +400,7 @@ impl SharedMemory {
 
 /// Immutable data segments and locked linear memory share a byte-read view.
 pub(crate) enum MemoryRead<'a> {
-    Segment(&'a [u8]),
+    Buffer(crate::heap::BufferRead<'a>),
     Memory(MemoryGuard<'a>),
 }
 
@@ -408,7 +408,7 @@ impl std::ops::Deref for MemoryRead<'_> {
     type Target = [u8];
     fn deref(&self) -> &[u8] {
         match self {
-            Self::Segment(bytes) => bytes,
+            Self::Buffer(bytes)=>bytes,
             Self::Memory(bytes) => bytes,
         }
     }
@@ -691,18 +691,26 @@ lane_accesses! {
     V128Store64Lane, WasmMemoryStore, MemoryStore::I64Store, I64x2ExtractLane;
 }
 
-/// Memories whose scalar accesses use a prologue binding register: memory32
-/// memories accessed directly at least once by this function body.
+/// Memory32 bindings shared by direct accesses, `memory.size`, and
+/// `memory.fill` within this function body.
 pub(super) fn direct_access_memories(
     memories: &[WasmMemory],
     operators: &[wasmparser::Operator<'_>],
 ) -> Vec<bool> {
     let mut used = vec![false; memories.len()];
-    for (_, memarg) in operators.iter().filter_map(direct_access) {
-        if let Some(memory) = memories.get(memarg.memory as usize)
+    for operator in operators {
+        let index = direct_access(operator)
+            .map(|(_, memarg)| memarg.memory)
+            .or_else(|| match operator {
+                wasmparser::Operator::MemorySize { mem }
+                | wasmparser::Operator::MemoryFill { mem } => Some(*mem),
+                _ => None,
+            });
+        if let Some(memory_index) = index
+            && let Some(memory) = memories.get(memory_index as usize)
             && !memory.ty.memory64
         {
-            used[memarg.memory as usize] = true;
+            used[memory_index as usize] = true;
         }
     }
     used
@@ -716,6 +724,9 @@ impl super::Lowering<'_> {
         self.memories.get(index as usize).ok_or_else(|| {
             crate::Diagnostic::unsupported(self.name, "Wasm memory out of bounds")
         })?;
+        if let Some(Some(register)) = self.memory_registers.get(index as usize) {
+            return Ok(*register);
+        }
         self.instance_binding(self.globals.len() + index as usize)
     }
 

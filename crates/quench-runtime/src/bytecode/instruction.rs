@@ -261,7 +261,7 @@ macro_rules! layout_accessors {
             pub(crate) fn optional_register_b(self) -> Option<Register> {
                 debug_assert!(matches!(
                     self.op().field_layout(InstructionField::B),
-                    FieldLayout::OptionalRegister | FieldLayout::OptionalSourceRegister
+                    FieldLayout::OptionalRegister | FieldLayout::OptionalReadRegister
                 ));
                 match self.b() {
                     super::NO_OPTIONAL_REGISTER => None,
@@ -273,7 +273,7 @@ macro_rules! layout_accessors {
             pub(crate) fn set_optional_register_b(&mut self, register: Option<Register>) {
                 debug_assert!(matches!(
                     self.op().field_layout(InstructionField::B),
-                    FieldLayout::OptionalRegister | FieldLayout::OptionalSourceRegister
+                    FieldLayout::OptionalRegister | FieldLayout::OptionalReadRegister
                 ));
                 self.set_b(super::encode_optional_register(register));
             }

@@ -263,6 +263,8 @@ fn parser_error(
 // Node uses the BIO decoder, whose bounded-input errors differ from d2i's
 // slice decoder. Keep the same parser entry point rather than rewriting errors.
 unsafe extern "C" {
+    #[cfg(quench_openssl_provider)]
+    fn BIO_s_secmem() -> *const openssl_sys::BIO_METHOD;
     fn d2i_PKCS12_bio(
         input: *mut openssl_sys::BIO,
         output: *mut *mut openssl_sys::PKCS12,
@@ -273,10 +275,21 @@ fn archive_from_bio(bytes: &[u8]) -> Result<openssl::pkcs12::Pkcs12, openssl::er
     use foreign_types::ForeignType;
     openssl::init();
     let length = i32::try_from(bytes.len()).map_err(|_| openssl::error::ErrorStack::get())?;
-    // BIO borrows the input until decoding completes; all early exits free it.
+    // Keep the BIO and its backing bytes alive until decoding; free on every exit.
     unsafe {
+        // Node LoadBIO owns a writable secure-memory BIO and writes the
+        // supplied bytes into it. A borrowed empty BIO has different EOF/error
+        // behavior on OpenSSL3.5, so preserve the actual input BIO state too.
+        #[cfg(quench_openssl_provider)]
+        let input=openssl_sys::BIO_new(BIO_s_secmem());
+        #[cfg(not(quench_openssl_provider))]
         let input = openssl_sys::BIO_new_mem_buf(bytes.as_ptr().cast(), length);
         if input.is_null() {
+            return Err(openssl::error::ErrorStack::get());
+        }
+        #[cfg(quench_openssl_provider)]
+        if openssl_sys::BIO_write(input,bytes.as_ptr().cast(),length)!=length {
+            openssl_sys::BIO_free_all(input);
             return Err(openssl::error::ErrorStack::get());
         }
         let archive = d2i_PKCS12_bio(input, std::ptr::null_mut());

@@ -12,3 +12,9 @@ pub mod shared_run;
 
 pub use host::{NodeHost, NodeOutputSink};
 pub use shared_run::EntryGoal;
+
+/// Quench's size-classed small-object allocator serves every binary that links this host
+/// with the `quench-alloc` feature (the CLI and the Node test runners alike).
+#[cfg(feature = "quench-alloc")]
+#[global_allocator]
+static GLOBAL_ALLOCATOR: quench_alloc::QuenchAlloc = quench_alloc::QuenchAlloc::new();

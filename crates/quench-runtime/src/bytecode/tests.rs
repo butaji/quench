@@ -123,6 +123,7 @@ fn decoder_rejects_out_of_range_local_load() {
         functions: vec![Function {
             parent: None,
             name: None,
+            inferred_name: None,
             is_arrow: false,
             self_binding_slot: None,
             source_span: None,
@@ -150,11 +151,7 @@ fn decoder_rejects_out_of_range_local_load() {
             local_registers: Vec::new().into(),
             inherited_with_scope: false,
             lexical_atoms: vec![].into(),
-            global_lexical_atoms: vec![].into(),
-            global_var_atoms: vec![].into(),
-            global_function_atoms: vec![].into(),
-            global_annex_b_var_atoms: vec![].into(),
-            global_immutable_atoms: vec![].into(),
+            global_declarations: None,
             name_bindings: Default::default(),
             binding_sites: vec![].into(),
             source_positions: Default::default(),
@@ -165,6 +162,7 @@ fn decoder_rejects_out_of_range_local_load() {
             dispatch: DispatchClass::General,
             decoded: Default::default(),
             plain_locals: Default::default(),
+            declared_atom_sets: Default::default(),
             activation_bindings: Default::default(),
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
@@ -205,6 +203,7 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
         functions: vec![Function {
             parent: None,
             name: None,
+            inferred_name: None,
             is_arrow: false,
             self_binding_slot: None,
             source_span: None,
@@ -232,11 +231,7 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             local_registers: Vec::new().into(),
             inherited_with_scope: false,
             lexical_atoms: vec![].into(),
-            global_lexical_atoms: vec![].into(),
-            global_var_atoms: vec![].into(),
-            global_function_atoms: vec![].into(),
-            global_annex_b_var_atoms: vec![].into(),
-            global_immutable_atoms: vec![].into(),
+            global_declarations: None,
             name_bindings: Default::default(),
             binding_sites: vec![].into(),
             source_positions: Default::default(),
@@ -247,6 +242,7 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             dispatch: DispatchClass::General,
             decoded: Default::default(),
             plain_locals: Default::default(),
+            declared_atom_sets: Default::default(),
             activation_bindings: Default::default(),
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
@@ -516,19 +512,17 @@ fn source_lines_share_javascript_boundaries_and_preserve_wrapper_origins() {
 }
 
 #[test]
-fn source_positions_round_trip_through_their_delta_encoding() {
-    use super::{SourcePosition, SourcePositions};
-    let positions = vec![
-        SourcePosition { pc: 0, line: 1, column: 1 },
-        SourcePosition { pc: 3, line: 1, column: 70_000 },
-        SourcePosition { pc: 4, line: 40, column: 2 },
-        SourcePosition { pc: 900, line: 7, column: 1 },
-        SourcePosition { pc: u32::MAX - 1, line: u32::MAX, column: u32::MAX },
+fn source_positions_round_trip_every_delta_shape() {
+    let positions = [
+        SourcePosition { pc: 0, line: 3, column: 40 },
+        SourcePosition { pc: 1, line: 3, column: 7 },
+        SourcePosition { pc: 9, line: 1, column: 200_000 },
+        SourcePosition { pc: 300, line: 1, column: 200_001 },
+        SourcePosition { pc: u32::MAX, line: u32::MAX, column: u32::MAX },
     ];
-    let table = SourcePositions::from(positions.clone());
-    assert_eq!(table.to_vec(), positions);
-    assert_eq!(table.at(0), Some(positions[0]));
-    assert_eq!(table.at(899), Some(positions[2]));
-    assert_eq!(table.at(900), Some(positions[3]));
-    assert_eq!(SourcePositions::default().at(0), None);
+    let table = positions.into_iter().collect::<SourcePositions>();
+    assert_eq!(table.iter().collect::<Vec<_>>(), positions);
+    assert_eq!(table.last(), positions.last().copied());
+    assert_eq!(table.at(8), Some(positions[1]));
+    assert_eq!(table.at(300), Some(positions[3]));
 }

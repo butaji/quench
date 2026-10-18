@@ -63,6 +63,16 @@ pub enum SharedInput {
 
 /// Execute one entry through the shared VM and the canonical `NodeHost`.
 pub fn execute_shared(input: SharedInput, argv: Vec<String>) -> Result<SharedCompletion, String> {
+    execute_shared_with_execution_mode(input, argv, quench_runtime::ExecutionMode::Interpreted)
+}
+
+/// Execute through the shared VM with the selected interpreter/JIT tier mode.
+/// The mode belongs to this Runtime; it does not create a second VM or frontend.
+pub fn execute_shared_with_execution_mode(
+    input: SharedInput,
+    argv: Vec<String>,
+    mode: quench_runtime::ExecutionMode,
+) -> Result<SharedCompletion, String> {
     #[cfg(target_os = "linux")]
     let (_parent_mask, worker_mask) =
         crate::modules::process_signals_state::ParentSignalMask::block_for_worker()
@@ -75,16 +85,32 @@ pub fn execute_shared(input: SharedInput, argv: Vec<String>) -> Result<SharedCom
             worker_mask
                 .restore()
                 .map_err(|error| format!("runtime execution signal mask: {error}"))?;
-            execute_shared_on_worker(input, argv)
+            execute_shared_on_worker(input, argv, None, mode)
         })
         .map_err(|error| format!("runtime worker thread: {error}"))?
         .join()
         .unwrap_or_else(|_| Err("runtime worker panicked".into()))
 }
 
+/// Run a `worker_threads` Worker's entry on the calling (worker) thread.
+pub(crate) fn execute_worker(
+    input: SharedInput,
+    argv: Vec<String>,
+    worker: crate::modules::worker_shared_vm::WorkerContext,
+) -> Result<SharedCompletion, String> {
+    execute_shared_on_worker(
+        input,
+        argv,
+        Some(worker),
+        quench_runtime::ExecutionMode::Interpreted,
+    )
+}
+
 fn execute_shared_on_worker(
     input: SharedInput,
     argv: Vec<String>,
+    worker: Option<crate::modules::worker_shared_vm::WorkerContext>,
+    mode: quench_runtime::ExecutionMode,
 ) -> Result<SharedCompletion, String> {
     let eval_builtin_globals = matches!(&input, SharedInput::Eval { .. });
     let eval_source_nonempty = matches!(&input, SharedInput::Eval { source, .. } if !source.is_empty());
@@ -157,6 +183,7 @@ fn execute_shared_on_worker(
         None => host,
     };
     let shared_state = host.shared_state();
+    shared_state.borrow_mut().messaging.context = worker;
     {
         let mut state = shared_state.borrow_mut();
         let argv = state.process_argv.clone();
@@ -164,12 +191,16 @@ fn execute_shared_on_worker(
         state.trace.open_environment(argv.as_slice(), &exec_argv);
     }
     let mut runtime = Runtime::new(host);
+    runtime.set_execution_mode(mode);
     let program = Engine::compile(ExecutionRequest {
         source: &source,
         name: &name,
         kind,
     })
     .map_err(|error| format!("{error:?}"))?;
+    if let Some(worker) = &shared_state.borrow().messaging.context {
+        worker.control.set_online();
+    }
     let execution = runtime.execute_deferred_jobs(&program);
     let completion = match execution {
         Ok(()) => crate::modules::process_shared_vm::finish_execution(&mut runtime, &program),
@@ -229,6 +260,9 @@ fn execute_shared_on_worker(
         return Err(error);
     }
     reporting?;
+    // Teardown's drops run code the program never touched; the run's code pages are no
+    // longer needed, so only teardown's own become resident beside its memory.
+    crate::host::resident_pages::release_read_only_pages();
     if let Some(code) = shared_state.borrow().process_control.exit_code() {
         return Ok(SharedCompletion::GuestExit { code });
     }
@@ -264,7 +298,7 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
     let args = arguments.into_iter().collect::<Vec<_>>();
     match args.first().map(String::as_str) {
         Some("--help") | Some("-h") => {
-            println!("quench-node [-e CODE|SCRIPT]");
+            println!("quench-node [--jit] [-e CODE|SCRIPT]");
             return Ok(ExitCode::SUCCESS);
         }
         _ => {}
@@ -274,10 +308,12 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
     let mut input = None;
     let mut eval_source = None;
     let mut print = false;
+    let mut jit = false;
     let mut guest_arguments = Vec::new();
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
+            "--jit" => jit = true,
             "--version" | "-v" => {
                 println!("v{}", crate::modules::process_state::NODE_VERSION);
                 return Ok(ExitCode::SUCCESS);
@@ -441,7 +477,16 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
     let executable = executable_path().map_err(|error| error.to_string())?;
     let mut argv = vec![executable.to_string_lossy().into_owned()];
     argv.extend(guest_arguments);
-    execute_shared(input, argv).map(SharedCompletion::exit_code)
+    execute_shared_with_execution_mode(
+        input,
+        argv,
+        if jit {
+            quench_runtime::ExecutionMode::Compiled
+        } else {
+            quench_runtime::ExecutionMode::Interpreted
+        },
+    )
+    .map(SharedCompletion::exit_code)
 }
 
 fn read_cli_stdin() -> Result<String, String> {

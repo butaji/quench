@@ -1,0 +1,11 @@
+'use strict';
+const assert=require('node:assert');
+Object.defineProperty(globalThis,'__quench_active_domain',{configurable:true,get(){throw new Error('unrelated-global-must-not-be-read');}});
+const {EventEmitter}=require('node:events');
+const domain=require('node:domain');
+const d=domain.create();const records=[];
+d.run(()=>records.push(['domain',new EventEmitter().domain===d]));
+records.push(['plain',new EventEmitter().domain===null]);
+assert.deepStrictEqual(records,[['domain',true],['plain',true]]);
+delete globalThis.__quench_active_domain;
+console.log(JSON.stringify(records));

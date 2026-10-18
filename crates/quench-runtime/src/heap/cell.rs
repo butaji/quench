@@ -9,6 +9,25 @@ use crate::vm::program_store::ProgramId;
 use crate::vm::wtf16::JsString;
 use rustc_hash::FxHashMap;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Changes whenever the layout an object used as a prototype offers its inheritors can have
+/// changed: its shape, prototype or integrity changes, and at every collection, after which a
+/// dead prototype's record may be reused. A cache that proved a prototype chain under one value
+/// proves it again while the value holds (`FieldAddCache::proved_epoch`). One counter for the
+/// process: a change another heap made only sends caches back to the walk that re-proves them.
+static PROTOTYPE_LAYOUT_EPOCH: AtomicU64 = AtomicU64::new(0);
+
+/// The current `PROTOTYPE_LAYOUT_EPOCH`.
+#[inline(always)]
+pub(crate) fn prototype_layout_epoch() -> u64 {
+    PROTOTYPE_LAYOUT_EPOCH.load(Ordering::Relaxed)
+}
+
+/// Retires every proof made under the current `PROTOTYPE_LAYOUT_EPOCH`.
+pub(crate) fn advance_prototype_layout_epoch() {
+    PROTOTYPE_LAYOUT_EPOCH.fetch_add(1, Ordering::Relaxed);
+}
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct WeakMapEntries {
@@ -721,6 +740,97 @@ impl Native {
         )
     }
 
+    /// `String.prototype` methods that, for a string primitive receiver and arguments that
+    /// are not objects, run no guest code and have no effect beyond allocating their result.
+    /// The methods that look up a `Symbol.split`-like method on an argument (`split`,
+    /// `replace`, `match` and their kin) are not among them.
+    pub(crate) fn is_pure_string_method(self) -> bool {
+        matches!(
+            self,
+            Self::StringCharCodeAt
+                | Self::StringCharAt
+                | Self::StringSlice
+                | Self::StringSubstring
+                | Self::StringSubstr
+                | Self::StringIncludes
+                | Self::StringStartsWith
+                | Self::StringEndsWith
+                | Self::StringIndexOf
+                | Self::StringLastIndexOf
+                | Self::StringTrim
+                | Self::StringTrimStart
+                | Self::StringTrimEnd
+                | Self::StringAt
+                | Self::StringCodePointAt
+                | Self::StringToUpperCase
+                | Self::StringToLowerCase
+                | Self::StringConcat
+        )
+    }
+
+    /// The functions of the `Math` object (`MATH_FUNCTIONS`, which its test keeps equal).
+    pub(crate) fn is_math_function(self) -> bool {
+        matches!(
+            self,
+            Self::MathAbs
+                | Self::MathAcos
+                | Self::MathAcosh
+                | Self::MathAsin
+                | Self::MathAsinh
+                | Self::MathAtan
+                | Self::MathAtan2
+                | Self::MathAtanh
+                | Self::MathCbrt
+                | Self::MathCeil
+                | Self::MathClz32
+                | Self::MathCos
+                | Self::MathCosh
+                | Self::MathExp
+                | Self::MathExpm1
+                | Self::MathF16Round
+                | Self::MathFloor
+                | Self::MathFround
+                | Self::MathHypot
+                | Self::MathImul
+                | Self::MathLog
+                | Self::MathLog10
+                | Self::MathLog1p
+                | Self::MathLog2
+                | Self::MathMax
+                | Self::MathMin
+                | Self::MathPow
+                | Self::MathRandom
+                | Self::MathRound
+                | Self::MathSign
+                | Self::MathSin
+                | Self::MathSinh
+                | Self::MathSqrt
+                | Self::MathSumPrecise
+                | Self::MathTan
+                | Self::MathTanh
+                | Self::MathTrunc
+        )
+    }
+
+    /// Natives a lane `Call` makes in place from the running frame (`lane_call_native`):
+    /// the string, RegExp and `Math` functions, which read no caller state beyond the frame's
+    /// published PC and run guest code only through ordinary nested calls.
+    pub(crate) fn runs_from_lane(self) -> bool {
+        self.is_pure_string_method()
+            || self.is_math_function()
+            || matches!(
+                self,
+                Self::RegExpExec
+                    | Self::RegExpTest
+                    | Self::StringReplace
+                    | Self::StringReplaceAll
+                    | Self::StringMatch
+                    | Self::StringMatchAll
+                    | Self::StringSearch
+                    | Self::StringSplit
+            )
+    }
+
     pub(crate) fn is_host_control_native(self) -> bool {
         matches!(
             self,
@@ -1287,7 +1397,7 @@ struct ObjectExtras {
     module_namespace: bool,
     external_address: Option<usize>,
     boxed_primitive: Option<Value>,
-    structured_clone_forbidden: bool,
+    structured_serialization: StructuredSerialization,
     structured_transfer_forbidden: bool,
     module_bindings: Vec<(Atom, ProgramId, u16)>,
     deferred_module: Option<crate::ModuleSource>,
@@ -1296,6 +1406,19 @@ struct ObjectExtras {
     /// An index-keyed property descriptor has been recorded for this object; never cleared.
     indexed_descriptors: bool,
 }
+/// How structured serialization treats an object (HTML [[Serializable]] and
+/// [[Transferable]] host objects).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum StructuredSerialization {
+    /// Serialized by its own properties or builtin data.
+    #[default]
+    Ordinary,
+    /// Never serializable (host-marked uncloneable, or an external).
+    Forbidden,
+    /// Serializable only when listed for transfer (a MessagePort).
+    TransferRequired,
+}
+
 impl ObjectExtras {
     fn allocated_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
@@ -1409,7 +1532,16 @@ impl Object {
     }
 
     pub(crate) fn set_proto(&mut self, proto: Value) {
+        self.note_prototype_layout_change();
         self.meta = (self.meta & !PROTO_INDEX_BITS) | Self::encode_proto(proto);
+    }
+
+    /// A change to what this object offers its inheritors, if it has any.
+    #[inline(always)]
+    fn note_prototype_layout_change(&self) {
+        if self.was_used_as_prototype() {
+            advance_prototype_layout_epoch();
+        }
     }
 
     /// Whether this object is an array's, whose payload holds the element backing.
@@ -1596,12 +1728,15 @@ impl Object {
         previous
     }
 
-    pub(crate) fn copy_property_storage_from(&mut self, source: &Self) {
-        let properties = source.properties();
+    /// Takes `source`'s property values, given `properties`, the arena's duplicate of
+    /// `source.properties()`, and returns the storage this object held before.
+    pub(crate) fn copy_property_storage_from(&mut self, source: &Self, properties: ValueVec) -> ValueVec {
+        let previous = self.properties();
         self.set_properties(properties);
         if properties.has_inline_property_storage() {
             *self.inline_property_values_mut() = *source.inline_property_values();
         }
+        previous
     }
 
     /// Presence of [[ErrorData]] is the unforgeable Error brand.
@@ -1611,12 +1746,13 @@ impl Object {
         object
     }
 
-    pub(crate) fn forbid_structured_clone(&mut self) {
-        self.extras_mut().structured_clone_forbidden = true;
+    /// How structured serialization treats this object.
+    pub(crate) fn set_structured_serialization(&mut self, policy: StructuredSerialization) {
+        self.extras_mut().structured_serialization = policy;
     }
 
-    pub(crate) fn is_structured_clone_forbidden(&self) -> bool {
-        self.extras().is_some_and(|extras| extras.structured_clone_forbidden)
+    pub(crate) fn structured_serialization(&self) -> StructuredSerialization {
+        self.extras().map_or(StructuredSerialization::Ordinary, |extras| extras.structured_serialization)
     }
 
     pub(crate) fn forbid_structured_transfer(&mut self) {
@@ -1693,6 +1829,7 @@ impl Object {
         ValueVec::from_parts(0, self.auxiliary).auxiliary()
     }
     pub(crate) fn set_shape(&mut self, shape: u32) {
+        self.note_prototype_layout_change();
         let mut properties = ValueVec::from_parts(0, self.auxiliary);
         properties.set_auxiliary(shape);
         self.auxiliary = properties.into_parts().1;
@@ -1709,6 +1846,7 @@ impl Object {
         self.properties().is_frozen()
     }
     pub(crate) fn set_frozen(&mut self, value: bool) {
+        self.note_prototype_layout_change();
         let mut properties = ValueVec::from_parts(self.meta & VALUE_VEC_INTEGRITY_BITS, 0);
         properties.set_frozen(value);
         self.meta = (self.meta & !VALUE_VEC_INTEGRITY_BITS) | properties.into_parts().0;
@@ -1755,7 +1893,7 @@ impl Object {
     pub(crate) fn set_external_address(&mut self, address: usize) {
         let extras = self.extras_mut();
         extras.external_address = Some(address);
-        extras.structured_clone_forbidden = true;
+        extras.structured_serialization = StructuredSerialization::Forbidden;
     }
 
     pub(crate) fn is_module_namespace(&self) -> bool {
@@ -1891,11 +2029,40 @@ pub(crate) enum ProxyKind {
     Constructor,
 }
 
+/// One environment slot in one word: a value the environment owns, or the direct owner of
+/// this slot index (`Value::shared_environment_slot`), whose slot is always owned.
 #[derive(Clone, Copy, Debug)]
-pub(crate) enum EnvironmentSlot {
+#[repr(transparent)]
+pub(crate) struct EnvironmentSlot(Value);
+
+/// What an `EnvironmentSlot` holds.
+pub(crate) enum EnvironmentSlotState {
     Owned(Value),
-    /// Direct owner of this slot index; the referenced slot is always Owned.
     Shared(Value),
+}
+
+impl EnvironmentSlot {
+    pub(crate) fn owned(value: Value) -> Self {
+        debug_assert!(value.shared_environment_owner().is_none());
+        Self(value)
+    }
+
+    pub(crate) fn shared(owner: Value) -> Self {
+        Self(Value::shared_environment_slot(owner))
+    }
+
+    #[inline(always)]
+    pub(crate) fn state(self) -> EnvironmentSlotState {
+        match self.0.shared_environment_owner() {
+            Some(owner) => EnvironmentSlotState::Shared(owner),
+            None => EnvironmentSlotState::Owned(self.0),
+        }
+    }
+
+    /// The owned value, for writing in place.
+    pub(crate) fn owned_mut(&mut self) -> Option<&mut Value> {
+        self.0.shared_environment_owner().is_none().then_some(&mut self.0)
+    }
 }
 
 /// An environment's provenance and dynamic-scope state: consulted for eval, `with` and
@@ -1911,6 +2078,133 @@ pub(crate) struct EnvironmentScope {
     pub(crate) with_objects: Box<[Value]>,
 }
 
+impl EnvironmentScope {
+    /// Whether this scope names its program and nothing else, as a function activation's does.
+    fn is_program_only(&self) -> bool {
+        !self.root_eval_scope
+            && self.binding_site_pc.is_none()
+            && matches!(&self.dynamic_bindings, EnvironmentBindings::Owned(bindings) if bindings.is_empty())
+            && self.with_objects.is_empty()
+    }
+}
+
+/// An environment's `EnvironmentScope` in one word. Most environments are a function's
+/// activation, whose scope names only its program: that scope is the word itself, tagged by
+/// `INLINE_SCOPE_TAG`, and needs no allocation. Any other scope is a box the word points to.
+pub(crate) struct EnvironmentScopeRef(std::num::NonZeroUsize);
+
+/// The low bit, never set in a box pointer, marks an inline program-only scope.
+const INLINE_SCOPE_TAG: usize = 1;
+/// An inline scope holds its program plus one (zero for none) above the tag bit.
+const INLINE_PROGRAM_SHIFT: u32 = INLINE_SCOPE_TAG.trailing_ones();
+const _: () = assert!(align_of::<EnvironmentScope>() > INLINE_SCOPE_TAG);
+static NO_DYNAMIC_BINDINGS: EnvironmentBindings = EnvironmentBindings::Owned(Vec::new());
+
+impl EnvironmentScopeRef {
+    pub(crate) fn new(scope: EnvironmentScope) -> Self {
+        if scope.is_program_only()
+            && let Some(inline) = Self::inline(scope.program)
+        {
+            return inline;
+        }
+        Self::boxed(scope)
+    }
+
+    fn inline(program: Option<u32>) -> Option<Self> {
+        let payload = program.map_or(Some(0), |program| usize::try_from(program).ok()?.checked_add(1))?;
+        (payload.leading_zeros() >= INLINE_PROGRAM_SHIFT).then(|| {
+            Self(
+                std::num::NonZeroUsize::new(payload << INLINE_PROGRAM_SHIFT | INLINE_SCOPE_TAG)
+                    .expect("the tag bit is set"),
+            )
+        })
+    }
+
+    fn boxed(scope: EnvironmentScope) -> Self {
+        let pointer = Box::into_raw(Box::new(scope));
+        Self(std::num::NonZeroUsize::new(pointer as usize).expect("a box is never null"))
+    }
+
+    fn scope(&self) -> Option<&EnvironmentScope> {
+        // SAFETY: an untagged word is the pointer `boxed` leaked, owned by `self` until `Drop`.
+        (self.0.get() & INLINE_SCOPE_TAG == 0)
+            .then(|| unsafe { &*(self.0.get() as *const EnvironmentScope) })
+    }
+
+    pub(crate) fn program(&self) -> Option<u32> {
+        match self.scope() {
+            Some(scope) => scope.program,
+            None => (self.0.get() >> INLINE_PROGRAM_SHIFT)
+                .checked_sub(1)
+                .map(|program| u32::try_from(program).expect("inline programs fit u32")),
+        }
+    }
+
+    pub(crate) fn root_eval_scope(&self) -> bool {
+        self.scope().is_some_and(|scope| scope.root_eval_scope)
+    }
+
+    pub(crate) fn binding_site_pc(&self) -> Option<u32> {
+        self.scope().and_then(|scope| scope.binding_site_pc)
+    }
+
+    pub(crate) fn dynamic_bindings(&self) -> &EnvironmentBindings {
+        self.scope().map_or(&NO_DYNAMIC_BINDINGS, |scope| &scope.dynamic_bindings)
+    }
+
+    pub(crate) fn with_objects(&self) -> &[Value] {
+        self.scope().map_or(&[], |scope| &scope.with_objects)
+    }
+
+    /// The scope, boxed first when it was inline.
+    pub(crate) fn make_mut(&mut self) -> &mut EnvironmentScope {
+        if self.scope().is_none() {
+            *self = Self::boxed(self.to_scope());
+        }
+        // SAFETY: `self` now holds the box `boxed` leaked, and `&mut self` borrows it uniquely.
+        unsafe { &mut *(self.0.get() as *mut EnvironmentScope) }
+    }
+
+    pub(crate) fn to_scope(&self) -> EnvironmentScope {
+        self.scope().cloned().unwrap_or_else(|| EnvironmentScope {
+            program: self.program(),
+            root_eval_scope: false,
+            binding_site_pc: None,
+            dynamic_bindings: EnvironmentBindings::Owned(Vec::new()),
+            with_objects: Box::default(),
+        })
+    }
+
+    #[cfg(feature = "profile-memory")]
+    pub(crate) fn boxed_bytes(&self) -> usize {
+        self.scope().map_or(0, |_| size_of::<EnvironmentScope>())
+    }
+}
+
+impl Drop for EnvironmentScopeRef {
+    fn drop(&mut self) {
+        if self.scope().is_some() {
+            // SAFETY: the untagged word is the box `boxed` leaked, dropped exactly once here.
+            drop(unsafe { Box::from_raw(self.0.get() as *mut EnvironmentScope) });
+        }
+    }
+}
+
+impl Clone for EnvironmentScopeRef {
+    fn clone(&self) -> Self {
+        match self.scope() {
+            Some(scope) => Self::boxed(scope.clone()),
+            None => Self(self.0),
+        }
+    }
+}
+
+impl std::fmt::Debug for EnvironmentScopeRef {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.to_scope().fmt(formatter)
+    }
+}
+
 #[derive(Clone, Debug)]
 /// An environment's slots behind a one-word pointer, which keeps the environment cell within
 /// the common cell size.
@@ -1923,14 +2217,21 @@ impl EnvironmentSlots {
     pub(crate) fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
-    /// The value of a slot this environment owns; a shared slot lives in its owner.
+    /// The state of `slot`: its value when this environment owns it, else its owner.
     #[inline(always)]
-    pub(crate) fn slot(&self, slot: usize) -> Option<&EnvironmentSlot> {
-        self.0.get(slot)
+    pub(crate) fn slot(&self, slot: usize) -> Option<EnvironmentSlotState> {
+        self.0.get(slot).map(|slot| slot.state())
+    }
+    /// The value of a slot this environment owns; a shared slot lives in its owner.
+    pub(crate) fn owned(&self, slot: usize) -> Option<Value> {
+        match self.slot(slot)? {
+            EnvironmentSlotState::Owned(value) => Some(value),
+            EnvironmentSlotState::Shared(_) => None,
+        }
     }
     pub(crate) fn roots(&self) -> impl Iterator<Item = Value> + '_ {
-        self.0.iter().map(|slot| match slot {
-            EnvironmentSlot::Owned(value) | EnvironmentSlot::Shared(value) => *value,
+        self.0.iter().map(|slot| match slot.state() {
+            EnvironmentSlotState::Owned(value) | EnvironmentSlotState::Shared(value) => value,
         })
     }
 }
@@ -1939,7 +2240,7 @@ impl EnvironmentSlots {
     /// Slots that own `values`, in order.
     pub(crate) fn from_values(values: impl ExactSizeIterator<Item = Value>) -> Self {
         Self(super::thin_slice::ThinBoxSlice::from_exact_iter(
-            values.map(EnvironmentSlot::Owned),
+            values.map(EnvironmentSlot::owned),
         ))
     }
 }
@@ -1953,7 +2254,7 @@ impl From<Vec<Value>> for EnvironmentSlots {
 impl From<Box<[Value]>> for EnvironmentSlots {
     fn from(values: Box<[Value]>) -> Self {
         Self(super::thin_slice::ThinBoxSlice::from_exact_iter(
-            values.iter().copied().map(EnvironmentSlot::Owned),
+            values.iter().copied().map(EnvironmentSlot::owned),
         ))
     }
 }
@@ -2114,6 +2415,30 @@ impl RegExpLegacyOwner {
     }
 }
 
+/// Native host-private keys remain symbol primitives, but do not participate in
+/// ordinary property reflection, inheritance, or proxy interception.
+#[derive(Clone, Debug)]
+pub(crate) struct SymbolData {
+    // Descriptions are immutable; a slice avoids String capacity metadata so
+    // the private-kind tag fits without growing every arena cell.
+    pub(crate) description: Option<Box<str>>,
+    pub(crate) kind: SymbolKind,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SymbolKind { Public, HostPrivate }
+impl SymbolData {
+    pub(crate) fn public(description: Option<String>) -> Self {
+        Self { description: description.map(String::into_boxed_str), kind: SymbolKind::Public }
+    }
+    pub(crate) fn host_private(description: Option<String>) -> Self {
+        Self { description: description.map(String::into_boxed_str), kind: SymbolKind::HostPrivate }
+    }
+}
+impl std::ops::Deref for SymbolData {
+    type Target = Option<Box<str>>;
+    fn deref(&self) -> &Self::Target { &self.description }
+}
+
 #[derive(Clone, Debug)]
 #[rustfmt::skip]
 pub(crate) enum Cell {
@@ -2204,7 +2529,7 @@ pub(crate) enum Cell {
         parent: Value,
         function: u32,
         slots: EnvironmentSlots,
-        scope: Box<EnvironmentScope>,
+        scope: EnvironmentScopeRef,
     },
     // Immutable raw 64-bit Wasm scalars cannot fit the tagged Value payload.
     WasmBits64(u64),
@@ -2242,7 +2567,7 @@ pub(crate) enum Cell {
         declarations: Box<crate::WasmTypes>,
     },
     String(JsString), BigInt(String),
-    Symbol(Option<String>),
+    Symbol(SymbolData),
     Date { milliseconds: f64, object: Box<Object> },
     RegExp {
         object: Box<Object>,
@@ -2296,6 +2621,18 @@ pub(crate) enum Cell {
 }
 
 impl Cell {
+    /// Whether a collection prunes this cell's entries by the liveness of their targets
+    /// (`Heap::prune_weak_cell`).
+    pub(crate) fn has_weak_entries(&self) -> bool {
+        matches!(
+            self,
+            Self::WeakMap { .. }
+                | Self::WeakSet { .. }
+                | Self::WeakRef { .. }
+                | Self::FinalizationRegistry { .. }
+        )
+    }
+
     pub(crate) fn profile_variant_name(&self) -> &'static str {
         match self {
             Self::Object(_) => "object",
@@ -2356,7 +2693,7 @@ impl Cell {
                 ..
             } => visit(*program),
             Self::Environment { scope, .. } => {
-                if let Some(program) = scope.program {
+                if let Some(program) = scope.program() {
                     visit(ProgramId::from_raw(program));
                 }
             }
