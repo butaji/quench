@@ -1246,6 +1246,8 @@ union ObjectPayload {
 struct ArrayPayload {
     extras: u64,
     elements: std::mem::ManuallyDrop<Rc<Vec<Value>>>,
+    /// The words past the two an array uses, so the payload spans the inline values.
+    _unused: [u64; INLINE_PROPERTY_COUNT - 2],
 }
 
 const _: () = assert!(size_of::<ArrayPayload>() == size_of::<[Value; INLINE_PROPERTY_COUNT]>());
@@ -2012,28 +2014,24 @@ impl Object {
     }
 }
 
-const _: () = assert!(std::mem::size_of::<Object>() == 3 * std::mem::size_of::<Value>());
+const _: () = assert!(std::mem::size_of::<Object>() == (1 + INLINE_PROPERTY_COUNT) * std::mem::size_of::<Value>());
 
 #[cfg(test)]
 mod object_payload_tests {
     use super::Object;
     use crate::value::Value;
-    use crate::value_vec::ValueVec;
+    use crate::value_vec::{INLINE_PROPERTY_COUNT, ValueVec};
 
     #[test]
     fn out_of_line_extras_preserve_inline_values_and_clone_state() {
-        let mut object = Object::with_property_storage(
-            Value::NULL,
-            ValueVec::inline_property_storage(7),
-            [Value::integer(11), Value::integer(13)],
-        );
+        let inline: [Value; INLINE_PROPERTY_COUNT] =
+            std::array::from_fn(|slot| Value::integer(11 + 2 * slot as i32));
+        let mut object =
+            Object::with_property_storage(Value::NULL, ValueVec::inline_property_storage(7), inline);
         object.set_arguments_object();
         assert!(object.is_arguments_object());
         assert_eq!(object.shape(), 7);
-        assert_eq!(
-            object.inline_properties().copied(),
-            Some([Value::integer(11), Value::integer(13)])
-        );
+        assert_eq!(object.inline_properties().copied(), Some(inline));
 
         let mut cloned = object.clone();
         cloned.set_inline_property(0, Value::integer(17));
@@ -2071,7 +2069,7 @@ mod object_payload_tests {
         let mut properties = ValueVec::new();
         properties.set_extensible(false);
         let mut object =
-            Object::with_property_storage(Value::NULL, properties, [Value::UNDEFINED; 2]);
+            Object::with_property_storage(Value::NULL, properties, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]);
         object.set_module_namespace();
         assert!(object.is_module_namespace());
         assert!(!object.properties().has_inline_property_storage());
