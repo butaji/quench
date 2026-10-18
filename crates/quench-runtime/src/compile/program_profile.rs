@@ -78,7 +78,7 @@ pub(super) fn report(program: &ResidualProgram) {
             + program
                 .literal_templates
                 .iter()
-                .map(|steps| bytes::<crate::bytecode::LiteralStep>(steps))
+                .map(|steps| std::mem::size_of_val(&**steps))
                 .sum::<usize>()
             + bytes::<Superinstruction>(&program.superinstructions),
         sum(|function| function.register_roots.capacity_bytes()),
