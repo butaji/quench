@@ -306,6 +306,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn collect_slow(&mut self, _program: &ResidualProgram, full: bool) {
+        self.invalidate_wasm_reference_caches();
         let full = self.heap.collection_is_full(full);
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("QUENCH_FUNCTION_USE").is_some() {

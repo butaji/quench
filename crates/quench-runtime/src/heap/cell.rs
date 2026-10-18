@@ -656,10 +656,20 @@ impl std::fmt::Debug for WasmObjectSlot {
 
 /// What a Wasm host function runs: an embedder operation, or a JavaScript callable
 /// imported through the `WebAssembly` namespace.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub(crate) enum WasmHostTarget {
     Host(crate::WasmHostFunctionId),
     Js(Value),
+    /// Exact Emscripten `HEAPU8.copyWithin(dest, src, src + num)` body, with the
+    /// mutable captured view location retained so each call observes memory growth.
+    JsEmscriptenMemcpy(Box<WasmHostMemcpyTarget>),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct WasmHostMemcpyTarget {
+    pub(crate) function: Value,
+    pub(crate) view_environment: Value,
+    pub(crate) view_slot: usize,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TypedArrayKind {
