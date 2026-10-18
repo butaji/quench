@@ -201,14 +201,16 @@ impl GenerationalPacing {
 }
 
 /// Production pacing, memory-first on the owner's direction of 2026-10-17 (TOD-123): young
-/// collections every half live set (at least 384 weight), a full collection once the old
+/// collections every eighth of a live set (at least 384 weight; from half a live set: V8-v7
+/// max RSS EarleyBoyer 9136 -> 8324 KiB, RegExp 8460 -> 7940, the rest within noise, static
+/// x86_64, 2026-10-18), a full collection once the old
 /// generation has doubled or one live set of allocation has passed since the last one, and,
 /// when more than half of young allocations survive, full collections with one live set
 /// between them, probing survival with a minor collection every fourth one. The minimums are
 /// the pre-generational 384-cell headroom; the TOD-137 starting point's 2^15 and 2^18 minimums
 /// and its eight- and four-live-set factors keep more garbage resident on V8-v7's small heaps.
 pub(super) const PRODUCTION_PACING: GenerationalPacing = GenerationalPacing {
-    young: Ratio::new(1, 2),
+    young: Ratio::new(1, 8),
     minimum_young: MEMORY_FIRST_MINIMUM_ALLOCATION,
     old_growth: Ratio::new(1, 1),
     minimum_old_growth: MEMORY_FIRST_MINIMUM_ALLOCATION,
@@ -253,7 +255,7 @@ mod tests {
         assert!(pacing.full_due(live, 2 * live, 0));
         assert!(pacing.full_due(live, live, 8 * live));
         assert_eq!(pacing.young_budget(0), pacing.minimum_young);
-        assert_eq!(pacing.young_budget(live), live / 2);
+        assert_eq!(pacing.young_budget(live), pacing.young.of(live));
     }
 
     fn minor(live: usize, previous_live: usize, allocated: usize) -> CollectionOutcome {
