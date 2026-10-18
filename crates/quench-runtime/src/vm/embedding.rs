@@ -190,9 +190,10 @@ impl<H: Host> Vm<H> {
                 if !include_symbols && matches!(self.heap.get(property), Some(Cell::Symbol(_))) {
                     continue;
                 }
-                let descriptor =
-                    self.object_get_own_property_descriptor(&program, &[value, property])?;
-                if !descriptor.is_undefined() && (!enumerable_only || self.descriptor_flag(descriptor, "enumerable")) {
+                // As `Object.keys` asks: a pending lazy data property answers from its
+                // attributes without materializing, and a Proxy through its descriptor trap.
+                let found = self.own_property_enumerable(&program, value, property)?;
+                if found.is_some_and(|enumerable| enumerable || !enumerable_only) {
                     enumerable.push(*key);
                     retained[index] = true;
                 }
