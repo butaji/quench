@@ -134,7 +134,7 @@ impl<H: Host> Vm<H> {
         p.root_variables_are_local()
             && function == super::ROOT_FUNCTION_ID
             && p.functions[super::ROOT_FUNCTION_ID as usize]
-                .global_var_atoms
+                .global_var_atoms()
                 .contains(&atom)
     }
 
@@ -494,7 +494,7 @@ impl<H: Host> Vm<H> {
         }
         let program = self.programs.get(program_id)?;
         program.functions[super::ROOT_FUNCTION_ID as usize]
-            .global_var_atoms
+            .global_var_atoms()
             .contains(&atom)
             .then(|| frame.checked_sub(1))
             .flatten()
@@ -1045,10 +1045,10 @@ impl<H: Host> Vm<H> {
         if let Some(frame_index) = self.frames.len().checked_sub(1)
             && (self.frames[frame_index].function != 0
                 || p.functions[self.frames[frame_index].function as usize]
-                    .global_lexical_atoms
+                    .global_lexical_atoms()
                     .contains(&atom)
                 || p.functions[self.frames[frame_index].function as usize]
-                    .global_var_atoms
+                    .global_var_atoms()
                     .contains(&atom)
                 || self.root_local_var_binding(p, self.frames[frame_index].function, atom))
             && let Some(slot) = self.local_binding_slot(p, self.frames[frame_index].function, atom)
@@ -1062,7 +1062,7 @@ impl<H: Host> Vm<H> {
                 )
                 .is_some();
             if p.functions[self.frames[frame_index].function as usize]
-                .global_immutable_atoms
+                .global_immutable_atoms()
                 .contains(&atom)
             {
                 return Err(self.type_error(p, "assignment to constant binding".into()));
@@ -1871,7 +1871,7 @@ impl<H: Host> Vm<H> {
         }
         if atom.is_some_and(|atom| {
             owner.functions[function as usize]
-                .global_immutable_atoms
+                .global_immutable_atoms()
                 .contains(&atom)
         }) {
             return Err(self.type_error(p, "assignment to constant binding".into()));
@@ -1982,7 +1982,7 @@ impl<H: Host> Vm<H> {
             if let Some(frame) = self.frames.last()
                 && (self.function_environment_binding(p, frame.function, atom)
                     || p.functions[frame.function as usize]
-                        .global_lexical_atoms
+                        .global_lexical_atoms()
                         .contains(&atom)
                     || self.root_local_var_binding(p, frame.function, atom))
                 && let Some(slot) = self.local_binding_slot(p, frame.function, atom)
@@ -2149,14 +2149,14 @@ impl<H: Host> Vm<H> {
             if let Some(frame_index) = self.frames.len().checked_sub(1)
                 && (self.frames[frame_index].function != 0
                     || p.functions[self.frames[frame_index].function as usize]
-                        .global_lexical_atoms
+                        .global_lexical_atoms()
                         .contains(&atom)
                     || self.root_local_var_binding(p, self.frames[frame_index].function, atom))
                 && let Some(slot) =
                     self.local_binding_slot(p, self.frames[frame_index].function, atom)
             {
                 if p.functions[self.frames[frame_index].function as usize]
-                    .global_immutable_atoms
+                    .global_immutable_atoms()
                     .contains(&atom)
                     && !initializing
                 {

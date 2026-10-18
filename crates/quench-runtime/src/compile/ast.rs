@@ -1149,7 +1149,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                                 && !LexicalBindingKind::ALL
                                     .into_iter()
                                     .any(|kind| kind != LexicalBindingKind::PrivateName && name.starts_with(kind.capture_prefix()))
-                                && !name.starts_with("\0quench:catch-capture:"))
+                                && !name.starts_with(super::CATCH_CAPTURE_PREFIX))
                             .then_some((*atom, *slot))
                         })
                         .collect(),
@@ -1191,8 +1191,8 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                         .get(source)
                         .copied()
                         .unwrap_or(LexicalBindingKind::Mutable);
-                    let name = self.owner.atoms[*source as usize].to_owned();
                     if kind == LexicalBindingKind::PrivateName {
+                        let name = self.owner.atoms[*source as usize].to_owned();
                         let label = crate::bytecode::private_identity_label(&name);
                         let stale = scope.keys().copied().filter(|atom| {
                             let text: &str = self.owner.atoms[*atom as usize].as_ref();
@@ -1202,20 +1202,20 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                         for atom in stale { scope.remove(&atom); }
                         scope.insert(*source, slot);
                     }
-                    for kind in LexicalBindingKind::ALL {
-                        let marker = format!("{}{name}", kind.capture_prefix());
-                        if let Some(marker) = self.owner.atoms.find(&marker).as_ref() {
-                            scope.remove(marker);
-                        }
+                    // Only markers this loop inserted can be in `scope`, and each was made
+                    // through `capture_marker`, which records it.
+                    for marker in LexicalBindingKind::ALL
+                        .map(Some)
+                        .into_iter()
+                        .chain([None])
+                        .filter_map(|kind| self.owner.capture_markers.get(&(kind, *source)).copied())
+                    {
+                        scope.remove(&marker);
                     }
-                    let catch_name = format!("\0quench:catch-capture:{name}");
-                    if let Some(marker) = self.owner.atoms.find(&catch_name).as_ref() {
-                        scope.remove(marker);
-                    }
-                    let marker = self.owner.atom(&format!("{}{name}", kind.capture_prefix()));
+                    let marker = self.owner.capture_marker(Some(kind), *source);
                     scope.insert(marker, slot);
                     if lexical.catch_parameter {
-                        let marker = self.owner.atom(&catch_name);
+                        let marker = self.owner.capture_marker(None, *source);
                         scope.insert(marker, slot);
                     }
                 }
