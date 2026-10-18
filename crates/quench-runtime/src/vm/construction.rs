@@ -800,7 +800,8 @@ impl<H: Host> Vm<H> {
         if object.shape() != shape {
             return None;
         }
-        self.heap.property_get(object, slot)
+        // SAFETY: the matching non-dictionary shape (`function_prototype_layout`) holds `slot`.
+        unsafe { self.heap.property_get_shaped(object, slot) }.filter(|value| !value.is_deleted())
     }
 
     fn prototype_from_constructor(
