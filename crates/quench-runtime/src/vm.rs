@@ -715,6 +715,9 @@ const FIELD_MEGAMORPHIC_INLINE: usize = 4;
 const FIELD_MEGAMORPHIC_LIMIT: usize = 256;
 struct FieldCacheSet {
     len: u8,
+    /// Whether any entry recorded an own field (`NO_FIELD_HOLDER`); a set without one names
+    /// only prototype holders, so a read probes no own entry.
+    holds_own: bool,
     entries: [FieldCache; FIELD_MEGAMORPHIC_INLINE],
     overflow: Option<Box<FxHashMap<u64, FieldCache>>>,
 }
@@ -872,6 +875,12 @@ impl DataAttributes {
 const DEFAULT_DATA_ATTRIBUTES: DataAttributes = DataAttributes {
     writable: true,
     enumerable: true,
+    configurable: true,
+};
+/// The attributes of a function's own `length` and `name`.
+const FUNCTION_INFO_ATTRIBUTES: DataAttributes = DataAttributes {
+    writable: false,
+    enumerable: false,
     configurable: true,
 };
 /// `ShapeAttributes::accessors` of attributes with neither getter nor setter.
@@ -1109,12 +1118,17 @@ struct Shape {
     /// Memo of whether this immutable shape's keys include an array-index name: `None` until
     /// first derived (`Vm::shape_has_index_key`). Dictionary shapes never memoize.
     index_keys: std::cell::Cell<Option<bool>>,
+    /// The child of this shape's latest cached transition (`NO_LAST_CHILD` before one), tried
+    /// before the transition index: objects of one layout grow by the same keys in turn.
+    last_child: std::cell::Cell<u32>,
 }
 // Every object layout and property key costs one shape; keep the record compact.
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(size_of::<Shape>() == 48);
+const _: () = assert!(size_of::<Shape>() == 56);
 /// `Shape::parent` of the root shape.
 const NO_PARENT_SHAPE: u32 = u32::MAX;
+/// `Shape::last_child` before the shape has a cached transition.
+const NO_LAST_CHILD: u32 = u32::MAX;
 const PROTOTYPE_SLOT_UNKNOWN: u32 = u32::MAX;
 const PROTOTYPE_SLOT_NONE: u32 = u32::MAX - 1;
 /// The shape table's initial capacity, above what a builtin realm uses (about 1900 shapes).
@@ -1158,6 +1172,7 @@ impl Shape {
             long_walks: std::cell::Cell::new(0),
             prototype_slot: std::cell::Cell::new(PROTOTYPE_SLOT_UNKNOWN),
             index_keys: std::cell::Cell::new(None),
+            last_child: std::cell::Cell::new(NO_LAST_CHILD),
         }
     }
 }
@@ -1348,6 +1363,9 @@ pub(crate) struct Vm<H> {
     /// Whether Wasm functions with a compiled denotation run as native code.
     execution_mode: ExecutionMode,
     execution_interrupt: crate::ExecutionInterrupt,
+    /// Invalidates monomorphic `call_indirect` certificates after a table
+    /// mutation or collection that can change target identity.
+    wasm_reference_epoch: std::cell::Cell<u64>,
     active_call_roots: Vec<Value>,
     with_stack: Vec<Value>,
     /// The realm's intrinsics as the host bootstrap left them (`seal_startup_intrinsics`).
@@ -2180,6 +2198,8 @@ impl<H: Host> Vm<H> {
         self.construct_target = None;
         self.realm.promise = Default::default();
         self.shapes.truncate(1);
+        // The kept root forgets its transitions along with the index.
+        self.shapes[0].last_child.set(NO_LAST_CHILD);
         self.transitions.clear();
         self.shape_slot_memo.clear();
         self.shape_attribute_memo.clear();

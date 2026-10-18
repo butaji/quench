@@ -198,6 +198,27 @@ compilation screen below tests that caller path; `WasmUnreachable` remains
 opt-in because the prior global experiment expanded TSF code about 52× and
 increased both compile time and RSS.
 
+## Monomorphic Wasm indirect-call cache
+
+Commit `f40e5ddeda1765ace5506af81a37fddb1b6de2b0` adds a lazy monomorphic cache
+to compiled `call_indirect` sites. It checks the table binding, index,
+signature, caller environment, and current table element; target artifacts are
+weakly held. Every hit rebuilds the memory and global activation state, while
+every miss retains the ordinary resolver's bounds, null, signature, and
+fallback behavior. GC clears cached identities before freed heap slots can be
+reused. The mutable-table test proves that a warmed site observes replacement,
+that the cache is actually hit, and that a null target still traps.
+
+The clean-source 11-round QuickSort/gcc-loops screen is preserved in
+`evidence/jit-jetstream3-wasm-2026-10-18/indirect-call-cache/`. Output matched
+on both fixtures. Quench remains below Bun and Node on Score (QuickSort 190.49
+vs. 345.96/405.88; gcc-loops 64.47 vs. 186.70/192.71), while its max RSS is
+lower on both. Paired Score ratios are 0.569 [0.520, 0.606] and 0.465 [0.416,
+0.500] against Bun/Node for QuickSort, and 0.340 [0.324, 0.373] and 0.342
+[0.329, 0.350] for gcc-loops. This targeted screen is not a score win; the
+next optimization should address the hot-call tiering path and first-iteration
+compile cost.
+
 ## Bounded HashSet root compilation
 
 Commit `ea7c76c6c327f76f18376b75ab278c22ce7c585e` adds an explicitly selected,
@@ -279,3 +300,135 @@ They therefore confirm a memory opportunity without a score win. Full commands,
 environment wrapper, diagnostic details, and raw reports are in
 `evidence/jit-jetstream3-wasm-2026-10-18/sparse-analysis-baseline-screen/`.
 No case has yet met the paired score-and-RSS rule; the target remains open.
+
+## Selective handoff from `CallKnown`
+
+Commit `7961b7bde` lets a hot eligible Wasm `CallKnown` activation leave the
+frameless fast interpreter lane and reach the existing one-shot Cranelift
+promotion gate. Cold calls stay on the lane, terminal calls retain the
+existing tail path, and the general dispatcher remains the sole owner of the
+compile attempt. The regression uses a four-function chain so the frontend
+does not inline away the target; it checks the residual `CallKnown`, correct
+result, tier threshold, and native entries.
+
+On the same clean source revision, an 11-round selective-mode screen improved
+gcc-loops median Score from 57.11 to 71.28 (+24.8%) relative to default JIT;
+the median first timed iteration fell from about 306 ms to 118 ms, while
+average iteration time changed from about 33 ms to 35 ms. QuickSort Score was
+roughly flat (183.47 default, 180.05 selective). Both modes retain lower RSS
+than Bun and Node but remain below both peers on Score. The default paired
+analysis has Score ratios of 0.320 [0.311, 0.351] for gcc-loops vs Bun and
+0.474 [0.459, 0.514] for QuickSort vs Bun. Selective mode intentionally has
+`qualification_ready: false`; its medians are a screen without a paired
+qualification claim. Raw reports and diagnostic limits are documented in
+`evidence/jit-jetstream3-wasm-2026-10-18/selective-callknown-handoff/`.
+
+The selective one-round diagnostic reports 309,089 gcc-loops native-to-VM
+callouts (309,039 imported), against 9,955 total for QuickSort. It reports
+345.5 ms summed tier compilation time for gcc-loops and 39.7 ms for QuickSort.
+The aggregate does not attribute individual import symbols. This separates
+two next optimization problems: attribute and lower repeated imported-call
+boundary costs for gcc-loops, and improve generated code or native-entry
+overhead for QuickSort, whose hot sort path has few callouts. Selective tier-up
+is only an admission mechanism; it does not by itself solve either runtime
+cost and it does not satisfy the requested peer-score target.
+
+## Safepoints on compiled control-flow cycles
+
+Commit `e955cff99` retains the native function-entry poll and checks a
+conditional branch only when its taken edge moves to an earlier bytecode PC.
+For a finite bytecode graph, every cycle contains such a backward edge; a
+forward-only path cannot remain in the loop indefinitely. This moves the
+interrupt effect onto cycle-crossing edges, preserving cancellation at loop
+iteration granularity while removing atomic loads from forward exits. The
+native-loop cancellation regression requests termination from a second thread
+after the Wasm loop reaches an imported callback.
+
+The clean 11-round comparison still confirms lower RSS than Bun and Node on
+gcc-loops and QuickSort, but its Score intervals remain below parity. Quench's
+medians are 59.80 / 47.79 MiB and 173.19 / 42.43 MiB respectively. Because the
+earlier report used a separate sampling window, these runs do not establish a
+causal before/after gain from safepoint placement. Full rounds, paired
+intervals, and reproduction commands are in
+`evidence/jit-jetstream3-wasm-2026-10-18/backedge-safepoints/`.
+
+The gcc-loops diagnostic attributes 307,270 of its 309,039 imported callouts
+to `_emscripten_memcpy_js`. The generic boundary was cloning parameter and
+result vectors and allocating converted JS arguments on each call. Commit
+`280b9a011` stores these small lists inline with `SmallVec`, spilling for
+larger imports while retaining the per-instance target, normal JavaScript
+conversion, dynamic helper lookup, and fallback semantics. It avoids
+specializing behavior by import name, since Emscripten's helper reads the
+current memory view and property target on every call. The consecutive
+same-host 11-round A/B screen is inconclusive for Score: the medians shift down
+1.3% on gcc-loops and 3.2% on QuickSort, but Bun's scores also fall between
+runs. Peak RSS is lower by 0.83 MiB and 1.06 MiB; Quench still loses Score to
+both engines. Full reports and executable hashes are in
+`evidence/jit-jetstream3-wasm-2026-10-18/import-alloc-smallvec/`. The
+optimization removes container churn, not the Wasm-to-VM-to-JS callout;
+reducing that boundary remains a separate opportunity with realm, caller
+masking, and dynamic property semantics to preserve.
+
+## Wrapped indexed-memory addresses
+
+Commit `ee75becfe` zero-extends the Wasm `i32` effective address after its
+32-bit arithmetic on the repeated-memory path. The boundary regression checks
+wrapped loads/stores, alias coherence, carried out-of-bounds addresses,
+access-width traps, and nonzero memarg carries. This also exposes a codegen
+tradeoff: Quicksort function 1 shrinks from 573 to 476 native bytes and reuses
+the formed address for swap stores, while indexed loads still need a separate
+address-forming instruction.
+
+In two consecutive but separately randomized 11-round windows, QuickSort
+Score moved from 163.89 to 232.81; an independent bootstrap of the round
+samples gives a candidate/baseline ratio of 1.421 (95% interval 1.280–1.561).
+Normalizing each window to its paired Bun samples gives a 1.344× relative
+improvement (1.201–1.536). This is a strong QuickSort gain, but not a
+randomized per-round A/B. GCC Score stayed flat (58.47 to 57.83), and peak
+RSS did not materially change. The candidate still scores below Bun and Node
+on both fixtures, while keeping lower peak RSS. The raw reports, executable
+hashes, peer-normalized comparison, and machine-code notes are in
+`evidence/jit-jetstream3-wasm-2026-10-18/indexed-address-zeroextend/`.
+
+## Persistent same-artifact indirect dispatch
+
+The artifact-local `call_indirect` cache now keeps a per-site monomorphic
+certificate in native code. A resolver miss still performs the VM's full table,
+null, and Wasm signature checks; it seeds the certificate only after a
+successful same-artifact call, a strong root across re-entrant VM execution,
+and a final live-function and table-slot identity check. The native fast path
+guards the VM epoch, environment, and dynamic table index before loading the
+cached function entry. Table writes and collection advance the epoch, so a
+mutation or GC during a re-entrant call falls back to the resolver on the next
+execution. This is a small feedback-directed partial evaluation of a stable
+site, in the direction of Futamura's first projection, while preserving the
+validated bytecode and ordinary resolver as semantic authority. The cache is
+monomorphic; JetStream 3's polymorphic-call work points toward bounded
+multi-target inlining only after profiling and code-size payback justify it.
+
+The final 11-round five-fixture screen is recorded in
+`evidence/jit-jetstream3-wasm-2026-10-18/persistent-indirect-cache/`. Quench
+retains an RSS advantage over Bun on HashSet, gcc-loops, QuickSort, and zlib,
+but its Score remains below both Bun and Node on all five fixtures. TSF is
+still the memory outlier at 225.62 MiB versus Bun's 126.09 MiB and Node's
+145.27 MiB. Thus this cache reduces repeated resolver boundaries, but does not
+yet meet the JIT score-and-RSS goal. A one-round selective-tier diagnostic
+screen reported 8.32 Score / 226.0 MiB; that run is not comparable to the
+non-diagnostic 11-round default report and establishes no selective-mode
+effect. Selective mode remains experimental and needs a matched screen before
+any memory claim.
+
+The regression suite checks the JS import boundary with three inline i32
+arguments and an i32 result. The direct-cache publication path keeps the
+target rooted across native execution, including re-entrant VM calls. The
+mechanism keeps the state relation explicit: cached dispatch must commute with
+slow resolution for the same environment, index, epoch, table target,
+signature, and compiled entry. This is a local correctness argument, not a
+claim that category theory or the cache itself guarantees a benchmark win.
+The next optimization needs to target the dominant generated-code or runtime
+cost rather than adding speculative tiers. JetStream 3 emphasizes polymorphic
+indirect-call inlining and code-size-aware decisions; Deegen and Copy-and-Patch
+motivate a future single-source, low-cost baseline compiler if Cranelift
+compilation remains a measured cost. [JetStream 3](https://webkit.org/blog/17899/introducing-the-jetstream-3-benchmark-suite/),
+[Deegen](https://compilers.stanford.edu/software/deegen/),
+[Copy-and-Patch](https://compilers.stanford.edu/software/copy-and-patch/).

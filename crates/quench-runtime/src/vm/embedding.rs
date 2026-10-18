@@ -1186,10 +1186,15 @@ impl<H: Host> Vm<H> {
         result
     }
 
-    fn is_realm_global(&self, value: Value) -> bool {
+    /// Whether `value` is a realm's global object, live or parked.
+    pub(super) fn is_global_object(&self, value: Value) -> bool {
         value == self.realm.globals
             || self.realm.global_lexical_states.contains_key(&value)
             || self.realm.parked.as_ref().is_some_and(|parked| parked.global == value)
+    }
+
+    fn is_realm_global(&self, value: Value) -> bool {
+        self.is_global_object(value)
             || self
                 .realm
                 .intrinsics
@@ -1330,6 +1335,24 @@ impl<H: Host> Vm<H> {
         )
     }
 
+    pub(crate) fn pending_lazy_data_property_rooted(
+        &mut self,
+        holder: RootId,
+        key: RootId,
+        listener: RootId,
+        index: u32,
+    ) -> Result<Option<Value>, JsError> {
+        let holder = self.embedding_value(holder)?;
+        let key = self.embedding_value(key)?;
+        let listener = self.embedding_value(listener)?;
+        // Lazy data properties have string keys.
+        let Some(Cell::String(name)) = self.heap.get(key).cloned() else {
+            return Ok(None);
+        };
+        let key = PropertyKey::string(self.intern_js_atom(&name));
+        Ok(self.pending_lazy_data_property(holder, key, listener, index))
+    }
+
     pub(crate) fn materialize_lazy_data_property_rooted(
         &mut self,
         holder: RootId,
@@ -1374,7 +1397,13 @@ impl<H: Host> Vm<H> {
         let values = keys
             .iter()
             .zip(members)
-            .map(|(&key, &(_, enumerable))| (self.heap.root_value(key).unwrap(), enumerable))
+            .map(
+                |(&key, &(_, enumerable))| super::lazy_data_property::LazyMember {
+                    key: self.heap.root_value(key).unwrap(),
+                    enumerable,
+                    redefined: false,
+                },
+            )
             .collect::<Vec<_>>();
         let defined = self.define_lazy_data_properties(
             &program,
@@ -1387,6 +1416,34 @@ impl<H: Host> Vm<H> {
             self.heap.release_root(key);
         }
         defined
+    }
+
+    /// Defines `members` (a rooted string or symbol key, whether it is enumerable while
+    /// pending, and whether `initializer` defines it itself) on `holder` as one lazy group
+    /// (`LazyMember`).
+    pub(crate) fn define_lazy_members_rooted(
+        &mut self,
+        holder: RootId,
+        members: &[(RootId, bool, bool)],
+        initializer: RootId,
+    ) -> Result<(), JsError> {
+        let holder = self.embedding_value(holder)?;
+        let initializer = self.embedding_value(initializer)?;
+        let program = self.embedding_program()?;
+        let members = members
+            .iter()
+            .map(|&(key, enumerable, redefined)| {
+                Ok(super::lazy_data_property::LazyMember {
+                    key: self.embedding_value(key)?,
+                    enumerable,
+                    redefined,
+                })
+            })
+            .collect::<Result<Vec<_>, JsError>>()?;
+        // An initializer that redefines members decides the holder's final keys, so listing
+        // them with symbols or fixing the holder's integrity materializes the group first.
+        let completes_keys = members.iter().any(|member| member.redefined);
+        self.define_lazy_data_properties(&program, holder, &members, completes_keys, initializer)
     }
 
     pub(crate) fn set_prototype_rooted(
