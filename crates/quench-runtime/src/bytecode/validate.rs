@@ -225,6 +225,7 @@ struct ValidationBounds {
     method_sites: usize,
     object_sites: usize,
     regexp_literal_sites: usize,
+    literal_templates: usize,
     superinstructions: usize,
     code_len: u32,
 }
@@ -408,6 +409,9 @@ fn immediate_domains_in_bounds(
         }
         super::ImmediateRole::RegExpLiteralSiteIndex => {
             instruction.regexp_literal_site_index() < bounds.regexp_literal_sites
+        }
+        super::ImmediateRole::LiteralTemplateIndex => {
+            instruction.literal_template_index() < bounds.literal_templates
         }
         super::ImmediateRole::SuperinstructionIndex => {
             (instruction.superinstruction_index() as usize) < bounds.superinstructions
@@ -665,6 +669,7 @@ function.plain_local_slots(&self.superinstructions)
                 method_sites: self.method_sites.len(),
                 object_sites: self.object_sites.len(),
                 regexp_literal_sites: self.regexp_literal_sites.len(),
+                literal_templates: self.literal_templates.len(),
                 superinstructions: self.superinstructions.len(),
                 code_len,
             };
@@ -876,6 +881,11 @@ function.plain_local_slots(&self.superinstructions)
                 return Err("invalid object site".into());
             }
         }
+        for template in &self.literal_templates {
+            if !self.literal_template_is_valid(template) {
+                return Err("invalid literal template".into());
+            }
+        }
         for site in &self.regexp_literal_sites {
             if !matches!(
                 self.constants.get(site.pattern_constant as usize),
@@ -895,6 +905,29 @@ function.plain_local_slots(&self.superinstructions)
             return Err("invalid method argument register".into());
         }
         Ok(())
+    }
+
+    /// Whether `steps` name only this program's constants and object sites and, run over
+    /// a stack, never take more values than it holds and leave exactly one.
+    fn literal_template_is_valid(&self, steps: &[super::LiteralStep]) -> bool {
+        let mut depth = 0usize;
+        for step in steps {
+            let (taken, valid) = match *step {
+                super::LiteralStep::Constant(index) => {
+                    (0, (index as usize) < self.constants.len())
+                }
+                super::LiteralStep::Array(count) => (count as usize, true),
+                super::LiteralStep::Object(site) => match self.object_sites.get(site as usize) {
+                    Some(site) => (site.atoms.len(), true),
+                    None => (0, false),
+                },
+            };
+            if !valid || taken > depth {
+                return false;
+            }
+            depth = depth - taken + 1;
+        }
+        depth == 1
     }
 
     fn validate_selective_capture_owners(&self) -> Result<(), String> {
@@ -1221,6 +1254,7 @@ mod tests {
             field_sites: vec![],
             object_sites: vec![],
             regexp_literal_sites: vec![],
+            literal_templates: Vec::new(),
             superinstructions: vec![],
         }
     }
