@@ -2352,8 +2352,11 @@ impl Heap {
             Some(_) if slot < INLINE_PROPERTY_COUNT => data.set_inline_property(slot, value),
             Some(inline) => {
                 debug_assert_eq!(slot, INLINE_PROPERTY_COUNT);
-                let mut moved = properties.with_values(vector.auxiliary(), &inline);
-                properties.push(&mut moved, value);
+                // One arena range sized for the grown shape, not one for the inline values
+                // that the add then outgrows at once.
+                let mut grown = [value; INLINE_PROPERTY_COUNT + 1];
+                grown[..INLINE_PROPERTY_COUNT].copy_from_slice(&inline);
+                let moved = properties.with_values(shape, &grown);
                 data.replace_property_storage(moved, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]);
             }
             None => {
