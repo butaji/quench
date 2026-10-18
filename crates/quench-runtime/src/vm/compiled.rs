@@ -292,9 +292,13 @@ const TRAPS: [crate::WasmTrap; 6] = [
 
 const JIT_ROOT_ENV: &str = "QUENCH_WASM_JIT_ROOT";
 const JIT_ROOT_OPT_LEVEL_ENV: &str = "QUENCH_WASM_JIT_ROOT_OPT_LEVEL";
-const MAX_JIT_ROOT_FUNCTIONS: usize = 32;
+const MAX_JIT_ROOT_FUNCTIONS: usize = 128;
 const MAX_JIT_ROOT_BYTECODES_PER_FUNCTION: usize = 80_000;
 const MAX_JIT_ROOT_CODE_BYTES: usize = 2 * 1024 * 1024;
+/// Keep unconditional trap lowering from admitting very large functions
+/// whose unreachable regions can make native code much larger than the
+/// useful live path. Root experiments have their own larger explicit cap.
+const MAX_JIT_UNREACHABLE_BYTECODES: usize = 2_048;
 
 fn jit_root_override() -> Result<Option<usize>, ()> {
     let Some(root) = std::env::var_os(JIT_ROOT_ENV) else {
@@ -1780,7 +1784,12 @@ impl<H: Host> Analysis<'_, H> {
                 };
                 set(state, instruction.result_register(), Slot::Value(kind))
             }
-            Op::WasmUnreachable if self.experimental_root_compilation => Some(()),
+            Op::WasmUnreachable
+                if self.experimental_root_compilation
+                    || function.code.len() <= MAX_JIT_UNREACHABLE_BYTECODES =>
+            {
+                Some(())
+            }
             Op::Return => match result {
                 Some(ty) => (value(state, instruction.a())? == Kind::of(ty)?).then_some(()),
                 None => Some(()),
