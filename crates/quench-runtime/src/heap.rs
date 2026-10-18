@@ -2827,7 +2827,8 @@ impl Heap {
                         + with_objects.len() * size_of::<Value>()
                 }
                 Cell::String(value) => value.capacity(),
-                Cell::BigInt(value) | Cell::Error(value) => value.capacity(),
+                Cell::BigInt(value) => crate::bigint::magnitude_bytes(value),
+                Cell::Error(value) => value.capacity(),
                 Cell::Symbol(value) => value.as_ref().map_or(0, |description| description.len()),
             }
     }
