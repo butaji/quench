@@ -10766,3 +10766,20 @@ fn anonymous_function_definitions_are_named_by_their_plan() {
         ["arrow,expression,fallback,method,computed,field,klass"]
     );
 }
+
+#[test]
+fn promoted_var_locals_read_undefined_before_their_first_store() {
+    // A frame's registers start stale from its pool, so a `var` promoted to a register that
+    // a read reaches before any store must still read undefined on every call.
+    let source = r#"
+      function H(m) { this.message = m; }
+      function f() { var err; var msg; msg = arguments[1]; if (!err) { err = new H(msg); } return err; }
+      const first = f(404, 'config');
+      const second = f(404, 'again');
+      print([first.message, second.message, first !== second].join(','));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "promoted-var-entry.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["config,again,true"]);
+}
