@@ -391,17 +391,13 @@ impl<H: Host> Vm<H> {
             })?;
         // An unshared memory32 lives in a guarded reservation in both
         // modes: its pages commit as they are first touched, and growth
-        // never copies. Compiled code also relies on the guard in place
-        // of bounds checks, and on the memory repeating above 2^32 to
-        // form i32 sums in 64 bits; the interpreter forms no addresses
-        // that way, so its memory stays private anonymous pages. The
-        // guard covers exactly the bytes past the memory's length only
-        // when every length is a whole number of host pages.
-        let wraps = self.execution_mode == super::ExecutionMode::Compiled;
+        // never copies. Compiled code relies on the guard in place of
+        // bounds checks, which covers exactly the bytes past the memory's
+        // length only when every length is a whole number of host pages.
         let guarded = (!ty.shared
             && !ty.memory64
             && (ty.page_size() as usize).is_multiple_of(crate::wasm::memory::HOST_PAGE))
-        .then(|| crate::wasm::memory::LinearBytes::reserved(length, wraps))
+        .then(|| crate::wasm::memory::LinearBytes::reserved(length))
         .flatten();
         let bytes = match guarded {
             Some(bytes) => bytes,
@@ -2014,14 +2010,6 @@ mod tests {
         let mut vm = Vm::new(crate::SystemHost);
         vm.set_execution_mode(crate::ExecutionMode::Compiled);
         let instance = vm.instantiate_wasm_module(&module).unwrap();
-        let memory = vm.wasm_memory(&instance, 0).unwrap();
-        let Cell::WasmMemory { bytes, .. } = vm.heap.get(memory).expect("memory binding") else {
-            panic!("memory binding must name a Wasm memory");
-        };
-        let crate::wasm::memory::MemoryStorage::Unshared(state) = &**bytes else {
-            panic!("memory must be unshared");
-        };
-        let repeats = state.borrow().bytes.wraps();
         let base = crate::WasmValue::I32(-16);
         let index = crate::WasmValue::I32(0x30);
         let stored = crate::WasmValue::I32(0x1234_5678);
@@ -2037,41 +2025,39 @@ mod tests {
             vm.invoke_wasm(&instance, 0, &[base, index]).unwrap(),
             Some(crate::WasmValue::I32(0x1234_5678))
         );
-        if repeats {
-            // Reads and writes through the repeated region stay coherent
-            // with accesses to the corresponding low address.
-            assert_eq!(
-                vm.invoke_wasm(
-                    &instance,
-                    1,
-                    &[
-                        crate::WasmValue::I32(0x20),
-                        crate::WasmValue::I32(0),
-                        crate::WasmValue::I32(0x2468_1357),
-                    ],
-                )
+        // Writes through the wrapped form of an address read back through its low form,
+        // and the other way round.
+        assert_eq!(
+            vm.invoke_wasm(
+                &instance,
+                1,
+                &[
+                    crate::WasmValue::I32(0x20),
+                    crate::WasmValue::I32(0),
+                    crate::WasmValue::I32(0x2468_1357),
+                ],
+            )
+            .unwrap(),
+            None
+        );
+        assert_eq!(
+            vm.invoke_wasm(&instance, 0, &[base, index]).unwrap(),
+            Some(crate::WasmValue::I32(0x2468_1357))
+        );
+        assert_eq!(
+            vm.invoke_wasm(&instance, 1, &[base, index, stored])
                 .unwrap(),
-                None
-            );
-            assert_eq!(
-                vm.invoke_wasm(&instance, 0, &[base, index]).unwrap(),
-                Some(crate::WasmValue::I32(0x2468_1357))
-            );
-            assert_eq!(
-                vm.invoke_wasm(&instance, 1, &[base, index, stored])
-                    .unwrap(),
-                None
-            );
-            assert_eq!(
-                vm.invoke_wasm(
-                    &instance,
-                    0,
-                    &[crate::WasmValue::I32(0x20), crate::WasmValue::I32(0)],
-                )
-                .unwrap(),
-                Some(crate::WasmValue::I32(0x1234_5678))
-            );
-        }
+            None
+        );
+        assert_eq!(
+            vm.invoke_wasm(
+                &instance,
+                0,
+                &[crate::WasmValue::I32(0x20), crate::WasmValue::I32(0)],
+            )
+            .unwrap(),
+            Some(crate::WasmValue::I32(0x1234_5678))
+        );
 
         // An i32 address of 0xffff_ffff still points outside this one-page
         // memory for a four-byte load.
