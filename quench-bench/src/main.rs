@@ -35,7 +35,6 @@ const QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT: &str = "QUENCH_WASM_EMSCRIPTEN_MEMCP
 const QUENCH_WASM_EMSCRIPTEN_MEMCPY_RAW_I32: &str = "QUENCH_WASM_EMSCRIPTEN_MEMCPY_RAW_I32";
 const QUENCH_WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT: &str = "QUENCH_WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT";
 const QUENCH_WASM_JIT_DIRECT_COMPARE_BRANCHES: &str = "QUENCH_WASM_JIT_DIRECT_COMPARE_BRANCHES";
-const QUENCH_WASM_JIT_INDEXED_OFFSET_REUSE: &str = "QUENCH_WASM_JIT_INDEXED_OFFSET_REUSE";
 const FIXED_WORK_REPORT_SCHEMA: u32 = 5;
 const SUITE_REPORT_SCHEMA: u32 = 13;
 const FIXED_WORK_MEASUREMENT_MODE: &str = "fixed_work_diagnostic";
@@ -417,9 +416,6 @@ struct SuiteRecord {
     /// Paired QuickSort-Wasm diagnostic for direct Wasm compare-branch lowering.
     #[serde(default)]
     jit_wasm_compare_branch_ab: bool,
-    /// Paired QuickSort-Wasm diagnostic for indexed-address offset reuse.
-    #[serde(default)]
-    jit_wasm_indexed_offset_reuse_ab: bool,
     created_unix_ns: u128,
     rounds_requested: usize,
     timeout_ms: u64,
@@ -575,7 +571,6 @@ struct Options {
     jit_wasm_memcpy_raw_ab: bool,
     jit_wasm_memcpy_early_ab: bool,
     jit_wasm_compare_branch_ab: bool,
-    jit_wasm_indexed_offset_reuse_ab: bool,
     fixture: Option<String>,
     fixtures: Option<Vec<String>>,
     all: bool,
@@ -655,7 +650,6 @@ fn main() {
         jit_wasm_memcpy_raw_ab: options.jit_wasm_memcpy_raw_ab,
         jit_wasm_memcpy_early_ab: options.jit_wasm_memcpy_early_ab,
         jit_wasm_compare_branch_ab: options.jit_wasm_compare_branch_ab,
-        jit_wasm_indexed_offset_reuse_ab: options.jit_wasm_indexed_offset_reuse_ab,
         created_unix_ns: now_ns(),
         rounds_requested: options.rounds,
         timeout_ms: options.timeout_ms,
@@ -744,7 +738,6 @@ fn main() {
         && !options.jit_wasm_memcpy_raw_ab
         && !options.jit_wasm_memcpy_early_ab
         && !options.jit_wasm_compare_branch_ab
-        && !options.jit_wasm_indexed_offset_reuse_ab
         && report
             .fixtures
             .values()
@@ -898,7 +891,6 @@ fn resume_metadata_matches(saved: &SuiteRecord, expected: &SuiteRecord) -> bool 
         && saved.jit_wasm_memcpy_raw_ab == expected.jit_wasm_memcpy_raw_ab
         && saved.jit_wasm_memcpy_early_ab == expected.jit_wasm_memcpy_early_ab
         && saved.jit_wasm_compare_branch_ab == expected.jit_wasm_compare_branch_ab
-        && saved.jit_wasm_indexed_offset_reuse_ab == expected.jit_wasm_indexed_offset_reuse_ab
         && saved.rounds_requested == expected.rounds_requested
         && saved.timeout_ms == expected.timeout_ms
         && saved.source_revision == expected.source_revision
@@ -1019,9 +1011,8 @@ fn jit_wasm_compare_branch_ab_error(options: &Options) -> Option<&'static str> {
     if options.jit_wasm_memcpy_ab
         || options.jit_wasm_memcpy_raw_ab
         || options.jit_wasm_memcpy_early_ab
-        || options.jit_wasm_indexed_offset_reuse_ab
     {
-        return Some("--jit-wasm-compare-branch-ab cannot be combined with another Wasm A/B diagnostic mode");
+        return Some("--jit-wasm-compare-branch-ab cannot be combined with a memcpy A/B mode");
     }
     if options.suite != Suite::JetStream3
         || options.jit_mode != JitMode::Jit
@@ -1048,43 +1039,6 @@ fn jit_wasm_compare_branch_ab_error(options: &Options) -> Option<&'static str> {
         .then_some("--jit-wasm-compare-branch-ab is pinned to the single JetStream fixture quicksort-wasm")
 }
 
-fn jit_wasm_indexed_offset_reuse_ab_error(options: &Options) -> Option<&'static str> {
-    if !options.jit_wasm_indexed_offset_reuse_ab {
-        return None;
-    }
-    if options.jit_wasm_memcpy_ab
-        || options.jit_wasm_memcpy_raw_ab
-        || options.jit_wasm_memcpy_early_ab
-        || options.jit_wasm_compare_branch_ab
-    {
-        return Some("--jit-wasm-indexed-offset-reuse-ab cannot be combined with another Wasm A/B diagnostic mode");
-    }
-    if options.suite != Suite::JetStream3
-        || options.jit_mode != JitMode::Jit
-        || options.rounds < MIN_DIAGNOSTIC_SCREEN_ROUNDS
-        || options.jit_diagnostics
-        || options.jit_wasm_root.is_some()
-        || options.jit_wasm_root_only
-        || options.jit_wasm_root_first
-        || options.jit_wasm_selective
-        || options.fixed_work
-        || options.quench_peer.is_some()
-    {
-        return Some("--jit-wasm-indexed-offset-reuse-ab requires --suite jetstream3 --jit, at least 3 rounds, and no other JIT diagnostic modes");
-    }
-    if options.preflight_only {
-        return (options.fixture.is_some() || options.fixtures.is_some() || options.all)
-            .then_some("--preflight-only cannot select fixtures");
-    }
-    let one_pinned_fixture = options.fixture.as_deref() == Some("quicksort-wasm")
-        || options.fixtures.as_ref().is_some_and(|fixtures| {
-            fixtures.len() == 1 && fixtures[0] == "quicksort-wasm"
-        });
-    (!one_pinned_fixture || options.all).then_some(
-        "--jit-wasm-indexed-offset-reuse-ab is pinned to the single JetStream fixture quicksort-wasm",
-    )
-}
-
 fn parse_options() -> Options {
     parse_options_from(env::args().skip(1))
 }
@@ -1106,7 +1060,6 @@ fn parse_options_from(args: impl IntoIterator<Item = String>) -> Options {
         jit_wasm_memcpy_raw_ab: false,
         jit_wasm_memcpy_early_ab: false,
         jit_wasm_compare_branch_ab: false,
-        jit_wasm_indexed_offset_reuse_ab: false,
         fixture: None,
         fixtures: None,
         all: first == "--all",
@@ -1155,9 +1108,6 @@ fn parse_options_from(args: impl IntoIterator<Item = String>) -> Options {
             "--jit-wasm-memcpy-raw-ab" => options.jit_wasm_memcpy_raw_ab = true,
             "--jit-wasm-memcpy-early-ab" => options.jit_wasm_memcpy_early_ab = true,
             "--jit-wasm-compare-branch-ab" => options.jit_wasm_compare_branch_ab = true,
-            "--jit-wasm-indexed-offset-reuse-ab" => {
-                options.jit_wasm_indexed_offset_reuse_ab = true
-            }
             "--jit-wasm-root-only" => options.jit_wasm_root_only = true,
             "--jit-wasm-root-first" => options.jit_wasm_root_first = true,
             "--jit-wasm-root" => {
@@ -1261,9 +1211,6 @@ fn parse_options_from(args: impl IntoIterator<Item = String>) -> Options {
     if let Some(error) = jit_wasm_compare_branch_ab_error(&options) {
         usage(error);
     }
-    if let Some(error) = jit_wasm_indexed_offset_reuse_ab_error(&options) {
-        usage(error);
-    }
     if options.quench_peer.is_some() && !options.fixed_work {
         usage("--quench-peer requires --fixed-work");
     }
@@ -1337,10 +1284,7 @@ fn fixture_selection_is_valid(suite: Suite, files: &[PathBuf]) -> bool {
 }
 
 fn prepare_engines(options: &Options) -> Vec<EngineSpec> {
-    let engines = if options.jit_wasm_indexed_offset_reuse_ab {
-        let [reuse_off, reuse_on] = quench_indexed_offset_reuse_ab_pair(options);
-        vec![reuse_off, reuse_on, bun_engine(options), node_engine(options)]
-    } else if options.jit_wasm_compare_branch_ab {
+    let engines = if options.jit_wasm_compare_branch_ab {
         let [branch_off, branch_on] = quench_compare_branch_ab_pair(options);
         vec![branch_off, branch_on, bun_engine(options), node_engine(options)]
     } else if options.jit_wasm_memcpy_early_ab {
@@ -1392,28 +1336,6 @@ fn quench_compare_branch_ab_pair(options: &Options) -> [EngineSpec; 2] {
         branch_on.jit_proof
     );
     [branch_off, branch_on]
-}
-
-fn quench_indexed_offset_reuse_ab_pair(options: &Options) -> [EngineSpec; 2] {
-    let mut reuse_off = quench_engine(options);
-    let mut reuse_on = quench_engine(options);
-    reuse_off.name = "quench_indexed_offset_reuse_off";
-    reuse_on.name = "quench_indexed_offset_reuse_on";
-    reuse_off
-        .env
-        .insert(QUENCH_WASM_JIT_INDEXED_OFFSET_REUSE.into(), "0".into());
-    reuse_on
-        .env
-        .insert(QUENCH_WASM_JIT_INDEXED_OFFSET_REUSE.into(), "1".into());
-    reuse_off.jit_proof = format!(
-        "{}; diagnostic indexed-offset-reuse A/B arm with {QUENCH_WASM_JIT_INDEXED_OFFSET_REUSE}=0",
-        reuse_off.jit_proof
-    );
-    reuse_on.jit_proof = format!(
-        "{}; diagnostic indexed-offset-reuse A/B arm with {QUENCH_WASM_JIT_INDEXED_OFFSET_REUSE}=1",
-        reuse_on.jit_proof
-    );
-    [reuse_off, reuse_on]
 }
 
 fn quench_memcpy_ab_pair(options: &Options, raw_i32: bool) -> [EngineSpec; 2] {
@@ -3065,7 +2987,7 @@ pub(crate) fn now_ns() -> u128 {
 
 fn usage(message: &str) -> ! {
     eprintln!(
-        "{message}\nusage: quench-bench <fixture.js>|--all|--fixtures NAME,NAME,... [--suite v8-v7|jetstream3] [--jit] [--jit-diagnostics] [--jit-wasm-root ID] [--jit-wasm-root-only] [--jit-wasm-root-first] [--jit-wasm-selective] [--jit-wasm-memcpy-ab] [--jit-wasm-memcpy-raw-ab] [--jit-wasm-memcpy-early-ab] [--jit-wasm-compare-branch-ab] [--jit-wasm-indexed-offset-reuse-ab] [--fixed-work] [--quench PATH] [--quench-peer PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--checkpoint PATH|--resume PATH] [--out PATH]\n       quench-bench --preflight-only [--suite v8-v7|jetstream3] [--jit] [--jit-diagnostics] [--jit-wasm-root ID] [--jit-wasm-root-only] [--jit-wasm-root-first] [--jit-wasm-selective] [--jit-wasm-memcpy-ab] [--jit-wasm-memcpy-raw-ab] [--jit-wasm-memcpy-early-ab] [--jit-wasm-compare-branch-ab] [--jit-wasm-indexed-offset-reuse-ab] [engine options]\n       quench-bench --analyze REPORT [--out JSON]"
+        "{message}\nusage: quench-bench <fixture.js>|--all|--fixtures NAME,NAME,... [--suite v8-v7|jetstream3] [--jit] [--jit-diagnostics] [--jit-wasm-root ID] [--jit-wasm-root-only] [--jit-wasm-root-first] [--jit-wasm-selective] [--jit-wasm-memcpy-ab] [--jit-wasm-memcpy-raw-ab] [--jit-wasm-memcpy-early-ab] [--jit-wasm-compare-branch-ab] [--fixed-work] [--quench PATH] [--quench-peer PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--checkpoint PATH|--resume PATH] [--out PATH]\n       quench-bench --preflight-only [--suite v8-v7|jetstream3] [--jit] [--jit-diagnostics] [--jit-wasm-root ID] [--jit-wasm-root-only] [--jit-wasm-root-first] [--jit-wasm-selective] [--jit-wasm-memcpy-ab] [--jit-wasm-memcpy-raw-ab] [--jit-wasm-memcpy-early-ab] [--jit-wasm-compare-branch-ab] [engine options]\n       quench-bench --analyze REPORT [--out JSON]"
     );
     std::process::exit(2)
 }
@@ -3228,7 +3150,6 @@ mod jit_wasm_root_only_tests {
             jit_wasm_memcpy_raw_ab: false,
             jit_wasm_memcpy_early_ab: false,
             jit_wasm_compare_branch_ab: false,
-            jit_wasm_indexed_offset_reuse_ab: false,
             fixture: None,
             fixtures: Some(vec!["HashSet-wasm".into()]),
             all: false,
@@ -3273,7 +3194,6 @@ mod jit_wasm_root_only_tests {
             jit_wasm_memcpy_raw_ab: false,
             jit_wasm_memcpy_early_ab: false,
             jit_wasm_compare_branch_ab: false,
-            jit_wasm_indexed_offset_reuse_ab: false,
             fixture: None,
             fixtures: Some(vec!["gcc-loops-wasm".into()]),
             all: false,
@@ -3573,90 +3493,6 @@ mod jit_wasm_compare_branch_ab_tests {
 }
 
 #[cfg(test)]
-mod jit_wasm_indexed_offset_reuse_ab_tests {
-    use super::{
-        jit_wasm_indexed_offset_reuse_ab_error, parse_options_from,
-        quench_indexed_offset_reuse_ab_pair, JitMode, Suite,
-        QUENCH_WASM_JIT_INDEXED_OFFSET_REUSE,
-    };
-
-    fn quicksort_ab_options() -> super::Options {
-        parse_options_from(
-            [
-                "quicksort-wasm",
-                "--suite",
-                "jetstream3",
-                "--jit",
-                "--jit-wasm-indexed-offset-reuse-ab",
-                "--runs",
-                "3",
-            ]
-            .map(str::to_string),
-        )
-    }
-
-    #[test]
-    fn diagnostic_mode_requires_jit_three_rounds_and_pinned_quicksort() {
-        let options = quicksort_ab_options();
-        assert_eq!(options.suite, Suite::JetStream3);
-        assert_eq!(options.jit_mode, JitMode::Jit);
-        assert!(options.jit_wasm_indexed_offset_reuse_ab);
-        assert_eq!(options.rounds, 3);
-        assert_eq!(options.fixture.as_deref(), Some("quicksort-wasm"));
-        assert!(jit_wasm_indexed_offset_reuse_ab_error(&options).is_none());
-
-        let mut wrong_fixture = quicksort_ab_options();
-        wrong_fixture.fixture = Some("gcc-loops-wasm".into());
-        assert!(jit_wasm_indexed_offset_reuse_ab_error(&wrong_fixture).is_some());
-
-        let mut too_few_rounds = quicksort_ab_options();
-        too_few_rounds.rounds = 2;
-        assert!(jit_wasm_indexed_offset_reuse_ab_error(&too_few_rounds).is_some());
-
-        let mut no_jit = quicksort_ab_options();
-        no_jit.jit_mode = JitMode::NoJit;
-        assert!(jit_wasm_indexed_offset_reuse_ab_error(&no_jit).is_some());
-
-        let mut conflicting = quicksort_ab_options();
-        conflicting.jit_wasm_compare_branch_ab = true;
-        assert!(jit_wasm_indexed_offset_reuse_ab_error(&conflicting).is_some());
-    }
-
-    #[test]
-    fn quench_arms_share_binary_and_jit_args_and_only_toggle_offset_reuse() {
-        let mut options = quicksort_ab_options();
-        options.quench = std::env::current_exe().expect("test executable path");
-        let [reuse_off, reuse_on] = quench_indexed_offset_reuse_ab_pair(&options);
-
-        assert_eq!(reuse_off.name, "quench_indexed_offset_reuse_off");
-        assert_eq!(reuse_on.name, "quench_indexed_offset_reuse_on");
-        assert_eq!(reuse_off.argv, vec!["--jit".to_string()]);
-        assert_eq!(reuse_on.argv, reuse_off.argv);
-        assert_eq!(reuse_off.executable, reuse_on.executable);
-        assert_eq!(reuse_off.executable_sha256, reuse_on.executable_sha256);
-        assert_eq!(
-            reuse_off
-                .env
-                .get(QUENCH_WASM_JIT_INDEXED_OFFSET_REUSE)
-                .map(String::as_str),
-            Some("0")
-        );
-        assert_eq!(
-            reuse_on
-                .env
-                .get(QUENCH_WASM_JIT_INDEXED_OFFSET_REUSE)
-                .map(String::as_str),
-            Some("1")
-        );
-        let mut off_environment = reuse_off.env.clone();
-        let mut on_environment = reuse_on.env.clone();
-        off_environment.remove(QUENCH_WASM_JIT_INDEXED_OFFSET_REUSE);
-        on_environment.remove(QUENCH_WASM_JIT_INDEXED_OFFSET_REUSE);
-        assert_eq!(off_environment, on_environment);
-    }
-}
-
-#[cfg(test)]
 mod fixed_work_tests {
     use super::{
         contention, fixed_work_marker, fixed_work_runner, parse_cpu_consumers, parse_load_average,
@@ -3943,7 +3779,6 @@ mod tests {
             jit_wasm_memcpy_raw_ab: false,
             jit_wasm_memcpy_early_ab: false,
             jit_wasm_compare_branch_ab: false,
-            jit_wasm_indexed_offset_reuse_ab: false,
             created_unix_ns: now_ns(),
             rounds_requested: 11,
             timeout_ms: 300_000,
@@ -4047,19 +3882,6 @@ mod tests {
             &compare_branch_ab
         ));
         assert!(!resume_metadata_matches(&raw_ab_loaded, &compare_branch_ab));
-
-        let indexed_offset_reuse_path = directory.join("indexed-offset-reuse-ab-report.json");
-        let mut indexed_offset_reuse = expected.clone();
-        indexed_offset_reuse.jit_wasm_root_only = false;
-        indexed_offset_reuse.jit_wasm_indexed_offset_reuse_ab = true;
-        write_checkpoint(&indexed_offset_reuse_path, &indexed_offset_reuse);
-        let indexed_offset_reuse_loaded = read_checkpoint(&indexed_offset_reuse_path);
-        assert!(indexed_offset_reuse_loaded.jit_wasm_indexed_offset_reuse_ab);
-        assert!(resume_metadata_matches(
-            &indexed_offset_reuse_loaded,
-            &indexed_offset_reuse
-        ));
-        assert!(!resume_metadata_matches(&compare_branch_ab_loaded, &indexed_offset_reuse));
         fs::remove_dir_all(directory).expect("remove checkpoint test directory");
     }
 

@@ -298,7 +298,6 @@ const JIT_ROOT_ONLY_ENV: &str = "QUENCH_WASM_JIT_ROOT_ONLY";
 const JIT_ROOT_FIRST_ENV: &str = "QUENCH_WASM_JIT_ROOT_FIRST";
 const JIT_WASM_SELECTIVE_ENV: &str = "QUENCH_WASM_JIT_SELECTIVE";
 const JIT_DIRECT_COMPARE_BRANCHES_ENV: &str = "QUENCH_WASM_JIT_DIRECT_COMPARE_BRANCHES";
-const JIT_INDEXED_OFFSET_REUSE_ENV: &str = "QUENCH_WASM_JIT_INDEXED_OFFSET_REUSE";
 const MAX_JIT_ROOT_FUNCTIONS: usize = 128;
 const MAX_JIT_ROOT_BYTECODES_PER_FUNCTION: usize = 80_000;
 const MAX_JIT_ROOT_CODE_BYTES: usize = 2 * 1024 * 1024;
@@ -337,15 +336,6 @@ fn jit_direct_compare_branches_enabled() -> bool {
         .is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
 }
 
-fn jit_indexed_offset_reuse_enabled() -> bool {
-    #[cfg(test)]
-    if let Some(enabled) = WASM_JIT_INDEXED_OFFSET_REUSE_TEST_OVERRIDE.with(std::cell::Cell::get) {
-        return enabled;
-    }
-    std::env::var(JIT_INDEXED_OFFSET_REUSE_ENV)
-        .is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
-}
-
 fn jit_wasm_root_only_enabled() -> bool {
     #[cfg(test)]
     if let Some(mode) = WASM_JIT_MODE_TEST_OVERRIDE.with(std::cell::Cell::get) {
@@ -375,8 +365,6 @@ thread_local! {
     static WASM_JIT_MODE_TEST_OVERRIDE: std::cell::Cell<Option<WasmJitModeTestOverride>> =
         const { std::cell::Cell::new(None) };
     static WASM_JIT_DIRECT_COMPARE_BRANCHES_TEST_OVERRIDE: std::cell::Cell<Option<bool>> =
-        const { std::cell::Cell::new(None) };
-    static WASM_JIT_INDEXED_OFFSET_REUSE_TEST_OVERRIDE: std::cell::Cell<Option<bool>> =
         const { std::cell::Cell::new(None) };
 }
 
@@ -421,26 +409,6 @@ pub(super) fn with_jit_direct_compare_branches_for_test<R>(
     }
 
     let previous = WASM_JIT_DIRECT_COMPARE_BRANCHES_TEST_OVERRIDE
-        .with(|override_mode| override_mode.replace(Some(enabled)));
-    let _restore = Restore(previous);
-    run()
-}
-
-#[cfg(test)]
-pub(super) fn with_jit_indexed_offset_reuse_for_test<R>(
-    enabled: bool,
-    run: impl FnOnce() -> R,
-) -> R {
-    struct Restore(Option<bool>);
-
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            WASM_JIT_INDEXED_OFFSET_REUSE_TEST_OVERRIDE
-                .with(|override_mode| override_mode.set(self.0));
-        }
-    }
-
-    let previous = WASM_JIT_INDEXED_OFFSET_REUSE_TEST_OVERRIDE
         .with(|override_mode| override_mode.replace(Some(enabled)));
     let _restore = Restore(previous);
     run()
@@ -2050,108 +2018,6 @@ fn direct_access(op: Op) -> bool {
     MemoryLoad::from_direct_op(op).is_some() || MemoryStore::from_direct_op(op).is_some()
 }
 
-/// Select i32 registers whose values can reach an `i32.shl 2` through copies
-/// and linear add/sub definitions. Other definitions of a selected register
-/// simply rebuild the exact scaled value from the raw i32 result.
-fn indexed_offset_reuse_registers(function: &Function, plan: &Plan) -> Option<Vec<bool>> {
-    let instructions: Vec<WideInstruction> = function
-        .code
-        .iter()
-        .map(|packed| super::dispatch_fast::decoded_instruction(function, *packed))
-        .collect();
-    let mut tracked = vec![false; usize::from(function.registers)];
-    let mut scale_by_four = false;
-    let mut memory_access = false;
-
-    for (pc, instruction) in instructions.iter().copied().enumerate() {
-        if !plan.reachable(pc) {
-            continue;
-        }
-        let op = instruction.op();
-        if I32BinaryOperator::from_immediate_op(op) == Some(I32BinaryOperator::ShiftLeft)
-            && instruction.imm() & 31 == 2
-        {
-            tracked[usize::from(instruction.b())] = true;
-            scale_by_four = true;
-        }
-        memory_access |= direct_access(op);
-    }
-    if !(scale_by_four && memory_access) {
-        return None;
-    }
-
-    // The use set flows backwards through operations that preserve the
-    // companion algebraically. All other selected definitions will be
-    // recomputed from their raw result in the emitter.
-    loop {
-        let mut changed = false;
-        for (pc, instruction) in instructions.iter().copied().enumerate() {
-            if !plan.reachable(pc)
-                || !tracked
-                    .get(usize::from(instruction.a()))
-                    .copied()
-                    .unwrap_or(false)
-            {
-                continue;
-            }
-            let op = instruction.op();
-            let mut add_source = |register: u16| {
-                let slot = &mut tracked[usize::from(register)];
-                changed |= !*slot;
-                *slot = true;
-            };
-            if op == Op::Move && plan.operand(pc) == Slot::Value(Kind::I32) {
-                add_source(instruction.b());
-            } else if matches!(
-                I32BinaryOperator::from_register_op(op),
-                Some(I32BinaryOperator::Add | I32BinaryOperator::Subtract)
-            ) {
-                add_source(instruction.b());
-                add_source(instruction.c());
-            } else if matches!(
-                I32BinaryOperator::from_immediate_op(op),
-                Some(I32BinaryOperator::Add | I32BinaryOperator::Subtract)
-            ) || op == Op::WasmI32AddImmediateJumpNonZero
-            {
-                add_source(instruction.b());
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
-
-    // Require the unit step itself to belong to the backward slice, so an
-    // unrelated counter elsewhere in a function cannot activate the reuse.
-    let unit_step_in_slice = instructions
-        .iter()
-        .copied()
-        .enumerate()
-        .any(|(pc, instruction)| {
-            if !plan.reachable(pc) {
-                return false;
-            }
-            let step = match I32BinaryOperator::from_immediate_op(instruction.op()) {
-                Some(I32BinaryOperator::Add | I32BinaryOperator::Subtract) => {
-                    instruction.imm() as i32 == 1
-                }
-                _ if instruction.op() == Op::WasmI32AddImmediateJumpNonZero => {
-                    matches!(instruction.c() as i16, -1 | 1)
-                }
-                _ => false,
-            };
-            step && tracked
-                .get(usize::from(instruction.a()))
-                .copied()
-                .unwrap_or(false)
-                && tracked
-                    .get(usize::from(instruction.b()))
-                    .copied()
-                    .unwrap_or(false)
-        });
-    unit_step_in_slice.then_some(tracked)
-}
-
 fn successors(function: &Function, pc: usize, instruction: WideInstruction) -> Vec<usize> {
     match instruction.op().control_flow_layout() {
         ControlFlowLayout::Jump => vec![instruction.jump_target() as usize],
@@ -3058,11 +2924,6 @@ struct Emitter<'a, 'b, H: Host> {
     /// When enabled, branch-only i32 comparisons remain Cranelift booleans
     /// instead of being extended to a Wasm i32 and tested again.
     direct_compare_branches: bool,
-    /// Maintain an exact i32-times-four companion for the opt-in indexed
-    /// address transform. Cranelift's SSA variables create matching phis at
-    /// control-flow joins.
-    indexed_offset_reuse: bool,
-    scaled_offsets: Option<Vec<Option<Variable>>>,
     /// The guarded memory repeats above 2^32 (`CompiledProgram::wraps`).
     wraps: bool,
     /// Per `Region`, its alias region in this function.
@@ -3120,43 +2981,6 @@ impl<H: Host> Emitter<'_, '_, H> {
         self.write_typed(register, kind.integer(), value);
     }
 
-    fn scaled_offset(&mut self, register: u16) -> ir::Value {
-        let variable = self
-            .scaled_offsets
-            .as_ref()
-            .and_then(|offsets| offsets[usize::from(register)])
-            .expect("register has a tracked indexed offset companion");
-        self.builder.use_var(variable)
-    }
-
-    fn tracks_scaled_offset(&self, register: u16) -> bool {
-        self.scaled_offsets
-            .as_ref()
-            .is_some_and(|offsets| offsets[usize::from(register)].is_some())
-    }
-
-    fn write_scaled_offset(&mut self, register: u16, value: ir::Value) {
-        if let Some(scaled_offsets) = &self.scaled_offsets {
-            if let Some(variable) = scaled_offsets[usize::from(register)] {
-                self.builder.def_var(variable, value);
-            }
-        }
-    }
-
-    fn scale_i32_offset(&mut self, value: ir::Value) -> ir::Value {
-        self.builder.ins().ishl_imm_s(value, 2)
-    }
-
-    fn write_with_scaled_offset(
-        &mut self,
-        register: u16,
-        value: ir::Value,
-        scaled_offset: ir::Value,
-    ) {
-        self.write(register, Kind::I32, value);
-        self.write_scaled_offset(register, scaled_offset);
-    }
-
     /// The register's value viewed as `ty`.
     fn read_typed(&mut self, register: u16, ty: crate::WasmType) -> ir::Value {
         self.builder
@@ -3175,17 +2999,6 @@ impl<H: Host> Emitter<'_, '_, H> {
         let variables = self.variables[usize::from(register)];
         self.builder.def_var(variables[view(ty)], value);
         self.builder.def_var(variables[view(other)], converted);
-        if self.indexed_offset_reuse && self.tracks_scaled_offset(register) {
-            let i32_value = match ty {
-                crate::WasmType::I32 => Some(value),
-                crate::WasmType::F32 => Some(converted),
-                _ => None,
-            };
-            if let Some(i32_value) = i32_value {
-                let scaled = self.scale_i32_offset(i32_value);
-                self.write_scaled_offset(register, scaled);
-            }
-        }
     }
 
     /// Define the register as the constant `bits` of width `kind`.
@@ -3209,11 +3022,6 @@ impl<H: Host> Emitter<'_, '_, H> {
         self.builder
             .def_var(variables[view(kind.integer())], integer);
         self.builder.def_var(variables[view(float_type)], float);
-        if self.indexed_offset_reuse && kind == Kind::I32 && self.tracks_scaled_offset(register) {
-            let scaled = (bits as i32).wrapping_shl(2);
-            let scaled = self.builder.ins().iconst(types::I32, i64::from(scaled));
-            self.write_scaled_offset(register, scaled);
-        }
     }
 
     /// The kind of the `b` register of instruction `pc`.
@@ -4194,32 +4002,8 @@ impl<H: Host> Emitter<'_, '_, H> {
         if let Some(operator) = I32BinaryOperator::from_register_op(op) {
             let left = self.read(b, Kind::I32);
             let right = self.read(c, Kind::I32);
-            let scaled = if self.indexed_offset_reuse
-                && self.tracks_scaled_offset(a)
-                && self.tracks_scaled_offset(b)
-                && self.tracks_scaled_offset(c)
-            {
-                match operator {
-                    I32BinaryOperator::Add => {
-                        let left_scaled = self.scaled_offset(b);
-                        let right_scaled = self.scaled_offset(c);
-                        Some(self.builder.ins().iadd(left_scaled, right_scaled))
-                    }
-                    I32BinaryOperator::Subtract => {
-                        let left_scaled = self.scaled_offset(b);
-                        let right_scaled = self.scaled_offset(c);
-                        Some(self.builder.ins().isub(left_scaled, right_scaled))
-                    }
-                    _ => None,
-                }
-            } else {
-                None
-            };
             let value = self.integer_binary(widen_binary(operator), left, right);
             self.write(a, Kind::I32, value);
-            if let Some(scaled) = scaled {
-                self.write_scaled_offset(a, scaled);
-            }
             return true;
         }
         if let Some(operator) = I32BinaryOperator::from_immediate_op(op) {
@@ -4228,39 +4012,8 @@ impl<H: Host> Emitter<'_, '_, H> {
                 .builder
                 .ins()
                 .iconst(types::I32, i64::from(instruction.imm() as i32));
-            let shift_by_two = self.indexed_offset_reuse
-                && operator == I32BinaryOperator::ShiftLeft
-                && instruction.imm() & 31 == 2
-                && self.tracks_scaled_offset(b);
-            let scaled = if self.indexed_offset_reuse
-                && self.tracks_scaled_offset(a)
-                && self.tracks_scaled_offset(b)
-            {
-                match operator {
-                    I32BinaryOperator::Add | I32BinaryOperator::Subtract => {
-                        let left_scaled = self.scaled_offset(b);
-                        let delta = (instruction.imm() as i32).wrapping_shl(2);
-                        let delta = self.builder.ins().iconst(types::I32, i64::from(delta));
-                        Some(if operator == I32BinaryOperator::Add {
-                            self.builder.ins().iadd(left_scaled, delta)
-                        } else {
-                            self.builder.ins().isub(left_scaled, delta)
-                        })
-                    }
-                    _ => None,
-                }
-            } else {
-                None
-            };
-            let value = if shift_by_two {
-                self.scaled_offset(b)
-            } else {
-                self.integer_binary(widen_binary(operator), left, right)
-            };
+            let value = self.integer_binary(widen_binary(operator), left, right);
             self.write(a, Kind::I32, value);
-            if let Some(scaled) = scaled {
-                self.write_scaled_offset(a, scaled);
-            }
             return true;
         }
         if let Some(operator) = I32BinaryOperator::from_jump_op(op) {
@@ -4415,16 +4168,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             Op::Move => {
                 let kind = self.operand_kind(pc);
                 let value = self.read(b, kind);
-                if self.indexed_offset_reuse
-                    && kind == Kind::I32
-                    && self.tracks_scaled_offset(a)
-                    && self.tracks_scaled_offset(b)
-                {
-                    let scaled = self.scaled_offset(b);
-                    self.write_with_scaled_offset(a, value, scaled);
-                } else {
-                    self.write(a, kind, value);
-                }
+                self.write(a, kind, value);
             }
             Op::LoadConst | Op::WasmFillRegisters => {
                 let constant = self
@@ -4464,18 +4208,7 @@ impl<H: Host> Emitter<'_, '_, H> {
                 let input = self.read(b, Kind::I32);
                 let addend = self.builder.ins().iconst(types::I32, i64::from(c as i16));
                 let sum = self.builder.ins().iadd(input, addend);
-                if self.indexed_offset_reuse
-                    && self.tracks_scaled_offset(a)
-                    && self.tracks_scaled_offset(b)
-                {
-                    let input_scaled = self.scaled_offset(b);
-                    let delta = i32::from(c as i16).wrapping_shl(2);
-                    let delta = self.builder.ins().iconst(types::I32, i64::from(delta));
-                    let sum_scaled = self.builder.ins().iadd(input_scaled, delta);
-                    self.write_with_scaled_offset(a, sum, sum_scaled);
-                } else {
-                    self.write(a, Kind::I32, sum);
-                }
+                self.write(a, Kind::I32, sum);
                 self.branch(sum, instruction.jump_target() as usize, pc + 1);
                 return false;
             }
@@ -4654,17 +4387,6 @@ impl<'a, H: Host> Analysis<'a, H> {
         let variables: Vec<[Variable; VIEW_TYPES.len()]> = (0..function.registers)
             .map(|_| VIEW_TYPES.map(|ty| builder.declare_var(scalar_ir(ty))))
             .collect();
-        let scaled_offsets = if jit_indexed_offset_reuse_enabled() {
-            indexed_offset_reuse_registers(function, plan).map(|tracked| {
-                tracked
-                    .into_iter()
-                    .map(|tracked| tracked.then(|| builder.declare_var(types::I32)))
-                    .collect()
-            })
-        } else {
-            None
-        };
-        let indexed_offset_reuse = scaled_offsets.is_some();
         let entry = builder.create_block();
         builder.append_block_params_for_function_params(entry);
         builder.switch_to_block(entry);
@@ -4706,8 +4428,6 @@ impl<'a, H: Host> Analysis<'a, H> {
         let mut emitter = Emitter {
             guarded,
             direct_compare_branches: jit_direct_compare_branches_enabled(),
-            indexed_offset_reuse,
-            scaled_offsets,
             wraps,
             regions,
             globals,
@@ -6618,69 +6338,6 @@ const VOID_RESULT_CONSTANT: usize = 1;
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn indexed_offset_companions_track_only_scaled_values_and_linear_dependencies() {
-        let memarg = wasmparser::MemArg {
-            align: 2,
-            max_align: 2,
-            offset: 0,
-            memory: 0,
-        };
-        let module = crate::Engine::lower_wasm_module_with_state(
-            "indexed-offset-register-closure",
-            [crate::WasmFunctionBody {
-                ty: crate::WasmCallableType::Embedded(crate::WasmSignature {
-                    params: vec![crate::WasmType::I32, crate::WasmType::I32],
-                    results: vec![crate::WasmType::I32],
-                }),
-                locals: vec![],
-                operators: vec![
-                    wasmparser::Operator::LocalGet { local_index: 0 },
-                    wasmparser::Operator::I32Const { value: 1 },
-                    wasmparser::Operator::I32Add,
-                    wasmparser::Operator::LocalSet { local_index: 0 },
-                    // This separate counter step is outside the scale-use slice.
-                    wasmparser::Operator::LocalGet { local_index: 1 },
-                    wasmparser::Operator::I32Const { value: 1 },
-                    wasmparser::Operator::I32Sub,
-                    wasmparser::Operator::LocalSet { local_index: 1 },
-                    wasmparser::Operator::LocalGet { local_index: 0 },
-                    wasmparser::Operator::I32Const { value: 2 },
-                    wasmparser::Operator::I32Shl,
-                    wasmparser::Operator::I32Load { memarg },
-                    wasmparser::Operator::End,
-                ]
-                .into_iter()
-                .map(Ok),
-            }],
-            &crate::WasmTypes::default(),
-            &[],
-            &[crate::WasmMemory {
-                ty: wasmparser::MemoryType {
-                    initial: 1,
-                    maximum: Some(1),
-                    memory64: false,
-                    shared: false,
-                    page_size_log2: None,
-                },
-                import: None,
-            }],
-            &[],
-        )
-        .unwrap();
-        let function = &module.program.functions[0];
-        let plan = Plan {
-            params: vec![crate::WasmType::I32, crate::WasmType::I32],
-            result: Some(crate::WasmType::I32),
-            operands: vec![Some(Slot::Value(Kind::I32)); function.code.len()],
-        };
-
-        let tracked = indexed_offset_reuse_registers(function, &plan).unwrap();
-        let first_local = usize::from(function.parameter_registers.unwrap());
-        assert!(tracked[first_local]);
-        assert!(!tracked[first_local + 1]);
-    }
 
     #[test]
     fn root_only_jit_forces_cranelift_opt_level_none() {
