@@ -1732,39 +1732,54 @@ impl Function {
     /// Otherwise the frame's own `this` is authoritative and the bindings are never read.
     /// By-name loads of source names resolve only their own atom; the implicit `this` and
     /// `new.target` bindings are reachable by name only through engine-internal atoms.
-    pub(crate) fn activation_bindings_observable(&self, atoms: &AtomTable) -> bool {
+    /// Whether the activation's implicit `this` and `new.target` bindings can be read: by
+    /// its own name lookups (`activation_binding_reads`) or by an arrow function it makes,
+    /// which inherits them. Any other closure has its own. `functions` is the owning
+    /// program's table.
+    pub(crate) fn activation_bindings_observable(&self, atoms: &AtomTable, functions: &[Function]) -> bool {
         *self.activation_bindings.get_or_init(|| {
-            self.is_async
-                || self.is_generator
-                || self.is_class_constructor
-                || self.derived_constructor
-                || self.class_initializer
-                || self.instance_initializer.is_some()
-                || self.inherited_with_scope
-                || !self.binding_sites.is_empty()
+            self.activation_binding_reads(atoms)
                 || self.instructions().any(|instruction| {
-                    matches!(
-                        instruction.op(),
-                        Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof
-                    ) && usize::try_from(instruction.atom_index())
-                        .is_ok_and(|atom| atom >= atoms.len() || atoms[atom].starts_with('\0'))
-                        || matches!(
-                            instruction.op(),
-                            Op::ResolveName
-                                | Op::LoadResolvedName
-                                | Op::DeleteName
-                                | Op::StoreName
-                                | Op::StoreResolvedName
-                                | Op::StoreVarBinding
-                                | Op::MakeClosure
-                                | Op::CloneEnv
-                                | Op::InitializeThis
-                                | Op::SuperCallCheck
-                        )
-                        || (instruction.op().is_call_with_eval_flags()
-                            && (instruction.direct_eval() || instruction.parameter_eval()))
+                    instruction.op() == Op::MakeClosure
+                        && functions
+                            .get(instruction.closure_function_index() as usize)
+                            .is_none_or(|closure| closure.is_arrow)
                 })
         })
+    }
+
+    /// Whether the activation itself may read its implicit bindings through a name or scope
+    /// operation, or must keep them for its kind of activation.
+    fn activation_binding_reads(&self, atoms: &AtomTable) -> bool {
+        self.is_async
+            || self.is_generator
+            || self.is_class_constructor
+            || self.derived_constructor
+            || self.class_initializer
+            || self.instance_initializer.is_some()
+            || self.inherited_with_scope
+            || !self.binding_sites.is_empty()
+            || self.instructions().any(|instruction| {
+                matches!(
+                    instruction.op(),
+                    Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof
+                ) && usize::try_from(instruction.atom_index())
+                    .is_ok_and(|atom| atom >= atoms.len() || atoms[atom].starts_with('\0'))
+                    || matches!(
+                        instruction.op(),
+                        Op::ResolveName
+                            | Op::LoadResolvedName
+                            | Op::DeleteName
+                            | Op::StoreName
+                            | Op::StoreResolvedName
+                            | Op::StoreVarBinding
+                            | Op::CloneEnv
+                            | Op::InitializeThis
+                            | Op::SuperCallCheck
+                    )
+                    || (instruction.op().is_call_with_eval_flags()
+                        && (instruction.direct_eval() || instruction.parameter_eval()))
+            })
     }
 
     /// Every instruction in fixed-width form.
@@ -1854,7 +1869,9 @@ impl Function {
                 && !self.is_generator
                 && !self.is_async
                 && promoted_parameters == usize::from(self.params)
-                && !self.activation_bindings_observable(atoms);
+                && !self.activation_binding_reads(atoms)
+                // A plain activation makes no closure, whichever bindings it would see.
+                && !self.instructions().any(|instruction| instruction.op() == Op::MakeClosure);
             let in_loop = !self.is_async
                 && !self.is_generator
                 && !self.is_class_constructor

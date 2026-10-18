@@ -2605,11 +2605,7 @@ impl Heap {
             } => {
                 work.push(*parent);
                 work.extend(slots.roots());
-                let crate::heap::EnvironmentScope {
-                    dynamic_bindings,
-                    with_objects,
-                    ..
-                } = &**scope;
+                let (dynamic_bindings, with_objects) = (scope.dynamic_bindings(), scope.with_objects());
                 match dynamic_bindings {
                     EnvironmentBindings::Owned(bindings) => {
                         work.extend(bindings.iter().map(|(_, value)| *value));
@@ -2796,7 +2792,7 @@ impl Heap {
                 Cell::WeakSet { entries, .. } => entries.capacity() * size_of::<Value>(),
                 Cell::Function { .. } => size_of::<Object>(),
                 Cell::Environment { slots, scope, .. } => {
-                    let with_objects = &scope.with_objects;
+                    let with_objects = scope.with_objects();
                     slots.len() * size_of::<EnvironmentSlot>()
                         + with_objects.len() * size_of::<Value>()
                 }

@@ -554,7 +554,8 @@ impl<H: Host> Vm<H> {
             &mut frame,
             arrow,
             new_target,
-            id == super::ROOT_FUNCTION_ID || function.activation_bindings_observable(&p.atoms),
+            id == super::ROOT_FUNCTION_ID
+                || function.activation_bindings_observable(&p.atoms, &p.functions),
         );
         frame.prepare_registers_for(function);
         frame.bind_register_parameters(function, args);
@@ -630,7 +631,8 @@ impl<H: Host> Vm<H> {
             &mut frame,
             arrow,
             new_target,
-            id == super::ROOT_FUNCTION_ID || function.activation_bindings_observable(&p.atoms),
+            id == super::ROOT_FUNCTION_ID
+                || function.activation_bindings_observable(&p.atoms, &p.functions),
         );
         frame.prepare_registers_for(function);
         frame.bind_register_parameters(function, args);
@@ -996,7 +998,7 @@ impl<H: Host> Vm<H> {
             parent,
             function: self.frames[frame].function,
             slots,
-            scope: Box::new(crate::heap::EnvironmentScope {
+            scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
                 program: Some(self.frames[frame].program.raw()),
                 root_eval_scope: false,
                 binding_site_pc: None,
@@ -1040,12 +1042,12 @@ impl<H: Host> Vm<H> {
             parent: *parent,
             function: *function,
             slots,
-            scope: Box::new(crate::heap::EnvironmentScope {
-                program: scope.program,
-                root_eval_scope: scope.root_eval_scope,
-                binding_site_pc: scope.binding_site_pc,
+            scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+                program: scope.program(),
+                root_eval_scope: scope.root_eval_scope(),
+                binding_site_pc: scope.binding_site_pc(),
                 dynamic_bindings: crate::heap::EnvironmentBindings::Shared(owner),
-                with_objects: scope.with_objects.clone(),
+                with_objects: scope.with_objects().into(),
             }),
         };
         let env = self.heap.alloc(environment);
@@ -1864,8 +1866,8 @@ impl<H: Host> Vm<H> {
         }
         let mut layers = Vec::new();
         while let Some(Cell::Environment { parent, scope, .. }) = self.heap.get(env) {
-            if !scope.with_objects.is_empty() {
-                layers.push(scope.with_objects.to_vec());
+            if !scope.with_objects().is_empty() {
+                layers.push(scope.with_objects().to_vec());
             }
             env = *parent;
             if env.is_null() {
