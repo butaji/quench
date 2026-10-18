@@ -58,3 +58,57 @@ target/production/quench-bench --fixtures "$fixtures" --suite jetstream3 --jit \
 The reverted experiment used the same command with the experimental build and
 output path `reverted-unreachable/jetstream3-wasm-jit.json`; its diagnostics
 were collected separately with `--jit-diagnostics`.
+
+## Clean 11-round comparison
+
+The qualification report and paired bootstrap analysis are in
+`qualification/`. The run used clean source revision
+`db977687a9bd91dc229432cf91491c17451b591b`, the pinned JetStream 3.0 checkout,
+Node v26.10.0 with Maglev/TurboFan verified by preflight, and Bun 1.4.2 with
+`useJIT=true` verified by preflight. All five fixtures completed 11 matched
+rounds, passed JetStream validation, produced equal outputs, and carry source
+hashes. The report is qualification-ready; the comparison itself is not a
+win.
+
+The paired ratios below are Quench divided by the comparator. Intervals are
+95% paired bootstrap intervals for the median log-ratio. A score ratio below
+1 means Quench is slower; an RSS ratio below 1 means Quench uses less memory.
+
+| Fixture | Quench JIT median Score / RSS MiB | Score vs Bun | RSS vs Bun | Score vs Node | RSS vs Node |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| HashSet | 29.62 / 113.1 | 0.147 [0.141, 0.154] | 2.035 [2.019, 2.041] | 0.128 [0.118, 0.141] | 0.892 [0.891, 0.893] |
+| gcc-loops | 70.96 / 48.1 | 0.414 [0.384, 0.429] | 0.856 [0.847, 0.866] | 0.400 [0.361, 0.410] | 0.524 [0.524, 0.525] |
+| quicksort | 209.84 / 42.0 | 0.605 [0.554, 0.715] | 0.863 [0.860, 0.867] | 0.497 [0.476, 0.538] | 0.476 [0.475, 0.476] |
+| tsf | 13.38 / 224.8 | 0.068 [0.062, 0.072] | 1.677 [1.611, 1.692] | 0.071 [0.067, 0.073] | 1.614 [1.547, 1.631] |
+| zlib | 13.62 / 112.9 | 0.156 [0.151, 0.162] | 1.126 [1.116, 1.134] | 0.154 [0.151, 0.158] | 1.018 [0.998, 1.021] |
+
+No fixture beats both the score and RSS bars against either peer. Score
+intervals are wholly below 1 for all fixtures. gcc-loops and quicksort beat
+both RSS bars; HashSet beats Node on RSS but not Bun. TSF loses on both metrics,
+and zlib uses more RSS than Bun while its Node RSS interval spans 1. The
+no-JIT cases that previously beat Bun on both metrics therefore do not carry
+that advantage into JIT mode.
+
+The separate diagnostic report in `diagnostics/` is not timing evidence. It
+records HashSet compiling 25/35 functions with 31,986 code bytes and about
+72.5 ms of compilation; its two hot `HashTable::add` functions entered native
+code 9.49M and 39.53M times. TSF compiled 156/244 functions with 177,800 code
+bytes, about 104.7 ms of compilation, and 2,816,456 compiled-to-VM callouts.
+Those mappings are small beside process RSS, so optimizing executable mapping
+size alone will not close the memory gap. The measured score gap is much
+larger than the compile-time cost and requires better generated-code/runtime
+execution, with TSF also needing fewer expensive VM callouts.
+
+Reproduction and analysis:
+
+```sh
+target/production/quench-bench --fixtures HashSet-wasm,gcc-loops-wasm,quicksort-wasm,tsf-wasm,zlib-wasm \
+  --suite jetstream3 --jit --runs 11 --timeout-ms 600000 \
+  --quench target/production/quench-node \
+  --node /workspace/.local/bench-runtimes/node-v26.10.0-linux-x64/bin/node \
+  --bun /workspace/.local/bench-runtimes/bun-linux-x64/bun \
+  --checkpoint target/jetstream3-wasm-jit.checkpoint.json \
+  --out target/jetstream3-wasm-jit.json
+target/production/quench-bench --analyze target/jetstream3-wasm-jit.json \
+  --out target/jetstream3-wasm-jit-analysis.json
+```
