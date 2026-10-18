@@ -1120,7 +1120,7 @@ pub struct Function {
     pub params: u16,
     pub length: u16,
     pub parameter_end_pc: u32,
-    pub parameter_atoms: Vec<Atom>,
+    pub(crate) parameter_atoms: crate::heap::ThinBoxSlice<Atom>,
     pub rest: bool,
     pub is_async: bool,
     pub is_generator: bool,
@@ -1137,9 +1137,9 @@ pub struct Function {
     pub simple_parameters: bool,
     pub strict: bool,
     pub locals: u16,
-    pub local_atoms: Vec<Atom>,
+    pub(crate) local_atoms: crate::heap::ThinBoxSlice<Atom>,
     /// Names visible through this function's captured declarative environment.
-    pub environment_atoms: Vec<Atom>,
+    pub(crate) environment_atoms: crate::heap::ThinBoxSlice<Atom>,
     /// Source local slots owned by a closure environment when this activation
     /// escapes. `None` retains legacy whole-frame promotion; `Some` is the
     /// selective layout, including an empty set for closure-only activations.
@@ -1149,7 +1149,7 @@ pub struct Function {
     /// The function was created while an enclosing `with` scope was active,
     /// so unresolved names in descendants can still observe its outer locals.
     pub(crate) inherited_with_scope: bool,
-    pub lexical_atoms: Vec<Atom>,
+    pub(crate) lexical_atoms: crate::heap::ThinBoxSlice<Atom>,
     /// What a Script or eval body declares in the global scope; `None` for every other
     /// function, which declares nothing there.
     pub global_declarations: Option<Box<GlobalDeclarations>>,
