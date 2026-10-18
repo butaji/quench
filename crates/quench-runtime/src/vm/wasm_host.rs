@@ -3,6 +3,15 @@
 use super::*;
 use crate::{WasmHostValue, WasmSignature, WasmValue};
 
+#[derive(Clone, Copy)]
+enum WasmHostInvocation {
+    Host(crate::WasmHostFunctionId),
+    Js {
+        function: Value,
+        memcpy_capture: Option<(Value, usize)>,
+    },
+}
+
 impl<H: Host> Vm<H> {
     pub(crate) fn create_wasm_host_function(
         &mut self,
@@ -151,20 +160,42 @@ impl<H: Host> Vm<H> {
         let environment = self
             .active_native_env()
             .ok_or_else(|| JsError::validation("missing Wasm host binding".into()))?;
-        let Some(Cell::WasmHostFunction { target, signature }) = self.heap.get(environment) else {
-            return Err(JsError::validation("invalid Wasm host binding".into()));
+        let (target, signature) = match self.heap.get(environment) {
+            Some(Cell::WasmHostFunction { target, signature }) => {
+                let target = match target {
+                    crate::heap::WasmHostTarget::Host(id) => WasmHostInvocation::Host(*id),
+                    crate::heap::WasmHostTarget::Js(function) => WasmHostInvocation::Js {
+                        function: *function,
+                        memcpy_capture: None,
+                    },
+                    crate::heap::WasmHostTarget::JsEmscriptenMemcpy(target) => {
+                        WasmHostInvocation::Js {
+                            function: target.function,
+                            memcpy_capture: Some((target.view_environment, target.view_slot)),
+                        }
+                    }
+                };
+                (target, signature.clone())
+            }
+            _ => return Err(JsError::validation("invalid Wasm host binding".into())),
         };
-        let target = *target;
-        let signature = signature.clone();
         if args.len() != signature.params.len() {
             return Err(JsError::validation(
                 "Wasm host argument count mismatch".into(),
             ));
         }
         let id = match target {
-            crate::heap::WasmHostTarget::Host(id) => id,
-            crate::heap::WasmHostTarget::Js(target) => {
-                return self.call_wasm_js_import(target, &signature, args);
+            WasmHostInvocation::Host(id) => id,
+            WasmHostInvocation::Js {
+                function,
+                memcpy_capture,
+            } => {
+                return self.call_wasm_js_import(
+                    function,
+                    memcpy_capture,
+                    &signature,
+                    args,
+                );
             }
         };
         let mut roots = Vec::new();
@@ -266,6 +297,68 @@ impl<H: Host> Vm<H> {
         }
         result
     }
+
+    /// Calls a JS-backed Wasm import from compiled code without dispatching
+    /// through its `Native::WasmHost` wrapper. Keep the wrapper's VM boundary
+    /// observable state while sharing the ordinary JS import conversion path.
+    pub(super) fn call_compiled_js_wasm_import(
+        &mut self,
+        program: ProgramId,
+        p: &ResidualProgram,
+        wrapper: Value,
+        target: Value,
+        memcpy_capture: Option<(Value, usize)>,
+        signature: &WasmSignature,
+        receiver: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let call_roots = self.active_call_roots.len();
+        self.active_call_roots
+            .extend([wrapper, receiver].into_iter().chain(args.iter().copied()));
+        self.profile.call_target(0, args.len());
+
+        let realm = match self.heap.get(wrapper) {
+            Some(Cell::Function { object, .. })
+                if object.realm == self.realm.globals
+                    || !self.shared_natives.contains(&wrapper) =>
+            {
+                object.realm
+            }
+            _ => self.realm.globals,
+        };
+        let previous_program = self.replace_active_program(program);
+        let previous_global = self.switch_realm_global(realm);
+        let native_depth = self.realm.promise.active_native.len();
+        self.realm
+            .promise
+            .active_native
+            .push(super::activation::NativeActivation {
+                callable: wrapper,
+                frame_depth: self.frames.len(),
+                boundary: super::activation::NativeCallBoundary::Opaque,
+            });
+
+        // The compiled-callout boundary catches Rust panics. Catch here long
+        // enough to restore the state this shortcut installs before resuming
+        // the panic to that boundary.
+        let called = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _stack = self.enter_stack()?;
+            self.check_execution_interrupt()?;
+            let receiver = self.string_method_receiver(p, Native::WasmHost, receiver)?;
+            self.with_call_roots([receiver], |vm| {
+                vm.call_wasm_js_import(target, memcpy_capture, signature, args)
+            })
+        }));
+
+        self.realm.promise.active_native.truncate(native_depth);
+        self.switch_realm_global(previous_global);
+        self.set_active_program(previous_program);
+        self.active_call_roots.truncate(call_roots);
+        match called {
+            Ok(result) => result,
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -273,6 +366,237 @@ mod tests {
     use super::*;
     use crate::{Engine, RootId, WasmFunctionBody, WasmHostFunctionId, WasmFunctionImport, WasmImportName, WasmType};
     use wasmparser::Operator;
+
+    fn compiled_js_import_module(name: &str, signature: WasmSignature) -> crate::WasmModule {
+        Engine::lower_wasm_module_with_imports(
+            name,
+            [WasmFunctionBody {
+                ty: crate::WasmCallableType::Embedded(WasmSignature {
+                    params: vec![],
+                    results: vec![WasmType::I32],
+                }),
+                locals: vec![],
+                operators: [
+                    Operator::I32Const { value: 7 },
+                    Operator::I32Const { value: 11 },
+                    Operator::I32Const { value: 13 },
+                    Operator::Call { function_index: 0 },
+                    Operator::End,
+                ]
+                .into_iter()
+                .map(Ok),
+            }],
+            &crate::WasmTypes::default(),
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[WasmFunctionImport {
+                exact: false,
+                ty: crate::WasmCallableType::Embedded(signature),
+                name: WasmImportName {
+                    index: 0,
+                    module: "env".into(),
+                    name: "jsImport".into(),
+                },
+            }],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn compiled_emscripten_memcpy_import_reads_current_view_and_honors_method_replacement() {
+        let signature = WasmSignature {
+            params: vec![WasmType::I32, WasmType::I32, WasmType::I32],
+            results: vec![],
+        };
+        let module = Engine::lower_wasm_module_with_imports(
+            "compiled-emscripten-memcpy-import",
+            [WasmFunctionBody {
+                ty: crate::WasmCallableType::Embedded(WasmSignature {
+                    params: vec![],
+                    results: vec![],
+                }),
+                locals: vec![],
+                operators: [
+                    Operator::I32Const { value: 7 },
+                    Operator::I32Const { value: 11 },
+                    Operator::I32Const { value: 13 },
+                    Operator::Call { function_index: 0 },
+                    Operator::End,
+                ]
+                .into_iter()
+                .map(Ok),
+            }],
+            &crate::WasmTypes::default(),
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[WasmFunctionImport {
+                exact: false,
+                ty: crate::WasmCallableType::Embedded(signature.clone()),
+                name: WasmImportName {
+                    index: 0,
+                    module: "env".into(),
+                    name: "_emscripten_memcpy_js".into(),
+                },
+            }],
+        )
+        .unwrap();
+
+        let mut vm = Vm::new(crate::SystemHost);
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        let owner = Engine::specialize("void 0", "compiled-emscripten-memcpy-owner.js").unwrap();
+        vm.execute(&owner).unwrap();
+        let script = vm
+            .compile_embedding_host_script(
+                "(() => { var HEAPU8 = new Uint8Array(Array.from({length: 32}, (_, i) => i)); const replacement = new Uint8Array(Array.from({length: 32}, (_, i) => 100 + i)); return { helper: (dest, src, num) => HEAPU8.copyWithin(dest, src, src + num), replacement }; })()",
+                "compiled-emscripten-memcpy-helper.js",
+                (0, 0),
+            )
+            .unwrap();
+        let exports = vm.evaluate_embedding_compiled_script(&script).unwrap();
+        // The helper and its replacement view are reached only through `exports` until the
+        // test stores them; collections in between must keep them.
+        let _exports_root = vm.root(exports);
+        let helper_atom = vm.intern_atom("helper");
+        let helper = vm.own_property(exports, helper_atom).unwrap();
+        let replacement_atom = vm.intern_atom("replacement");
+        let replacement = vm.own_property(exports, replacement_atom).unwrap();
+        let Cell::Function {
+            kind: FunctionKind::User(program_id, function_id),
+            env,
+            ..
+        } = vm.heap.get(helper).unwrap()
+        else {
+            panic!("helper should be a user function")
+        };
+        let helper_program = vm.programs.get(*program_id).unwrap();
+        let helper_metadata = &helper_program.functions[*function_id as usize];
+        let helper_source = helper_metadata.source_span.map(|span| {
+            &helper_program.source.as_ref().unwrap().text[span.start as usize..span.end as usize]
+        });
+        assert_eq!(
+            helper_source,
+            Some("(dest, src, num) => HEAPU8.copyWithin(dest, src, src + num)"),
+            "the source span used for exact-body recognition"
+        );
+        let view_atom = helper_program
+            .atoms
+            .iter()
+            .position(|atom| atom == "HEAPU8")
+            .unwrap() as u32;
+        assert!(
+            vm.outer_environment_binding(*env, view_atom).is_some(),
+            "the helper closure should expose its HEAPU8 lexical binding"
+        );
+        let (view_environment, view_slot) = vm
+            .emscripten_memcpy_view_capture(helper, &signature)
+            .expect("the exact helper and its lexical view should be recognized");
+        let target = crate::heap::WasmHostTarget::JsEmscriptenMemcpy(Box::new(
+            crate::heap::WasmHostMemcpyTarget {
+            function: helper,
+            view_environment,
+            view_slot,
+            },
+        ));
+        let imported = vm
+            .create_wasm_host_function("_emscripten_memcpy_js", target, signature.clone())
+            .unwrap();
+        let imported_root = vm.root(imported);
+        let instance = vm
+            .instantiate_wasm_module_with_imports(&module, &[imported_root])
+            .unwrap();
+
+        vm.invoke_wasm(&instance, 1, &[]).unwrap();
+        let original = vm
+            .heap
+            .environment_slot(view_environment, view_slot)
+            .unwrap();
+        assert_eq!(
+            (7..20)
+                .map(|index| vm.typed_array_get(original, index).unwrap().as_number().unwrap() as u8)
+                .collect::<Vec<_>>(),
+            (11..24).collect::<Vec<_>>()
+        );
+
+        *vm.heap
+            .environment_slot_mut(view_environment, view_slot)
+            .expect("captured HEAPU8 slot") = replacement;
+        vm.invoke_wasm(&instance, 1, &[]).unwrap();
+        assert_eq!(
+            (7..20)
+                .map(|index| vm.typed_array_get(replacement, index).unwrap().as_number().unwrap() as u8)
+                .collect::<Vec<_>>(),
+            (111..124).map(|value| value as u8).collect::<Vec<_>>()
+        );
+
+        let custom_method = vm
+            .compile_embedding_host_script(
+                "(function replacementCopyWithin() { this[0] = 99; return this; })",
+                "compiled-emscripten-memcpy-custom-method.js",
+                (0, 0),
+            )
+            .unwrap();
+        let custom_method = vm
+            .evaluate_embedding_compiled_script(&custom_method)
+            .unwrap();
+        vm.set_builtin_value_named(replacement, "copyWithin", custom_method)
+            .unwrap();
+        vm.invoke_wasm(&instance, 1, &[]).unwrap();
+        assert_eq!(vm.typed_array_get(replacement, 0).unwrap().as_number(), Some(99.0));
+
+        let shadowed = vm
+            .compile_embedding_host_script(
+                "(() => { let HEAPU8 = new Uint8Array(Array.from({length: 32}, (_, i) => i)); const alternate = new Uint8Array(Array.from({length: 32}, (_, i) => 100 + i)); let helper; with ({ HEAPU8: alternate }) { helper = (dest, src, num) => HEAPU8.copyWithin(dest, src, src + num); } return { helper, HEAPU8, alternate }; })()",
+                "compiled-emscripten-memcpy-with-shadow.js",
+                (0, 0),
+            )
+            .unwrap();
+        let shadowed = vm.evaluate_embedding_compiled_script(&shadowed).unwrap();
+        let shadowed_helper = vm.own_property(shadowed, helper_atom).unwrap();
+        let lexical_view_atom = vm.intern_atom("HEAPU8");
+        let lexical_view = vm.own_property(shadowed, lexical_view_atom).unwrap();
+        let alternate_atom = vm.intern_atom("alternate");
+        let alternate_view = vm
+            .own_property(shadowed, alternate_atom)
+            .unwrap();
+        assert_eq!(
+            vm.emscripten_memcpy_view_capture(shadowed_helper, &signature),
+            None,
+            "a with-shadowed free name must not specialize to an outer lexical slot"
+        );
+        let shadowed_import = vm
+            .create_wasm_host_function(
+                "_emscripten_memcpy_js",
+                crate::heap::WasmHostTarget::Js(shadowed_helper),
+                signature.clone(),
+            )
+            .unwrap();
+        let shadowed_root = vm.root(shadowed_import);
+        let shadowed_instance = vm
+            .instantiate_wasm_module_with_imports(&module, &[shadowed_root])
+            .unwrap();
+        vm.invoke_wasm(&shadowed_instance, 1, &[]).unwrap();
+        assert_eq!(
+            (7..20)
+                .map(|index| vm.typed_array_get(alternate_view, index).unwrap().as_number().unwrap() as u8)
+                .collect::<Vec<_>>(),
+            (111..124).map(|value| value as u8).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            (7..20)
+                .map(|index| vm.typed_array_get(lexical_view, index).unwrap().as_number().unwrap() as u8)
+                .collect::<Vec<_>>(),
+            (7..20).collect::<Vec<_>>(),
+            "the with object shadows the outer lexical HEAPU8"
+        );
+        assert!(vm.realm.promise.active_native.is_empty());
+        assert!(vm.active_call_roots.is_empty());
+    }
 
     #[derive(Default)]
     enum Reply {
@@ -499,5 +823,218 @@ mod tests {
         for value in [payload, function, descriptor] {
             assert!(!vm.heap.is_live(value));
         }
+    }
+
+    #[test]
+    fn compiled_js_import_converts_inline_arguments_and_result() {
+        let signature = WasmSignature {
+            params: vec![WasmType::I32, WasmType::I32, WasmType::I32],
+            results: vec![WasmType::I32],
+        };
+        let body_signature = WasmSignature {
+            params: vec![],
+            results: vec![WasmType::I32],
+        };
+        let module = Engine::lower_wasm_module_with_imports(
+            "compiled-js-import-inline-arguments",
+            [WasmFunctionBody {
+                ty: crate::WasmCallableType::Embedded(body_signature),
+                locals: vec![],
+                operators: [
+                    Operator::I32Const { value: 7 },
+                    Operator::I32Const { value: 11 },
+                    Operator::I32Const { value: 13 },
+                    Operator::Call { function_index: 0 },
+                    Operator::End,
+                ]
+                .into_iter()
+                .map(Ok),
+            }],
+            &crate::WasmTypes::default(),
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[WasmFunctionImport {
+                exact: false,
+                ty: crate::WasmCallableType::Embedded(signature.clone()),
+                name: WasmImportName {
+                    index: 0,
+                    module: "env".into(),
+                    name: "_emscripten_memcpy_js".into(),
+                },
+            }],
+        )
+        .unwrap();
+        let mut vm = Vm::new(crate::SystemHost);
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        let owner = Engine::specialize("void 0", "compiled-js-import-owner.js").unwrap();
+        vm.execute(&owner).unwrap();
+        let helper = vm
+            .compile_embedding_host_script(
+                "(dest,src,num)=>dest*10000+src*100+num",
+                "compiled-js-import-helper.js",
+                (0, 0),
+            )
+            .unwrap();
+        let target = vm.evaluate_embedding_compiled_script(&helper).unwrap();
+        let imported = vm
+            .create_wasm_host_function(
+                "_emscripten_memcpy_js",
+                crate::heap::WasmHostTarget::Js(target),
+                signature,
+            )
+            .unwrap();
+        let imported_root = vm.root(imported);
+        let instance = vm
+            .instantiate_wasm_module_with_imports(&module, &[imported_root])
+            .unwrap();
+
+        assert_eq!(
+            vm.invoke_wasm(&instance, 1, &[]).unwrap(),
+            Some(WasmValue::I32(71_113))
+        );
+        assert!(vm.realm.promise.active_native.is_empty());
+        assert!(vm.active_call_roots.is_empty());
+        assert_eq!(vm.active_program, crate::vm::ProgramId::MAIN);
+    }
+
+    #[test]
+    fn compiled_js_import_keeps_opaque_caller_boundary() {
+        let signature = WasmSignature {
+            params: vec![WasmType::I32, WasmType::I32, WasmType::I32],
+            results: vec![WasmType::I32],
+        };
+        let module = compiled_js_import_module(
+            "compiled-js-import-opaque-caller",
+            signature.clone(),
+        );
+        let mut vm = Vm::new(crate::SystemHost);
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        let owner = Engine::specialize("void 0", "compiled-js-import-caller-owner.js").unwrap();
+        vm.execute(&owner).unwrap();
+        let helper = vm
+            .compile_embedding_host_script(
+                "(function imported(){ return imported.caller === null ? 1 : 0; })",
+                "compiled-js-import-caller.js",
+                (0, 0),
+            )
+            .unwrap();
+        let target = vm.evaluate_embedding_compiled_script(&helper).unwrap();
+        let imported = vm
+            .create_wasm_host_function(
+                "jsImport",
+                crate::heap::WasmHostTarget::Js(target),
+                signature,
+            )
+            .unwrap();
+        let imported_root = vm.root(imported);
+        let instance = vm
+            .instantiate_wasm_module_with_imports(&module, &[imported_root])
+            .unwrap();
+
+        assert_eq!(
+            vm.invoke_wasm(&instance, 1, &[]).unwrap(),
+            Some(WasmValue::I32(1))
+        );
+        assert!(vm.realm.promise.active_native.is_empty());
+        assert!(vm.active_call_roots.is_empty());
+        assert_eq!(vm.active_program, crate::vm::ProgramId::MAIN);
+    }
+
+    #[test]
+    fn compiled_js_import_preserves_strict_undefined_receiver() {
+        let signature = WasmSignature {
+            params: vec![WasmType::I32, WasmType::I32, WasmType::I32],
+            results: vec![WasmType::I32],
+        };
+        let module = compiled_js_import_module(
+            "compiled-js-import-strict-receiver",
+            signature.clone(),
+        );
+        let mut vm = Vm::new(crate::SystemHost);
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        let owner = Engine::specialize("void 0", "compiled-js-import-strict-owner.js").unwrap();
+        vm.execute(&owner).unwrap();
+        let helper = vm
+            .compile_embedding_host_script(
+                "(function imported(){ 'use strict'; return this === undefined ? 1 : 0; })",
+                "compiled-js-import-strict.js",
+                (0, 0),
+            )
+            .unwrap();
+        let target = vm.evaluate_embedding_compiled_script(&helper).unwrap();
+        let imported = vm
+            .create_wasm_host_function(
+                "jsImport",
+                crate::heap::WasmHostTarget::Js(target),
+                signature,
+            )
+            .unwrap();
+        let imported_root = vm.root(imported);
+        let instance = vm
+            .instantiate_wasm_module_with_imports(&module, &[imported_root])
+            .unwrap();
+
+        assert_eq!(
+            vm.invoke_wasm(&instance, 1, &[]).unwrap(),
+            Some(WasmValue::I32(1))
+        );
+        assert!(vm.realm.promise.active_native.is_empty());
+        assert!(vm.active_call_roots.is_empty());
+        assert_eq!(vm.active_program, crate::vm::ProgramId::MAIN);
+    }
+
+    #[test]
+    fn compiled_js_import_throw_after_collection_restores_roots_and_vm_state() {
+        let signature = WasmSignature {
+            params: vec![WasmType::I32, WasmType::I32, WasmType::I32],
+            results: vec![WasmType::I32],
+        };
+        let module = compiled_js_import_module("compiled-js-import-throw-gc", signature.clone());
+        let mut vm = Vm::new(crate::SystemHost);
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        let owner = Engine::specialize("void 0", "compiled-js-import-throw-owner.js").unwrap();
+        vm.execute(&owner).unwrap();
+        let gc = vm.native_value(Native::CollectGarbage);
+        vm.set_builtin_value_named(vm.realm.globals, "gc", gc)
+            .unwrap();
+        let helper = vm
+            .compile_embedding_host_script(
+                "(() => { const marker = {}; const imported = function imported(){ gc(); throw marker; }; imported.marker = marker; return imported; })()",
+                "compiled-js-import-throw.js",
+                (0, 0),
+            )
+            .unwrap();
+        let target = vm.evaluate_embedding_compiled_script(&helper).unwrap();
+        let marker_atom = vm.intern_atom("marker");
+        let marker = vm
+            .own_property(target, marker_atom)
+            .expect("the imported target retains its thrown marker");
+        let imported = vm
+            .create_wasm_host_function(
+                "jsImport",
+                crate::heap::WasmHostTarget::Js(target),
+                signature,
+            )
+            .unwrap();
+        let imported_root = vm.root(imported);
+        let instance = vm
+            .instantiate_wasm_module_with_imports(&module, &[imported_root])
+            .unwrap();
+        let roots_before = vm.heap.root_count_for_test();
+        let realm_before = vm.realm.globals;
+
+        let error = vm.invoke_wasm(&instance, 1, &[]).unwrap_err();
+
+        assert_eq!(error.thrown_value(), Some(marker));
+        assert_eq!(vm.heap.root_count_for_test(), roots_before);
+        assert!(vm.realm.promise.active_native.is_empty());
+        assert!(vm.active_call_roots.is_empty());
+        assert_eq!(vm.active_program, crate::vm::ProgramId::MAIN);
+        assert_eq!(vm.realm.globals, realm_before);
+        assert!(vm.heap.is_live(target));
+        assert!(vm.heap.is_live(marker));
     }
 }

@@ -779,7 +779,7 @@ impl<H: Host> Vm<H> {
             )?;
             let formatted = if let Some(Cell::BigInt(value)) = vm.heap.get(value) {
                 quench_intl::format_bigint(
-                    value,
+                    &value.to_string(),
                     &quench_intl::BigIntFormatOptions {
                         locale: &locale,
                         style: &style,
@@ -1207,7 +1207,7 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<f64, JsError> {
         if let Some(Cell::BigInt(value)) = self.heap.get(value) {
-            return Ok(value.parse::<f64>().unwrap_or(f64::INFINITY));
+            return Ok(crate::bigint::to_f64(value));
         }
         self.to_number(p, value)
     }

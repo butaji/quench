@@ -1271,7 +1271,7 @@ impl<H: Host> Vm<H> {
         } else {
             match self.heap.get(key) {
                 Some(Cell::String(text)) => text.hash(&mut hasher),
-                Some(Cell::BigInt(digits)) => digits.hash(&mut hasher),
+                Some(Cell::BigInt(value)) => value.hash(&mut hasher),
                 _ => key.hash(&mut hasher),
             }
         }

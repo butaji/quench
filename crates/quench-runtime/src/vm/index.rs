@@ -61,6 +61,27 @@ impl<H: Host> Vm<H> {
         Some(self.heap.alloc(Cell::String(JsString::from_units(&[unit]))))
     }
 
+    /// `get_index` of a string at an integer key inside its length: the one-unit string
+    /// there (`string_index_value`). `None` for any other read.
+    pub(super) fn string_element(&mut self, string: Value, key: Value) -> Option<Value> {
+        let index = key
+            .as_number()
+            .filter(|number| number.fract() == 0.0 && (0.0..=f64::from(u32::MAX)).contains(number))?;
+        self.string_index_value(string, index as usize)
+    }
+
+    /// `get_index` of a typed array at an index key where it allocates nothing: an element
+    /// of a non-BigInt kind, or `undefined` past the end. `None` for any other read.
+    pub(super) fn plain_typed_element(&mut self, object: Value, key: Value) -> Option<Value> {
+        let index = self.array_index_key(key)? as usize;
+        match self.heap.get(object) {
+            Some(Cell::TypedArray { kind, .. })
+                if !matches!(kind, TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64) => {}
+            _ => return None,
+        }
+        self.typed_array_get(object, index)
+    }
+
     pub(super) fn get_index(
         &mut self,
         p: &ResidualProgram,

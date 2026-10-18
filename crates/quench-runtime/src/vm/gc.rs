@@ -1,6 +1,7 @@
 use super::module::ModuleRecord;
 use super::promise::PromiseState;
 use super::*;
+use smallvec::SmallVec;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 // RayTrace's allocation trace shows about 40–43% of its shape table is
@@ -79,6 +80,12 @@ fn append_shape_roots(
 /// Parallel GC readers need only the immutable shape transition metadata.
 /// `Shape` also contains `Cell` and `OnceCell` caches, which this view never
 /// reads or mutates while workers are active.
+/// Edges kept outside their owner's cell (descriptors, promise and continuation tables),
+/// indexed by owner for the collection that derived them. Owners hold one or two such edges
+/// (doxbee-promise: 20k-55k owners at 1-2 edges each), so they stay inline.
+type OwnedRoots = FxHashMap<Value, SmallVec<[Value; OWNED_ROOTS_INLINE]>>;
+const OWNED_ROOTS_INLINE: usize = 2;
+
 struct ParallelShapeTrace<'a> {
     shapes: *const Shape,
     shape_count: usize,
@@ -86,7 +93,7 @@ struct ParallelShapeTrace<'a> {
     marked_shapes: &'a [AtomicU64],
     marked_constructor_shapes: &'a [AtomicU64],
     constructors: &'a [Value],
-    owned_roots: &'a FxHashMap<Value, Vec<Value>>,
+    owned_roots: &'a OwnedRoots,
     _shape_borrow: std::marker::PhantomData<&'a [Shape]>,
 }
 
@@ -299,6 +306,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn collect_slow(&mut self, _program: &ResidualProgram, full: bool) {
+        self.invalidate_wasm_reference_caches();
         let full = self.heap.collection_is_full(full);
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("QUENCH_FUNCTION_USE").is_some() {
@@ -318,7 +326,15 @@ impl<H: Host> Vm<H> {
         }
         // Out-of-cell metadata belongs to its object. Derive the edge index for
         // this collection and visit it only when the owner becomes reachable.
-        let mut owned_roots: FxHashMap<Value, Vec<Value>> = FxHashMap::default();
+        let mut owned_roots = OwnedRoots::with_capacity_and_hasher(
+            self.gc_owned_root_count,
+            Default::default(),
+        );
+        let mut own = |owner: Value, edge: Value| {
+            if edge.heap_index().is_some() {
+                owned_roots.entry(owner).or_default().push(edge);
+            }
+        };
         let attached_continuations: FxHashSet<_> = self
             .realm
             .promise
@@ -326,33 +342,24 @@ impl<H: Host> Vm<H> {
             .values()
             .map(|job| job.continuation)
             .collect();
-        let continuation_edges =
-            self.realm
-                .promise
-                .async_resume_jobs
-                .iter()
-                .flat_map(|(owner, job)| {
-                    self.suspended_continuation(job.continuation)
-                        .into_iter()
-                        .flat_map(Continuation::roots)
-                        .map(move |edge| (*owner, edge))
-                });
-        let descriptor_edges = self
-            .descriptors
-            .iter()
-            .flat_map(|((owner, key), attributes)| {
-                key.symbol_value()
-                    .into_iter()
-                    .chain([attributes.getter, attributes.setter].into_iter().flatten())
-                    .map(move |edge| (*owner, edge))
-            });
-        for (owner, edge) in descriptor_edges
-            .chain(self.realm.promise.owned_edges())
-            .chain(continuation_edges)
-            .filter(|(_, edge)| edge.heap_index().is_some())
-        {
-            owned_roots.entry(owner).or_default().push(edge);
+        for ((owner, key), attributes) in &self.descriptors {
+            for edge in key
+                .symbol_value()
+                .into_iter()
+                .chain([attributes.getter, attributes.setter].into_iter().flatten())
+            {
+                own(*owner, edge);
+            }
         }
+        self.realm.promise.for_each_owned_edge(&mut own);
+        for (owner, job) in &self.realm.promise.async_resume_jobs {
+            if let Some(continuation) = self.suspended_continuation(job.continuation) {
+                for edge in continuation.roots() {
+                    own(*owner, edge);
+                }
+            }
+        }
+        self.gc_owned_root_count = owned_roots.len();
         let external_roots = if full {
             Vec::new()
         } else {
@@ -684,18 +691,10 @@ impl<H: Host> Vm<H> {
             // A missing map means the function uses a register form
             // the liveness pass cannot represent; keep the safe
             // conservative scan for that activation.
-            let register_mask = self.programs.get(frame.program).and_then(|program| {
-                let function = program.functions.get(frame.function as usize)?;
-                (function.register_root_offset != crate::bytecode::NO_REGISTER_ROOT_MAP)
-                    .then(|| {
-                        program.register_roots.mask(
-                            function.register_root_offset,
-                            function.registers,
-                            frame.pc,
-                        )
-                    })
-                    .flatten()
-            });
+            let register_mask = self
+                .programs
+                .residual(frame.program)
+                .and_then(|program| program.register_root_mask(frame.function, frame.pc));
             [frame.env, frame.this]
                 .into_iter()
                 .chain(frame.context.callee())
@@ -776,6 +775,7 @@ impl<H: Host> Vm<H> {
         // into newly freed slots.
         let heap = &self.heap;
         self.programs.prune_owned_script_realms(|realm| heap.weak_value(realm).is_some());
+        self.programs.clear_wasm_reference_caches();
         self.prune_function_values();
         self.prune_wasm_exported_functions();
         // A home stays reachable through its environment; entries of swept environments go
@@ -818,19 +818,7 @@ impl<H: Host> Vm<H> {
         );
         self.descriptors
             .retain(|(object, _), _| self.heap.is_live(*object));
-        let mut abandoned_job_contexts = Vec::new();
-        self.realm.promise.records.retain(|promise, record| {
-            let live = self.heap.is_live(*promise);
-            if !live {
-                abandoned_job_contexts.extend(
-                    record
-                        .reactions
-                        .iter()
-                        .filter_map(|reaction| reaction.execution_context),
-                );
-            }
-            live
-        });
+        let mut abandoned_job_contexts = self.heap.take_abandoned_job_contexts();
         self.realm.promise.thenable_jobs.retain(|job, record| {
             let live = self.heap.is_live(*job);
             if !live {
@@ -1052,10 +1040,7 @@ impl<H: Host> Vm<H> {
         promise: Value,
     ) -> Result<(), JsError> {
         while self
-            .realm
-            .promise
-            .records
-            .get(&promise)
+            .promise_record(promise)
             .is_some_and(|record| record.state == PromiseState::Pending)
             && let Some(job) = self.realm.jobs.pop_front()
         {

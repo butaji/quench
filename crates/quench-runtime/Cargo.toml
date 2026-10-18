@@ -41,6 +41,7 @@ hashbrown = { version = "0.16", default-features = false }
 rayon = "1.12.0"
 smallvec = "1.15.2"
 num-bigint = "0.4"
+num-traits = "0.2"
 quench-regexp = { path = "../quench-regexp" }
 quench-intl = { path = "../quench-intl" }
 quench-temporal = { path = "../quench-temporal" }

@@ -221,7 +221,7 @@ impl<H: Host> Vm<H> {
             B::Date => matches!(cell, Some(Cell::Date { .. })),
             B::RegExp => matches!(cell, Some(Cell::RegExp { .. })),
             B::NativeError => self.error_is_error(value) || matches!(cell, Some(Cell::Error(_))),
-            B::Promise => self.realm.promise.records.contains_key(&value),
+            B::Promise => self.is_promise(value),
             B::Map => matches!(cell, Some(Cell::Map { .. })),
             B::Set => matches!(cell, Some(Cell::Set { .. })),
             B::WeakMap => matches!(cell, Some(Cell::WeakMap { .. })),
@@ -460,7 +460,7 @@ impl<H: Host> Vm<H> {
         if self.error_is_error(value) {
             return Ok(Some(D::Error));
         }
-        if self.realm.promise.records.contains_key(&value) {
+        if self.is_promise(value) {
             return Ok(Some(D::Opaque));
         }
         if value.direct_object_index().is_some() {
@@ -658,7 +658,7 @@ impl<H: Host> Vm<H> {
                 if Self::detail_bigint_is_too_large(integer) {
                     "<a very large BigInt>".into()
                 } else {
-                    integer.clone()
+                    integer.to_string()
                 }
             }
             Some(Cell::Symbol(description)) => Self::detail_symbol(description.as_deref()),
@@ -670,36 +670,9 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn detail_bigint_is_too_large(integer: &str) -> bool {
-        const MAX_V8_DETAIL_BIGINT_LIMBS: usize = 100;
-
-        let digits = integer
-            .strip_prefix('-')
-            .unwrap_or(integer)
-            .trim_start_matches('0');
-        if digits.is_empty() || digits.parse::<usize>().is_ok() {
-            return false;
-        }
-
-        let mut limbs = vec![0usize];
-        for byte in digits.bytes() {
-            let Some(digit) = byte.checked_sub(b'0').filter(|digit| *digit <= 9) else {
-                return false;
-            };
-            let mut carry = u128::from(digit);
-            for limb in &mut limbs {
-                let product = (*limb as u128) * 10 + carry;
-                *limb = product as usize;
-                carry = product >> usize::BITS;
-            }
-            if carry != 0 {
-                limbs.push(carry as usize);
-                if limbs.len() > MAX_V8_DETAIL_BIGINT_LIMBS {
-                    return true;
-                }
-            }
-        }
-        limbs.len() > MAX_V8_DETAIL_BIGINT_LIMBS
+    fn detail_bigint_is_too_large(integer: &num_bigint::BigInt) -> bool {
+        const MAX_V8_DETAIL_BIGINT_LIMBS: u64 = 100;
+        integer.bits() > MAX_V8_DETAIL_BIGINT_LIMBS * u64::from(usize::BITS)
     }
 
     fn detail_symbol(description: Option<&str>) -> String {
@@ -781,7 +754,7 @@ impl<H: Host> Vm<H> {
     pub(crate) fn embedding_resolve_promise(&mut self, promise: RootId, value: RootId) -> Result<(), JsError> {
         let promise = self.embedding_value(promise)?;
         let value = self.embedding_value(value)?;
-        let state = self.realm.promise.records.get(&promise)
+        let state = self.promise_record(promise)
             .ok_or_else(|| JsError("value does not have Promise internal slots".into()))?.state;
         if state != super::promise::PromiseState::Pending { return Ok(()); }
         let program = self.embedding_program()?;
@@ -791,7 +764,7 @@ impl<H: Host> Vm<H> {
     pub(crate) fn embedding_reject_promise(&mut self, promise: RootId, reason: RootId) -> Result<(), JsError> {
         let promise = self.embedding_value(promise)?;
         let reason = self.embedding_value(reason)?;
-        if !self.realm.promise.records.contains_key(&promise) {
+        if !self.is_promise(promise) {
             return Err(JsError("value does not have Promise internal slots".into()));
         }
         let program = self.embedding_program()?;
@@ -801,7 +774,7 @@ impl<H: Host> Vm<H> {
     pub(crate) fn embedding_promise_snapshot(&self, root: RootId) -> Result<Option<crate::PromiseSnapshot<Value>>, JsError> {
         use crate::PromiseSnapshot as Snapshot;
         let value = self.embedding_value(root)?;
-        Ok(self.realm.promise.records.get(&value).map(|record| match record.state {
+        Ok(self.promise_record(value).map(|record| match record.state {
             super::promise::PromiseState::Pending => Snapshot::Pending,
             super::promise::PromiseState::Fulfilled => Snapshot::Fulfilled(record.result),
             super::promise::PromiseState::Rejected => Snapshot::Rejected(record.result),
@@ -810,7 +783,7 @@ impl<H: Host> Vm<H> {
 
     pub(crate) fn embedding_mark_promise_handled(&mut self, root: RootId) -> Result<(), JsError> {
         let promise = self.embedding_value(root)?;
-        if !self.realm.promise.records.contains_key(&promise) {
+        if !self.is_promise(promise) {
             return Err(JsError("value does not have Promise internal slots".into()));
         }
         self.observe_promise_rejection(promise);
@@ -1054,7 +1027,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(crate) fn bigint_rooted(&mut self, integer: i128) -> RootId {
-        let value = self.heap.alloc(Cell::BigInt(integer.to_string()));
+        let value = self.heap.alloc(Cell::bigint(integer.into()));
         self.root(value)
     }
 
@@ -1213,10 +1186,15 @@ impl<H: Host> Vm<H> {
         result
     }
 
-    fn is_realm_global(&self, value: Value) -> bool {
+    /// Whether `value` is a realm's global object, live or parked.
+    pub(super) fn is_global_object(&self, value: Value) -> bool {
         value == self.realm.globals
             || self.realm.global_lexical_states.contains_key(&value)
             || self.realm.parked.as_ref().is_some_and(|parked| parked.global == value)
+    }
+
+    fn is_realm_global(&self, value: Value) -> bool {
+        self.is_global_object(value)
             || self
                 .realm
                 .intrinsics
@@ -1355,6 +1333,24 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         )
+    }
+
+    pub(crate) fn pending_lazy_data_property_rooted(
+        &mut self,
+        holder: RootId,
+        key: RootId,
+        listener: RootId,
+        index: u32,
+    ) -> Result<Option<Value>, JsError> {
+        let holder = self.embedding_value(holder)?;
+        let key = self.embedding_value(key)?;
+        let listener = self.embedding_value(listener)?;
+        // Lazy data properties have string keys.
+        let Some(Cell::String(name)) = self.heap.get(key).cloned() else {
+            return Ok(None);
+        };
+        let key = PropertyKey::string(self.intern_js_atom(&name));
+        Ok(self.pending_lazy_data_property(holder, key, listener, index))
     }
 
     pub(crate) fn materialize_lazy_data_property_rooted(

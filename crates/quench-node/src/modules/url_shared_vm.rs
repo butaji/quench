@@ -27,7 +27,26 @@ pub(crate) fn to_path_if_file_url(c: &mut Context<'_>, _: RootId, args: &[RootId
         Some(value) => *value,
         None => c.undefined(),
     };
+    // Node's `isURL` first reads `href`, which a string finds only on its prototypes: with none
+    // there, a string path is returned as it is, and Node's URL module is not needed.
+    if c.string_text(value)?.is_some() && !strings_have_href(c)? {
+        return Ok(value);
+    }
     internal(c, "toPathIfFileURL", &[value])
+}
+
+/// Whether a string primitive finds an `href` property (its prototype chain is the realm's
+/// `String.prototype` and `Object.prototype`); [[HasProperty]] on them runs no script.
+fn strings_have_href(c: &mut Context<'_>) -> Result<bool, RootedError> {
+    let prototype = c.with_startup_intrinsics(|c| {
+        let global = c.global_root()?;
+        let key = c.string_rooted("String");
+        let constructor = c.get_property_rooted(global, key)?;
+        let key = c.string_rooted("prototype");
+        c.get_property_rooted(constructor, key)
+    })?;
+    let key = c.string_rooted("href");
+    c.has_property_rooted(prototype, key)
 }
 
 pub(crate) fn file_url_to_path(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {

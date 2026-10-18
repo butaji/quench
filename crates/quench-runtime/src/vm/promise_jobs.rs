@@ -623,7 +623,7 @@ impl<H: Host> Vm<H> {
             |vm| {
                 vm.promise_job_boundary(thenable.execution_context, true)?;
                 if vm.is_intrinsic_promise_then(thenable.then)
-                    && vm.realm.promise.records.contains_key(&thenable.thenable)
+                    && vm.is_promise(thenable.thenable)
                     && !vm
                         .realm
                         .promise

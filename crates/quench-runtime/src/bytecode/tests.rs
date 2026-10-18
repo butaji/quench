@@ -130,7 +130,7 @@ fn decoder_rejects_out_of_range_local_load() {
             params: 0,
             length: 0,
             parameter_end_pc: 0,
-            parameter_atoms: vec![],
+            parameter_atoms: vec![].into(),
             rest: false,
             is_async: false,
             is_generator: false,
@@ -145,17 +145,17 @@ fn decoder_rejects_out_of_range_local_load() {
             simple_parameters: true,
             strict: false,
             locals: 1,
-            local_atoms: vec![],
-            environment_atoms: vec![],
+            local_atoms: vec![].into(),
+            environment_atoms: vec![].into(),
             selective_capture_slots: None,
-            local_registers: Vec::new(),
+            local_registers: Vec::new().into(),
             inherited_with_scope: false,
-            lexical_atoms: vec![],
+            lexical_atoms: vec![].into(),
             global_declarations: None,
             name_bindings: Default::default(),
-            binding_sites: vec![],
+            binding_sites: vec![].into(),
             source_positions: Default::default(),
-            environment_clones: vec![],
+            environment_clones: vec![].into(),
             code: vec![Instr::new(Op::LoadLocal, 0, 0, 0, 1)],
             wide: vec![],
             registers: 1,
@@ -167,8 +167,8 @@ fn decoder_rejects_out_of_range_local_load() {
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
             call_plan: Default::default(),
-            handlers: vec![],
-            register_root_offset: 0,
+            handlers: vec![].into(),
+            register_roots: Default::default(),
             undefined_register: None,
             parameter_registers: None,
             initial_register: Default::default(),
@@ -179,8 +179,8 @@ fn decoder_rejects_out_of_range_local_load() {
         field_sites: vec![],
         object_sites: vec![],
         regexp_literal_sites: vec![],
+        literal_templates: Vec::new(),
         superinstructions: vec![],
-        register_roots: Default::default(),
     };
     let path = std::env::temp_dir().join(format!("quench-invalid-local-{}", std::process::id()));
     program.write_binary(&path).unwrap();
@@ -211,7 +211,7 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             params: 0,
             length: 0,
             parameter_end_pc: 0,
-            parameter_atoms: vec![],
+            parameter_atoms: vec![].into(),
             rest: false,
             is_async: false,
             is_generator: false,
@@ -226,17 +226,17 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             simple_parameters: true,
             strict: false,
             locals: 0,
-            local_atoms: vec![],
-            environment_atoms: vec![],
+            local_atoms: vec![].into(),
+            environment_atoms: vec![].into(),
             selective_capture_slots: None,
-            local_registers: Vec::new(),
+            local_registers: Vec::new().into(),
             inherited_with_scope: false,
-            lexical_atoms: vec![],
+            lexical_atoms: vec![].into(),
             global_declarations: None,
             name_bindings: Default::default(),
-            binding_sites: vec![],
+            binding_sites: vec![].into(),
             source_positions: Default::default(),
-            environment_clones: vec![],
+            environment_clones: vec![].into(),
             code: vec![Instr::new(Op::Return, 0, 0, 0, 0)],
             wide: vec![],
             registers: 1,
@@ -248,8 +248,8 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
             call_plan: Default::default(),
-            handlers: vec![],
-            register_root_offset: u32::MAX,
+            handlers: vec![].into(),
+            register_roots: Default::default(),
             undefined_register: None,
             parameter_registers: None,
             initial_register: Default::default(),
@@ -260,8 +260,8 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
         field_sites: vec![],
         object_sites: vec![],
         regexp_literal_sites: vec![],
+        literal_templates: Vec::new(),
         superinstructions: vec![],
-        register_roots: Default::default(),
     };
     let path = std::env::temp_dir().join(format!("quench-invalid-abi-{}", std::process::id()));
     program.write_binary(&path).unwrap();
@@ -428,9 +428,11 @@ fn decoder_rejects_invalid_binding_site_metadata() {
                 function.binding_sites[0].bindings[0].location =
                     EvalBindingLocation::Local(function.locals)
             }
-            3 => function
-                .binding_sites
-                .insert(0, function.binding_sites[0].clone()),
+            3 => {
+                let mut sites = function.binding_sites.to_vec();
+                sites.insert(0, sites[0].clone());
+                function.binding_sites = sites.into();
+            }
             _ => unreachable!(),
         }
         invalid.write_binary(&path).unwrap();
