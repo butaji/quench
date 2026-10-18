@@ -357,7 +357,7 @@ impl Frame {
     #[inline(always)]
     fn prepare_registers_for(&mut self, function: &crate::bytecode::Function) {
         let register_count = usize::from(function.registers);
-        if function.register_root_offset == crate::bytecode::NO_REGISTER_ROOT_MAP
+        if !function.register_roots.covered()
             || function.is_generator
             || function.is_async
             || function.initial_register != crate::bytecode::InitialRegister::Undefined
@@ -715,6 +715,9 @@ const FIELD_MEGAMORPHIC_INLINE: usize = 4;
 const FIELD_MEGAMORPHIC_LIMIT: usize = 256;
 struct FieldCacheSet {
     len: u8,
+    /// Whether any entry recorded an own field (`NO_FIELD_HOLDER`); a set without one names
+    /// only prototype holders, so a read probes no own entry.
+    holds_own: bool,
     entries: [FieldCache; FIELD_MEGAMORPHIC_INLINE],
     overflow: Option<Box<FxHashMap<u64, FieldCache>>>,
 }
@@ -872,6 +875,12 @@ impl DataAttributes {
 const DEFAULT_DATA_ATTRIBUTES: DataAttributes = DataAttributes {
     writable: true,
     enumerable: true,
+    configurable: true,
+};
+/// The attributes of a function's own `length` and `name`.
+const FUNCTION_INFO_ATTRIBUTES: DataAttributes = DataAttributes {
+    writable: false,
+    enumerable: false,
     configurable: true,
 };
 /// `ShapeAttributes::accessors` of attributes with neither getter nor setter.
@@ -1109,12 +1118,17 @@ struct Shape {
     /// Memo of whether this immutable shape's keys include an array-index name: `None` until
     /// first derived (`Vm::shape_has_index_key`). Dictionary shapes never memoize.
     index_keys: std::cell::Cell<Option<bool>>,
+    /// The child of this shape's latest cached transition (`NO_LAST_CHILD` before one), tried
+    /// before the transition index: objects of one layout grow by the same keys in turn.
+    last_child: std::cell::Cell<u32>,
 }
 // Every object layout and property key costs one shape; keep the record compact.
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(size_of::<Shape>() == 48);
+const _: () = assert!(size_of::<Shape>() == 56);
 /// `Shape::parent` of the root shape.
 const NO_PARENT_SHAPE: u32 = u32::MAX;
+/// `Shape::last_child` before the shape has a cached transition.
+const NO_LAST_CHILD: u32 = u32::MAX;
 const PROTOTYPE_SLOT_UNKNOWN: u32 = u32::MAX;
 const PROTOTYPE_SLOT_NONE: u32 = u32::MAX - 1;
 /// The shape table's initial capacity, above what a builtin realm uses (about 1900 shapes).
@@ -1158,6 +1172,7 @@ impl Shape {
             long_walks: std::cell::Cell::new(0),
             prototype_slot: std::cell::Cell::new(PROTOTYPE_SLOT_UNKNOWN),
             index_keys: std::cell::Cell::new(None),
+            last_child: std::cell::Cell::new(NO_LAST_CHILD),
         }
     }
 }
@@ -1340,12 +1355,17 @@ pub(crate) struct Vm<H> {
     pub(crate) native_root_lists: Vec<Vec<RootId>>,
     /// The roots the last collection gathered, which sizes the next one's root vector.
     gc_root_count: usize,
+    /// Owners with out-of-cell edges at the previous collection, which sizes the next index.
+    gc_owned_root_count: usize,
     frame_pool: Vec<Box<Frame>>,
     /// Activations a running lane holds without frames.
     lane_stack: dispatch_fast::LaneStack,
     /// Whether Wasm functions with a compiled denotation run as native code.
     execution_mode: ExecutionMode,
     execution_interrupt: crate::ExecutionInterrupt,
+    /// Invalidates monomorphic `call_indirect` certificates after a table
+    /// mutation or collection that can change target identity.
+    wasm_reference_epoch: std::cell::Cell<u64>,
     active_call_roots: Vec<Value>,
     with_stack: Vec<Value>,
     /// The realm's intrinsics as the host bootstrap left them (`seal_startup_intrinsics`).
@@ -1396,7 +1416,8 @@ pub(crate) struct Vm<H> {
     /// The strings most recently matched by a RegExp, most recent first, each prepared once
     /// for repeated matching (`Vm::regexp_subject`).
     regexp_subjects: Vec<Rc<quench_regexp::Subject>>,
-    /// The subject of the last short string matched, reused in place once no match holds it.
+    /// The last short subject matched, recognized by content and otherwise reused in place
+    /// once no match holds it (`Vm::regexp_subject`).
     regexp_short_subject: Option<Rc<quench_regexp::Subject>>,
     regexp_matchers: regexp::RegExpMatcherCache,
     // One lazily derived class byte per atom; length tracks `atom_sequence`.
@@ -1469,6 +1490,9 @@ pub(crate) struct Vm<H> {
     /// Private-name home objects found by `private_name_home`, kept while their starting
     /// environment is live.
     private_homes: FxHashMap<PrivateHomeKey, Value>,
+    /// The collation `String.prototype.localeCompare` resolves without locales or options
+    /// (`Vm::locale_compare_collation`); the host's default locale fixes it.
+    default_collation: Option<std::rc::Rc<intl_collator::Collation>>,
     wasm_js: wasm_js::WasmJsIntrinsics,
     direct_eval: bool,
     direct_eval_var_program: Option<ProgramId>,
@@ -1896,9 +1920,9 @@ impl<H: Host> Vm<H> {
         let (_, collections, _, _, _, _) = self.heap.stats();
         let gc = self.heap.gc_profile();
         eprintln!(
-            "{{\"kind\":\"quench-gc-time\",\"collections\":{collections},\"full_collections\":{},\"full_mark_nanos\":{},\"minor_mark_nanos\":{},\"mark_nanos\":{},\"sweep_nanos\":{},\"mark_clear_nanos\":{},\"vm_owner_edges_nanos\":{},\"vm_roots_nanos\":{},\"vm_shape_setup_nanos\":{},\"vm_after_nanos\":{}}}",
+            "{{\"kind\":\"quench-gc-time\",\"collections\":{collections},\"full_collections\":{},\"full_mark_nanos\":{},\"minor_mark_nanos\":{},\"mark_nanos\":{},\"sweep_nanos\":{},\"sweep_phase_nanos\":{:?},\"mark_clear_nanos\":{},\"vm_owner_edges_nanos\":{},\"vm_roots_nanos\":{},\"vm_shape_setup_nanos\":{},\"vm_after_nanos\":{}}}",
             gc.full_collections, gc.full_mark_nanos, gc.minor_mark_nanos,
-            gc.mark_nanos, gc.sweep_nanos, gc.mark_clear_nanos, gc.vm_phase_nanos[0], gc.vm_phase_nanos[1], gc.vm_phase_nanos[2], gc.vm_phase_nanos[3],
+            gc.mark_nanos, gc.sweep_nanos, gc.sweep_phase_nanos, gc.mark_clear_nanos, gc.vm_phase_nanos[0], gc.vm_phase_nanos[1], gc.vm_phase_nanos[2], gc.vm_phase_nanos[3],
         );
         // Sizes of the VM-side tables beside the heap: a table that grows with work done
         // rather than with live data is retention.
@@ -1909,11 +1933,10 @@ impl<H: Host> Vm<H> {
         eprintln!("{{\"kind\":\"quench-live-cells\",\"top\":{:?}}}", &kinds[..kinds.len().min(8)]);
         let promise = &self.realm.promise;
         eprintln!(
-            "{{\"kind\":\"quench-vm-tables\",\"live_slots\":{},\"suspended\":{},\"suspended_free\":{},\"promise_records\":{},\"thenable_jobs\":{},\"reaction_capabilities\":{},\"async_resume_jobs\":{},\"jobs\":{},\"descriptors\":{},\"function_values\":{},\"frames\":{},\"active_call_roots\":{}}}",
+            "{{\"kind\":\"quench-vm-tables\",\"live_slots\":{},\"suspended\":{},\"suspended_free\":{},\"thenable_jobs\":{},\"reaction_capabilities\":{},\"async_resume_jobs\":{},\"jobs\":{},\"descriptors\":{},\"function_values\":{},\"frames\":{},\"active_call_roots\":{}}}",
             self.heap.live_slots(),
             self.suspended.len(),
             self.suspended_free.len(),
-            promise.records.len(),
             promise.thenable_jobs.len(),
             promise.reaction_capabilities.len(),
             promise.async_resume_jobs.len(),
@@ -2175,6 +2198,8 @@ impl<H: Host> Vm<H> {
         self.construct_target = None;
         self.realm.promise = Default::default();
         self.shapes.truncate(1);
+        // The kept root forgets its transitions along with the index.
+        self.shapes[0].last_child.set(NO_LAST_CHILD);
         self.transitions.clear();
         self.shape_slot_memo.clear();
         self.shape_attribute_memo.clear();
@@ -2282,7 +2307,7 @@ impl<H: Host> Vm<H> {
             Constant::WasmV128(bits) => self.heap.alloc(Cell::WasmV128(*bits)),
             Constant::String(v) => self.heap.alloc(Cell::String(v.clone().into())),
             Constant::StringUnits(v) => self.heap.alloc(Cell::String(JsString::from_units(v))),
-            Constant::BigInt(v) => self.heap.alloc(Cell::BigInt(v.clone())),
+            Constant::BigInt(v) => self.heap.alloc(Cell::bigint(v.clone())),
             Constant::Boolean(true) => Value::TRUE,
             Constant::Boolean(false) => Value::FALSE,
             Constant::Null => Value::NULL,

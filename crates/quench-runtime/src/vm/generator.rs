@@ -109,7 +109,7 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        self.initialize_frame_invocation(&p.atoms, &mut frame, function, context, args);
+        self.initialize_frame_invocation(p, &mut frame, function, context, args);
         frame.function = id;
         frame.program = self.active_program;
         frame.pc = 0;
@@ -488,10 +488,7 @@ impl<H: Host> Vm<H> {
         target: Value,
     ) -> Result<(), JsError> {
         let record = self
-            .realm
-            .promise
-            .records
-            .get(&source)
+            .promise_record(source)
             .cloned()
             .ok_or_else(|| JsError("async generator request result is not a Promise".into()))?;
         self.observe_promise_rejection(source);
@@ -499,13 +496,10 @@ impl<H: Host> Vm<H> {
             on_fulfilled: Value::UNDEFINED,
             on_rejected: Value::UNDEFINED,
             next: target,
-            execution_context: self.host.capture_job_context(self.realm.promise.records.get(&target).and_then(|record| record.host_context)),
+            execution_context: self.host.capture_job_context(self.promise_record(target).and_then(|record| record.host_context)),
         };
         if record.state == PromiseState::Pending {
-            self.realm
-                .promise
-                .records
-                .get_mut(&source)
+            self.promise_record_mut(source)
                 .expect("source Promise record exists")
                 .reactions
                 .push(reaction);
@@ -999,10 +993,7 @@ impl<H: Host> Vm<H> {
         let value = if self.truthy(adapter) {
             let resolved = self.promise_for_value(p, value)?;
             let state = self
-                .realm
-                .promise
-                .records
-                .get(&resolved)
+                .promise_record(resolved)
                 .cloned()
                 .ok_or_else(|| JsError("async-from-sync value lost its Promise".into()))?;
             match state.state {

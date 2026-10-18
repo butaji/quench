@@ -3,7 +3,7 @@ use super::{
     EvalBindingLocation, FieldBase, FieldSite, Function, Handler, InitialRegister, Instr,
     LexicalBindingKind, LocalRegister, MethodSite, ModuleImportBinding, ModuleImportName,
     ModuleImportNameKind, ModuleLinkPlan, ModuleReexport, ModuleReexportKind, ModuleRequest,
-    ModuleRequestPhase, ObjectSite, Op, RegExpLiteralSite, SourcePosition, Superinstruction,
+    LiteralStep, ModuleRequestPhase, ObjectSite, Op, RegExpLiteralSite, SourcePosition, Superinstruction,
     WideInstruction,
 };
 
@@ -30,6 +30,9 @@ const OPTIONAL_STRING_NONE: u8 = 0;
 const OPTIONAL_STRING_SOME: u8 = 1;
 const MODULE_LINK_PLAN_NONE: u8 = 0;
 const MODULE_LINK_PLAN_SOME: u8 = 1;
+const LITERAL_STEP_CONSTANT: u8 = 0;
+const LITERAL_STEP_ARRAY: u8 = 1;
+const LITERAL_STEP_OBJECT: u8 = 2;
 
 fn read_eval_binding(input: &mut BinaryReader<'_>) -> Result<EvalBinding, String> {
     Ok(EvalBinding {
@@ -167,7 +170,7 @@ pub(super) fn write_program(
             }
             Constant::BigInt(value) => {
                 out.u8(6);
-                out.string(value);
+                out.string(&value.to_string());
             }
             Constant::Boolean(value) => {
                 out.u8(if *value { 2 } else { 3 });
@@ -278,7 +281,7 @@ pub(super) fn write_program(
         }
         out.u16(function.registers);
         out.u8(function.dispatch as u8);
-        out.u32(function.register_root_offset);
+        out.u8(u8::from(function.register_roots.covered()));
         out.u16(function.undefined_register.unwrap_or(NO_UNDEFINED_REGISTER));
         out.u16(
             function
@@ -288,7 +291,7 @@ pub(super) fn write_program(
         out.u8(function.initial_register as u8);
         out.u32(function.code.len() as u32);
         for instruction in &function.code {
-            out.u8(instruction.op() as u8);
+            out.u16(instruction.op() as u16);
             out.u16(instruction.a());
             out.u16(instruction.b());
             out.u16(instruction.c());
@@ -296,7 +299,7 @@ pub(super) fn write_program(
         }
         out.u32(function.wide.len() as u32);
         for instruction in &function.wide {
-            out.u8(instruction.op() as u8);
+            out.u16(instruction.op() as u16);
             out.u16(instruction.a());
             out.u16(instruction.b());
             out.u16(instruction.c());
@@ -352,20 +355,28 @@ pub(super) fn write_program(
         out.u32(site.pattern_constant);
         out.u32(site.flags_constant);
     }
+    out.u32(program.literal_templates.len() as u32);
+    for template in &program.literal_templates {
+        out.u32(template.len() as u32);
+        for step in template {
+            let (tag, operand) = match *step {
+                LiteralStep::Constant(index) => (LITERAL_STEP_CONSTANT, index),
+                LiteralStep::Array(count) => (LITERAL_STEP_ARRAY, count),
+                LiteralStep::Object(site) => (LITERAL_STEP_OBJECT, site),
+            };
+            out.u8(tag);
+            out.u32(operand);
+        }
+    }
     out.u32(program.superinstructions.len() as u32);
     for site in &program.superinstructions {
         for instruction in site.code {
-            out.u8(instruction.op() as u8);
+            out.u16(instruction.op() as u16);
             out.u16(instruction.a());
             out.u16(instruction.b());
             out.u16(instruction.c());
             out.u32(instruction.imm());
         }
-    }
-    let register_roots = program.register_roots.bytes();
-    out.u32(register_roots.len() as u32);
-    for byte in register_roots {
-        out.u8(*byte);
     }
     std::fs::write(path, out.bytes).map_err(|error| error.to_string())
 }
@@ -461,7 +472,10 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         0 => Ok(Constant::Number(f64::from_bits(input.u64()?))),
         1 => Ok(Constant::String(input.string()?)),
         7 => Ok(Constant::StringUnits(input.u16s()?)),
-        6 => Ok(Constant::BigInt(input.string()?)),
+        6 => Ok(Constant::BigInt(input
+            .string()?
+            .parse()
+            .map_err(|_| "invalid residual BigInt constant")?)),
         2 => Ok(Constant::Boolean(true)),
         3 => Ok(Constant::Boolean(false)),
         4 => Ok(Constant::Null),
@@ -597,7 +611,11 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             1 => DispatchClass::Numeric,
             _ => return Err("invalid residual dispatch class".into()),
         };
-        let register_root_offset = input.u32()?;
+        let register_roots = match input.u8()? {
+            0 => super::RegisterRoots::new(false),
+            1 => super::RegisterRoots::new(true),
+            _ => return Err("invalid residual register root coverage".into()),
+        };
         let undefined_register =
             Some(input.u16()?).filter(|register| *register != NO_UNDEFINED_REGISTER);
         let parameter_registers = Some(input.u16()?).filter(|base| *base != NO_PARAMETER_REGISTERS);
@@ -607,7 +625,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             _ => return Err("invalid residual initial register".into()),
         };
         let code = input.list(|input| {
-            let opcode = input.u8()?;
+            let opcode = input.u16()?;
             let op = Op::from_index(usize::from(opcode))
                 .ok_or_else(|| String::from("invalid residual opcode"))?;
             let a = input.u16()?;
@@ -623,7 +641,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             }
         })?;
         let wide = input.list(|input| {
-            let opcode = input.u8()?;
+            let opcode = input.u16()?;
             let op = Op::from_index(usize::from(opcode))
                 .filter(|op| !op.is_wide_marker())
                 .ok_or_else(|| String::from("invalid residual wide opcode"))?;
@@ -676,7 +694,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             params,
             length,
             parameter_end_pc,
-            parameter_atoms,
+            parameter_atoms: parameter_atoms.into(),
             rest,
             is_async,
             is_generator,
@@ -691,14 +709,14 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             simple_parameters,
             strict,
             locals,
-            local_atoms,
-            local_registers,
-            environment_atoms,
+            local_atoms: local_atoms.into(),
+            local_registers: local_registers.into(),
+            environment_atoms: environment_atoms.into(),
             selective_capture_slots,
             inherited_with_scope,
-            environment_clones,
+            environment_clones: environment_clones.into(),
             name_bindings: crate::bytecode::NameBindings::flat(name_bindings),
-            lexical_atoms,
+            lexical_atoms: lexical_atoms.into(),
             global_declarations: super::GlobalDeclarations {
                 lexical: global_lexical_atoms,
                 var: global_var_atoms,
@@ -707,7 +725,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
                 immutable: global_immutable_atoms,
             }
             .boxed(),
-            binding_sites,
+            binding_sites: binding_sites.into(),
             source_positions,
             code,
             wide,
@@ -720,8 +738,8 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
             call_plan: Default::default(),
-            handlers,
-            register_root_offset,
+            handlers: handlers.into(),
+            register_roots,
             undefined_register,
             parameter_registers,
             initial_register,
@@ -762,15 +780,29 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             flags_constant: input.u32()?,
         })
     })?;
+    let literal_templates = input.list(|input| {
+        Ok(input
+            .list(|input| {
+                let tag = input.u8()?;
+                let operand = input.u32()?;
+                Ok(match tag {
+                    LITERAL_STEP_CONSTANT => LiteralStep::Constant(operand),
+                    LITERAL_STEP_ARRAY => LiteralStep::Array(operand),
+                    LITERAL_STEP_OBJECT => LiteralStep::Object(operand),
+                    _ => return Err("invalid residual literal template step".into()),
+                })
+            })?
+            .into_boxed_slice())
+    })?;
     let superinstructions = input.list(|input| {
         let mut code = [Instr::new(Op::Nop, 0, 0, 0, 0); 4];
         for instruction in &mut code {
-            let opcode = input.u8()?;
+            let opcode = input.u16()?;
             if usize::from(opcode) >= Op::COUNT {
                 return Err("invalid residual superinstruction opcode".into());
             }
             // SAFETY: same contiguous repr(u16) invariant as normal code.
-            let op = unsafe { std::mem::transmute::<u16, Op>(u16::from(opcode)) };
+            let op = unsafe { std::mem::transmute::<u16, Op>(opcode) };
             *instruction =
                 Instr::try_new(op, input.u16()?, input.u16()?, input.u16()?, input.u32()?)
                     .ok_or_else(|| {
@@ -784,7 +816,6 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         }
         Ok(Superinstruction::new(code))
     })?;
-    let register_roots = super::RegisterRoots::from_bytes(input.list(|input| input.u8())?);
     input.finish()?;
     let program = super::ResidualProgram {
         specialized,
@@ -803,8 +834,8 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         field_sites,
         object_sites,
         regexp_literal_sites,
+        literal_templates,
         superinstructions,
-        register_roots,
     };
     program.validate()?;
     Ok(program)

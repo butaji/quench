@@ -115,7 +115,7 @@ impl<H: Host> Vm<H> {
     /// its program, which the loop executes from the push (`StepResult::PushFrame`) until the
     /// return restores the caller's.
     #[allow(clippy::too_many_arguments)]
-    fn push_in_loop_call(
+    pub(super) fn push_in_loop_call(
         &mut self,
         p: &ResidualProgram,
         f: usize,
@@ -159,7 +159,7 @@ impl<H: Host> Vm<H> {
     /// JavaScript program in the current realm that the loop may push in place: a non-root
     /// ordinary body (`CallPlan::in_loop`). Resolved targets are cached (`InLoopCallTarget`).
     #[inline(always)]
-    fn in_loop_call_target(
+    pub(super) fn in_loop_call_target(
         &mut self,
         p: &ResidualProgram,
         callee: Value,
@@ -192,7 +192,7 @@ impl<H: Host> Vm<H> {
             || !owner
                 .functions
                 .get(function as usize)
-                .is_some_and(|function| function.call_plan(&owner.atoms).in_loop)
+                .is_some_and(|function| function.call_plan(p).in_loop)
         {
             return None;
         }
@@ -266,7 +266,7 @@ impl<H: Host> Vm<H> {
             || !p
                 .functions
                 .get(id as usize)
-                .is_some_and(|function| function.call_plan(&p.atoms).in_loop)
+                .is_some_and(|function| function.call_plan(p).in_loop)
         {
             return None;
         }
@@ -706,6 +706,10 @@ impl<H: Host> Vm<H> {
                         elements,
                     ),
                 });
+                self.write(f, i.result_register(), v);
+            }
+            Op::MakeLiteralTemplate => {
+                let v = self.literal_template(p, f, i.literal_template_index())?;
                 self.write(f, i.result_register(), v);
             }
             Op::GetField => {
@@ -1617,7 +1621,7 @@ impl<H: Host> Vm<H> {
             Some(crate::bytecode::OperandKind::Local) => {
                 let slot = operand.payload() as usize;
                 // A plain slot is exactly what `LoadLocalPlain` reads.
-                if p.functions[self.frames[frame].function as usize].plain_local(&p.atoms, slot) {
+                if p.functions[self.frames[frame].function as usize].plain_local(p, slot) {
                     return Ok(self.frames[frame].locals[slot]);
                 }
                 self.load_local_binding(p, frame, slot, None)

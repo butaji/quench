@@ -1102,15 +1102,22 @@ impl quench_runtime::Host for NodeHost {
                 serde_json::to_string(require_specifier).map_err(|error| error.to_string())?
             );
             // lib/internal/bootstrap/realm.js `syncExports`: each name is read with `getOwn`,
-            // in the order the module lists its own keys (`builtin_export_values`).
+            // in the order the module lists its own keys (`builtin_export_values`). A member
+            // still a pending lazy data property is bound to its pending value instead, and
+            // the listener gives the binding the member's value when its group materializes.
+            let assignments: String = exports
+                .iter()
+                .enumerate()
+                .map(|(index, name)| format!("case {index}: {name} = value; break; "))
+                .collect();
             source.push_str(&format!(
-                "const __quenchExports = globalThis[{}](__quenchModule, {});\n",
+                "const __quenchExports = globalThis[{}](__quenchModule, {}, (index, value) => {{ switch (index) {{ {assignments}}} }});\n",
                 serde_json::to_string(crate::host::shared_vm::commonjs::BUILTIN_EXPORT_VALUES)
                     .map_err(|error| error.to_string())?,
                 serde_json::to_string(exports).map_err(|error| error.to_string())?
             ));
             for (index, name) in exports.iter().enumerate() {
-                source.push_str(&format!("export const {name} = __quenchExports[{index}];\n"));
+                source.push_str(&format!("export let {name} = __quenchExports[{index}];\n"));
             }
             return Ok(Some(quench_runtime::ModuleSource {
                 name: format!("node:quench-builtin/{builtin_name}"),

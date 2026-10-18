@@ -126,21 +126,20 @@ impl<H: Host> Vm<H> {
             }
         };
         let function = self.native_with_env(Native::HostFunction, environment);
-        let atom = self.intern_atom("length");
-        self.set_property_with_attributes(
+        // A fresh function holds neither key and no cache can name it yet, so its `length`
+        // and `name` are plain shape additions.
+        let length_key = PropertyKey::string(self.length_atom);
+        self.create_shape_data_property(
             function,
-            atom,
+            length_key,
             Value::number(f64::from(length)),
-            PropertyAttributes {
-                writable: false,
-                enumerable: false,
-                configurable: true,
-                accessor: false,
-                getter: None,
-                setter: None,
-            },
+            FUNCTION_INFO_ATTRIBUTES,
         )?;
-        self.set_builtin_function_name(function, name)?;
+        let name_key = PropertyKey::string(self.intern_atom("name"));
+        let name_atom = self.intern_atom(name);
+        let name_value = self.heap.alloc(Cell::String(self.atom_value(name_atom)));
+        self.create_shape_data_property(function, name_key, name_value, FUNCTION_INFO_ATTRIBUTES)?;
+        self.capture_function_name_for_atom(function, name_atom);
         if constructible {
             let prototype = self.heap.alloc(Cell::Object(Self::empty_object(self.object_proto)));
             let constructor_atom = self.intern_atom("constructor");

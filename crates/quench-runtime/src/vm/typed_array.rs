@@ -347,16 +347,14 @@ impl<H: Host> Vm<H> {
                         let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get(buffer) else {
                             unreachable!("validated typed array backing buffer");
                         };
-                        let source_bytes = bytes.to_vec();
+                        let source_bytes = bytes.read()[source_offset..source_offset + byte_count].to_vec();
                         let Some(Cell::ArrayBuffer { bytes, .. }) =
                             self.heap.get_mut(target_buffer)
                         else {
                             unreachable!("validated species backing buffer");
                         };
                         bytes.make_mut()[target_offset..target_offset + byte_count]
-                            .copy_from_slice(
-                                &source_bytes[source_offset..source_offset + byte_count],
-                            );
+                            .copy_from_slice(&source_bytes);
                     }
                 } else {
                     for index in 0..copy_count {
@@ -746,7 +744,7 @@ impl<H: Host> Vm<H> {
             let converted = if matches!(kind, TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64)
             {
                 let value = self.to_bigint(p, value)?;
-                self.heap.alloc(Cell::BigInt(value.to_string()))
+                self.heap.alloc(Cell::bigint(value))
             } else {
                 Value::number(self.to_number(p, value)?)
             };
@@ -839,9 +837,7 @@ impl<H: Host> Vm<H> {
         if let (Some(Cell::BigInt(left)), Some(Cell::BigInt(right))) =
             (self.heap.get(left), self.heap.get(right))
         {
-            let left = left.parse::<i128>().unwrap_or_default();
-            let right = right.parse::<i128>().unwrap_or_default();
-            return left.cmp(&right);
+            return left.cmp(right);
         }
         let left = left.as_number().unwrap_or(f64::NAN);
         let right = right.as_number().unwrap_or(f64::NAN);

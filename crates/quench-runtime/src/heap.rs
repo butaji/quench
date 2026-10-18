@@ -17,10 +17,13 @@ pub use memory_stats::HeapMemoryComposition;
 #[cfg(feature = "profile-memory")]
 mod memory_profile;
 mod pacing;
+mod promise_record;
+pub(crate) use promise_record::{PromiseReaction, PromiseRecord, PromiseRejectionState, PromiseState};
 mod records;
 mod root;
 mod slots;
 mod thin_slice;
+pub(crate) use thin_slice::ThinBoxSlice;
 mod weak;
 pub(crate) use cell::*;
 pub(crate) use buffer_bytes::{BufferBytes,BufferRead};
@@ -168,6 +171,9 @@ impl<'slots> ParallelSweepSlab<'slots> {
 
             let cell = slot.cell.take().expect("occupied dead sweep slot");
             result.external_bytes = result.external_bytes.saturating_add(cell.external_bytes());
+            if let Cell::Promise { record, .. } = &cell {
+                result.abandoned_job_contexts.extend(record.reaction_job_contexts());
+            }
             if let Some(object) = cell.object() {
                 result.released_properties.push(object.properties());
             }
@@ -197,6 +203,7 @@ struct ParallelSweepResult {
     rc_cells: Vec<StoppedCellDrop>,
     external_bytes: usize,
     live_payload_bytes: usize,
+    abandoned_job_contexts: Vec<crate::HostExecutionContext>,
     swept_slots: usize,
 }
 
@@ -328,6 +335,8 @@ pub(crate) struct Heap {
     /// The next collection traces the whole heap.
     full_due: bool,
     pacing_state: pacing::PacingState,
+    /// Job contexts held by reactions of promises the sweep freed, for the host to release.
+    abandoned_job_contexts: Vec<crate::HostExecutionContext>,
     /// Live weight after the previous collection.
     live_weight_after_previous: usize,
     /// Backing-store bytes allocated since the last collection, against its budget.
@@ -500,6 +509,8 @@ pub(crate) struct GcProfile {
     pub full_mark_nanos: u64,
     pub minor_mark_nanos: u64,
     pub sweep_nanos: u64,
+    /// The sweep's phases: slot cells, direct records, and property-arena compaction.
+    pub sweep_phase_nanos: [u64; 3],
     pub mark_clear_nanos: u64,
     /// VM-side collection phases: owner edges, root gathering, shape-trace setup, and
     /// the work after the heap collection.
@@ -551,6 +562,7 @@ impl Default for GcProfile {
             full_mark_nanos: 0,
             minor_mark_nanos: 0,
             sweep_nanos: 0,
+            sweep_phase_nanos: [0; 3],
             mark_clear_nanos: 0,
             vm_phase_nanos: [0; 4],
             full_collections: 0,
@@ -722,7 +734,7 @@ impl Heap {
     }
 
     /// Every live legacy cell, without needing `&mut` (census and diagnostics).
-    #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+    #[cfg(feature = "profile-gc-time")]
     pub(crate) fn for_each_live_cell(&self, mut visit: impl FnMut(&Cell)) {
         for slot in self.slots.iter() {
             if let Some(cell) = &slot.cell {
@@ -765,10 +777,16 @@ impl Heap {
         )
     }
 
+    #[inline(always)]
     pub(crate) fn mark_prototype(&mut self, prototype: Value) {
-        if self.marked_prototype == Some(prototype) {
-            return;
+        if self.marked_prototype != Some(prototype) {
+            self.mark_new_prototype(prototype);
         }
+    }
+
+    /// `mark_prototype` of a prototype other than the one it marked last.
+    #[inline(never)]
+    fn mark_new_prototype(&mut self, prototype: Value) {
         // A flag, not an edge: no write barrier for record prototypes.
         let object = match prototype.direct_object_index() {
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
@@ -942,7 +960,10 @@ impl Heap {
         self.properties.assert_shape_length(shape, values.len());
         if inline && values.len() <= INLINE_PROPERTY_COUNT {
             let mut inline = [Value::UNDEFINED; INLINE_PROPERTY_COUNT];
-            inline[..values.len()].copy_from_slice(values);
+            // At most `INLINE_PROPERTY_COUNT` values: element moves, not a `memcpy` call.
+            for (slot, value) in inline.iter_mut().zip(values) {
+                *slot = *value;
+            }
             (ValueVec::inline_property_storage(shape), inline)
         } else {
             (
@@ -982,7 +1003,7 @@ impl Heap {
         slot_owners: Vec<u64>,
         direct_owners: Vec<(usize, Value)>,
     ) {
-        if !self.properties.has_released_ranges() {
+        if !self.properties.compaction_due() {
             return;
         }
         #[cfg(feature = "profile-memory")]
@@ -1100,6 +1121,10 @@ impl Heap {
     pub fn should_collect(&self) -> bool {
         self.allocations >= self.threshold
     }
+    /// The job contexts of promises freed since the last call, which their reactions held.
+    pub(crate) fn take_abandoned_job_contexts(&mut self) -> Vec<crate::HostExecutionContext> {
+        std::mem::take(&mut self.abandoned_job_contexts)
+    }
     pub(crate) fn should_full_collect(&self) -> bool {
         self.full_due
             || pacing().allocation_cap_reached(
@@ -1197,9 +1222,10 @@ impl Heap {
         if full {
             self.gc_profile.mark_clear_nanos += mark_clear_started.elapsed().as_nanos() as u64;
         }
-        let roots = roots.into_iter();
-        let mut work = Vec::with_capacity(roots.size_hint().0 + self.roots.slot_count());
-        work.extend(roots);
+        // The roots become the mark stack: collecting a vector's own iterator keeps its
+        // buffer, so a collection holds one root-sized buffer, not a copy beside it.
+        let mut work: Vec<Value> = roots.into_iter().collect();
+        work.reserve(self.roots.slot_count());
         work.extend(self.roots.values());
         #[cfg(debug_assertions)]
         let verify_roots = work.clone();
@@ -1337,6 +1363,13 @@ impl Heap {
             0
         });
         let legacy_live = live;
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        let records_started = std::time::Instant::now();
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        {
+            self.gc_profile.sweep_phase_nanos[0] +=
+                (records_started - sweep_started).as_nanos() as u64;
+        }
         {
             #[cfg(feature = "profile-aggregate")]
             {
@@ -1409,6 +1442,12 @@ impl Heap {
             self.gc_profile.freed += freed_cells as u64;
         }
         let _ = (freed_cells, swept_slots);
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        {
+            self.gc_profile.sweep_phase_nanos[1] += records_started.elapsed().as_nanos() as u64;
+        }
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        let compaction_started = std::time::Instant::now();
         if full {
             // A full sweep recounts the ledger from the survivors: shrinking a live array
             // (truncation, `pop`, `splice`) is not charged back between full collections.
@@ -1418,6 +1457,7 @@ impl Heap {
         }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         {
+            self.gc_profile.sweep_phase_nanos[2] += compaction_started.elapsed().as_nanos() as u64;
             self.gc_profile.sweep_nanos += sweep_started.elapsed().as_nanos() as u64;
         }
         // Live weight in the units allocation is charged in: one per cell or record plus
@@ -1527,8 +1567,10 @@ impl Heap {
                     rc_cells,
                     external_bytes,
                     live_payload_bytes,
+                    abandoned_job_contexts,
                     swept_slots,
                 } = result;
+                self.abandoned_job_contexts.extend(abandoned_job_contexts);
                 let freed_cells = free_slots.len();
                 if freed_cells > 0 {
                     let slab_free = &mut self.free_by_slab[slab as usize];
@@ -1575,6 +1617,7 @@ impl Heap {
         {
             let external_bytes = &mut self.external_bytes;
             let payload_bytes = &mut self.payload_bytes;
+            let abandoned_job_contexts = &mut self.abandoned_job_contexts;
             let free_by_slab = &mut self.free_by_slab;
             let free_slabs = &mut self.free_slabs;
             let free_slot_count = &mut self.free_slots;
@@ -1584,6 +1627,9 @@ impl Heap {
             let mut reclaim = |properties: &mut ValueArena, index: usize, cell: Cell| {
                 *external_bytes = external_bytes.saturating_sub(cell.external_bytes());
                 *payload_bytes = payload_bytes.saturating_sub(cell.payload_bytes());
+                if let Cell::Promise { record, .. } = &cell {
+                    abandoned_job_contexts.extend(record.reaction_job_contexts());
+                }
                 #[cfg(feature = "profile-memory")]
                 {
                     let object_slots = cell
@@ -2296,54 +2342,52 @@ impl Heap {
         unsafe { self.properties.set_flat_unchecked(vector, slot, value) };
         true
     }
-    /// `property_add` of the next property of a direct object that keeps inline storage, at
-    /// inline `slot`, the object's storage length that its shape records. `false`, changing
-    /// nothing, for any other owner or slot, which `property_add` takes.
+    /// Appends `value` as the next property of `object`, which moves to `shape`, whose
+    /// storage length is one more than the object's: inline while the values fit, otherwise
+    /// in the arena, into which the add that outgrows the inline values moves them. One owner
+    /// lookup, which passes the write barrier only for a stored reference; the arena borrow
+    /// is disjoint from the owner.
     #[inline(always)]
-    pub(crate) fn add_inline_property(&mut self, object: Value, slot: usize, value: Value, shape: u32) -> bool {
-        let Some(record_id) = object.direct_object_index() else {
-            return false;
+    pub(crate) fn property_add(&mut self, object: Value, value: Value, shape: u32) {
+        let _slot = if let Some(record_id) = object.direct_object_index() {
+            let Self {
+                object_records,
+                properties,
+                ..
+            } = &mut *self;
+            // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
+            let data = unsafe { object_records.get_live_mut_storing(record_id, value) };
+            let slot = properties.len(data.properties());
+            append_property(data, properties, slot, value, shape);
+            slot
+        } else {
+            let (data, properties) = self
+                .object_and_arena_mut(object)
+                .expect("property owner is an object");
+            let slot = properties.len(data.properties());
+            append_property(data, properties, slot, value, shape);
+            slot
         };
-        // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
-        let data = unsafe { self.object_records.get_live_mut_storing(record_id, value) };
-        if slot >= INLINE_PROPERTY_COUNT || data.inline_properties().is_none() {
-            return false;
-        }
-        debug_assert_eq!(slot, self.properties.len(data.properties()));
-        data.set_inline_property(slot, value);
-        data.set_shape(shape);
         #[cfg(feature = "profile-memory")]
-        self.note_object_slots(object, slot + 1);
-        true
+        self.note_object_slots(object, _slot + 1);
     }
 
-    /// One cached property add: appends `value` at `slot`, the object's current storage
-    /// length, and moves the object to `shape`, whose storage length is `slot + 1`.
+    /// `property_add` to a direct object's record at `slot`, which the caller proved its
+    /// storage length (a cached add's recorded slot), without deriving it again.
     #[inline(always)]
-    /// Appends `value` as the next property of `object`, which moves to `shape`: inline while
-    /// the values fit, otherwise in the arena, into which the add that outgrows the inline
-    /// values moves them. One owner lookup; the arena borrow is disjoint from the owner.
-    pub(crate) fn property_add(&mut self, object: Value, value: Value, shape: u32) {
-        let (data, properties) = self
-            .object_and_arena_mut(object)
-            .expect("property owner is an object");
-        let vector = data.properties();
-        let slot = properties.len(vector);
-        match data.inline_properties().copied() {
-            Some(_) if slot < INLINE_PROPERTY_COUNT => data.set_inline_property(slot, value),
-            Some(inline) => {
-                debug_assert_eq!(slot, INLINE_PROPERTY_COUNT);
-                let mut moved = properties.with_values(vector.auxiliary(), &inline);
-                properties.push(&mut moved, value);
-                data.replace_property_storage(moved, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]);
-            }
-            None => {
-                let mut vector = vector;
-                properties.push(&mut vector, value);
-                data.set_properties(vector);
-            }
-        }
-        data.set_shape(shape);
+    pub(crate) fn record_property_add_at(&mut self, object: Value, slot: usize, value: Value, shape: u32) {
+        let Some(record_id) = object.direct_object_index() else {
+            return self.property_add(object, value, shape);
+        };
+        let Self {
+            object_records,
+            properties,
+            ..
+        } = &mut *self;
+        // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
+        let data = unsafe { object_records.get_live_mut_storing(record_id, value) };
+        debug_assert_eq!(slot, properties.len(data.properties()));
+        append_property(data, properties, slot, value, shape);
         #[cfg(feature = "profile-memory")]
         self.note_object_slots(object, slot + 1);
     }
@@ -2641,6 +2685,10 @@ impl Heap {
                 work.extend(payload.iter().copied());
             }
             Cell::PromiseResolvingState { promise, .. } => work.push(*promise),
+            Cell::Promise { object: value, record } => {
+                object(value);
+                work.extend(record.roots());
+            }
             Cell::Date { object: value, .. }
             | Cell::TemporalDuration { object: value, .. }
             | Cell::TemporalPlainDate { object: value, .. }
@@ -2664,6 +2712,13 @@ impl Heap {
                 target: crate::heap::WasmHostTarget::Js(target),
                 ..
             } => work.push(*target),
+            Cell::WasmHostFunction {
+                target: crate::heap::WasmHostTarget::JsEmscriptenMemcpy(target),
+                ..
+            } => {
+                work.push(target.function);
+                work.push(target.view_environment);
+            }
             Cell::WasmObject { object: value, slot } => {
                 object(value);
                 if let crate::heap::WasmObjectSlot::Instance { exports } = slot {
@@ -2715,7 +2770,8 @@ impl Heap {
             | Cell::DataView { .. }
             | Cell::ShadowRealm { .. }
             | Cell::Proxy { .. }
-            | Cell::PromiseResolvingState { .. } => CellKind::Object,
+            | Cell::PromiseResolvingState { .. }
+            | Cell::Promise { .. } => CellKind::Object,
             Cell::Array { .. } => CellKind::Array,
             Cell::Map { .. } => CellKind::Map,
             Cell::Set { .. } => CellKind::Set,
@@ -2778,11 +2834,20 @@ impl Heap {
                 | Cell::WasmV128(_)
                 | Cell::WasmExtern(_)
                 | Cell::WasmTag { .. } => 0,
+                Cell::Promise { record, .. } => {
+                    size_of::<crate::heap::PromiseRecord>()
+                        + record.reactions.capacity() * size_of::<crate::heap::PromiseReaction>()
+                }
                 Cell::WasmException { payload, .. } => payload.capacity() * size_of::<Value>(),
-                Cell::WasmHostFunction { signature, .. } => {
+                Cell::WasmHostFunction { target, signature } => {
                     size_of::<crate::WasmSignature>()
                         + (signature.params.capacity() + signature.results.capacity())
                             * size_of::<crate::WasmType>()
+                        + if matches!(target, crate::heap::WasmHostTarget::JsEmscriptenMemcpy(_)) {
+                            size_of::<crate::heap::WasmHostMemcpyTarget>()
+                        } else {
+                            0
+                        }
                 }
                 Cell::WasmElements(elements) => elements.capacity() * size_of::<Value>(),
                 Cell::WasmTable { elements, .. } => elements.capacity() * size_of::<Value>(),
@@ -2809,7 +2874,8 @@ impl Heap {
                         + with_objects.len() * size_of::<Value>()
                 }
                 Cell::String(value) => value.capacity(),
-                Cell::BigInt(value) | Cell::Error(value) => value.capacity(),
+                Cell::BigInt(value) => crate::bigint::magnitude_bytes(value),
+                Cell::Error(value) => value.capacity(),
                 Cell::Symbol(value) => value.as_ref().map_or(0, |description| description.len()),
             }
     }
@@ -2902,4 +2968,29 @@ mod offset_order_tests {
         super::sort_by_unique_offset(&mut keys);
         assert_eq!(keys, expected);
     }
+}
+
+/// `Heap::property_add` on the owner's storage: writes `value` at `slot`, the owner's
+/// storage length, and moves the owner to `shape`.
+#[inline(always)]
+fn append_property(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value, shape: u32) {
+    let vector = data.properties();
+    match data.inline_properties().copied() {
+        Some(_) if slot < INLINE_PROPERTY_COUNT => data.set_inline_property(slot, value),
+        Some(inline) => {
+            debug_assert_eq!(slot, INLINE_PROPERTY_COUNT);
+            // One arena range sized for the grown shape, not one for the inline values that
+            // the add then outgrows at once.
+            let mut grown = [value; INLINE_PROPERTY_COUNT + 1];
+            grown[..INLINE_PROPERTY_COUNT].copy_from_slice(&inline);
+            let moved = properties.with_values(shape, &grown);
+            data.replace_property_storage(moved, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]);
+        }
+        None => {
+            let mut vector = vector;
+            properties.push(&mut vector, value);
+            data.set_properties(vector);
+        }
+    }
+    data.set_shape(shape);
 }

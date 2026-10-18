@@ -178,9 +178,16 @@ for f in empty.cjs quench-bench/deegen-curriculum/*.js quench-bench/micros/*.js 
     --dump-before=quench_entry_compiled \
     --callgrind-out-file=run/$(basename $f).out $BINARY $f
 done
+# Wasm: the interpreter's handlers, then the compiler's pipeline (never a scored module).
+for mode in no-jit jit; do
+  valgrind --tool=cachegrind --cache-sim=no --demangle=no \
+    --cachegrind-out-file=train/wasm-kernels-$mode.out \
+    $BINARY $([ $mode = jit ] && echo --jit) quench-bench/wasm-micros/kernels.cjs 3
+done
 # The static order adds --foreign-first (block layout below).
 target/production/symbol-order $BINARY $ORDER --dense 13dispatch_fast \
   train/empty.cjs.out train/*.js.out \
+  train/wasm-kernels-no-jit.out train/wasm-kernels-jit.out \
   --run run/empty.cjs.out run/{curriculum,micros}*.out --run run/test262-*.out
 ```
 

@@ -635,7 +635,7 @@ pub(super) fn protected_positions(
 }
 
 /// `instruction` in fixed-width form: a wide one through the function's wide table.
-fn fixed_width(instruction: Instr, wide: &[WideInstruction]) -> WideInstruction {
+pub(super) fn fixed_width(instruction: Instr, wide: &[WideInstruction]) -> WideInstruction {
     if instruction.is_wide() {
         wide[instruction.wide_index()]
     } else {
@@ -865,10 +865,10 @@ fn relocate_source_positions(
         {
             origin_pc += 1;
         }
-        assert_eq!(
-            map[origin_pc], new_pc,
-            "compacted instruction has an origin"
-        );
+        // An instruction a rewrite inserted after its origin's first shares its position.
+        if map.get(origin_pc) != Some(&new_pc) {
+            continue;
+        }
         let anchor = origin_pc;
         origin_pc += 1;
         while surviving_positions
@@ -1296,7 +1296,7 @@ mod tests {
             Instr::new(Op::Nop, 0, 0, 0, 0),
             Instr::new(Op::Return, 0, 0, 0, 0),
         ];
-        let mut source_positions = vec![
+        let mut source_positions: crate::bytecode::SourcePositions = vec![
             SourcePosition {
                 pc: 0,
                 line: 1,
