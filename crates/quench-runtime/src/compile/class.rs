@@ -884,7 +884,7 @@ impl Compiler<'_> {
     fn compile_auto_accessor_methods(
         &mut self,
         accessor: &AccessorProperty<'_>,
-        scopes: &[Rc<FxHashMap<Atom, u16>>],
+        scopes: &[Rc<super::capture_scope::CaptureScope>],
         parent: Option<u32>,
         home_atom: Atom,
         with_depth: u16,
@@ -959,7 +959,7 @@ impl Compiler<'_> {
         &mut self,
         method: &MethodDefinition<'_>,
         source_span: Option<Span>,
-        scopes: &[Rc<FxHashMap<Atom, u16>>],
+        scopes: &[Rc<super::capture_scope::CaptureScope>],
         parent: Option<u32>,
         instance_fields: Option<&[ClassField<'_>]>,
         instance_private_methods: Option<&[Atom]>,
@@ -1025,7 +1025,7 @@ impl Compiler<'_> {
     fn compile_class_static_block(
         &mut self,
         block: &StaticBlock<'_>,
-        scopes: &[Rc<FxHashMap<Atom, u16>>],
+        scopes: &[Rc<super::capture_scope::CaptureScope>],
         parent: Option<u32>,
         home_atom: Atom,
         with_depth: u16,

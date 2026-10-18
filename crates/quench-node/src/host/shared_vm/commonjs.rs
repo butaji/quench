@@ -942,6 +942,7 @@ pub(crate) fn builtin_export_values(
     let undefined = context.undefined();
     let module = args.first().copied().unwrap_or(undefined);
     let names = args.get(1).copied().unwrap_or(undefined);
+    let listener = args.get(2).copied().unwrap_or(undefined);
     let count = get(context, names, "length")?;
     let count = context.to_number(count)? as usize;
     let mut wanted = Vec::with_capacity(count);
@@ -950,15 +951,24 @@ pub(crate) fn builtin_export_values(
         wanted.push(context.string_text(name)?.unwrap_or_default());
     }
     let mut values = vec![None; count];
+    // A pending lazy member stays pending: the facade binds its pending value, which
+    // resolves on first read, and `listener` receives the member's value when it materializes.
     for key in context.enumerable_own_keys_rooted(module, false, false)? {
         let Some(text) = context.string_text(key)? else { continue };
         if let Some(index) = wanted.iter().position(|name| *name == text) {
-            values[index] = Some(context.get_property_rooted(module, key)?);
+            values[index] = Some(match context.pending_lazy_data_property_rooted(module, key, listener, index as u32)? {
+                Some(pending) => pending,
+                None => context.get_property_rooted(module, key)?,
+            });
         }
     }
     for (index, name) in wanted.iter().enumerate() {
         if values[index].is_some() { continue; }
         let key = context.string_rooted(name);
+        if let Some(pending) = context.pending_lazy_data_property_rooted(module, key, listener, index as u32)? {
+            values[index] = Some(pending);
+            continue;
+        }
         let descriptor = context.own_property_descriptor_rooted(module, key)?;
         let own = !context.rooted_value(descriptor).is_some_and(|value| value.is_undefined());
         values[index] = Some(if own { context.get_property_rooted(module, key)? } else { undefined });
@@ -971,10 +981,17 @@ pub(super) fn require_node_library(
     context: &mut Context<'_>, receiver: RootId, args: &[RootId],
 ) -> Result<RootId, RootedError> {
     if let Some(value) = args.first() {
-        if context.string_text(*value)?.is_some_and(|name| {
-            name.strip_prefix("node:").unwrap_or(&name) == "internal/timers"
-        }) {
-            return cached_builtin(context, BuiltinModule::InternalTimers);
+        match context.string_text(*value)?.as_deref() {
+            Some(name) if name.strip_prefix("node:").unwrap_or(name) == "internal/timers" => {
+                return cached_builtin(context, BuiltinModule::InternalTimers);
+            }
+            Some(crate::modules::buffer_shared_vm::FAST_BUFFER_REQUEST) => {
+                return crate::modules::buffer_shared_vm::fast_buffer_request(context);
+            }
+            Some(crate::modules::buffer_shared_vm::BUFFER_POOL_REQUEST) => {
+                return crate::modules::buffer_shared_vm::buffer_pool_request(context);
+            }
+            _ => {}
         }
     }
     require(context, receiver, args)
@@ -2515,7 +2532,6 @@ fn load_with_resolution(
         ModuleCache::NodeLibrary
     } else { ModuleCache::CommonJs };
     let cached = cache.get(context, &key)?;
-    if std::env::var_os("QTRACE_LOAD").is_some() && context.rooted_value(cached).is_some_and(|value| value.is_undefined()) { eprintln!("QLOAD {key}"); }
     if !context.rooted_value(cached).is_some_and(|value| value.is_undefined()) {
         if let Some(parent) = parent {
             transition_child(context, parent, cached, ChildTransition::Attach)?;
@@ -2572,6 +2588,10 @@ fn load_with_resolution(
                 super::policy_projection::project(&file_text, &["BoundSocket"]).map_err(RootedError::host)?.into(),
             Some(path) if path == Path::new("lib/child_process.js") =>
                 super::policy_projection::project(&file_text, &["_forkChild"]).map_err(RootedError::host)?.into(),
+            Some(path) if path == Path::new("lib/internal/buffer.js") =>
+                crate::modules::buffer_shared_vm::project_internal_buffer(&file_text)?.into(),
+            Some(path) if path == Path::new("lib/buffer.js") =>
+                crate::modules::buffer_shared_vm::project_buffer(&file_text)?.into(),
             _ => file_text,
         };
         // An embedded library file is static text the compiled program can retain as is;

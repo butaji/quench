@@ -77,6 +77,7 @@ impl<H: Host> Vm<H> {
                 });
             }
             let property_key = if matches!(vm.heap.get(key), Some(Cell::Symbol(_))) {
+                vm.materialize_watched_lazy_member(p, target, PropertyKey::symbol(key))?;
                 PropertyKey::symbol(key)
             } else {
                 let Some(Cell::String(key)) = vm.heap.get(key).cloned() else {
@@ -84,6 +85,7 @@ impl<H: Host> Vm<H> {
                 };
                 let atom = vm.intern_js_atom(&key);
                 vm.evaluate_deferred_namespace_for_key(p, target, Some(PropertyKey::string(atom)))?;
+                vm.materialize_watched_lazy_member(p, target, PropertyKey::string(atom))?;
                 if key.host_string() == "length"
                     && vm.heap.array(target).is_some()
                     && !vm

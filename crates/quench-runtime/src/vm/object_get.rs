@@ -91,6 +91,10 @@ impl<H: Host> Vm<H> {
         let value = self
             .module_binding_value(object, atom)
             .or_else(|| self.own_property(object, atom));
+        let value = match value {
+            Some(value) => Some(self.resolve_pending_binding(p, value)?),
+            None => None,
+        };
         if value.is_some_and(Value::is_deleted) {
             return Err(self.uninitialized_binding_error(p, atom));
         }
@@ -426,14 +430,64 @@ impl<H: Host> Vm<H> {
     /// and private, index, `length` or legacy function keys to the general path.
     #[inline]
     fn plain_named_get(&self, object: Value, atom: Atom) -> Option<Value> {
+        if !self.plain_named_key(atom) {
+            return None;
+        }
+        self.plain_property_get(object, PropertyKey::string(atom))
+    }
+
+    /// Whether `atom` names a property that ordinary shapes alone decide: no private, index,
+    /// `length` or legacy function key.
+    #[inline]
+    fn plain_named_key(&self, atom: Atom) -> bool {
         const GENERAL_KEYS: u8 = AtomClass::PRIVATE
             | AtomClass::ARRAY_INDEX
             | AtomClass::TYPED_ARRAY_INDEX
             | AtomClass::RESTRICTED_FUNCTION_PROPERTY;
-        if atom == self.length_atom || self.atom_class(atom).intersects(GENERAL_KEYS) {
+        atom != self.length_atom && !self.atom_class(atom).intersects(GENERAL_KEYS)
+    }
+
+    /// `[[Set]]` of a string key on its own receiver along a chain of extensible plain
+    /// objects, decided by the shape facts `plain_named_get` reads: the nearest data
+    /// property decides, and an absent key is added. `None` leaves accessors, read-only
+    /// properties, side-table descriptors, exotic, namespace and non-extensible objects,
+    /// Proxies and the keys `plain_named_key` refuses to the general path, which runs no
+    /// guest code before reaching one.
+    pub(super) fn set_plain_named_property(
+        &mut self,
+        object: Value,
+        atom: Atom,
+        value: Value,
+    ) -> Option<()> {
+        // A global object's bindings carry declaration state beside its shape.
+        if !self.plain_named_key(atom) || self.is_global_object(object) {
             return None;
         }
-        self.plain_property_get(object, PropertyKey::string(atom))
+        let key = PropertyKey::string(atom);
+        let mut current = object;
+        loop {
+            let data = self.heap.ordinary_object(current)?;
+            if !data.is_extensible()
+                || data.is_module_namespace()
+                || data.deferred_module().is_some()
+                || self.descriptors.contains_key(&(current, key))
+            {
+                return None;
+            }
+            let (shape, proto) = (data.shape(), data.proto());
+            if let Some(slot) = self.property_shape_slot(shape, key) {
+                let attributes = self.slot_attributes(data, slot)?;
+                if attributes.accessor || !attributes.writable {
+                    return None;
+                }
+                break;
+            }
+            if proto.is_null() {
+                break;
+            }
+            current = proto;
+        }
+        self.set_shape_property(object, key, value).ok()
     }
 
     /// A keyed read of a public symbol, or of a string naming an existing non-index atom,

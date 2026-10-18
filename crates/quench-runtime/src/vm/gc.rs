@@ -306,6 +306,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn collect_slow(&mut self, _program: &ResidualProgram, full: bool) {
+        self.invalidate_wasm_reference_caches();
         let full = self.heap.collection_is_full(full);
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("QUENCH_FUNCTION_USE").is_some() {
@@ -774,6 +775,7 @@ impl<H: Host> Vm<H> {
         // into newly freed slots.
         let heap = &self.heap;
         self.programs.prune_owned_script_realms(|realm| heap.weak_value(realm).is_some());
+        self.programs.clear_wasm_reference_caches();
         self.prune_function_values();
         self.prune_wasm_exported_functions();
         // A home stays reachable through its environment; entries of swept environments go
