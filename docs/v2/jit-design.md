@@ -198,6 +198,27 @@ compilation screen below tests that caller path; `WasmUnreachable` remains
 opt-in because the prior global experiment expanded TSF code about 52× and
 increased both compile time and RSS.
 
+## Monomorphic Wasm indirect-call cache
+
+Commit `f40e5ddeda1765ace5506af81a37fddb1b6de2b0` adds a lazy monomorphic cache
+to compiled `call_indirect` sites. It checks the table binding, index,
+signature, caller environment, and current table element; target artifacts are
+weakly held. Every hit rebuilds the memory and global activation state, while
+every miss retains the ordinary resolver's bounds, null, signature, and
+fallback behavior. GC clears cached identities before freed heap slots can be
+reused. The mutable-table test proves that a warmed site observes replacement,
+that the cache is actually hit, and that a null target still traps.
+
+The clean-source 11-round QuickSort/gcc-loops screen is preserved in
+`evidence/jit-jetstream3-wasm-2026-10-18/indirect-call-cache/`. Output matched
+on both fixtures. Quench remains below Bun and Node on Score (QuickSort 190.49
+vs. 345.96/405.88; gcc-loops 64.47 vs. 186.70/192.71), while its max RSS is
+lower on both. Paired Score ratios are 0.569 [0.520, 0.606] and 0.465 [0.416,
+0.500] against Bun/Node for QuickSort, and 0.340 [0.324, 0.373] and 0.342
+[0.329, 0.350] for gcc-loops. This targeted screen is not a score win; the
+next optimization should address the hot-call tiering path and first-iteration
+compile cost.
+
 ## Bounded HashSet root compilation
 
 Commit `ea7c76c6c327f76f18376b75ab278c22ce7c585e` adds an explicitly selected,
