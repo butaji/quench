@@ -4,7 +4,7 @@ impl Compiler<'_> {
     pub(super) fn compile_arrow_function(
         &mut self,
         value: &oxc_ast::ast::ArrowFunctionExpression<'_>,
-        scopes: &[Rc<FxHashMap<Atom, u16>>],
+        scopes: &[Rc<super::capture_scope::CaptureScope>],
         parent: Option<u32>,
         super_static: bool,
         super_home: bool,

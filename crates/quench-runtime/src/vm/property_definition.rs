@@ -189,6 +189,15 @@ impl<H: Host> Vm<H> {
                 }
             }
             let object = self.heap.root_value(target).unwrap();
+            // A watched member (one a binding stands for, or one its initializer redefines)
+            // materializes before any definition, as before a write.
+            if self.watched_lazy_member(object, property)
+                || (matches!(property, PropertyKey::Symbol(_))
+                    && !descriptor.resolve(&self.heap).replaces_kind_fields())
+            {
+                self.materialize_lazy_data_property(p, object, property)?;
+            }
+            let object = self.heap.root_value(target).unwrap();
             self.define_ordinary_property_key(object, property, descriptor.resolve(&self.heap))
         })();
         descriptor.release(&mut self.heap);
