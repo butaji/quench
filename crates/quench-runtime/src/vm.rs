@@ -874,6 +874,12 @@ const DEFAULT_DATA_ATTRIBUTES: DataAttributes = DataAttributes {
     enumerable: true,
     configurable: true,
 };
+/// The attributes of a function's own `length` and `name`.
+const FUNCTION_INFO_ATTRIBUTES: DataAttributes = DataAttributes {
+    writable: false,
+    enumerable: false,
+    configurable: true,
+};
 /// `ShapeAttributes::accessors` of attributes with neither getter nor setter.
 const NO_SHAPE_ACCESSORS: u32 = u32::MAX;
 /// `ShapeAttributes::accessors` of an accessor with a getter and no setter: the getter is the
@@ -1109,12 +1115,17 @@ struct Shape {
     /// Memo of whether this immutable shape's keys include an array-index name: `None` until
     /// first derived (`Vm::shape_has_index_key`). Dictionary shapes never memoize.
     index_keys: std::cell::Cell<Option<bool>>,
+    /// The child of this shape's latest cached transition (`NO_LAST_CHILD` before one), tried
+    /// before the transition index: objects of one layout grow by the same keys in turn.
+    last_child: std::cell::Cell<u32>,
 }
 // Every object layout and property key costs one shape; keep the record compact.
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(size_of::<Shape>() == 48);
+const _: () = assert!(size_of::<Shape>() == 56);
 /// `Shape::parent` of the root shape.
 const NO_PARENT_SHAPE: u32 = u32::MAX;
+/// `Shape::last_child` before the shape has a cached transition.
+const NO_LAST_CHILD: u32 = u32::MAX;
 const PROTOTYPE_SLOT_UNKNOWN: u32 = u32::MAX;
 const PROTOTYPE_SLOT_NONE: u32 = u32::MAX - 1;
 /// The shape table's initial capacity, above what a builtin realm uses (about 1900 shapes).
@@ -1158,6 +1169,7 @@ impl Shape {
             long_walks: std::cell::Cell::new(0),
             prototype_slot: std::cell::Cell::new(PROTOTYPE_SLOT_UNKNOWN),
             index_keys: std::cell::Cell::new(None),
+            last_child: std::cell::Cell::new(NO_LAST_CHILD),
         }
     }
 }
@@ -2176,6 +2188,8 @@ impl<H: Host> Vm<H> {
         self.construct_target = None;
         self.realm.promise = Default::default();
         self.shapes.truncate(1);
+        // The kept root forgets its transitions along with the index.
+        self.shapes[0].last_child.set(NO_LAST_CHILD);
         self.transitions.clear();
         self.shape_slot_memo.clear();
         self.shape_attribute_memo.clear();
