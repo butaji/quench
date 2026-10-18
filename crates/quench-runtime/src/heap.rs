@@ -763,10 +763,16 @@ impl Heap {
         )
     }
 
+    #[inline(always)]
     pub(crate) fn mark_prototype(&mut self, prototype: Value) {
-        if self.marked_prototype == Some(prototype) {
-            return;
+        if self.marked_prototype != Some(prototype) {
+            self.mark_new_prototype(prototype);
         }
+    }
+
+    /// `mark_prototype` of a prototype other than the one it marked last.
+    #[inline(never)]
+    fn mark_new_prototype(&mut self, prototype: Value) {
         // A flag, not an edge: no write barrier for record prototypes.
         let object = match prototype.direct_object_index() {
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
@@ -940,7 +946,10 @@ impl Heap {
         self.properties.assert_shape_length(shape, values.len());
         if inline && values.len() <= INLINE_PROPERTY_COUNT {
             let mut inline = [Value::UNDEFINED; INLINE_PROPERTY_COUNT];
-            inline[..values.len()].copy_from_slice(values);
+            // At most `INLINE_PROPERTY_COUNT` values: element moves, not a `memcpy` call.
+            for (slot, value) in inline.iter_mut().zip(values) {
+                *slot = *value;
+            }
             (ValueVec::inline_property_storage(shape), inline)
         } else {
             (
