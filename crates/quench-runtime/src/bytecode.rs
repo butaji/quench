@@ -1765,6 +1765,53 @@ impl Function {
             }
     }
 
+    /// The method a constructor body forwards its construction to, when the body is exactly
+    /// `this.<method>.apply(this, arguments)` and the return of `undefined` (Prototype's
+    /// `Class.create` constructor): its seven records read `this.<method>`, read `apply` from
+    /// it, load `this` and the forwarded `arguments` binding into the call window, make the
+    /// forwarding call, then return `undefined`. No handler covers them.
+    pub(crate) fn forwarded_this_method(&self, constants: &[Constant]) -> Option<ForwardedThisMethod> {
+        if !self.handlers.is_empty() {
+            return None;
+        }
+        let arguments_slot = self.arguments_slot?;
+        let records = self.instructions().collect::<SmallVec<[WideInstruction; 8]>>();
+        let [method, apply, this, arguments, call, undefined, completion] = records.as_slice() else {
+            return None;
+        };
+        let window = ImmediateLayout::call_window_base(call.imm());
+        let plain_result = |record: &WideInstruction| record.result_flags() == 0;
+        let shaped = method.op() == Op::GetField
+            && method.b() == FieldBase::THIS.0
+            && plain_result(method)
+            && apply.op() == Op::GetField
+            && apply.b() == method.result_register()
+            && plain_result(apply)
+            && this.op() == Op::LoadThis
+            && plain_result(this)
+            && this.result_register() == window
+            && arguments.op() == Op::LoadLocalPlain
+            && plain_result(arguments)
+            && arguments.result_register() == window + 1
+            && arguments.local_slot() == usize::from(arguments_slot)
+            && call.op() == Op::CallForwardingArguments
+            && call.b() == apply.result_register()
+            && call.c() == method.result_register()
+            && ImmediateLayout::argument_count(call.imm()) == FORWARDED_APPLY_ARGUMENTS
+            && plain_result(call)
+            && undefined.op() == Op::LoadConst
+            && plain_result(undefined)
+            && matches!(constants.get(undefined.constant_index()), Some(Constant::Undefined))
+            && completion.op() == Op::Return
+            && completion.register_a() == undefined.result_register();
+        shaped.then(|| ForwardedThisMethod {
+            method: (method.imm(), method.c()),
+            apply: (apply.imm(), apply.c()),
+            call_pc: FORWARDED_THIS_METHOD_CALL,
+            call_result: call.a(),
+        })
+    }
+
     /// The `SetThisField` records a body opens with (`only_initializes_this_fields`), in their
     /// packed form: each holds its value register in `a`, its cache site in `c` and its atom
     /// in `imm`.
@@ -2056,6 +2103,24 @@ pub(crate) struct Handler {
     pub return_target: Option<u32>,
     pub return_slot: Option<u16>,
     pub with_depth: u16,
+}
+
+/// The argument count of a forwarding `apply` call: the receiver and `arguments`.
+pub(crate) const FORWARDED_APPLY_ARGUMENTS: u16 = 2;
+
+/// The record index of a `ForwardedThisMethod` body's forwarding call: after the reads of
+/// the method and `apply` and the loads of `this` and `arguments`.
+pub(crate) const FORWARDED_THIS_METHOD_CALL: u32 = 4;
+
+/// A constructor body that forwards its construction to a method of `this`
+/// (`Function::forwarded_this_method`): the atom and cache site of each read, and the
+/// forwarding call's record index and result register.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ForwardedThisMethod {
+    pub(crate) method: (Atom, u16),
+    pub(crate) apply: (Atom, u16),
+    pub(crate) call_pc: u32,
+    pub(crate) call_result: u16,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
