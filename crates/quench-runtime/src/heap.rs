@@ -328,8 +328,7 @@ pub(crate) struct Heap {
     /// The next collection traces the whole heap.
     full_due: bool,
     pacing_state: pacing::PacingState,
-    /// Live cells and records, and their weight, after the previous collection.
-    live_after_previous: usize,
+    /// Live weight after the previous collection.
     live_weight_after_previous: usize,
     /// Backing-store bytes allocated since the last collection, against its budget.
     external_since_collection: usize,
@@ -1050,7 +1049,6 @@ impl Heap {
         self.live_after_full = 0;
         self.full_due = false;
         self.pacing_state = pacing::PacingState::default();
-        self.live_after_previous = 0;
         self.live_weight_after_previous = 0;
         self.old_live = 0;
         self.threshold = pacing().minimum_young;
@@ -1105,7 +1103,6 @@ impl Heap {
     pub(crate) fn should_full_collect(&self) -> bool {
         self.full_due
             || pacing().allocation_cap_reached(
-                &self.pacing_state,
                 self.live_after_full,
                 self.allocations_since_full,
             )
@@ -1445,7 +1442,6 @@ impl Heap {
                 full,
                 live,
                 live_weight,
-                previous_live: self.live_after_previous,
                 previous_live_weight: self.live_weight_after_previous,
                 live_after_full: self.live_after_full,
                 allocated,
@@ -1464,7 +1460,6 @@ impl Heap {
         if std::env::var_os("QUENCH_GC_TRACE").is_some() {
             eprintln!("gc full={full} live={live} prev={} after_full={} alloc={} since_full={} next={next:?} state={:?}", self.live_weight_after_previous, self.live_after_full, allocated, self.allocations_since_full, self.pacing_state);
         }
-        self.live_after_previous = live;
         self.live_weight_after_previous = live_weight;
         self.threshold = next.threshold;
         self.full_due = next.full;

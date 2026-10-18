@@ -178,6 +178,11 @@ enum Slot {
     Memory,
     /// A reference to imported function `index`; only a call reads it.
     Import(u32),
+    /// An indirect table call, with its table binding and expected type.
+    IndirectReference {
+        signature: u32,
+        table: u32,
+    },
     /// Paths disagree; no compiled instruction may read it.
     Conflict,
 }
@@ -236,8 +241,16 @@ struct CallContext {
     globals: *const *mut Value,
     /// `import_callout` for the VM's host type.
     callout: usize,
+    /// VM helper for indirect calls, including table checks and invocation.
+    call_reference: usize,
     // Fields below are the VM's, never read by compiled code.
     program: ProgramId,
+    /// Number of Wasm-to-host callouts made by this native invocation.
+    import_callouts: *mut u64,
+    /// The bound linear memory whose base and size this call uses.
+    memory: Value,
+    /// Its exact current byte length, refreshed when a callout may grow it.
+    memory_length: u64,
     /// What a callout that returned `RAISED_STATUS` raised.
     raised: Option<Raised>,
 }
@@ -255,10 +268,148 @@ const CONTEXT_TABLE: i32 = std::mem::offset_of!(CallContext, table) as i32;
 const CONTEXT_ENTRY_STACK: u8 = std::mem::offset_of!(CallContext, entry_stack) as u8;
 const CONTEXT_GLOBALS: i32 = std::mem::offset_of!(CallContext, globals) as i32;
 const CONTEXT_CALLOUT: i32 = std::mem::offset_of!(CallContext, callout) as i32;
+const CONTEXT_CALL_REFERENCE: i32 = std::mem::offset_of!(CallContext, call_reference) as i32;
+const CONTEXT_MEMORY_LENGTH: i32 = std::mem::offset_of!(CallContext, memory_length) as i32;
 
 /// The callout's signature: (context, function index, arguments, result) ->
 /// status; arguments and result are Wasm bits, one word each.
 type Callout = unsafe extern "C" fn(*mut CallContext, u64, *const u64, *mut u64) -> i64;
+type ReferenceCallout =
+    unsafe extern "C" fn(*mut CallContext, u64, u64, u64, *const u64, *mut u64) -> i64;
+
+/// Fill an already bounds-checked range in the instance's unshared memory.
+/// The compiler checks against the exact current length before calling this
+/// leaf, and no VM call can move the guarded memory during the operation.
+unsafe extern "C" fn compiled_memory_fill(address: u64, byte: u64, length: u64) -> i64 {
+    // Wasm32 operands are zero-extended before this call; they fit every
+    // supported host's address size.
+    unsafe {
+        std::ptr::write_bytes(address as usize as *mut u8, byte as u8, length as usize);
+    }
+    0
+}
+
+fn note_compiled_callout(context: &CallContext) {
+    if !context.import_callouts.is_null() {
+        // SAFETY: only diagnostic-enabled calls provide this pointer, and it
+        // points to a counter owned by the suspended native invocation.
+        unsafe {
+            *context.import_callouts = (*context.import_callouts).saturating_add(1);
+        }
+    }
+}
+
+fn refresh_memory_length<H: Host>(context: &mut CallContext, vm: &Vm<H>) {
+    if context.memory != Value::UNDEFINED
+        && let Some((_, length)) = super::dispatch_fast::unshared_memory(vm, context.memory)
+    {
+        context.memory_length = length as u64;
+    }
+}
+
+fn finish_callout(
+    context: &mut CallContext,
+    called: Result<Result<(), JsError>, Box<dyn std::any::Any + Send>>,
+) -> i64 {
+    match called {
+        Ok(Ok(())) => 0,
+        Ok(Err(error)) => {
+            context.raised = Some(Raised::Error(error));
+            RAISED_STATUS
+        }
+        Err(panic) => {
+            context.raised = Some(Raised::Panic(panic));
+            RAISED_STATUS
+        }
+    }
+}
+
+/// Resolve, check, and invoke an indirect table target in one VM callout.
+unsafe extern "C" fn reference_callout<H: Host>(
+    context: *mut CallContext,
+    table_slot: u64,
+    index: u64,
+    signature_index: u64,
+    args: *const u64,
+    out: *mut u64,
+) -> i64 {
+    // SAFETY: generated code passes the context, table binding, table index,
+    // signature index, argument words, and output storage for this call.
+    let context = unsafe { &mut *context };
+    note_compiled_callout(context);
+    let vm = unsafe { &mut *context.vm.cast::<Vm<H>>() };
+    let active = ACTIVE_CONTEXT.with(|current| current.replace(std::ptr::null_mut()));
+    let program = context.program;
+    let called = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let table_slot = usize::try_from(table_slot)
+            .map_err(|_| JsError::validation("invalid Wasm table binding".into()))?;
+        let signature_index = u32::try_from(signature_index)
+            .map_err(|_| JsError::validation("invalid Wasm signature index".into()))?;
+        let table = vm
+            .heap
+            .environment_slot(context.env, table_slot)
+            .ok_or_else(|| JsError::validation("invalid Wasm table binding".into()))?;
+        let callee = vm.wasm_indirect_target(program, table, index, signature_index)?;
+        let (params, result_type) = {
+            let signature = vm
+                .programs
+                .wasm_signatures(program)
+                .and_then(|signatures| signatures.type_signature(signature_index))
+                .ok_or_else(|| JsError::validation("invalid Wasm signature index".into()))?;
+            (
+                signature
+                    .params
+                    .iter()
+                    .copied()
+                    .collect::<smallvec::SmallVec<[crate::WasmType; 8]>>(),
+                signature.results.first().copied(),
+            )
+        };
+        let mut values: smallvec::SmallVec<[Value; 8]> = smallvec::SmallVec::new();
+        for (offset, ty) in params.iter().enumerate() {
+            let kind = Kind::of(*ty)
+                .ok_or_else(|| JsError::validation("unsupported Wasm call parameter".into()))?;
+            // SAFETY: the generated call frame stores one word per parameter.
+            let bits = unsafe { *args.add(offset) };
+            values.push(vm.encode_wasm_value(crate::WasmValue::from_bits(
+                *ty,
+                match kind {
+                    Kind::I32 => u64::from(bits as u32),
+                    Kind::I64 => bits,
+                },
+            )));
+        }
+        let code = vm
+            .programs
+            .get(program)
+            .ok_or_else(|| JsError::validation("missing Wasm program".into()))?;
+        let receiver = vm
+            .programs
+            .constant(program, VOID_RESULT_CONSTANT)
+            .ok_or_else(|| JsError::validation("missing Wasm void constant".into()))?;
+        let result = vm.call_value(&code, callee, receiver, &values)?;
+        let bits = match result_type {
+            Some(ty) => match vm
+                .decode_wasm_value(result, ty)?
+                .bits()
+                .ok_or_else(|| JsError::validation("non-scalar Wasm call result".into()))?
+            {
+                crate::wasm::ScalarBits::Bits32(bits) => u64::from(bits),
+                crate::wasm::ScalarBits::Bits64(bits) => bits,
+                crate::wasm::ScalarBits::Bits128(_) => {
+                    return Err(JsError::validation("non-scalar Wasm call result".into()));
+                }
+            },
+            None => 0,
+        };
+        // SAFETY: `out` points into the result word emitted for this helper.
+        unsafe { *out = bits };
+        Ok(())
+    }));
+    ACTIVE_CONTEXT.with(|current| current.set(active));
+    refresh_memory_length(context, vm);
+    finish_callout(context, called)
+}
 
 /// Make imported call `function` for compiled code, as the interpreter's
 /// `Op::Call` does.
@@ -271,6 +422,7 @@ unsafe extern "C" fn import_callout<H: Host>(
     // SAFETY: compiled code passes the context `run_compiled` made, whose
     // VM is suspended in that call.
     let context = unsafe { &mut *context };
+    note_compiled_callout(context);
     let vm = unsafe { &mut *context.vm.cast::<Vm<H>>() };
     // The VM's own code runs outside compiled code: no guard fault is ours.
     let active = ACTIVE_CONTEXT.with(|current| current.replace(std::ptr::null_mut()));
@@ -282,17 +434,8 @@ unsafe extern "C" fn import_callout<H: Host>(
         unsafe { vm.call_import(program, env, function as u32, args, out) }
     }));
     ACTIVE_CONTEXT.with(|current| current.set(active));
-    match called {
-        Ok(Ok(())) => 0,
-        Ok(Err(error)) => {
-            context.raised = Some(Raised::Error(error));
-            RAISED_STATUS
-        }
-        Err(panic) => {
-            context.raised = Some(Raised::Panic(panic));
-            RAISED_STATUS
-        }
-    }
+    refresh_memory_length(context, vm);
+    finish_callout(context, called)
 }
 
 /// A compiled function's entry: (context, memory base, memory length,
@@ -329,9 +472,83 @@ pub(super) struct CompiledProgram {
     /// The environment slots of the globals compiled code accesses, in the
     /// order of the context's global addresses.
     globals: Vec<u32>,
+    diagnostics: Option<WasmJitDiagnostics>,
+}
+
+/// Counters allocated only for opt-in benchmark diagnostics. These runs are
+/// intended to explain coverage; their timings are not qualification scores.
+struct WasmJitDiagnostics {
+    program: u32,
+    total_functions: usize,
+    compiled_functions: usize,
+    code_bytes: usize,
+    mapped_bytes: usize,
+    compile_ns: u128,
+    native_entry_requests: Vec<std::cell::Cell<u64>>,
+    interpreter_fallback_entries: Vec<std::cell::Cell<u64>>,
+    compiled_to_vm_callouts: std::cell::Cell<u64>,
+}
+
+impl Drop for CompiledProgram {
+    fn drop(&mut self) {
+        let Some(stats) = &self.diagnostics else {
+            return;
+        };
+        let entries = stats
+            .native_entry_requests
+            .iter()
+            .enumerate()
+            .filter_map(|(function, count)| {
+                let count = count.get();
+                (count > 0).then(|| format!("[{function},{count}]"))
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let fallbacks = stats
+            .interpreter_fallback_entries
+            .iter()
+            .enumerate()
+            .filter_map(|(function, count)| {
+                let count = count.get();
+                (count > 0).then(|| format!("[{function},{count}]"))
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        eprintln!(
+            "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compiled_functions\":{},\"total_functions\":{},\"code_bytes\":{},\"mapped_bytes\":{},\"compile_ns\":{},\"native_entry_requests\":[{}],\"interpreter_fallback_entries\":[{}],\"compiled_to_vm_callouts\":{}}}",
+            stats.program,
+            stats.compiled_functions,
+            stats.total_functions,
+            stats.code_bytes,
+            stats.mapped_bytes,
+            stats.compile_ns,
+            entries,
+            fallbacks,
+            stats.compiled_to_vm_callouts.get(),
+        );
+    }
+}
+
+fn jit_diagnostics_enabled() -> bool {
+    std::env::var_os("QUENCH_WASM_JIT_STATS").is_some_and(|value| value == "1")
 }
 
 impl CompiledProgram {
+    pub(super) fn has_function(&self, function: usize) -> bool {
+        self.functions.get(function).is_some_and(Option::is_some)
+    }
+
+    pub(super) fn has_function_or_note_fallback(&self, function: usize) -> bool {
+        let available = self.has_function(function);
+        if !available
+            && let Some(stats) = &self.diagnostics
+            && let Some(fallbacks) = stats.interpreter_fallback_entries.get(function)
+        {
+            fallbacks.set(fallbacks.get().saturating_add(1));
+        }
+        available
+    }
+
     #[cfg(test)]
     pub(super) fn native_entries(&self, function: usize) -> Option<u64> {
         self.functions
@@ -557,9 +774,25 @@ struct Analysis<'a, H: Host> {
     /// Whether imported calls may compile: a callee may grow memory, which
     /// moves an unguarded memory's bytes.
     callouts: bool,
+    /// Rejection reasons exist only for explicit diagnostic runs.
+    compile_rejections: Option<&'a std::cell::RefCell<Vec<Option<String>>>>,
 }
 
 impl<H: Host> Analysis<'_, H> {
+    fn reject(&self, index: usize, reason: impl FnOnce() -> String) {
+        let Some(rejections) = self.compile_rejections else {
+            return;
+        };
+        let mut rejections = rejections.borrow_mut();
+        if let Some(rejection) = rejections.get_mut(index)
+            && rejection.is_none()
+        {
+            let reason = reason();
+            *rejection = Some(reason.clone());
+            eprintln!("QUENCH_WASM_JIT_REJECTION {index} {reason}");
+        }
+    }
+
     fn constant(&self, index: usize) -> Option<Value> {
         self.vm.programs.constant(self.program, index)
     }
@@ -601,6 +834,32 @@ impl<H: Host> Analysis<'_, H> {
         )
     }
 
+    /// Whether a bound memory has the representation supported by native
+    /// linear-memory operations: unshared memory32 with ordinary Wasm pages.
+    fn supports_compiled_memory(&self, slot: u32) -> bool {
+        let Some(binding) = self.vm.heap.environment_slot(self.env, slot as usize) else {
+            return false;
+        };
+        matches!(
+            self.vm.heap.get(binding),
+            Some(Cell::WasmMemory { bytes, header, .. })
+                if matches!(**bytes, crate::wasm::memory::MemoryStorage::Unshared(_))
+                    && !header.ty.memory64
+                    && header.ty.page_size() as usize
+                        == (1usize << crate::wasm::memory::WASM_PAGE_BITS)
+        )
+    }
+
+    fn binds_table32(&self, slot: u32) -> bool {
+        let Some(binding) = self.vm.heap.environment_slot(self.env, slot as usize) else {
+            return false;
+        };
+        matches!(
+            self.vm.heap.get(binding),
+            Some(Cell::WasmTable { table64: false, .. })
+        )
+    }
+
     fn signature(&self, index: u32) -> Option<&crate::WasmSignature> {
         self.vm
             .programs
@@ -616,25 +875,47 @@ impl<H: Host> Analysis<'_, H> {
             .then(|| signatures.get(function as usize))?
     }
 
+    fn type_signature(&self, index: u32) -> Option<&crate::WasmSignature> {
+        self.vm
+            .programs
+            .wasm_signatures(self.program)?
+            .type_signature(index)
+    }
+
     /// The function's plan, assuming every function in `callable` compiles.
     fn plan(&self, index: usize, callable: &[bool], memory_slot: &mut Option<u32>) -> Option<Plan> {
         let function = &self.code.functions[index];
-        let signature = self.signature(index as u32)?;
-        if function.locals != 0 || signature.results.len() > 1 {
+        let Some(signature) = self.signature(index as u32) else {
+            self.reject(index, || "missing-signature".into());
+            return None;
+        };
+        if function.locals != 0 {
+            self.reject(index, || format!("frame-locals:{}", function.locals));
+            return None;
+        }
+        if signature.results.len() > 1 {
+            self.reject(index, || {
+                format!("multi-value-results:{}", signature.results.len())
+            });
             return None;
         }
         let params = signature.params.clone();
         let result = signature.results.first().copied();
-        if params
+        if let Some(ty) = params
             .iter()
             .chain(result.iter())
-            .any(|ty| Kind::of(*ty).is_none())
+            .find(|ty| Kind::of(**ty).is_none())
         {
+            self.reject(index, || format!("unsupported-signature-type:{ty:?}"));
             return None;
         }
-        let parameter_base = usize::from(function.parameter_registers?);
+        let Some(parameter_base) = function.parameter_registers.map(usize::from) else {
+            self.reject(index, || "missing-parameter-register-base".into());
+            return None;
+        };
         let registers = usize::from(function.registers);
         if parameter_base + params.len() > registers {
+            self.reject(index, || "parameters-outside-register-window".into());
             return None;
         }
         let memory_register = super::dispatch_fast::memory_register(function);
@@ -655,17 +936,35 @@ impl<H: Host> Analysis<'_, H> {
             let mut state = states[pc]
                 .clone()
                 .expect("queued instructions have a state");
-            self.transfer(
-                function,
-                instruction,
-                &mut state,
-                callable,
-                memory_register,
-                memory_slot,
-                result,
-            )?;
+            if instruction.op() == Op::CallKnown
+                && !callable
+                    .get(usize::from(instruction.known_function_index()))
+                    .copied()
+                    .unwrap_or(false)
+            {
+                let callee = instruction.known_function_index();
+                self.reject(index, || format!("uncompiled-callee:{callee}@{pc}"));
+                return None;
+            }
+            if self
+                .transfer(
+                    function,
+                    instruction,
+                    &mut state,
+                    callable,
+                    memory_register,
+                    memory_slot,
+                    result,
+                )
+                .is_none()
+            {
+                let op = instruction.op();
+                self.reject(index, || format!("unsupported-instruction:{op:?}@{pc}"));
+                return None;
+            }
             for successor in successors(function, pc, instruction) {
                 if successor >= instructions.len() {
+                    self.reject(index, || format!("invalid-successor:{successor}@{pc}"));
                     return None;
                 }
                 let changed = match &mut states[successor] {
@@ -741,6 +1040,7 @@ impl<H: Host> Analysis<'_, H> {
         // The memory register is read only by direct accesses through it.
         if memory_register.is_some_and(|memory| {
             !direct_access(op)
+                && !matches!(op, Op::WasmMemorySize | Op::WasmMemoryFill)
                 && op != Op::WasmInstanceBinding
                 && crate::bytecode::InstructionField::ALL.iter().any(|field| {
                     op.field_layout(*field).reads_register()
@@ -874,6 +1174,47 @@ impl<H: Host> Analysis<'_, H> {
                 (value(state, instruction.c())? == kind).then_some(())?;
                 set(state, instruction.a(), Slot::Value(kind))
             }
+            Op::WasmMemorySize => {
+                let memory = instruction.b();
+                if Some(memory) != memory_register
+                    || state.get(usize::from(memory)) != Some(&Slot::Memory)
+                    || !memory_slot.is_some_and(|slot| self.supports_compiled_memory(slot))
+                {
+                    return None;
+                }
+                set(state, instruction.a(), Slot::Value(Kind::I32))
+            }
+            Op::WasmMemoryFill => {
+                let memory = instruction.a();
+                let (destination, _) = instruction.register_pair();
+                if Some(memory) != memory_register
+                    || state.get(usize::from(memory)) != Some(&Slot::Memory)
+                    || !memory_slot.is_some_and(|slot| self.supports_compiled_memory(slot))
+                {
+                    return None;
+                }
+                i32_value(state, instruction.b())?;
+                i32_value(state, instruction.c())?;
+                i32_value(state, destination)
+            }
+            Op::WasmIndirectTarget if self.callouts => {
+                let Slot::Binding(table) = *state.get(usize::from(instruction.b()))? else {
+                    return None;
+                };
+                if !self.binds_table32(table) {
+                    return None;
+                }
+                i32_value(state, instruction.c())?;
+                self.type_signature(instruction.imm())?;
+                set(
+                    state,
+                    instruction.a(),
+                    Slot::IndirectReference {
+                        signature: instruction.imm(),
+                        table,
+                    },
+                )
+            }
             Op::CallKnown => {
                 let callee = u32::from(instruction.known_function_index());
                 if !callable.get(callee as usize).copied().unwrap_or(false) {
@@ -899,10 +1240,14 @@ impl<H: Host> Analysis<'_, H> {
                 set(state, instruction.a(), Slot::Import(function))
             }
             Op::Call => {
-                let Slot::Import(function) = *state.get(usize::from(instruction.b()))? else {
-                    return None;
+                let slot = *state.get(usize::from(instruction.b()))?;
+                let signature = match slot {
+                    Slot::Import(function) => self.import_signature(function)?,
+                    Slot::IndirectReference { signature, .. } if self.callouts => {
+                        self.type_signature(signature)?
+                    }
+                    _ => return None,
                 };
-                let signature = self.import_signature(function)?;
                 let window = instruction.call_window();
                 if usize::from(window.count) != signature.params.len()
                     || signature.results.len() > 1
@@ -1274,7 +1619,7 @@ struct Emitter<'a, 'b, H: Host> {
     blocks: Vec<Option<ir::Block>>,
     context: ir::Value,
     base: ir::Value,
-    /// The memory's length, which only unguarded accesses compare.
+    /// The memory's exact length for checked accesses and bulk operations.
     length: Option<ir::Value>,
     memory: MemoryArguments,
     trap_blocks: [Option<ir::Block>; TRAPS.len()],
@@ -1391,17 +1736,39 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 
     fn interrupt_safepoint(&mut self) {
-        let pointer=self.builder.ins().load(types::I64,MemFlagsData::trusted(),self.context,CONTEXT_INTERRUPT);
-        let requested=self.builder.ins().atomic_load(types::I8,MemFlagsData::trusted(),pointer);
-        let stop=self.builder.ins().icmp_imm_u(IntCC::NotEqual,requested,0);
-        let termination=match self.termination_block { Some(block)=>block,None=>{let block=self.builder.create_block();self.termination_block=Some(block);block} };
-        let next=self.builder.create_block();self.builder.ins().brif(stop,termination,&[],next,&[]);
-        self.builder.switch_to_block(next);self.builder.seal_block(next);
+        let pointer = self.builder.ins().load(
+            types::I64,
+            MemFlagsData::trusted(),
+            self.context,
+            CONTEXT_INTERRUPT,
+        );
+        let requested = self
+            .builder
+            .ins()
+            .atomic_load(types::I8, MemFlagsData::trusted(), pointer);
+        let stop = self.builder.ins().icmp_imm_u(IntCC::NotEqual, requested, 0);
+        let termination = match self.termination_block {
+            Some(block) => block,
+            None => {
+                let block = self.builder.create_block();
+                self.termination_block = Some(block);
+                block
+            }
+        };
+        let next = self.builder.create_block();
+        self.builder.ins().brif(stop, termination, &[], next, &[]);
+        self.builder.switch_to_block(next);
+        self.builder.seal_block(next);
     }
     fn finish_traps(&mut self) {
-        if let Some(block)=self.termination_block {
-            self.builder.switch_to_block(block);let status=self.builder.ins().iconst(types::I64,TERMINATED_STATUS);
-            let mut values=vec![status];if let Some(ty)=self.plan.result {let kind=Kind::of(ty).expect("planned");values.push(self.builder.ins().iconst(kind.ir(),0));}
+        if let Some(block) = self.termination_block {
+            self.builder.switch_to_block(block);
+            let status = self.builder.ins().iconst(types::I64, TERMINATED_STATUS);
+            let mut values = vec![status];
+            if let Some(ty) = self.plan.result {
+                let kind = Kind::of(ty).expect("planned");
+                values.push(self.builder.ins().iconst(kind.ir(), 0));
+            }
             self.builder.ins().return_(&values);
         }
         for (index, block) in self.trap_blocks.into_iter().enumerate() {
@@ -1875,6 +2242,99 @@ impl<H: Host> Emitter<'_, '_, H> {
         }
     }
 
+    /// Keep the table index in native code until the combined VM callout.
+    fn indirect_target(&mut self, _pc: usize, instruction: WideInstruction) {
+        let index = self.read(instruction.c(), Kind::I32);
+        let index = self.builder.ins().uextend(types::I64, index);
+        self.write(instruction.a(), Kind::I64, index);
+    }
+
+    /// Resolve and call a table reference through one ordinary VM boundary.
+    fn call_reference(&mut self, pc: usize, instruction: WideInstruction) {
+        let Slot::IndirectReference {
+            signature: signature_index,
+            table,
+        } = self.plan.operand(pc)
+        else {
+            unreachable!("planned indirect calls retain their table binding");
+        };
+        let wasm_signature = self
+            .analysis
+            .type_signature(signature_index)
+            .expect("planned")
+            .clone();
+        let word = types::I64.bytes();
+        let words = wasm_signature.params.len() + 1;
+        let slot = self.builder.create_sized_stack_slot(ir::StackSlotData::new(
+            ir::StackSlotKind::ExplicitSlot,
+            word * words as u32,
+            word.trailing_zeros() as u8,
+        ));
+        let window = instruction.call_window();
+        for (offset, ty) in wasm_signature.params.iter().enumerate() {
+            let kind = Kind::of(*ty).expect("planned");
+            let value = self.read(window.base + offset as u16, kind);
+            let value = match kind {
+                Kind::I32 => self.builder.ins().uextend(types::I64, value),
+                Kind::I64 => value,
+            };
+            let address =
+                self.builder
+                    .ins()
+                    .stack_addr(types::I64, slot, (offset as u32 * word) as i32);
+            self.builder
+                .ins()
+                .store(MemFlagsData::trusted(), value, address, 0);
+        }
+        let result_offset = (wasm_signature.params.len() as u32 * word) as i32;
+        let args = self.builder.ins().stack_addr(types::I64, slot, 0);
+        let out = self
+            .builder
+            .ins()
+            .stack_addr(types::I64, slot, result_offset);
+        let index = self.read(instruction.b(), Kind::I64);
+        let target = self.builder.ins().load(
+            types::I64,
+            invariant(),
+            self.context,
+            CONTEXT_CALL_REFERENCE,
+        );
+        let mut call_signature = Signature::new(self.call_conv);
+        for _ in 0..6 {
+            call_signature.params.push(AbiParam::new(types::I64));
+        }
+        call_signature.returns.push(AbiParam::new(types::I64));
+        let call_signature = self.builder.import_signature(call_signature);
+        let table_slot = self.builder.ins().iconst(types::I64, i64::from(table));
+        let signature_index = self
+            .builder
+            .ins()
+            .iconst(types::I64, i64::from(signature_index));
+        let call = self.builder.ins().call_indirect(
+            call_signature,
+            target,
+            &[self.context, table_slot, index, signature_index, args, out],
+        );
+        let status = self.builder.inst_results(call)[0];
+        self.propagate(status);
+        let destination = instruction.result_register();
+        match wasm_signature.results.first() {
+            Some(ty) => {
+                let kind = Kind::of(*ty).expect("planned");
+                let bits = self
+                    .builder
+                    .ins()
+                    .load(types::I64, MemFlagsData::trusted(), out, 0);
+                let value = match kind {
+                    Kind::I32 => self.builder.ins().ireduce(types::I32, bits),
+                    Kind::I64 => bits,
+                };
+                self.write(destination, kind, value);
+            }
+            None => self.write_constant(destination, Kind::I32, 0),
+        }
+    }
+
     fn jump(&mut self, target: usize) {
         self.interrupt_safepoint();
         let mut block = self.edge(target);
@@ -1984,7 +2444,9 @@ impl<H: Host> Emitter<'_, '_, H> {
         instruction: WideInstruction,
     ) -> bool {
         let op = instruction.op();
-        if op == Op::WasmBranchTable { self.interrupt_safepoint(); }
+        if op == Op::WasmBranchTable {
+            self.interrupt_safepoint();
+        }
         let (a, b, c) = (instruction.a(), instruction.b(), instruction.c());
         if let Some(operator) = I32BinaryOperator::from_register_op(op) {
             let left = self.read(b, Kind::I32);
@@ -2053,6 +2515,54 @@ impl<H: Host> Emitter<'_, '_, H> {
                 4 if kind == Kind::I64 => self.builder.ins().istore32(flags, value, host, 0),
                 _ => self.builder.ins().store(flags, value, host, 0),
             };
+            return true;
+        }
+        if op == Op::WasmMemorySize {
+            let bytes = self.builder.ins().load(
+                types::I64,
+                MemFlagsData::trusted(),
+                self.context,
+                CONTEXT_MEMORY_LENGTH,
+            );
+            let pages = self.builder.ins().ushr_imm_u(bytes, 16);
+            let pages = self.builder.ins().ireduce(types::I32, pages);
+            self.write(a, Kind::I32, pages);
+            return true;
+        }
+        if op == Op::WasmMemoryFill {
+            let (destination, _) = instruction.register_pair();
+            let destination = self.read(destination, Kind::I32);
+            let destination = self.builder.ins().uextend(types::I64, destination);
+            let raw_length = self.read(c, Kind::I32);
+            let length = self.builder.ins().uextend(types::I64, raw_length);
+            let end = self.builder.ins().iadd(destination, length);
+            let memory_length = self.builder.ins().load(
+                types::I64,
+                MemFlagsData::trusted(),
+                self.context,
+                CONTEXT_MEMORY_LENGTH,
+            );
+            let out_of_bounds =
+                self.builder
+                    .ins()
+                    .icmp(IntCC::UnsignedGreaterThan, end, memory_length);
+            self.trap_if(out_of_bounds, crate::WasmTrap::OutOfBoundsMemory);
+            let address = self.builder.ins().iadd(self.base, destination);
+            let raw_byte = self.read(b, Kind::I32);
+            let byte = self.builder.ins().uextend(types::I64, raw_byte);
+            let mut signature = Signature::new(self.call_conv);
+            for _ in 0..3 {
+                signature.params.push(AbiParam::new(types::I64));
+            }
+            signature.returns.push(AbiParam::new(types::I64));
+            let signature = self.builder.import_signature(signature);
+            let target = self.builder.ins().iconst(
+                types::I64,
+                compiled_memory_fill as *const () as usize as i64,
+            );
+            self.builder
+                .ins()
+                .call_indirect(signature, target, &[address, byte, length]);
             return true;
         }
         if let Some((operator, ty)) = float_binary_operator(op, instruction.imm()) {
@@ -2241,7 +2751,12 @@ impl<H: Host> Emitter<'_, '_, H> {
                 }
             }
             Op::WasmRefFunc => {}
-            Op::Call => self.callout(pc, instruction),
+            Op::WasmIndirectTarget => self.indirect_target(pc, instruction),
+            Op::Call => match self.plan.operand(pc) {
+                Slot::Import(_) => self.callout(pc, instruction),
+                Slot::IndirectReference { .. } => self.call_reference(pc, instruction),
+                _ => unreachable!("planned calls hold a supported callable"),
+            },
             Op::Return => {
                 let status = self.builder.ins().iconst(types::I64, 0);
                 let mut values = vec![status];
@@ -2876,8 +3391,7 @@ impl<H: Host> Vm<H> {
             feature = "profile-trace",
             feature = "profile-memory",
             feature = "profile-gc-time"
-        ))
-            || self.execution_mode != ExecutionMode::Compiled
+        )) || self.execution_mode != ExecutionMode::Compiled
             || program.kind == crate::bytecode::ProgramKind::Wasm
             || self.frames.get(frame)?.pc != 0
         {
@@ -2887,12 +3401,13 @@ impl<H: Host> Vm<H> {
         let function_id = self.frames[frame].function;
         let function = program.functions.get(function_id as usize)?;
         let tier = self.programs.js_tier(program_id, function_id);
-        if matches!(tier.as_ref(), Some(super::program_store::JsTierState::Unsupported)) {
+        if matches!(
+            tier.as_ref(),
+            Some(super::program_store::JsTierState::Unsupported)
+        ) {
             return None;
         }
-        if tier.is_none()
-            && !super::js_compiled::function_candidate(function, &program.atoms)
-        {
+        if tier.is_none() && !super::js_compiled::function_candidate(function, &program.atoms) {
             return None;
         }
 
@@ -2919,11 +3434,10 @@ impl<H: Host> Vm<H> {
             }
             Some(super::program_store::JsTierState::Unsupported) => return None,
             Some(super::program_store::JsTierState::Hot { .. }) | None => {
-                if !self.programs.note_js_function_entry(
-                    program_id,
-                    function_id,
-                    numeric,
-                ) || !numeric
+                if !self
+                    .programs
+                    .note_js_function_entry(program_id, function_id, numeric)
+                    || !numeric
                 {
                     return None;
                 }
@@ -2970,12 +3484,17 @@ impl<H: Host> Vm<H> {
         if code.kind != crate::bytecode::ProgramKind::Wasm {
             return None;
         }
+        let diagnostics_enabled = jit_diagnostics_enabled();
+        let compile_started = diagnostics_enabled.then(std::time::Instant::now);
+        let compile_rejections =
+            diagnostics_enabled.then(|| std::cell::RefCell::new(vec![None; code.functions.len()]));
         let mut analysis = Analysis {
             vm: self,
             program,
             code: &code,
             env,
             callouts: true,
+            compile_rejections: compile_rejections.as_ref(),
         };
         let count = code.functions.len();
         // The callable set is the greatest fixpoint: assume every function
@@ -3091,12 +3610,13 @@ impl<H: Host> Vm<H> {
             link(&mut bytes, offset, &call, offsets[call.callee]?)?;
         }
         let memory = CodeMemory::new(&bytes)?;
+        let mapped_bytes = memory.length;
         let base = memory.pointer as usize;
         let table: Box<[usize]> = offsets
             .iter()
             .map(|offset| offset.map_or(0, |offset| base + offset))
             .collect();
-        let functions = plans
+        let functions: Vec<Option<CompiledFunction>> = plans
             .into_iter()
             .zip(entries)
             .map(|(plan, entry)| {
@@ -3114,6 +3634,21 @@ impl<H: Host> Vm<H> {
                 })
             })
             .collect();
+        let compiled_functions = functions
+            .iter()
+            .filter(|function| function.is_some())
+            .count();
+        let diagnostics = diagnostics_enabled.then(|| WasmJitDiagnostics {
+            program: program.raw(),
+            total_functions: count,
+            compiled_functions,
+            code_bytes: bytes.len(),
+            mapped_bytes,
+            compile_ns: compile_started.map_or(0, |started| started.elapsed().as_nanos()),
+            native_entry_requests: (0..count).map(|_| std::cell::Cell::new(0)).collect(),
+            interpreter_fallback_entries: (0..count).map(|_| std::cell::Cell::new(0)).collect(),
+            compiled_to_vm_callouts: std::cell::Cell::new(0),
+        });
         Some(CompiledProgram {
             _code: memory,
             table,
@@ -3123,6 +3658,7 @@ impl<H: Host> Vm<H> {
             fixed_base,
             wraps,
             globals,
+            diagnostics,
         })
     }
 
@@ -3160,125 +3696,192 @@ impl<H: Host> Vm<H> {
         id: u32,
         args: &[Value],
     ) -> Option<Result<Value, JsError>> {
+        self.run_compiled_inner(program, env, id, args)
+    }
+
+    fn run_compiled_inner(
+        &mut self,
+        program: ProgramId,
+        env: Value,
+        id: u32,
+        args: &[Value],
+    ) -> Option<Result<Value, JsError>> {
         if self.execution_mode != ExecutionMode::Compiled {
             return None;
         }
         let compiled = match self.programs.compiled(program) {
             Some(compiled) => compiled?,
             None => {
+                let diagnose = jit_diagnostics_enabled()
+                    && self
+                        .programs
+                        .get(program)
+                        .is_some_and(|code| code.kind == crate::bytecode::ProgramKind::Wasm);
+                let started = diagnose.then(std::time::Instant::now);
                 let compiled = self.compile_program(program, env).map(Rc::new);
+                if diagnose && compiled.is_none() {
+                    let total_functions = self
+                        .programs
+                        .get(program)
+                        .map_or(0, |code| code.functions.len());
+                    eprintln!(
+                        "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compile_failed\":true,\"total_functions\":{},\"compile_ns\":{}}}",
+                        program.raw(),
+                        total_functions,
+                        started
+                            .expect("diagnostic timer started")
+                            .elapsed()
+                            .as_nanos(),
+                    );
+                }
                 self.programs.set_compiled(program, compiled.clone());
                 compiled?
             }
         };
-        let function = compiled.functions.get(id as usize)?.as_ref()?;
-        if args.len() != function.params.len() {
-            return None;
-        }
-        let (base, length, guard) = match compiled.memory_slot {
-            Some(slot) => {
-                let binding = self.heap.environment_slot(env, slot as usize)?;
-                let view = super::dispatch_fast::unshared_memory(self, binding)?;
-                let guard = guarded_memory(self, binding);
-                // Code compiled without bounds checks needs this memory's guard.
-                if compiled.guarded && guard.is_none() {
-                    return None;
-                }
-                if compiled.wraps && !wrapping_memory(self, binding) {
-                    return None;
-                }
-                if compiled.fixed_base.is_some_and(|fixed| {
-                    guard.map(|(base, _)| displacement_base(base)) != Some(Some(fixed))
-                }) {
-                    return None;
-                }
-                (view.0 as u64, view.1 as u64, guard)
+        let result = (|| {
+            let function = compiled.functions.get(id as usize)?.as_ref()?;
+            if args.len() != function.params.len() {
+                return None;
             }
-            None => (0, 0, None),
-        };
-        let mut raw: smallvec::SmallVec<[u64; 8]> = smallvec::SmallVec::new();
-        for (value, ty) in args.iter().zip(&function.params) {
-            raw.push(match Kind::of(*ty)? {
-                Kind::I32 => u64::from(value.wasm_bits32()),
-                Kind::I64 => self.decode_bits64(*value)?,
-            });
-        }
-        let marker = 0u8;
-        let stack_pointer = std::hint::black_box(&marker as *const u8 as usize);
-        let mut globals: smallvec::SmallVec<[*mut Value; 8]> = smallvec::SmallVec::new();
-        for slot in &compiled.globals {
-            let binding = self.heap.environment_slot(env, *slot as usize)?;
-            match self.heap.get_mut(binding)? {
-                Cell::WasmGlobal { value, .. } => globals.push(value),
-                _ => return None,
-            }
-        }
-        let (guard_start, guard_end) = guard.map_or((0, 0), |(start, size)| {
-            (start as usize, start as usize + size)
-        });
-        let mut context = CallContext {
-            stack_limit: stack_pointer.saturating_sub(COMPILED_STACK_BUDGET),
-            interrupt: self.execution_interrupt.atomic_flag(),
-            table: compiled.table.as_ptr(),
-            vm: (self as *mut Self).cast(),
-            env,
-            entry_stack: 0,
-            guard_start,
-            guard_end,
-            globals: globals.as_ptr(),
-            callout: import_callout::<H> as Callout as usize,
-            program,
-            raised: None,
-        };
-        let mut out = 0u64;
-        #[cfg(test)]
-        function
-            .native_entries
-            .set(function.native_entries.get().saturating_add(1));
-        let status = match guard_trampoline() {
-            Some(trampoline) => {
-                // Compiled calls nest only through the interpreter, so the
-                // outer context returns when this call does.
-                let outer = ACTIVE_CONTEXT.with(|active| active.replace(&mut context));
-                // SAFETY: as below; the trampoline saves the caller's registers
-                // and records where a guard fault resumes.
-                let status = unsafe {
-                    trampoline(
-                        &mut context,
-                        base,
-                        length,
-                        raw.as_ptr(),
-                        &mut out,
-                        function.entry,
-                    )
-                };
-                ACTIVE_CONTEXT.with(|active| active.set(outer));
-                status
-            }
-            // SAFETY: the entry is compiled code for this function's
-            // signature; the context, arguments and result outlive the call,
-            // and the memory view stays valid because compiled code never
-            // grows memory.
-            None => unsafe { (function.entry)(&mut context, base, length, raw.as_ptr(), &mut out) },
-        };
-        if i64::from(status) == TERMINATED_STATUS { return Some(Err(JsError::execution_terminated())); }
-        if i64::from(status) == RAISED_STATUS {
-            return match context.raised.take()? {
-                Raised::Error(error) => Some(Err(error)),
-                Raised::Panic(panic) => std::panic::resume_unwind(panic),
+            let (base, length, guard, memory_binding) = match compiled.memory_slot {
+                Some(slot) => {
+                    let binding = self.heap.environment_slot(env, slot as usize)?;
+                    let view = super::dispatch_fast::unshared_memory(self, binding)?;
+                    let guard = guarded_memory(self, binding);
+                    // Code compiled without bounds checks needs this memory's guard.
+                    if compiled.guarded && guard.is_none() {
+                        return None;
+                    }
+                    if compiled.wraps && !wrapping_memory(self, binding) {
+                        return None;
+                    }
+                    if compiled.fixed_base.is_some_and(|fixed| {
+                        guard.map(|(base, _)| displacement_base(base)) != Some(Some(fixed))
+                    }) {
+                        return None;
+                    }
+                    (view.0 as u64, view.1 as u64, guard, binding)
+                }
+                None => (0, 0, None, Value::UNDEFINED),
             };
+            let mut raw: smallvec::SmallVec<[u64; 8]> = smallvec::SmallVec::new();
+            for (value, ty) in args.iter().zip(&function.params) {
+                raw.push(match Kind::of(*ty)? {
+                    Kind::I32 => u64::from(value.wasm_bits32()),
+                    Kind::I64 => self.decode_bits64(*value)?,
+                });
+            }
+            let marker = 0u8;
+            let stack_pointer = std::hint::black_box(&marker as *const u8 as usize);
+            let mut globals: smallvec::SmallVec<[*mut Value; 8]> = smallvec::SmallVec::new();
+            for slot in &compiled.globals {
+                let binding = self.heap.environment_slot(env, *slot as usize)?;
+                match self.heap.get_mut(binding)? {
+                    Cell::WasmGlobal { value, .. } => globals.push(value),
+                    _ => return None,
+                }
+            }
+            let (guard_start, guard_end) = guard.map_or((0, 0), |(start, size)| {
+                (start as usize, start as usize + size)
+            });
+            let mut import_callouts = 0u64;
+            let import_callouts_ptr = if compiled.diagnostics.is_some() {
+                &mut import_callouts
+            } else {
+                std::ptr::null_mut()
+            };
+            let mut context = CallContext {
+                stack_limit: stack_pointer.saturating_sub(COMPILED_STACK_BUDGET),
+                interrupt: self.execution_interrupt.atomic_flag(),
+                table: compiled.table.as_ptr(),
+                vm: (self as *mut Self).cast(),
+                env,
+                entry_stack: 0,
+                guard_start,
+                guard_end,
+                globals: globals.as_ptr(),
+                callout: import_callout::<H> as Callout as usize,
+                call_reference: reference_callout::<H> as ReferenceCallout as usize,
+                program,
+                import_callouts: import_callouts_ptr,
+                memory: memory_binding,
+                memory_length: length,
+                raised: None,
+            };
+            let mut out = 0u64;
+            if let Some(stats) = &compiled.diagnostics
+                && let Some(entries) = stats.native_entry_requests.get(id as usize)
+            {
+                entries.set(entries.get().saturating_add(1));
+            }
+            #[cfg(test)]
+            function
+                .native_entries
+                .set(function.native_entries.get().saturating_add(1));
+            let status = match guard_trampoline() {
+                Some(trampoline) => {
+                    // Compiled calls nest only through the interpreter, so the
+                    // outer context returns when this call does.
+                    let outer = ACTIVE_CONTEXT.with(|active| active.replace(&mut context));
+                    // SAFETY: as below; the trampoline saves the caller's registers
+                    // and records where a guard fault resumes.
+                    let status = unsafe {
+                        trampoline(
+                            &mut context,
+                            base,
+                            length,
+                            raw.as_ptr(),
+                            &mut out,
+                            function.entry,
+                        )
+                    };
+                    ACTIVE_CONTEXT.with(|active| active.set(outer));
+                    status
+                }
+                // SAFETY: the entry is compiled code for this function's
+                // signature; the context, arguments and result outlive the call,
+                // and the memory view stays valid because compiled code never
+                // grows memory.
+                None => unsafe {
+                    (function.entry)(&mut context, base, length, raw.as_ptr(), &mut out)
+                },
+            };
+            if let Some(stats) = &compiled.diagnostics {
+                stats.compiled_to_vm_callouts.set(
+                    stats
+                        .compiled_to_vm_callouts
+                        .get()
+                        .saturating_add(import_callouts),
+                );
+            }
+            if i64::from(status) == TERMINATED_STATUS {
+                return Some(Err(JsError::execution_terminated()));
+            }
+            if i64::from(status) == RAISED_STATUS {
+                return match context.raised.take()? {
+                    Raised::Error(error) => Some(Err(error)),
+                    Raised::Panic(panic) => std::panic::resume_unwind(panic),
+                };
+            }
+            if status != 0 {
+                let trap = TRAPS[status as usize - 1];
+                return Some(Err(JsError::wasm_trap_error(trap)));
+            }
+            Some(Ok(match function.result {
+                Some(ty) => match Kind::of(ty)? {
+                    Kind::I32 => Value::integer(out as u32 as i32),
+                    Kind::I64 => self.encode_bits64(out),
+                },
+                None => self.programs.constant(program, VOID_RESULT_CONSTANT)?,
+            }))
+        })();
+        if let Some(stats) = &compiled.diagnostics
+            && result.is_none()
+            && let Some(fallbacks) = stats.interpreter_fallback_entries.get(id as usize)
+        {
+            fallbacks.set(fallbacks.get().saturating_add(1));
         }
-        if status != 0 {
-            let trap = TRAPS[status as usize - 1];
-            return Some(Err(JsError::wasm_trap_error(trap)));
-        }
-        Some(Ok(match function.result {
-            Some(ty) => match Kind::of(ty)? {
-                Kind::I32 => Value::integer(out as u32 as i32),
-                Kind::I64 => self.encode_bits64(out),
-            },
-            None => self.programs.constant(program, VOID_RESULT_CONSTANT)?,
-        }))
+        result
     }
 }
 
