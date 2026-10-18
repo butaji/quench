@@ -206,40 +206,49 @@ impl<H: Host> Vm<H> {
         value: Value,
         constructor: Value,
     ) -> Option<bool> {
-        // The steady case first: the remembered constructor layout and `@@hasInstance`
-        // holder, and a chain of object records.
-        if let Some(Cell::Function { kind, object, .. }) = self.heap.get(constructor)
-            && !matches!(kind, FunctionKind::Native(Native::FunctionBoundCall))
-            && let Some((shape, slot)) = self.instanceof_constructor_layout
-            && shape == object.shape()
-            && object.proto() == self.instanceof_has_instance_holder
-            // SAFETY: the memo names the slot of `prototype` in the shape it holds, which is
-            // never a dictionary's, so the slot exists.
-            && let Some(prototype) = unsafe { self.heap.property_get_shaped(object, slot) }
-                .filter(|prototype| !prototype.is_deleted())
-            && prototype.direct_object_index().is_some()
-        {
-            let Some(record) = value.direct_object_index() else {
-                if !self.is_object_like(value) {
-                    return Some(false);
-                }
-                return self.ordinary_instanceof_walk(value, constructor);
-            };
-            let mut link = self.heap.object_record_by_id(record).proto();
-            loop {
-                if link == prototype {
-                    return Some(true);
-                }
-                if link.is_null() {
-                    return Some(false);
-                }
-                match self.heap.object_record(link) {
-                    Some(object) => link = object.proto(),
-                    None => break,
-                }
-            }
+        match self.steady_instanceof(value, constructor) {
+            Some(holds) => Some(holds),
+            None => self.ordinary_instanceof_walk(value, constructor),
         }
-        self.ordinary_instanceof_walk(value, constructor)
+    }
+
+    /// `ordinary_instanceof`'s steady case, which calls nothing: the remembered constructor
+    /// layout and `@@hasInstance` holder, and a primitive or a value whose chain is object
+    /// records up to the prototype or `null`. `None` leaves the rest to
+    /// `ordinary_instanceof_walk`.
+    #[inline(always)]
+    pub(super) fn steady_instanceof(&self, value: Value, constructor: Value) -> Option<bool> {
+        let Some(Cell::Function { kind, object, .. }) = self.heap.get(constructor) else {
+            return None;
+        };
+        if matches!(kind, FunctionKind::Native(Native::FunctionBoundCall)) {
+            return None;
+        }
+        let (shape, slot) = self.instanceof_constructor_layout?;
+        if shape != object.shape() || object.proto() != self.instanceof_has_instance_holder {
+            return None;
+        }
+        // SAFETY: the memo names the slot of `prototype` in the shape it holds, which is
+        // never a dictionary's, so the slot exists.
+        let prototype = unsafe { self.heap.property_get_shaped(object, slot) }?;
+        if prototype.is_deleted() || prototype.direct_object_index().is_none() {
+            return None;
+        }
+        let Some(record) = value.direct_object_index() else {
+            // A primitive has no prototype chain to hold the prototype; any other object
+            // takes the walk.
+            return (!self.is_object_like(value)).then_some(false);
+        };
+        let mut link = self.heap.object_record_by_id(record).proto();
+        loop {
+            if link == prototype {
+                return Some(true);
+            }
+            if link.is_null() {
+                return Some(false);
+            }
+            link = self.heap.object_record(link)?.proto();
+        }
     }
 
     /// `ordinary_instanceof` in full: whatever its steady case leaves.

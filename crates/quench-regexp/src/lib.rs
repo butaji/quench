@@ -393,13 +393,14 @@ impl Regex {
         // mode modifiers).  Keep compilation behind a source-shape guard so
         // those patterns use the repository matcher instead of silently
         // changing observable match results.
-        // Since the compiled backtracking matcher (`backtrack::Program`), the automata cost
-        // more than they save: on V8-v7 RegExp (static x86_64, 2026-10-18) leaving them out
-        // takes max RSS from 9544 to 8660 KiB and Score from 869 to 971. They stay available,
-        // as a linear-time bound on backtracking, for embedders that ask for them.
+        // The trunk leaves the automata out for memory (V8-v7 RegExp max RSS 9544 -> 8660
+        // KiB, static x86_64, 2026-10-18). The Score lane (`v2-cloud-c`) keeps them: with
+        // its Score-first collection pacing, paired V8-v7 RegExp runs of one binary score
+        // 1121 without them and 1201 with them (+7.1%, 7/9, max RSS 18.2 -> 20.4 MB, Linux
+        // x86_64, 4 vCPU, 2026-10-18). `QUENCH_DISABLE_COMPILED_REGEXP` leaves them out.
         let backend_enabled = !flags.unicode_sets
             && !flags.unicode
-            && std::env::var_os("QUENCH_COMPILED_REGEXP").is_some();
+            && std::env::var_os("QUENCH_DISABLE_COMPILED_REGEXP").is_none();
         let compiled = (backend_enabled
             && compiled_source_syntax_is_safe(source, NonCapturingGroups::Allowed)
             && compiled_structure_is_safe(&parsed.body))
@@ -797,7 +798,11 @@ pub const INLINE_SUBJECT_BYTES: usize = 4 * size_of::<usize>() - 1;
 /// The text a subject matches: a string's own one-byte ASCII storage, a short ASCII copy,
 /// or its UTF-16 units.
 enum SubjectText {
-    Ascii(std::rc::Rc<str>),
+    /// The bytes `range` of shared ASCII storage: a whole string, or a slice of one.
+    Ascii {
+        text: std::rc::Rc<str>,
+        range: std::ops::Range<usize>,
+    },
     Inline {
         length: u8,
         bytes: [u8; INLINE_SUBJECT_BYTES],
@@ -838,11 +843,11 @@ impl Subject {
         }
     }
 
-    /// A subject over ASCII text, matched in place without a copy.
-    pub fn from_ascii(text: std::rc::Rc<str>) -> Self {
-        debug_assert!(text.is_ascii());
+    /// A subject over the bytes `range` of ASCII text, matched in place without a copy.
+    pub fn from_ascii(text: std::rc::Rc<str>, range: std::ops::Range<usize>) -> Self {
+        debug_assert!(text.is_ascii() && range.end <= text.len());
         Self {
-            text: SubjectText::Ascii(text),
+            text: SubjectText::Ascii { text, range },
             carriage_return: std::cell::OnceCell::new(),
             decoded: Default::default(),
         }
@@ -873,7 +878,7 @@ impl Subject {
 
     fn len(&self) -> usize {
         match &self.text {
-            SubjectText::Ascii(text) => text.len(),
+            SubjectText::Ascii { range, .. } => range.len(),
             SubjectText::Inline { length, .. } => usize::from(*length),
             SubjectText::Wide { units, .. } => units.len(),
         }
@@ -881,7 +886,7 @@ impl Subject {
 
     fn ascii(&self) -> Option<&[u8]> {
         match &self.text {
-            SubjectText::Ascii(text) => Some(text.as_bytes()),
+            SubjectText::Ascii { text, range } => Some(&text.as_bytes()[range.clone()]),
             SubjectText::Inline { length, bytes } => Some(&bytes[..usize::from(*length)]),
             SubjectText::Wide { ascii, .. } => ascii.as_deref(),
         }
@@ -889,7 +894,7 @@ impl Subject {
 
     fn decoded(&self, unicode: bool) -> &[Unit] {
         self.decoded[usize::from(unicode)].get_or_init(|| match &self.text {
-            SubjectText::Ascii(_) | SubjectText::Inline { .. } => {
+            SubjectText::Ascii { .. } | SubjectText::Inline { .. } => {
                 let ascii = self.ascii().expect("ASCII text has bytes");
                 let units = ascii.iter().copied().map(u16::from).collect::<Vec<_>>();
                 units_from_utf16(&units, unicode)
@@ -910,8 +915,10 @@ impl Subject {
         matches!(&self.text, SubjectText::Wide { units: own, .. } if std::rc::Rc::ptr_eq(own, units))
     }
 
-    pub fn is_ascii_text_of(&self, text: &std::rc::Rc<str>) -> bool {
-        matches!(&self.text, SubjectText::Ascii(own) if std::rc::Rc::ptr_eq(own, text))
+    /// Whether this subject is the bytes `range` of the same ASCII storage as `text`.
+    pub fn is_ascii_text_of(&self, text: &std::rc::Rc<str>, range: &std::ops::Range<usize>) -> bool {
+        matches!(&self.text, SubjectText::Ascii { text: own, range: own_range }
+            if std::rc::Rc::ptr_eq(own, text) && own_range == range)
     }
 
     /// Whether this subject spells exactly the ASCII `text`, compared by content.
@@ -3137,7 +3144,7 @@ mod tests {
     #[test]
     fn sticky_matches_only_at_the_start_position() {
         let regex = Regex::with_flags(r"y|\d+", Flags::default()).unwrap();
-        let subject = super::Subject::from_ascii("ab12y".into());
+        let subject = super::Subject::from_ascii("ab12y".into(), 0.."ab12y".len());
         assert!(regex.find_sticky_in_subject(&subject, 0).next().is_none());
         let digits = regex.find_sticky_in_subject(&subject, 2).next().unwrap();
         assert_eq!(digits.range, 2..4);

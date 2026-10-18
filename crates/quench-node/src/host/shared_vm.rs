@@ -107,6 +107,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "processKillNative" (2) => crate::modules::process_shared_vm::kill_native,
         method "processKill" (2) => crate::modules::process_shared_vm::kill,
         method "bufferConstructor" (0) => crate::modules::buffer_shared_vm::constructor,
+        method "bufferPrototypeInitialize" (0) => crate::modules::buffer_shared_vm::initialize_prototype,
         method "encodingToAscii" (0) => crate::modules::encoding_binding_shared_vm::to_ascii,
         method "encodingToUnicode" (0) => crate::modules::encoding_binding_shared_vm::to_unicode,
         method "urlBindingDomainToAscii" (0) => crate::modules::url_binding_shared_vm::domain_to_ascii,
@@ -446,7 +447,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "netServerOptions" (1) => crate::modules::net_options_shared_vm::server_options,
         method "netNormalizeEndpoint" (4) => crate::modules::net_endpoint_shared_vm::normalize,
         method "netConnect" (4) => crate::modules::net_shared_vm::connect_operation,
-        method "emitterInitialize" (2) => crate::modules::event_constructor_shared_vm::initialize,
+        method "emitterValidateCaptureRejections" (1) => crate::modules::event_constructor_shared_vm::validate_capture_rejections,
         method "emitterRemoveAllListeners" (3) => crate::modules::event_emitter_shared_vm::remove_all_listeners,
         method "emitterRemoveListener" (3) => crate::modules::event_emitter_shared_vm::remove_listener,
         method "emitterEmit" (3) => crate::modules::event_emitter_shared_vm::emit,
@@ -1102,15 +1103,22 @@ impl quench_runtime::Host for NodeHost {
                 serde_json::to_string(require_specifier).map_err(|error| error.to_string())?
             );
             // lib/internal/bootstrap/realm.js `syncExports`: each name is read with `getOwn`,
-            // in the order the module lists its own keys (`builtin_export_values`).
+            // in the order the module lists its own keys (`builtin_export_values`). A member
+            // still a pending lazy data property is bound to its pending value instead, and
+            // the listener gives the binding the member's value when its group materializes.
+            let assignments: String = exports
+                .iter()
+                .enumerate()
+                .map(|(index, name)| format!("case {index}: {name} = value; break; "))
+                .collect();
             source.push_str(&format!(
-                "const __quenchExports = globalThis[{}](__quenchModule, {});\n",
+                "const __quenchExports = globalThis[{}](__quenchModule, {}, (index, value) => {{ switch (index) {{ {assignments}}} }});\n",
                 serde_json::to_string(crate::host::shared_vm::commonjs::BUILTIN_EXPORT_VALUES)
                     .map_err(|error| error.to_string())?,
                 serde_json::to_string(exports).map_err(|error| error.to_string())?
             ));
             for (index, name) in exports.iter().enumerate() {
-                source.push_str(&format!("export const {name} = __quenchExports[{index}];\n"));
+                source.push_str(&format!("export let {name} = __quenchExports[{index}];\n"));
             }
             return Ok(Some(quench_runtime::ModuleSource {
                 name: format!("node:quench-builtin/{builtin_name}"),
@@ -1442,7 +1450,10 @@ fn install_event_emitter(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         .borrow()
         .event_targets_api
         .ok_or_else(|| RootedError::host("event listener configuration missing"))?;
-    let initialize = context.host_function_with_data(operation("emitterInitialize"), event_data)?;
+    let shape_key = crate::modules::event_constructor_shared_vm::get(context, event_data, "shapeKey")?;
+    let capture_key =
+        crate::modules::event_constructor_shared_vm::get(context, event_data, "captureKey")?;
+    let validate = context.host_function(operation("emitterValidateCaptureRejections"))?;
     let dispatch =
         context.host_function_with_data(operation("emitterEmitListeners"), event_data)?;
     let emitter_factory = context.evaluate_script_rooted(
@@ -1451,7 +1462,11 @@ fn install_event_emitter(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     )?;
     let undefined = context.undefined();
     let inspector = context.host_function(operation("emitterErrorInspector"))?;
-    let event_emitter = context.call_rooted(emitter_factory, undefined, &[initialize, dispatch, inspector])?;
+    let event_emitter = context.call_rooted(
+        emitter_factory,
+        undefined,
+        &[shape_key, capture_key, validate, dispatch, inspector],
+    )?;
     context.release_root(event_emitter);
     crate::modules::event_constructor_shared_vm::install(context)?;
     crate::modules::event_emitter_shared_vm::initialize(context)?;

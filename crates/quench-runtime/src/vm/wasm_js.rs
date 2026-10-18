@@ -450,6 +450,7 @@ impl<H: Host> Vm<H> {
                 if let Some(Cell::WasmTable { elements, .. }) = self.heap.get_mut(this) {
                     elements[index] = value;
                 }
+                self.invalidate_wasm_reference_caches();
                 Ok(Value::UNDEFINED)
             }
             Native::WasmTableGrow => {
@@ -477,6 +478,7 @@ impl<H: Host> Vm<H> {
                         .range_error(p, "WebAssembly.Table.grow(): failed to grow table".into()));
                 };
                 elements.resize(grown, value);
+                self.invalidate_wasm_reference_caches();
                 Ok(Value::number(length as f64))
             }
             Native::WasmGlobalValueGetter | Native::WasmGlobalValueOf => {
@@ -809,7 +811,131 @@ impl<H: Host> Vm<H> {
             .get(index)
             .cloned()
             .ok_or_else(|| JsError::validation("invalid Wasm import signature".into()))?;
-        self.create_wasm_host_function(&name.name, WasmHostTarget::Js(value), signature)
+        let target = self
+            .emscripten_memcpy_view_capture(value, &signature)
+            .map_or(WasmHostTarget::Js(value), |(view_environment, view_slot)| {
+                WasmHostTarget::JsEmscriptenMemcpy(Box::new(crate::heap::WasmHostMemcpyTarget {
+                    function: value,
+                    view_environment,
+                    view_slot,
+                }))
+            });
+        self.create_wasm_host_function(&name.name, target, signature)
+    }
+
+    /// Recognizes only the canonical Emscripten helper body and its real mutable
+    /// lexical `HEAPU8` binding. The capture location is retained; the view itself
+    /// is deliberately re-read on every call because Emscripten replaces it after
+    /// `WebAssembly.Memory.grow()`.
+    pub(super) fn emscripten_memcpy_view_capture(
+        &self,
+        function: Value,
+        signature: &crate::WasmSignature,
+    ) -> Option<(Value, usize)> {
+        use crate::WasmType::I32;
+
+        if signature.params.as_slice() != [I32, I32, I32] {
+            return None;
+        }
+        let Cell::Function {
+            kind: FunctionKind::User(program_id, function_id),
+            env,
+            ..
+        } = self.heap.get(function)?
+        else {
+            return None;
+        };
+        let program = self.programs.get(*program_id)?;
+        let metadata = program.functions.get(*function_id as usize)?;
+        if metadata.params != 3
+            || metadata.inherited_with_scope
+            || !metadata.binding_sites.is_empty()
+            || metadata
+                .parameter_atoms
+                .iter()
+                .map(|atom| &program.atoms[*atom as usize])
+                .ne(["dest", "src", "num"].iter().copied())
+        {
+            return None;
+        }
+        let span = metadata.source_span?;
+        let source = program
+            .source
+            .as_ref()?
+            .text
+            .get(span.start as usize..span.end as usize)?;
+        if source != "(dest, src, num) => HEAPU8.copyWithin(dest, src, src + num)" {
+            return None;
+        }
+        // Free-name atoms need not appear in `environment_atoms` (which describes
+        // bindings owned by this function); the complete program atom table includes
+        // both local and captured names.
+        let view_atom = program
+            .atoms
+            .iter()
+            .position(|atom| atom == "HEAPU8")?
+            .try_into()
+            .ok()?;
+        // The exact source reads one captured name, HEAPU8, so its one capture load names the
+        // binding's depth and slot; name bindings are kept only for functions that resolve
+        // names dynamically.
+        let mut captures = metadata
+            .instructions()
+            .filter(|instruction| instruction.op() == crate::bytecode::Op::LoadCapture);
+        let load = captures.next()?;
+        if captures.next().is_some() {
+            return None;
+        }
+        let (depth, slot) = (load.capture_depth(), load.capture_slot());
+        let owner_environment = self.environment_capture_env(*env, false, depth)?;
+
+        // Verify that the statically resolved binding still names this slot in a
+        // plain lexical environment. Captured with/eval scopes can shadow a static
+        // outer declaration even though their parent chain also contains that slot.
+        let mut environment = *env;
+        loop {
+            let Cell::Environment {
+                parent,
+                function: owner_function,
+                slots,
+                scope,
+            } = self.heap.get(environment)?
+            else {
+                return None;
+            };
+            if scope.root_eval_scope()
+                || scope.binding_site_pc().is_some()
+                || !scope.with_objects().is_empty()
+                || self
+                    .heap
+                    .environment_bindings(environment)?
+                    .iter()
+                    .any(|(atom, _)| *atom == view_atom)
+            {
+                return None;
+            }
+            if environment == owner_environment {
+                let owner_program_id = super::program_store::ProgramId::from_raw(scope.program()?);
+                let owner_program = self.programs.get(owner_program_id)?;
+                let owner_metadata = owner_program.functions.get(*owner_function as usize)?;
+                let owns_atom = if *owner_function == super::ROOT_FUNCTION_ID {
+                    owner_metadata.declares_global_lexical(view_atom)
+                        || (owner_program.root_variables_are_local()
+                            && owner_metadata.global_var_atoms().contains(&view_atom))
+                } else {
+                    owner_metadata.declares_environment_atom(view_atom)
+                };
+                if !owns_atom
+                    || self.local_binding_slot(&owner_program, *owner_function, view_atom)?
+                        != usize::from(slot)
+                    || usize::from(slot) >= slots.len()
+                {
+                    return None;
+                }
+                return Some((environment, usize::from(slot)));
+            }
+            environment = *parent;
+        }
     }
 
     fn wasm_import_global(
@@ -1046,7 +1172,8 @@ impl<H: Host> Vm<H> {
     /// Wasm `args`, returning the encoded result.
     pub(super) fn call_wasm_js_import(
         &mut self,
-        target: Value,
+        function: Value,
+        memcpy_capture: Option<(Value, usize)>,
         signature: &crate::WasmSignature,
         args: &[Value],
     ) -> Result<Value, JsError> {
@@ -1054,11 +1181,35 @@ impl<H: Host> Vm<H> {
             .programs
             .get(self.active_program)
             .ok_or_else(|| JsError::validation("missing host caller program".into()))?;
-        let mut arguments = Vec::with_capacity(args.len());
+        let mut arguments: smallvec::SmallVec<[Value; 8]> = smallvec::SmallVec::new();
         for (&value, &ty) in args.iter().zip(&signature.params) {
             arguments.push(self.wasm_to_js(&program, value, ty)?);
         }
-        let result = self.call_value(&program, target, Value::UNDEFINED, &arguments)?;
+        let result = if let Some((view_environment, view_slot)) = memcpy_capture {
+            let view = self
+                .heap
+                .environment_slot(view_environment, view_slot)
+                .unwrap_or(Value::UNDEFINED);
+            let copy_within_atom = self.intern_atom("copyWithin");
+            if self.can_inline_emscripten_memcpy(view, copy_within_atom) {
+                let _stack = self.enter_stack()?;
+                self.check_execution_interrupt()?;
+                let end = Value::number(
+                    arguments[1].as_number().unwrap_or_default()
+                        + arguments[2].as_number().unwrap_or_default(),
+                );
+                self.typed_array_native(
+                    &program,
+                    Native::Uint8ArrayCopyWithin,
+                    view,
+                    &[arguments[0], arguments[1], end],
+                )?
+            } else {
+                self.call_value(&program, function, Value::UNDEFINED, &arguments)?
+            }
+        } else {
+            self.call_value(&program, function, Value::UNDEFINED, &arguments)?
+        };
         match signature.results.as_slice() {
             [] => Ok(Value::UNDEFINED),
             [ty] => self.js_to_wasm(&program, result, *ty),
@@ -1091,6 +1242,68 @@ impl<H: Host> Vm<H> {
                         encoded.into(),
                     ),
                 }))
+            }
+        }
+    }
+
+    /// Whether the exact Emscripten helper call can be inlined without running any
+    /// JavaScript during property lookup. Accessors, proxies and customized methods
+    /// stay on the ordinary JS call path, which also preserves their caller frames.
+    fn can_inline_emscripten_memcpy(
+        &self,
+        view: Value,
+        copy_within_atom: crate::bytecode::Atom,
+    ) -> bool {
+        let Some(Cell::TypedArray { buffer, kind, .. }) = self.heap.get(view) else {
+            return false;
+        };
+        if *kind != crate::heap::TypedArrayKind::Uint8
+            || self.typed_array_out_of_bounds(view)
+            || self.array_buffer_detached(*buffer)
+            || matches!(
+                self.heap.get(*buffer),
+                Some(Cell::ArrayBuffer {
+                    immutable: true,
+                    ..
+                })
+            )
+        {
+            return false;
+        }
+        self.data_property_without_getter(view, copy_within_atom)
+            .is_some_and(|method| {
+                matches!(
+                    self.heap.get(method),
+                    Some(Cell::Function {
+                        kind: FunctionKind::Native(Native::Uint8ArrayCopyWithin),
+                        ..
+                    })
+                )
+            })
+    }
+
+    /// Looks up an own data property through ordinary object prototypes without
+    /// invoking accessors. A proxy or any accessor makes the result unknown.
+    fn data_property_without_getter(
+        &self,
+        object: Value,
+        atom: crate::bytecode::Atom,
+    ) -> Option<Value> {
+        let key = PropertyKey::string(atom);
+        let mut holder = object;
+        loop {
+            if matches!(self.heap.get(holder), Some(Cell::Proxy { .. })) {
+                return None;
+            }
+            if let Some(attributes) = self.property_attributes(holder, key) {
+                if attributes.accessor {
+                    return None;
+                }
+                return self.own_property(holder, atom);
+            }
+            holder = self.object_data(holder)?.proto();
+            if holder.is_null() {
+                return None;
             }
         }
     }

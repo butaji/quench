@@ -22,6 +22,7 @@ mod binding_time;
 mod capture_layout;
 #[cfg(feature = "profile-memory")]
 mod capture_profile;
+mod capture_scope;
 mod class;
 mod early;
 mod frame_registers;
@@ -1413,6 +1414,7 @@ struct Compiler<'a> {
     field_sites: Vec<FieldSite>,
     object_sites: Vec<ObjectSite>,
     regexp_literal_sites: Vec<crate::bytecode::RegExpLiteralSite>,
+    literal_templates: Vec<Box<[crate::bytecode::LiteralStep]>>,
     superinstructions: Vec<Superinstruction>,
     /// Distinct `name_bindings` lists: sibling functions that see the same bindings,
     /// such as every function declared in one module scope, share one list.
@@ -1423,7 +1425,7 @@ struct Compiler<'a> {
     captured_name_scopes: FxHashMap<
         (usize, Option<usize>),
         (
-            std::rc::Rc<FxHashMap<Atom, u16>>,
+            std::rc::Rc<capture_scope::CaptureScope>,
             std::rc::Rc<crate::bytecode::CapturedNames>,
         ),
     >,
@@ -1441,7 +1443,7 @@ struct DeferredNameBindings {
     /// home through these bindings.
     names_private_members: bool,
     direct: Vec<crate::bytecode::EvalBinding>,
-    scopes: Vec<std::rc::Rc<FxHashMap<Atom, u16>>>,
+    scopes: Vec<std::rc::Rc<capture_scope::CaptureScope>>,
     function_scope: Vec<Atom>,
 }
 
@@ -1605,7 +1607,7 @@ impl<'a> Compiler<'a> {
 
     fn captured_names(
         &mut self,
-        scopes: &[std::rc::Rc<FxHashMap<Atom, u16>>],
+        scopes: &[std::rc::Rc<capture_scope::CaptureScope>],
     ) -> Option<std::rc::Rc<crate::bytecode::CapturedNames>> {
         if scopes
             .len()
@@ -1650,7 +1652,7 @@ impl<'a> Compiler<'a> {
     /// declaration conflicts, so ordinary captures are added only for names they leave.
     fn captured_scope_bindings(
         &mut self,
-        scope: &FxHashMap<Atom, u16>,
+        scope: &capture_scope::CaptureScope,
     ) -> Vec<crate::bytecode::EvalBinding> {
         let capture = |slot: u16| crate::bytecode::EvalBindingLocation::Capture { depth: 0, slot };
         let mut visible = FxHashSet::default();
@@ -1752,6 +1754,7 @@ impl<'a> Compiler<'a> {
             field_sites: vec![],
             object_sites: vec![],
             regexp_literal_sites: vec![],
+            literal_templates: vec![],
             superinstructions: vec![],
             deferred_name_bindings: FxHashMap::default(),
             captured_name_scopes: FxHashMap::default(),
@@ -2104,6 +2107,7 @@ impl<'a> Compiler<'a> {
         if std::env::var_os("QUENCH_MEMORY").is_some() {
             capture_profile::report(&functions);
         }
+        let undefined_constant = self.constant(Constant::Undefined);
         for function in &mut functions {
             rewrite::return_through_shared_returns(function);
             rewrite::express_strict_sets(function);
@@ -2122,7 +2126,12 @@ impl<'a> Compiler<'a> {
                 numeric::apply(function, live.as_deref());
             }
             Self::specialize_plain_local_operations(function, &self.superinstructions);
-            frame_registers::promote(function, &self.superinstructions, |atom| self.atoms.get(atom));
+            frame_registers::promote(
+                function,
+                &self.superinstructions,
+                undefined_constant,
+                |atom| self.atoms.get(atom),
+            );
             if function
                 .code
                 .iter()
@@ -2195,6 +2204,7 @@ impl<'a> Compiler<'a> {
             field_sites: self.field_sites,
             object_sites: self.object_sites,
             regexp_literal_sites: self.regexp_literal_sites,
+            literal_templates: self.literal_templates,
             superinstructions: self.superinstructions,
         };
         #[cfg(feature = "profile-aggregate")]
@@ -2492,7 +2502,7 @@ impl<'a> Compiler<'a> {
         name: Option<&str>,
         params: &[String],
         body: FunctionBody<'_>,
-        scopes: &[Rc<FxHashMap<Atom, u16>>],
+        scopes: &[Rc<capture_scope::CaptureScope>],
         parent: Option<u32>,
         options: FunctionOptions<'_>,
     ) -> u32 {

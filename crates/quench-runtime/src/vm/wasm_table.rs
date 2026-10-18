@@ -223,6 +223,7 @@ impl<H: Host> Vm<H> {
         };
         let range = table_range(index, length, elements.len())?;
         elements[range].fill(value);
+        self.invalidate_wasm_reference_caches();
         Ok(())
     }
 
@@ -259,6 +260,7 @@ impl<H: Host> Vm<H> {
         elements.resize(length, initial);
         let after = elements.capacity() * size_of::<Value>();
         self.heap.adjust_external_bytes(before, after);
+        self.invalidate_wasm_reference_caches();
         Ok(Some(old_size as u64))
     }
 
@@ -285,6 +287,7 @@ impl<H: Host> Vm<H> {
             unreachable!()
         };
         elements[output].copy_from_slice(&values);
+        self.invalidate_wasm_reference_caches();
         Ok(())
     }
 
@@ -326,6 +329,7 @@ impl<H: Host> Vm<H> {
             };
             elements[output].copy_from_slice(&values);
         }
+        self.invalidate_wasm_reference_caches();
         Ok(())
     }
 }
