@@ -20,7 +20,7 @@ fn atom_bytes(function: &Function) -> usize {
         &function.lexical_atoms,
     ]
     .into_iter()
-    .map(|atoms: &Vec<Atom>| bytes(atoms))
+    .map(|atoms| size_of_val::<[Atom]>(atoms))
     .sum::<usize>()
         + function.global_declarations.as_deref().map_or(0, |declarations| {
             size_of::<crate::bytecode::GlobalDeclarations>()
