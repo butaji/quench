@@ -250,8 +250,30 @@ impl<H: Host> Vm<H> {
         self.evaluate_embedding_prepared_script(&prepared)
     }
 
+    /// Compiles a host wrapper `prefix + body + suffix` whose body is static host text: the
+    /// program's positions start at the wrapper origin and it retains the body itself.
+    pub(crate) fn prepare_embedding_static_body(
+        &mut self, prefix: &str, body: &'static str, suffix: &str, name: &str,
+    ) -> Result<crate::PreparedScript, JsError> {
+        let wrapped = format!("{prefix}{body}{suffix}");
+        let origin = crate::api::wrapper_origin(prefix)
+            .ok_or_else(|| JsError("host wrapper origin exceeds compiler positions".into()))?;
+        let base = u32::try_from(prefix.len())
+            .map_err(|_| JsError("host wrapper prefix exceeds compiler positions".into()))?;
+        self.prepare_embedding_specialized_script_retaining(&wrapped, name, Some(origin), Some((body, base)))
+    }
+
     pub(crate) fn prepare_embedding_specialized_script(
         &mut self, source: &str, name: &str, origin: Option<(u32, u32)>,
+    ) -> Result<crate::PreparedScript, JsError> {
+        self.prepare_embedding_specialized_script_retaining(source, name, origin, None)
+    }
+
+    /// `retained` names static text the program keeps in place of its compiled source, and
+    /// the compiled byte offset where that text starts.
+    fn prepare_embedding_specialized_script_retaining(
+        &mut self, source: &str, name: &str, origin: Option<(u32, u32)>,
+        retained: Option<(&'static str, u32)>,
     ) -> Result<crate::PreparedScript, JsError> {
         let program = self.embedding_program()?;
         let mut residual = crate::Engine::specialize_script_with_atom_prefix(source, name, &*self)
@@ -271,6 +293,10 @@ impl<H: Host> Vm<H> {
         if let (Some(source), Some((line_offset, column_offset))) = (&mut residual.source, origin) {
             source.line_offset = line_offset;
             source.column_offset = column_offset;
+        }
+        if let (Some(source), Some((text, base))) = (&mut residual.source, retained) {
+            source.text = crate::bytecode::SourceText::Static(text);
+            source.base = base;
         }
         let residual = self.intern_program_atoms(residual);
         Ok(crate::PreparedScript { program: Rc::new(residual) })
@@ -390,8 +416,8 @@ impl<H: Host> Vm<H> {
         let result = (|| {
             if !root_function.strict {
                 let global_function_atoms = residual.functions[super::ROOT_FUNCTION_ID as usize]
-                    .global_function_atoms
-                    .clone();
+                    .global_function_atoms()
+                    .to_vec();
                 for atom in &global_function_atoms {
                     if (!caller_scope && self.realm.global_lexical_declarations.contains(atom))
                         || (direct_eval
@@ -412,7 +438,7 @@ impl<H: Host> Vm<H> {
                     self.check_global_eval_declaration(p, globals, &name, true)?;
                 }
                 for atom in residual.functions[super::ROOT_FUNCTION_ID as usize]
-                    .global_var_atoms
+                    .global_var_atoms()
                     .iter()
                     .copied()
                 {
@@ -464,7 +490,7 @@ impl<H: Host> Vm<H> {
                             self.define_global_eval_binding(p, *atom, Value::UNDEFINED)?;
                         }
                     }
-                    for atom in root_function.global_var_atoms.iter().copied() {
+                    for atom in root_function.global_var_atoms().iter().copied() {
                         if global_function_atoms.contains(&atom) {
                             continue;
                         }
@@ -487,7 +513,7 @@ impl<H: Host> Vm<H> {
                 }
             }
             if caller_scope {
-                self.prepare_direct_eval_var_bindings(&root_function.global_var_atoms);
+                self.prepare_direct_eval_var_bindings(&root_function.global_var_atoms());
             }
             let parent = if direct_eval {
                 if let Some(frame) = self.frames.len().checked_sub(1) {

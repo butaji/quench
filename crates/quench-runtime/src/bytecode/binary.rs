@@ -81,6 +81,7 @@ pub(super) fn write_program(
         program.source.as_ref().map(|source| source.text.as_ref()),
     );
     if let Some(source) = &program.source {
+        out.u32(source.base);
         out.u32(source.line_offset);
         out.u32(source.column_offset);
     }
@@ -247,24 +248,24 @@ pub(super) fn write_program(
         for atom in &function.lexical_atoms {
             out.u32(*atom);
         }
-        out.u32(function.global_lexical_atoms.len() as u32);
-        for atom in &function.global_lexical_atoms {
+        out.u32(function.global_lexical_atoms().len() as u32);
+        for atom in function.global_lexical_atoms() {
             out.u32(*atom);
         }
-        out.u32(function.global_var_atoms.len() as u32);
-        for atom in &function.global_var_atoms {
+        out.u32(function.global_var_atoms().len() as u32);
+        for atom in function.global_var_atoms() {
             out.u32(*atom);
         }
-        out.u32(function.global_function_atoms.len() as u32);
-        for atom in &function.global_function_atoms {
+        out.u32(function.global_function_atoms().len() as u32);
+        for atom in function.global_function_atoms() {
             out.u32(*atom);
         }
-        out.u32(function.global_annex_b_var_atoms.len() as u32);
-        for atom in &function.global_annex_b_var_atoms {
+        out.u32(function.global_annex_b_var_atoms().len() as u32);
+        for atom in function.global_annex_b_var_atoms() {
             out.u32(*atom);
         }
-        out.u32(function.global_immutable_atoms.len() as u32);
-        for atom in &function.global_immutable_atoms {
+        out.u32(function.global_immutable_atoms().len() as u32);
+        for atom in function.global_immutable_atoms() {
             out.u32(*atom);
         }
         out.u32(function.binding_sites.len() as u32);
@@ -387,7 +388,8 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
     let source_name = input.string()?;
     let source = match read_optional_string(&mut input)? {
         Some(text) => Some(super::ProgramSource {
-            text: std::sync::Arc::from(text),
+            text: super::SourceText::Shared(std::sync::Arc::from(text)),
+            base: input.u32()?,
             line_offset: input.u32()?,
             column_offset: input.u32()?,
         }),
@@ -697,11 +699,14 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             environment_clones,
             name_bindings: crate::bytecode::NameBindings::flat(name_bindings),
             lexical_atoms,
-            global_lexical_atoms,
-            global_var_atoms,
-            global_function_atoms,
-            global_annex_b_var_atoms,
-            global_immutable_atoms,
+            global_declarations: super::GlobalDeclarations {
+                lexical: global_lexical_atoms,
+                var: global_var_atoms,
+                function: global_function_atoms,
+                annex_b_var: global_annex_b_var_atoms,
+                immutable: global_immutable_atoms,
+            }
+            .boxed(),
             binding_sites,
             source_positions,
             code,
