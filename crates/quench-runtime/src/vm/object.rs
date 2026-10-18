@@ -766,6 +766,7 @@ impl FieldCacheSet {
         entries[1] = second;
         Self {
             len: 2,
+            holds_own: first.holder == NO_FIELD_HOLDER || second.holder == NO_FIELD_HOLDER,
             entries,
             overflow: None,
         }
@@ -782,6 +783,7 @@ impl FieldCacheSet {
             .copied()
     }
     fn insert(&mut self, cache: FieldCache) {
+        self.holds_own |= cache.holder == NO_FIELD_HOLDER;
         let key = field_cache_key(cache.receiver, cache.holder);
         if let Some(entries) = &mut self.overflow {
             if entries.len() < FIELD_MEGAMORPHIC_LIMIT || entries.contains_key(&key) {
@@ -1191,7 +1193,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// The data field of a direct object, or of its immediate prototype held in an object
-    /// record, among the site's inline megamorphic entries, which include the primary entry:
+    /// record, among the site's megamorphic entries, which include the primary entry:
     /// `cached_field_hit` and its holder tier for a site past one shape.
     #[inline(always)]
     pub(super) fn polymorphic_field_hit(
@@ -1210,10 +1212,29 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let set = unsafe { self.megamorphic_fields.get_unchecked(table_index as usize) };
-        if set.overflow.is_some() {
-            return None;
-        }
         let shape = receiver.shape();
+        if set.overflow.is_some() {
+            // The hashed entries: an own one for the receiver's shape, else one for its
+            // immediate prototype in an object record. A shape either holds the atom or not,
+            // so at most one of the two is recorded; a set of holders alone has no own one.
+            if set.holds_own
+                && let Some(entry) = set.get(shape, NO_FIELD_HOLDER)
+            {
+                // SAFETY: as for `cached_field_hit`.
+                let value = unsafe { self.heap.property_get_shaped(receiver, usize::from(entry.slot)) }?;
+                self.profile.field_cache_hit(2, 0);
+                return Some(value);
+            }
+            let holder = self.heap.object_record(receiver.proto())?;
+            if holder.is_module_namespace() {
+                return None;
+            }
+            let entry = set.get(shape, holder.shape())?;
+            // SAFETY: as for the inline holder entries below.
+            let value = unsafe { self.heap.property_get_shaped(holder, usize::from(entry.slot)) }?;
+            self.profile.field_cache_hit(2, 1);
+            return Some(value);
+        }
         for entry in &set.entries[..usize::from(set.len)] {
             if entry.receiver != shape {
                 continue;
@@ -1265,12 +1286,10 @@ impl<H: Host> Vm<H> {
         self.field_miss_data_value(object, atom, index)
     }
 
-    /// Whether the site's shapes moved to inline megamorphic entries without an overflow:
+    /// Whether the site's shapes moved to megamorphic entries, inline or hashed:
     /// `polymorphic_field_hit` then sees every entry the site has recorded.
     pub(super) fn field_site_polymorphic(&self, site: u16) -> bool {
-        let table_index = self.megamorphic_field_indices[self.field_cache_index(site)];
-        table_index != NO_MEGAMORPHIC_FIELD
-            && self.megamorphic_fields[table_index as usize].overflow.is_none()
+        self.megamorphic_field_indices[self.field_cache_index(site)] != NO_MEGAMORPHIC_FIELD
     }
 
     /// An own-data slot from a site's inline megamorphic entries; the hashed overflow is
@@ -1406,7 +1425,10 @@ impl<H: Host> Vm<H> {
         Some(self.cached_field_value(self.field_cache_index(site), receiver))
     }
 
-    /// `string_field_cache_read`'s hit for a cached site reading a string primitive `object`.
+    /// A string primitive's `GetField` where no lookup can run guest code, in the order
+    /// `get_field_cached` takes: its `length`, then the `String.prototype` data property
+    /// its site cache holds (`string_field_cache_read`). An index, or any other key, is
+    /// left to the general path.
     pub(super) fn cached_string_field_hit(
         &self,
         p: &ResidualProgram,
@@ -1414,8 +1436,14 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         site: u16,
     ) -> Option<Value> {
+        let Some(Cell::String(text)) = self.heap.get(object) else {
+            return None;
+        };
+        if atom == self.length_atom {
+            return Some(Value::number(text.len() as f64));
+        }
         if !(self.specialized && p.specialized)
-            || !matches!(self.heap.get(object), Some(Cell::String(_)))
+            || self.atom_class(atom).contains(AtomClass::ARRAY_INDEX)
         {
             return None;
         }
@@ -1510,7 +1538,13 @@ impl<H: Host> Vm<H> {
         atom: Atom,
     ) -> Option<FieldCacheHit> {
         let holder_value = receiver.proto();
-        let holder = self.shape_property_lookup(holder_value, atom)?;
+        // An ordinary record prototype is the holder as it stands: entries record only holder
+        // shapes whose lookup answered the atom (`shape_property_lookup`), and a shape fixes
+        // its dictionary state and keys, so a matching entry proves what the lookup would.
+        let holder = match self.heap.object_record(holder_value) {
+            Some(holder) if !holder.is_module_namespace() => holder,
+            _ => self.shape_property_lookup(holder_value, atom)?,
+        };
         // SAFETY: the active program's layout reserves every compiler-emitted site.
         let cache = unsafe { *self.field_caches.get_unchecked(site) };
         let (cache, tier) = if cache.receiver == receiver.shape() && cache.holder == holder.shape()
@@ -1931,6 +1965,9 @@ impl<H: Host> Vm<H> {
         value: Value,
         receiver: Value,
     ) -> Result<bool, JsError> {
+        if target == receiver && self.set_plain_named_property(target, atom, value).is_some() {
+            return Ok(true);
+        }
         let _stack = self.enter_stack()?;
         if self.is_private_name(atom) {
             self.check_private_brand(p, target, atom)?;
@@ -2620,9 +2657,7 @@ impl<H: Host> Vm<H> {
             self.prove_field_add_chain(set as usize, shape, atom, proto, depth, epoch);
         }
         debug_assert_eq!(slot as usize, self.shapes[shape as usize].storage_len());
-        if !self.heap.add_inline_property(object, usize::from(slot), value, target_shape) {
-            self.heap.property_add(object, value, target_shape);
-        }
+        self.heap.record_property_add_at(object, usize::from(slot), value, target_shape);
         if self.method_caches_may_name(atom) {
             self.invalidate_method_caches_for_prototype_add(object, atom);
         }
@@ -2957,11 +2992,20 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn append_cached_shape_transition(&mut self, shape: u32, transition: ShapeTransition) -> u32 {
         let key = transition.cache_key();
-        if let Some(key) = key
-            && let Some(next) = self.transitions.get(&self.shapes, shape, key)
-        {
-            self.profile.shape_transition(true);
-            return next;
+        if let Some(key) = key {
+            let last = self.shapes[shape as usize].last_child.get();
+            let next = if last != NO_LAST_CHILD
+                && super::shape_transitions::is_transition(&self.shapes, last, shape, key)
+            {
+                Some(last)
+            } else {
+                self.transitions.get(&self.shapes, shape, key)
+            };
+            if let Some(next) = next {
+                self.shapes[shape as usize].last_child.set(next);
+                self.profile.shape_transition(true);
+                return next;
+            }
         }
         if key.is_some() || matches!(transition, ShapeTransition::Add { .. }) {
             self.profile.shape_transition(false);
@@ -2997,6 +3041,7 @@ impl<H: Host> Vm<H> {
         }
         if let Some(key) = key {
             self.transitions.insert(&self.shapes, shape, key, next);
+            self.shapes[shape as usize].last_child.set(next);
         }
         next
     }

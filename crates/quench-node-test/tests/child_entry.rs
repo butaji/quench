@@ -87,6 +87,62 @@ fn package_scope_applies_inside_nested_checkouts() {
 }
 
 #[test]
+fn builtin_esm_exports_keep_node_snapshots_of_lazy_members() {
+    // `node:fs` builds its streams and library policy on first use; its ESM exports must
+    // still be the values the members had when the facade was made (Node's `syncExports`).
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("reexport.mjs"), "export * from 'node:fs';").unwrap();
+    for (name, source, expected) in [
+        (
+            "read",
+            "import * as fs from 'node:fs'; import { ReadStream as R } from './reexport.mjs';
+             import { createRequire } from 'node:module';
+             const cjs = createRequire(import.meta.url)('fs');
+             const d = Object.getOwnPropertyDescriptor(fs, 'WriteStream');
+             let n = 0; for (let i = 0; i < 2000; i++) if (typeof fs.createWriteStream === 'function') n++;
+             console.log(typeof fs.ReadStream, fs.ReadStream === cjs.ReadStream, fs.ReadStream.name,
+               R === fs.ReadStream, typeof d.value, d.writable, d.enumerable, d.configurable,
+               d.value.name, Object.keys(fs).includes('createReadStream'), n);",
+            "function true ReadStream true function true true false WriteStream true 2000\n",
+        ),
+        (
+            "write",
+            "import * as fs from 'node:fs'; import { createRequire } from 'node:module';
+             const cjs = createRequire(import.meta.url)('fs');
+             cjs.ReadStream = 1; delete cjs.WriteStream; cjs.glob = 'g';
+             console.log(typeof fs.ReadStream, cjs.ReadStream, typeof fs.WriteStream,
+               'WriteStream' in cjs, typeof fs.glob, cjs.glob);",
+            "function 1 function false function g\n",
+        ),
+        (
+            "named",
+            "import { createReadStream, glob } from 'node:fs'; import * as fs from 'node:fs';
+             console.log(typeof createReadStream, typeof glob, createReadStream === fs.createReadStream);",
+            "function function true\n",
+        ),
+        (
+            "materialized",
+            "import { createRequire } from 'node:module';
+             const cjs = createRequire(import.meta.url)('fs');
+             const original = cjs.WriteStream; const fs = await import('node:fs');
+             cjs.WriteStream = 2; console.log(fs.WriteStream === original, cjs.WriteStream);",
+            "true 2\n",
+        ),
+    ] {
+        let entry = directory.path().join(format!("{name}.mjs"));
+        std::fs::write(&entry, source).unwrap();
+        for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
+            let mut command = Command::new(executable);
+            command.arg(&entry);
+            if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+            let result = quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap();
+            assert_eq!(result.exit_code, Some(0), "{name} {executable}: {}", String::from_utf8_lossy(&result.stderr));
+            assert_eq!(String::from_utf8_lossy(&result.stdout), expected, "{name} {executable}");
+        }
+    }
+}
+
+#[test]
 fn package_scope_reads_nearest_type_and_stops_at_node_modules() {
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(directory.path().join("package.json"), r#"{"type":"module"}"#).unwrap();
@@ -10286,4 +10342,128 @@ process.execve('/bin/sh', ['sh', '-c', 'echo replaced "$X" "$#"', 'sh', 'one'], 
 "#,
         &["--no-warnings"],
     );
+}
+
+/// The parity script of `evidence/wasm-coremark-buffer-before-library-linux-2026-10-18/`:
+/// each case reads files before anything touches `Buffer`, then observes the result.
+const BUFFER_PARITY_SCRIPT: &str = r#"// Usage: node parity.cjs <case>. Each case reads files before touching Buffer, then observes.
+const fs = require('fs');
+const path = require('path');
+const dir = __dirname;
+const out = [];
+const log = (...a) => out.push(a.map(v => typeof v === 'string' ? v : JSON.stringify(v)).join(' '));
+const desc = (o, k) => { const d = Object.getOwnPropertyDescriptor(o, k); return d && ['value' in d ? 'data' : 'acc', d.enumerable, d.configurable, d.writable].join(','); };
+const c = process.argv[2];
+// Node's library loads internal/buffer.js without buffer.js for streams and encodings.
+if (c === 'stream-first') require('stream');
+const a = fs.readFileSync(path.join(dir, 'small.bin'));
+const b = fs.readFileSync(path.join(dir, 'big.bin'));
+const t = fs.readFileSync(path.join(dir, 'tiny.bin'));
+const p = Object.getPrototypeOf(a);
+if (c === 'keys') {
+  log('ownKeys', Reflect.ownKeys(p).map(String));
+  log('keys', Object.keys(p));
+} else if (c === 'proto') {
+  log(p === Object.getPrototypeOf(b), p === Object.getPrototypeOf(t), Object.getPrototypeOf(p) === Uint8Array.prototype);
+  log(p === Buffer.prototype, a instanceof Buffer, a.constructor === Buffer);
+} else if (c === 'ctor-first') {
+  log(a.constructor === Buffer, a.constructor.name, p.constructor.name);
+} else if (c === 'pool') {
+  log(a.byteLength, a.buffer.byteLength, a.byteOffset % 8, b.buffer.byteLength, b.byteOffset, t.buffer.byteLength);
+  log(a.buffer === t.buffer, (t.byteOffset - a.byteOffset));
+  const x = Buffer.allocUnsafe(10);
+  log(x.buffer === a.buffer, x.byteOffset - t.byteOffset);
+  try { a.buffer.transfer(); log('transferred'); } catch (e) { log('transfer', e.name); }
+} else if (c === 'inspect') {
+  log(require('util').inspect(t).slice(0, 12));
+  log(t.toString('hex').length, desc(p, 'parent'), desc(p, 'toString'), desc(p, 'constructor'));
+} else if (c === 'desc-first') {
+  log(desc(p, 'parent'), desc(p, 'offset'), desc(p, 'readUInt8'), desc(p, Symbol.for('nodejs.util.inspect.custom')));
+  log(Reflect.ownKeys(p).length);
+} else if (c === 'write-first') {
+  p.toString = function () { return 'mine'; };
+  log(a.toString(), Buffer.from('x').toString(), Object.keys(p).indexOf('toString'));
+} else if (c === 'delete-first') {
+  delete p.toString;
+  log(typeof a.toString, Object.keys(p).includes('toString'), String(Object.getOwnPropertyNames(p).length));
+} else if (c === 'define-first') {
+  Object.defineProperty(p, 'swap16', { value: 1, writable: false, enumerable: false, configurable: true });
+  log(desc(p, 'swap16'), Buffer.prototype.swap16, Object.keys(p).length);
+} else if (c === 'buffer-first') {
+  log(typeof Buffer.alloc, Buffer.prototype === p, Reflect.ownKeys(p).length, a.readUInt8(0) === a[0]);
+} else if (c === 'parent') {
+  log(a.parent === a.buffer, b.offset === b.byteOffset);
+} else if (c === 'freeze') {
+  Object.freeze(p);
+  log(Object.isFrozen(p), typeof p.toString, Reflect.ownKeys(p).length);
+} else if (c === 'forin') {
+  const ks = []; for (const k in t) if (!/^\d+$/.test(k)) ks.push(k);
+  log(ks.length, ks.slice(0, 3), ks.slice(-3));
+} else if (c === 'stream-first') {
+  log(typeof a.readUInt8, a.toString('hex', 0, 4), p === Buffer.prototype, Reflect.ownKeys(p).length);
+} else if (c === 'sym') {
+  const s = Symbol.for('nodejs.util.inspect.custom');
+  log(typeof t[s], s in p, Object.getOwnPropertySymbols(p).map(String));
+}
+console.log(out.join('\n'));
+"#;
+
+fn buffer_parity_directory() -> tempfile::TempDir {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("parity.cjs"), BUFFER_PARITY_SCRIPT).unwrap();
+    // Below Node's unpooled size, above it, and within the heap-buffer size.
+    let pattern = |length: u32, modulus: u32| (0..length).map(|i| (i % modulus) as u8).collect::<Vec<_>>();
+    std::fs::write(directory.path().join("small.bin"), pattern(7684, 251)).unwrap();
+    std::fs::write(directory.path().join("big.bin"), pattern(100_000, 241)).unwrap();
+    std::fs::write(directory.path().join("tiny.bin"), pattern(50, 256)).unwrap();
+    directory
+}
+
+fn run_quench(entry: &std::path::Path, args: &[&str]) -> String {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_run-parallel"));
+    command.arg(entry).args(args).env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+    let result = quench_node_test::case_process::observe_command(command, Duration::from_secs(20)).unwrap();
+    assert_eq!(result.exit_code, Some(0), "{args:?}: {}", String::from_utf8_lossy(&result.stderr));
+    String::from_utf8_lossy(&result.stdout).into_owned()
+}
+
+#[test]
+fn buffer_prototype_keys_match_node() {
+    // A prototype made before `buffer.js` loads ends with the keys the library gives it, in
+    // the library's order and with its attributes, as one the library made itself.
+    let directory = buffer_parity_directory();
+    let probe = "const p = Object.getPrototypeOf(globalThis.__first());
+      console.log(JSON.stringify(Reflect.ownKeys(p).map(k => [String(k), Object.getOwnPropertyDescriptor(p, k)]).map(([k, d]) => [k, 'value' in d, d.enumerable, d.configurable, d.writable])));";
+    let eager = directory.path().join("eager.cjs");
+    std::fs::write(&eager, format!("globalThis.__first = () => Buffer.alloc(1);\n{probe}")).unwrap();
+    let lazy = directory.path().join("lazy.cjs");
+    std::fs::write(&lazy, format!("globalThis.__first = () => require('fs').readFileSync(__dirname + '/small.bin');\n{probe}")).unwrap();
+    let eager = run_quench(&eager, &[]);
+    assert!(eager.contains("readBigUInt64LE") && eager.contains("nodejs.util.inspect.custom"), "{eager}");
+    assert_eq!(run_quench(&lazy, &[]), eager);
+}
+
+#[test]
+fn read_file_before_buffer_keeps_node_buffer_semantics() {
+    // Expected outputs are Node v26.12.0's, the pinned library's release.
+    let directory = buffer_parity_directory();
+    let entry = directory.path().join("parity.cjs");
+    for (case, expected) in [
+        ("proto", r#"true true true\ntrue true true"#),
+        ("ctor-first", r#"true Buffer Buffer"#),
+        ("pool", r#"7684 65600 0 100000 0 65600\ntrue 7688\ntrue 56\ntransfer TypeError"#),
+        ("inspect", r#"<Buffer 00 0\n100 acc,true,false, data,true,true,true data,false,true,true"#),
+        ("desc-first", r#"acc,true,false, acc,true,false, data,true,true,true data,true,true,true\n97"#),
+        ("write-first", r#"mine mine 79"#),
+        ("delete-first", r#"function false 95"#),
+        ("define-first", r#"data,false,true,false 1 94"#),
+        ("buffer-first", r#"function true 97 true"#),
+        ("parent", r#"true true"#),
+        ("freeze", r#"true function 97"#),
+        ("forin", r#"95 ["readBigUInt64LE","readBigUInt64BE","readBigUint64LE"] ["swap32","swap64","toLocaleString"]"#),
+        ("sym", r#"function true ["Symbol(nodejs.util.inspect.custom)"]"#),
+        ("stream-first", r#"function 00010203 true 97"#),
+    ] {
+        assert_eq!(run_quench(&entry, &[case]), format!("{}\n", expected.replace("\\n", "\n")), "{case}");
+    }
 }

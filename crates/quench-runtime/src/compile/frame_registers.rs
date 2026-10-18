@@ -1,24 +1,23 @@
 //! Plain frame locals (`Function::plain_local_slots`) whose every access is a plain load, a
-//! plain store without a copy, a dead-zone opening or an operand read move into registers of
-//! their own. A function left addressing no frame slot runs without a frame in a lane
+//! plain store, a dead-zone opening or an operand read move into registers of their own. A function left addressing no frame slot runs without a frame in a lane
 //! (`CallPlan::registers_only`). A plain slot has no observer but these accesses, its dead
 //! zone is never read, and its frame storage is reached only through them, so the register
 //! holds exactly what the slot would; opening its dead zone writes nothing anyone reads.
 
-use super::liveness::{self, MethodArguments, ROOT_MAP_REGISTERS};
-use super::rewrite::{fixed_width, relocate, relocate_targets};
+use super::liveness::ROOT_MAP_REGISTERS;
+use super::rewrite::{fixed_width, relocate};
 /// The binding legacy argument reflection looks for.
 const ARGUMENTS_NAME: &str = "arguments";
 
+use crate::bytecode::initialization;
 use crate::bytecode::{
-    WITH_ENTER_BINDING, EvalBindingLocation, FieldLayout, FieldSite, Function, ImmediateRole, Instr, InstructionField, Op,
+    WITH_ENTER_BINDING, EvalBindingLocation, FieldLayout, Function, ImmediateRole, Instr, InstructionField, Op,
     Operand, OperandKind, REGISTER_MASK, Register, Superinstruction, WideInstruction,
 };
 
+/// `undefined_constant` is the program's constant index of `undefined`.
 pub(super) fn promote<'a>(
     function: &mut Function,
-    methods: &(impl MethodArguments + ?Sized),
-    fields: &[FieldSite],
     superinstructions: &[Superinstruction],
     undefined_constant: u32,
     atom_name: impl Fn(usize) -> Option<&'a str>,
@@ -38,10 +37,29 @@ pub(super) fn promote<'a>(
         }
     }
     // Parameters arrive in their slots, and these slots are named outside the code: the
-    // `arguments` and self bindings, eval binding sites, handlers' completion slots and
-    // environment clone plans.
+    // `arguments` and self bindings, eval binding sites, handlers' completion slots and the
+    // environment clone plans a `CloneEnv` still runs (capture layout drops unobservable
+    // clones, leaving their plans unreferenced).
     let parameters = usize::from(function.params).min(eligible.len());
     eligible[..parameters].fill(false);
+    let cloned = function
+        .instructions()
+        .chain(
+            function
+                .instructions()
+                .filter(|instruction| {
+                    instruction.op().immediate_role() == ImmediateRole::SuperinstructionIndex
+                })
+                .flat_map(|instruction| {
+                    superinstructions[instruction.superinstruction_index()]
+                        .code
+                        .iter()
+                        .map(|member| member.as_wide())
+                }),
+        )
+        .filter(|instruction| instruction.op() == Op::CloneEnv)
+        .map(|instruction| instruction.environment_clone_index())
+        .collect::<Vec<_>>();
     let named = function
         .arguments_slot
         .into_iter()
@@ -53,9 +71,9 @@ pub(super) fn promote<'a>(
                 .flat_map(|handler| handler.slot.into_iter().chain(handler.return_slot)),
         )
         .chain(
-            function
-                .environment_clones
+            cloned
                 .iter()
+                .filter_map(|&index| function.environment_clones.get(index))
                 .flat_map(|plan| plan.fresh.iter().chain(&plan.reset).copied()),
         )
         .chain(function.binding_sites.iter().flat_map(|site| {
@@ -120,7 +138,7 @@ pub(super) fn promote<'a>(
                     && instruction.numeric_local_store_target().is_none()
                     && WideInstruction::new(Op::Move, instruction.a(), 0, 0, 0).result_flags_valid()
             }
-            Op::StoreLocalPlain => instruction.optional_register_b().is_none(),
+            Op::StoreLocalPlain => true,
             _ => false,
         };
         if !promotable {
@@ -146,8 +164,25 @@ pub(super) fn promote<'a>(
     }
     function.registers = next;
     let register = |slot: usize| registers.get(slot).copied().flatten();
+    // A frame slot starts undefined, a register only once written (`prepare_registers_for`):
+    // a promoted slot some read can reach before any store gets `undefined` on entry.
+    let promoted: Vec<bool> = registers.iter().map(Option::is_some).collect();
+    let written_first = initialization::initialized_before_reads(
+        function,
+        superinstructions,
+        &promoted,
+        &promoted,
+    );
     let old = function.code.clone();
     let mut code = Vec::with_capacity(old.len());
+    for (slot, target) in registers.iter().enumerate() {
+        if let Some(target) = *target
+            && !written_first[slot]
+        {
+            let load = WideInstruction::new(Op::LoadConst, target, 0, 0, undefined_constant);
+            code.push(encode(load, Instr::new(Op::Nop, 0, 0, 0, 0), &mut function.wide));
+        }
+    }
     let mut map = vec![0; old.len() + 1];
     for (pc, &packed) in old.iter().enumerate() {
         map[pc] = code.len();
@@ -161,7 +196,15 @@ pub(super) fn promote<'a>(
                 instruction = WideInstruction::new(Op::Move, instruction.a(), source, 0, 0);
             }
             (Op::StoreLocalPlain, Some(target)) => {
-                instruction = WideInstruction::new(Op::Move, target, instruction.register_a(), 0, 0);
+                let source = instruction.register_a();
+                // A store that also keeps its value in a register becomes two moves.
+                if let Some(copy) = instruction.optional_register_b() {
+                    let store = WideInstruction::new(Op::Move, target, source, 0, 0);
+                    code.push(encode(store, Instr::new(Op::Nop, 0, 0, 0, 0), &mut function.wide));
+                    instruction = WideInstruction::new(Op::Move, copy, source, 0, 0);
+                } else {
+                    instruction = WideInstruction::new(Op::Move, target, source, 0, 0);
+                }
             }
             _ => {
                 let mut changed = false;
@@ -204,58 +247,6 @@ pub(super) fn promote<'a>(
         &mut function.source_positions,
         &old,
     );
-    function.code = code;
-    let promoted = registers
-        .iter()
-        .flatten()
-        .fold(0u64, |mask, register| mask | 1 << register);
-    initialize_unwritten(function, methods, fields, superinstructions, promoted, undefined_constant);
-}
-
-/// A frame slot starts undefined but a register holds whatever its frame last left in it, so
-/// a promoted register that some path reads before writing (a `var` read before its first
-/// assignment) is set to undefined on entry. Liveness at the first instruction names exactly
-/// those registers; the others are written before any read and need nothing.
-fn initialize_unwritten(
-    function: &mut Function,
-    methods: &(impl MethodArguments + ?Sized),
-    fields: &[FieldSite],
-    superinstructions: &[Superinstruction],
-    promoted: u64,
-    undefined_constant: u32,
-) {
-    let live = liveness::analyze(function, methods, fields, superinstructions)
-        .expect("promotion keeps registers within liveness coverage");
-    let unwritten = live.first().copied().unwrap_or(0) & promoted;
-    if unwritten == 0 {
-        return;
-    }
-    let old = function.code.clone();
-    let mut code = (0..u64::BITS as Register)
-        .filter(|register| unwritten & 1 << register != 0)
-        .map(|register| Instr::new(Op::LoadConst, register, 0, 0, undefined_constant))
-        .collect::<Vec<_>>();
-    let prefix = code.len();
-    code.extend_from_slice(&old);
-    // Every old position, the entry included, moves past the prefix: a jump back to the
-    // first instruction does not re-run the initialization.
-    let map = (0..=old.len()).map(|pc| pc + prefix).collect::<Vec<_>>();
-    relocate_targets(
-        &mut code[prefix..],
-        &mut function.wide,
-        &map,
-        &mut function.handlers,
-        &mut function.parameter_end_pc,
-        &mut function.binding_sites,
-    );
-    let mut positions = crate::bytecode::SourcePositions::default();
-    for position in function.source_positions.iter() {
-        positions.push(crate::bytecode::SourcePosition {
-            pc: position.pc + prefix as u32,
-            ..position
-        });
-    }
-    function.source_positions = positions;
     function.code = code;
 }
 
