@@ -987,6 +987,17 @@ impl<H: Host> Vm<H> {
         JsError::thrown(object, text)
     }
 
+    /// The ReferenceError for reading `atom` in its temporal dead zone, naming the binding as
+    /// the source spells it.
+    pub(super) fn uninitialized_binding_error(
+        &mut self,
+        program: &ResidualProgram,
+        atom: Atom,
+    ) -> JsError {
+        let name = crate::bytecode::source_binding_name(self.atom_name(atom)).to_owned();
+        self.reference_error(program, format!("Cannot access '{name}' before initialization"))
+    }
+
     /// A host's module-load failure as its error object, with the host's `code` as an
     /// ordinary data property.
     pub(super) fn module_load_error(&mut self, program: &ResidualProgram, error: crate::ModuleLoadError) -> JsError {
@@ -1012,17 +1023,6 @@ impl<H: Host> Vm<H> {
             }
         }
         JsError::thrown(object, error.message)
-    }
-
-    /// The ReferenceError for reading `atom` in its temporal dead zone, naming the binding as
-    /// the source spells it.
-    pub(super) fn uninitialized_binding_error(
-        &mut self,
-        program: &ResidualProgram,
-        atom: Atom,
-    ) -> JsError {
-        let name = crate::bytecode::source_binding_name(self.atom_name(atom)).to_owned();
-        self.reference_error(program, format!("Cannot access '{name}' before initialization"))
     }
 
     pub(super) fn reference_error(&mut self, program: &ResidualProgram, text: String) -> JsError {

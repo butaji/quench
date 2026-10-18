@@ -908,11 +908,7 @@ impl Subject {
 
     /// Whether this subject spells exactly the ASCII `text`, compared by content.
     pub fn spells_ascii(&self, text: &str) -> bool {
-        match &self.text {
-            SubjectText::Ascii(own) => **own == *text,
-            SubjectText::Inline { length, bytes } => bytes[..usize::from(*length)] == *text.as_bytes(),
-            SubjectText::Wide { .. } => false,
-        }
+        self.ascii() == Some(text.as_bytes())
     }
 }
 
