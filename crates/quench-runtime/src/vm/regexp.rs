@@ -1733,21 +1733,27 @@ impl<H: Host> Vm<H> {
         flags: &str,
     ) -> Result<Value, JsError> {
         let subject = self.regexp_subject(input);
+        // Only the last match's captures are observable (the legacy statics), so the rest
+        // keep their ranges alone; the last is found again from its start for its captures.
         let ranges = self.regexp_global_matches(
             p,
             receiver,
             input,
             flags,
-            |start| matcher.find_in_subject(&subject, start).next(),
-            |found| found.range.clone(),
+            |start| matcher.find_in_subject(&subject, start).next().map(|found| found.range),
+            Range::clone,
         )?;
         let Some(last) = ranges.last() else {
             return Ok(Value::NULL);
         };
-        self.record_regexp_legacy_match(receiver, input.clone(), last.clone())?;
+        let last = matcher
+            .find_in_subject(&subject, last.start)
+            .next()
+            .expect("a match is found again from its own start");
+        self.record_regexp_legacy_match(receiver, input.clone(), last)?;
         let matched = ranges
-            .iter()
-            .map(|found| self.heap.alloc(Cell::String(input.substring(found.range.clone()))))
+            .into_iter()
+            .map(|range| self.heap.alloc(Cell::String(input.substring(range))))
             .collect();
         Ok(self.new_array(matched))
     }
