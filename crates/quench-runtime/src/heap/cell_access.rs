@@ -17,6 +17,7 @@ impl Cell {
             Self::ArrayBuffer { object, .. }
             | Self::Map { object, .. }
             | Self::Set { object, .. }
+            | Self::Promise { object, .. }
             | Self::ShadowRealm { object, .. }
             | Self::WeakMap { object, .. }
             | Self::WeakSet { object, .. }
@@ -52,6 +53,7 @@ impl Cell {
             Self::ArrayBuffer { object, .. }
             | Self::Map { object, .. }
             | Self::Set { object, .. }
+            | Self::Promise { object, .. }
             | Self::ShadowRealm { object, .. }
             | Self::WeakMap { object, .. }
             | Self::WeakSet { object, .. }
