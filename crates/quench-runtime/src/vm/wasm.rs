@@ -1723,6 +1723,90 @@ mod tests {
         assert_eq!(compiled.native_entries(0), Some(1));
     }
 
+    /// Compiled code checks for an interrupt on each backward edge and at each function entry:
+    /// a run stops whether it repeats through a loop or only through calls.
+    #[test]
+    fn compiled_wasm_observes_termination_in_loops_and_loop_free_recursion() {
+        use wasmparser::BlockType;
+        let spin = vec![
+            Operator::Loop {
+                blockty: BlockType::Empty,
+            },
+            Operator::Br { relative_depth: 0 },
+            Operator::End,
+            Operator::I32Const { value: 0 },
+            Operator::End,
+        ];
+        // fib(n) = n < 2 ? n : fib(n - 1) + fib(n - 2), with no loop.
+        let fib = vec![
+            Operator::LocalGet { local_index: 0 },
+            Operator::I32Const { value: 2 },
+            Operator::I32LtU,
+            Operator::If {
+                blockty: BlockType::Type(wasmparser::ValType::I32),
+            },
+            Operator::LocalGet { local_index: 0 },
+            Operator::Else,
+            Operator::LocalGet { local_index: 0 },
+            Operator::I32Const { value: 1 },
+            Operator::I32Sub,
+            Operator::Call { function_index: 0 },
+            Operator::LocalGet { local_index: 0 },
+            Operator::I32Const { value: 2 },
+            Operator::I32Sub,
+            Operator::Call { function_index: 0 },
+            Operator::I32Add,
+            Operator::End,
+            Operator::End,
+        ];
+        // block { loop { br_table [0] default 1 (i32.const 0) } }: the loop
+        // repeats through the table alone.
+        static TABLE_SPIN: &[u8] = &[
+            0x02, 0x40, 0x03, 0x40, 0x41, 0x00, 0x0e, 0x01, 0x00, 0x01, 0x0b, 0x0b, 0x41, 0x00,
+            0x0b,
+        ];
+        let table_spin: Vec<_> =
+            wasmparser::OperatorsReader::new(wasmparser::BinaryReader::new(TABLE_SPIN, 0))
+                .into_iter()
+                .map(Result::unwrap)
+                .collect();
+        // loop { br_if 0 (i32.eqz (local.get 0)) } with a zero argument.
+        let zero_spin = vec![
+            Operator::Loop {
+                blockty: BlockType::Empty,
+            },
+            Operator::LocalGet { local_index: 0 },
+            Operator::I32Eqz,
+            Operator::BrIf { relative_depth: 0 },
+            Operator::End,
+            Operator::I32Const { value: 0 },
+            Operator::End,
+        ];
+        for (name, params, operators, args) in [
+            ("compiled-wasm-spin", 0, spin, vec![]),
+            ("compiled-wasm-table-spin", 0, table_spin, vec![]),
+            ("compiled-wasm-zero-spin", 1, zero_spin, vec![0]),
+            ("compiled-wasm-fib", 1, fib, vec![60]),
+        ] {
+            let function = crate::Engine::lower_wasm_i32_module(
+                name,
+                0,
+                [(params, 0, true, operators.into_iter().map(Ok))],
+            )
+            .unwrap();
+            let mut vm = Vm::new(crate::SystemHost);
+            vm.set_execution_mode(crate::ExecutionMode::Compiled);
+            let interrupt = vm.execution_interrupt_handle();
+            let stopper = std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                interrupt.request_termination();
+            });
+            let error = vm.execute_wasm_i32(&function, &args).unwrap_err();
+            assert!(error.is_execution_terminated(), "{name}");
+            stopper.join().unwrap();
+        }
+    }
+
     #[test]
     fn compiled_wasm_memory_size_and_fill_preserve_bounds_and_results() {
         let memarg = wasmparser::MemArg {
