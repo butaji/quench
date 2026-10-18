@@ -246,18 +246,18 @@ process RSS/high-water snapshots.
 For HashSet `main` (function 3), the diagnostic measured 66,145 reachable
 bytecodes and 97 registers. The dense-equivalent state payload is 76,992,780
 bytes; sparse states and allocated capacities use 6,962,568 bytes, about 11.1x
-less. Planning takes 6.9-10.2 ms. The Cranelift body remains the large cost:
-with optimization disabled it takes 866 ms and the process reaches
-265,424 KiB high-water RSS. Cranelift's `none` setting reduces compile time and
-RSS, but its one-round root-3 screen is only 49.04 Score / 259.1 MiB. The
-`speed_and_size` screen is 56.20 / 284.2 MiB, and default `speed` is 56.77 /
-308.7 MiB. These are root-selected one-round screens, not matched comparisons
+less. Planning takes 5.7-10.2 ms. The Cranelift body remains the large cost:
+with optimization disabled it takes 875 ms and the process reaches
+266,068 KiB high-water RSS. Cranelift's `none` setting reduces compile time and
+RSS, but its one-round root-3 screen is 57.00 Score / 259.1 MiB. The
+`speed_and_size` screen is 58.32 / 284.7 MiB, and default `speed` is 58.70 /
+285.0 MiB. These are root-selected one-round screens, not matched comparisons
 or qualification results.
 
 JetStream includes the first, worst, and average per-fixture scores in its
-geometric-mean Score. The diagnostic root-3 run spends 941 ms compiling and
+geometric-mean Score. The diagnostic root-3 run spends 944 ms compiling and
 emits 1,544,754 bytes. Its first timed iteration takes 1,005 ms (Score 4.98),
-while the later average is 23.99 ms (Score 208.41). HashSet loads its Wasm
+while the later average is 22.60 ms (Score 221.24). HashSet loads its Wasm
 binary in `init()` but first initializes the Emscripten module inside the first
 timed `runIteration()`. Quench then compiles the whole eligible program on the
 first exported-function entry. This identifies cold compile latency, as well
@@ -274,7 +274,7 @@ not predict Quench's performance. [Cranelift optimization levels](https://docs.r
 [Deegen](https://compilers.stanford.edu/software/deegen/).
 
 Narrower root-31 (`operator new`) and root-27 screens use about 44 MiB RSS,
-below both JIT peers in these one-round runs, but score only 23.49 and 22.57.
+below both JIT peers in these one-round runs, but score only 24.15 and 23.48.
 They therefore confirm a memory opportunity without a score win. Full commands,
 environment wrapper, diagnostic details, and raw reports are in
 `evidence/jit-jetstream3-wasm-2026-10-18/sparse-analysis-baseline-screen/`.
