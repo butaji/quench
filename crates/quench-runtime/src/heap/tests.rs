@@ -751,11 +751,7 @@ fn out_of_line_object_metadata_is_included_in_live_memory_totals() {
     data.set_arguments_map(vec![0; 32]);
     data.set_module_namespace();
     data.set_module_bindings(vec![(0, crate::vm::program_store::ProgramId::MAIN, 0)]);
-    data.set_deferred_module(Some(crate::ModuleSource {
-        name: "module.js".into(),
-        source: "export const value = 1;".into(),
-        bytes: vec![1, 2, 3],
-    }));
+    data.set_deferred_module(Some(crate::ModuleSource::text("module.js", "export const value = 1;")));
     data.add_private_name(PrivateBrand {
         home: object,
         name: 0,
