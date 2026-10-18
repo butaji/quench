@@ -344,7 +344,7 @@ impl<H: Host> Vm<H> {
             parent: Value::NULL,
             function: 0,
             slots: values.into(),
-            scope: Box::new(crate::heap::EnvironmentScope {
+            scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
                 program: Some(id.raw()),
                 root_eval_scope: false,
                 binding_site_pc: None,

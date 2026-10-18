@@ -290,7 +290,7 @@ impl<H: Host> Vm<H> {
                 parent: env,
                 function: u32::MAX,
                 slots: Vec::<Value>::new().into_boxed_slice().into(),
-                scope: Box::new(crate::heap::EnvironmentScope {
+                scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
                     program: None,
                     root_eval_scope: false,
                     binding_site_pc: None,
