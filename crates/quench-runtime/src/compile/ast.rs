@@ -119,7 +119,7 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     shared_undefined: SharedUndefined,
     function_scope: FxHashSet<Atom>,
     annex_b_collisions: FxHashSet<u32>,
-    pub(super) scopes: Vec<Rc<FxHashMap<Atom, u16>>>,
+    pub(super) scopes: Vec<Rc<super::capture_scope::CaptureScope>>,
     pub(super) function_id: u32,
     /// `Compiler::private_name_references` when this function began, so a later count
     /// shows that it or a function it encloses names a private member.
@@ -161,7 +161,9 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     /// The current function's capture scope for one lexical state: closures created in the
     /// same state (hoisted declarations, sibling callbacks) share it instead of re-copying
     /// every local binding.
-    capture_scope_memo: Option<(CaptureScopeState, Rc<FxHashMap<Atom, u16>>)>,
+    capture_scope_memo: Option<(CaptureScopeState, Rc<super::capture_scope::CaptureScope>)>,
+    /// The capture base as of a local count and parameter context (`capture_base`).
+    capture_base_memo: Option<((usize, bool), Rc<FxHashMap<Atom, u16>>)>,
     disposal_scopes: Vec<DisposalScope>,
 }
 
@@ -177,7 +179,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         locals: Vec<Atom>,
         function_scope: FxHashSet<Atom>,
         annex_b_collisions: FxHashSet<u32>,
-        scopes: Vec<Rc<FxHashMap<Atom, u16>>>,
+        scopes: Vec<Rc<super::capture_scope::CaptureScope>>,
         function_id: u32,
         super_flags: (bool, bool),
         async_function: bool,
@@ -275,6 +277,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             lexical_scopes: Vec::new(),
             lexical_scope_pushes: 0,
             capture_scope_memo: None,
+            capture_base_memo: None,
             disposal_scopes: vec![DisposalScope::default()],
         }
     }
@@ -1116,7 +1119,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         }
     }
 
-    pub(super) fn capture_scopes(&mut self) -> Vec<Rc<FxHashMap<Atom, u16>>> {
+    pub(super) fn capture_scopes(&mut self) -> Vec<Rc<super::capture_scope::CaptureScope>> {
         let state = CaptureScopeState {
             local_count: self.local_slots.len(),
             lexical_depth: self.lexical_scopes.len(),
@@ -1159,29 +1162,54 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         scopes
     }
 
-    /// The current function's bindings visible to a closure created at this position.
-    fn current_capture_scope(&mut self) -> FxHashMap<Atom, u16> {
-        let mut scope: FxHashMap<Atom, u16> = self
-            .function_scope
-            .iter()
-            .filter(|_| !self.dynamic_eval)
-            .filter_map(|atom| self.local_slots.get(atom).map(|slot| (*atom, *slot)))
-            .collect();
-        scope.extend(
-            self.local_slots
-                .iter()
-                .filter(|(atom, _)| self.is_compiler_binding(**atom))
-                .map(|(atom, slot)| (*atom, *slot)),
-        );
-        if self.parameter_context {
-            scope.retain(|_, slot| {
-                usize::from(*slot) < self.parameter_local_count
-                    || Some(*slot) == self.parameter_arguments_slot
-            });
-            if let Some(slot) = self.parameter_arguments_slot {
-                scope.insert(self.owner.atom("arguments"), slot);
+    /// The current function's bindings any closure created inside it sees before lexical
+    /// scopes apply: its declared names and compiler bindings with local slots. Locals are
+    /// only appended (`hidden_local`), so a later base is an earlier one plus the locals added
+    /// since, under the same parameter context.
+    fn capture_base(&mut self) -> Rc<FxHashMap<Atom, u16>> {
+        let key = (self.locals.len(), self.parameter_context);
+        let (mut base, first_new) = match self.capture_base_memo.take() {
+            Some(((count, parameter_context), base))
+                if parameter_context == key.1 && count <= key.0 =>
+            {
+                if count == key.0 {
+                    self.capture_base_memo = Some((key, Rc::clone(&base)));
+                    return base;
+                }
+                (Rc::unwrap_or_clone(base), count)
+            }
+            _ => (FxHashMap::default(), 0),
+        };
+        let arguments = self
+            .parameter_arguments_slot
+            .filter(|_| self.parameter_context)
+            .map(|slot| (self.owner.atom("arguments"), slot));
+        for &atom in &self.locals[first_new..] {
+            let Some(&slot) = self.local_slots.get(&atom) else {
+                continue;
+            };
+            let declared = !self.dynamic_eval && self.function_scope.contains(&atom);
+            let visible = !self.parameter_context
+                || usize::from(slot) < self.parameter_local_count
+                || Some(slot) == self.parameter_arguments_slot;
+            // The parameter context's `arguments` binding is its own, whatever local shares
+            // the name.
+            let shadowed = arguments.is_some_and(|(name, _)| name == atom);
+            if (declared || self.is_compiler_binding(atom)) && visible && !shadowed {
+                base.insert(atom, slot);
             }
         }
+        if let Some((name, slot)) = arguments {
+            base.insert(name, slot);
+        }
+        let base = Rc::new(base);
+        self.capture_base_memo = Some((key, Rc::clone(&base)));
+        base
+    }
+
+    /// The current function's bindings visible to a closure created at this position.
+    fn current_capture_scope(&mut self) -> super::capture_scope::CaptureScope {
+        let mut scope = super::capture_scope::CaptureScope::new(self.capture_base());
         for lexical in &self.lexical_scopes {
             for (source, target) in &lexical.bindings {
                 if let Some(slot) = self.local_slots.get(target).copied() {
