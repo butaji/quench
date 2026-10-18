@@ -67,6 +67,11 @@ impl FunctionCompiler<'_, '_> {
                 function
             },
             Expression::ClassExpression(value) => self.class_expression(value),
+            Expression::ArrayExpression(_) | Expression::ObjectExpression(_)
+                if let Some(literal) = self.literal_template(expression) =>
+            {
+                literal
+            }
             Expression::ArrayExpression(value) => self.array_expression(value),
             Expression::ObjectExpression(value) => self.object_expression(value),
             Expression::StaticMemberExpression(value) => self.static_member(value),
