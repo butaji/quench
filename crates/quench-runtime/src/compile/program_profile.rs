@@ -25,7 +25,7 @@ fn atom_bytes(function: &Function) -> usize {
         &function.global_immutable_atoms,
     ]
     .into_iter()
-    .map(|atoms: &Vec<Atom>| bytes(atoms))
+    .map(|atoms| size_of_val::<[Atom]>(atoms))
     .sum()
 }
 

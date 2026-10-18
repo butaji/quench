@@ -131,6 +131,9 @@ impl Compiler<'_> {
                 function.emit(Op::Return, result, 0, 0, 0);
             }
         }
+        // As in `Compiler::compile_function`: no doubling slack beside the syntax tree.
+        function.code.shrink_to_fit();
+        function.source_positions.shrink_to_fit();
         let name_bindings = function.name_bindings();
         let undefined_register = function.used_undefined_register();
         let environment_clones = function.per_site_environment_clones();
@@ -164,17 +167,17 @@ impl Compiler<'_> {
             simple_parameters,
             strict,
             locals: function.locals.len() as u16,
-            local_atoms: function.locals.clone(),
+            local_atoms: function.locals.clone().into(),
             environment_atoms,
             selective_capture_slots: None,
             local_registers: function.promoted_local_layout(),
             inherited_with_scope: with_depth != 0,
-            lexical_atoms,
-            global_lexical_atoms: Vec::new(),
-            global_var_atoms: Vec::new(),
-            global_function_atoms: Vec::new(),
-            global_annex_b_var_atoms: Vec::new(),
-            global_immutable_atoms: Vec::new(),
+            lexical_atoms: lexical_atoms.into(),
+            global_lexical_atoms: Vec::new().into(),
+            global_var_atoms: Vec::new().into(),
+            global_function_atoms: Vec::new().into(),
+            global_annex_b_var_atoms: Vec::new().into(),
+            global_immutable_atoms: Vec::new().into(),
             name_bindings,
             binding_sites: function.binding_sites,
             source_positions: function.source_positions,
