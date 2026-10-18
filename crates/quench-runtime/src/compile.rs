@@ -2561,7 +2561,9 @@ impl<'a> Compiler<'a> {
         let annex_b_collisions = self.annex_b_collisions(body);
         let arguments_slot = if let Some(slot) = parameter_arguments_slot {
             Some(slot)
-        } else if parent.is_none() {
+        } else if parent.is_none() || options.class_initializer {
+            // Field initializers and static blocks cannot name `arguments` (an early error),
+            // so they have no binding to materialize.
             None
         } else {
             if parameter_shadows_arguments {

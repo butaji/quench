@@ -924,10 +924,16 @@ impl<H: Host> Vm<H> {
     fn regexp_subject(&mut self, input: &JsString) -> Rc<quench_regexp::Subject> {
         let flat = input.flat();
         let text = match flat {
-            // A short subject is copied inline and has no shared storage to recognize it by,
-            // so it neither consults nor displaces the cache; its one slot is reused once no
-            // match holds it.
+            // A short subject is copied inline and has no shared storage to recognize it by, so
+            // it neither consults nor displaces the cache. The last one is kept by content, as
+            // routers match one short path against many patterns; otherwise its slot is reused
+            // once no match holds it.
             FlatUnits::Short(text) => {
+                if let Some(subject) = &self.regexp_short_subject
+                    && subject.spells_ascii(text.as_str())
+                {
+                    return Rc::clone(subject);
+                }
                 let subject = quench_regexp::Subject::short_ascii(text.as_str());
                 if let Some(slot) = self.regexp_short_subject.as_mut()
                     && let Some(reused) = Rc::get_mut(slot)
