@@ -1933,11 +1933,10 @@ impl<H: Host> Vm<H> {
         eprintln!("{{\"kind\":\"quench-live-cells\",\"top\":{:?}}}", &kinds[..kinds.len().min(8)]);
         let promise = &self.realm.promise;
         eprintln!(
-            "{{\"kind\":\"quench-vm-tables\",\"live_slots\":{},\"suspended\":{},\"suspended_free\":{},\"promise_records\":{},\"thenable_jobs\":{},\"reaction_capabilities\":{},\"async_resume_jobs\":{},\"jobs\":{},\"descriptors\":{},\"function_values\":{},\"frames\":{},\"active_call_roots\":{}}}",
+            "{{\"kind\":\"quench-vm-tables\",\"live_slots\":{},\"suspended\":{},\"suspended_free\":{},\"thenable_jobs\":{},\"reaction_capabilities\":{},\"async_resume_jobs\":{},\"jobs\":{},\"descriptors\":{},\"function_values\":{},\"frames\":{},\"active_call_roots\":{}}}",
             self.heap.live_slots(),
             self.suspended.len(),
             self.suspended_free.len(),
-            promise.records.len(),
             promise.thenable_jobs.len(),
             promise.reaction_capabilities.len(),
             promise.async_resume_jobs.len(),
