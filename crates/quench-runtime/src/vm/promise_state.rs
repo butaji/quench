@@ -5,7 +5,7 @@ impl<H: Host> Vm<H> {
     /// The state of `promise`, or `None` when the value is not a promise.
     pub(super) fn promise_record(&self, promise: Value) -> Option<&super::promise::PromiseRecord> {
         match self.heap.get(promise)? {
-            Cell::Promise { record, .. } => Some(record),
+            Cell::Promise(promise) => Some(&promise.record),
             _ => None,
         }
     }
@@ -17,7 +17,7 @@ impl<H: Host> Vm<H> {
         promise: Value,
     ) -> Option<&mut super::promise::PromiseRecord> {
         match self.heap.get_mut(promise)? {
-            Cell::Promise { record, .. } => Some(record),
+            Cell::Promise(promise) => Some(&mut promise.record),
             _ => None,
         }
     }
@@ -74,7 +74,7 @@ impl<H: Host> Vm<H> {
                 {
                     return None;
                 }
-                let id = record.rejection_id?;
+                let id = record.rejection_id?.get();
                 record.rejection = PromiseRejectionState::Handled;
                 Some(id)
             })() else {
@@ -107,7 +107,7 @@ impl<H: Host> Vm<H> {
                 {
                     return None;
                 }
-                let id = record.rejection_id?;
+                let id = record.rejection_id?.get();
                 record.rejection = PromiseRejectionState::Reporting;
                 Some((id, record.result))
             })() else {
@@ -187,7 +187,7 @@ impl<H: Host> Vm<H> {
             self.realm.promise.last_rejection_id = id;
             self.promise_record_mut(promise)
                 .expect("settled Promise record remains registered")
-                .rejection_id = Some(id);
+                .rejection_id = std::num::NonZeroU64::new(id);
             self.realm
                 .promise
                 .rejection_notifications
