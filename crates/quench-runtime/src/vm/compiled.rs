@@ -247,6 +247,8 @@ struct CallContext {
     program: ProgramId,
     /// Number of Wasm-to-host callouts made by this native invocation.
     import_callouts: *mut u64,
+    /// Number of Wasm indirect-reference callouts made by this native invocation.
+    reference_callouts: *mut u64,
     /// The bound linear memory whose base and size this call uses.
     memory: Value,
     /// Its exact current byte length, refreshed when a callout may grow it.
@@ -289,12 +291,12 @@ unsafe extern "C" fn compiled_memory_fill(address: u64, byte: u64, length: u64) 
     0
 }
 
-fn note_compiled_callout(context: &CallContext) {
-    if !context.import_callouts.is_null() {
+fn note_compiled_callout(counter: *mut u64) {
+    if !counter.is_null() {
         // SAFETY: only diagnostic-enabled calls provide this pointer, and it
         // points to a counter owned by the suspended native invocation.
         unsafe {
-            *context.import_callouts = (*context.import_callouts).saturating_add(1);
+            *counter = (*counter).saturating_add(1);
         }
     }
 }
@@ -336,7 +338,7 @@ unsafe extern "C" fn reference_callout<H: Host>(
     // SAFETY: generated code passes the context, table binding, table index,
     // signature index, argument words, and output storage for this call.
     let context = unsafe { &mut *context };
-    note_compiled_callout(context);
+    note_compiled_callout(context.reference_callouts);
     let vm = unsafe { &mut *context.vm.cast::<Vm<H>>() };
     let active = ACTIVE_CONTEXT.with(|current| current.replace(std::ptr::null_mut()));
     let program = context.program;
@@ -436,7 +438,7 @@ unsafe extern "C" fn import_callout<H: Host>(
     // SAFETY: compiled code passes the context `run_compiled` made, whose
     // VM is suspended in that call.
     let context = unsafe { &mut *context };
-    note_compiled_callout(context);
+    note_compiled_callout(context.import_callouts);
     let vm = unsafe { &mut *context.vm.cast::<Vm<H>>() };
     // The VM's own code runs outside compiled code: no guard fault is ours.
     let active = ACTIVE_CONTEXT.with(|current| current.replace(std::ptr::null_mut()));
@@ -501,6 +503,8 @@ struct WasmJitDiagnostics {
     native_entry_requests: Vec<std::cell::Cell<u64>>,
     interpreter_fallback_entries: Vec<std::cell::Cell<u64>>,
     compiled_to_vm_callouts: std::cell::Cell<u64>,
+    compiled_import_callouts: std::cell::Cell<u64>,
+    compiled_reference_callouts: std::cell::Cell<u64>,
 }
 
 impl Drop for CompiledProgram {
@@ -529,7 +533,7 @@ impl Drop for CompiledProgram {
             .collect::<Vec<_>>()
             .join(",");
         eprintln!(
-            "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compiled_functions\":{},\"total_functions\":{},\"code_bytes\":{},\"mapped_bytes\":{},\"compile_ns\":{},\"native_entry_requests\":[{}],\"interpreter_fallback_entries\":[{}],\"compiled_to_vm_callouts\":{}}}",
+            "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compiled_functions\":{},\"total_functions\":{},\"code_bytes\":{},\"mapped_bytes\":{},\"compile_ns\":{},\"native_entry_requests\":[{}],\"interpreter_fallback_entries\":[{}],\"compiled_to_vm_callouts\":{},\"compiled_import_callouts\":{},\"compiled_reference_callouts\":{}}}",
             stats.program,
             stats.compiled_functions,
             stats.total_functions,
@@ -539,6 +543,8 @@ impl Drop for CompiledProgram {
             entries,
             fallbacks,
             stats.compiled_to_vm_callouts.get(),
+            stats.compiled_import_callouts.get(),
+            stats.compiled_reference_callouts.get(),
         );
     }
 }
@@ -3662,6 +3668,8 @@ impl<H: Host> Vm<H> {
             native_entry_requests: (0..count).map(|_| std::cell::Cell::new(0)).collect(),
             interpreter_fallback_entries: (0..count).map(|_| std::cell::Cell::new(0)).collect(),
             compiled_to_vm_callouts: std::cell::Cell::new(0),
+            compiled_import_callouts: std::cell::Cell::new(0),
+            compiled_reference_callouts: std::cell::Cell::new(0),
         });
         Some(CompiledProgram {
             _code: memory,
@@ -3799,11 +3807,16 @@ impl<H: Host> Vm<H> {
                 (start as usize, start as usize + size)
             });
             let mut import_callouts = 0u64;
-            let import_callouts_ptr = if compiled.diagnostics.is_some() {
-                &mut import_callouts
-            } else {
-                std::ptr::null_mut()
-            };
+            let mut reference_callouts = 0u64;
+            let (import_callouts_ptr, reference_callouts_ptr): (*mut u64, *mut u64) =
+                if compiled.diagnostics.is_some() {
+                    (
+                        &mut import_callouts as *mut u64,
+                        &mut reference_callouts as *mut u64,
+                    )
+                } else {
+                    (std::ptr::null_mut(), std::ptr::null_mut())
+                };
             let mut context = CallContext {
                 stack_limit: stack_pointer.saturating_sub(COMPILED_STACK_BUDGET),
                 interrupt: self.execution_interrupt.atomic_flag(),
@@ -3818,6 +3831,7 @@ impl<H: Host> Vm<H> {
                 call_reference: reference_callout::<H> as ReferenceCallout as usize,
                 program,
                 import_callouts: import_callouts_ptr,
+                reference_callouts: reference_callouts_ptr,
                 memory: memory_binding,
                 memory_length: length,
                 raised: None,
@@ -3865,7 +3879,20 @@ impl<H: Host> Vm<H> {
                     stats
                         .compiled_to_vm_callouts
                         .get()
+                        .saturating_add(import_callouts)
+                        .saturating_add(reference_callouts),
+                );
+                stats.compiled_import_callouts.set(
+                    stats
+                        .compiled_import_callouts
+                        .get()
                         .saturating_add(import_callouts),
+                );
+                stats.compiled_reference_callouts.set(
+                    stats
+                        .compiled_reference_callouts
+                        .get()
+                        .saturating_add(reference_callouts),
                 );
             }
             if i64::from(status) == TERMINATED_STATUS {
