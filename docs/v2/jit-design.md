@@ -549,32 +549,19 @@ compilation remains a measured cost. [JetStream 3](https://webkit.org/blog/17899
 
 ## Indexed i32 offset reuse experiment
 
-The opt-in `QUENCH_WASM_JIT_INDEXED_OFFSET_REUSE=1` candidate maintains an
-exact companion `x * 4 mod 2^32` for i32 register views in structurally
-matching Wasm functions. It substitutes that value for `i32.shl 2`; add,
-subtract, and move preserve it algebraically, while other writes to those
-views rebuild it. Memory address formation, bounds checks, trap order, and loop
-safepoints stay on the existing path. The feature is disabled by default.
+The indexed i32 offset-reuse experiment tested the exact relation
+`(x ± y) * 4 mod 2^32 = (x * 4 ± y * 4) mod 2^32` in two compiler variants.
+Both kept address formation, bounds checks, trap order, and loop safepoints on
+the existing path and passed interpreter/compiled-off/compiled-on smoke checks
+for ordinary, wrapped, and out-of-bounds indices. The first variant tracked
+every register in structurally matching functions; the second used a
+backward-use slice from `i32.shl 2` operands.
 
-The algebraic relation is exact under Wasm wraparound:
-`(x ± y) * 4 mod 2^32 = (x * 4 ± y * 4) mod 2^32`. Differential smoke runs
-matched interpreter, compiled-off, and compiled-on results for ordinary,
-wrapped, and out-of-bounds indices. `cargo check --tests` type-checks the
-focused regression. The unit-test executable could not be built within the
-container's memory limit, so its assertions remain unrun.
-
-The candidate is screened only on JetStream 3 `quicksort-wasm` using the
-paired `--jit-wasm-indexed-offset-reuse-ab` diagnostic. A three-round screen
-advances to an 11-round confirmation only if the paired on/off Score ratio is
-at least 1.05 with its 95% interval above 1, and peak RSS grows by no more than
-0.5 MiB. The diagnostic report is never qualification-ready. Keep the code
-only if the measured result supports it; a local gain is not a peer win unless
-the same 11-round report also clears both Bun and Node Score and RSS bars.
-
-The first all-register companion screen scored 198.98 versus 194.34 with the
-feature off, a paired ratio of 1.0395 [0.8684, 1.1094]; RSS rose 0.19 MiB.
-This failed the predeclared gate, so no confirmation ran. A narrower
-backward-liveness variant that tracks only registers feeding shift-by-two
-operations has been implemented and is awaiting its own screen. The complete
-report and raw rounds are in
+Neither variant passed the predeclared three-round QuickSort screen. The
+first's paired Score ratio was 1.0395 [0.8684, 1.1094], below the 1.05 gate
+and crossing a tie. The narrower variant regressed, with a paired ratio of
+0.8320 [0.8075, 0.8383]; RSS was effectively unchanged. Neither advanced to
+eleven rounds, and neither beat Bun or Node on Score. The compiler switch and
+diagnostic runner option were removed. Full runs and the rejection decision
+are recorded in
 `evidence/jit-jetstream3-wasm-2026-10-18/indexed-offset-reuse/`.
