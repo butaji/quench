@@ -518,11 +518,8 @@ impl<H: Host> Vm<H> {
                 let text = self.to_string(p, value)?;
                 Ok(Value::number(super::number::parse_float(&text)))
             }
-            Native::MathFloor => {
-                let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-                Ok(Value::number(self.to_number(p, value)?.floor()))
-            }
-            Native::MathAbs
+            Native::MathFloor
+            | Native::MathAbs
             | Native::MathCeil
             | Native::MathRound
             | Native::MathTrunc
@@ -550,7 +547,9 @@ impl<H: Host> Vm<H> {
             | Native::MathClz32
             | Native::MathF16Round => {
                 let value = self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-                Ok(Value::number(super::number::math_unary(native, value)))
+                Ok(Value::number(
+                    super::number::math_unary(native, value).expect("a unary Math native"),
+                ))
             }
             Native::MathAtan2 => {
                 let y = args.first().copied().unwrap_or(Value::UNDEFINED);
