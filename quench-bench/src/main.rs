@@ -31,7 +31,7 @@ const MIN_QUALIFYING_ROUNDS: usize = 11;
 const DEFAULT_TIMEOUT_MS: u64 = 300_000;
 const MEASUREMENT_ENV: &[&str] = &["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TZ"];
 const FIXED_WORK_REPORT_SCHEMA: u32 = 5;
-const SUITE_REPORT_SCHEMA: u32 = 8;
+const SUITE_REPORT_SCHEMA: u32 = 9;
 const FIXED_WORK_MEASUREMENT_MODE: &str = "fixed_work_diagnostic";
 const FIXED_WORK_MARKER_PREFIX: &str = "__quenchFixedWork:";
 const FIXED_WORK_SUITE_COUNT: usize = 1;
@@ -390,6 +390,9 @@ struct SuiteRecord {
     /// Experimental bounded root compilation; never qualification mode.
     #[serde(default)]
     jit_wasm_root: Option<u32>,
+    /// Starts Wasm functions in the interpreter and promotes hot roots only.
+    #[serde(default)]
+    jit_wasm_selective: bool,
     created_unix_ns: u128,
     rounds_requested: usize,
     timeout_ms: u64,
@@ -538,6 +541,7 @@ struct Options {
     jit_mode: JitMode,
     jit_diagnostics: bool,
     jit_wasm_root: Option<u32>,
+    jit_wasm_selective: bool,
     fixture: Option<String>,
     fixtures: Option<Vec<String>>,
     all: bool,
@@ -610,6 +614,7 @@ fn main() {
         jit_mode: options.jit_mode,
         jit_diagnostics: options.jit_diagnostics,
         jit_wasm_root: options.jit_wasm_root,
+        jit_wasm_selective: options.jit_wasm_selective,
         created_unix_ns: now_ns(),
         rounds_requested: options.rounds,
         timeout_ms: options.timeout_ms,
@@ -691,6 +696,7 @@ fn main() {
         && options.rounds >= MIN_QUALIFYING_ROUNDS
         && !options.jit_diagnostics
         && options.jit_wasm_root.is_none()
+        && !options.jit_wasm_selective
         && report
             .fixtures
             .values()
@@ -781,6 +787,7 @@ fn validate_resume(saved: &SuiteRecord, expected: &SuiteRecord, files: &[PathBuf
         && saved.jit_mode == expected.jit_mode
         && saved.jit_diagnostics == expected.jit_diagnostics
         && saved.jit_wasm_root == expected.jit_wasm_root
+        && saved.jit_wasm_selective == expected.jit_wasm_selective
         && saved.rounds_requested == expected.rounds_requested
         && saved.timeout_ms == expected.timeout_ms
         && saved.source_revision == expected.source_revision
@@ -859,6 +866,7 @@ fn parse_options() -> Options {
         jit_mode: JitMode::NoJit,
         jit_diagnostics: false,
         jit_wasm_root: None,
+        jit_wasm_selective: false,
         fixture: None,
         fixtures: None,
         all: first == "--all",
@@ -902,6 +910,7 @@ fn parse_options() -> Options {
             }
             "--jit" => options.jit_mode = JitMode::Jit,
             "--jit-diagnostics" => options.jit_diagnostics = true,
+            "--jit-wasm-selective" => options.jit_wasm_selective = true,
             "--jit-wasm-root" => {
                 options.jit_wasm_root = Some(
                     u32::try_from(required_number(&mut args, "--jit-wasm-root"))
@@ -970,6 +979,13 @@ fn parse_options() -> Options {
         && (options.jit_mode != JitMode::Jit || options.suite != Suite::JetStream3)
     {
         usage("--jit-wasm-root requires --suite jetstream3 --jit");
+    }
+    if options.jit_wasm_selective
+        && (options.jit_mode != JitMode::Jit
+            || options.suite != Suite::JetStream3
+            || options.jit_wasm_root.is_some())
+    {
+        usage("--jit-wasm-selective requires --suite jetstream3 --jit and cannot combine with --jit-wasm-root");
     }
     if options.quench_peer.is_some() && !options.fixed_work {
         usage("--quench-peer requires --fixed-work");
@@ -1171,6 +1187,9 @@ fn quench_engine(options: &Options) -> EngineSpec {
     if options.jit_diagnostics {
         environment.insert("QUENCH_WASM_JIT_STATS".into(), "1".into());
     }
+    if options.jit_wasm_selective {
+        environment.insert("QUENCH_WASM_JIT_SELECTIVE".into(), "1".into());
+    }
     if let Some(root) = options.jit_wasm_root {
         environment.insert("QUENCH_WASM_JIT_ROOT".into(), root.to_string());
     }
@@ -1192,6 +1211,12 @@ fn quench_engine(options: &Options) -> EngineSpec {
         if let Some(root) = options.jit_wasm_root {
             quench.jit_proof = format!(
                 "{}; bounded experimental root compilation selected residual function {root} via QUENCH_WASM_JIT_ROOT; not qualification mode",
+                quench.jit_proof
+            );
+        }
+        if options.jit_wasm_selective {
+            quench.jit_proof = format!(
+                "{}; opt-in selective Wasm hot-root tiering enabled with QUENCH_WASM_JIT_SELECTIVE=1; not qualification mode",
                 quench.jit_proof
             );
         }
@@ -2603,7 +2628,7 @@ pub(crate) fn now_ns() -> u128 {
 
 fn usage(message: &str) -> ! {
     eprintln!(
-        "{message}\nusage: quench-bench <fixture.js>|--all|--fixtures NAME,NAME,... [--suite v8-v7|jetstream3] [--jit] [--jit-diagnostics] [--jit-wasm-root ID] [--fixed-work] [--quench PATH] [--quench-peer PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--checkpoint PATH|--resume PATH] [--out PATH]\n       quench-bench --preflight-only [--suite v8-v7|jetstream3] [--jit] [--jit-diagnostics] [--jit-wasm-root ID] [engine options]\n       quench-bench --analyze REPORT [--out JSON]"
+        "{message}\nusage: quench-bench <fixture.js>|--all|--fixtures NAME,NAME,... [--suite v8-v7|jetstream3] [--jit] [--jit-diagnostics] [--jit-wasm-root ID] [--jit-wasm-selective] [--fixed-work] [--quench PATH] [--quench-peer PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--checkpoint PATH|--resume PATH] [--out PATH]\n       quench-bench --preflight-only [--suite v8-v7|jetstream3] [--jit] [--jit-diagnostics] [--jit-wasm-root ID] [--jit-wasm-selective] [engine options]\n       quench-bench --analyze REPORT [--out JSON]"
     );
     std::process::exit(2)
 }
@@ -2926,6 +2951,7 @@ mod tests {
             jit_mode: super::JitMode::NoJit,
             jit_diagnostics: false,
             jit_wasm_root: None,
+            jit_wasm_selective: false,
             created_unix_ns: now_ns(),
             rounds_requested: 11,
             timeout_ms: 300_000,
