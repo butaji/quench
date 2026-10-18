@@ -444,6 +444,23 @@ struct ConstructPlan {
     shape: u32,
     fields: u8,
     parameters: [u16; CONSTRUCT_PLAN_FIELDS],
+    /// For a forwarding constructor's plan of no fields, where its body's reads resolved
+    /// (`lane_forwarded_construction`), which the plan's own proof keeps.
+    forwarded: Option<ForwardedResolution>,
+}
+
+/// Where a forwarding constructor's reads of `this.<method>` and its `apply` resolved under
+/// a construct plan (`ConstructPlan::forwarded`). While the plan holds, the prototype layout
+/// epoch is unchanged, so the plan's prototype keeps the method's data slot and the method's
+/// prototype keeps `apply`'s, and the receiver template lacks the method. The values are
+/// read again on every construction, and a method whose own shape or prototype differs
+/// from the one recorded, which could shadow `apply`, resolves afresh.
+#[derive(Clone, Copy)]
+struct ForwardedResolution {
+    method_slot: u16,
+    method_shape: u32,
+    apply_holder: Value,
+    apply_slot: u16,
 }
 
 /// Fields a `ConstructPlan` names; an initializer storing more keeps running its adds.
@@ -464,6 +481,7 @@ const EMPTY_CONSTRUCT_PLAN: ConstructPlan = ConstructPlan {
     shape: 0,
     fields: 0,
     parameters: [0; CONSTRUCT_PLAN_FIELDS],
+    forwarded: None,
 };
 const _: () = assert!(SCRIPT_CALL_TARGETS.is_power_of_two());
 
@@ -4717,7 +4735,8 @@ fn lane_construct_keeping_activation<H: Host>(
     note_allocation(vm);
     let arguments = ActivationArguments::Window(i.c);
     if let Some(&method) = vm.lane_stack.forwarded_methods.get(target.forwarded_method as usize)
-        && let Some(forwarded) = lane_forwarded_construction(cx, target, method, this)
+        && let Some(forwarded) = lane_resolved_forwarding(cx, callee)
+            .or_else(|| lane_forwarded_construction(cx, target, method, this))
     {
         let forwarder = SkippedForwarder {
             function: target.function,
@@ -4773,6 +4792,97 @@ fn lane_forwarded_construction<H: Host>(
             ..
         })
     ) || function == constructor.callee
+    {
+        return None;
+    }
+    let forwarded = lane_script_target(cx, function)?;
+    if let Some(resolution) = forwarded_resolution(vm, constructor.callee, method, function, apply) {
+        let index = construct_plan_index(constructor.callee)?;
+        vm.lane_stack.construct_plans[index].forwarded = Some(resolution);
+    }
+    Some(forwarded)
+}
+
+/// Where a forwarding constructor's reads of `this.<method>` and its `apply`, which gave
+/// `function` and `apply`, resolved under `callee`'s plan of no fields while it holds
+/// (`ForwardedResolution`): own data properties of the plan's prototype and of the method's
+/// prototype, neither shadowed by the receiver template or the method, in shapes that fix
+/// their slots. `None` records nothing.
+fn forwarded_resolution<H: Host>(
+    vm: &Vm<H>,
+    callee: Value,
+    method: crate::bytecode::ForwardedThisMethod,
+    function: Value,
+    apply: Value,
+) -> Option<ForwardedResolution> {
+    let plan = holding_construct_plan(vm, callee).filter(|plan| plan.fields == 0)?;
+    let data_slot = |owner: &crate::heap::Object, atom| {
+        let shape = owner.shape();
+        if vm.shape_is_dictionary(shape) {
+            return None;
+        }
+        let slot = vm.shape_slot(shape, atom)?;
+        // SAFETY: the slot exists in the non-dictionary shape that names it.
+        let value = unsafe { vm.heap.property_get_shaped(owner, slot) }?;
+        (!value.is_deleted()).then_some((u16::try_from(slot).ok()?, value))
+    };
+    let data = |owner: Value, atom, slot: usize| {
+        let key = crate::vm::PropertyKey::string(atom);
+        vm.property_attributes(owner, key).is_some_and(|attributes| !attributes.accessor)
+            && vm.object_data(owner).is_some_and(|object| vm.shape_slot(object.shape(), atom) == Some(slot))
+    };
+    if vm.shape_slot(plan.shape, method.method.0).is_some() {
+        return None;
+    }
+    let prototype = vm.heap.object_record(plan.prototype)?;
+    let (method_slot, found) = data_slot(prototype, method.method.0)?;
+    let Some(Cell::Function { object, .. }) = vm.heap.get(function) else {
+        return None;
+    };
+    if found != function || vm.shape_slot(object.shape(), method.apply.0).is_some() {
+        return None;
+    }
+    let (method_shape, apply_holder) = (object.shape(), object.proto());
+    let (apply_slot, found) = data_slot(vm.heap.object(apply_holder)?, method.apply.0)?;
+    (found == apply
+        && data(plan.prototype, method.method.0, usize::from(method_slot))
+        && data(apply_holder, method.apply.0, usize::from(apply_slot)))
+    .then_some(ForwardedResolution {
+        method_slot,
+        method_shape,
+        apply_holder,
+        apply_slot,
+    })
+}
+
+/// The method a forwarding constructor's construction activates, from `callee`'s plan's
+/// recorded resolution (`ConstructPlan::forwarded`): the values in the recorded slots, the
+/// method still of the recorded shape and prototype, `apply` still the intrinsic, and a
+/// frameless target. `None` resolves afresh (`lane_forwarded_construction`).
+#[inline(always)]
+fn lane_resolved_forwarding<H: Host>(cx: *mut LaneContext<H>, callee: Value) -> Option<ScriptCallTarget> {
+    let vm = unsafe { vm(cx) };
+    let plan = holding_construct_plan(vm, callee)?;
+    let resolution = plan.forwarded?;
+    let prototype = vm.heap.object_record(plan.prototype)?;
+    // SAFETY: the plan's proof keeps the prototype's shape, which holds the slot.
+    let function = unsafe { vm.heap.property_get_shaped(prototype, usize::from(resolution.method_slot)) }?;
+    let Some(Cell::Function { object, .. }) = vm.heap.get(function) else {
+        return None;
+    };
+    if object.shape() != resolution.method_shape || object.proto() != resolution.apply_holder {
+        return None;
+    }
+    let holder = vm.heap.object(resolution.apply_holder)?;
+    // SAFETY: the epoch the plan holds under keeps the holder's shape, which holds the slot.
+    let apply = unsafe { vm.heap.property_get_shaped(holder, usize::from(resolution.apply_slot)) }?;
+    if !matches!(
+        vm.heap.get(apply),
+        Some(Cell::Function {
+            kind: FunctionKind::Native(Native::FunctionApply),
+            ..
+        })
+    ) || function == callee
     {
         return None;
     }
@@ -5038,6 +5148,7 @@ fn lane_initialize_fields<H: Host>(
         shape: source_shape,
         fields: 0,
         parameters: [0; CONSTRUCT_PLAN_FIELDS],
+        forwarded: None,
     };
     let mut plannable = true;
     for store in code.functions[function as usize].this_field_stores() {
