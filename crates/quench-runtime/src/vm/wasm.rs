@@ -2706,6 +2706,142 @@ mod tests {
         assert_eq!(compiled.native_entries(0), None);
         assert_eq!(compiled.native_entries(1), None);
         assert_eq!(compiled.native_entries(2), Some(1));
+
+        // A selected native root can keep a known call to an unsupported
+        // function as a VM boundary; that interpreter frame can still enter
+        // a native leaf through the normal dispatcher.
+        let mut root_vm = Vm::new(crate::SystemHost);
+        root_vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        let root_instance = root_vm.instantiate_wasm_module(&module).unwrap();
+        let root_environment = root_vm.root_value(root_instance.environment).unwrap();
+        let root_program = root_vm
+            .programs
+            .find_shared(&module.program)
+            .expect("registered root-closure Wasm program");
+        assert!(root_vm.install_compiled_root_for_test(root_program, root_environment, 0));
+        assert_eq!(
+            root_vm.invoke_wasm(&root_instance, 0, &[]).unwrap(),
+            Some(crate::WasmValue::I32(2))
+        );
+        let root_compiled = root_vm
+            .programs
+            .compiled(root_program)
+            .flatten()
+            .expect("root closure installed");
+        assert_eq!(root_compiled.native_entries(0), Some(1));
+        assert_eq!(root_compiled.native_entries(1), None);
+        assert_eq!(root_compiled.native_entries(2), Some(1));
+    }
+
+    #[test]
+    fn compiled_wasm_known_fallback_offsets_defined_index_by_import_count() {
+        let signature = crate::WasmSignature {
+            params: vec![],
+            results: vec![crate::WasmType::I32],
+        };
+        let owner = crate::Engine::lower_wasm_i32_module(
+            "compiled-wasm-fallback-import-owner",
+            0,
+            [(
+                0,
+                0,
+                true,
+                vec![Operator::I32Const { value: 99 }, Operator::End],
+            )]
+            .into_iter()
+            .map(|(params, locals, result, ops)| (params, locals, result, ops.into_iter().map(Ok))),
+        )
+        .unwrap();
+        let module = crate::Engine::lower_wasm_module_for(
+            crate::ExecutionMode::Compiled,
+            "compiled-wasm-known-fallback-index",
+            [
+                crate::WasmFunctionBody {
+                    ty: crate::WasmCallableType::Embedded(signature.clone()),
+                    locals: vec![],
+                    // The imported function occupies absolute index zero, so
+                    // defined function one is absolute index two/local index
+                    // one in this residual program.
+                    operators: vec![Operator::Call { function_index: 2 }, Operator::End]
+                        .into_iter()
+                        .map(Ok),
+                },
+                crate::WasmFunctionBody {
+                    ty: crate::WasmCallableType::Embedded(signature.clone()),
+                    locals: vec![],
+                    // TableSize remains interpreter-only. Its known call to
+                    // the native leaf must survive the fallback boundary.
+                    operators: vec![
+                        Operator::TableSize { table: 0 },
+                        Operator::Drop,
+                        Operator::Call { function_index: 3 },
+                        Operator::End,
+                    ]
+                    .into_iter()
+                    .map(Ok),
+                },
+                crate::WasmFunctionBody {
+                    ty: crate::WasmCallableType::Embedded(signature.clone()),
+                    locals: vec![],
+                    operators: vec![Operator::I32Const { value: 42 }, Operator::End]
+                        .into_iter()
+                        .map(Ok),
+                },
+            ],
+            &crate::WasmTypes::default(),
+            &[],
+            &[],
+            &[],
+            &[crate::WasmTable {
+                ty: wasmparser::TableType {
+                    element_type: wasmparser::RefType::FUNCREF,
+                    table64: false,
+                    initial: 1,
+                    maximum: Some(1),
+                    shared: false,
+                },
+                initializer: crate::WasmReferenceInitializer::Null.into(),
+            }],
+            &[],
+            &[crate::WasmFunctionImport {
+                exact: false,
+                ty: crate::WasmCallableType::Embedded(signature),
+                name: crate::WasmImportName {
+                    index: 0,
+                    module: "owner".into(),
+                    name: "get".into(),
+                },
+            }],
+            &[],
+        )
+        .unwrap();
+        let mut vm = Vm::new(crate::SystemHost);
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        let owner_instance = vm.instantiate_wasm_module(&owner.module).unwrap();
+        let owner_function = vm.wasm_function(&owner_instance, 0).unwrap();
+        let owner_function_root = vm.root(owner_function);
+        let instance = vm
+            .instantiate_wasm_module_with_imports(&module, &[owner_function_root])
+            .unwrap();
+        let environment = vm.root_value(instance.environment).unwrap();
+        let program = vm
+            .programs
+            .find_shared(&module.program)
+            .expect("registered imported Wasm program");
+        assert!(vm.install_compiled_root_for_test(program, environment, 0));
+
+        assert_eq!(
+            vm.invoke_wasm(&instance, 1, &[]).unwrap(),
+            Some(crate::WasmValue::I32(42))
+        );
+        let compiled = vm
+            .programs
+            .compiled(program)
+            .flatten()
+            .expect("root closure installed");
+        assert_eq!(compiled.native_entries(0), Some(1));
+        assert_eq!(compiled.native_entries(1), None);
+        assert_eq!(compiled.native_entries(2), Some(1));
     }
 
     #[test]
@@ -3999,6 +4135,104 @@ mod tests {
         );
         assert!(vm.frames.is_empty());
         vm.collect_now(function.residual());
+    }
+
+    #[test]
+    fn compiled_wasm_root_selection_leaves_unselected_functions_interpreted() {
+        let module = crate::Engine::lower_wasm_i32_module(
+            "compiled-wasm-root-closure",
+            0,
+            [
+                (
+                    0,
+                    0,
+                    true,
+                    vec![
+                        Operator::Call { function_index: 1 },
+                        Operator::I32Const { value: 0 },
+                        Operator::I32Add,
+                        Operator::End,
+                    ],
+                ),
+                (
+                    0,
+                    0,
+                    true,
+                    vec![Operator::I32Const { value: 42 }, Operator::End],
+                ),
+                (
+                    0,
+                    0,
+                    true,
+                    vec![Operator::I32Const { value: 7 }, Operator::End],
+                ),
+            ]
+            .into_iter()
+            .map(|(params, locals, result, ops)| (params, locals, result, ops.into_iter().map(Ok))),
+        )
+        .unwrap();
+        let function = module.select_function(0).unwrap();
+        let mut vm = Vm::new(crate::SystemHost);
+        assert_eq!(vm.execute_wasm_i32(&function, &[]).unwrap(), Some(42));
+        let program = vm
+            .programs
+            .find_shared(&function.module.program)
+            .expect("registered Wasm program");
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        assert!(vm.install_compiled_root_for_test(program, Value::NULL, 0));
+
+        assert_eq!(vm.execute_wasm_i32(&function, &[]).unwrap(), Some(42));
+        let compiled = vm
+            .programs
+            .compiled(program)
+            .flatten()
+            .expect("root closure installed");
+        assert_eq!(compiled.native_entries(0), Some(1));
+        assert_eq!(compiled.native_entries(1), None);
+        assert_eq!(compiled.native_entries(2), None);
+    }
+
+    #[test]
+    fn compiled_wasm_unreachable_raises_the_interpreter_trap() {
+        let module = crate::Engine::lower_wasm_i32_module(
+            "compiled-wasm-unreachable-trap",
+            0,
+            [
+                (0, 0, true, vec![Operator::Unreachable, Operator::End]),
+                (
+                    0,
+                    0,
+                    true,
+                    vec![Operator::I32Const { value: 7 }, Operator::End],
+                ),
+            ]
+            .into_iter()
+            .map(|(params, locals, result, ops)| (params, locals, result, ops.into_iter().map(Ok))),
+        )
+        .unwrap();
+        let function = module.select_function(0).unwrap();
+        let mut vm = Vm::new(crate::SystemHost);
+        assert_eq!(
+            vm.execute_wasm_i32(&function, &[]).unwrap_err().wasm_trap(),
+            Some(crate::WasmTrap::Unreachable)
+        );
+        let program = vm
+            .programs
+            .find_shared(&function.module.program)
+            .expect("registered Wasm program");
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        assert!(vm.install_compiled_root_for_test(program, Value::NULL, 0));
+
+        assert_eq!(
+            vm.execute_wasm_i32(&function, &[]).unwrap_err().wasm_trap(),
+            Some(crate::WasmTrap::Unreachable)
+        );
+        let compiled = vm
+            .programs
+            .compiled(program)
+            .flatten()
+            .expect("root closure installed");
+        assert_eq!(compiled.native_entries(0), Some(1));
     }
 
     #[test]
