@@ -501,6 +501,8 @@ pub(crate) struct GcProfile {
     pub full_mark_nanos: u64,
     pub minor_mark_nanos: u64,
     pub sweep_nanos: u64,
+    /// The sweep's phases: slot cells, direct records, and property-arena compaction.
+    pub sweep_phase_nanos: [u64; 3],
     pub mark_clear_nanos: u64,
     /// VM-side collection phases: owner edges, root gathering, shape-trace setup, and
     /// the work after the heap collection.
@@ -552,6 +554,7 @@ impl Default for GcProfile {
             full_mark_nanos: 0,
             minor_mark_nanos: 0,
             sweep_nanos: 0,
+            sweep_phase_nanos: [0; 3],
             mark_clear_nanos: 0,
             vm_phase_nanos: [0; 4],
             full_collections: 0,
@@ -983,7 +986,7 @@ impl Heap {
         slot_owners: Vec<u64>,
         direct_owners: Vec<(usize, Value)>,
     ) {
-        if !self.properties.has_released_ranges() {
+        if !self.properties.compaction_due() {
             return;
         }
         #[cfg(feature = "profile-memory")]
@@ -1338,6 +1341,13 @@ impl Heap {
             0
         });
         let legacy_live = live;
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        let records_started = std::time::Instant::now();
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        {
+            self.gc_profile.sweep_phase_nanos[0] +=
+                (records_started - sweep_started).as_nanos() as u64;
+        }
         {
             #[cfg(feature = "profile-aggregate")]
             {
@@ -1410,6 +1420,12 @@ impl Heap {
             self.gc_profile.freed += freed_cells as u64;
         }
         let _ = (freed_cells, swept_slots);
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        {
+            self.gc_profile.sweep_phase_nanos[1] += records_started.elapsed().as_nanos() as u64;
+        }
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        let compaction_started = std::time::Instant::now();
         if full {
             // A full sweep recounts the ledger from the survivors: shrinking a live array
             // (truncation, `pop`, `splice`) is not charged back between full collections.
@@ -1419,6 +1435,7 @@ impl Heap {
         }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         {
+            self.gc_profile.sweep_phase_nanos[2] += compaction_started.elapsed().as_nanos() as u64;
             self.gc_profile.sweep_nanos += sweep_started.elapsed().as_nanos() as u64;
         }
         // Live weight in the units allocation is charged in: one per cell or record plus

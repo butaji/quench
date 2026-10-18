@@ -73,6 +73,7 @@ impl<H: Host> Vm<H> {
             native_stack_frames: vec![],
             native_root_lists: vec![],
             gc_root_count: 0,
+            gc_owned_root_count: 0,
             frame_pool: vec![],
             lane_stack: Default::default(),
             execution_mode: ExecutionMode::default(),
