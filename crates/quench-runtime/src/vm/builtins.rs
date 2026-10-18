@@ -888,7 +888,17 @@ impl<H: Host> Vm<H> {
         let atom = self.intern_atom("Temporal");
         let key = self.heap.alloc(Cell::String(self.atom_value(atom)));
         self.with_call_roots([initializer, key], |vm| {
-            vm.define_lazy_data_properties(program, vm.realm.globals, &[(key, false)], false, initializer)
+            vm.define_lazy_data_properties(
+                program,
+                vm.realm.globals,
+                &[super::lazy_data_property::LazyMember {
+                    key,
+                    enumerable: false,
+                    redefined: false,
+                }],
+                false,
+                initializer,
+            )
         })?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_temporal");

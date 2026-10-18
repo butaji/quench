@@ -1392,7 +1392,13 @@ impl<H: Host> Vm<H> {
         let values = keys
             .iter()
             .zip(members)
-            .map(|(&key, &(_, enumerable))| (self.heap.root_value(key).unwrap(), enumerable))
+            .map(
+                |(&key, &(_, enumerable))| super::lazy_data_property::LazyMember {
+                    key: self.heap.root_value(key).unwrap(),
+                    enumerable,
+                    redefined: false,
+                },
+            )
             .collect::<Vec<_>>();
         let defined = self.define_lazy_data_properties(
             &program,
@@ -1405,6 +1411,34 @@ impl<H: Host> Vm<H> {
             self.heap.release_root(key);
         }
         defined
+    }
+
+    /// Defines `members` (a rooted string or symbol key, whether it is enumerable while
+    /// pending, and whether `initializer` defines it itself) on `holder` as one lazy group
+    /// (`LazyMember`).
+    pub(crate) fn define_lazy_members_rooted(
+        &mut self,
+        holder: RootId,
+        members: &[(RootId, bool, bool)],
+        initializer: RootId,
+    ) -> Result<(), JsError> {
+        let holder = self.embedding_value(holder)?;
+        let initializer = self.embedding_value(initializer)?;
+        let program = self.embedding_program()?;
+        let members = members
+            .iter()
+            .map(|&(key, enumerable, redefined)| {
+                Ok(super::lazy_data_property::LazyMember {
+                    key: self.embedding_value(key)?,
+                    enumerable,
+                    redefined,
+                })
+            })
+            .collect::<Result<Vec<_>, JsError>>()?;
+        // An initializer that redefines members decides the holder's final keys, so listing
+        // them with symbols or fixing the holder's integrity materializes the group first.
+        let completes_keys = members.iter().any(|member| member.redefined);
+        self.define_lazy_data_properties(&program, holder, &members, completes_keys, initializer)
     }
 
     pub(crate) fn set_prototype_rooted(
