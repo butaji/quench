@@ -960,6 +960,7 @@ impl Engine {
             field_sites: vec![],
             object_sites: vec![],
             regexp_literal_sites: vec![],
+            literal_templates: Vec::new(),
             superinstructions: vec![],
         };
         program
