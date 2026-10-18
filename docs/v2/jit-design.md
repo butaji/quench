@@ -140,11 +140,11 @@ parity with Bun or Node:
 gcc-loops and quicksort beat both RSS bars but remain far below both score
 bars; HashSet beats Node on RSS only; TSF loses on both metrics; zlib's Node
 RSS interval contains parity. This keeps the requested JIT score-and-RSS goal
-open. The next experiment should bypass the VM argument boxing and nested
-`run_compiled` setup for same-instance compiled targets, while retaining table
-bounds, null, signature, and cross-instance checks. Per-site attribution should
-determine whether reducing repeated table resolution is still worthwhile after
-that boundary is removed.
+open. The direct same-instance native-entry path now bypasses argument boxing
+and nested `run_compiled` setup while retaining table bounds, null, signature,
+memory-guard, and cross-instance checks. Targeted correctness tests prove the
+shortcut runs for same-instance calls and stays on fallback for a foreign
+instance; clean benchmark qualification is pending.
 
 The remaining design work follows a staged-specialization path: keep validated
 Wasm and residual JS bytecode as the static input, specialize only hot
@@ -171,9 +171,10 @@ target hits and no fallback. The complete report and source/binary hashes are in
 `evidence/jit-jetstream3-wasm-2026-10-18/site-attribution/README.md`.
 
 This confirms a high-volume VM transition even when both caller and target are
-compiled. The next implementation experiment calls the existing fixed native
-entry directly for same-program, same-instance targets using the raw Wasm words.
-It keeps table validation in the VM resolver and retains the existing slow path
-for another instance or an uncompiled target. One-round diagnostic Score/RSS
-are not qualification evidence, and the separate clean 11-round results still
-show no JIT Score wins.
+compiled. The current implementation experiment calls the existing fixed
+native entry directly for same-program, same-instance targets using the raw
+Wasm words. It keeps table validation in the VM resolver and retains the
+existing slow path for another instance or an uncompiled target. One-round
+diagnostic Score/RSS are not qualification evidence, and the separate clean
+11-round results still show no JIT Score wins; rerun the five selected cases on
+this change before claiming an improvement.
