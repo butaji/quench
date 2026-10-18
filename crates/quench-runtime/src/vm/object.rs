@@ -766,6 +766,7 @@ impl FieldCacheSet {
         entries[1] = second;
         Self {
             len: 2,
+            holds_own: first.holder == NO_FIELD_HOLDER || second.holder == NO_FIELD_HOLDER,
             entries,
             overflow: None,
         }
@@ -782,6 +783,7 @@ impl FieldCacheSet {
             .copied()
     }
     fn insert(&mut self, cache: FieldCache) {
+        self.holds_own |= cache.holder == NO_FIELD_HOLDER;
         let key = field_cache_key(cache.receiver, cache.holder);
         if let Some(entries) = &mut self.overflow {
             if entries.len() < FIELD_MEGAMORPHIC_LIMIT || entries.contains_key(&key) {
@@ -1168,8 +1170,10 @@ impl<H: Host> Vm<H> {
         if set.overflow.is_some() {
             // The hashed entries: an own one for the receiver's shape, else one for its
             // immediate prototype in an object record. A shape either holds the atom or not,
-            // so at most one of the two is recorded.
-            if let Some(entry) = set.get(shape, NO_FIELD_HOLDER) {
+            // so at most one of the two is recorded; a set of holders alone has no own one.
+            if set.holds_own
+                && let Some(entry) = set.get(shape, NO_FIELD_HOLDER)
+            {
                 // SAFETY: as for `cached_field_hit`.
                 let value = unsafe { self.heap.property_get_shaped(receiver, usize::from(entry.slot)) }?;
                 self.profile.field_cache_hit(2, 0);
@@ -2604,7 +2608,7 @@ impl<H: Host> Vm<H> {
             self.prove_field_add_chain(set as usize, shape, atom, proto, depth, epoch);
         }
         debug_assert_eq!(slot as usize, self.shapes[shape as usize].storage_len());
-        self.heap.property_add(object, value, target_shape);
+        self.heap.record_property_add_at(object, usize::from(slot), value, target_shape);
         if self.method_caches_may_name(atom) {
             self.invalidate_method_caches_for_prototype_add(object, atom);
         }
