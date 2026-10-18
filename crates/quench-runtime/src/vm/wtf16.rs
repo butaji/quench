@@ -26,15 +26,25 @@ enum Repr {
 #[cfg(target_pointer_width = "64")]
 const _: () = assert!(size_of::<JsString>() == size_of::<FlatUnits>());
 
-/// Flat code units. A string whose units are all ASCII is always stored `Short` when they
-/// fit and `Ascii` otherwise (`FlatUnits::ascii`), so equal strings share a representation.
+/// Flat code units. A string whose units are all ASCII is stored `Short` when they fit;
+/// longer ASCII text is `Ascii`, or an `AsciiSlice` of another string's `Ascii` storage.
 #[derive(Clone)]
 pub(crate) enum FlatUnits {
     /// ASCII text held in the string's own allocation: most property names and tokens fit,
     /// and need no second allocation.
     Short(ShortAscii),
     Ascii(Rc<str>),
+    /// A run of longer ASCII storage, shared instead of copied, as V8's sliced strings are:
+    /// taking the rest of a scanned text costs one small record, not a copy of the rest.
+    AsciiSlice(Rc<AsciiSlice>),
     Wide(Rc<[u16]>),
+}
+
+/// The bytes `range` of shared ASCII storage; never shorter than `SHORT_ASCII_CAPACITY`
+/// allows inline, and never a slice of a slice.
+pub(crate) struct AsciiSlice {
+    text: Rc<str>,
+    range: Range<usize>,
 }
 
 /// ASCII text of at most `SHORT_ASCII_CAPACITY` bytes, stored inline.
@@ -75,18 +85,52 @@ impl FlatUnits {
     fn view(&self) -> Units<'_> {
         match self {
             Self::Short(text) => Units::Ascii(text.as_str().as_bytes()),
-            Self::Ascii(text) => Units::Ascii(text.as_bytes()),
+            Self::Ascii(_) | Self::AsciiSlice(_) => {
+                let (text, range) = self.shared_ascii().expect("shared ASCII storage");
+                Units::Ascii(&text.as_bytes()[range])
+            }
             Self::Wide(units) => Units::Wide(units),
         }
     }
 
     pub(crate) fn is_ascii(&self) -> bool {
-        matches!(self, Self::Short(_) | Self::Ascii(_))
+        !matches!(self, Self::Wide(_))
+    }
+
+    /// The shared ASCII storage these units view and the bytes they cover.
+    pub(crate) fn shared_ascii(&self) -> Option<(&Rc<str>, Range<usize>)> {
+        match self {
+            Self::Ascii(text) => Some((text, 0..text.len())),
+            Self::AsciiSlice(slice) => Some((&slice.text, slice.range.clone())),
+            Self::Short(_) | Self::Wide(_) => None,
+        }
+    }
+
+    /// The units `range` of these, sharing ASCII storage when the run is too long to hold
+    /// inline. `range` must lie within the units.
+    fn run(&self, range: Range<usize>) -> Self {
+        if range.len() > SHORT_ASCII_CAPACITY
+            && let Some((text, own)) = self.shared_ascii()
+        {
+            if range.len() == own.len() {
+                return self.clone();
+            }
+            return Self::AsciiSlice(Rc::new(AsciiSlice {
+                text: Rc::clone(text),
+                range: own.start + range.start..own.start + range.end,
+            }));
+        }
+        match self.view().slice(range) {
+            // SAFETY: ASCII units are UTF-8.
+            Units::Ascii(bytes) => Self::ascii(unsafe { std::str::from_utf8_unchecked(bytes) }),
+            Units::Wide(units) => flat_units(units),
+        }
     }
 
     fn same_storage(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Ascii(left), Self::Ascii(right)) => Rc::ptr_eq(left, right),
+            (Self::AsciiSlice(left), Self::AsciiSlice(right)) => Rc::ptr_eq(left, right),
             (Self::Wide(left), Self::Wide(right)) => Rc::ptr_eq(left, right),
             _ => false,
         }
@@ -528,7 +572,9 @@ impl JsStringBuilder {
 impl JsString {
     fn from_flat(units: FlatUnits) -> Self {
         let repr = match units {
-            FlatUnits::Short(_) | FlatUnits::Ascii(_) => Repr::Flat(units),
+            FlatUnits::Short(_) | FlatUnits::Ascii(_) | FlatUnits::AsciiSlice(_) => {
+                Repr::Flat(units)
+            }
             FlatUnits::Wide(_) => Repr::Shared(Rc::new(JsStringInner::flat(units))),
         };
         Self { repr }
@@ -560,6 +606,12 @@ impl JsString {
             }
             Units::Wide(units) => Self::from_units(units),
         }
+    }
+
+    /// The units `range` of this string (`String.prototype.slice` and its kin). A long ASCII
+    /// result shares this string's storage; any other result is copied.
+    pub(crate) fn substring(&self, range: Range<usize>) -> Self {
+        Self::from_flat(self.flat().run(range))
     }
 
     pub(crate) fn from_str(text: &str) -> Self {
@@ -613,6 +665,7 @@ impl JsString {
         match self.flat() {
             FlatUnits::Short(text) => text.as_str(),
             FlatUnits::Ascii(text) => text,
+            FlatUnits::AsciiSlice(slice) => &slice.text[slice.range.clone()],
             FlatUnits::Wide(units) => match &self.repr {
                 Repr::Shared(inner) => inner.host(|| Rc::<str>::from(String::from_utf16_lossy(units))),
                 Repr::Flat(_) => unreachable!("a flat string held by value is ASCII"),
@@ -644,6 +697,8 @@ impl JsString {
         match self.flat() {
             FlatUnits::Short(_) => 0,
             FlatUnits::Ascii(text) => text.len(),
+            // The storage belongs to the string sliced; the slice owns its record.
+            FlatUnits::AsciiSlice(_) => std::mem::size_of::<AsciiSlice>(),
             FlatUnits::Wide(units) => {
                 std::mem::size_of_val(&**units)
                     + self.existing_host().map_or(0, |host| host.len())
@@ -659,6 +714,11 @@ impl JsString {
             FlatUnits::Ascii(text) => (
                 Rc::as_ptr(text) as *const u8 as usize,
                 RC_HEADER_BYTES + text.len(),
+            ),
+            // Shared storage is reported once by its address, whichever string holds it.
+            FlatUnits::AsciiSlice(slice) => (
+                Rc::as_ptr(&slice.text) as *const u8 as usize,
+                RC_HEADER_BYTES + slice.text.len(),
             ),
             FlatUnits::Wide(units) => (
                 Rc::as_ptr(units) as *const u16 as usize,
@@ -743,7 +803,7 @@ impl Eq for JsString {}
 
 impl Hash for JsString {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        // Canonical storage makes equal strings share a representation.
+        // Hashed by units, so a slice and a copy of the same text agree.
         match self.units() {
             Units::Ascii(bytes) => bytes.hash(state),
             Units::Wide(units) => units.hash(state),
