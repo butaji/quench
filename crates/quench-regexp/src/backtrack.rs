@@ -142,6 +142,11 @@ impl UnitSet {
         Self { ascii, beyond }
     }
 
+    /// Whether no unit is in the set.
+    fn is_empty(&self) -> bool {
+        self.ascii == 0 && self.beyond.is_never()
+    }
+
     #[inline(always)]
     fn contains(&self, value: u32) -> bool {
         if value < ASCII_UNITS {
@@ -153,6 +158,15 @@ impl UnitSet {
 }
 
 impl Beyond {
+    /// Whether the test rejects every unit by construction.
+    fn is_never(&self) -> bool {
+        match self {
+            Self::Never => true,
+            Self::Either(either) => either.iter().all(Self::is_never),
+            _ => false,
+        }
+    }
+
     fn matches(&self, value: u32) -> bool {
         match self {
             Self::Never => false,
@@ -583,18 +597,26 @@ fn literal_prefix(expr: &Expr, flags: Flags, prefix: &mut Vec<u8>) -> bool {
 }
 
 /// Where a match can start: at the subject's start when `at_start`, and wherever the unit
-/// there is in `units`.
+/// there is in `units`. `only_at_start` is derived: no unit admits a start, so the subject's
+/// start is the sole candidate and a search need not scan for another.
 struct Starts {
     at_start: bool,
     units: UnitSet,
+    only_at_start: bool,
 }
 
 impl Starts {
-    fn union(self, other: Self) -> Self {
+    fn new(at_start: bool, units: UnitSet) -> Self {
+        let only_at_start = units.is_empty();
         Self {
-            at_start: self.at_start || other.at_start,
-            units: self.units.union(&other.units),
+            at_start,
+            units,
+            only_at_start,
         }
+    }
+
+    fn union(self, other: Self) -> Self {
+        Self::new(self.at_start || other.at_start, self.units.union(&other.units))
     }
 
     #[inline(always)]
@@ -608,17 +630,12 @@ impl Starts {
 /// an expression that can match empty.
 fn starts(expr: &Expr, flags: Flags) -> Option<Starts> {
     let units = |beyond| {
-        Some(Starts {
-            at_start: false,
-            units: UnitSet::new(beyond),
-        })
+        Some(Starts::new(false, UnitSet::new(beyond)))
     };
     match expr {
         Expr::Literal(value) if !flags.ignore_case => {
             let value = *value;
-            Some(Starts {
-                at_start: false,
-                units: UnitSet {
+            Some(Starts::new(false, UnitSet {
                     ascii: if value < ASCII_UNITS { 1 << value } else { 0 },
                     beyond: if value < ASCII_UNITS {
                         Beyond::Never
@@ -629,7 +646,7 @@ fn starts(expr: &Expr, flags: Flags) -> Option<Starts> {
                         }
                     },
                 },
-            })
+            ))
         }
         Expr::Literal(value) => units(Beyond::Literal {
             value: *value,
@@ -645,14 +662,8 @@ fn starts(expr: &Expr, flags: Flags) -> Option<Starts> {
         }),
         Expr::Sequence(parts) => match parts.first()? {
             // Outside multiline mode `^` holds only at the start, whatever follows.
-            Expr::Assertion(Assertion::Start) if !flags.multiline => Some(Starts {
-                at_start: true,
-                units: UnitSet::new(Beyond::Never),
-            }),
-            Expr::Assertion(Assertion::StartBuffer) => Some(Starts {
-                at_start: true,
-                units: UnitSet::new(Beyond::Never),
-            }),
+            Expr::Assertion(Assertion::Start) if !flags.multiline => Some(Starts::new(true, UnitSet::new(Beyond::Never))),
+            Expr::Assertion(Assertion::StartBuffer) => Some(Starts::new(true, UnitSet::new(Beyond::Never))),
             first => starts(first, flags),
         },
         Expr::Alternation(alternatives) => {
@@ -664,10 +675,7 @@ fn starts(expr: &Expr, flags: Flags) -> Option<Starts> {
         }
         Expr::Capture { body, .. } => starts(body, flags),
         Expr::Repeat { body, min, .. } if *min > 0 => starts(body, flags),
-        Expr::Assertion(Assertion::Start) if !flags.multiline => Some(Starts {
-            at_start: true,
-            units: UnitSet::new(Beyond::Never),
-        }),
+        Expr::Assertion(Assertion::Start) if !flags.multiline => Some(Starts::new(true, UnitSet::new(Beyond::Never))),
         Expr::Mode { body, flags: local } => starts(body, merge_flags(flags, *local)),
         _ => None,
     }
@@ -764,6 +772,7 @@ impl Program {
         }
         match &self.starts {
             None => Some(from),
+            Some(starts) if starts.only_at_start => (starts.at_start && from == 0).then_some(0),
             Some(starts) => (from..=last).find(|position| starts.admits(text, *position)),
         }
     }
