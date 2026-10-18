@@ -154,7 +154,7 @@ impl<H: Host> Vm<H> {
             if has_waiter || self.agent_spin_escape() {
                 return Ok(
                     if matches!(kind, TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64) {
-                        self.heap.alloc(Cell::BigInt("1".into()))
+                        self.heap.alloc(Cell::bigint(1_u8.into()))
                     } else {
                         Value::number(1.0)
                     },
@@ -349,12 +349,10 @@ impl<H: Host> Vm<H> {
         old: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let Some(Cell::BigInt(old_text)) = self.heap.get(old).cloned() else {
+        let Some(Cell::BigInt(old_number)) = self.heap.get(old).cloned() else {
             return Err(self.type_error(p, "Atomics BigInt element is invalid".into()));
         };
-        let old_number = old_text
-            .parse::<num_bigint::BigInt>()
-            .map_err(|_| self.type_error(p, "Atomics BigInt element is invalid".into()))?;
+        let old_number = *old_number;
         let first = self.to_bigint(p, args.get(2).copied().unwrap_or(Value::UNDEFINED))?;
         let replacement = if native == Native::AtomicsCompareExchange {
             self.to_bigint(p, args.get(3).copied().unwrap_or(Value::UNDEFINED))?
@@ -371,9 +369,9 @@ impl<H: Host> Vm<H> {
             && self.test262_agent.active_callback
             && self.agent_spin_escape()
         {
-            let value = self.heap.alloc(Cell::BigInt(replacement.to_string()));
+            let value = self.heap.alloc(Cell::bigint(replacement));
             self.typed_array_set(p, view, index, value)?;
-            return Ok(self.heap.alloc(Cell::BigInt("0".into())));
+            return Ok(self.heap.alloc(Cell::bigint(num_bigint::BigInt::ZERO)));
         }
         if native != Native::AtomicsCompareExchange || compare {
             let mut next = match native {
@@ -393,11 +391,11 @@ impl<H: Host> Vm<H> {
             {
                 next = num_bigint::BigInt::from(1_u8);
             }
-            let value = self.heap.alloc(Cell::BigInt(next.to_string()));
+            let value = self.heap.alloc(Cell::bigint(next));
             self.typed_array_set(p, view, index, value)?;
         }
         if native == Native::AtomicsStore {
-            Ok(self.heap.alloc(Cell::BigInt(first.to_string())))
+            Ok(self.heap.alloc(Cell::bigint(first)))
         } else {
             Ok(old)
         }
@@ -447,9 +445,8 @@ impl<H: Host> Vm<H> {
             Value::number(self.atomic_number_value(kind, number))
         } else {
             let value = self.to_bigint(p, args.get(2).copied().unwrap_or(Value::UNDEFINED))?;
-            self.heap.alloc(Cell::BigInt(
-                self.normalize_atomic_bigint(value).to_string(),
-            ))
+            let normalized = self.normalize_atomic_bigint(value);
+            self.heap.alloc(Cell::bigint(normalized))
         };
         let current = self
             .typed_array_get(view, index)
@@ -603,7 +600,7 @@ impl<H: Host> Vm<H> {
     fn atomic_is_zero(&self, kind: TypedArrayKind, value: Value) -> bool {
         match kind {
             TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64 => {
-                matches!(self.heap.get(value), Some(Cell::BigInt(value)) if value == "0")
+                matches!(self.heap.get(value), Some(Cell::BigInt(value)) if value.sign() == num_bigint::Sign::NoSign)
             }
             _ => value.as_number() == Some(0.0),
         }
@@ -684,10 +681,8 @@ impl<H: Host> Vm<H> {
         let mut convert = |vm: &mut Self, value: Value| -> Result<u64, JsError> {
             if big {
                 let n = vm.to_bigint(p, value)?;
-                store_result = Some(vm.heap.alloc(Cell::BigInt(n.to_string())));
-                vm.normalize_atomic_bigint(n)
-                    .to_string()
-                    .parse::<u64>()
+                store_result = Some(vm.heap.alloc(Cell::bigint(n.clone())));
+                u64::try_from(vm.normalize_atomic_bigint(n))
                     .map_err(|_| vm.type_error(p, "Invalid atomic BigInt".into()))
             } else {
                 let n = vm.to_number(p, value)?;
@@ -813,8 +808,8 @@ impl<H: Host> Vm<H> {
             return Ok(store_result.unwrap());
         }
         Ok(match kind {
-            TypedArrayKind::BigInt64 => self.heap.alloc(Cell::BigInt((old as i64).to_string())),
-            TypedArrayKind::BigUint64 => self.heap.alloc(Cell::BigInt(old.to_string())),
+            TypedArrayKind::BigInt64 => self.heap.alloc(Cell::bigint((old as i64).into())),
+            TypedArrayKind::BigUint64 => self.heap.alloc(Cell::bigint(old.into())),
             TypedArrayKind::Int8 => Value::number(old as i8 as f64),
             TypedArrayKind::Int16 => Value::number(old as i16 as f64),
             TypedArrayKind::Int32 => Value::number(old as i32 as f64),
