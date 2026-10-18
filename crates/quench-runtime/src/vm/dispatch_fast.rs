@@ -1005,9 +1005,22 @@ unsafe fn lane_binary_value<H: Host>(
     let operator = i.imm();
     match unsafe { vm(cx) }.number_binary(operator, left, right) {
         Some(value) => Some(value),
+        None if operator == super::operations::ADDITION => lane_concatenation(cx, left, right),
         None => lane_relation::<H>(operator, left, right)
             .map(|holds| if holds { Value::TRUE } else { Value::FALSE }),
     }
+}
+
+/// `+` of operands that become strings without guest code (`Vm::primitive_concatenation`),
+/// which allocates the result; `None` leaves any other `+` to the general path. Out of line,
+/// so the numeric handlers that fall back to it keep their code.
+#[inline(never)]
+fn lane_concatenation<H: Host>(cx: *mut LaneContext<H>, left: Value, right: Value) -> Option<Value> {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the context's program outlives the lane run.
+    let value = vm.primitive_concatenation(unsafe { &*(*cx).code }, left, right)?;
+    note_allocation(vm);
+    Some(value)
 }
 
 /// A relation the lane decides without running guest code: Number comparison, identity
@@ -1110,7 +1123,11 @@ lane_handler! {
     /// through their double values.
     #[inline(never)]
     fn lane_operator_numbers<OP: u32>(cx, r, ip, i, view) {
-        let Some(value) = super::operations::number_value_operator::<OP>(r.get(i.b), r.get(i.c)) else {
+        let (left, right) = (r.get(i.b), r.get(i.c));
+        let Some(value) = (match super::operations::number_value_operator::<OP>(left, right) {
+            None if OP == super::operations::ADDITION => lane_concatenation(cx, left, right),
+            value => value,
+        }) else {
             return exit(ip);
         };
         r.set(i.a, value);
@@ -1135,7 +1152,11 @@ lane_handler! {
     /// `lane_operator_numbers` with a constant right operand.
     #[inline(never)]
     fn lane_operator_constant_numbers<OP: u32>(cx, r, ip, i, view) {
-        let Some(value) = super::operations::number_value_operator::<OP>(r.get(i.b), i.constant()) else {
+        let (left, right) = (r.get(i.b), i.constant());
+        let Some(value) = (match super::operations::number_value_operator::<OP>(left, right) {
+            None if OP == super::operations::ADDITION => lane_concatenation(cx, left, right),
+            value => value,
+        }) else {
             return exit(ip);
         };
         r.set(i.a, value);
@@ -2253,11 +2274,25 @@ lane_handler! {
     /// (`Vm::ordinary_instanceof`), which runs no guest code. Any other case, which the full
     /// algorithm decides, takes the general path.
     fn lane_instanceof_value<>(cx, r, ip, i, view) {
+        let Some(holds) = (unsafe { vm(cx) }).steady_instanceof(r.get(i.b), r.get(i.c)) else {
+            sibling!(lane_instanceof_value_walk::<H>, r, ip, Carried::SCRIPT)
+        };
+        r.set(i.a, if holds { Value::TRUE } else { Value::FALSE });
+        // `instanceof` is a JavaScript record, which carries the script state.
+        next!(cx, r, following(ip), Carried::SCRIPT)
+    }
+}
+
+lane_handler! {
+    /// `lane_instanceof_value` that its steady case leaves (`Vm::steady_instanceof`): the
+    /// whole ordinary walk, out of line so the steady case calls nothing.
+    #[inline(never)]
+    fn lane_instanceof_value_walk<>(cx, r, ip, i, view) {
         let Some(holds) = (unsafe { vm(cx) }).ordinary_instanceof(r.get(i.b), r.get(i.c)) else {
             return exit(ip);
         };
         r.set(i.a, if holds { Value::TRUE } else { Value::FALSE });
-        next!(cx, r, following(ip), view)
+        next!(cx, r, following(ip), Carried::SCRIPT)
     }
 }
 
@@ -2265,13 +2300,29 @@ lane_handler! {
     /// `lane_jump_binary_false` of `instanceof` with register operands, decoded when the view
     /// was derived (`specialize_register_operands`), as `lane_instanceof_value` decides it.
     fn lane_jump_instanceof_false<BACKWARD: bool>(cx, r, ip, i, view) {
+        let Some(holds) = (unsafe { vm(cx) }).steady_instanceof(r.get(i.b), r.get(i.c)) else {
+            sibling!(lane_jump_instanceof_false_walk::<H, BACKWARD>, r, ip, Carried::SCRIPT)
+        };
+        // `instanceof` is a JavaScript record, which carries the script state.
+        if !holds {
+            return lane_jump(cx, r, ip, BACKWARD, Carried::SCRIPT, None);
+        }
+        next!(cx, r, following(ip), Carried::SCRIPT)
+    }
+}
+
+lane_handler! {
+    /// `lane_jump_instanceof_false` that its steady case leaves: the whole ordinary walk, out
+    /// of line so the steady case calls nothing.
+    #[inline(never)]
+    fn lane_jump_instanceof_false_walk<BACKWARD: bool>(cx, r, ip, i, view) {
         let Some(holds) = (unsafe { vm(cx) }).ordinary_instanceof(r.get(i.b), r.get(i.c)) else {
             return exit(ip);
         };
         if !holds {
-            return lane_jump(cx, r, ip, BACKWARD, view, None);
+            return lane_jump(cx, r, ip, BACKWARD, Carried::SCRIPT, None);
         }
-        next!(cx, r, following(ip), view)
+        next!(cx, r, following(ip), Carried::SCRIPT)
     }
 }
 
