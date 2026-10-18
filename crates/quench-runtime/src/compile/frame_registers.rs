@@ -9,12 +9,17 @@ use super::liveness::ROOT_MAP_REGISTERS;
 use super::rewrite::{fixed_width, relocate};
 use crate::bytecode::{
     EvalBindingLocation, FieldLayout, Function, ImmediateRole, Instr, InstructionField, Op,
-    Operand, OperandKind, Register, Superinstruction, WideInstruction,
+    Operand, OperandKind, REGISTER_MASK, Register, Superinstruction, WideInstruction,
 };
 
-pub(super) fn promote(function: &mut Function, superinstructions: &[Superinstruction]) {
+pub(super) fn promote(
+    function: &mut Function,
+    superinstructions: &[Superinstruction],
+    is_with_enter: impl Fn(usize) -> bool,
+) {
     let mut eligible = function.plain_local_slots(superinstructions);
-    if !eligible.contains(&true) {
+    // A by-name read inside `with` resolves a local through its frame slot.
+    if !eligible.contains(&true) || function.contains_with_statement(is_with_enter) {
         return;
     }
     // Parameters arrive in their slots, and these slots are named outside the code: the
@@ -67,6 +72,24 @@ pub(super) fn promote(function: &mut Function, superinstructions: &[Superinstruc
             }
             continue;
         }
+        if matches!(
+            instruction.op(),
+            Op::LoadName
+                | Op::LoadNameCall
+                | Op::LoadNameTypeof
+                | Op::ResolveName
+                | Op::LoadResolvedName
+                | Op::DeleteName
+                | Op::StoreName
+                | Op::StoreResolvedName
+        ) {
+            let atom = instruction.atom_index();
+            for (slot, local) in function.local_atoms.iter().enumerate() {
+                if *local == atom {
+                    exclude(slot);
+                }
+            }
+        }
         if let Some(target) = instruction.numeric_local_target() {
             exclude(usize::from(target));
         }
@@ -76,9 +99,11 @@ pub(super) fn promote(function: &mut Function, superinstructions: &[Superinstruc
         let slot = instruction.local_slot();
         let promotable = match instruction.op() {
             Op::InitializeTdz => true,
+            // The move keeps the load's result flags.
             Op::LoadLocalPlain => {
                 instruction.numeric_local_target().is_none()
                     && instruction.numeric_local_store_target().is_none()
+                    && WideInstruction::new(Op::Move, instruction.a(), 0, 0, 0).result_flags_valid()
             }
             Op::StoreLocalPlain => instruction.optional_register_b().is_none(),
             _ => false,
@@ -92,7 +117,11 @@ pub(super) fn promote(function: &mut Function, superinstructions: &[Superinstruc
     let mut next = function.registers;
     let mut registers: Vec<Option<Register>> = vec![None; eligible.len()];
     for (slot, register) in registers.iter_mut().enumerate() {
-        if eligible[slot] && next < ROOT_MAP_REGISTERS && next <= Operand::PAYLOAD_MASK {
+        if eligible[slot]
+            && next < ROOT_MAP_REGISTERS
+            && next <= Operand::PAYLOAD_MASK
+            && next <= REGISTER_MASK
+        {
             *register = Some(next);
             next += 1;
         }
@@ -114,7 +143,7 @@ pub(super) fn promote(function: &mut Function, superinstructions: &[Superinstruc
         match (instruction.op(), promoted) {
             (Op::InitializeTdz, Some(_)) => continue,
             (Op::LoadLocalPlain, Some(source)) => {
-                instruction = WideInstruction::new(Op::Move, instruction.result_register(), source, 0, 0);
+                instruction = WideInstruction::new(Op::Move, instruction.a(), source, 0, 0);
             }
             (Op::StoreLocalPlain, Some(target)) => {
                 instruction = WideInstruction::new(Op::Move, target, instruction.register_a(), 0, 0);
