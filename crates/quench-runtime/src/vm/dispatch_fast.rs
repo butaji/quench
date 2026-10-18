@@ -324,8 +324,6 @@ struct ScriptActivation {
     caller_this: Value,
     caller_env: Value,
     caller_capture: *const crate::heap::EnvironmentSlots,
-    /// The guest-call budget the activation holds, as its frame push would.
-    guard: crate::stack::GuestCallGuard,
     /// What its return yields to the call.
     completion: Completion,
     /// The `argc` values passed follow the registers in the window, for a forwarded
@@ -504,6 +502,12 @@ pub(super) struct LaneStack {
     /// The forwarding constructor bodies call targets name (`ScriptCallTarget::forwarded_method`),
     /// each once: a program's bodies are fixed, so the table only grows with distinct ones.
     forwarded_methods: Vec<crate::bytecode::ForwardedThisMethod>,
+    /// The activation count at which a JavaScript lane call leaves for
+    /// `lane_script_call_frame`: the activations' capacity, the guest calls the thread still
+    /// admits (the activations hold no guards; their frames take them when they materialize,
+    /// which `lane_call_native` does before any guest code runs), or none while a collection
+    /// is due (`note_allocation`). One comparison stands for the three.
+    activation_limit: std::cell::Cell<usize>,
     /// Names the collection epoch, realm and program of the running lane, which no lane
     /// instruction changes: a target resolved under another generation is stale.
     generation: u64,
@@ -523,6 +527,7 @@ impl Default for LaneStack {
             construct_plans: Box::new([EMPTY_CONSTRUCT_PLAN; CONSTRUCT_PLANS]),
             forwarders: Vec::new(),
             forwarded_methods: Vec::new(),
+            activation_limit: std::cell::Cell::new(0),
             generation: NO_SCRIPT_GENERATION,
             generation_key: (0, Value::UNDEFINED, ProgramId::MAIN),
         }
@@ -564,6 +569,19 @@ impl LaneStack {
 
     /// The generation of a lane run under `key`: the current one while the key holds, else
     /// a new one, which retires every target resolved before.
+    /// Derive `activation_limit` from the activations' capacity, the guest calls the
+    /// thread admits beyond the frames and activations already counted, and a due
+    /// collection.
+    fn refresh_activation_limit(&self) {
+        let limit = if LANE_FLOOR.with(std::cell::Cell::get) == COLLECTION_DUE_FLOOR {
+            0
+        } else {
+            let admitted = self.activations.len() + crate::stack::GuestCallGuard::remaining();
+            self.activations.capacity().min(admitted)
+        };
+        self.activation_limit.set(limit);
+    }
+
     fn enter_generation(&mut self, key: (u64, Value, ProgramId)) {
         if self.generation == NO_SCRIPT_GENERATION || self.generation_key != key {
             self.generation += 1;
@@ -686,6 +704,7 @@ fn below_floor() -> bool {
 fn note_allocation<H: Host>(vm: &Vm<H>) {
     if vm.heap.should_collect() {
         LANE_FLOOR.with(|floor| floor.set(COLLECTION_DUE_FLOOR));
+        vm.lane_stack.activation_limit.set(0);
     }
 }
 
@@ -4119,7 +4138,9 @@ impl<H: Host> Vm<H> {
                         passed,
                         window,
                     );
-                    Some(script.guard)
+                    // The activation counted within `LaneStack::activation_limit`; its frame
+                    // takes the guest-call guard its push would have.
+                    crate::stack::GuestCallGuard::enter().ok()
                 }
                 ActivationKind::Wasm(_) => {
                     self.push_wasm_frame_with_registers(code, caller, activation.function, window);
@@ -4143,6 +4164,8 @@ impl<H: Host> Vm<H> {
         self.lane_stack.values = registers;
         self.lane_stack.values.clear();
         self.lane_stack.activations = activations;
+        // The frames now hold the guards the activations were counted against.
+        self.lane_stack.refresh_activation_limit();
         unsafe {
             (*cx).frame = caller;
             (*cx).registers = Registers(self.frames[caller].registers.as_mut_ptr());
@@ -5062,21 +5085,16 @@ fn lane_activate<H: Host>(
     if returns && !lane_returning_call_admitted(cx) {
         return Err(exit(ip));
     }
-    if argc > target.params
-        || vm.with_scope_entered
-        || LANE_FLOOR.with(std::cell::Cell::get) == COLLECTION_DUE_FLOOR
-    {
+    if argc > target.params || vm.with_scope_entered {
         return Err(exit(ip));
     }
-    if vm.lane_stack.activations.len() == vm.lane_stack.activations.capacity()
+    // Capacity, the guest-call budget and a due collection (`LaneStack::activation_limit`).
+    if vm.lane_stack.activations.len() >= vm.lane_stack.activation_limit.get()
         || vm.lane_stack.values.capacity() - vm.lane_stack.values.len()
             < fill_room::<SCRIPT_FILL_BLOCK>(count)
     {
         return Err(lane_script_call_frame::<H>(ip));
     }
-    let Ok(guard) = crate::stack::GuestCallGuard::enter() else {
-        return Err(exit(ip));
-    };
     let stack = &mut vm.lane_stack;
     let window = stack.values.len();
     // SAFETY: capacity holds the window; each slot is written before the length covers
@@ -5107,7 +5125,6 @@ fn lane_activate<H: Host>(
             caller_this: unsafe { (*cx).this },
             caller_env: unsafe { (*cx).env },
             caller_capture: unsafe { (*cx).capture },
-            guard,
             completion: Completion::of(constructs),
             forwards: false,
         }),
@@ -5292,19 +5309,16 @@ fn lane_activate_keeping<H: Host>(
     if (argc > usize::from(target.params) && !keeps)
         || argc > usize::from(u16::MAX)
         || vm.with_scope_entered
-        || LANE_FLOOR.with(std::cell::Cell::get) == COLLECTION_DUE_FLOOR
     {
         return Err(exit(ip));
     }
-    if vm.lane_stack.activations.len() == vm.lane_stack.activations.capacity()
+    // Capacity, the guest-call budget and a due collection (`LaneStack::activation_limit`).
+    if vm.lane_stack.activations.len() >= vm.lane_stack.activation_limit.get()
         || vm.lane_stack.values.capacity() - vm.lane_stack.values.len()
             < fill_room::<ACTIVATION_FILL_BLOCK>(window_size)
     {
         return Err(lane_script_call_frame::<H>(ip));
     }
-    let Ok(guard) = crate::stack::GuestCallGuard::enter() else {
-        return Err(exit(ip));
-    };
     let stack = &mut vm.lane_stack;
     let window = stack.values.len();
     // SAFETY: capacity holds the window; each slot is written before the length covers
@@ -5343,7 +5357,6 @@ fn lane_activate_keeping<H: Host>(
             caller_this: unsafe { (*cx).this },
             caller_env: unsafe { (*cx).env },
             caller_capture: unsafe { (*cx).capture },
-            guard,
             completion: if forwarder.is_some() { Completion::Forwarder } else { Completion::of(constructs) },
             forwards: keeps,
         }),
@@ -5573,6 +5586,8 @@ fn lane_call_frame<H: Host>(ip: Ip) -> Ip {
         call_guard: Some(call_guard),
         caller_program: None,
     });
+    // The pushed frame's guard narrows the activations the thread admits.
+    vm.lane_stack.refresh_activation_limit();
     lane_enter_frame(cx, caller + 1, 0)
 }
 
@@ -5662,7 +5677,6 @@ fn lane_complete_activation<H: Host>(
                     vm.lane_stack.forwarders.pop();
                 }
             }
-            drop(script.guard);
         }
         // SAFETY: the call record belongs to the caller's live view.
         let destination = unsafe { (*activation.call).a };
@@ -5935,6 +5949,8 @@ lane_handler! {
                     call_guard: Some(call_guard),
                     caller_program: None,
                 });
+                // The pushed frame's guard narrows the activations the thread admits.
+                vm.lane_stack.refresh_activation_limit();
                 lane_enter_script_frame(cx, frame + 1)
             }
             // A failed push (the guest call depth) throws at the call, as the general path's.
@@ -7381,6 +7397,7 @@ impl<H: Host> Vm<H> {
             stack_pointer().saturating_sub(LANE_STACK_SLACK)
         };
         let outer_floor = LANE_FLOOR.with(|current| current.replace(floor));
+        self.lane_stack.refresh_activation_limit();
         self.lane_stack.enter_generation((
             self.heap.collection_epoch(),
             self.realm.globals,
