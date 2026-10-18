@@ -26,6 +26,13 @@ pub(super) fn expression(value: &Expression<'_>) -> BindingTime<Constant> {
         }
         Expression::BooleanLiteral(value) => BindingTime::Static(Constant::Boolean(value.value)),
         Expression::NullLiteral(_) => BindingTime::Static(Constant::Null),
+        // A negative number literal is a negation of its magnitude, which has no effect.
+        Expression::UnaryExpression(unary)
+            if unary.operator == oxc_syntax::operator::UnaryOperator::UnaryNegation
+                && let Expression::NumericLiteral(magnitude) = &unary.argument =>
+        {
+            BindingTime::Static(Constant::Number(-magnitude.value))
+        }
         _ => BindingTime::Dynamic,
     }
 }

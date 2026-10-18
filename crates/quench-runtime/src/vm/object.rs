@@ -845,6 +845,52 @@ impl<H: Host> Vm<H> {
         self.derive_object_site_shape(program, site)
     }
 
+    /// A nested literal of constants built from its template (`LiteralStep`). No guest code
+    /// and no collection runs while it is built, so the values on the build stack need no
+    /// roots; each container is made as `MakeObjectLiteral` and `MakeConstArray` make one.
+    pub(super) fn literal_template(
+        &mut self,
+        program: &ResidualProgram,
+        frame: usize,
+        template: usize,
+    ) -> Result<Value, JsError> {
+        let program_id = self.frames[frame].program;
+        let steps = &program.literal_templates[template];
+        let mut values: Vec<Value> = Vec::new();
+        for step in steps.iter().copied() {
+            let value = match step {
+                crate::bytecode::LiteralStep::Constant(index) => {
+                    self.programs.constant(program_id, index as usize).ok_or_else(|| {
+                        JsError::validation("literal constant is outside program".into())
+                    })?
+                }
+                crate::bytecode::LiteralStep::Array(count) => {
+                    let elements = values.split_off(values.len() - count as usize);
+                    self.heap.alloc(Cell::Array {
+                        object: crate::heap::ArrayObject::new(
+                            Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
+                            Rc::new(elements),
+                        ),
+                    })
+                }
+                crate::bytecode::LiteralStep::Object(site) => {
+                    let shape = self.object_site_shape(program, site as usize);
+                    let count = program.object_sites[site as usize].atoms.len();
+                    let start = values.len() - count;
+                    let object = self.heap.alloc_object_with_properties(
+                        self.object_proto,
+                        shape,
+                        &values[start..],
+                    );
+                    values.truncate(start);
+                    object
+                }
+            };
+            values.push(value);
+        }
+        Ok(values.pop().expect("a validated template leaves its literal"))
+    }
+
     /// Walks a literal site's transitions from the empty shape, recording the result when
     /// shape caches are active.
     #[inline(never)]
