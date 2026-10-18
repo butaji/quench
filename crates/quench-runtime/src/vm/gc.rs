@@ -68,7 +68,8 @@ fn append_shape_roots(
             .into_iter()
             .flatten()
             .flat_map(|(key, attributes)| {
-                let (getter, setter) = attributes.functions(accessors);
+                // A slot getter is traced with its object's slots.
+                let (getter, setter) = attributes.functions(accessors, || None);
                 key.symbol_value()
                     .into_iter()
                     .chain([getter, setter].into_iter().flatten())
@@ -132,12 +133,12 @@ impl ParallelShapeTrace<'_> {
         let word = shape_index / u64::BITS as usize;
         let mask = 1_u64 << (shape_index % u64::BITS as usize);
         if trace_kind == GcTraceKind::VerifyFull {
-            if shapes[shape_index].may_have_gc_roots {
+            if shapes[shape_index].facts.may_have_gc_roots() {
                 append_shape_roots(shapes, self.accessors, shape, roots);
             }
         } else if self.marked_shapes[word].load(Ordering::Relaxed) & mask == 0
             && self.marked_shapes[word].fetch_or(mask, Ordering::Relaxed) & mask == 0
-            && shapes[shape_index].may_have_gc_roots
+            && shapes[shape_index].facts.may_have_gc_roots()
         {
             append_shape_roots(shapes, self.accessors, shape, roots);
         }
@@ -172,13 +173,13 @@ fn append_compacted_shape(
         ShapeTransition::Dictionary { trigger } => Some(trigger),
         _ => shapes[parent as usize].dictionary_trigger,
     };
-    let parent_may_have_gc_roots = shapes[parent as usize].may_have_gc_roots;
+    let parent_facts = shapes[parent as usize].facts;
     shapes.push(Shape::child(
         Some(parent),
         transition,
         storage_len,
         dictionary_trigger,
-        parent_may_have_gc_roots,
+        parent_facts,
     ));
     if let Some(key) = cache_key {
         transitions.insert(shapes, parent, key, shape);
@@ -226,7 +227,7 @@ fn rebuild_shape(
         if let Some((_, attributes)) = entry
             && data.is_none()
         {
-            let attributes = ShapeAttributes::record(attributes.attributes(old_accessors), accessors);
+            let attributes = attributes.rehomed(old_accessors, accessors);
             parent = append_compacted_shape(
                 shapes,
                 transitions,
@@ -689,18 +690,10 @@ impl<H: Host> Vm<H> {
             // A missing map means the function uses a register form
             // the liveness pass cannot represent; keep the safe
             // conservative scan for that activation.
-            let register_mask = self.programs.get(frame.program).and_then(|program| {
-                let function = program.functions.get(frame.function as usize)?;
-                (function.register_root_offset != crate::bytecode::NO_REGISTER_ROOT_MAP)
-                    .then(|| {
-                        program.register_roots.mask(
-                            function.register_root_offset,
-                            function.registers,
-                            frame.pc,
-                        )
-                    })
-                    .flatten()
-            });
+            let register_mask = self
+                .programs
+                .residual(frame.program)
+                .and_then(|program| program.register_root_mask(frame.function, frame.pc));
             [frame.env, frame.this]
                 .into_iter()
                 .chain(frame.context.callee())
@@ -1116,7 +1109,7 @@ mod tests {
     #[test]
     fn shape_gc_root_fact_is_inherited_from_symbol_and_accessor_transitions() {
         let root = Shape::root();
-        assert!(!root.may_have_gc_roots);
+        assert!(!root.facts.may_have_gc_roots());
         let string_key = Shape::child(
             Some(0),
             ShapeTransition::Add {
@@ -1126,9 +1119,9 @@ mod tests {
             },
             1,
             None,
-            root.may_have_gc_roots,
+            root.facts,
         );
-        assert!(!string_key.may_have_gc_roots);
+        assert!(!string_key.facts.may_have_gc_roots());
 
         let symbol_key = PropertyKey::symbol(Value::heap(1));
         let symbol_shape = Shape::child(
@@ -1140,9 +1133,9 @@ mod tests {
             },
             1,
             None,
-            root.may_have_gc_roots,
+            root.facts,
         );
-        assert!(symbol_shape.may_have_gc_roots);
+        assert!(symbol_shape.facts.may_have_gc_roots());
         let deleted_symbol_shape = Shape::child(
             Some(1),
             ShapeTransition::Delete {
@@ -1151,27 +1144,38 @@ mod tests {
             },
             1,
             None,
-            symbol_shape.may_have_gc_roots,
+            symbol_shape.facts,
         );
-        assert!(deleted_symbol_shape.may_have_gc_roots);
+        assert!(deleted_symbol_shape.facts.may_have_gc_roots());
 
-        let attributes = ShapeAttributes::record(
-            PropertyAttributes {
-                getter: Some(Value::heap(2)),
-                ..DEFAULT_PROPERTY_ATTRIBUTES
-            },
-            &mut Vec::new(),
-        );
-        let accessor_shape = Shape::child(
-            Some(1),
-            ShapeTransition::Descriptor {
-                slot: 0,
-                attributes,
-            },
-            1,
-            Some(DictionaryTrigger::PropertyCount),
-            string_key.may_have_gc_roots,
-        );
-        assert!(accessor_shape.may_have_gc_roots);
+        let accessor_shape = |getter, setter| {
+            let attributes = ShapeAttributes::record(
+                PropertyAttributes {
+                    accessor: true,
+                    getter,
+                    setter,
+                    ..DEFAULT_PROPERTY_ATTRIBUTES
+                },
+                &mut Vec::new(),
+            );
+            Shape::child(
+                Some(1),
+                ShapeTransition::Descriptor {
+                    slot: 0,
+                    attributes,
+                },
+                1,
+                Some(DictionaryTrigger::PropertyCount),
+                string_key.facts,
+            )
+        };
+        // A getter and a setter live in the shape's accessor table, which the shape roots.
+        let table_accessor = accessor_shape(Some(Value::heap(2)), Some(Value::heap(3)));
+        assert!(table_accessor.facts.may_have_gc_roots());
+        assert!(!table_accessor.facts.slot_getters());
+        // A lone getter lives in its object's slot, traced with the object.
+        let slot_getter = accessor_shape(Some(Value::heap(2)), None);
+        assert!(!slot_getter.facts.may_have_gc_roots());
+        assert!(slot_getter.facts.slot_getters());
     }
 }

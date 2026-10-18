@@ -2029,11 +2029,40 @@ pub(crate) enum ProxyKind {
     Constructor,
 }
 
+/// One environment slot in one word: a value the environment owns, or the direct owner of
+/// this slot index (`Value::shared_environment_slot`), whose slot is always owned.
 #[derive(Clone, Copy, Debug)]
-pub(crate) enum EnvironmentSlot {
+#[repr(transparent)]
+pub(crate) struct EnvironmentSlot(Value);
+
+/// What an `EnvironmentSlot` holds.
+pub(crate) enum EnvironmentSlotState {
     Owned(Value),
-    /// Direct owner of this slot index; the referenced slot is always Owned.
     Shared(Value),
+}
+
+impl EnvironmentSlot {
+    pub(crate) fn owned(value: Value) -> Self {
+        debug_assert!(value.shared_environment_owner().is_none());
+        Self(value)
+    }
+
+    pub(crate) fn shared(owner: Value) -> Self {
+        Self(Value::shared_environment_slot(owner))
+    }
+
+    #[inline(always)]
+    pub(crate) fn state(self) -> EnvironmentSlotState {
+        match self.0.shared_environment_owner() {
+            Some(owner) => EnvironmentSlotState::Shared(owner),
+            None => EnvironmentSlotState::Owned(self.0),
+        }
+    }
+
+    /// The owned value, for writing in place.
+    pub(crate) fn owned_mut(&mut self) -> Option<&mut Value> {
+        self.0.shared_environment_owner().is_none().then_some(&mut self.0)
+    }
 }
 
 /// An environment's provenance and dynamic-scope state: consulted for eval, `with` and
@@ -2047,6 +2076,133 @@ pub(crate) struct EnvironmentScope {
     pub(crate) binding_site_pc: Option<u32>,
     pub(crate) dynamic_bindings: EnvironmentBindings,
     pub(crate) with_objects: Box<[Value]>,
+}
+
+impl EnvironmentScope {
+    /// Whether this scope names its program and nothing else, as a function activation's does.
+    fn is_program_only(&self) -> bool {
+        !self.root_eval_scope
+            && self.binding_site_pc.is_none()
+            && matches!(&self.dynamic_bindings, EnvironmentBindings::Owned(bindings) if bindings.is_empty())
+            && self.with_objects.is_empty()
+    }
+}
+
+/// An environment's `EnvironmentScope` in one word. Most environments are a function's
+/// activation, whose scope names only its program: that scope is the word itself, tagged by
+/// `INLINE_SCOPE_TAG`, and needs no allocation. Any other scope is a box the word points to.
+pub(crate) struct EnvironmentScopeRef(std::num::NonZeroUsize);
+
+/// The low bit, never set in a box pointer, marks an inline program-only scope.
+const INLINE_SCOPE_TAG: usize = 1;
+/// An inline scope holds its program plus one (zero for none) above the tag bit.
+const INLINE_PROGRAM_SHIFT: u32 = INLINE_SCOPE_TAG.trailing_ones();
+const _: () = assert!(align_of::<EnvironmentScope>() > INLINE_SCOPE_TAG);
+static NO_DYNAMIC_BINDINGS: EnvironmentBindings = EnvironmentBindings::Owned(Vec::new());
+
+impl EnvironmentScopeRef {
+    pub(crate) fn new(scope: EnvironmentScope) -> Self {
+        if scope.is_program_only()
+            && let Some(inline) = Self::inline(scope.program)
+        {
+            return inline;
+        }
+        Self::boxed(scope)
+    }
+
+    fn inline(program: Option<u32>) -> Option<Self> {
+        let payload = program.map_or(Some(0), |program| usize::try_from(program).ok()?.checked_add(1))?;
+        (payload.leading_zeros() >= INLINE_PROGRAM_SHIFT).then(|| {
+            Self(
+                std::num::NonZeroUsize::new(payload << INLINE_PROGRAM_SHIFT | INLINE_SCOPE_TAG)
+                    .expect("the tag bit is set"),
+            )
+        })
+    }
+
+    fn boxed(scope: EnvironmentScope) -> Self {
+        let pointer = Box::into_raw(Box::new(scope));
+        Self(std::num::NonZeroUsize::new(pointer as usize).expect("a box is never null"))
+    }
+
+    fn scope(&self) -> Option<&EnvironmentScope> {
+        // SAFETY: an untagged word is the pointer `boxed` leaked, owned by `self` until `Drop`.
+        (self.0.get() & INLINE_SCOPE_TAG == 0)
+            .then(|| unsafe { &*(self.0.get() as *const EnvironmentScope) })
+    }
+
+    pub(crate) fn program(&self) -> Option<u32> {
+        match self.scope() {
+            Some(scope) => scope.program,
+            None => (self.0.get() >> INLINE_PROGRAM_SHIFT)
+                .checked_sub(1)
+                .map(|program| u32::try_from(program).expect("inline programs fit u32")),
+        }
+    }
+
+    pub(crate) fn root_eval_scope(&self) -> bool {
+        self.scope().is_some_and(|scope| scope.root_eval_scope)
+    }
+
+    pub(crate) fn binding_site_pc(&self) -> Option<u32> {
+        self.scope().and_then(|scope| scope.binding_site_pc)
+    }
+
+    pub(crate) fn dynamic_bindings(&self) -> &EnvironmentBindings {
+        self.scope().map_or(&NO_DYNAMIC_BINDINGS, |scope| &scope.dynamic_bindings)
+    }
+
+    pub(crate) fn with_objects(&self) -> &[Value] {
+        self.scope().map_or(&[], |scope| &scope.with_objects)
+    }
+
+    /// The scope, boxed first when it was inline.
+    pub(crate) fn make_mut(&mut self) -> &mut EnvironmentScope {
+        if self.scope().is_none() {
+            *self = Self::boxed(self.to_scope());
+        }
+        // SAFETY: `self` now holds the box `boxed` leaked, and `&mut self` borrows it uniquely.
+        unsafe { &mut *(self.0.get() as *mut EnvironmentScope) }
+    }
+
+    pub(crate) fn to_scope(&self) -> EnvironmentScope {
+        self.scope().cloned().unwrap_or_else(|| EnvironmentScope {
+            program: self.program(),
+            root_eval_scope: false,
+            binding_site_pc: None,
+            dynamic_bindings: EnvironmentBindings::Owned(Vec::new()),
+            with_objects: Box::default(),
+        })
+    }
+
+    #[cfg(feature = "profile-memory")]
+    pub(crate) fn boxed_bytes(&self) -> usize {
+        self.scope().map_or(0, |_| size_of::<EnvironmentScope>())
+    }
+}
+
+impl Drop for EnvironmentScopeRef {
+    fn drop(&mut self) {
+        if self.scope().is_some() {
+            // SAFETY: the untagged word is the box `boxed` leaked, dropped exactly once here.
+            drop(unsafe { Box::from_raw(self.0.get() as *mut EnvironmentScope) });
+        }
+    }
+}
+
+impl Clone for EnvironmentScopeRef {
+    fn clone(&self) -> Self {
+        match self.scope() {
+            Some(scope) => Self::boxed(scope.clone()),
+            None => Self(self.0),
+        }
+    }
+}
+
+impl std::fmt::Debug for EnvironmentScopeRef {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.to_scope().fmt(formatter)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -2064,14 +2220,18 @@ impl EnvironmentSlots {
     /// The value of a slot this environment owns; a shared slot lives in its owner.
     #[inline(always)]
     pub(crate) fn owned(&self, slot: usize) -> Option<Value> {
-        match self.0.get(slot)? {
-            EnvironmentSlot::Owned(value) => Some(*value),
-            EnvironmentSlot::Shared(_) => None,
+        match self.0.get(slot)?.state() {
+            EnvironmentSlotState::Owned(value) => Some(value),
+            EnvironmentSlotState::Shared(_) => None,
         }
     }
+
+    pub(crate) fn slot(&self, slot: usize) -> Option<&EnvironmentSlot> {
+        self.0.get(slot)
+    }
     pub(crate) fn roots(&self) -> impl Iterator<Item = Value> + '_ {
-        self.0.iter().map(|slot| match slot {
-            EnvironmentSlot::Owned(value) | EnvironmentSlot::Shared(value) => *value,
+        self.0.iter().map(|slot| match slot.state() {
+            EnvironmentSlotState::Owned(value) | EnvironmentSlotState::Shared(value) => value,
         })
     }
 }
@@ -2080,7 +2240,7 @@ impl EnvironmentSlots {
     /// Slots that own `values`, in order.
     pub(crate) fn from_values(values: impl ExactSizeIterator<Item = Value>) -> Self {
         Self(super::thin_slice::ThinBoxSlice::from_exact_iter(
-            values.map(EnvironmentSlot::Owned),
+            values.map(EnvironmentSlot::owned),
         ))
     }
 }
@@ -2094,7 +2254,7 @@ impl From<Vec<Value>> for EnvironmentSlots {
 impl From<Box<[Value]>> for EnvironmentSlots {
     fn from(values: Box<[Value]>) -> Self {
         Self(super::thin_slice::ThinBoxSlice::from_exact_iter(
-            values.iter().copied().map(EnvironmentSlot::Owned),
+            values.iter().copied().map(EnvironmentSlot::owned),
         ))
     }
 }
@@ -2369,7 +2529,7 @@ pub(crate) enum Cell {
         parent: Value,
         function: u32,
         slots: EnvironmentSlots,
-        scope: Box<EnvironmentScope>,
+        scope: EnvironmentScopeRef,
     },
     // Immutable raw 64-bit Wasm scalars cannot fit the tagged Value payload.
     WasmBits64(u64),
@@ -2533,7 +2693,7 @@ impl Cell {
                 ..
             } => visit(*program),
             Self::Environment { scope, .. } => {
-                if let Some(program) = scope.program {
+                if let Some(program) = scope.program() {
                     visit(ProgramId::from_raw(program));
                 }
             }

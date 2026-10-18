@@ -20,6 +20,8 @@ struct SuiteInput {
     suite: crate::Suite,
     #[serde(default)]
     jit_mode: crate::JitMode,
+    #[serde(default)]
+    jit_diagnostics: bool,
     rounds_requested: usize,
     timeout_ms: u64,
     source_revision: String,
@@ -204,15 +206,18 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let quench_bench_binary = artifact_input(&binary_path)?;
     let mut fixtures = BTreeMap::new();
     let engines = input.suite.engine_names();
-    for name in input.suite.fixture_names() {
-        let (fixture_path, fixture) = find_fixture(&input.fixtures, name)?;
+    for (fixture_path, fixture) in &input.fixtures {
+        let name = Path::new(fixture_path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| format!("invalid fixture path: {fixture_path}"))?;
         let measured = engines
             .iter()
             .copied()
             .filter(|engine| !fixture.unsupported_engines.contains_key(*engine))
             .collect::<Vec<_>>();
         fixtures.insert(
-            (*name).to_string(),
+            name.to_string(),
             analyze_fixture(fixture_path, fixture, input.rounds_requested, &measured)?,
         );
     }
@@ -300,7 +305,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         .map(|fixture| fixture.comparisons.len())
         .sum::<usize>();
     eprintln!(
-        "qualification: passed all {} fixtures and {comparison_count} fixture-engine comparisons for {:?}",
+        "qualification: passed all {} selected fixtures and {comparison_count} fixture-engine comparisons for {:?}",
         report.fixtures.len(),
         report.suite
     );
@@ -328,11 +333,14 @@ fn parse_args(args: &[String]) -> Result<(PathBuf, Option<PathBuf>), String> {
 }
 
 fn validate_suite(input: &SuiteInput) -> Result<(), String> {
-    if input.schema != 5 && input.schema != crate::SUITE_REPORT_SCHEMA {
+    if !matches!(input.schema, 5 | 6 | 7) && input.schema != crate::SUITE_REPORT_SCHEMA {
         return Err(format!(
             "unsupported benchmark report schema {}",
             input.schema
         ));
+    }
+    if input.jit_diagnostics {
+        return Err("JIT-diagnostic reports cannot be used for qualification analysis".into());
     }
     if !input.qualification_ready || !input.complete {
         return Err("benchmark report is incomplete or not qualification_ready".to_string());
@@ -354,12 +362,9 @@ fn validate_suite(input: &SuiteInput) -> Result<(), String> {
         return Err("benchmark report is missing timeout or host/toolchain provenance".to_string());
     }
     if !input.corpus.checkout_clean
-        || !input.corpus.fixture_set_matches
         || input.corpus.pinned_revision != input.corpus.checkout_revision
     {
-        return Err(
-            "benchmark corpus is dirty, unpinned, or has a fixture-set mismatch".to_string(),
-        );
+        return Err("benchmark corpus is dirty or unpinned".to_string());
     }
     let engines = input
         .engines
@@ -377,11 +382,23 @@ fn validate_suite(input: &SuiteInput) -> Result<(), String> {
     for engine in &input.engines {
         validate_engine(engine, input.suite, input.jit_mode)?;
     }
-    if input.fixtures.len() != input.suite.fixture_names().len() {
-        return Err(format!(
-            "benchmark report does not contain exactly the {} required fixtures",
-            input.suite.fixture_names().len()
-        ));
+    if input.fixtures.is_empty()
+        || input
+            .fixtures
+            .iter()
+            .any(|(path, fixture)| fixture.source.path != *path)
+        || !crate::fixture_selection_is_valid(
+            input.suite,
+            &input.fixtures.keys().map(PathBuf::from).collect::<Vec<_>>(),
+        )
+    {
+        return Err("benchmark report contains an invalid fixture selection".to_string());
+    }
+    let complete_fixture_set = input.fixtures.len() == input.suite.fixture_names().len();
+    if input.corpus.fixture_set_matches != complete_fixture_set {
+        return Err(
+            "benchmark corpus fixture-set proof does not match the selected fixtures".into(),
+        );
     }
     let suite_input_paths = input
         .suite_inputs
@@ -469,26 +486,6 @@ fn validate_engine(
         ));
     }
     Ok(())
-}
-
-fn find_fixture<'a>(
-    fixtures: &'a BTreeMap<String, FixtureInput>,
-    expected_name: &str,
-) -> Result<(&'a str, &'a FixtureInput), String> {
-    let mut matches = fixtures.iter().filter(|(path, _)| {
-        Path::new(path.as_str())
-            .file_name()
-            .is_some_and(|name| name == expected_name)
-    });
-    let first = matches
-        .next()
-        .ok_or_else(|| format!("benchmark report is missing {expected_name}"))?;
-    if matches.next().is_some() {
-        return Err(format!(
-            "benchmark report has duplicate {expected_name} fixtures"
-        ));
-    }
-    Ok((first.0.as_str(), first.1))
 }
 
 fn artifact_input(path: &Path) -> Result<ArtifactInput, String> {
@@ -773,7 +770,7 @@ impl XorShift64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        EngineInput, median, median_log_ratio, paired_bootstrap_log_ratio_interval, validate_engine,
+        median, median_log_ratio, paired_bootstrap_log_ratio_interval, validate_engine, EngineInput,
     };
     use crate::{JitMode, Suite};
     use std::collections::BTreeMap;

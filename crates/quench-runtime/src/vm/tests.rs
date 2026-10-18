@@ -291,7 +291,7 @@ fn rootless_shapes_survive_collection_and_shape_compaction() {
     let mut vm = Vm::new(SilentHost);
     let atom = vm.intern_atom("survivor");
     let live_shape = vm.transition_shape(0, atom);
-    assert!(!vm.shapes[live_shape as usize].may_have_gc_roots);
+    assert!(!vm.shapes[live_shape as usize].facts.may_have_gc_roots());
     let owner =
         vm.heap
             .alloc_object_with_properties(Value::NULL, live_shape, &[Value::integer(42)]);
@@ -495,36 +495,42 @@ fn accessor_descriptor_transitions_do_not_root_values_in_the_cache() {
     let atom = vm.intern_atom("field");
     let first_getter = vm.native_value(Native::Object);
     let second_getter = vm.native_value(Native::Array);
-    let first = vm.object();
-    let second = vm.object();
-    for (object, getter) in [(first, first_getter), (second, second_getter)] {
-        vm.set_property(object, atom, Value::UNDEFINED).unwrap();
-        vm.set_property_attributes(
-            object,
-            PropertyKey::string(atom),
-            super::PropertyAttributes {
-                writable: false,
-                enumerable: false,
-                configurable: true,
-                accessor: true,
-                getter: Some(getter),
-                setter: None,
-            },
+    let setter = vm.native_value(Native::Function);
+    // A lone getter lives in its object's slot, so the two objects share one shape; a getter
+    // with a setter lives in the shape's accessor table, so each object keeps its own.
+    for (setter, shared) in [(None, true), (Some(setter), false)] {
+        let first = vm.object();
+        let second = vm.object();
+        for (object, getter) in [(first, first_getter), (second, second_getter)] {
+            vm.set_property(object, atom, Value::UNDEFINED).unwrap();
+            vm.set_property_attributes(
+                object,
+                PropertyKey::string(atom),
+                super::PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: true,
+                    getter: Some(getter),
+                    setter,
+                },
+            );
+        }
+
+        let first_attributes = vm
+            .property_attributes(first, PropertyKey::string(atom))
+            .unwrap();
+        let second_attributes = vm
+            .property_attributes(second, PropertyKey::string(atom))
+            .unwrap();
+        assert_eq!(first_attributes.getter, Some(first_getter));
+        assert_eq!(second_attributes.getter, Some(second_getter));
+        assert_eq!((first_attributes.setter, second_attributes.setter), (setter, setter));
+        assert_eq!(
+            vm.object_data(first).unwrap().shape() == vm.object_data(second).unwrap().shape(),
+            shared
         );
     }
-
-    let first_attributes = vm
-        .property_attributes(first, PropertyKey::string(atom))
-        .unwrap();
-    let second_attributes = vm
-        .property_attributes(second, PropertyKey::string(atom))
-        .unwrap();
-    assert_eq!(first_attributes.getter, Some(first_getter));
-    assert_eq!(second_attributes.getter, Some(second_getter));
-    assert_ne!(
-        vm.object_data(first).unwrap().shape(),
-        vm.object_data(second).unwrap().shape()
-    );
 }
 
 #[test]
@@ -1589,7 +1595,7 @@ fn object_method_home_survives_collection_with_precise_register_roots() {
 fn unrepresentable_register_maps_keep_the_conservative_frame_roots() {
     let mut program = Engine::specialize("print(0);", "wide-roots.js").unwrap();
     program.functions[0].registers = 65;
-    program.functions[0].register_root_offset = u32::MAX;
+    program.functions[0].register_roots = crate::bytecode::RegisterRoots::new(false);
 
     let mut vm = Vm::new(SilentHost);
     vm.initialize(&program).unwrap();
@@ -1700,7 +1706,7 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
         parent: crate::Value::NULL,
         function: u32::MAX,
         slots: Vec::<Value>::new().into_boxed_slice().into(),
-        scope: Box::new(crate::heap::EnvironmentScope {
+        scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
             program: None,
             root_eval_scope: false,
             binding_site_pc: None,
@@ -1712,7 +1718,7 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
         parent: crate::Value::NULL,
         function: u32::MAX,
         slots: Vec::<Value>::new().into_boxed_slice().into(),
-        scope: Box::new(crate::heap::EnvironmentScope {
+        scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
             program: None,
             root_eval_scope: false,
             binding_site_pc: None,
@@ -1758,7 +1764,7 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
         parent: crate::Value::NULL,
         function: u32::MAX,
         slots: Vec::<Value>::new().into_boxed_slice().into(),
-        scope: Box::new(crate::heap::EnvironmentScope {
+        scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
             program: None,
             root_eval_scope: false,
             binding_site_pc: None,
@@ -2936,7 +2942,7 @@ fn module_namespace_operations_share_uninitialized_export_errors() {
                 slots: vec![Value::DELETED; program.functions[0].local_atoms.len()]
                     .into_boxed_slice()
                     .into(),
-                scope: Box::new(crate::heap::EnvironmentScope {
+                scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
                     program: Some(super::program_store::ProgramId::MAIN.raw()),
                     root_eval_scope: false,
                     binding_site_pc: None,
@@ -4575,7 +4581,7 @@ fn suspended_continuations_are_rooted_until_generation_checked_resume() {
         parent: Value::NULL,
         function: u32::MAX,
         slots: Vec::<Value>::new().into_boxed_slice().into(),
-        scope: Box::new(crate::heap::EnvironmentScope {
+        scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
             program: None,
             root_eval_scope: false,
             binding_site_pc: None,
@@ -4735,7 +4741,7 @@ fn wasm_retirement_invalidates_register_reuse_after_shrinking() {
         Engine::specialize("function identity(x) { return x; }", "retired-frame.js").unwrap();
     let function = &mut program.functions[1];
     function.registers = u16::MAX;
-    function.register_root_offset = 0;
+    function.register_roots = crate::bytecode::RegisterRoots::new(true);
     frame.prepare_registers_for(function);
     assert_eq!(frame.registers.len(), usize::from(u16::MAX));
     assert!(frame.registers.capacity() >= frame.registers.len());
@@ -10685,4 +10691,78 @@ fn spread_of_a_branch_built_array_survives_collection() {
     let name = vm.intern_atom("total");
     let total = vm.own_property(vm.realm.globals, name).unwrap();
     assert_eq!(total.as_number(), Some(20_042_000.0));
+}
+
+#[test]
+fn lexical_slots_read_only_after_initialization_become_plain_and_keep_their_dead_zone() {
+    let source = r#"
+      'use strict';
+      const out = [];
+      function t(f) { try { out.push(String(f())); } catch (e) { out.push(e.constructor.name + ':' + e.message); } }
+      function proven() { let s = 0; for (let i = 0; i < 3; i++) { const y = i * 2; s += y; } return s; }
+      t(proven);
+      t(() => { const r = x; let x = 1; return r; });
+      t(() => { switch (1) { case 0: let x = 1; break; case 1: return x; } });
+      t(() => { const s = []; for (let i = 0; i < 2; i++) { if (i) s.push(z); let z = i; } return s; });
+      t(() => { let r; try { r = w; } catch (e) { r = e.name; } let w = 3; return r + w; });
+      t(() => { k = 2; let k; return k; });
+      t(() => { let v; try { v = 1; } finally { v += 1; } return v; });
+      t(() => { for (let x of [x]) {} });
+      print(out.join('|'));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    let program = Engine::specialize(source, "lexical-initialization.js").unwrap();
+    let proven = program
+        .functions
+        .iter()
+        .find(|function| function.name.is_some_and(|atom| program.atoms[atom as usize] == *"proven"))
+        .unwrap();
+    assert!(
+        proven
+            .instructions()
+            .all(|instruction| !matches!(instruction.op(), crate::bytecode::Op::LoadLocal | crate::bytecode::Op::StoreLocal)),
+        "every lexical slot of `proven` is read after its initialization"
+    );
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["6|ReferenceError:Cannot access 'x' before initialization|\
+          ReferenceError:Cannot access 'x' before initialization|\
+          ReferenceError:Cannot access 'z' before initialization|ReferenceError3|\
+          ReferenceError:Cannot access 'k' before initialization|2|\
+          ReferenceError:Cannot access 'x' before initialization"]
+    );
+}
+
+#[test]
+fn anonymous_function_definitions_are_named_by_their_plan() {
+    let source = r#"
+      const arrow = () => 1;
+      let expression = function () {};
+      const { fallback = () => 2 } = {};
+      const object = { method: () => 3, ['computed']: () => 4 };
+      class Named { static field = () => 5; }
+      const klass = class {};
+      print([arrow.name, expression.name, fallback.name, object.method.name,
+        object.computed.name, Named.field.name, klass.name].join(','));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    let program = Engine::specialize(source, "named-definitions.js").unwrap();
+    // Closures made straight into the named value are created with the name
+    // (`inferred_name`); classes, computed keys and static field values are named at run time.
+    for name in ["arrow", "expression", "fallback", "method"] {
+        assert!(
+            program.functions.iter().any(|function| {
+                function.inferred_name.is_some_and(|atom| program.atoms[atom as usize] == *name)
+            }),
+            "{name} is named at closure creation"
+        );
+    }
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["arrow,expression,fallback,method,computed,field,klass"]
+    );
 }

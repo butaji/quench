@@ -206,8 +206,10 @@ impl GenerationalPacing {
 /// generation has doubled or one live set of allocation has passed since the last one, and,
 /// when more than half of young allocations survive, full collections with one live set
 /// between them, probing survival with a minor collection every fourth one. The minimums are
-/// the pre-generational 384-cell headroom; the TOD-137 starting point's 2^15 and 2^18 minimums
-/// and its eight- and four-live-set factors keep more garbage resident on V8-v7's small heaps.
+/// the pre-generational 384-cell headroom. The Score lane's table (eight live sets per young
+/// collection, four per full one, 2^15 and 2^18 minimums) raised npm peak RSS by up to 17 MiB
+/// per package (semver 27.6 -> 45.2, typescript-eslint 188 -> 226); the owner reaffirmed
+/// memory-first on 2026-10-18.
 pub(super) const PRODUCTION_PACING: GenerationalPacing = GenerationalPacing {
     young: Ratio::new(1, 2),
     minimum_young: MEMORY_FIRST_MINIMUM_ALLOCATION,
@@ -250,11 +252,12 @@ mod tests {
     fn full_collection_follows_old_growth_or_the_allocation_cap() {
         let pacing = PRODUCTION_PACING;
         let live = 1 << 20;
-        assert!(!pacing.full_due(live, live + (live / 2), 0));
-        assert!(pacing.full_due(live, 2 * live, 0));
-        assert!(pacing.full_due(live, live, 8 * live));
+        let growth = pacing.old_growth.of(live);
+        assert!(!pacing.full_due(live, live + growth - 1, 0));
+        assert!(pacing.full_due(live, live + growth, 0));
+        assert!(pacing.full_due(live, live, pacing.allocation_cap.of(live)));
         assert_eq!(pacing.young_budget(0), pacing.minimum_young);
-        assert_eq!(pacing.young_budget(live), live / 2);
+        assert_eq!(pacing.young_budget(live), pacing.young.of(live));
     }
 
     fn minor(live: usize, previous_live: usize, allocated: usize) -> CollectionOutcome {
