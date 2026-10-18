@@ -3174,8 +3174,13 @@ impl<H: Host> Emitter<'_, '_, H> {
         }
     }
 
-    fn jump(&mut self, target: usize) {
-        self.interrupt_safepoint();
+    /// Emit a jump, polling only for the entry transfer or a loop backedge.
+    /// Every bytecode control-flow cycle has a backedge, so acyclic edges do
+    /// not need an atomic load to preserve cancellation responsiveness.
+    fn jump(&mut self, target: usize, interrupt_check: bool) {
+        if interrupt_check {
+            self.interrupt_safepoint();
+        }
         let mut block = self.edge(target);
         if self.threading
             && Some(block) == self.blocks[target]
@@ -3188,11 +3193,10 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 
     /// A loop latch (a branch whose taken target lies behind its
-    /// fallthrough) leaves the loop through a block of its own, so values
-    /// only the exit passes (merge arguments) are computed after the loop,
-    /// not on every iteration. The back edge stays direct.
+    /// fallthrough) polls only on the taken backedge. Its exit stays free of
+    /// the atomic check, and values only the exit passes (merge arguments)
+    /// are computed after the loop, not on every iteration.
     fn branch(&mut self, condition: ir::Value, target: usize, fallthrough: usize) {
-        self.interrupt_safepoint();
         let taken = self.edge(target);
         let next = self.edge(fallthrough);
         if target >= fallthrough {
@@ -3200,7 +3204,13 @@ impl<H: Host> Emitter<'_, '_, H> {
             return;
         }
         let exit = self.builder.create_block();
-        self.builder.ins().brif(condition, taken, &[], exit, &[]);
+        let backedge = self.builder.create_block();
+        self.builder
+            .ins()
+            .brif(condition, backedge, &[], exit, &[]);
+        self.builder.switch_to_block(backedge);
+        self.interrupt_safepoint();
+        self.builder.ins().jump(taken, &[]);
         self.builder.switch_to_block(exit);
         self.builder.ins().jump(next, &[]);
     }
@@ -3503,7 +3513,8 @@ impl<H: Host> Emitter<'_, '_, H> {
                 return false;
             }
             Op::Jump => {
-                self.jump(instruction.jump_target() as usize);
+                let target = instruction.jump_target() as usize;
+                self.jump(target, target <= pc);
                 return false;
             }
             Op::WasmBranchTable => {
@@ -3762,7 +3773,7 @@ impl<'a, H: Host> Analysis<'a, H> {
             .icmp(IntCC::UnsignedLessThan, stack_pointer, limit);
         emitter.trap_if(exhausted, crate::WasmTrap::CallStackExhausted);
         emitter.known.clear();
-        emitter.jump(0);
+        emitter.jump(0, true);
         // Every jump target starts a block, created before emission so a
         // backward jump finds its target's block already placed.
         for (pc, instruction) in instructions.iter().copied().enumerate() {
