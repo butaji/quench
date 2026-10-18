@@ -121,6 +121,30 @@ pub(crate) fn fixture_path(name: &str) -> PathBuf {
     Path::new(SUITE_DIR).join(name)
 }
 
+/// The corpus exposes Wasm cases under synthetic test names; their actual
+/// inputs live together under `wasm/<module>`.
+pub(crate) fn source_path(file: &Path) -> PathBuf {
+    let module = match test_name(file).as_str() {
+        "HashSet-wasm" => Some("wasm/HashSet"),
+        "gcc-loops-wasm" => Some("wasm/gcc-loops"),
+        "quicksort-wasm" => Some("wasm/quicksort"),
+        "tsf-wasm" => Some("wasm/TSF"),
+        "richards-wasm" => Some("wasm/richards"),
+        "sqlite3-wasm" => Some("sqlite3"),
+        "zlib-wasm" => Some("wasm/zlib"),
+        "argon2-wasm" => Some("wasm/argon2"),
+        _ => None,
+    };
+    match module {
+        Some(module) => file
+            .parent()
+            .unwrap_or_else(|| Path::new(SUITE_DIR))
+            .join(module),
+        None if file.exists() => file.to_path_buf(),
+        None => Path::new(SUITE_DIR).to_path_buf(),
+    }
+}
+
 pub(crate) fn test_name(file: &Path) -> String {
     file.file_name()
         .unwrap_or_default()
@@ -202,5 +226,38 @@ mod tests {
         assert_eq!(score(&file, stdout), Some(70.47));
         assert_eq!(score(&fixture_path("zlib-wasm"), stdout), None);
         assert_eq!(semantic_output(stdout), "Running web-ssr:");
+    }
+
+    #[test]
+    fn wasm_fixture_source_paths_resolve_to_the_pinned_inputs() {
+        let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("workspace root");
+        for (fixture, module_path) in [
+            ("HashSet-wasm", "wasm/HashSet"),
+            ("gcc-loops-wasm", "wasm/gcc-loops"),
+            ("quicksort-wasm", "wasm/quicksort"),
+            ("tsf-wasm", "wasm/TSF"),
+            ("richards-wasm", "wasm/richards"),
+            ("sqlite3-wasm", "sqlite3"),
+            ("zlib-wasm", "wasm/zlib"),
+            ("argon2-wasm", "wasm/argon2"),
+        ] {
+            assert_eq!(
+                source_path(&fixture_path(fixture)),
+                Path::new(SUITE_DIR).join(module_path)
+            );
+            assert!(
+                workspace.join(source_path(&fixture_path(fixture))).is_dir(),
+                "{fixture}"
+            );
+        }
+        assert_eq!(
+            source_path(&fixture_path("typescript-lib")),
+            Path::new(SUITE_DIR)
+        );
+        assert!(workspace
+            .join(source_path(&fixture_path("typescript-lib")))
+            .is_dir());
     }
 }
