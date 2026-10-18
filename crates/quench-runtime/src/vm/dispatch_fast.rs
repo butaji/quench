@@ -5171,8 +5171,9 @@ fn returning_kind(instruction: WideInstruction) -> Option<u8> {
 
 lane_handler! {
     /// A value record that returns its result from the frame (`returning_kind`): the value
-    /// as the record's own handler computes it, then the activation's completion. A VM
-    /// frame's return, and any other value, take the general path.
+    /// as the record's own handler computes it, then the activation's completion, or the VM
+    /// frame's return of it from the general loop (`lane_frame_return`). A value the
+    /// handler does not compute takes the general path.
     fn lane_returning<KIND: u8>(cx, r, ip, i, view) {
         let value = unsafe {
             match KIND {
@@ -5218,7 +5219,8 @@ lane_handler! {
             }
             next!(cx, registers, next, view)
         }
-        exit(ip)
+        // The VM frame returns the value from this record.
+        lane_frame_return(unsafe { vm(cx) }, ip, value)
     }
 }
 
