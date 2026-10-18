@@ -609,6 +609,7 @@ pub(crate) enum CellKind {
     Error,
     RegExp,
     ArrayFromAsync,
+    AwaitState,
     TemporalDuration,
     TemporalPlainDate,
     TemporalPlainDateTime,
@@ -648,6 +649,7 @@ impl CellKind {
         "error",
         "regexp",
         "array_from_async",
+        "await_state",
         "temporal_duration",
         "temporal_plain_date",
         "temporal_plain_date_time",
@@ -2627,6 +2629,13 @@ impl Heap {
                     work.extend(record.roots());
                 }
             }
+            Cell::AwaitState(state) => {
+                work.push(state.promise);
+                work.extend(state.generator);
+                if let Some(continuation) = &state.continuation {
+                    work.extend(continuation.roots());
+                }
+            }
             Cell::ArrayFromAsyncState(state) => {
                 work.extend([state.output, state.result, state.this_arg]);
                 work.extend(state.iterator);
@@ -2799,6 +2808,7 @@ impl Heap {
             Cell::Error(_) => CellKind::Error,
             Cell::RegExp { .. } => CellKind::RegExp,
             Cell::ArrayFromAsyncState(_) => CellKind::ArrayFromAsync,
+            Cell::AwaitState(_) => CellKind::AwaitState,
             Cell::TemporalDuration { .. } => CellKind::TemporalDuration,
             Cell::TemporalPlainDate { .. } => CellKind::TemporalPlainDate,
             Cell::TemporalPlainDateTime { .. } => CellKind::TemporalPlainDateTime,
@@ -2819,6 +2829,7 @@ impl Heap {
                 | Cell::ShadowRealm { .. }
                 | Cell::Iterator { .. }
                 | Cell::ArrayFromAsyncState(_)
+                | Cell::AwaitState(_)
                 | Cell::Proxy { .. }
                 | Cell::Date { .. }
                 | Cell::PromiseResolvingState { .. }
