@@ -91,6 +91,10 @@ impl<H: Host> Vm<H> {
         let value = self
             .module_binding_value(object, atom)
             .or_else(|| self.own_property(object, atom));
+        let value = match value {
+            Some(value) => Some(self.resolve_pending_binding(p, value)?),
+            None => None,
+        };
         if value.is_some_and(Value::is_deleted) {
             return Err(self.uninitialized_binding_error(p, atom));
         }
