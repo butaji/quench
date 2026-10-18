@@ -656,10 +656,20 @@ impl std::fmt::Debug for WasmObjectSlot {
 
 /// What a Wasm host function runs: an embedder operation, or a JavaScript callable
 /// imported through the `WebAssembly` namespace.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub(crate) enum WasmHostTarget {
     Host(crate::WasmHostFunctionId),
     Js(Value),
+    /// Exact Emscripten `HEAPU8.copyWithin(dest, src, src + num)` body, with the
+    /// mutable captured view location retained so each call observes memory growth.
+    JsEmscriptenMemcpy(Box<WasmHostMemcpyTarget>),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct WasmHostMemcpyTarget {
+    pub(crate) function: Value,
+    pub(crate) view_environment: Value,
+    pub(crate) view_slot: usize,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TypedArrayKind {
@@ -832,13 +842,14 @@ impl Native {
 
     /// Natives a lane `Call` makes in place from the running frame (`lane_call_native`):
     /// the string, RegExp and `Math` functions, the Array, Object, Reflect and JSON
-    /// functions and the primitive conversions, which read no caller state beyond the
+    /// functions, `String.fromCharCode` and `fromCodePoint` and the primitive conversions, which read no caller state beyond the
     /// frame's published PC and run guest code only through ordinary nested calls.
     pub(crate) fn runs_from_lane(self) -> bool {
         self.is_string_regexp_or_math()
             || matches!(
                 self,
                 Self::ArrayIsArray
+                    | Self::ArrayIteratorNext
                     | Self::ArrayIndexOf
                     | Self::ArrayLastIndexOf
                     | Self::ArrayIncludes
@@ -880,6 +891,8 @@ impl Native {
                     | Self::JsonParse
                     | Self::NumberIsInteger
                     | Self::ParseInt
+                    | Self::StringFromCharCode
+                    | Self::StringFromCodePoint
                     | Self::String
                     | Self::Number
                     | Self::Boolean
@@ -2633,6 +2646,11 @@ pub(crate) enum Cell {
         matcher: Rc<quench_regexp::Regex>,
     },
     Error(String),
+    /// A promise: an ordinary object with its [[PromiseState]] and reactions.
+    Promise {
+        object: Box<Object>,
+        record: Box<super::PromiseRecord>,
+    },
     PromiseResolvingState {
         promise: Value,
         already_resolved: bool,
@@ -2734,6 +2752,7 @@ impl Cell {
             Self::RegExp { .. } => "regexp",
             Self::Error(_) => "error",
             Self::PromiseResolvingState { .. } => "promise_resolving_state",
+            Self::Promise { .. } => "promise",
             Self::TemporalDuration { .. } => "temporal_duration",
             Self::TemporalPlainDate { .. } => "temporal_plain_date",
             Self::TemporalPlainDateTime { .. } => "temporal_plain_date_time",

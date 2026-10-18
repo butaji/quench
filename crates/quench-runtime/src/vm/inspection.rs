@@ -90,7 +90,7 @@ impl<H: Host> Vm<H> {
             && super::provenance::shape_names(&self.shapes, object.shape())
                 .1
                 .is_none();
-        if self.realm.promise.records.contains_key(&value) {
+        if self.is_promise(value) {
             return if uncaptured_factory {
                 "Promise"
             } else {

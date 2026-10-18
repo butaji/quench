@@ -306,6 +306,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn collect_slow(&mut self, _program: &ResidualProgram, full: bool) {
+        self.invalidate_wasm_reference_caches();
         let full = self.heap.collection_is_full(full);
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("QUENCH_FUNCTION_USE").is_some() {
@@ -817,19 +818,7 @@ impl<H: Host> Vm<H> {
         );
         self.descriptors
             .retain(|(object, _), _| self.heap.is_live(*object));
-        let mut abandoned_job_contexts = Vec::new();
-        self.realm.promise.records.retain(|promise, record| {
-            let live = self.heap.is_live(*promise);
-            if !live {
-                abandoned_job_contexts.extend(
-                    record
-                        .reactions
-                        .iter()
-                        .filter_map(|reaction| reaction.execution_context),
-                );
-            }
-            live
-        });
+        let mut abandoned_job_contexts = self.heap.take_abandoned_job_contexts();
         self.realm.promise.thenable_jobs.retain(|job, record| {
             let live = self.heap.is_live(*job);
             if !live {
@@ -1051,10 +1040,7 @@ impl<H: Host> Vm<H> {
         promise: Value,
     ) -> Result<(), JsError> {
         while self
-            .realm
-            .promise
-            .records
-            .get(&promise)
+            .promise_record(promise)
             .is_some_and(|record| record.state == PromiseState::Pending)
             && let Some(job) = self.realm.jobs.pop_front()
         {

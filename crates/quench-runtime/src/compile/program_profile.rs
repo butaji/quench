@@ -75,6 +75,11 @@ pub(super) fn report(program: &ResidualProgram) {
             + bytes::<FieldSite>(&program.field_sites)
             + bytes::<ObjectSite>(&program.object_sites)
             + bytes::<RegExpLiteralSite>(&program.regexp_literal_sites)
+            + program
+                .literal_templates
+                .iter()
+                .map(|steps| bytes::<crate::bytecode::LiteralStep>(steps))
+                .sum::<usize>()
             + bytes::<Superinstruction>(&program.superinstructions),
         sum(|function| function.register_roots.capacity_bytes()),
     );

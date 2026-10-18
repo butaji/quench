@@ -646,6 +646,15 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)]
+            pub(crate) fn literal_template_index(self) -> usize {
+                debug_assert_eq!(
+                    self.op().immediate_role(),
+                    ImmediateRole::LiteralTemplateIndex
+                );
+                self.imm() as usize
+            }
+
+            #[allow(dead_code)]
             pub(crate) fn superinstruction_index(self) -> usize {
                 debug_assert_eq!(
                     self.op().immediate_role(),
