@@ -148,6 +148,7 @@ impl<H: Host> Vm<H> {
             function_values: FxHashMap::default(),
             wasm_exported_functions: FxHashMap::default(),
             private_homes: FxHashMap::default(),
+            default_collation: None,
             wasm_js: Default::default(),
             direct_eval: false,
             direct_eval_var_program: None,
