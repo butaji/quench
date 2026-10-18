@@ -2208,31 +2208,155 @@ impl std::fmt::Debug for EnvironmentScopeRef {
 #[derive(Clone, Debug)]
 /// An environment's slots behind a one-word pointer, which keeps the environment cell within
 /// the common cell size.
+///
+/// Storage is dense, one `EnvironmentSlot` per slot, or sparse for a per-iteration copy of a
+/// wide environment (`SPARSE_CLONE_MIN_SLOTS`): `[environment_index(len), shared(owner),
+/// (environment_index(slot), slot)...]`. The listed slots are those that differ from sharing
+/// with the default owner, sorted by index; every other slot is shared with that owner. The
+/// slice header's mark tells the two apart, so a dense read tests one bit it loads anyway.
 pub(crate) struct EnvironmentSlots(pub(super) super::thin_slice::ThinBoxSlice<EnvironmentSlot>);
 
+/// A per-iteration copy of an environment with at least this many slots stores only the
+/// slots it does not share with one owner. A module root with thousands of bindings would
+/// otherwise copy every one into each loop iteration's environment a closure keeps; smaller
+/// environments stay dense, whose slot reads need no search.
+pub(crate) const SPARSE_CLONE_MIN_SLOTS: usize = 64;
+/// Where a sparse storage's listed pairs start: after its length and default owner.
+const SPARSE_ENTRIES_START: usize = 2;
+/// Words per listed sparse slot: its index, then the slot.
+const SPARSE_ENTRY_WORDS: usize = 2;
+
 impl EnvironmentSlots {
+    /// The logical length and default owner of sparse storage.
+    #[inline(always)]
+    fn sparse(&self) -> Option<(usize, Value)> {
+        if !self.0.marked() {
+            return None;
+        }
+        let length = self.0.first()?.0.as_environment_index()?;
+        let owner = self.0.get(1)?.0.shared_environment_owner()?;
+        Some((length as usize, owner))
+    }
+
+    /// The listed sparse entry for `slot`, as its storage position.
+    fn sparse_position(&self, slot: usize) -> Option<usize> {
+        let entries = self.0.len().saturating_sub(SPARSE_ENTRIES_START) / SPARSE_ENTRY_WORDS;
+        let index = |entry: usize| {
+            self.0[SPARSE_ENTRIES_START + entry * SPARSE_ENTRY_WORDS]
+                .0
+                .as_environment_index()
+                .expect("sparse entries start with their index") as usize
+        };
+        let (mut low, mut high) = (0, entries);
+        while low < high {
+            let middle = (low + high) / 2;
+            match index(middle).cmp(&slot) {
+                std::cmp::Ordering::Equal => return Some(SPARSE_ENTRIES_START + middle * SPARSE_ENTRY_WORDS + 1),
+                std::cmp::Ordering::Less => low = middle + 1,
+                std::cmp::Ordering::Greater => high = middle,
+            }
+        }
+        None
+    }
+
+    /// The owner a sparse storage's unlisted slots share.
+    pub(crate) fn default_owner(&self) -> Option<Value> {
+        self.sparse().map(|(_, owner)| owner)
+    }
     pub(crate) fn len(&self) -> usize {
-        self.0.len()
+        self.sparse().map_or(self.0.len(), |(length, _)| length)
     }
     pub(crate) fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.len() == 0
     }
-    /// The value of a slot this environment owns; a shared slot lives in its owner.
+    /// What `slot` holds: a value this environment owns, or the owner it shares the slot with.
     #[inline(always)]
-    pub(crate) fn owned(&self, slot: usize) -> Option<Value> {
+    pub(crate) fn state(&self, slot: usize) -> Option<EnvironmentSlotState> {
+        if self.0.marked() {
+            return self.sparse_state(slot);
+        }
+        Some(self.0.get(slot)?.state())
+    }
+    /// `state` of sparse storage, kept out of the dense read's line.
+    #[inline(never)]
+    fn sparse_state(&self, slot: usize) -> Option<EnvironmentSlotState> {
+        let (length, owner) = self.sparse()?;
+        if slot >= length {
+            return None;
+        }
+        Some(match self.sparse_position(slot) {
+            Some(position) => self.0[position].state(),
+            None => EnvironmentSlotState::Shared(owner),
+        })
+    }
+    /// This storage when it is dense, which a caller may then read with `dense_owned`.
+    #[inline(always)]
+    pub(crate) fn dense(&self) -> Option<&Self> {
+        (!self.0.marked()).then_some(self)
+    }
+    /// `owned` of storage `dense` returned, without testing its layout again.
+    #[inline(always)]
+    pub(crate) fn dense_owned(&self, slot: usize) -> Option<Value> {
+        debug_assert!(!self.0.marked());
         match self.0.get(slot)?.state() {
             EnvironmentSlotState::Owned(value) => Some(value),
             EnvironmentSlotState::Shared(_) => None,
         }
     }
-    pub(crate) fn roots(&self) -> impl Iterator<Item = Value> + '_ {
-        self.0.iter().map(|slot| match slot.state() {
-            EnvironmentSlotState::Owned(value) | EnvironmentSlotState::Shared(value) => value,
-        })
+    /// The value of a slot this environment owns; a shared slot lives in its owner.
+    #[inline(always)]
+    pub(crate) fn owned(&self, slot: usize) -> Option<Value> {
+        match self.state(slot)? {
+            EnvironmentSlotState::Owned(value) => Some(value),
+            EnvironmentSlotState::Shared(_) => None,
+        }
     }
-}
+    pub(crate) fn owned_mut(&mut self, slot: usize) -> Option<&mut Value> {
+        let position = match self.sparse() {
+            None => slot,
+            Some((length, _)) if slot < length => self.sparse_position(slot)?,
+            Some(_) => return None,
+        };
+        self.0.get_mut(position)?.owned_mut()
+    }
+    pub(crate) fn roots(&self) -> impl Iterator<Item = Value> + '_ {
+        // A sparse storage's index words are not values; its owner and slots are.
+        let sparse = self.0.marked();
+        self.0
+            .iter()
+            .filter(move |slot| !sparse || slot.0.as_environment_index().is_none())
+            .map(|slot| match slot.state() {
+                EnvironmentSlotState::Owned(value) | EnvironmentSlotState::Shared(value) => value,
+            })
+    }
 
-impl EnvironmentSlots {
+    /// Slots of `len`, each `slot(index)`, stored sparsely around `default_owner` when one is
+    /// given and `len` reaches `SPARSE_CLONE_MIN_SLOTS`. `None` when a slot is missing.
+    pub(crate) fn try_from_slots(
+        len: usize,
+        default_owner: Option<Value>,
+        mut slot: impl FnMut(usize) -> Option<EnvironmentSlot>,
+    ) -> Option<Self> {
+        let Some(owner) = default_owner.filter(|_| len >= SPARSE_CLONE_MIN_SLOTS) else {
+            return super::thin_slice::ThinBoxSlice::try_from_fn(len, slot).map(Self);
+        };
+        let shared = Value::shared_environment_slot(owner);
+        let mut words = vec![
+            EnvironmentSlot(Value::environment_index(u32::try_from(len).ok()?)),
+            EnvironmentSlot(shared),
+        ];
+        for index in 0..len {
+            let value = slot(index)?;
+            if value.0 != shared {
+                words.push(EnvironmentSlot(Value::environment_index(u32::try_from(index).ok()?)));
+                words.push(value);
+            }
+        }
+        let mut storage = super::thin_slice::ThinBoxSlice::from_exact_iter(words.into_iter());
+        storage.mark();
+        Some(Self(storage))
+    }
+
     /// Slots that own `values`, in order.
     pub(crate) fn from_values(values: impl ExactSizeIterator<Item = Value>) -> Self {
         Self(super::thin_slice::ThinBoxSlice::from_exact_iter(
