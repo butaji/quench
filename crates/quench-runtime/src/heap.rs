@@ -384,6 +384,10 @@ pub(crate) struct Heap {
     /// The live cells and backing-store bytes the last full collection left.
     live_after_full: usize,
     external_after_full: usize,
+    /// Whether the coming collection is minor, so allocations and barriers track young
+    /// cells: decided when a collection ends, withdrawn when backing-store growth makes a
+    /// full collection due (`should_full_collect`).
+    young_tracking: bool,
     threshold: usize,
     total_allocations: u64,
     collections: u64,
@@ -1049,6 +1053,7 @@ impl Heap {
         self.old_live = 0;
         self.live_after_full = 0;
         self.external_after_full = 0;
+        self.young_tracking = false;
         self.threshold = MINIMUM_GC_ALLOCATION_HEADROOM;
         self.total_allocations = 0;
         self.collections = 0;
@@ -1087,6 +1092,9 @@ impl Heap {
     /// Accounts new backing-store bytes; past the external budget a collection is due.
     pub(crate) fn charge_external_growth(&mut self, bytes: usize) {
         self.external_bytes += bytes;
+        if bytes != 0 && self.young_tracking && self.should_full_collect() {
+            self.young_tracking = false;
+        }
         self.external_since_collection = self.external_since_collection.saturating_add(bytes);
         if self.external_since_collection >= self.external_collection_budget {
             self.threshold = self.threshold.min(self.allocations);
@@ -1108,7 +1116,12 @@ impl Heap {
         !self.should_full_collect()
     }
     fn tracks_young_cells(&self) -> bool {
-        cfg!(test) || self.minor_collection_scheduled()
+        cfg!(test) || self.young_tracking
+    }
+    /// Whether the coming collection may be minor: young cells were tracked since the last
+    /// one and no full collection became due.
+    pub(crate) fn next_collection_is_minor(&self) -> bool {
+        self.tracks_young_cells() && self.minor_collection_scheduled()
     }
     /// The value survived a collection: its mark is kept until the next full collection.
     pub(crate) fn is_old(&self, value: Value) -> bool {
@@ -1418,6 +1431,7 @@ impl Heap {
             self.object_generation.young.clear();
             self.array_generation.young.clear();
         }
+        self.young_tracking = self.minor_collection_scheduled();
         // A minor collection's live count includes old garbage awaiting the next full one;
         // the nursery stays sized by the live set that full collection measured.
         self.threshold = gc_allocation_headroom(self.live_after_full);

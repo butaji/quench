@@ -255,7 +255,7 @@ impl<H: Host> Vm<H> {
         if !self.heap.should_collect() {
             return;
         }
-        let full = self.heap.should_full_collect();
+        let full = !self.heap.next_collection_is_minor();
         self.collect_slow(program, full);
     }
 
