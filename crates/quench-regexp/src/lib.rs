@@ -905,6 +905,15 @@ impl Subject {
     pub fn is_ascii_text_of(&self, text: &std::rc::Rc<str>) -> bool {
         matches!(&self.text, SubjectText::Ascii(own) if std::rc::Rc::ptr_eq(own, text))
     }
+
+    /// Whether this subject spells exactly the ASCII `text`, compared by content.
+    pub fn spells_ascii(&self, text: &str) -> bool {
+        match &self.text {
+            SubjectText::Ascii(own) => **own == *text,
+            SubjectText::Inline { length, bytes } => bytes[..usize::from(*length)] == *text.as_bytes(),
+            SubjectText::Wide { .. } => false,
+        }
+    }
 }
 
 pub fn validate_property_escapes(source: &str, flags_text: &str) -> Result<(), String> {
