@@ -2192,15 +2192,35 @@ mod tests {
         );
         assert_eq!(tier.native_entries(0), Some(2));
         assert_eq!(tier.direct_reference_entries(0), Some(1));
+        assert_eq!(
+            vm.invoke_wasm(&instance, 1, &[])
+                .unwrap_err()
+                .wasm_trap(),
+            Some(crate::WasmTrap::Unreachable)
+        );
+        assert_eq!(tier.native_entries(0), Some(3));
+        assert_eq!(tier.direct_reference_entries(0), Some(2));
 
-        // The root artifact only accelerates code. Every indirect call still
-        // resolves the current mutable table element before entering native code.
+        // The call-site cache has warmed with the exact table target. It must
+        // notice replacement before entering native code, then cache the new
+        // identity. Null still takes the authoritative resolver's trap path.
         let table = vm.wasm_table(&instance, 0).unwrap();
+        let original = vm.wasm_function(&instance, 0).unwrap();
+        assert_eq!(baseline.reference_call_cache_target(0), Some(original));
+        assert!(baseline.reference_cache_hits() > 0);
         let replacement = vm.wasm_function(&instance, 2).unwrap();
         vm.wasm_table_fill(table, 0, replacement, 1).unwrap();
         assert_eq!(
             vm.invoke_wasm(&instance, 1, &[]).unwrap(),
             Some(crate::WasmValue::I32(9))
+        );
+        assert_eq!(baseline.reference_call_cache_target(0), Some(replacement));
+        vm.wasm_table_fill(table, 0, Value::NULL, 1).unwrap();
+        assert_eq!(
+            vm.invoke_wasm(&instance, 1, &[])
+                .unwrap_err()
+                .wasm_trap(),
+            Some(crate::WasmTrap::UninitializedElement)
         );
     }
 
