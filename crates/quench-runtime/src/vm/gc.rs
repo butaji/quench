@@ -1,6 +1,7 @@
 use super::module::ModuleRecord;
 use super::promise::PromiseState;
 use super::*;
+use smallvec::SmallVec;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 // RayTrace's allocation trace shows about 40–43% of its shape table is
@@ -67,7 +68,8 @@ fn append_shape_roots(
             .into_iter()
             .flatten()
             .flat_map(|(key, attributes)| {
-                let (getter, setter) = attributes.functions(accessors);
+                // A slot getter is traced with its object's slots.
+                let (getter, setter) = attributes.functions(accessors, || None);
                 key.symbol_value()
                     .into_iter()
                     .chain([getter, setter].into_iter().flatten())
@@ -78,6 +80,12 @@ fn append_shape_roots(
 /// Parallel GC readers need only the immutable shape transition metadata.
 /// `Shape` also contains `Cell` and `OnceCell` caches, which this view never
 /// reads or mutates while workers are active.
+/// Edges kept outside their owner's cell (descriptors, promise and continuation tables),
+/// indexed by owner for the collection that derived them. Owners hold one or two such edges
+/// (doxbee-promise: 20k-55k owners at 1-2 edges each), so they stay inline.
+type OwnedRoots = FxHashMap<Value, SmallVec<[Value; OWNED_ROOTS_INLINE]>>;
+const OWNED_ROOTS_INLINE: usize = 2;
+
 struct ParallelShapeTrace<'a> {
     shapes: *const Shape,
     shape_count: usize,
@@ -85,7 +93,7 @@ struct ParallelShapeTrace<'a> {
     marked_shapes: &'a [AtomicU64],
     marked_constructor_shapes: &'a [AtomicU64],
     constructors: &'a [Value],
-    owned_roots: &'a FxHashMap<Value, Vec<Value>>,
+    owned_roots: &'a OwnedRoots,
     _shape_borrow: std::marker::PhantomData<&'a [Shape]>,
 }
 
@@ -125,12 +133,12 @@ impl ParallelShapeTrace<'_> {
         let word = shape_index / u64::BITS as usize;
         let mask = 1_u64 << (shape_index % u64::BITS as usize);
         if trace_kind == GcTraceKind::VerifyFull {
-            if shapes[shape_index].may_have_gc_roots {
+            if shapes[shape_index].facts.may_have_gc_roots() {
                 append_shape_roots(shapes, self.accessors, shape, roots);
             }
         } else if self.marked_shapes[word].load(Ordering::Relaxed) & mask == 0
             && self.marked_shapes[word].fetch_or(mask, Ordering::Relaxed) & mask == 0
-            && shapes[shape_index].may_have_gc_roots
+            && shapes[shape_index].facts.may_have_gc_roots()
         {
             append_shape_roots(shapes, self.accessors, shape, roots);
         }
@@ -165,13 +173,13 @@ fn append_compacted_shape(
         ShapeTransition::Dictionary { trigger } => Some(trigger),
         _ => shapes[parent as usize].dictionary_trigger,
     };
-    let parent_may_have_gc_roots = shapes[parent as usize].may_have_gc_roots;
+    let parent_facts = shapes[parent as usize].facts;
     shapes.push(Shape::child(
         Some(parent),
         transition,
         storage_len,
         dictionary_trigger,
-        parent_may_have_gc_roots,
+        parent_facts,
     ));
     if let Some(key) = cache_key {
         transitions.insert(shapes, parent, key, shape);
@@ -219,7 +227,7 @@ fn rebuild_shape(
         if let Some((_, attributes)) = entry
             && data.is_none()
         {
-            let attributes = ShapeAttributes::record(attributes.attributes(old_accessors), accessors);
+            let attributes = attributes.rehomed(old_accessors, accessors);
             parent = append_compacted_shape(
                 shapes,
                 transitions,
@@ -299,6 +307,10 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn collect_slow(&mut self, _program: &ResidualProgram, full: bool) {
         let full = self.heap.collection_is_full(full);
+        #[cfg(feature = "profile-memory")]
+        if std::env::var_os("QUENCH_FUNCTION_USE").is_some() {
+            self.report_function_use();
+        }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         let mut phase_started = std::time::Instant::now();
         self.constructed_shapes.fill(super::provenance::ConstructedShape::EMPTY);
@@ -313,7 +325,15 @@ impl<H: Host> Vm<H> {
         }
         // Out-of-cell metadata belongs to its object. Derive the edge index for
         // this collection and visit it only when the owner becomes reachable.
-        let mut owned_roots: FxHashMap<Value, Vec<Value>> = FxHashMap::default();
+        let mut owned_roots = OwnedRoots::with_capacity_and_hasher(
+            self.gc_owned_root_count,
+            Default::default(),
+        );
+        let mut own = |owner: Value, edge: Value| {
+            if edge.heap_index().is_some() {
+                owned_roots.entry(owner).or_default().push(edge);
+            }
+        };
         let attached_continuations: FxHashSet<_> = self
             .realm
             .promise
@@ -321,33 +341,24 @@ impl<H: Host> Vm<H> {
             .values()
             .map(|job| job.continuation)
             .collect();
-        let continuation_edges =
-            self.realm
-                .promise
-                .async_resume_jobs
-                .iter()
-                .flat_map(|(owner, job)| {
-                    self.suspended_continuation(job.continuation)
-                        .into_iter()
-                        .flat_map(Continuation::roots)
-                        .map(move |edge| (*owner, edge))
-                });
-        let descriptor_edges = self
-            .descriptors
-            .iter()
-            .flat_map(|((owner, key), attributes)| {
-                key.symbol_value()
-                    .into_iter()
-                    .chain([attributes.getter, attributes.setter].into_iter().flatten())
-                    .map(move |edge| (*owner, edge))
-            });
-        for (owner, edge) in descriptor_edges
-            .chain(self.realm.promise.owned_edges())
-            .chain(continuation_edges)
-            .filter(|(_, edge)| edge.heap_index().is_some())
-        {
-            owned_roots.entry(owner).or_default().push(edge);
+        for ((owner, key), attributes) in &self.descriptors {
+            for edge in key
+                .symbol_value()
+                .into_iter()
+                .chain([attributes.getter, attributes.setter].into_iter().flatten())
+            {
+                own(*owner, edge);
+            }
         }
+        self.realm.promise.for_each_owned_edge(&mut own);
+        for (owner, job) in &self.realm.promise.async_resume_jobs {
+            if let Some(continuation) = self.suspended_continuation(job.continuation) {
+                for edge in continuation.roots() {
+                    own(*owner, edge);
+                }
+            }
+        }
+        self.gc_owned_root_count = owned_roots.len();
         let external_roots = if full {
             Vec::new()
         } else {
@@ -679,18 +690,10 @@ impl<H: Host> Vm<H> {
             // A missing map means the function uses a register form
             // the liveness pass cannot represent; keep the safe
             // conservative scan for that activation.
-            let register_mask = self.programs.get(frame.program).and_then(|program| {
-                let function = program.functions.get(frame.function as usize)?;
-                (function.register_root_offset != crate::bytecode::NO_REGISTER_ROOT_MAP)
-                    .then(|| {
-                        program.register_roots.mask(
-                            function.register_root_offset,
-                            function.registers,
-                            frame.pc,
-                        )
-                    })
-                    .flatten()
-            });
+            let register_mask = self
+                .programs
+                .residual(frame.program)
+                .and_then(|program| program.register_root_mask(frame.function, frame.pc));
             [frame.env, frame.this]
                 .into_iter()
                 .chain(frame.context.callee())
@@ -870,6 +873,9 @@ impl<H: Host> Vm<H> {
         }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         self.heap.record_vm_gc_phase(3, after_collection_started);
+        if full {
+            self.host.after_full_collection();
+        }
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("QUENCH_MEMORY_PEAK").is_some() {
             let phase = format!("gc_{}_after", self.heap.collection_count());
@@ -1103,7 +1109,7 @@ mod tests {
     #[test]
     fn shape_gc_root_fact_is_inherited_from_symbol_and_accessor_transitions() {
         let root = Shape::root();
-        assert!(!root.may_have_gc_roots);
+        assert!(!root.facts.may_have_gc_roots());
         let string_key = Shape::child(
             Some(0),
             ShapeTransition::Add {
@@ -1113,9 +1119,9 @@ mod tests {
             },
             1,
             None,
-            root.may_have_gc_roots,
+            root.facts,
         );
-        assert!(!string_key.may_have_gc_roots);
+        assert!(!string_key.facts.may_have_gc_roots());
 
         let symbol_key = PropertyKey::symbol(Value::heap(1));
         let symbol_shape = Shape::child(
@@ -1127,9 +1133,9 @@ mod tests {
             },
             1,
             None,
-            root.may_have_gc_roots,
+            root.facts,
         );
-        assert!(symbol_shape.may_have_gc_roots);
+        assert!(symbol_shape.facts.may_have_gc_roots());
         let deleted_symbol_shape = Shape::child(
             Some(1),
             ShapeTransition::Delete {
@@ -1138,27 +1144,38 @@ mod tests {
             },
             1,
             None,
-            symbol_shape.may_have_gc_roots,
+            symbol_shape.facts,
         );
-        assert!(deleted_symbol_shape.may_have_gc_roots);
+        assert!(deleted_symbol_shape.facts.may_have_gc_roots());
 
-        let attributes = ShapeAttributes::record(
-            PropertyAttributes {
-                getter: Some(Value::heap(2)),
-                ..DEFAULT_PROPERTY_ATTRIBUTES
-            },
-            &mut Vec::new(),
-        );
-        let accessor_shape = Shape::child(
-            Some(1),
-            ShapeTransition::Descriptor {
-                slot: 0,
-                attributes,
-            },
-            1,
-            Some(DictionaryTrigger::PropertyCount),
-            string_key.may_have_gc_roots,
-        );
-        assert!(accessor_shape.may_have_gc_roots);
+        let accessor_shape = |getter, setter| {
+            let attributes = ShapeAttributes::record(
+                PropertyAttributes {
+                    accessor: true,
+                    getter,
+                    setter,
+                    ..DEFAULT_PROPERTY_ATTRIBUTES
+                },
+                &mut Vec::new(),
+            );
+            Shape::child(
+                Some(1),
+                ShapeTransition::Descriptor {
+                    slot: 0,
+                    attributes,
+                },
+                1,
+                Some(DictionaryTrigger::PropertyCount),
+                string_key.facts,
+            )
+        };
+        // A getter and a setter live in the shape's accessor table, which the shape roots.
+        let table_accessor = accessor_shape(Some(Value::heap(2)), Some(Value::heap(3)));
+        assert!(table_accessor.facts.may_have_gc_roots());
+        assert!(!table_accessor.facts.slot_getters());
+        // A lone getter lives in its object's slot, traced with the object.
+        let slot_getter = accessor_shape(Some(Value::heap(2)), None);
+        assert!(!slot_getter.facts.may_have_gc_roots());
+        assert!(slot_getter.facts.slot_getters());
     }
 }

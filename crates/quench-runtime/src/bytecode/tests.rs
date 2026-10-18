@@ -130,7 +130,7 @@ fn decoder_rejects_out_of_range_local_load() {
             params: 0,
             length: 0,
             parameter_end_pc: 0,
-            parameter_atoms: vec![],
+            parameter_atoms: vec![].into(),
             rest: false,
             is_async: false,
             is_generator: false,
@@ -145,21 +145,17 @@ fn decoder_rejects_out_of_range_local_load() {
             simple_parameters: true,
             strict: false,
             locals: 1,
-            local_atoms: vec![],
-            environment_atoms: vec![],
+            local_atoms: vec![].into(),
+            environment_atoms: vec![].into(),
             selective_capture_slots: None,
-            local_registers: Vec::new(),
+            local_registers: Vec::new().into(),
             inherited_with_scope: false,
-            lexical_atoms: vec![],
-            global_lexical_atoms: vec![],
-            global_var_atoms: vec![],
-            global_function_atoms: vec![],
-            global_annex_b_var_atoms: vec![],
-            global_immutable_atoms: vec![],
+            lexical_atoms: vec![].into(),
+            global_declarations: None,
             name_bindings: Default::default(),
-            binding_sites: vec![],
+            binding_sites: vec![].into(),
             source_positions: Default::default(),
-            environment_clones: vec![],
+            environment_clones: vec![].into(),
             code: vec![Instr::new(Op::LoadLocal, 0, 0, 0, 1)],
             wide: vec![],
             registers: 1,
@@ -171,8 +167,8 @@ fn decoder_rejects_out_of_range_local_load() {
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
             call_plan: Default::default(),
-            handlers: vec![],
-            register_root_offset: 0,
+            handlers: vec![].into(),
+            register_roots: Default::default(),
             undefined_register: None,
             parameter_registers: None,
             initial_register: Default::default(),
@@ -184,7 +180,6 @@ fn decoder_rejects_out_of_range_local_load() {
         object_sites: vec![],
         regexp_literal_sites: vec![],
         superinstructions: vec![],
-        register_roots: Default::default(),
     };
     let path = std::env::temp_dir().join(format!("quench-invalid-local-{}", std::process::id()));
     program.write_binary(&path).unwrap();
@@ -215,7 +210,7 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             params: 0,
             length: 0,
             parameter_end_pc: 0,
-            parameter_atoms: vec![],
+            parameter_atoms: vec![].into(),
             rest: false,
             is_async: false,
             is_generator: false,
@@ -230,21 +225,17 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             simple_parameters: true,
             strict: false,
             locals: 0,
-            local_atoms: vec![],
-            environment_atoms: vec![],
+            local_atoms: vec![].into(),
+            environment_atoms: vec![].into(),
             selective_capture_slots: None,
-            local_registers: Vec::new(),
+            local_registers: Vec::new().into(),
             inherited_with_scope: false,
-            lexical_atoms: vec![],
-            global_lexical_atoms: vec![],
-            global_var_atoms: vec![],
-            global_function_atoms: vec![],
-            global_annex_b_var_atoms: vec![],
-            global_immutable_atoms: vec![],
+            lexical_atoms: vec![].into(),
+            global_declarations: None,
             name_bindings: Default::default(),
-            binding_sites: vec![],
+            binding_sites: vec![].into(),
             source_positions: Default::default(),
-            environment_clones: vec![],
+            environment_clones: vec![].into(),
             code: vec![Instr::new(Op::Return, 0, 0, 0, 0)],
             wide: vec![],
             registers: 1,
@@ -256,8 +247,8 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
             call_plan: Default::default(),
-            handlers: vec![],
-            register_root_offset: u32::MAX,
+            handlers: vec![].into(),
+            register_roots: Default::default(),
             undefined_register: None,
             parameter_registers: None,
             initial_register: Default::default(),
@@ -269,7 +260,6 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
         object_sites: vec![],
         regexp_literal_sites: vec![],
         superinstructions: vec![],
-        register_roots: Default::default(),
     };
     let path = std::env::temp_dir().join(format!("quench-invalid-abi-{}", std::process::id()));
     program.write_binary(&path).unwrap();
@@ -436,9 +426,11 @@ fn decoder_rejects_invalid_binding_site_metadata() {
                 function.binding_sites[0].bindings[0].location =
                     EvalBindingLocation::Local(function.locals)
             }
-            3 => function
-                .binding_sites
-                .insert(0, function.binding_sites[0].clone()),
+            3 => {
+                let mut sites = function.binding_sites.to_vec();
+                sites.insert(0, sites[0].clone());
+                function.binding_sites = sites.into();
+            }
             _ => unreachable!(),
         }
         invalid.write_binary(&path).unwrap();
@@ -482,16 +474,41 @@ fn fused_field_source_locations_survive_binary_round_trip_and_validate_coordinat
 fn source_lines_share_javascript_boundaries_and_preserve_wrapper_origins() {
     let text = "a\r\nb\rc\nd\u{2028}e\u{2029}";
     assert_eq!(super::source_line_starts(text).collect::<Vec<_>>(), [0, 3, 5, 7, 11, 15]);
-    let source = super::ProgramSource { text: text.into(), line_offset: 0, column_offset: 0 };
+    let source = super::ProgramSource {
+        text: super::SourceText::Shared(text.into()),
+        base: 0,
+        line_offset: 0,
+        column_offset: 0,
+    };
     for (index, expected) in ["a", "b", "c", "d", "e", ""].into_iter().enumerate() {
         assert_eq!(source.source_line(index as u32 + 1), Some(expected));
     }
     assert_eq!(source.source_line(7), None);
     assert_eq!(source.source_line(0), None);
-    let wrapped = super::ProgramSource { text: "wrapper\r\n😀first\rsecond\u{2028}third".into(), line_offset: 1, column_offset: 2 };
+    let wrapped = super::ProgramSource {
+        text: super::SourceText::Shared("wrapper\r\n😀first\rsecond\u{2028}third".into()),
+        base: 0,
+        line_offset: 1,
+        column_offset: 2,
+    };
     assert_eq!(wrapped.source_line(1), Some("first"));
     assert_eq!(wrapped.source_line(2), Some("second"));
     assert_eq!(wrapped.source_line(3), Some("third"));
+    // A static body kept without its wrapper prefix starts at the wrapper origin.
+    let prefix = "(function () {\n  ";
+    let body = "first\nsecond";
+    let (line_offset, column_offset) = crate::wrapper_origin(prefix).unwrap();
+    let retained = super::ProgramSource {
+        text: super::SourceText::Static(body),
+        base: prefix.len() as u32,
+        line_offset,
+        column_offset,
+    };
+    assert_eq!(retained.source_line(1), Some("first"));
+    assert_eq!(retained.source_line(2), Some("second"));
+    let second = (prefix.len() + body.find("second").unwrap()) as u32;
+    assert_eq!(retained.slice(second, second + 6), Some("second"));
+    assert_eq!(retained.slice(0, second), None);
 }
 
 #[test]

@@ -21,10 +21,12 @@ mod records;
 mod root;
 mod slots;
 mod thin_slice;
+pub(crate) use thin_slice::ThinBoxSlice;
 mod weak;
 pub(crate) use cell::*;
 pub(crate) use buffer_bytes::{BufferBytes,BufferRead};
 pub(crate) use collection_entries::CollectionEntries;
+use external::array_payload_bytes;
 use records::{ArrayRecordSpace, ObjectRecordSpace, RecordSweep};
 pub use root::RootId;
 pub(crate) use root::{RootTable, WeakHandle};
@@ -37,12 +39,20 @@ use slots::{FreeSlotBitmap, SLOTS_PER_SLAB, SlotArena};
 const DENSE_ARRAY_HOLE_BUDGET_BYTES: usize = 256 * 1024;
 const MAX_DENSE_ARRAY_HOLE_LENGTH: usize = DENSE_ARRAY_HOLE_BUDGET_BYTES / size_of::<Value>();
 use pacing::pacing;
+#[inline(always)]
+fn payload_unit() -> usize {
+    #[cfg(feature = "gc-tuning")]
+    return *PAYLOAD_BYTES_PER_ALLOCATION_TUNED;
+    #[cfg(not(feature = "gc-tuning"))]
+    PAYLOAD_BYTES_PER_ALLOCATION
+}
 /// The fewest allocations after which a collection is full on a small heap.
 #[cfg(test)]
 pub(crate) const FULL_COLLECTION_ALLOCATION_BOUND: usize =
     pacing::PRODUCTION_PACING.minimum_allocation_cap;
 /// Payload bytes beside a cell (string units, array elements) that weigh as one more
 /// allocation toward the next collection.
+#[cfg(not(feature = "gc-tuning"))]
 const PAYLOAD_BYTES_PER_ALLOCATION: usize = 64;
 /// Backing-store bytes (ArrayBuffer contents) allocated since the last collection that
 /// make the next one due, at least; the budget grows to the live external bytes a
@@ -52,6 +62,11 @@ const PAYLOAD_BYTES_PER_ALLOCATION: usize = 64;
 /// SaltyAom video route (64 KiB chunks, Linux x86_64, 4 vCPU) one collection per
 /// 64 KiB buffer cut peak RSS 112 -> 47 MB and throughput by two thirds.
 const MINIMUM_EXTERNAL_COLLECTION_BUDGET: usize = 8 << 20;
+/// Diagnostic builds read the unit from `QUENCH_GC_PAYLOAD_UNIT` to measure it.
+#[cfg(feature = "gc-tuning")]
+static PAYLOAD_BYTES_PER_ALLOCATION_TUNED: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
+    std::env::var("QUENCH_GC_PAYLOAD_UNIT").ok().and_then(|v| v.parse().ok()).unwrap_or(64)
+});
 const PARALLEL_MARK_MINIMUM_SLOTS: usize = 50_000;
 const PARALLEL_MARK_MAX_THREADS: usize = 4;
 // Paired Splay screens on the 4-vCPU Linux host favored the collector thread;
@@ -141,6 +156,7 @@ impl<'slots> ParallelSweepSlab<'slots> {
             let index = self.base + offset;
             if Heap::marked(marks, index) {
                 result.live += 1;
+                result.live_payload_bytes += cell.payload_bytes();
                 if let Some(object) = cell.object() {
                     if object.properties().has_compact_range() {
                         result
@@ -181,12 +197,15 @@ struct ParallelSweepResult {
     sparse_arrays: Vec<u32>,
     rc_cells: Vec<StoppedCellDrop>,
     external_bytes: usize,
+    live_payload_bytes: usize,
     swept_slots: usize,
 }
 
 #[derive(Default)]
 struct SweepOutput {
     live: usize,
+    /// Payload of the surviving cells, summed by full sweeps only.
+    live_payload_bytes: usize,
     property_owners: Vec<u64>,
     freed_cells: usize,
     swept_slots: usize,
@@ -299,6 +318,10 @@ pub(crate) struct Heap {
     external_bytes: usize,
     allocations: usize,
     allocations_since_full: usize,
+    /// Payload the live and not yet swept cells and records own (`Cell::payload_bytes`):
+    /// allocation and growth add it, reclamation subtracts it. Pacing measures live
+    /// weight with it, in the units allocation is charged in.
+    payload_bytes: usize,
     /// Payload bytes grown since the last charge, below one allocation's weight.
     uncharged_payload_bytes: usize,
     /// What the last full collection kept, which the generational pacing grows from.
@@ -306,9 +329,8 @@ pub(crate) struct Heap {
     /// The next collection traces the whole heap.
     full_due: bool,
     pacing_state: pacing::PacingState,
-    /// Live count after, and cells allocated before, the previous collection.
-    live_after_previous: usize,
-    allocations_at_previous: u64,
+    /// Live weight after the previous collection.
+    live_weight_after_previous: usize,
     /// Backing-store bytes allocated since the last collection, against its budget.
     external_since_collection: usize,
     external_collection_budget: usize,
@@ -479,13 +501,13 @@ pub(crate) struct GcProfile {
     pub full_mark_nanos: u64,
     pub minor_mark_nanos: u64,
     pub sweep_nanos: u64,
+    /// The sweep's phases: slot cells, direct records, and property-arena compaction.
+    pub sweep_phase_nanos: [u64; 3],
     pub mark_clear_nanos: u64,
     /// VM-side collection phases: owner edges, root gathering, shape-trace setup, and
     /// the work after the heap collection.
     pub vm_phase_nanos: [u64; 4],
-    #[cfg(feature = "profile-aggregate")]
     pub full_collections: u64,
-    #[cfg(feature = "profile-aggregate")]
     pub minor_collections: u64,
     #[cfg(feature = "profile-aggregate")]
     pub remembered_owner_scans: u64,
@@ -532,11 +554,10 @@ impl Default for GcProfile {
             full_mark_nanos: 0,
             minor_mark_nanos: 0,
             sweep_nanos: 0,
+            sweep_phase_nanos: [0; 3],
             mark_clear_nanos: 0,
             vm_phase_nanos: [0; 4],
-            #[cfg(feature = "profile-aggregate")]
             full_collections: 0,
-            #[cfg(feature = "profile-aggregate")]
             minor_collections: 0,
             #[cfg(feature = "profile-aggregate")]
             remembered_owner_scans: 0,
@@ -704,6 +725,16 @@ impl Heap {
         }
     }
 
+    /// Every live legacy cell, without needing `&mut` (census and diagnostics).
+    #[cfg(feature = "profile-gc-time")]
+    pub(crate) fn for_each_live_cell(&self, mut visit: impl FnMut(&Cell)) {
+        for slot in self.slots.iter() {
+            if let Some(cell) = &slot.cell {
+                visit(cell);
+            }
+        }
+    }
+
     pub(crate) fn live_slots(&self) -> usize {
         self.slots.len() - self.free_slots
             + self.object_records.live_count()
@@ -764,13 +795,9 @@ impl Heap {
             self.gc_profile.allocated_payload_bytes[kind] += bytes as u64;
             self.gc_profile.allocated_size_buckets[kind][Self::size_bucket(bytes)] += 1;
         }
-        let weight = 1 + match &cell {
-            Cell::String(text) => text.flat_unit_bytes() / PAYLOAD_BYTES_PER_ALLOCATION,
-            Cell::Array { object } => {
-                object.elements().capacity() * size_of::<Value>() / PAYLOAD_BYTES_PER_ALLOCATION
-            }
-            cell => cell.external_bytes() / PAYLOAD_BYTES_PER_ALLOCATION,
-        };
+        let payload = cell.payload_bytes();
+        let weight = 1 + payload / payload_unit();
+        self.payload_bytes = self.payload_bytes.saturating_add(payload);
         self.allocations += weight;
         self.allocations_since_full = self.allocations_since_full.saturating_add(weight);
         let track_young = self.tracks_young_cells();
@@ -959,7 +986,7 @@ impl Heap {
         slot_owners: Vec<u64>,
         direct_owners: Vec<(usize, Value)>,
     ) {
-        if !self.properties.has_released_ranges() {
+        if !self.properties.compaction_due() {
             return;
         }
         #[cfg(feature = "profile-memory")]
@@ -1020,13 +1047,13 @@ impl Heap {
         self.external_bytes = 0;
         self.external_since_collection = 0;
         self.external_collection_budget = MINIMUM_EXTERNAL_COLLECTION_BUDGET;
+        self.payload_bytes = 0;
         self.allocations = 0;
         self.allocations_since_full = 0;
         self.live_after_full = 0;
         self.full_due = false;
         self.pacing_state = pacing::PacingState::default();
-        self.live_after_previous = 0;
-        self.allocations_at_previous = 0;
+        self.live_weight_after_previous = 0;
         self.old_live = 0;
         self.threshold = pacing().minimum_young;
         self.total_allocations = 0;
@@ -1059,9 +1086,10 @@ impl Heap {
     /// Charges payload a live cell grew outside `alloc` (array elements) toward the next
     /// collection, at the weight `alloc` gives a cell's own payload.
     pub(crate) fn charge_payload_growth(&mut self, bytes: usize) {
+        self.payload_bytes = self.payload_bytes.saturating_add(bytes);
         let pending = self.uncharged_payload_bytes.saturating_add(bytes);
-        let weight = pending / PAYLOAD_BYTES_PER_ALLOCATION;
-        self.uncharged_payload_bytes = pending % PAYLOAD_BYTES_PER_ALLOCATION;
+        let weight = pending / payload_unit();
+        self.uncharged_payload_bytes = pending % payload_unit();
         self.allocations += weight;
         self.allocations_since_full = self.allocations_since_full.saturating_add(weight);
     }
@@ -1151,13 +1179,16 @@ impl Heap {
         let mark_started = std::time::Instant::now();
         #[cfg(feature = "profile-aggregate")]
         let mark_clear_started = std::time::Instant::now();
-        #[cfg(feature = "profile-aggregate")]
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         if full {
             self.gc_profile.full_collections += 1;
         } else {
             self.gc_profile.minor_collections += 1;
-            self.gc_profile.remembered_owner_scans += self.remembered.len() as u64;
-            self.gc_profile.young_cells_swept += self.young.len() as u64;
+            #[cfg(feature = "profile-aggregate")]
+            {
+                self.gc_profile.remembered_owner_scans += self.remembered.len() as u64;
+                self.gc_profile.young_cells_swept += self.young.len() as u64;
+            }
         }
         if full {
             Self::clear_marks(&self.marks);
@@ -1295,6 +1326,7 @@ impl Heap {
         };
         let SweepOutput {
             mut live,
+            mut live_payload_bytes,
             property_owners,
             freed_cells,
             swept_slots,
@@ -1309,6 +1341,13 @@ impl Heap {
             0
         });
         let legacy_live = live;
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        let records_started = std::time::Instant::now();
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        {
+            self.gc_profile.sweep_phase_nanos[0] +=
+                (records_started - sweep_started).as_nanos() as u64;
+        }
         {
             #[cfg(feature = "profile-aggregate")]
             {
@@ -1318,6 +1357,7 @@ impl Heap {
             #[cfg(feature = "profile-memory")]
             let memory_profile = &mut self.memory_profile;
             let properties = &mut self.properties;
+            let payload_bytes = &mut self.payload_bytes;
             let (object_live, object_freed) = self.object_records.sweep(|record| match record {
                 RecordSweep::Keep(record_id, object) => {
                     if full && object.properties().has_compact_range() {
@@ -1338,6 +1378,9 @@ impl Heap {
             let mut dead_arrays = Vec::new();
             let (array_live, array_freed) = self.array_records.sweep(|record| match record {
                 RecordSweep::Keep(record_id, array) => {
+                    if full {
+                        live_payload_bytes += array_payload_bytes(array);
+                    }
                     if full && array.properties().has_compact_range() {
                         direct_property_owners.push((
                             array.properties().start_offset(),
@@ -1346,6 +1389,7 @@ impl Heap {
                     }
                 }
                 RecordSweep::Dead(record_id, array) => {
+                    *payload_bytes = payload_bytes.saturating_sub(array_payload_bytes(&array));
                     #[cfg(feature = "profile-memory")]
                     let slots = properties.len(array.properties());
                     properties.release(array.properties());
@@ -1376,15 +1420,28 @@ impl Heap {
             self.gc_profile.freed += freed_cells as u64;
         }
         let _ = (freed_cells, swept_slots);
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        {
+            self.gc_profile.sweep_phase_nanos[1] += records_started.elapsed().as_nanos() as u64;
+        }
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        let compaction_started = std::time::Instant::now();
         if full {
+            // A full sweep recounts the ledger from the survivors: shrinking a live array
+            // (truncation, `pop`, `splice`) is not charged back between full collections.
+            self.payload_bytes = live_payload_bytes;
             self.property_owner_counts = (property_owners.len(), direct_property_owners.len());
             self.compact_property_arena(property_owners, direct_property_owners);
         }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         {
+            self.gc_profile.sweep_phase_nanos[2] += compaction_started.elapsed().as_nanos() as u64;
             self.gc_profile.sweep_nanos += sweep_started.elapsed().as_nanos() as u64;
         }
-        self.allocations = 0;
+        // Live weight in the units allocation is charged in: one per cell or record plus
+        // its payload.
+        let live_weight = live + self.payload_bytes / payload_unit();
+        let allocated = std::mem::take(&mut self.allocations);
         self.external_since_collection = 0;
         self.external_collection_budget = self.external_bytes.max(MINIMUM_EXTERNAL_COLLECTION_BUDGET);
         if full {
@@ -1402,14 +1459,26 @@ impl Heap {
             pacing::CollectionOutcome {
                 full,
                 live,
-                previous_live: self.live_after_previous,
+                live_weight,
+                previous_live_weight: self.live_weight_after_previous,
                 live_after_full: self.live_after_full,
-                allocated: (self.total_allocations - self.allocations_at_previous) as usize,
+                allocated,
                 since_full: self.allocations_since_full,
             },
         );
-        self.live_after_previous = live;
-        self.allocations_at_previous = self.total_allocations;
+        #[cfg(all(feature = "gc-tuning", feature = "profile-gc-time"))]
+        if full && std::env::var_os("QUENCH_GC_TRACE").is_some() {
+            // Diagnostic recount of the payload ledger after a full sweep.
+            let mut exact = 0;
+            self.for_each_live_cell(|cell| exact += cell.payload_bytes());
+            self.array_records.for_each_live(|_, array| exact += array_payload_bytes(array));
+            eprintln!("gc payload ledger={} exact={exact}", self.payload_bytes);
+        }
+        #[cfg(feature = "gc-tuning")]
+        if std::env::var_os("QUENCH_GC_TRACE").is_some() {
+            eprintln!("gc full={full} live={live} prev={} after_full={} alloc={} since_full={} next={next:?} state={:?}", self.live_weight_after_previous, self.live_after_full, allocated, self.allocations_since_full, self.pacing_state);
+        }
+        self.live_weight_after_previous = live_weight;
         self.threshold = next.threshold;
         self.full_due = next.full;
         #[cfg(feature = "profile-aggregate")]
@@ -1475,6 +1544,7 @@ impl Heap {
                     sparse_arrays,
                     rc_cells,
                     external_bytes,
+                    live_payload_bytes,
                     swept_slots,
                 } = result;
                 let freed_cells = free_slots.len();
@@ -1499,6 +1569,7 @@ impl Heap {
                     cell.drop_on_owner();
                 }
                 output.live += live;
+                output.live_payload_bytes += live_payload_bytes;
                 output.property_owners.extend(property_owners);
                 output.freed_cells += freed_cells;
                 output.swept_slots += swept_slots;
@@ -1510,6 +1581,7 @@ impl Heap {
 
     fn sweep_serial(&mut self, full: bool) -> SweepOutput {
         let mut live = 0;
+        let mut live_payload_bytes = 0;
         let mut freed_cells = 0;
         let mut swept_slots = 0;
         let properties = &mut self.properties;
@@ -1520,6 +1592,7 @@ impl Heap {
         });
         {
             let external_bytes = &mut self.external_bytes;
+            let payload_bytes = &mut self.payload_bytes;
             let free_by_slab = &mut self.free_by_slab;
             let free_slabs = &mut self.free_slabs;
             let free_slot_count = &mut self.free_slots;
@@ -1528,6 +1601,7 @@ impl Heap {
             let memory_profile = &mut self.memory_profile;
             let mut reclaim = |properties: &mut ValueArena, index: usize, cell: Cell| {
                 *external_bytes = external_bytes.saturating_sub(cell.external_bytes());
+                *payload_bytes = payload_bytes.saturating_sub(cell.payload_bytes());
                 #[cfg(feature = "profile-memory")]
                 {
                     let object_slots = cell
@@ -1559,6 +1633,7 @@ impl Heap {
                         swept_slots += 1;
                         if Self::marked(&self.marks, index) {
                             live += 1;
+                            live_payload_bytes += slot.cell.as_ref().map_or(0, Cell::payload_bytes);
                             if let Some(object) = slot.cell.as_ref().and_then(Cell::object) {
                                 if properties.has_compact_range(object.properties()) {
                                     property_owners_for_sweep.push(pack_offset_owner(
@@ -1600,6 +1675,7 @@ impl Heap {
         }
         SweepOutput {
             live,
+            live_payload_bytes,
             property_owners: property_owners_for_sweep,
             freed_cells,
             swept_slots,
@@ -2559,11 +2635,7 @@ impl Heap {
             } => {
                 work.push(*parent);
                 work.extend(slots.roots());
-                let crate::heap::EnvironmentScope {
-                    dynamic_bindings,
-                    with_objects,
-                    ..
-                } = &**scope;
+                let (dynamic_bindings, with_objects) = (scope.dynamic_bindings(), scope.with_objects());
                 match dynamic_bindings {
                     EnvironmentBindings::Owned(bindings) => {
                         work.extend(bindings.iter().map(|(_, value)| *value));
@@ -2750,7 +2822,7 @@ impl Heap {
                 Cell::WeakSet { entries, .. } => entries.capacity() * size_of::<Value>(),
                 Cell::Function { .. } => size_of::<Object>(),
                 Cell::Environment { slots, scope, .. } => {
-                    let with_objects = &scope.with_objects;
+                    let with_objects = scope.with_objects();
                     slots.len() * size_of::<EnvironmentSlot>()
                         + with_objects.len() * size_of::<Value>()
                 }

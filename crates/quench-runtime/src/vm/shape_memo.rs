@@ -8,9 +8,11 @@
 use std::cell::Cell;
 use std::hash::{Hash, Hasher};
 
-/// Direct-mapped entries: a power of two, at most 32 bytes each about 128 KiB, which holds
-/// the working set of the Node HTTP stack's shaped objects and their prototypes.
-const SHAPE_MEMO_ENTRIES: usize = 1 << 12;
+/// Direct-mapped entries: a power of two. Every VM fills each memo when it starts, so the
+/// table is resident from then on: memory-first (TOD-123), 1024 entries, a quarter of the
+/// 4096 sized for the Node HTTP stack's working set, which cost 80 KiB of anon memory for
+/// the two memos in every run.
+const SHAPE_MEMO_ENTRIES: usize = 1 << 10;
 
 /// One question kind about shapes: `K` names what is asked of a shape, `V` is the answer.
 pub(super) struct ShapeMemo<K: Copy + Eq + Hash, V: Copy> {

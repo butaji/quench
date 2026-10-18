@@ -213,7 +213,10 @@ impl<H: Host> Vm<H> {
             && let Some((shape, slot)) = self.instanceof_constructor_layout
             && shape == object.shape()
             && object.proto() == self.instanceof_has_instance_holder
-            && let Some(prototype) = self.heap.property_get(object, slot)
+            // SAFETY: the memo names the slot of `prototype` in the shape it holds, which is
+            // never a dictionary's, so the slot exists.
+            && let Some(prototype) = unsafe { self.heap.property_get_shaped(object, slot) }
+                .filter(|prototype| !prototype.is_deleted())
             && prototype.direct_object_index().is_some()
         {
             let Some(record) = value.direct_object_index() else {
@@ -264,8 +267,7 @@ impl<H: Host> Vm<H> {
                 self.heap.property_get(self.object_data(constructor)?, slot)?
             }
         };
-        if holder != self.instanceof_has_instance_holder && !self.verify_has_instance_holder(holder)
-        {
+        if !self.inherits_native_has_instance(holder) {
             return None;
         }
         if !self.is_object_like(value) {
@@ -319,6 +321,38 @@ impl<H: Host> Vm<H> {
 
     /// Whether `holder`'s `@@hasInstance` is the native `Function.prototype[@@hasInstance]`
     /// as a data property; remembers a holder whose property can never change.
+    /// Whether the `@@hasInstance` a constructor with prototype `holder` inherits is the
+    /// native one held as data (`verify_has_instance_holder`): the first object on the chain
+    /// with an own `@@hasInstance` holds it, and no proxy precedes it. A subclass constructor
+    /// inherits it through its parent constructors.
+    fn inherits_native_has_instance(&mut self, holder: Value) -> bool {
+        let Some(&symbol) = self.well_known_symbols.get("hasInstance") else {
+            return false;
+        };
+        let mut current = holder;
+        loop {
+            if current == self.instanceof_has_instance_holder {
+                return true;
+            }
+            if matches!(self.heap.get(current), Some(Cell::Proxy { .. })) {
+                return false;
+            }
+            if self
+                .property_attributes(current, PropertyKey::symbol(symbol))
+                .is_some()
+            {
+                return self.verify_has_instance_holder(current);
+            }
+            let Some(object) = self.heap.object(current) else {
+                return false;
+            };
+            current = object.proto();
+            if current.is_null() {
+                return false;
+            }
+        }
+    }
+
     fn verify_has_instance_holder(&mut self, holder: Value) -> bool {
         let Some(&symbol) = self.well_known_symbols.get("hasInstance") else {
             return false;

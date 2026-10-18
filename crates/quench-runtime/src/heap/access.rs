@@ -1,5 +1,5 @@
 use super::{
-    ArrayObject, Cell, EnvironmentBindings, EnvironmentSlot, EnvironmentSlots, Heap, Object,
+    ArrayObject, Cell, EnvironmentBindings, EnvironmentSlot, EnvironmentSlotState, EnvironmentSlots, Heap, Object,
 };
 use crate::bytecode::Atom;
 use crate::value::{HeapReference, Value};
@@ -50,9 +50,9 @@ impl Heap {
 
     pub(crate) fn environment_binding_owner(&self, environment: Value) -> Option<Value> {
         match self.get(environment)? {
-            Cell::Environment { scope, .. } => match scope.dynamic_bindings {
+            Cell::Environment { scope, .. } => match scope.dynamic_bindings() {
                 EnvironmentBindings::Owned(_) => Some(environment),
-                EnvironmentBindings::Shared(owner) => Some(owner),
+                EnvironmentBindings::Shared(owner) => Some(*owner),
             },
             _ => None,
         }
@@ -61,7 +61,7 @@ impl Heap {
     pub(crate) fn environment_bindings(&self, environment: Value) -> Option<&Vec<(Atom, Value)>> {
         let owner = self.environment_binding_owner(environment)?;
         match self.get(owner)? {
-            Cell::Environment { scope, .. } => match &scope.dynamic_bindings {
+            Cell::Environment { scope, .. } => match scope.dynamic_bindings() {
                 EnvironmentBindings::Owned(bindings) => Some(bindings),
                 EnvironmentBindings::Shared(_) => None,
             },
@@ -75,7 +75,7 @@ impl Heap {
     ) -> Option<&mut Vec<(Atom, Value)>> {
         let owner = self.environment_binding_owner(environment)?;
         match self.get_mut(owner)? {
-            Cell::Environment { scope, .. } => match &mut scope.dynamic_bindings {
+            Cell::Environment { scope, .. } => match &mut scope.make_mut().dynamic_bindings {
                 EnvironmentBindings::Owned(bindings) => Some(bindings),
                 EnvironmentBindings::Shared(_) => None,
             },
@@ -87,9 +87,9 @@ impl Heap {
         let Cell::Environment { slots, .. } = self.get(environment)? else {
             return None;
         };
-        match slots.0.get(slot)? {
-            EnvironmentSlot::Owned(_) => Some(environment),
-            EnvironmentSlot::Shared(owner) => Some(*owner),
+        match slots.0.get(slot)?.state() {
+            EnvironmentSlotState::Owned(_) => Some(environment),
+            EnvironmentSlotState::Shared(owner) => Some(owner),
         }
     }
 
@@ -97,17 +97,14 @@ impl Heap {
         let Cell::Environment { slots, .. } = self.get(environment)? else {
             return None;
         };
-        match slots.0.get(slot)? {
-            EnvironmentSlot::Owned(value) => Some(*value),
+        match slots.0.get(slot)?.state() {
+            EnvironmentSlotState::Owned(value) => Some(value),
             // A shared slot names its owner, which holds the slot itself.
-            EnvironmentSlot::Shared(owner) => {
-                let Cell::Environment { slots, .. } = self.get(*owner)? else {
+            EnvironmentSlotState::Shared(owner) => {
+                let Cell::Environment { slots, .. } = self.get(owner)? else {
                     return None;
                 };
-                match slots.0.get(slot)? {
-                    EnvironmentSlot::Owned(value) => Some(*value),
-                    EnvironmentSlot::Shared(_) => None,
-                }
+                slots.owned(slot)
             }
         }
     }
@@ -121,10 +118,7 @@ impl Heap {
         let Cell::Environment { slots, .. } = self.get_mut(owner)? else {
             return None;
         };
-        match slots.0.get_mut(slot)? {
-            EnvironmentSlot::Owned(value) => Some(value),
-            EnvironmentSlot::Shared(_) => None,
-        }
+        slots.0.get_mut(slot)?.owned_mut()
     }
 
     pub(crate) fn clone_environment_slots(
@@ -140,20 +134,20 @@ impl Heap {
         super::thin_slice::ThinBoxSlice::try_from_fn(source.len(), |index| {
             let slot = index as u16;
             if reset.binary_search(&slot).is_ok() {
-                return Some(EnvironmentSlot::Owned(Value::UNDEFINED));
+                return Some(EnvironmentSlot::owned(Value::UNDEFINED));
             }
             let fresh = fresh.binary_search(&slot).is_ok();
-            Some(match source[index] {
-                EnvironmentSlot::Owned(value) if fresh => EnvironmentSlot::Owned(value),
-                EnvironmentSlot::Owned(_) => EnvironmentSlot::Shared(environment),
+            Some(match source[index].state() {
+                EnvironmentSlotState::Owned(value) if fresh => EnvironmentSlot::owned(value),
+                EnvironmentSlotState::Owned(_) => EnvironmentSlot::shared(environment),
                 // A shared slot names its owner, which holds the slot itself.
-                EnvironmentSlot::Shared(owner) if fresh => {
+                EnvironmentSlotState::Shared(owner) if fresh => {
                     let Cell::Environment { slots, .. } = self.get(owner)? else {
                         return None;
                     };
-                    EnvironmentSlot::Owned(slots.owned(index)?)
+                    EnvironmentSlot::owned(slots.owned(index)?)
                 }
-                EnvironmentSlot::Shared(owner) => EnvironmentSlot::Shared(owner),
+                EnvironmentSlotState::Shared(_) => source[index],
             })
         })
         .map(EnvironmentSlots)
@@ -284,6 +278,18 @@ impl Heap {
             }
         };
         Some((object, properties))
+    }
+
+    /// Gives `target` its own copy of `source`'s properties and releases the storage it held.
+    /// Two objects never share arena storage: sweeping either would free the other's values.
+    pub(crate) fn copy_property_storage(&mut self, source: &Object, target: Value) -> bool {
+        let Some((object, properties)) = self.object_and_arena_mut(target) else {
+            return false;
+        };
+        let storage = properties.duplicate(source.properties());
+        let previous = object.copy_property_storage_from(source, storage);
+        properties.release(previous);
+        true
     }
 
     pub(crate) fn array(&self, value: Value) -> Option<&ArrayObject> {

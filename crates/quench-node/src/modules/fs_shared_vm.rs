@@ -2534,7 +2534,9 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     )?;
     let undefined = context.undefined();
     context.call_rooted(install_missing_fs_methods, undefined, &[module])?;
-    for name in ["lutimesSync", "futimesSync", "createReadStream", "createWriteStream"] {
+    // `createReadStream` and `createWriteStream` take the same wrapper when their lazy groups
+    // materialize (`initialize_read_stream`, `write_stream::initialize`).
+    for name in ["lutimesSync", "futimesSync"] {
         let original = get(context, module, name)?;
         let function = metadata_public::wrap(context, original, name)?;
         set(context, module, name, function)?;
@@ -2995,6 +2997,7 @@ pub(crate) fn initialize_read_stream(
         ],
     )?;
     let create_read_stream = get(context, read_stream_api, "createReadStream")?;
+    let create_read_stream = metadata_public::wrap(context, create_read_stream, "createReadStream")?;
     let read_stream = get(context, read_stream_api, "ReadStream")?;
     set(context, module, "createReadStream", create_read_stream)?;
     set(context, module, "ReadStream", read_stream)?;
