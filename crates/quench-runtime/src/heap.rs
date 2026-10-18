@@ -2308,15 +2308,39 @@ impl Heap {
             } = &mut *self;
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
             let data = unsafe { object_records.get_live_mut_storing(record_id, value) };
-            append_property(data, properties, value, shape)
+            let slot = properties.len(data.properties());
+            append_property(data, properties, slot, value, shape);
+            slot
         } else {
             let (data, properties) = self
                 .object_and_arena_mut(object)
                 .expect("property owner is an object");
-            append_property(data, properties, value, shape)
+            let slot = properties.len(data.properties());
+            append_property(data, properties, slot, value, shape);
+            slot
         };
         #[cfg(feature = "profile-memory")]
         self.note_object_slots(object, _slot + 1);
+    }
+
+    /// `property_add` to a direct object's record at `slot`, which the caller proved its
+    /// storage length (a cached add's recorded slot), without deriving it again.
+    #[inline(always)]
+    pub(crate) fn record_property_add_at(&mut self, object: Value, slot: usize, value: Value, shape: u32) {
+        let Some(record_id) = object.direct_object_index() else {
+            return self.property_add(object, value, shape);
+        };
+        let Self {
+            object_records,
+            properties,
+            ..
+        } = &mut *self;
+        // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
+        let data = unsafe { object_records.get_live_mut_storing(record_id, value) };
+        debug_assert_eq!(slot, properties.len(data.properties()));
+        append_property(data, properties, slot, value, shape);
+        #[cfg(feature = "profile-memory")]
+        self.note_object_slots(object, slot + 1);
     }
 
     #[cfg(feature = "profile-memory")]
@@ -2879,12 +2903,11 @@ mod offset_order_tests {
     }
 }
 
-/// `Heap::property_add` on the owner's storage: writes `value` at the next slot, the
-/// owner's storage length, moves the owner to `shape` and returns that slot.
+/// `Heap::property_add` on the owner's storage: writes `value` at `slot`, the owner's
+/// storage length, and moves the owner to `shape`.
 #[inline(always)]
-fn append_property(data: &mut Object, properties: &mut ValueArena, value: Value, shape: u32) -> usize {
+fn append_property(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value, shape: u32) {
     let vector = data.properties();
-    let slot = properties.len(vector);
     match data.inline_properties().copied() {
         Some(_) if slot < INLINE_PROPERTY_COUNT => data.set_inline_property(slot, value),
         Some(inline) => {
@@ -2903,5 +2926,4 @@ fn append_property(data: &mut Object, properties: &mut ValueArena, value: Value,
         }
     }
     data.set_shape(shape);
-    slot
 }
