@@ -552,8 +552,8 @@ compilation remains a measured cost. [JetStream 3](https://webkit.org/blog/17899
 The opt-in `QUENCH_WASM_JIT_INDEXED_OFFSET_REUSE=1` candidate maintains an
 exact companion `x * 4 mod 2^32` for i32 register views in structurally
 matching Wasm functions. It substitutes that value for `i32.shl 2`; add,
-subtract, move, and every other register definition preserve or rebuild the
-companion. Memory address formation, bounds checks, trap order, and loop
+subtract, and move preserve it algebraically, while other writes to those
+views rebuild it. Memory address formation, bounds checks, trap order, and loop
 safepoints stay on the existing path. The feature is disabled by default.
 
 The algebraic relation is exact under Wasm wraparound:
@@ -570,3 +570,10 @@ at least 1.05 with its 95% interval above 1, and peak RSS grows by no more than
 0.5 MiB. The diagnostic report is never qualification-ready. Keep the code
 only if the measured result supports it; a local gain is not a peer win unless
 the same 11-round report also clears both Bun and Node Score and RSS bars.
+
+The first all-register companion screen scored 198.98 versus 194.34 with the
+feature off, a paired ratio of 1.0395 [0.8684, 1.1094]; RSS rose 0.19 MiB.
+This failed the predeclared gate, so no confirmation ran. A narrower
+backward-liveness variant that tracks only registers feeding shift-by-two
+operations is under development. The complete report and raw rounds are in
+`evidence/jit-jetstream3-wasm-2026-10-18/indexed-offset-reuse/`.
