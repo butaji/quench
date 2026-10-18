@@ -80,9 +80,9 @@ fn append_shape_roots(
 /// Parallel GC readers need only the immutable shape transition metadata.
 /// `Shape` also contains `Cell` and `OnceCell` caches, which this view never
 /// reads or mutates while workers are active.
-/// Edges kept outside their owner's cell (descriptors, promise and continuation tables),
-/// indexed by owner for the collection that derived them. Owners hold one or two such edges
-/// (doxbee-promise: 20k-55k owners at 1-2 edges each), so they stay inline.
+/// Edges kept outside their owner's cell (descriptors, promise job and continuation tables),
+/// indexed by owner for the collection that derived them. Owners hold one to three such
+/// edges, so the first two stay inline.
 type OwnedRoots = FxHashMap<Value, SmallVec<[Value; OWNED_ROOTS_INLINE]>>;
 const OWNED_ROOTS_INLINE: usize = 2;
 
@@ -287,10 +287,6 @@ impl<H: Host> Vm<H> {
         self.frames
             .iter()
             .for_each(|frame| reference(frame.program));
-        self.suspended
-            .iter()
-            .filter_map(|entry| entry.continuation.as_ref())
-            .for_each(|continuation| reference(continuation.program));
         self.heap
             .for_each_cell(|cell| cell.program_references(&mut reference));
         let reclaimed = self.programs.reclaim_unreferenced(referenced);
@@ -335,13 +331,6 @@ impl<H: Host> Vm<H> {
                 owned_roots.entry(owner).or_default().push(edge);
             }
         };
-        let attached_continuations: FxHashSet<_> = self
-            .realm
-            .promise
-            .async_resume_jobs
-            .values()
-            .map(|job| job.continuation)
-            .collect();
         for ((owner, key), attributes) in &self.descriptors {
             for edge in key
                 .symbol_value()
@@ -352,13 +341,6 @@ impl<H: Host> Vm<H> {
             }
         }
         self.realm.promise.for_each_owned_edge(&mut own);
-        for (owner, job) in &self.realm.promise.async_resume_jobs {
-            if let Some(continuation) = self.suspended_continuation(job.continuation) {
-                for edge in continuation.roots() {
-                    own(*owner, edge);
-                }
-            }
-        }
         self.gc_owned_root_count = owned_roots.len();
         let external_roots = if full {
             Vec::new()
@@ -670,20 +652,6 @@ impl<H: Host> Vm<H> {
         roots.extend(self.with_stack.iter().copied());
         roots.extend(std::iter::once(self.instanceof_has_instance_holder));
         roots.extend(self.active_call_roots.iter().copied());
-        roots.extend(
-            self.suspended
-                .iter()
-                .enumerate()
-                .filter_map(|(slot, entry)| {
-                    let continuation = entry.continuation.as_ref()?;
-                    let id = super::activation::ContinuationId {
-                        slot: slot as u32,
-                        generation: entry.generation,
-                    };
-                    (!attached_continuations.contains(&id)).then_some(continuation)
-                })
-                .flat_map(Continuation::roots),
-        );
         roots.extend(self.symbol_registry.values().copied());
         roots.extend(self.well_known_symbols.values().copied());
         roots.extend(self.startup_intrinsic_roots());
@@ -796,17 +764,6 @@ impl<H: Host> Vm<H> {
         } else {
             self.retain_live_method_caches();
         }
-        let live_continuations: FxHashSet<_> = self
-            .realm
-            .promise
-            .async_resume_jobs
-            .iter()
-            .filter(|(owner, _)| self.heap.is_live(**owner))
-            .map(|(_, job)| job.continuation)
-            .collect();
-        for id in attached_continuations.difference(&live_continuations) {
-            self.resume_continuation(*id);
-        }
         self.realm.jobs.extend(
             finalization_jobs
                 .into_iter()
@@ -849,10 +806,6 @@ impl<H: Host> Vm<H> {
             .promise
             .reaction_capabilities
             .retain(|promise, _| self.heap.is_live(*promise));
-        self.realm
-            .promise
-            .async_resume_jobs
-            .retain(|job, _| self.heap.is_live(*job));
         #[cfg(feature = "profile-aggregate")]
         self.retain_live_gc_method_snapshots();
         if let Some(strings) = &mut self.dynamic_strings {

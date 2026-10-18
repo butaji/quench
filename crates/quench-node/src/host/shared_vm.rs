@@ -447,7 +447,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "netServerOptions" (1) => crate::modules::net_options_shared_vm::server_options,
         method "netNormalizeEndpoint" (4) => crate::modules::net_endpoint_shared_vm::normalize,
         method "netConnect" (4) => crate::modules::net_shared_vm::connect_operation,
-        method "emitterInitialize" (2) => crate::modules::event_constructor_shared_vm::initialize,
+        method "emitterValidateCaptureRejections" (1) => crate::modules::event_constructor_shared_vm::validate_capture_rejections,
         method "emitterRemoveAllListeners" (3) => crate::modules::event_emitter_shared_vm::remove_all_listeners,
         method "emitterRemoveListener" (3) => crate::modules::event_emitter_shared_vm::remove_listener,
         method "emitterEmit" (3) => crate::modules::event_emitter_shared_vm::emit,
@@ -1450,7 +1450,10 @@ fn install_event_emitter(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         .borrow()
         .event_targets_api
         .ok_or_else(|| RootedError::host("event listener configuration missing"))?;
-    let initialize = context.host_function_with_data(operation("emitterInitialize"), event_data)?;
+    let shape_key = crate::modules::event_constructor_shared_vm::get(context, event_data, "shapeKey")?;
+    let capture_key =
+        crate::modules::event_constructor_shared_vm::get(context, event_data, "captureKey")?;
+    let validate = context.host_function(operation("emitterValidateCaptureRejections"))?;
     let dispatch =
         context.host_function_with_data(operation("emitterEmitListeners"), event_data)?;
     let emitter_factory = context.evaluate_script_rooted(
@@ -1459,7 +1462,11 @@ fn install_event_emitter(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     )?;
     let undefined = context.undefined();
     let inspector = context.host_function(operation("emitterErrorInspector"))?;
-    let event_emitter = context.call_rooted(emitter_factory, undefined, &[initialize, dispatch, inspector])?;
+    let event_emitter = context.call_rooted(
+        emitter_factory,
+        undefined,
+        &[shape_key, capture_key, validate, dispatch, inspector],
+    )?;
     context.release_root(event_emitter);
     crate::modules::event_constructor_shared_vm::install(context)?;
     crate::modules::event_emitter_shared_vm::initialize(context)?;

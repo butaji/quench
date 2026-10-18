@@ -1,4 +1,3 @@
-use super::activation::ContinuationId;
 use super::module::{ModuleEvaluationStack, ModuleOutcome, ModulePhase, ModuleRecord};
 use super::*;
 use crate::HostExecutionContext;
@@ -1051,17 +1050,6 @@ pub(super) struct AggregateJob {
     pub(super) rejected: bool,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub(super) struct AsyncResumeJob {
-    pub(super) continuation: ContinuationId,
-    pub(super) promise: Value,
-    pub(super) generator: Option<Value>,
-    pub(super) rejected: bool,
-    pub(super) yielded: bool,
-    /// The other reaction of the same `await`, removed when either one runs.
-    pub(super) sibling: Value,
-}
-
 #[derive(Clone, Debug)]
 pub(super) struct DynamicImportJob {
     pub(super) cache_key: String,
@@ -1079,7 +1067,6 @@ pub(super) struct PromiseRuntime {
     pub(super) aggregates: FxHashMap<Value, AggregateRecord>,
     pub(super) aggregate_jobs: FxHashMap<Value, AggregateJob>,
     pub(super) reaction_capabilities: FxHashMap<Value, (Value, Value)>,
-    pub(super) async_resume_jobs: FxHashMap<Value, AsyncResumeJob>,
     pub(super) modules: FxHashMap<String, ModuleRecord>,
     pub(super) dynamic_import_jobs: Vec<DynamicImportJob>,
     pub(super) async_module_order: VecDeque<String>,
@@ -1089,9 +1076,9 @@ pub(super) struct PromiseRuntime {
 }
 
 impl PromiseRuntime {
-    /// Visits each `(owner, edge)` the promise tables hold outside their owner's cell. Plain
-    /// loops per table: a chained iterator costs every edge a step through each nesting level,
-    /// and a collection visits every in-flight promise (doxbee-promise: 170k records).
+    /// Visits each `(owner, edge)` the promise job and combinator tables hold outside their
+    /// owner's cell; a promise's own state is traced with its `Cell::Promise`. Plain loops per
+    /// table: a chained iterator costs every edge a step through each nesting level.
     pub(super) fn for_each_owned_edge(&self, mut visit: impl FnMut(Value, Value)) {
         macro_rules! edges {
             ($table:expr, |$record:ident| $roots:expr) => {
@@ -1116,9 +1103,6 @@ impl PromiseRuntime {
         });
         edges!(self.aggregate_jobs, |job| [job.aggregate]);
         edges!(self.reaction_capabilities, |capability| [capability.0, capability.1]);
-        edges!(self.async_resume_jobs, |job| {
-            [Some(job.promise), job.generator].into_iter().flatten()
-        });
     }
 }
 
@@ -1345,17 +1329,17 @@ impl<H: Host> Vm<H> {
         } else {
             None
         };
-        let promise = self.heap.alloc(Cell::Promise {
-            object: Box::new(Self::empty_object(prototype)),
-            record: Box::new(PromiseRecord {
+        let promise = self.heap.alloc(Cell::Promise(Box::new(crate::heap::PromiseCell {
+            object: Self::empty_object(prototype),
+            record: PromiseRecord {
                 state: PromiseState::Pending,
                 result: Value::UNDEFINED,
                 reactions: vec![],
                 rejection: PromiseRejectionState::Unobserved,
                 rejection_id: None,
                 host_context,
-            }),
-        });
+            },
+        })));
         if let Some(identity) = host_context {
             let mut context = crate::NativeContext::new(self);
             let resource = context.scoped_value(promise);
@@ -1580,9 +1564,12 @@ impl<H: Host> Vm<H> {
             Native::PromiseAggregateJob => {
                 self.promise_aggregate_job(p, args.first().copied().unwrap_or(Value::UNDEFINED))
             }
-            Native::PromiseAsyncResumeJob => {
-                self.promise_async_resume_job(p, args.first().copied().unwrap_or(Value::UNDEFINED))
-            }
+            Native::PromiseAsyncResumeFulfilled | Native::PromiseAsyncResumeRejected => self
+                .promise_async_resume_job(
+                    p,
+                    native == Native::PromiseAsyncResumeRejected,
+                    args.first().copied().unwrap_or(Value::UNDEFINED),
+                ),
             Native::ArrayFromAsyncFulfilled | Native::ArrayFromAsyncRejected => self
                 .array_from_async_reaction(
                     p,

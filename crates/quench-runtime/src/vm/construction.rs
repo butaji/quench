@@ -704,14 +704,16 @@ impl<H: Host> Vm<H> {
         Some((id, env, self.inline_construct_receiver(callee)?))
     }
 
-    /// A body whose [[Construct]] the dispatch loop may push in place: an ordinary
-    /// constructible function that binds its receiver itself, with no class semantics.
+    /// A body whose [[Construct]] the dispatch loop may push in place: a constructible
+    /// function that binds its receiver itself. A base class constructor's [[Construct]] is
+    /// an ordinary one (OrdinaryCreateFromConstructor, then the body, whose instance fields
+    /// are its own code); a derived constructor binds `this` through `super()` and runs its
+    /// instance initializer there, so it keeps the native path.
     pub(super) fn inline_constructible(function: &crate::bytecode::Function) -> bool {
         function.dispatch == DispatchClass::General
             && function.constructible
             && !function.is_async
             && !function.is_generator
-            && !function.is_class_constructor
             && !function.derived_constructor
             && !function.class_initializer
             && !function.parameter_eval_arguments_error
