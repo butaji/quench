@@ -4854,6 +4854,19 @@ lane_handler! {
             return exit(ip);
         }
         let vm = unsafe { vm(cx) };
+        // Keep eligible calls on the general dispatcher so they can enter
+        // native code. Unsupported calls stay on the fast interpreter lane.
+        if vm.execution_mode == super::ExecutionMode::Compiled
+            && i.a & crate::bytecode::RETURN_REGISTER == 0
+            && vm
+                .programs
+                .has_compiled_function_or_note_fallback(
+                    unsafe { (*cx).program },
+                    i.b as usize,
+                )
+        {
+            return exit(ip);
+        }
         // SAFETY: the program's views outlive the lane run.
         let views = unsafe { &*(*cx).views };
         let stack = &mut vm.lane_stack;
@@ -5581,18 +5594,20 @@ fn lane_returns(instruction: WideInstruction) -> bool {
     instruction.result_flags() & !crate::bytecode::RETURN_REGISTER == 0
 }
 
-/// The register every direct memory access of `function` goes through, when
-/// there is exactly one.
+/// The register every compiled linear-memory access of `function` goes
+/// through, when there is exactly one.
 pub(super) fn memory_register(function: &Function) -> Option<u16> {
     let mut registers = function
         .code
         .iter()
         .map(|packed| decoded_instruction(function, *packed))
-        .filter(|instruction| {
-            MemoryLoad::from_direct_op(instruction.op()).is_some()
-                || MemoryStore::from_direct_op(instruction.op()).is_some()
-        })
-        .map(|instruction| instruction.b());
+        .filter_map(|instruction| match instruction.op() {
+            op if MemoryLoad::from_direct_op(op).is_some()
+                || MemoryStore::from_direct_op(op).is_some() => Some(instruction.b()),
+            Op::WasmMemorySize => Some(instruction.b()),
+            Op::WasmMemoryFill => Some(instruction.a()),
+            _ => None,
+        });
     let first = registers.next()?;
     registers.all(|register| register == first).then_some(first)
 }
@@ -6579,8 +6594,7 @@ impl<H: Host> Vm<H> {
                 .map_or(&[][..], |views| views) as *const _,
             constants: self.programs.constants(program) as *const _,
             inline_calls: inline_calls
-                && code.kind == crate::bytecode::ProgramKind::Wasm
-                && self.execution_mode != super::compiled::ExecutionMode::Compiled,
+                && code.kind == crate::bytecode::ProgramKind::Wasm,
             memory: MemoryView::NONE,
             resolved: (Value::UNDEFINED, MemoryView::NONE),
             script_calls: inline_calls
