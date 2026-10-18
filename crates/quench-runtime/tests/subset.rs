@@ -404,3 +404,19 @@ fn shared_atomics_round_trip_negative_bigints() {
         ["-5,-3,0,-1"]
     );
 }
+
+/// A `var` read before any write is `undefined`, even when its frame slot moved into a
+/// register of a reused frame (TOD-140: TypeScript's `(function (E) {...})(E || (E = {}))`).
+#[test]
+fn locals_read_before_their_first_write_are_undefined_in_reused_frames() {
+    assert_eq!(
+        output(
+            "function junk() { var a = 'j1', b = 'j2', c = 'j3', d = 'j4', e = 'j5', h = 'j6', i = 'j7', k = 'j8', m = 'j9'; return [a, b, c, d, e, h, i, k, m].join(); }
+             function g() { var A, B; f(A || (A = 1)); function f(x) { return x; } return [A, B, typeof B].join(); }
+             function maybe() { var x; if (junk() === '') x = 1; return typeof x; }
+             function assigned() { var y; y = 2; return y; }
+             junk(); print(g()); junk(); print(maybe()); print(assigned());"
+        ),
+        ["1,,undefined", "undefined", "2"]
+    );
+}
