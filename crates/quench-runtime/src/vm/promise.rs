@@ -1132,41 +1132,37 @@ pub(super) struct PromiseRuntime {
 }
 
 impl PromiseRuntime {
-    pub(super) fn owned_edges(&self) -> impl Iterator<Item = (Value, Value)> + '_ {
+    /// Visits each `(owner, edge)` the promise tables hold outside their owner's cell. Plain
+    /// loops per table: a chained iterator costs every edge a step through each nesting level,
+    /// and a collection visits every in-flight promise (doxbee-promise: 170k records).
+    pub(super) fn for_each_owned_edge(&self, mut visit: impl FnMut(Value, Value)) {
         macro_rules! edges {
             ($table:expr, |$record:ident| $roots:expr) => {
-                $table.iter().flat_map(|(owner, $record)| {
-                    ($roots).into_iter().map(move |root| (*owner, root))
-                })
+                for (owner, $record) in &$table {
+                    for root in $roots {
+                        visit(*owner, root);
+                    }
+                }
             };
         }
-        edges!(self.records, |record| record.roots())
-            .chain(edges!(self.thenable_jobs, |job| [
-                job.then,
-                job.thenable,
-                job.promise
-            ]))
-            .chain(edges!(self.finally_handler_callbacks, |callback| [
-                callback.handler,
-                callback.constructor
-            ]))
-            .chain(edges!(self.finally_continuation_callbacks, |callback| [
-                callback.original
-            ]))
-            .chain(edges!(self.aggregates, |record| {
-                [record.output, record.resolve, record.reject]
-                    .into_iter()
-                    .chain(record.values.iter().copied())
-                    .chain(record.keys.iter().flatten().copied())
-            }))
-            .chain(edges!(self.aggregate_jobs, |job| [job.aggregate]))
-            .chain(edges!(self.reaction_capabilities, |capability| [
-                capability.0,
-                capability.1
-            ]))
-            .chain(edges!(self.async_resume_jobs, |job| {
-                [Some(job.promise), job.generator].into_iter().flatten()
-            }))
+        edges!(self.records, |record| record.roots());
+        edges!(self.thenable_jobs, |job| [job.then, job.thenable, job.promise]);
+        edges!(self.finally_handler_callbacks, |callback| [
+            callback.handler,
+            callback.constructor
+        ]);
+        edges!(self.finally_continuation_callbacks, |callback| [callback.original]);
+        edges!(self.aggregates, |record| {
+            [record.output, record.resolve, record.reject]
+                .into_iter()
+                .chain(record.values.iter().copied())
+                .chain(record.keys.iter().flatten().copied())
+        });
+        edges!(self.aggregate_jobs, |job| [job.aggregate]);
+        edges!(self.reaction_capabilities, |capability| [capability.0, capability.1]);
+        edges!(self.async_resume_jobs, |job| {
+            [Some(job.promise), job.generator].into_iter().flatten()
+        });
     }
 }
 
@@ -2797,7 +2793,7 @@ impl<H: Host> Vm<H> {
             parent: Value::NULL,
             function: super::ROOT_FUNCTION_ID,
             slots: slots.into(),
-            scope: Box::new(crate::heap::EnvironmentScope {
+            scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
                 program: Some(program.raw()),
                 root_eval_scope: false,
                 binding_site_pc: None,
@@ -2982,7 +2978,11 @@ impl<H: Host> Vm<H> {
                     let is_namespace = self
                         .object_data(namespace)
                         .is_some_and(Object::is_module_namespace);
-                    let fallback = self.own_property(namespace, atom);
+                    // A named import of a pending builtin export takes the member's value now.
+                    let fallback = match self.own_property(namespace, atom) {
+                        Some(value) => Some(self.resolve_pending_binding(p, value)?),
+                        None => None,
+                    };
                     if is_namespace && named_binding.is_none() && fallback.is_none() {
                         return self
                             .missing_module_export(p, &import.source, name)
@@ -5048,7 +5048,7 @@ impl<H: Host> Vm<H> {
             Constant::StringUnits(value) => {
                 self.heap.alloc(Cell::String(JsString::from_units(&value)))
             }
-            Constant::BigInt(value) => self.heap.alloc(Cell::BigInt(value)),
+            Constant::BigInt(value) => self.heap.alloc(Cell::bigint(value)),
             Constant::Boolean(true) => Value::TRUE,
             Constant::Boolean(false) => Value::FALSE,
             Constant::Null => Value::NULL,

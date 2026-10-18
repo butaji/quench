@@ -200,6 +200,19 @@ impl<H: Host> Vm<H> {
         if let Some(index) = self.shapes[shape as usize].lookup_index.get() {
             return index.slot(key).map(|slot| slot as usize);
         }
+        // A key is only ever added to a shape that lacks it (`transition_data_property_shape`),
+        // so a recorded add of `key` proves its absence without the walk. Objects that build
+        // the same wide layout one key at a time (`__importStar`, decoded records) ask exactly
+        // this on every intermediate shape; walking would also earn each of those shapes a
+        // lookup index the size of its chain.
+        if self.shapes[shape as usize].storage_len() >= SHAPE_INDEX_WALK_DISTANCE
+            && self
+                .transitions
+                .get(&self.shapes, shape, ShapeTransitionKey::Add(key, DEFAULT_DATA_ATTRIBUTES))
+                .is_some()
+        {
+            return None;
+        }
         let mut current = Some(shape);
         let mut distance = 0;
         let slot = loop {
@@ -255,28 +268,47 @@ impl<H: Host> Vm<H> {
         let shape = self.object_data(object)?.shape();
         Some((shape, self.property_shape_slot(shape, key)?))
     }
-    pub(super) fn shape_attribute(&self, shape: u32, slot: usize) -> Option<PropertyAttributes> {
+    /// The attributes of `object`'s shape-held property at `slot`, its getter read from the
+    /// slot when the shape keeps it there (`SLOT_GETTER`).
+    pub(super) fn slot_attributes(&self, object: &Object, slot: usize) -> Option<PropertyAttributes> {
+        let attributes = self.shape_slot_attributes(object.shape(), slot)?;
+        Some(attributes.attributes(&self.shape_accessors, || self.heap.property_get(object, slot)))
+    }
+    /// `object`'s data value at `slot`, as a raw read sees it: `undefined` for an accessor,
+    /// whose slot holds its getter or nothing.
+    pub(super) fn slot_data_value(&self, object: &Object, slot: usize) -> Option<Value> {
+        let value = self.heap.property_get(object, slot)?;
+        let shape = object.shape();
+        if self.shapes[shape as usize].facts.slot_getters()
+            && self
+                .shape_slot_attributes(shape, slot)
+                .is_some_and(ShapeAttributes::slot_getter)
+        {
+            return Some(Value::UNDEFINED);
+        }
+        Some(value)
+    }
+    fn shape_slot_attributes(&self, shape: u32, slot: usize) -> Option<ShapeAttributes> {
         if let Some(index) = self.shapes[shape as usize].lookup_index.get() {
             return Some(
                 index
                     .attributes
                     .get(&(slot as u32))
-                    .map_or(DEFAULT_PROPERTY_ATTRIBUTES, |attributes| {
-                        attributes.attributes(&self.shape_accessors)
-                    }),
+                    .copied()
+                    .unwrap_or(DEFAULT_SHAPE_ATTRIBUTES),
             );
         }
         let memo_slot = u32::try_from(slot).ok().filter(|_| !self.shape_is_dictionary(shape));
         if let Some(memo_slot) = memo_slot
             && let Some(attributes) = self.shape_attribute_memo.get(shape, memo_slot)
         {
-            return attributes.map(|attributes| attributes.attributes(&self.shape_accessors));
+            return attributes;
         }
         let attributes = self.walked_shape_attribute(shape, slot);
         if let Some(memo_slot) = memo_slot {
             self.shape_attribute_memo.record(shape, memo_slot, attributes);
         }
-        attributes.map(|attributes| attributes.attributes(&self.shape_accessors))
+        attributes
     }
     /// The attributes the nearest transition describing `slot` gives it, walking `shape`'s chain.
     fn walked_shape_attribute(&self, shape: u32, slot: usize) -> Option<ShapeAttributes> {
@@ -335,7 +367,7 @@ impl<H: Host> Vm<H> {
             ShapeTransition::Dictionary { trigger } => Some(trigger),
             _ => self.shapes[parent as usize].dictionary_trigger,
         };
-        let parent_may_have_gc_roots = self.shapes[parent as usize].may_have_gc_roots;
+        let parent_facts = self.shapes[parent as usize].facts;
         // The object that grew has moved to the child, so the parent's lookup index usually
         // serves nobody; an object left on the parent rebuilds it after
         // `SHAPE_INDEX_LONG_WALKS` long walks. Otherwise every intermediate shape of a growing
@@ -346,7 +378,7 @@ impl<H: Host> Vm<H> {
             transition,
             storage_len,
             dictionary_trigger,
-            parent_may_have_gc_roots,
+            parent_facts,
         ));
         self.heap.register_property_shape(next, storage_len);
         next
@@ -375,8 +407,9 @@ impl<H: Host> Vm<H> {
         object: Value,
         key: PropertyKey,
     ) -> Option<PropertyAttributes> {
-        if let Some((shape, slot)) = self.object_property_slot(object, key)
-            && let Some(attributes) = self.shape_attribute(shape, slot)
+        if let Some(data) = self.object_data(object)
+            && let Some(slot) = self.property_shape_slot(data.shape(), key)
+            && let Some(attributes) = self.slot_attributes(data, slot)
         {
             return Some(attributes);
         }
@@ -520,20 +553,22 @@ impl<H: Host> Vm<H> {
         attributes: PropertyAttributes,
     ) {
         if let Some((shape, slot)) = self.object_property_slot(object, key) {
-            if self.shape_attribute(shape, slot) == Some(attributes) {
+            let current = self.slot_attributes(self.object_data(object).expect("shaped object"), slot);
+            if current == Some(attributes) {
                 return;
             }
-            let attributes = ShapeAttributes::record(attributes, &mut self.shape_accessors);
+            let recorded = ShapeAttributes::record(attributes, &mut self.shape_accessors);
             let next_id = self.append_cached_shape_transition(
                 shape,
                 ShapeTransition::Descriptor {
                     slot: slot as u32,
-                    attributes,
+                    attributes: recorded,
                 },
             );
             self.object_data_mut(object)
                 .expect("object survived descriptor transition")
                 .set_shape(next_id);
+            self.store_accessor_slot(object, slot, current, attributes, recorded);
             self.invalidate_method_caches_for_key(key);
             return;
         }
@@ -559,7 +594,7 @@ impl<H: Host> Vm<H> {
             .map(|&key| {
                 let slot = self.property_shape_slot(original, key);
                 let current = slot
-                    .and_then(|slot| self.shape_attribute(original, slot))
+                    .and_then(|slot| self.slot_attributes(self.object_data(object)?, slot))
                     .or_else(|| self.property_attributes(object, key))
                     .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
                 (key, slot, current)
@@ -571,14 +606,15 @@ impl<H: Host> Vm<H> {
             match slot {
                 Some(_) if attributes == current => {}
                 Some(slot) => {
-                    let attributes = ShapeAttributes::record(attributes, &mut self.shape_accessors);
+                    let recorded = ShapeAttributes::record(attributes, &mut self.shape_accessors);
                     shape = self.append_cached_shape_transition(
                         shape,
                         ShapeTransition::Descriptor {
                             slot: slot as u32,
-                            attributes,
+                            attributes: recorded,
                         },
                     );
+                    self.store_accessor_slot(object, slot, Some(current), attributes, recorded);
                     self.invalidate_method_caches_for_key(key);
                 }
                 None => {
@@ -596,6 +632,8 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn remove_property_attributes(&mut self, object: Value, key: PropertyKey) {
         if let Some((shape, slot)) = self.object_property_slot(object, key) {
+            let current = self.slot_attributes(self.object_data(object).expect("shaped object"), slot);
+            self.store_accessor_slot(object, slot, current, DEFAULT_PROPERTY_ATTRIBUTES, DEFAULT_SHAPE_ATTRIBUTES);
             let next_id = self.append_cached_shape_transition(
                 shape,
                 ShapeTransition::Descriptor {
@@ -613,6 +651,26 @@ impl<H: Host> Vm<H> {
             self.invalidate_field_caches();
             self.invalidate_method_caches_for_key(key);
         }
+    }
+    /// Keeps the slot of `object`'s property at `slot` as its new `attributes` need it: an
+    /// accessor's slot holds its `SLOT_GETTER` getter or `undefined`, and a data property made
+    /// from an accessor starts as `undefined` (ValidateAndApplyPropertyDescriptor).
+    fn store_accessor_slot(
+        &mut self,
+        object: Value,
+        slot: usize,
+        current: Option<PropertyAttributes>,
+        attributes: PropertyAttributes,
+        recorded: ShapeAttributes,
+    ) {
+        let value = if recorded.slot_getter() {
+            attributes.getter.expect("a slot getter record has a getter")
+        } else if attributes.accessor || current.is_some_and(|current| current.accessor) {
+            Value::UNDEFINED
+        } else {
+            return;
+        };
+        self.heap.property_set(object, slot, value);
     }
     pub(super) fn invalidate_field_caches(&mut self) {
         self.field_caches.fill(EMPTY_CACHE);
@@ -813,7 +871,7 @@ impl<H: Host> Vm<H> {
         }
         let object = self.object_data(object)?;
         let slot = self.shape_slot(object.shape(), atom)?;
-        self.heap.property_get(object, slot)
+        self.slot_data_value(object, slot)
     }
     /// The target and handler of a Proxy, copied out so callers need not clone its cell.
     pub(super) fn proxy_parts(&self, value: Value) -> Option<(Value, Value)> {
@@ -1321,7 +1379,10 @@ impl<H: Host> Vm<H> {
         Some(self.cached_field_value(self.field_cache_index(site), receiver))
     }
 
-    /// `string_field_cache_read`'s hit for a cached site reading a string primitive `object`.
+    /// A string primitive's `GetField` where no lookup can run guest code, in the order
+    /// `get_field_cached` takes: its `length`, then the `String.prototype` data property
+    /// its site cache holds (`string_field_cache_read`). An index, or any other key, is
+    /// left to the general path.
     pub(super) fn cached_string_field_hit(
         &self,
         p: &ResidualProgram,
@@ -1329,8 +1390,14 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         site: u16,
     ) -> Option<Value> {
+        let Some(Cell::String(text)) = self.heap.get(object) else {
+            return None;
+        };
+        if atom == self.length_atom {
+            return Some(Value::number(text.len() as f64));
+        }
         if !(self.specialized && p.specialized)
-            || !matches!(self.heap.get(object), Some(Cell::String(_)))
+            || self.atom_class(atom).contains(AtomClass::ARRAY_INDEX)
         {
             return None;
         }
@@ -1533,7 +1600,7 @@ impl<H: Host> Vm<H> {
             return;
         };
         if self
-            .shape_attribute(holder_shape, slot)
+            .slot_attributes(holder, slot)
             .is_some_and(|attributes| attributes.accessor && attributes.getter.is_some())
         {
             self.accessor_field_caches.insert(
@@ -1559,7 +1626,7 @@ impl<H: Host> Vm<H> {
         if holder.shape() != cache.holder {
             return None;
         }
-        self.shape_attribute(cache.holder, usize::from(cache.slot))?
+        self.slot_attributes(holder, usize::from(cache.slot))?
             .getter
     }
 
@@ -1774,7 +1841,7 @@ impl<H: Host> Vm<H> {
                 if depth == 0
                     || slot >= FIELD_CACHE_SLOT_CAPACITY
                     || self
-                        .shape_attribute(shape, slot)
+                        .slot_attributes(data, slot)
                         .is_some_and(|attributes| attributes.accessor)
                 {
                     return None;
@@ -1799,7 +1866,7 @@ impl<H: Host> Vm<H> {
         let holder_shape = holder.shape();
         let slot = self.shape_slot(holder_shape, atom)?;
         if self
-            .shape_attribute(holder_shape, slot)
+            .slot_attributes(holder, slot)
             .is_some_and(|attributes| attributes.accessor)
         {
             return None;
@@ -2862,6 +2929,10 @@ impl<H: Host> Vm<H> {
         key: PropertyKey,
         attributes: DataAttributes,
     ) -> u32 {
+        debug_assert!(
+            self.walked_property_shape_slot(shape, key).is_none(),
+            "a shape gains only keys it lacks"
+        );
         let transition = ShapeTransition::Add {
             key,
             slot: u32::try_from(self.shapes[shape as usize].storage_len())

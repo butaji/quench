@@ -17,7 +17,8 @@ use std::ops::Range;
 
 use super::{
     class_is_single_unit, class_matches, equal, is_line_terminator, is_word_mode, merge_flags,
-    Assertion, Backreference, ClassExpr, Expr, Flags, Lookaround, Unit, ASCII_MAX,
+    literal_finder, Assertion, Backreference, ClassExpr, Expr, Flags, LiteralFinder, Lookaround,
+    Unit, ASCII_MAX,
 };
 
 /// A register holding no position: an unset capture bound.
@@ -141,6 +142,11 @@ impl UnitSet {
         Self { ascii, beyond }
     }
 
+    /// Whether no unit is in the set.
+    fn is_empty(&self) -> bool {
+        self.ascii == 0 && self.beyond.is_never()
+    }
+
     #[inline(always)]
     fn contains(&self, value: u32) -> bool {
         if value < ASCII_UNITS {
@@ -152,6 +158,15 @@ impl UnitSet {
 }
 
 impl Beyond {
+    /// Whether the test rejects every unit by construction.
+    fn is_never(&self) -> bool {
+        match self {
+            Self::Never => true,
+            Self::Either(either) => either.iter().all(Self::is_never),
+            _ => false,
+        }
+    }
+
     fn matches(&self, value: u32) -> bool {
         match self {
             Self::Never => false,
@@ -302,17 +317,22 @@ struct Workspace {
 }
 
 pub(crate) struct Program {
-    instructions: Vec<Inst>,
-    sets: Vec<UnitSet>,
+    instructions: Box<[Inst]>,
+    sets: Box<[UnitSet]>,
     /// Capture index lists for `ResetCaptures` and `Backreference`.
-    lists: Vec<u32>,
+    lists: Box<[u32]>,
     capture_count: usize,
     register_count: usize,
     /// Where matches can start; `None` where any position can.
     starts: Option<Starts>,
     /// The literal bytes every match begins with, searched for directly in ASCII subjects.
-    prefix: Option<memchr::memmem::Finder<'static>>,
-    workspace: RefCell<Workspace>,
+    prefix: Option<LiteralFinder>,
+}
+
+thread_local! {
+    /// The registers and stack of the running search. A search never starts another, so
+    /// every program on a thread shares one workspace, sized by the largest search so far.
+    static WORKSPACE: RefCell<Workspace> = RefCell::default();
 }
 
 /// The compiled form of a construct this matcher does not run.
@@ -577,18 +597,26 @@ fn literal_prefix(expr: &Expr, flags: Flags, prefix: &mut Vec<u8>) -> bool {
 }
 
 /// Where a match can start: at the subject's start when `at_start`, and wherever the unit
-/// there is in `units`.
+/// there is in `units`. `only_at_start` is derived: no unit admits a start, so the subject's
+/// start is the sole candidate and a search need not scan for another.
 struct Starts {
     at_start: bool,
     units: UnitSet,
+    only_at_start: bool,
 }
 
 impl Starts {
-    fn union(self, other: Self) -> Self {
+    fn new(at_start: bool, units: UnitSet) -> Self {
+        let only_at_start = units.is_empty();
         Self {
-            at_start: self.at_start || other.at_start,
-            units: self.units.union(&other.units),
+            at_start,
+            units,
+            only_at_start,
         }
+    }
+
+    fn union(self, other: Self) -> Self {
+        Self::new(self.at_start || other.at_start, self.units.union(&other.units))
     }
 
     #[inline(always)]
@@ -602,17 +630,12 @@ impl Starts {
 /// an expression that can match empty.
 fn starts(expr: &Expr, flags: Flags) -> Option<Starts> {
     let units = |beyond| {
-        Some(Starts {
-            at_start: false,
-            units: UnitSet::new(beyond),
-        })
+        Some(Starts::new(false, UnitSet::new(beyond)))
     };
     match expr {
         Expr::Literal(value) if !flags.ignore_case => {
             let value = *value;
-            Some(Starts {
-                at_start: false,
-                units: UnitSet {
+            Some(Starts::new(false, UnitSet {
                     ascii: if value < ASCII_UNITS { 1 << value } else { 0 },
                     beyond: if value < ASCII_UNITS {
                         Beyond::Never
@@ -623,7 +646,7 @@ fn starts(expr: &Expr, flags: Flags) -> Option<Starts> {
                         }
                     },
                 },
-            })
+            ))
         }
         Expr::Literal(value) => units(Beyond::Literal {
             value: *value,
@@ -639,14 +662,8 @@ fn starts(expr: &Expr, flags: Flags) -> Option<Starts> {
         }),
         Expr::Sequence(parts) => match parts.first()? {
             // Outside multiline mode `^` holds only at the start, whatever follows.
-            Expr::Assertion(Assertion::Start) if !flags.multiline => Some(Starts {
-                at_start: true,
-                units: UnitSet::new(Beyond::Never),
-            }),
-            Expr::Assertion(Assertion::StartBuffer) => Some(Starts {
-                at_start: true,
-                units: UnitSet::new(Beyond::Never),
-            }),
+            Expr::Assertion(Assertion::Start) if !flags.multiline => Some(Starts::new(true, UnitSet::new(Beyond::Never))),
+            Expr::Assertion(Assertion::StartBuffer) => Some(Starts::new(true, UnitSet::new(Beyond::Never))),
             first => starts(first, flags),
         },
         Expr::Alternation(alternatives) => {
@@ -658,10 +675,7 @@ fn starts(expr: &Expr, flags: Flags) -> Option<Starts> {
         }
         Expr::Capture { body, .. } => starts(body, flags),
         Expr::Repeat { body, min, .. } if *min > 0 => starts(body, flags),
-        Expr::Assertion(Assertion::Start) if !flags.multiline => Some(Starts {
-            at_start: true,
-            units: UnitSet::new(Beyond::Never),
-        }),
+        Expr::Assertion(Assertion::Start) if !flags.multiline => Some(Starts::new(true, UnitSet::new(Beyond::Never))),
         Expr::Mode { body, flags: local } => starts(body, merge_flags(flags, *local)),
         _ => None,
     }
@@ -679,18 +693,17 @@ impl Program {
         compiler.compile(expr, flags).ok()?;
         compiler.emit(Inst::Match);
         Some(Self {
-            instructions: compiler.instructions,
-            sets: compiler.sets,
-            lists: compiler.lists,
+            instructions: compiler.instructions.into_boxed_slice(),
+            sets: compiler.sets.into_boxed_slice(),
+            lists: compiler.lists.into_boxed_slice(),
             capture_count,
             register_count: compiler.registers as usize,
             starts: starts(expr, flags),
             prefix: {
                 let mut prefix = Vec::new();
                 literal_prefix(expr, flags, &mut prefix);
-                (!prefix.is_empty()).then(|| memchr::memmem::Finder::new(&prefix).into_owned())
+                (!prefix.is_empty()).then(|| literal_finder(&prefix))
             },
-            workspace: RefCell::default(),
         })
     }
 
@@ -716,34 +729,35 @@ impl Program {
         sticky: bool,
         budget: Option<usize>,
     ) -> Result<Option<Found>, Exhausted> {
-        let mut workspace = self.workspace.borrow_mut();
-        let Workspace { registers, stack } = &mut *workspace;
-        // A failed run restores every register it set, so one reset serves every start.
-        registers.clear();
-        registers.resize(self.register_count, UNSET);
-        let mut steps = budget.unwrap_or(usize::MAX);
-        let search = Search {
-            last: if sticky { first } else { text.len() },
-        };
-        let Some(start) = self.next_start(text, first, search.last) else {
-            return Ok(None);
-        };
-        stack.clear();
-        stack.push(Frame::Barrier);
-        let Some((start, end)) =
-            self.run(text, 0, start, Some(search), registers, stack, &mut steps)?
-        else {
-            return Ok(None);
-        };
-        let captures = registers[..2 * self.capture_count]
-            .chunks_exact(2)
-            .map(|bounds| (bounds[0] != UNSET).then(|| bounds[0]..bounds[1]))
-            .collect();
-        Ok(Some(Found {
-            start,
-            end,
-            captures,
-        }))
+        WORKSPACE.with_borrow_mut(|workspace| {
+            let Workspace { registers, stack } = &mut *workspace;
+            // A failed run restores every register it set, so one reset serves every start.
+            registers.clear();
+            registers.resize(self.register_count, UNSET);
+            let mut steps = budget.unwrap_or(usize::MAX);
+            let search = Search {
+                last: if sticky { first } else { text.len() },
+            };
+            let Some(start) = self.next_start(text, first, search.last) else {
+                return Ok(None);
+            };
+            stack.clear();
+            stack.push(Frame::Barrier);
+            let Some((start, end)) =
+                self.run(text, 0, start, Some(search), registers, stack, &mut steps)?
+            else {
+                return Ok(None);
+            };
+            let captures = registers[..2 * self.capture_count]
+                .chunks_exact(2)
+                .map(|bounds| (bounds[0] != UNSET).then(|| bounds[0]..bounds[1]))
+                .collect();
+            Ok(Some(Found {
+                start,
+                end,
+                captures,
+            }))
+        })
     }
 
     /// The first position from `from` through `last` where a match can start.
@@ -758,6 +772,7 @@ impl Program {
         }
         match &self.starts {
             None => Some(from),
+            Some(starts) if starts.only_at_start => (starts.at_start && from == 0).then_some(0),
             Some(starts) => (from..=last).find(|position| starts.admits(text, *position)),
         }
     }

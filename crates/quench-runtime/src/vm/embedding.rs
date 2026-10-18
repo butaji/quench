@@ -190,9 +190,10 @@ impl<H: Host> Vm<H> {
                 if !include_symbols && matches!(self.heap.get(property), Some(Cell::Symbol(_))) {
                     continue;
                 }
-                let descriptor =
-                    self.object_get_own_property_descriptor(&program, &[value, property])?;
-                if !descriptor.is_undefined() && (!enumerable_only || self.descriptor_flag(descriptor, "enumerable")) {
+                // As `Object.keys` asks: a pending lazy data property answers from its
+                // attributes without materializing, and a Proxy through its descriptor trap.
+                let found = self.own_property_enumerable(&program, value, property)?;
+                if found.is_some_and(|enumerable| enumerable || !enumerable_only) {
                     enumerable.push(*key);
                     retained[index] = true;
                 }
@@ -657,7 +658,7 @@ impl<H: Host> Vm<H> {
                 if Self::detail_bigint_is_too_large(integer) {
                     "<a very large BigInt>".into()
                 } else {
-                    integer.clone()
+                    integer.to_string()
                 }
             }
             Some(Cell::Symbol(description)) => Self::detail_symbol(description.as_deref()),
@@ -669,36 +670,9 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn detail_bigint_is_too_large(integer: &str) -> bool {
-        const MAX_V8_DETAIL_BIGINT_LIMBS: usize = 100;
-
-        let digits = integer
-            .strip_prefix('-')
-            .unwrap_or(integer)
-            .trim_start_matches('0');
-        if digits.is_empty() || digits.parse::<usize>().is_ok() {
-            return false;
-        }
-
-        let mut limbs = vec![0usize];
-        for byte in digits.bytes() {
-            let Some(digit) = byte.checked_sub(b'0').filter(|digit| *digit <= 9) else {
-                return false;
-            };
-            let mut carry = u128::from(digit);
-            for limb in &mut limbs {
-                let product = (*limb as u128) * 10 + carry;
-                *limb = product as usize;
-                carry = product >> usize::BITS;
-            }
-            if carry != 0 {
-                limbs.push(carry as usize);
-                if limbs.len() > MAX_V8_DETAIL_BIGINT_LIMBS {
-                    return true;
-                }
-            }
-        }
-        limbs.len() > MAX_V8_DETAIL_BIGINT_LIMBS
+    fn detail_bigint_is_too_large(integer: &num_bigint::BigInt) -> bool {
+        const MAX_V8_DETAIL_BIGINT_LIMBS: u64 = 100;
+        integer.bits() > MAX_V8_DETAIL_BIGINT_LIMBS * u64::from(usize::BITS)
     }
 
     fn detail_symbol(description: Option<&str>) -> String {
@@ -1053,7 +1027,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(crate) fn bigint_rooted(&mut self, integer: i128) -> RootId {
-        let value = self.heap.alloc(Cell::BigInt(integer.to_string()));
+        let value = self.heap.alloc(Cell::bigint(integer.into()));
         self.root(value)
     }
 
@@ -1354,6 +1328,24 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         )
+    }
+
+    pub(crate) fn pending_lazy_data_property_rooted(
+        &mut self,
+        holder: RootId,
+        key: RootId,
+        listener: RootId,
+        index: u32,
+    ) -> Result<Option<Value>, JsError> {
+        let holder = self.embedding_value(holder)?;
+        let key = self.embedding_value(key)?;
+        let listener = self.embedding_value(listener)?;
+        // Lazy data properties have string keys.
+        let Some(Cell::String(name)) = self.heap.get(key).cloned() else {
+            return Ok(None);
+        };
+        let key = PropertyKey::string(self.intern_js_atom(&name));
+        Ok(self.pending_lazy_data_property(holder, key, listener, index))
     }
 
     pub(crate) fn materialize_lazy_data_property_rooted(

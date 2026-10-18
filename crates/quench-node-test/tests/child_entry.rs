@@ -87,6 +87,62 @@ fn package_scope_applies_inside_nested_checkouts() {
 }
 
 #[test]
+fn builtin_esm_exports_keep_node_snapshots_of_lazy_members() {
+    // `node:fs` builds its streams and library policy on first use; its ESM exports must
+    // still be the values the members had when the facade was made (Node's `syncExports`).
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("reexport.mjs"), "export * from 'node:fs';").unwrap();
+    for (name, source, expected) in [
+        (
+            "read",
+            "import * as fs from 'node:fs'; import { ReadStream as R } from './reexport.mjs';
+             import { createRequire } from 'node:module';
+             const cjs = createRequire(import.meta.url)('fs');
+             const d = Object.getOwnPropertyDescriptor(fs, 'WriteStream');
+             let n = 0; for (let i = 0; i < 2000; i++) if (typeof fs.createWriteStream === 'function') n++;
+             console.log(typeof fs.ReadStream, fs.ReadStream === cjs.ReadStream, fs.ReadStream.name,
+               R === fs.ReadStream, typeof d.value, d.writable, d.enumerable, d.configurable,
+               d.value.name, Object.keys(fs).includes('createReadStream'), n);",
+            "function true ReadStream true function true true false WriteStream true 2000\n",
+        ),
+        (
+            "write",
+            "import * as fs from 'node:fs'; import { createRequire } from 'node:module';
+             const cjs = createRequire(import.meta.url)('fs');
+             cjs.ReadStream = 1; delete cjs.WriteStream; cjs.glob = 'g';
+             console.log(typeof fs.ReadStream, cjs.ReadStream, typeof fs.WriteStream,
+               'WriteStream' in cjs, typeof fs.glob, cjs.glob);",
+            "function 1 function false function g\n",
+        ),
+        (
+            "named",
+            "import { createReadStream, glob } from 'node:fs'; import * as fs from 'node:fs';
+             console.log(typeof createReadStream, typeof glob, createReadStream === fs.createReadStream);",
+            "function function true\n",
+        ),
+        (
+            "materialized",
+            "import { createRequire } from 'node:module';
+             const cjs = createRequire(import.meta.url)('fs');
+             const original = cjs.WriteStream; const fs = await import('node:fs');
+             cjs.WriteStream = 2; console.log(fs.WriteStream === original, cjs.WriteStream);",
+            "true 2\n",
+        ),
+    ] {
+        let entry = directory.path().join(format!("{name}.mjs"));
+        std::fs::write(&entry, source).unwrap();
+        for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
+            let mut command = Command::new(executable);
+            command.arg(&entry);
+            if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+            let result = quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap();
+            assert_eq!(result.exit_code, Some(0), "{name} {executable}: {}", String::from_utf8_lossy(&result.stderr));
+            assert_eq!(String::from_utf8_lossy(&result.stdout), expected, "{name} {executable}");
+        }
+    }
+}
+
+#[test]
 fn package_scope_reads_nearest_type_and_stops_at_node_modules() {
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(directory.path().join("package.json"), r#"{"type":"module"}"#).unwrap();
@@ -10263,5 +10319,27 @@ c.on('message',reply=>console.log(JSON.stringify(reply,(k,v)=>typeof v==='bigint
 c.on('exit',code=>console.log('exit',code));
 c.send(message);
 "#,
+    );
+}
+
+#[test]
+fn process_execve_replaces_the_process_and_reports_errors_like_node() {
+    compare_node_source_with_args(
+        r#"
+const out = [];
+const t = (f) => { try { out.push(f()); } catch (e) { out.push([e.name, e.code, e.message, e.errno, e.path, e.syscall, Object.keys(e)]); } };
+t(() => [process.execve.length, process.execve.name, Object.getOwnPropertyDescriptor(process, 'execve').enumerable]);
+t(() => process.execve('/nonexistent/quench-execve', ['x']));
+t(() => process.execve('/bin/sh', [1]));
+t(() => process.execve('/bin/sh', ['a\0b']));
+t(() => process.execve('/bin/sh', [], { a: 1 }));
+t(() => process.execve(1));
+const seen = [];
+require('diagnostics_channel').channel('process.execve').subscribe((m) => seen.push(m.execPath, m.args.length, m.env));
+process.on('exit', () => console.log('exit handlers do not run'));
+console.log(JSON.stringify(out));
+process.execve('/bin/sh', ['sh', '-c', 'echo replaced "$X" "$#"', 'sh', 'one'], { X: 'kept' });
+"#,
+        &["--no-warnings"],
     );
 }

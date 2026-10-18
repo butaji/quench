@@ -12,6 +12,14 @@
 //! The initializer is host bootstrap code: it runs with the startup intrinsics in place and
 //! defines the group's members, which materialization has first turned into writable
 //! `undefined` data properties with their enumerable and configurable attributes.
+//!
+//! A binding may stand for a member that is still pending, such as a builtin module's ESM
+//! export (Node's facades bind each export's value when the facade is created). The binding
+//! then holds the member's accessor function, which script never observes otherwise
+//! (`resolve_pending_binding` reads it as the member), and the member keeps a listener that
+//! gives the binding the member's value when its group materializes. While a member has
+//! listeners, script's writes and deletes materialize the group first, so the binding keeps
+//! the value the member had, as Node's snapshot does.
 
 use super::object_descriptors::PropertyDescriptorRecord;
 use super::*;
@@ -36,10 +44,14 @@ impl GroupSlot {
 enum MemberSlot {
     Group,
     Key,
+    /// The bindings standing for the member while it is pending: an array of
+    /// `listener, index` pairs, each called with `index` and the member's value when its
+    /// group materializes (`UNDEFINED` while there are none).
+    Listeners,
 }
 
 impl MemberSlot {
-    const COUNT: usize = Self::Key as usize + 1;
+    const COUNT: usize = Self::Listeners as usize + 1;
 }
 
 /// A group's lifecycle: the initializer runs at most once.
@@ -108,19 +120,109 @@ impl<H: Host> Vm<H> {
         })
     }
 
-    /// The group of `holder`'s own property `key` while it is still a lazy data property.
-    fn lazy_data_group(&self, holder: Value, key: PropertyKey) -> Option<Value> {
+    /// The accessor of `holder`'s own property `key` while it is still a lazy data property.
+    fn lazy_data_accessor(&self, holder: Value, key: PropertyKey) -> Option<Value> {
         let attributes = self.property_attributes(holder, key)?;
         let getter = attributes.getter.filter(|_| attributes.accessor)?;
-        let Some(Cell::Function {
-            kind: FunctionKind::Native(Native::LazyDataProperty),
-            env,
-            ..
-        }) = self.heap.get(getter)
-        else {
-            return None;
+        self.lazy_member(getter).map(|_| getter)
+    }
+
+    /// The member environment of `value` when it is a lazy data property's accessor.
+    fn lazy_member(&self, value: Value) -> Option<Value> {
+        match self.heap.get(value) {
+            Some(Cell::Function {
+                kind: FunctionKind::Native(Native::LazyDataProperty),
+                env,
+                ..
+            }) => Some(*env),
+            _ => None,
+        }
+    }
+
+    fn member_slot(&self, member: Value, slot: MemberSlot) -> Value {
+        self.heap
+            .environment_slot(member, slot as usize)
+            .unwrap_or(Value::UNDEFINED)
+    }
+
+    /// The group of `holder`'s own property `key` while it is still a lazy data property.
+    fn lazy_data_group(&self, holder: Value, key: PropertyKey) -> Option<Value> {
+        let member = self.lazy_member(self.lazy_data_accessor(holder, key)?)?;
+        Some(self.member_slot(member, MemberSlot::Group))
+    }
+
+    /// Whether a binding stands for `holder`'s still-pending member `key`.
+    fn watched_lazy_member(&self, holder: Value, key: PropertyKey) -> bool {
+        self.lazy_data_accessor(holder, key)
+            .and_then(|accessor| self.lazy_member(accessor))
+            .is_some_and(|member| !self.member_slot(member, MemberSlot::Listeners).is_undefined())
+    }
+
+    /// The pending value a binding of `holder`'s member `key` holds while the member is still a
+    /// lazy data property, registering `listener` to receive `index` and the member's value when
+    /// its group materializes. `None` when the member is not pending.
+    pub(super) fn pending_lazy_data_property(
+        &mut self,
+        holder: Value,
+        key: PropertyKey,
+        listener: Value,
+        index: u32,
+    ) -> Option<Value> {
+        let accessor = self.lazy_data_accessor(holder, key)?;
+        let member = self.lazy_member(accessor)?;
+        let mut entries = match self.member_slot(member, MemberSlot::Listeners) {
+            listeners if listeners.is_undefined() => Vec::new(),
+            listeners => self.heap.array_elements(listeners).map(|elements| elements.to_vec()).unwrap_or_default(),
         };
-        self.heap.environment_slot(*env, MemberSlot::Group as usize)
+        entries.extend([listener, Value::number(f64::from(index))]);
+        let listeners = self.with_call_roots([accessor, member, listener], |vm| vm.new_array(entries));
+        if let Some(slot) = self
+            .heap
+            .environment_slot_mut(member, MemberSlot::Listeners as usize)
+        {
+            *slot = listeners;
+        }
+        Some(accessor)
+    }
+
+    /// The value a binding holds, reading a pending lazy member (`pending_lazy_data_property`)
+    /// as the member: its group materializes, and the binding then holds the member's value.
+    pub(super) fn resolve_pending_binding(
+        &mut self,
+        p: &ResidualProgram,
+        value: Value,
+    ) -> Result<Value, JsError> {
+        let Some(member) = self.lazy_member(value) else {
+            return Ok(value);
+        };
+        let group = self.member_slot(member, MemberSlot::Group);
+        let holder = self
+            .heap
+            .environment_slot(group, GroupSlot::Holder as usize)
+            .unwrap_or(Value::UNDEFINED);
+        self.with_call_roots([value, member, group, holder], |vm| {
+            vm.materialize_lazy_group(p, group)?;
+            let Some(Cell::String(name)) = vm.heap.get(vm.member_slot(member, MemberSlot::Key)).cloned()
+            else {
+                return Err(JsError("lazy data property key is a string".into()));
+            };
+            let key = vm.intern_js_atom(&name);
+            vm.get_property(p, holder, key)
+        })
+    }
+
+    /// Materializes `holder`'s member `key` when a binding stands for it, before script
+    /// writes or deletes it (Node's snapshot keeps the member's value).
+    pub(super) fn materialize_watched_lazy_member(
+        &mut self,
+        p: &ResidualProgram,
+        holder: Value,
+        key: PropertyKey,
+    ) -> Result<(), JsError> {
+        if self.watched_lazy_member(holder, key) {
+            self.materialize_lazy_data_property(p, holder, key)?;
+        }
+        Ok(())
     }
 
     fn lazy_data_properties(
@@ -201,22 +303,47 @@ impl<H: Host> Vm<H> {
         let holder = slot(self, GroupSlot::Holder);
         let initializer = slot(self, GroupSlot::Initializer);
         self.with_call_roots([group, holder, initializer], |vm| {
-            vm.enter_startup_intrinsics(p)?;
-            let initialized = (|| {
-                // Entering the startup intrinsics put back any member script had replaced.
-                let keys = vm
-                    .lazy_data_properties(holder)
-                    .filter_map(|(key, candidate)| (candidate == group).then_some(key))
-                    .collect::<Vec<_>>();
-                for key in keys {
-                    vm.replace_lazy_data_property(holder, key, Value::UNDEFINED)?;
+            // The bindings standing for pending members receive their values once the
+            // group is defined.
+            let watched = vm
+                .lazy_data_properties(holder)
+                .filter(|(_, candidate)| *candidate == group)
+                .filter_map(|(key, _)| {
+                    let member = vm.lazy_member(vm.lazy_data_accessor(holder, key)?)?;
+                    let listeners = vm.member_slot(member, MemberSlot::Listeners);
+                    (!listeners.is_undefined()).then_some((key, listeners))
+                })
+                .collect::<Vec<_>>();
+            let roots = watched.iter().map(|(_, listeners)| *listeners).collect::<Vec<_>>();
+            vm.with_call_roots(roots, |vm| {
+                vm.enter_startup_intrinsics(p)?;
+                let initialized = (|| {
+                    // Entering the startup intrinsics put back any member script had replaced.
+                    let keys = vm
+                        .lazy_data_properties(holder)
+                        .filter_map(|(key, candidate)| (candidate == group).then_some(key))
+                        .collect::<Vec<_>>();
+                    for key in keys {
+                        vm.replace_lazy_data_property(holder, key, Value::UNDEFINED)?;
+                    }
+                    vm.call_value(p, initializer, Value::UNDEFINED, &[])
+                        .map(|_| ())
+                })();
+                vm.set_lazy_group_state(group, GroupState::Done);
+                let left = vm.leave_startup_intrinsics(p);
+                initialized.and(left)?;
+                for (key, listeners) in watched {
+                    let PropertyKey::String(atom) = key else { continue };
+                    let value = vm.get_property(p, holder, atom)?;
+                    let entries = vm.heap.array_elements(listeners).map(|elements| elements.to_vec()).unwrap_or_default();
+                    for entry in entries.chunks_exact(2) {
+                        vm.with_call_roots([value], |vm| {
+                            vm.call_value(p, entry[0], Value::UNDEFINED, &[entry[1], value])
+                        })?;
+                    }
                 }
-                vm.call_value(p, initializer, Value::UNDEFINED, &[])
-                    .map(|_| ())
-            })();
-            vm.set_lazy_group_state(group, GroupState::Done);
-            let left = vm.leave_startup_intrinsics(p);
-            initialized.and(left)
+                Ok(())
+            })
         })
     }
 
@@ -279,8 +406,9 @@ impl<H: Host> Vm<H> {
             .unwrap_or(Value::UNDEFINED);
         let still_lazy =
             |vm: &Self| vm.lazy_data_group(holder, PropertyKey::string(key)) == Some(group);
+        let watched = self.watched_lazy_member(holder, PropertyKey::string(key));
         match args.first() {
-            Some(&value) if receiver == holder && still_lazy(self) => {
+            Some(&value) if receiver == holder && still_lazy(self) && !watched => {
                 self.replace_lazy_data_property(holder, PropertyKey::string(key), value)?;
                 Ok(Value::UNDEFINED)
             }

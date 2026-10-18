@@ -84,6 +84,7 @@ impl<H: Host> Vm<H> {
                 };
                 let atom = vm.intern_js_atom(&key);
                 vm.evaluate_deferred_namespace_for_key(p, target, Some(PropertyKey::string(atom)))?;
+                vm.materialize_watched_lazy_member(p, target, PropertyKey::string(atom))?;
                 if key.host_string() == "length"
                     && vm.heap.array(target).is_some()
                     && !vm

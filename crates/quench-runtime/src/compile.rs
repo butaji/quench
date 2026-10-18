@@ -24,6 +24,7 @@ mod capture_layout;
 mod capture_profile;
 mod class;
 mod early;
+mod frame_registers;
 mod syntax_message;
 pub(crate) mod liveness;
 mod locals;
@@ -1393,6 +1394,9 @@ struct Compiler<'a> {
     eval_context: Option<EvalContext>,
     eval_annex_b_collisions: FxHashSet<u32>,
     atoms: CompilerAtoms<'a>,
+    /// The capture markers made so far by binding kind (`None` for a catch parameter's) and
+    /// source atom (`capture_marker`).
+    capture_markers: FxHashMap<(Option<crate::bytecode::LexicalBindingKind>, Atom), Atom>,
     /// Private names resolved so far (`private_name_atom`): private member access resolves
     /// through name bindings, so functions resolving one keep theirs.
     private_name_references: u64,
@@ -1426,6 +1430,9 @@ struct Compiler<'a> {
 }
 
 type MethodSiteSpec = (Atom, u16, Vec<Register>, Option<(Atom, u16)>);
+
+/// The name prefix of a catch parameter's capture marker (`Compiler::capture_marker`).
+const CATCH_CAPTURE_PREFIX: &str = "\0quench:catch-capture:";
 
 /// A function's name bindings before its captured names are resolved: its direct bindings,
 /// the scopes it closes over and the names it declares.
@@ -1544,7 +1551,7 @@ enum ConstantKey {
     WasmV128([u8; crate::wasm::V128_BYTES]),
     String(String),
     StringUnits(Vec<u16>),
-    BigInt(String),
+    BigInt(num_bigint::BigInt),
     Boolean(bool),
     Null,
     Undefined,
@@ -1573,8 +1580,8 @@ impl<'a> Compiler<'a> {
     /// (`capture_layout::dynamic_name_scopes`), of every function private member access
     /// resolves through, and of the root; the rest keep their direct bindings, as no lookup
     /// reaches their captured names.
-    fn resolve_name_bindings(&mut self, functions: &mut [BcFunction]) {
-        let reachable = capture_layout::dynamic_name_scopes(functions, &self.atoms);
+    fn resolve_name_bindings(&mut self, functions: &mut [BcFunction], dynamic: &[bool]) {
+        let reachable = capture_layout::dynamic_name_scopes(functions, dynamic);
         for (id, function) in functions.iter_mut().enumerate() {
             let Some(deferred) = self.deferred_name_bindings.remove(&(id as u32)) else {
                 continue;
@@ -1660,7 +1667,7 @@ impl<'a> Compiler<'a> {
             if !visible.insert(atom) {
                 continue;
             }
-            let catch_marker = format!("\0quench:catch-capture:{name}");
+            let catch_marker = format!("{CATCH_CAPTURE_PREFIX}{name}");
             bindings.push(crate::bytecode::EvalBinding {
                 atom,
                 location: capture(*slot),
@@ -1730,6 +1737,7 @@ impl<'a> Compiler<'a> {
             eval_context: None,
             eval_annex_b_collisions: FxHashSet::default(),
             atoms,
+            capture_markers: FxHashMap::default(),
             private_name_references: 0,
             private_name_ids,
             private_name_labels: FxHashMap::default(),
@@ -2006,11 +2014,14 @@ impl<'a> Compiler<'a> {
             .filter_map(|name| self.atoms.find(name))
             .collect();
         if let Some(Some(root)) = self.functions.first_mut() {
-            root.global_lexical_atoms = global_lexical_atoms;
-            root.global_immutable_atoms = global_immutable_atoms;
-            root.global_var_atoms = global_var_atoms;
-            root.global_function_atoms = global_function_atoms;
-            root.global_annex_b_var_atoms = global_annex_b_var_atoms;
+            root.global_declarations = crate::bytecode::GlobalDeclarations {
+                lexical: global_lexical_atoms,
+                var: global_var_atoms,
+                function: global_function_atoms,
+                annex_b_var: global_annex_b_var_atoms,
+                immutable: global_immutable_atoms,
+            }
+            .boxed();
             if !self.module_goal {
                 fn lower_global_var(
                     op: Op,
@@ -2028,12 +2039,13 @@ impl<'a> Compiler<'a> {
                         .is_some_and(|atom| global_var_atoms.contains(atom))
                         .then_some(replacement)
                 }
+                let global_var_atoms = root.global_var_atoms().to_vec();
                 for instruction in &mut root.code {
                     if let Some(op) = lower_global_var(
                         instruction.op(),
                         || instruction.local_slot(),
                         &root.local_atoms,
-                        &root.global_var_atoms,
+                        &global_var_atoms,
                     ) {
                         instruction.set_op(op);
                     }
@@ -2043,7 +2055,7 @@ impl<'a> Compiler<'a> {
                         instruction.op(),
                         || instruction.local_slot(),
                         &root.local_atoms,
-                        &root.global_var_atoms,
+                        &global_var_atoms,
                     ) {
                         instruction.set_op(op);
                     }
@@ -2077,11 +2089,9 @@ impl<'a> Compiler<'a> {
         // Functions the compiler synthesizes (class constructors and initializers) may have
         // grown the reservation.
         functions.shrink_to_fit();
-        self.resolve_name_bindings(&mut functions);
-        capture_layout::apply(&mut functions, &self.atoms);
-        for function in &mut functions {
-            Self::elide_unobservable_tdz(function, &self.atoms);
-        }
+        let dynamic = capture_layout::dynamic_name_resolution(&functions, &self.atoms);
+        self.resolve_name_bindings(&mut functions, &dynamic);
+        capture_layout::apply(&mut functions, &self.atoms, &dynamic);
         if self.mode == SpecializationMode::Enabled {
             Self::apply_rewrites(
                 &mut functions,
@@ -2094,6 +2104,7 @@ impl<'a> Compiler<'a> {
         if std::env::var_os("QUENCH_MEMORY").is_some() {
             capture_profile::report(&functions);
         }
+        let undefined_constant = self.constant(Constant::Undefined);
         for function in &mut functions {
             rewrite::return_through_shared_returns(function);
             rewrite::express_strict_sets(function);
@@ -2105,13 +2116,19 @@ impl<'a> Compiler<'a> {
             if function.dispatch == DispatchClass::Numeric {
                 let live = liveness::analyze(
                     function,
-                    &self.method_sites,
+                    self.method_sites.as_slice(),
                     &self.field_sites,
                     &self.superinstructions,
                 );
                 numeric::apply(function, live.as_deref());
             }
-            Self::specialize_plain_local_operations(function, &self.atoms);
+            Self::specialize_plain_local_operations(function, &self.superinstructions);
+            frame_registers::promote(
+                function,
+                &self.superinstructions,
+                undefined_constant,
+                |atom| self.atoms.get(atom),
+            );
             if function
                 .code
                 .iter()
@@ -2119,16 +2136,16 @@ impl<'a> Compiler<'a> {
             {
                 let live = liveness::analyze(
                     function,
-                    &self.method_sites,
+                    self.method_sites.as_slice(),
                     &self.field_sites,
                     &self.superinstructions,
                 );
                 numeric::apply_plain_local_stores(function, live.as_deref());
             }
         }
-        let register_roots = liveness::derive(
+        liveness::mark_register_roots(
             &mut functions,
-            &self.method_sites,
+            self.method_sites.as_slice(),
             &self.field_sites,
             &self.superinstructions,
         );
@@ -2144,7 +2161,6 @@ impl<'a> Compiler<'a> {
         for function in &mut functions {
             function.code.shrink_to_fit();
             function.wide.shrink_to_fit();
-            function.handlers.shrink_to_fit();
             function.source_positions.shrink_to_fit();
         }
         let (mut method_sites, mut method_arguments) =
@@ -2186,7 +2202,6 @@ impl<'a> Compiler<'a> {
             object_sites: self.object_sites,
             regexp_literal_sites: self.regexp_literal_sites,
             superinstructions: self.superinstructions,
-            register_roots,
         };
         #[cfg(feature = "profile-aggregate")]
         debug_assert!(crate::profile::instruction_word_domains_fit(&program));
@@ -2199,6 +2214,22 @@ impl<'a> Compiler<'a> {
 
     fn atom(&mut self, text: &str) -> Atom {
         self.atoms.intern(text)
+    }
+
+    /// The atom marking a captured binding of `source` with `kind` (`None` for a catch
+    /// parameter's), recorded so the capture scope finds it without spelling it again.
+    fn capture_marker(
+        &mut self,
+        kind: Option<crate::bytecode::LexicalBindingKind>,
+        source: Atom,
+    ) -> Atom {
+        if let Some(marker) = self.capture_markers.get(&(kind, source)) {
+            return *marker;
+        }
+        let prefix = kind.map_or(CATCH_CAPTURE_PREFIX, |kind| kind.capture_prefix());
+        let marker = self.atom(&format!("{prefix}{}", &self.atoms[source as usize]));
+        self.capture_markers.insert((kind, source), marker);
+        marker
     }
 
     fn private_name_atom(&mut self, span: Span) -> Atom {
@@ -2536,7 +2567,9 @@ impl<'a> Compiler<'a> {
         let annex_b_collisions = self.annex_b_collisions(body);
         let arguments_slot = if let Some(slot) = parameter_arguments_slot {
             Some(slot)
-        } else if parent.is_none() {
+        } else if parent.is_none() || options.class_initializer {
+            // Field initializers and static blocks cannot name `arguments` (an early error),
+            // so they have no binding to materialize.
             None
         } else {
             if parameter_shadows_arguments {
@@ -2699,6 +2732,10 @@ impl<'a> Compiler<'a> {
                 .map(|name| function.owner.atom(name))
                 .collect()
         });
+        // Grown by doubling, these would keep their slack beside the syntax tree until the
+        // whole program has compiled.
+        function.code.shrink_to_fit();
+        function.source_positions.shrink_to_fit();
         let name_bindings = function.name_bindings();
         let undefined_register = function.used_undefined_register();
         let environment_clones = function.per_site_environment_clones();
@@ -2719,7 +2756,7 @@ impl<'a> Compiler<'a> {
             } else {
                 0
             },
-            parameter_atoms,
+            parameter_atoms: parameter_atoms.into(),
             rest: options.rest_override
                 || options.defaults.is_some_and(|value| value.rest.is_some()),
             is_async: options.async_function,
@@ -2737,21 +2774,17 @@ impl<'a> Compiler<'a> {
             simple_parameters,
             strict: root_strict,
             locals: function.locals.len() as u16,
-            local_atoms: function.locals.clone(),
+            local_atoms: function.locals.clone().into(),
             environment_atoms,
             selective_capture_slots: None,
-            local_registers: function.promoted_local_layout(),
+            local_registers: function.promoted_local_layout().into(),
             inherited_with_scope: options.with_depth != 0,
-            lexical_atoms,
-            global_lexical_atoms: Vec::new(),
-            global_var_atoms: Vec::new(),
-            global_function_atoms: Vec::new(),
-            global_annex_b_var_atoms: Vec::new(),
-            global_immutable_atoms: Vec::new(),
+            lexical_atoms: lexical_atoms.into(),
+            global_declarations: None,
             name_bindings,
-            binding_sites: function.binding_sites,
-            source_positions: function.source_positions,
-            environment_clones,
+            binding_sites: function.binding_sites.into(),
+            source_positions: function.source_positions.into(),
+            environment_clones: environment_clones.into(),
             code: function.code,
             wide: function.wide,
             registers: function.max_reg,
@@ -2763,8 +2796,8 @@ impl<'a> Compiler<'a> {
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
             call_plan: Default::default(),
-            handlers: function.handlers,
-            register_root_offset: crate::bytecode::NO_REGISTER_ROOT_MAP,
+            handlers: function.handlers.into(),
+            register_roots: Default::default(),
             undefined_register,
             parameter_registers: None,
             initial_register: Default::default(),
@@ -2842,25 +2875,11 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    /// Drops the TDZ resets of slots whose uninitialized state no access can observe
-    /// (`unobservable_tdz_slots`), so their loads and stores need no TDZ check.
-    fn elide_unobservable_tdz(function: &mut BcFunction, atoms: &CompilerAtoms<'_>) {
-        let slots = function.unobservable_tdz_slots(|atom| atoms.get(atom as usize));
-        if !slots.contains(&true) {
-            return;
-        }
-        for instruction in &mut function.code {
-            if instruction.op() == Op::InitializeTdz
-                && slots.get(instruction.local_slot()) == Some(&true)
-            {
-                *instruction = Instr::new(Op::Nop, 0, 0, 0, 0);
-            }
-        }
-    }
-
-    fn specialize_plain_local_operations(function: &mut BcFunction, atoms: &CompilerAtoms<'_>) {
-        let plain_slots = function.plain_local_slots(|atom| atoms.get(atom as usize));
-
+    fn specialize_plain_local_operations(
+        function: &mut BcFunction,
+        superinstructions: &[crate::bytecode::Superinstruction],
+    ) {
+        let plain_slots = function.plain_local_slots(superinstructions);
         for instruction in &mut function.code {
             match instruction.op() {
                 Op::LoadLocal | Op::StoreLocal

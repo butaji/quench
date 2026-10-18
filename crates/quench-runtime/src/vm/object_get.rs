@@ -91,14 +91,12 @@ impl<H: Host> Vm<H> {
         let value = self
             .module_binding_value(object, atom)
             .or_else(|| self.own_property(object, atom));
+        let value = match value {
+            Some(value) => Some(self.resolve_pending_binding(p, value)?),
+            None => None,
+        };
         if value.is_some_and(Value::is_deleted) {
-            return Err(self.reference_error(
-                p,
-                format!(
-                    "Cannot access '{}' before initialization",
-                    self.atom_name(atom)
-                ),
-            ));
+            return Err(self.uninitialized_binding_error(p, atom));
         }
         Ok(value)
     }
@@ -442,10 +440,38 @@ impl<H: Host> Vm<H> {
         self.plain_property_get(object, PropertyKey::string(atom))
     }
 
+    /// A keyed read of a public symbol, or of a string naming an existing non-index atom,
+    /// that the plain chain walk answers: what `get_index` returns for it before any lookup
+    /// that can run guest code. A host-private symbol names only an own property, so its
+    /// read is left to `get_index` with every other `None`.
+    pub(super) fn plain_keyed_get(&self, object: Value, key: Value) -> Option<Value> {
+        match self.heap.get(key)? {
+            // A host-private symbol names only an own property, which the general path reads.
+            Cell::Symbol(symbol) if symbol.kind != crate::heap::SymbolKind::HostPrivate => {
+                self.plain_property_get(object, PropertyKey::symbol(key))
+            }
+            Cell::String(text) => self.plain_named_get(object, self.lookup_js_atom(text)?),
+            _ => None,
+        }
+    }
+
     /// `plain_named_get`'s chain walk for a key it admits, or any symbol key: symbols name
     /// no exotic, index or virtual property.
     #[inline]
     fn plain_property_get(&self, object: Value, key: PropertyKey) -> Option<Value> {
+        self.plain_property_lookup(object, key)
+            .map(|found| found.unwrap_or(Value::UNDEFINED))
+    }
+
+    /// The chain walk of `plain_property_get`, telling an absent key (`Some(None)`) from a
+    /// present one: `HasProperty` and `Get` together where neither can run guest code.
+    /// `None` leaves both to the general path.
+    #[inline]
+    pub(super) fn plain_property_lookup(
+        &self,
+        object: Value,
+        key: PropertyKey,
+    ) -> Option<Option<Value>> {
         let mut current = object;
         loop {
             let data = self.heap.ordinary_object(current)?;
@@ -454,17 +480,17 @@ impl<H: Host> Vm<H> {
             }
             let shape = data.shape();
             if let Some(slot) = self.property_shape_slot(shape, key) {
-                if self.shape_attribute(shape, slot)?.accessor {
+                if self.slot_attributes(data, slot)?.accessor {
                     return None;
                 }
-                return self.heap.property_get(data, slot);
+                return self.heap.property_get(data, slot).map(Some);
             }
             if self.descriptors.contains_key(&(current, key)) {
                 return None;
             }
             let proto = data.proto();
             if proto.is_null() {
-                return Some(Value::UNDEFINED);
+                return Some(None);
             }
             current = proto;
         }
@@ -793,11 +819,6 @@ impl<H: Host> Vm<H> {
     /// so a found home is memoized while that environment lives.
     fn private_name_home(&mut self, p: &ResidualProgram, atom: Atom) -> Option<Value> {
         let frame_index = self.frames.len().checked_sub(1)?;
-        if let Some(binding) = self.name_binding(frame_index, atom)
-            && binding.kind == crate::bytecode::LexicalBindingKind::PrivateName
-        {
-            return self.load_name_binding(p, frame_index, binding).ok();
-        }
         let start = self.captured_parent_environment(frame_index);
         let key = PrivateHomeKey {
             environment: start,
@@ -805,6 +826,25 @@ impl<H: Host> Vm<H> {
             function: self.frames[frame_index].function,
             name: atom,
         };
+        // Without binding sites no eval-introduced private binding is in reach, so the name
+        // bindings resolve the same initialized home whenever the closure's environment chain
+        // is the same.
+        let static_bindings = p
+            .functions
+            .get(key.function as usize)
+            .is_some_and(|function| function.binding_sites.is_empty());
+        if static_bindings && let Some(home) = self.private_homes.get(&key) {
+            return Some(*home);
+        }
+        if let Some(binding) = self.name_binding(frame_index, atom)
+            && binding.kind == crate::bytecode::LexicalBindingKind::PrivateName
+        {
+            let home = self.load_name_binding(p, frame_index, binding).ok();
+            if static_bindings && let Some(home) = home {
+                self.private_homes.insert(key, home);
+            }
+            return home;
+        }
         if let Some(home) = self.private_homes.get(&key) {
             return Some(*home);
         }
@@ -830,7 +870,7 @@ impl<H: Host> Vm<H> {
             scope,
         }) = self.heap.get(environment)
         {
-            let program = &scope.program;
+            let program = &scope.program();
             let dynamic_bindings = self.heap.environment_bindings(environment)?;
             if let Some((_, home)) = dynamic_bindings
                 .iter()

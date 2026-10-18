@@ -2,9 +2,10 @@ use super::CompilerAtoms;
 
 use crate::bytecode::{Function, Op, WITH_ENTER_BINDING};
 
-pub(super) fn apply(functions: &mut [Function], atoms: &CompilerAtoms<'_>) {
+/// `dynamic` is `dynamic_name_resolution` of `functions`.
+pub(super) fn apply(functions: &mut [Function], atoms: &CompilerAtoms<'_>, dynamic: &[bool]) {
     let mut captured = captured_slots(functions);
-    let dynamic_ancestors = dynamic_scope_ancestors(functions, atoms);
+    let dynamic_ancestors = dynamic_scope_ancestors(functions, dynamic);
 
     for (id, function) in functions.iter_mut().enumerate() {
         if !has_closure(function) {
@@ -38,6 +39,16 @@ pub(super) fn apply(functions: &mut [Function], atoms: &CompilerAtoms<'_>) {
             );
             captured[id].sort_unstable();
             captured[id].dedup();
+            // An `arguments` binding that no instruction addresses and no closure captures is
+            // unobservable, as `Compiler::compile_function` finds for a closure-free body.
+            if let Some(slot) = function.arguments_slot
+                && captured[id].binary_search(&slot).is_err()
+                && !function
+                    .instructions()
+                    .any(|instruction| instruction.addressed_local_slots().any(|local| local == slot))
+            {
+                function.arguments_slot = None;
+            }
             function.selective_capture_slots = Some(captured[id].clone());
             rewrite_local_ownership(function, &captured[id]);
             remove_unobservable_clones(function, &captured[id]);
@@ -97,9 +108,9 @@ fn captured_slots(functions: &[Function]) -> Vec<Vec<u16>> {
 /// Functions whose name bindings a dynamic name lookup may consult: those enclosing dynamic
 /// name resolution (`dynamic_scope_ancestors`), whose environments such a lookup walks, and
 /// those it encloses, whose by-name loads no longer resolve statically.
-pub(super) fn dynamic_name_scopes(functions: &[Function], atoms: &CompilerAtoms<'_>) -> Vec<bool> {
-    let mut reachable = dynamic_scope_ancestors(functions, atoms);
-    let dynamic = dynamic_name_resolution(functions, atoms);
+/// `dynamic` is `dynamic_name_resolution` of `functions`.
+pub(super) fn dynamic_name_scopes(functions: &[Function], dynamic: &[bool]) -> Vec<bool> {
+    let mut reachable = dynamic_scope_ancestors(functions, dynamic);
     for id in 0..functions.len() {
         let mut current = Some(id);
         while let Some(function) = current {
@@ -115,7 +126,7 @@ pub(super) fn dynamic_name_scopes(functions: &[Function], atoms: &CompilerAtoms<
 
 /// Functions resolving names dynamically themselves: direct eval, by-name resolution, a
 /// `with` statement, or an enclosing function's binding sites.
-fn dynamic_name_resolution(functions: &[Function], atoms: &CompilerAtoms<'_>) -> Vec<bool> {
+pub(super) fn dynamic_name_resolution(functions: &[Function], atoms: &CompilerAtoms<'_>) -> Vec<bool> {
     let inherited_dynamic_scope = inherited_dynamic_scope(functions);
     let is_with_enter = |atom: usize| {
         atoms
@@ -136,8 +147,7 @@ fn dynamic_name_resolution(functions: &[Function], atoms: &CompilerAtoms<'_>) ->
 /// Functions enclosing dynamic name resolution, including a `with` body's by-name
 /// loads, which may denote any ancestor's binding and so need every ancestor's
 /// locals in its environment.
-fn dynamic_scope_ancestors(functions: &[Function], atoms: &CompilerAtoms<'_>) -> Vec<bool> {
-    let dynamic = dynamic_name_resolution(functions, atoms);
+fn dynamic_scope_ancestors(functions: &[Function], dynamic: &[bool]) -> Vec<bool> {
     let mut unsafe_layout = vec![false; functions.len()];
     for id in 0..functions.len() {
         if !dynamic[id] {

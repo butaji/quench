@@ -7,6 +7,7 @@ const MINIMUM_POSITIVE_SUBNORMAL: f64 = f64::from_bits(MINIMUM_SUBNORMAL_BIT_PAT
 const NUMBER_RADIX_PREFIX_LENGTH: usize = 2;
 const BINARY_RADIX: u32 = 2;
 const OCTAL_RADIX: u32 = 8;
+const DECIMAL_RADIX: u32 = 10;
 const HEXADECIMAL_RADIX: u32 = 16;
 const MAX_NUMBER_FORMAT_DIGITS: usize = 100;
 
@@ -32,8 +33,37 @@ pub(super) fn parse_number_string(text: &str) -> f64 {
     };
     radix.map_or_else(
         || text.parse().unwrap_or(f64::NAN),
-        |radix| i64::from_str_radix(digits, radix).map_or(f64::NAN, |value| value as f64),
+        |radix| {
+            if digits.is_empty() || !digits.chars().all(|digit| digit.is_digit(radix)) {
+                f64::NAN
+            } else {
+                integer_digits_value(digits, radix)
+            }
+        },
     )
+}
+
+/// The Number nearest the non-negative integer that `digits` (all valid in `radix`) spell.
+/// Values that stay at or below 2^53 accumulate exactly in binary64; larger values in
+/// radix 10 or a power of two are rounded once from the exact integer, as StringToNumber
+/// and parseInt require, and other radices keep the accumulated approximation parseInt
+/// permits (ECMA-262 19.2.5).
+pub(super) fn integer_digits_value(digits: &str, radix: u32) -> f64 {
+    let mut value = 0.0;
+    for digit in digits.chars().filter_map(|digit| digit.to_digit(radix)) {
+        value = value * f64::from(radix) + f64::from(digit);
+    }
+    if value <= MAX_SAFE_INTEGER + 1.0 {
+        return value;
+    }
+    if radix == DECIMAL_RADIX {
+        return digits.parse().unwrap_or(value);
+    }
+    if radix.is_power_of_two() {
+        return num_bigint::BigUint::parse_bytes(digits.as_bytes(), radix)
+            .map_or(value, |exact| crate::bigint::to_f64(&BigInt::from(exact)));
+    }
+    value
 }
 
 fn fixed_decimal(number: f64, digits: usize) -> String {
@@ -364,9 +394,7 @@ impl<H: Host> Vm<H> {
                     value
                 };
                 let number = match self.heap.get(primitive) {
-                    Some(Cell::BigInt(value)) => value.parse::<f64>().map_err(|_| {
-                        self.type_error(p, "invalid BigInt numeric representation".into())
-                    })?,
+                    Some(Cell::BigInt(value)) => crate::bigint::to_f64(value),
                     _ => self.to_number(p, primitive)?,
                 };
                 Value::number(number)

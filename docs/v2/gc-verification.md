@@ -33,10 +33,12 @@ Allocation is charged in weight: one per cell or record plus one per 64
 payload bytes. `Cell::payload_bytes` is the authority for a cell's payload
 (string units, array element storage, ArrayBuffer and Wasm memory/table
 bytes); the heap's payload ledger adds it at allocation and growth and
-subtracts it at reclamation, so live weight needs no extra trace. Survival
-compares live weight with allocated weight; budgets stay proportional to live
-cells and records, which also hold memory the weight does not see. A `gc-tuning` + `profile-gc-time` build with `QUENCH_GC_TRACE=1`
-prints each plan and recounts the ledger after every full collection. Rope
+subtracts it at reclamation, and every full sweep resets it to the survivors'
+sum, since a live array shrinking is not charged back. Survival compares live
+weight with allocated weight; budgets stay proportional to live cells and
+records, which also hold memory the weight does not see. A `gc-tuning` + `profile-gc-time` build
+with `QUENCH_GC_TRACE=1` prints each plan and recounts the ledger after every
+full collection. Rope
 flattening, the property arena and collection entries are not yet charged.
 
 Every minor collection in a `debug_assertions` build is compared with a full

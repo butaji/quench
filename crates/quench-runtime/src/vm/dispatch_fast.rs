@@ -892,6 +892,23 @@ lane_handler! {
 }
 
 lane_handler! {
+    /// `InitializeTdz`: opens the binding's dead zone wherever the frame keeps it, as the
+    /// general path does (`Vm::frame_binding_mut`).
+    fn lane_initialize_tdz<>(cx, r, ip, i, view) {
+        // SAFETY: the context's program outlives the lane run.
+        let Some(binding) = (unsafe { vm(cx) }).frame_binding_mut(
+            unsafe { &*(*cx).code },
+            unsafe { (*cx).frame },
+            i.imm() as usize,
+        ) else {
+            return exit(ip);
+        };
+        *binding = Value::DELETED;
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
     fn lane_load_this<>(cx, r, ip, i, view) {
         // An uninitialized `this` throws on the general path.
         let Some(value) = (unsafe { lane_this(cx) }) else {
@@ -1134,7 +1151,12 @@ lane_handler! {
         else {
             return exit(ip);
         };
-        let Some(value) = (unsafe { vm(cx) }).dense_array_element(base, key) else {
+        let vm = unsafe { vm(cx) };
+        let Some(value) = vm
+            .dense_array_element(base, key)
+            .or_else(|| vm.plain_keyed_get(base, key))
+            .or_else(|| vm.plain_typed_element(base, key))
+        else {
             return exit(ip);
         };
         r.set(i.a, value);
@@ -1160,7 +1182,13 @@ lane_handler! {
     /// `lane_get_index_registers` past a record array.
     #[inline(never)]
     fn lane_get_index_slot<>(cx, r, ip, i, view) {
-        let Some(value) = (unsafe { vm(cx) }).dense_array_element(r.get(i.b), r.get(i.c)) else {
+        let vm = unsafe { vm(cx) };
+        let (base, key) = (r.get(i.b), r.get(i.c));
+        let Some(value) = vm
+            .dense_array_element(base, key)
+            .or_else(|| vm.plain_keyed_get(base, key))
+            .or_else(|| vm.plain_typed_element(base, key))
+        else {
             return exit(ip);
         };
         r.set(i.a, value);
@@ -1267,8 +1295,9 @@ lane_handler! {
     }
 }
 
-/// A `Unary` record's value where it runs no guest code: logical not and `typeof` of any
-/// value, and the numeric operators of a Number.
+/// A `Unary` record's value where it runs no guest code and throws nothing: logical not and
+/// `typeof` of any value, and every other operator of a Number, String, Boolean, null or
+/// undefined, whose conversions are pure.
 ///
 /// # Safety
 /// `cx` is the running lane's context and `r` its registers.
@@ -1290,11 +1319,23 @@ unsafe fn lane_unary_value<H: Host>(
         note_allocation(vm);
         return Some(name);
     }
-    if operand.as_number().is_none() || !super::coercion::numeric_unary(operator) {
+    if operand.as_number().is_some() && super::coercion::numeric_unary(operator) {
+        // SAFETY: the context's program outlives the lane run.
+        return vm.unary(unsafe { &*(*cx).code }, operator, operand).ok();
+    }
+    let pure_primitive = operand.as_bool().is_some()
+        || operand.is_null()
+        || operand.is_undefined()
+        || operand.as_number().is_some()
+        || vm.is_string(operand);
+    if !pure_primitive {
         return None;
     }
     // SAFETY: the context's program outlives the lane run.
-    vm.unary(unsafe { &*(*cx).code }, operator, operand).ok()
+    let value = vm.unary(unsafe { &*(*cx).code }, operator, operand).ok()?;
+    // Converting to a string can allocate.
+    note_allocation(vm);
+    Some(value)
 }
 
 lane_handler! {
@@ -3945,7 +3986,7 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let body = code.functions.get(function as usize)?;
-        let plan = body.call_plan(&code.atoms);
+        let plan = body.call_plan(code);
         if !plan.registers_only {
             return None;
         }
@@ -5028,6 +5069,32 @@ lane_handler! {
             return exit(ip);
         }
         let vm = unsafe { vm(cx) };
+        // Keep eligible calls on the general dispatcher so they can enter
+        // native code. Unsupported calls stay on the fast interpreter lane.
+        if vm.execution_mode == super::ExecutionMode::Compiled
+            && i.a & crate::bytecode::RETURN_REGISTER == 0
+        {
+            let program = unsafe { (*cx).program };
+            let function = i.b as usize;
+            if vm
+                .programs
+                .has_compiled_function_or_note_fallback(program, function)
+                || vm.programs.has_wasm_tier_containing(program, function)
+            {
+                return exit(ip);
+            }
+            // `run_compiled_inner` is the one-shot promotion claimant. Count
+            // lane-only entries here, but leave the threshold entry for that
+            // general-path hook so no handoff token or duplicate count is
+            // needed. Terminal calls stay on their tail-call path above the
+            // tier gate and are deliberately not observed here.
+            if vm
+                .programs
+                .note_wasm_tier_lane_entry(program, u32::from(i.b))
+            {
+                return exit(ip);
+            }
+        }
         // SAFETY: the program's views outlive the lane run.
         let views = unsafe { &*(*cx).views };
         let stack = &mut vm.lane_stack;
@@ -5291,8 +5358,9 @@ fn returning_kind(instruction: WideInstruction) -> Option<u8> {
 
 lane_handler! {
     /// A value record that returns its result from the frame (`returning_kind`): the value
-    /// as the record's own handler computes it, then the activation's completion. A VM
-    /// frame's return, and any other value, take the general path.
+    /// as the record's own handler computes it, then the activation's completion, or the VM
+    /// frame's return of it from the general loop (`lane_frame_return`). A value the
+    /// handler does not compute takes the general path.
     fn lane_returning<KIND: u8>(cx, r, ip, i, view) {
         let value = unsafe {
             match KIND {
@@ -5338,11 +5406,12 @@ lane_handler! {
             }
             next!(cx, registers, next, view)
         }
-        // A VM frame returns the value as `Return` would (`lane_return_frame`).
+        // A script frame the lane pushed returns as `Return` would (`lane_return_script_frame`);
+        // any other VM frame returns the value from this record.
         if !unsafe { (*cx).inline_calls } && unsafe { (*cx).script_calls } {
             return lane_return_script_frame(cx, ip, value);
         }
-        exit(ip)
+        lane_frame_return(unsafe { vm(cx) }, ip, value)
     }
 }
 
@@ -5686,6 +5755,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::StoreLocalPlain => Some(lane_store_local_plain::<H>),
         Op::StoreLocal | Op::StoreEnvLocal => Some(lane_store_local::<H>),
         Op::LoadThis => Some(lane_load_this::<H>),
+        Op::InitializeTdz => Some(lane_initialize_tdz::<H>),
         Op::GetField => Some(lane_get_field_first::<H>),
         Op::SetField | Op::SetFieldStrict => Some(lane_set_object_field_own::<H>),
         Op::SetThisField | Op::SetThisFieldStrict => Some(lane_set_this_field_own::<H>),
@@ -5936,18 +6006,20 @@ fn lane_returns(instruction: WideInstruction) -> bool {
     instruction.result_flags() & !crate::bytecode::RETURN_REGISTER == 0
 }
 
-/// The register every direct memory access of `function` goes through, when
-/// there is exactly one.
+/// The register every compiled linear-memory access of `function` goes
+/// through, when there is exactly one.
 pub(super) fn memory_register(function: &Function) -> Option<u16> {
     let mut registers = function
         .code
         .iter()
         .map(|packed| decoded_instruction(function, *packed))
-        .filter(|instruction| {
-            MemoryLoad::from_direct_op(instruction.op()).is_some()
-                || MemoryStore::from_direct_op(instruction.op()).is_some()
-        })
-        .map(|instruction| instruction.b());
+        .filter_map(|instruction| match instruction.op() {
+            op if MemoryLoad::from_direct_op(op).is_some()
+                || MemoryStore::from_direct_op(op).is_some() => Some(instruction.b()),
+            Op::WasmMemorySize => Some(instruction.b()),
+            Op::WasmMemoryFill => Some(instruction.a()),
+            _ => None,
+        });
     let first = registers.next()?;
     registers.all(|register| register == first).then_some(first)
 }
@@ -6954,8 +7026,7 @@ impl<H: Host> Vm<H> {
                 .map_or(&[][..], |views| views) as *const _,
             constants: self.programs.constants(program) as *const _,
             inline_calls: inline_calls
-                && code.kind == crate::bytecode::ProgramKind::Wasm
-                && self.execution_mode != super::compiled::ExecutionMode::Compiled,
+                && code.kind == crate::bytecode::ProgramKind::Wasm,
             memory: MemoryView::NONE,
             resolved: (Value::UNDEFINED, MemoryView::NONE),
             script_calls: inline_calls

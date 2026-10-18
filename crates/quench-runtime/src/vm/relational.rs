@@ -267,8 +267,7 @@ impl<H: Host> Vm<H> {
                 self.heap.property_get(self.object_data(constructor)?, slot)?
             }
         };
-        if holder != self.instanceof_has_instance_holder && !self.verify_has_instance_holder(holder)
-        {
+        if !self.inherits_native_has_instance(holder) {
             return None;
         }
         if !self.is_object_like(value) {
@@ -322,6 +321,38 @@ impl<H: Host> Vm<H> {
 
     /// Whether `holder`'s `@@hasInstance` is the native `Function.prototype[@@hasInstance]`
     /// as a data property; remembers a holder whose property can never change.
+    /// Whether the `@@hasInstance` a constructor with prototype `holder` inherits is the
+    /// native one held as data (`verify_has_instance_holder`): the first object on the chain
+    /// with an own `@@hasInstance` holds it, and no proxy precedes it. A subclass constructor
+    /// inherits it through its parent constructors.
+    fn inherits_native_has_instance(&mut self, holder: Value) -> bool {
+        let Some(&symbol) = self.well_known_symbols.get("hasInstance") else {
+            return false;
+        };
+        let mut current = holder;
+        loop {
+            if current == self.instanceof_has_instance_holder {
+                return true;
+            }
+            if matches!(self.heap.get(current), Some(Cell::Proxy { .. })) {
+                return false;
+            }
+            if self
+                .property_attributes(current, PropertyKey::symbol(symbol))
+                .is_some()
+            {
+                return self.verify_has_instance_holder(current);
+            }
+            let Some(object) = self.heap.object(current) else {
+                return false;
+            };
+            current = object.proto();
+            if current.is_null() {
+                return false;
+            }
+        }
+    }
+
     fn verify_has_instance_holder(&mut self, holder: Value) -> bool {
         let Some(&symbol) = self.well_known_symbols.get("hasInstance") else {
             return false;
@@ -414,11 +445,11 @@ fn compare_bigint_string(heap: &Heap, left: Value, right: Value) -> Option<Optio
     match (heap.get(left), heap.get(right)) {
         (Some(Cell::BigInt(bigint)), Some(Cell::String(string))) => Some(
             crate::bigint::parse_string(string.host_string())
-                .and_then(|right| Some(bigint.parse::<BigInt>().ok()?.cmp(&right))),
+                .map(|right| bigint.as_ref().cmp(&right)),
         ),
         (Some(Cell::String(string)), Some(Cell::BigInt(bigint))) => Some(
             crate::bigint::parse_string(string.host_string())
-                .and_then(|left| Some(left.cmp(&bigint.parse::<BigInt>().ok()?))),
+                .map(|left| left.cmp(bigint)),
         ),
         _ => None,
     }
@@ -431,11 +462,7 @@ fn compare_bigint_values(heap: &Heap, left: Value, right: Value) -> Option<Optio
         left.as_number(),
         right.as_number(),
     ) {
-        (Some(Cell::BigInt(left)), Some(Cell::BigInt(right)), _, _) => Some(Some(
-            left.parse::<BigInt>()
-                .ok()?
-                .cmp(&right.parse::<BigInt>().ok()?),
-        )),
+        (Some(Cell::BigInt(left)), Some(Cell::BigInt(right)), _, _) => Some(Some(left.cmp(right))),
         (Some(Cell::BigInt(bigint)), _, _, Some(number)) => {
             Some(bigint_number_ordering(bigint, number))
         }
@@ -446,11 +473,10 @@ fn compare_bigint_values(heap: &Heap, left: Value, right: Value) -> Option<Optio
     }
 }
 
-fn bigint_number_ordering(bigint: &str, number: f64) -> Option<Ordering> {
+fn bigint_number_ordering(integer: &BigInt, number: f64) -> Option<Ordering> {
     if number.is_nan() {
         return None;
     }
-    let integer = bigint.parse::<BigInt>().ok()?;
     if number == f64::INFINITY {
         return Some(Ordering::Less);
     }
@@ -459,7 +485,7 @@ fn bigint_number_ordering(bigint: &str, number: f64) -> Option<Ordering> {
     }
     let sign = integer.sign();
     if number == 0.0 {
-        return Some(integer.cmp(&BigInt::from(0)));
+        return Some(integer.cmp(&BigInt::ZERO));
     }
     if sign == Sign::Minus && number.is_sign_positive() {
         return Some(Ordering::Less);
@@ -467,12 +493,7 @@ fn bigint_number_ordering(bigint: &str, number: f64) -> Option<Ordering> {
     if sign != Sign::Minus && number.is_sign_negative() {
         return Some(Ordering::Greater);
     }
-    let magnitude = if sign == Sign::Minus {
-        -integer
-    } else {
-        integer
-    };
-    let ordering = compare_positive_bigint_number(magnitude, number.abs());
+    let ordering = compare_positive_bigint_number(BigInt::from(integer.magnitude().clone()), number.abs());
     Some(if number.is_sign_negative() {
         ordering.reverse()
     } else {
