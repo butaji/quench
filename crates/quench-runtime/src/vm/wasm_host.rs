@@ -459,6 +459,9 @@ mod tests {
             )
             .unwrap();
         let exports = vm.evaluate_embedding_compiled_script(&script).unwrap();
+        // The helper, its HEAPU8 environment and the replacement view are held across the
+        // instantiation and calls below, which may collect.
+        vm.root(exports);
         let helper_atom = vm.intern_atom("helper");
         let helper = vm.own_property(exports, helper_atom).unwrap();
         let replacement_atom = vm.intern_atom("replacement");
