@@ -341,13 +341,14 @@ impl Heap {
         }
     }
 
-    /// An ordinary object (`Cell::Object`), whether it lives in the object record space or a
-    /// legacy slot.
+    /// An ordinary object (`Cell::Object`, or a promise, whose internal slots change no
+    /// object operation), whether it lives in the object record space or a legacy slot.
     pub(crate) fn ordinary_object(&self, value: Value) -> Option<&Object> {
         match self.object_record(value) {
             Some(object) => Some(object),
             None => match self.get(value)? {
                 Cell::Object(object) => Some(object),
+                Cell::Promise { object, .. } => Some(object),
                 _ => None,
             },
         }
