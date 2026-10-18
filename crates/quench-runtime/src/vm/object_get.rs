@@ -436,12 +436,15 @@ impl<H: Host> Vm<H> {
         self.plain_property_get(object, PropertyKey::string(atom))
     }
 
-    /// A keyed read of a symbol, or of a string naming an existing non-index atom, that the
-    /// plain chain walk answers: what `get_index` returns for it before any lookup that can
-    /// run guest code. `None` leaves the read to `get_index`.
+    /// A keyed read of a public symbol, or of a string naming an existing non-index atom,
+    /// that the plain chain walk answers: what `get_index` returns for it before any lookup
+    /// that can run guest code. A host-private symbol names only an own property, so its
+    /// read is left to `get_index` with every other `None`.
     pub(super) fn plain_keyed_get(&self, object: Value, key: Value) -> Option<Value> {
         match self.heap.get(key)? {
-            Cell::Symbol(_) => self.plain_property_get(object, PropertyKey::symbol(key)),
+            Cell::Symbol(data) if data.kind != crate::heap::SymbolKind::HostPrivate => {
+                self.plain_property_get(object, PropertyKey::symbol(key))
+            }
             Cell::String(text) => self.plain_named_get(object, self.lookup_js_atom(text)?),
             _ => None,
         }
