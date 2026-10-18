@@ -296,7 +296,15 @@ struct CompleteMatcher {
     /// lookbehind or multi-unit classes.
     backtracking: Option<backtrack::Program>,
     /// `required_literal` as bytes, when every unit is ASCII.
-    required_bytes: Option<memchr::memmem::Finder<'static>>,
+    required_bytes: Option<LiteralFinder>,
+}
+
+/// A searcher for a literal byte run. The searcher is several hundred bytes, so it is boxed:
+/// most patterns have no such literal, and theirs need not carry the space.
+pub(crate) type LiteralFinder = Box<memchr::memmem::Finder<'static>>;
+
+pub(crate) fn literal_finder(bytes: &[u8]) -> LiteralFinder {
+    Box::new(memchr::memmem::Finder::new(bytes).into_owned())
 }
 
 impl CompleteMatcher {
@@ -309,7 +317,7 @@ impl CompleteMatcher {
             && required_literal.iter().all(|unit| *unit <= u32::from(ASCII_MAX)))
         .then(|| {
             let bytes = required_literal.iter().map(|unit| *unit as u8).collect::<Vec<_>>();
-            memchr::memmem::Finder::new(&bytes).into_owned()
+            literal_finder(&bytes)
         });
         let tree = OnceCell::new();
         if backtracking.is_none() {
@@ -2452,9 +2460,7 @@ fn class_item_matches(item: &ClassItem, value: u32, ignore_case: bool, unicode: 
             // The range matches when one of its members has `value`'s canonical form.
             let key = canonical(value, unicode);
             (canonical(key, unicode) == key && in_range(key))
-                || canonical_preimages(unicode)
-                    .get(&key)
-                    .is_some_and(|members| members.iter().copied().any(in_range))
+                || canonical_preimages_of(key, unicode).any(in_range)
         }
         ClassItem::Escape(escape) => escape_matches(*escape, value, ignore_case, unicode),
         ClassItem::Property {
@@ -3005,21 +3011,33 @@ fn equal(left: u32, right: u32, ignore_case: bool, unicode: bool) -> bool {
     }
 }
 /// For each canonicalization mode, the code points whose canonical form is another code point,
-/// grouped by that form: the inverse of `canonical`, which case-insensitive class ranges need.
-fn canonical_preimages(unicode: bool) -> &'static std::collections::HashMap<u32, Vec<u32>> {
-    static TABLES: [std::sync::OnceLock<std::collections::HashMap<u32, Vec<u32>>>; 2] =
+/// as `(form, member)` pairs ordered by form: the inverse of `canonical`, which
+/// case-insensitive class ranges need. One flat table, not a map of lists, since it is held
+/// for the process's life.
+fn canonical_preimages(unicode: bool) -> &'static [(u32, u32)] {
+    static TABLES: [std::sync::OnceLock<Box<[(u32, u32)]>>; 2] =
         [std::sync::OnceLock::new(), std::sync::OnceLock::new()];
     TABLES[usize::from(unicode)].get_or_init(|| {
         let last = if unicode { u32::from(char::MAX) } else { BMP_MAX };
-        let mut preimages = std::collections::HashMap::<u32, Vec<u32>>::new();
-        for member in 0..=last {
-            let key = canonical(member, unicode);
-            if key != member {
-                preimages.entry(key).or_default().push(member);
-            }
-        }
-        preimages
+        let mut preimages: Vec<(u32, u32)> = (0..=last)
+            .filter_map(|member| {
+                let key = canonical(member, unicode);
+                (key != member).then_some((key, member))
+            })
+            .collect();
+        preimages.sort_unstable();
+        preimages.into_boxed_slice()
     })
+}
+
+/// The code points other than `key` itself whose canonical form is `key`.
+fn canonical_preimages_of(key: u32, unicode: bool) -> impl Iterator<Item = u32> {
+    let table = canonical_preimages(unicode);
+    let first = table.partition_point(|(form, _)| *form < key);
+    table[first..]
+        .iter()
+        .take_while(move |(form, _)| *form == key)
+        .map(|(_, member)| *member)
 }
 
 fn canonical(value: u32, unicode: bool) -> u32 {
