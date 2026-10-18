@@ -1255,6 +1255,8 @@ pub(crate) struct Vm<H> {
     /// The strings most recently matched by a RegExp, most recent first, each prepared once
     /// for repeated matching (`Vm::regexp_subject`).
     regexp_subjects: Vec<Rc<quench_regexp::Subject>>,
+    /// The last short subject matched, recognized by content (`Vm::regexp_subject`).
+    regexp_short_subject: Option<Rc<quench_regexp::Subject>>,
     regexp_matchers: regexp::RegExpMatcherCache,
     // One lazily derived class byte per atom; length tracks atom_text plus dynamic_atoms.
     atom_classes: Vec<std::cell::Cell<u8>>,

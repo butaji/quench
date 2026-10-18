@@ -809,10 +809,18 @@ impl<H: Host> Vm<H> {
     fn regexp_subject(&mut self, input: &JsString) -> Rc<quench_regexp::Subject> {
         let flat = input.flat();
         let text = match flat {
-            // A short subject prepares in proportion to its few units and has no shared storage
-            // to recognize it by, so it neither consults nor displaces the cache.
+            // A short subject has no shared storage to recognize it by, so it neither consults
+            // nor displaces the cache; the last one is kept by content, as routers match one
+            // short path against many patterns.
             FlatUnits::Short(text) => {
-                return Rc::new(quench_regexp::Subject::from_ascii(Rc::from(text.as_str())));
+                if let Some(subject) = &self.regexp_short_subject
+                    && subject.spells_ascii(text.as_str())
+                {
+                    return Rc::clone(subject);
+                }
+                let subject = Rc::new(quench_regexp::Subject::from_ascii(Rc::from(text.as_str())));
+                self.regexp_short_subject = Some(Rc::clone(&subject));
+                return subject;
             }
             FlatUnits::Ascii(_) | FlatUnits::Wide(_) => flat,
         };
