@@ -291,7 +291,7 @@ fn rootless_shapes_survive_collection_and_shape_compaction() {
     let mut vm = Vm::new(SilentHost);
     let atom = vm.intern_atom("survivor");
     let live_shape = vm.transition_shape(0, atom);
-    assert!(!vm.shapes[live_shape as usize].may_have_gc_roots);
+    assert!(!vm.shapes[live_shape as usize].facts.may_have_gc_roots());
     let owner =
         vm.heap
             .alloc_object_with_properties(Value::NULL, live_shape, &[Value::integer(42)]);
@@ -495,36 +495,42 @@ fn accessor_descriptor_transitions_do_not_root_values_in_the_cache() {
     let atom = vm.intern_atom("field");
     let first_getter = vm.native_value(Native::Object);
     let second_getter = vm.native_value(Native::Array);
-    let first = vm.object();
-    let second = vm.object();
-    for (object, getter) in [(first, first_getter), (second, second_getter)] {
-        vm.set_property(object, atom, Value::UNDEFINED).unwrap();
-        vm.set_property_attributes(
-            object,
-            PropertyKey::string(atom),
-            super::PropertyAttributes {
-                writable: false,
-                enumerable: false,
-                configurable: true,
-                accessor: true,
-                getter: Some(getter),
-                setter: None,
-            },
+    let setter = vm.native_value(Native::Function);
+    // A lone getter lives in its object's slot, so the two objects share one shape; a getter
+    // with a setter lives in the shape's accessor table, so each object keeps its own.
+    for (setter, shared) in [(None, true), (Some(setter), false)] {
+        let first = vm.object();
+        let second = vm.object();
+        for (object, getter) in [(first, first_getter), (second, second_getter)] {
+            vm.set_property(object, atom, Value::UNDEFINED).unwrap();
+            vm.set_property_attributes(
+                object,
+                PropertyKey::string(atom),
+                super::PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: true,
+                    getter: Some(getter),
+                    setter,
+                },
+            );
+        }
+
+        let first_attributes = vm
+            .property_attributes(first, PropertyKey::string(atom))
+            .unwrap();
+        let second_attributes = vm
+            .property_attributes(second, PropertyKey::string(atom))
+            .unwrap();
+        assert_eq!(first_attributes.getter, Some(first_getter));
+        assert_eq!(second_attributes.getter, Some(second_getter));
+        assert_eq!((first_attributes.setter, second_attributes.setter), (setter, setter));
+        assert_eq!(
+            vm.object_data(first).unwrap().shape() == vm.object_data(second).unwrap().shape(),
+            shared
         );
     }
-
-    let first_attributes = vm
-        .property_attributes(first, PropertyKey::string(atom))
-        .unwrap();
-    let second_attributes = vm
-        .property_attributes(second, PropertyKey::string(atom))
-        .unwrap();
-    assert_eq!(first_attributes.getter, Some(first_getter));
-    assert_eq!(second_attributes.getter, Some(second_getter));
-    assert_ne!(
-        vm.object_data(first).unwrap().shape(),
-        vm.object_data(second).unwrap().shape()
-    );
 }
 
 #[test]
@@ -1700,7 +1706,7 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
         parent: crate::Value::NULL,
         function: u32::MAX,
         slots: Vec::<Value>::new().into_boxed_slice().into(),
-        scope: Box::new(crate::heap::EnvironmentScope {
+        scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
             program: None,
             root_eval_scope: false,
             binding_site_pc: None,
@@ -1712,7 +1718,7 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
         parent: crate::Value::NULL,
         function: u32::MAX,
         slots: Vec::<Value>::new().into_boxed_slice().into(),
-        scope: Box::new(crate::heap::EnvironmentScope {
+        scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
             program: None,
             root_eval_scope: false,
             binding_site_pc: None,
@@ -1758,7 +1764,7 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
         parent: crate::Value::NULL,
         function: u32::MAX,
         slots: Vec::<Value>::new().into_boxed_slice().into(),
-        scope: Box::new(crate::heap::EnvironmentScope {
+        scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
             program: None,
             root_eval_scope: false,
             binding_site_pc: None,
@@ -2936,7 +2942,7 @@ fn module_namespace_operations_share_uninitialized_export_errors() {
                 slots: vec![Value::DELETED; program.functions[0].local_atoms.len()]
                     .into_boxed_slice()
                     .into(),
-                scope: Box::new(crate::heap::EnvironmentScope {
+                scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
                     program: Some(super::program_store::ProgramId::MAIN.raw()),
                     root_eval_scope: false,
                     binding_site_pc: None,
@@ -4575,7 +4581,7 @@ fn suspended_continuations_are_rooted_until_generation_checked_resume() {
         parent: Value::NULL,
         function: u32::MAX,
         slots: Vec::<Value>::new().into_boxed_slice().into(),
-        scope: Box::new(crate::heap::EnvironmentScope {
+        scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
             program: None,
             root_eval_scope: false,
             binding_site_pc: None,

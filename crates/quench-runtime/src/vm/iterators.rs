@@ -103,7 +103,7 @@ impl<H: Host> Vm<H> {
         let data = self.object_data(object)?;
         let slot = self.property_shape_slot(data.shape(), key)?;
         if self
-            .shape_attribute(data.shape(), slot)
+            .slot_attributes(data, slot)
             .is_some_and(|attributes| attributes.accessor)
         {
             return None;
@@ -3216,7 +3216,7 @@ impl<H: Host> Vm<H> {
         let Some(slot) = self.property_shape_slot(data.shape(), key) else {
             return self.property_attributes(object, key).map(|_| None);
         };
-        let attributes = self.shape_attribute(data.shape(), slot)?;
+        let attributes = self.slot_attributes(data, slot)?;
         Some((!attributes.accessor).then(|| self.heap.property_get(data, slot)).flatten())
     }
 

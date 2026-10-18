@@ -28,13 +28,17 @@ impl<T> ThinBoxSlice<T> {
         }
     }
 
+    /// Where the elements start: after the header, at `T`'s alignment. `layout` derives the
+    /// same offset for every length.
+    const ELEMENTS_OFFSET: usize = size_of::<usize>().next_multiple_of(align_of::<T>());
+
     fn elements(&self) -> *mut T {
         if self.len() == 0 {
             return NonNull::dangling().as_ptr();
         }
-        let (_, offset) = Self::layout(self.len());
-        // SAFETY: the allocation spans the header and `len` elements from `offset`.
-        unsafe { self.header.as_ptr().cast::<u8>().add(offset).cast::<T>() }
+        debug_assert_eq!(Self::layout(self.len()).1, Self::ELEMENTS_OFFSET);
+        // SAFETY: the allocation spans the header and `len` elements from `ELEMENTS_OFFSET`.
+        unsafe { self.header.as_ptr().cast::<u8>().add(Self::ELEMENTS_OFFSET).cast::<T>() }
     }
 
     pub(crate) fn len(&self) -> usize {
