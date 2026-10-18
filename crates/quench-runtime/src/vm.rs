@@ -123,6 +123,7 @@ mod module;
 mod number;
 mod object;
 mod shape_memo;
+mod symbol_write_proof;
 mod name_atom_memo;
 mod object_assignment;
 mod object_array;
@@ -1393,6 +1394,7 @@ pub(crate) struct Vm<H> {
     shape_accessors: Vec<ShapeAccessors>,
     transitions: shape_transitions::ShapeTransitionIndex,
     shape_slot_memo: shape_memo::ShapeSlotMemo,
+    symbol_write_proofs: symbol_write_proof::SymbolWriteProofs,
     shape_attribute_memo: shape_memo::ShapeAttributeMemo,
     name_atom_memo: name_atom_memo::NameAtomMemo,
     atom_text: AtomTable,
@@ -2192,6 +2194,7 @@ impl<H: Host> Vm<H> {
         self.shapes[0].last_child.set(NO_LAST_CHILD);
         self.transitions.clear();
         self.shape_slot_memo.clear();
+        self.symbol_write_proofs.clear();
         self.shape_attribute_memo.clear();
         self.atom_strings.clear();
         // The sealed holders and their shapes belong to the discarded heap.
