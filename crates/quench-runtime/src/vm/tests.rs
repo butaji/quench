@@ -4543,14 +4543,7 @@ fn async_continuation_lifetime_follows_reachable_callbacks_and_jobs() {
         let held_atom = vm.intern_atom("held");
         let held = vm.own_property(values, held_atom).unwrap();
         let held_weak = vm.heap.weak_handle(held).unwrap();
-        let token = vm
-            .realm
-            .promise
-            .async_resume_jobs
-            .values()
-            .next()
-            .unwrap()
-            .continuation;
+        assert_eq!(pending_await_continuations(&mut vm), 1);
         let root = vm.heap.root(values);
         vm.collect_now(&program);
         assert_eq!(vm.heap.weak_value(held_weak), Some(held));
@@ -4571,17 +4564,22 @@ fn async_continuation_lifetime_follows_reachable_callbacks_and_jobs() {
             vm.collect_now(&program);
         }
         assert!(vm.heap.weak_value(held_weak).is_none(), "queued={queued}");
-        assert!(
-            vm.suspended
-                .iter()
-                .all(|entry| entry.continuation.is_none())
-        );
-        assert!(vm.resume_continuation(token).is_none());
+        assert_eq!(pending_await_continuations(&mut vm), 0, "queued={queued}");
     }
 }
 
+fn pending_await_continuations(vm: &mut Vm<SilentHost>) -> usize {
+    let mut pending = 0;
+    vm.heap.for_each_cell(|cell| {
+        if let crate::heap::Cell::AwaitState(state) = cell {
+            pending += usize::from(state.continuation.is_some());
+        }
+    });
+    pending
+}
+
 #[test]
-fn suspended_continuations_are_rooted_until_generation_checked_resume() {
+fn await_state_traces_its_continuation_until_a_reaction_takes_it() {
     let mut vm = Vm::new(SilentHost);
     let program = Engine::specialize("print(0);", "continuation.js").unwrap();
     vm.initialize(&program).unwrap();
@@ -4607,7 +4605,7 @@ fn suspended_continuations_are_rooted_until_generation_checked_resume() {
         .heap
         .alloc(crate::heap::Cell::Error("suspended scope".into()));
     let held_atom = vm.intern_atom("held");
-    let id = vm.suspend_continuation(Continuation {
+    let continuation = Continuation {
         context: super::activation::CallContext::Internal,
         reflected_parameters: 0,
         original_arguments: vec![original],
@@ -4625,60 +4623,34 @@ fn suspended_continuations_are_rooted_until_generation_checked_resume() {
         captured: false,
         resume_register: None,
         promise: Value::UNDEFINED,
-    });
+    };
+    let state = vm.heap.alloc(crate::heap::Cell::AwaitState(Box::new(
+        crate::heap::AwaitState {
+            continuation: Some(continuation),
+            promise: Value::UNDEFINED,
+            generator: None,
+            yielded: false,
+        },
+    )));
+    let root = vm.heap.root(state);
     vm.collect_now(&program);
     assert!(vm.heap.is_live(live));
     assert!(vm.heap.is_live(held));
     assert!(vm.heap.is_live(original));
     assert!(vm.heap.is_live(scope));
-    assert_eq!(
-        vm.resume_continuation(id).unwrap().original_arguments,
-        [original]
-    );
-    assert!(vm.resume_continuation(id).is_none());
+    let take = |vm: &mut Vm<SilentHost>| match vm.heap.get_mut(state) {
+        Some(crate::heap::Cell::AwaitState(state)) => state.continuation.take(),
+        _ => panic!("await state"),
+    };
+    assert_eq!(take(&mut vm).unwrap().original_arguments, [original]);
+    assert!(take(&mut vm).is_none());
     vm.collect_now(&program);
     assert!(!vm.heap.is_live(live));
     assert!(!vm.heap.is_live(held));
     assert!(!vm.heap.is_live(original));
     assert!(!vm.heap.is_live(scope));
-}
-
-#[test]
-fn exhausted_continuation_generations_retire_slots_without_resumer_aliasing() {
-    let mut vm = Vm::new(SilentHost);
-    let program = Engine::specialize("print(0);", "continuation-generation.js").unwrap();
-    vm.initialize(&program).unwrap();
-    let continuation = || Continuation {
-        context: CallContext::Internal,
-        reflected_parameters: 0,
-        original_arguments: vec![],
-        program: super::program_store::ProgramId::MAIN,
-        function: 0,
-        pc: 0,
-        env: Value::NULL,
-        this: Value::UNDEFINED,
-        locals: vec![],
-        dynamic_bindings: vec![],
-        registers: vec![],
-        active_iterators: vec![],
-        with_objects: Vec::new(),
-        completion: Completion::Yield(Value::UNDEFINED),
-        captured: false,
-        resume_register: None,
-        promise: Value::UNDEFINED,
-    };
-    let initial = vm.suspend_continuation(continuation());
-    vm.suspended[initial.slot as usize].generation = u32::MAX;
-    let final_generation = super::activation::ContinuationId {
-        slot: initial.slot,
-        generation: u32::MAX,
-    };
-    assert!(vm.resume_continuation(final_generation).is_some());
-
-    let replacement = vm.suspend_continuation(continuation());
-    assert_ne!(replacement.slot, final_generation.slot);
-    assert!(vm.resume_continuation(final_generation).is_none());
-    assert!(vm.resume_continuation(replacement).is_some());
+    assert!(vm.heap.is_live(state));
+    assert!(vm.heap.release_root(root));
 }
 
 #[test]
@@ -6988,9 +6960,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                     && frame.active_iterators.is_empty()
             );
             let roots = vm.heap.root_count_for_test();
-            let mut owner = None;
-            let mut token = None;
-            if generator {
+            let owner = if generator {
                 let value = vm.heap.alloc(super::Cell::Iterator {
                     object: Box::new(Vm::<SilentHost>::empty_object(Value::NULL)),
                     source: Value::NULL,
@@ -7017,10 +6987,18 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                         })),
                     }),
                 });
-                owner = Some(vm.heap.root(value));
+                vm.heap.root(value)
             } else {
-                token = Some(vm.suspend_continuation(continuation));
-            }
+                let value = vm.heap.alloc(super::Cell::AwaitState(Box::new(
+                    crate::heap::AwaitState {
+                        continuation: Some(continuation),
+                        promise,
+                        generator: None,
+                        yielded: false,
+                    },
+                )));
+                vm.heap.root(value)
+            };
             vm.collect_now(&program);
             for (handle, value) in handles.iter().zip(&owned) {
                 assert_eq!(
@@ -7030,22 +7008,17 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                     completion(completion_value)
                 );
             }
-            let resumed = if let Some(token) = token {
-                let continuation = vm.resume_continuation(token).unwrap();
-                assert!(vm.resume_continuation(token).is_none());
-                continuation
-            } else {
-                let value = vm.heap.root_value(owner.unwrap()).unwrap();
-                match vm.heap.get_mut(value) {
-                    Some(super::Cell::Iterator { ext, .. }) => ext
-                        .generator
-                        .as_mut()
-                        .expect("generator owner")
-                        .continuation
-                        .take()
-                        .unwrap(),
-                    _ => panic!("generator owner"),
-                }
+            let value = vm.heap.root_value(owner).unwrap();
+            let resumed = match vm.heap.get_mut(value) {
+                Some(super::Cell::Iterator { ext, .. }) => ext
+                    .generator
+                    .as_mut()
+                    .expect("generator owner")
+                    .continuation
+                    .take()
+                    .unwrap(),
+                Some(super::Cell::AwaitState(state)) => state.continuation.take().unwrap(),
+                _ => panic!("suspended owner"),
             };
             assert_eq!(resumed.completion, completion(completion_value));
             assert_eq!(resumed.promise, promise);
@@ -7060,9 +7033,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                     done: 2
                 }]
             );
-            if let Some(owner) = owner {
-                vm.heap.release_root(owner);
-            }
+            vm.heap.release_root(owner);
             assert_eq!(vm.heap.root_count_for_test(), roots);
             vm.collect_now(&program);
             for handle in handles {

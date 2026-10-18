@@ -82,8 +82,6 @@ impl<H: Host> Vm<H> {
             active_call_roots: vec![],
             with_stack: vec![],
             with_scope_entered: false,
-            suspended: vec![],
-            suspended_free: vec![],
             test262_agent: Default::default(),
             shared_async_waiters:Vec::new(),
             programs: ProgramStore::default(),

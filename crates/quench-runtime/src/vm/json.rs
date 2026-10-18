@@ -1155,6 +1155,7 @@ impl<H: Host> Vm<H> {
             Some(Cell::Environment { .. })
             | Some(Cell::Iterator { .. })
             | Some(Cell::ArrayFromAsyncState(_))
+            | Some(Cell::AwaitState(_))
             | Some(Cell::PromiseResolvingState { .. })
             | Some(Cell::WasmElements(_))
             | Some(Cell::WasmBits64(_))
