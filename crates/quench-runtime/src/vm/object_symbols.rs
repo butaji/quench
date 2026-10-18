@@ -336,7 +336,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn symbol_property(&self, object: Value, key: Value) -> Option<Value> {
         let data = self.object_data(object)?;
         let slot = self.property_shape_slot(data.shape(), PropertyKey::symbol(key))?;
-        self.heap.property_get(data, slot)
+        self.slot_data_value(data, slot)
     }
 
     pub(super) fn set_symbol_property(
@@ -365,7 +365,7 @@ impl<H: Host> Vm<H> {
             }
             let (shape, proto) = (data.shape(), data.proto());
             if let Some(slot) = self.property_shape_slot(shape, symbol) {
-                let attributes = self.shape_attribute(shape, slot)?;
+                let attributes = self.slot_attributes(data, slot)?;
                 if attributes.accessor {
                     return None;
                 }
