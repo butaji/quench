@@ -1089,9 +1089,9 @@ pub(super) struct PromiseRuntime {
 }
 
 impl PromiseRuntime {
-    /// Visits each `(owner, edge)` the promise tables hold outside their owner's cell. Plain
-    /// loops per table: a chained iterator costs every edge a step through each nesting level,
-    /// and a collection visits every in-flight promise (doxbee-promise: 170k records).
+    /// Visits each `(owner, edge)` the promise job and combinator tables hold outside their
+    /// owner's cell; a promise's own state is traced with its `Cell::Promise`. Plain loops per
+    /// table: a chained iterator costs every edge a step through each nesting level.
     pub(super) fn for_each_owned_edge(&self, mut visit: impl FnMut(Value, Value)) {
         macro_rules! edges {
             ($table:expr, |$record:ident| $roots:expr) => {

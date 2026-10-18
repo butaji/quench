@@ -442,9 +442,15 @@ impl<H: Host> Vm<H> {
             }
             // A lazy data property reports its data descriptor; its attributes alone (as
             // enumeration reads them) need no value.
-            if let Some(Cell::String(name)) = self.heap.get(key).cloned() {
-                let atom = self.intern_js_atom(&name);
-                self.materialize_lazy_data_property(p, target, PropertyKey::string(atom))?;
+            match self.heap.get(key).cloned() {
+                Some(Cell::String(name)) => {
+                    let atom = self.intern_js_atom(&name);
+                    self.materialize_lazy_data_property(p, target, PropertyKey::string(atom))?;
+                }
+                Some(Cell::Symbol(_)) => {
+                    self.materialize_lazy_data_property(p, target, PropertyKey::symbol(key))?;
+                }
+                _ => {}
             }
             match self.ordinary_own_property(p, target, key)? {
                 Some((value, attributes)) => self.property_descriptor_object(value, attributes),
