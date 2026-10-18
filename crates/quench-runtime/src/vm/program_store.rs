@@ -846,6 +846,26 @@ impl ProgramStore {
             })
     }
 
+    /// Find a selective tier with the requested function in the currently
+    /// executing artifact. Indirect-call promotion can place both caller and
+    /// profile-selected target in one closure; prefer that closure so the
+    /// native call does not bounce through the baseline artifact.
+    pub(super) fn wasm_tier_for_artifact_containing(
+        &self,
+        id: ProgramId,
+        function: usize,
+        artifact: *const super::compiled::CompiledProgram,
+    ) -> Option<Rc<super::compiled::CompiledProgram>> {
+        self.entry(id)?
+            .wasm_tiers
+            .values()
+            .filter_map(|state| state.compiled.as_ref())
+            .find(|compiled| {
+                std::ptr::eq(Rc::as_ptr(compiled), artifact) && compiled.has_function(function)
+            })
+            .cloned()
+    }
+
     /// Retain one compiled root closure if the VM-wide tier budget permits
     /// it. Active calls retain their own Rc through native return.
     pub(super) fn install_wasm_tier(
