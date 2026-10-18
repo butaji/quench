@@ -4253,6 +4253,114 @@ mod tests {
     }
 
     #[test]
+    fn compiled_wasm_loop_backedge_polls_execution_interrupt() {
+        struct StartHost(std::sync::mpsc::Sender<()>);
+        impl crate::Host for StartHost {
+            fn write_line(&mut self, _: &str) {}
+            fn clock_millis(&mut self) -> f64 {
+                0.0
+            }
+            fn call_wasm(
+                &mut self,
+                _: crate::WasmHostFunctionId,
+                _: &[crate::WasmHostValue],
+            ) -> Result<Vec<crate::WasmHostValue>, String> {
+                self.0.send(()).map_err(|error| error.to_string())?;
+                Ok(Vec::new())
+            }
+        }
+
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (finished_tx, finished_rx) = std::sync::mpsc::channel();
+        let interrupt = crate::ExecutionInterrupt::default();
+        let worker_interrupt = interrupt.clone();
+        let worker = std::thread::Builder::new()
+            .stack_size(crate::WORKER_STACK_SIZE)
+            .spawn(move || {
+                let mut vm = Vm::new_with_execution_interrupt(
+                    StartHost(entered_tx),
+                    worker_interrupt,
+                );
+                vm.set_execution_mode(crate::ExecutionMode::Compiled);
+                let signature = crate::WasmSignature {
+                    params: vec![],
+                    results: vec![],
+                };
+                let module = crate::Engine::lower_wasm_module_with_imports(
+                    "compiled-wasm-interrupt-backedge",
+                    [crate::WasmFunctionBody {
+                        ty: crate::WasmCallableType::Embedded(signature.clone()),
+                        locals: vec![],
+                        operators: [
+                            Operator::Call { function_index: 0 },
+                            Operator::Loop {
+                                blockty: wasmparser::BlockType::Empty,
+                            },
+                            Operator::Br { relative_depth: 0 },
+                            Operator::End,
+                            Operator::End,
+                        ]
+                        .into_iter()
+                        .map(Ok),
+                    }],
+                    &crate::WasmTypes::default(),
+                    &[],
+                    &[],
+                    &[],
+                    &[],
+                    &[],
+                    &[crate::WasmFunctionImport {
+                        exact: false,
+                        ty: crate::WasmCallableType::Embedded(signature.clone()),
+                        name: crate::WasmImportName {
+                            index: 0,
+                            module: "interrupt-test".into(),
+                            name: "started".into(),
+                        },
+                    }],
+                )
+                .unwrap();
+                let host_function = vm
+                    .create_wasm_host_function(
+                        "started",
+                        crate::heap::WasmHostTarget::Host(crate::WasmHostFunctionId(0)),
+                        signature,
+                    )
+                    .unwrap();
+                let host_root = vm.root(host_function);
+                let instance = vm
+                    .instantiate_wasm_module_with_imports(&module, &[host_root])
+                    .unwrap();
+                assert!(
+                    vm.invoke_wasm(&instance, 1, &[])
+                        .unwrap_err()
+                        .is_execution_terminated()
+                );
+                let program = vm
+                    .programs
+                    .find_shared(&module.program)
+                    .expect("registered interrupt-test module");
+                let compiled = vm
+                    .programs
+                    .compiled(program)
+                    .flatten()
+                    .expect("compiled loop remains installed");
+                assert_eq!(compiled.native_entries(0), Some(1));
+                finished_tx.send(()).unwrap();
+            })
+            .unwrap();
+
+        entered_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("native loop reached its import callout");
+        interrupt.request_termination();
+        finished_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("compiled loop observed termination at its backedge");
+        worker.join().unwrap();
+    }
+
+    #[test]
     fn unreachable_trap_unwinds_the_shared_activation() {
         let function = crate::Engine::lower_wasm_i32_function(
             "unreachable-unwind",
