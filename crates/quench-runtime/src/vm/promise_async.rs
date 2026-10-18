@@ -79,8 +79,8 @@ impl<H: Host> Vm<H> {
         })
     }
 
-    /// Suspends `continuation` on `source`: one `AwaitState` cell holds it, and both
-    /// reactions name that cell, so it lives exactly as long as one of them can run.
+    /// Suspends `continuation` on `source`: one `AwaitState` cell holds it and is both
+    /// handlers of the await's reaction, so it lives exactly as long as that reaction.
     pub(super) fn enqueue_async_resume(
         &mut self,
         p: &ResidualProgram,
@@ -92,6 +92,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         let state = self.heap.alloc(Cell::AwaitState(Box::new(AwaitState {
             continuation: Some(Box::new(continuation)),
+            realm: self.realm.globals,
             promise,
             generator,
             yielded,
@@ -123,12 +124,10 @@ impl<H: Host> Vm<H> {
         } else {
             source
         };
-        let fulfilled = self.native_with_env(Native::PromiseAsyncResumeFulfilled, state);
-        let rejected = self.native_with_env(Native::PromiseAsyncResumeRejected, state);
         // Materialize the await reaction's Promise resource for host lifecycle
         // observation, even though the continuation consumes no result value.
         let next = if self.host.observes_promise_lifecycle() {
-            self.with_call_roots([fulfilled, rejected, source, promise], |vm| {
+            self.with_call_roots([source], |vm| {
                 vm.promise_object_with_parent(
                     vm.promise_record(source).and_then(|record| record.host_context),
                 )
@@ -140,48 +139,51 @@ impl<H: Host> Vm<H> {
         // after creating the reaction's observable resource.
         // `source` is a Promise, or a primitive standing for the fulfilled one an `await`
         // never materializes.
-        let (state, result) = match self.promise_record(source) {
+        let (source_state, result) = match self.promise_record(source) {
             Some(record) => (record.state, record.result),
             None if !self.is_object_like(source) => (PromiseState::Fulfilled, source),
             None => return Err(JsError("await source is not a Promise".into())),
         };
         self.observe_promise_rejection(source);
         let reaction = PromiseReaction {
-            on_fulfilled: fulfilled,
-            on_rejected: rejected,
+            on_fulfilled: state,
+            on_rejected: state,
             next,
             execution_context: self.host.capture_job_context(self.promise_record(next).and_then(|record| record.host_context)),
         };
-        if state == PromiseState::Pending {
+        if source_state == PromiseState::Pending {
             self.promise_record_mut(source)
                 .expect("await source Promise record exists")
                 .reactions
                 .push(reaction);
         } else {
-            self.enqueue_promise_reaction(p, reaction, state, result);
+            self.enqueue_promise_reaction(p, reaction, source_state, result);
         }
         Ok(())
     }
 
-    pub(super) fn promise_async_resume_job(
+    /// Runs an await's reaction: `state` is the `AwaitState` both its handlers name. The
+    /// first run takes the continuation, which resumes in the realm that awaited.
+    pub(super) fn resume_await(
         &mut self,
         p: &ResidualProgram,
+        state: Value,
         rejected: bool,
         value: Value,
     ) -> Result<Value, JsError> {
-        let state = self.active_native_env();
-        let Some(Cell::AwaitState(state)) = state.and_then(|state| self.heap.get_mut(state))
-        else {
-            return Err(JsError("Promise async resume without its await".into()));
+        let Some(Cell::AwaitState(state)) = self.heap.get_mut(state) else {
+            return Err(JsError("await reaction without its state".into()));
         };
         let continuation = state.continuation.take().map(|continuation| *continuation);
+        let realm = state.realm;
         let resume = AwaitResume {
             promise: state.promise,
             generator: state.generator,
             rejected,
             yielded: state.yielded,
         };
-        self.with_call_roots(
+        let previous_global = self.switch_realm_global(realm);
+        let result = self.with_call_roots(
             [Some(resume.promise), resume.generator, Some(value)]
                 .into_iter()
                 .flatten(),
@@ -192,7 +194,9 @@ impl<H: Host> Vm<H> {
                 }
                 Ok(Value::UNDEFINED)
             },
-        )
+        );
+        self.switch_realm_global(previous_global);
+        result
     }
 
     fn resume_async_continuation(
