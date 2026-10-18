@@ -2388,8 +2388,6 @@ struct Emitter<'a, 'b, H: Host> {
     guarded: bool,
     /// The guarded memory repeats above 2^32 (`CompiledProgram::wraps`).
     wraps: bool,
-    /// The memory base addressed as a displacement (`displacement_base`).
-    fixed_base: Option<i32>,
     /// Per `Region`, its alias region in this function.
     regions: [ir::AliasRegion; Region::COUNT],
     globals: &'a [u32],
@@ -2808,17 +2806,14 @@ impl<H: Host> Emitter<'_, '_, H> {
 
     /// The host address of a checked `width`-byte access at `address + offset`.
     fn address(&mut self, address: ir::Value, offset: u32, width: usize) -> ir::Value {
-        // An i32 sum without an offset may be formed in 64 bits when the
-        // memory repeats above 2^32: a sum that wrapped reads the bytes its
-        // wrapped value names, and one past the accessible prefix faults.
-        if self.wraps
-            && offset == 0
-            && let Some([left, right]) = self.i32_sum(address)
-        {
-            let left = self.builder.ins().uextend(types::I64, left);
-            let right = self.builder.ins().uextend(types::I64, right);
-            let index = self.builder.ins().iadd(left, right);
-            return self.builder.ins().iadd(self.base, index);
+        if self.wraps && offset == 0 {
+            // The Wasm effective address is already an i32 bit pattern, so
+            // preserve its modulo-2^32 result before extending it. This also
+            // lets x64 lower an i32 base-plus-scaled-index to a 32-bit LEA;
+            // the repeated mapping makes that result equivalent to the old
+            // widened sum when the i32 addition carried past 2^32.
+            let address = self.builder.ins().uextend(types::I64, address);
+            return self.builder.ins().iadd(self.base, address);
         }
         if self.wraps && offset != 0 {
             // An index whose offset carries it past 2^32 would meet the
@@ -2859,43 +2854,6 @@ impl<H: Host> Emitter<'_, '_, H> {
         self.trap_if(out_of_bounds, crate::WasmTrap::OutOfBoundsMemory);
         let host = self.builder.ins().iadd(self.base, address);
         self.builder.ins().iadd_imm_s(host, i64::from(offset))
-    }
-
-    /// The operands of `value` when an i32 add defines it, worth forming
-    /// in 64 bits: a constant operand joins the access's displacement, so
-    /// one that is negative as i32 (its 64-bit form past 2^31) or carries
-    /// the displacement past 32 bits keeps the add.
-    fn i32_sum(&self, value: ir::Value) -> Option<[ir::Value; 2]> {
-        let dfg = &self.builder.func.dfg;
-        let ir::ValueDef::Result(inst, _) = dfg.value_def(value) else {
-            return None;
-        };
-        let ir::InstructionData::Binary {
-            opcode: ir::Opcode::Iadd,
-            args,
-        } = dfg.insts[inst]
-        else {
-            return None;
-        };
-        if dfg.value_type(value) != types::I32 {
-            return None;
-        }
-        let displacement_fits = |operand: ir::Value| {
-            let ir::ValueDef::Result(constant, _) = dfg.value_def(operand) else {
-                return true;
-            };
-            let ir::InstructionData::UnaryImm { imm, .. } = dfg.insts[constant] else {
-                return true;
-            };
-            let fixed = self.fixed_base.map_or(0, i64::from);
-            u32::try_from(imm.bits())
-                .ok()
-                .and_then(|constant| i32::try_from(fixed + i64::from(constant)).ok())
-                .is_some()
-        };
-        args.iter()
-            .all(|&operand| displacement_fits(operand))
-            .then_some(args)
     }
 
     /// The address of the value of the global bound at `slot`.
@@ -3718,7 +3676,6 @@ impl<'a, H: Host> Analysis<'a, H> {
         let mut emitter = Emitter {
             guarded,
             wraps,
-            fixed_base,
             regions,
             globals,
             analysis: self,
