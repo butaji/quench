@@ -459,6 +459,9 @@ mod tests {
             )
             .unwrap();
         let exports = vm.evaluate_embedding_compiled_script(&script).unwrap();
+        // The helper and its replacement view are reached only through `exports` until the
+        // test stores them; collections in between must keep them.
+        let _exports_root = vm.root(exports);
         let helper_atom = vm.intern_atom("helper");
         let helper = vm.own_property(exports, helper_atom).unwrap();
         let replacement_atom = vm.intern_atom("replacement");
