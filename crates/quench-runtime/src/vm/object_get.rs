@@ -793,11 +793,6 @@ impl<H: Host> Vm<H> {
     /// so a found home is memoized while that environment lives.
     fn private_name_home(&mut self, p: &ResidualProgram, atom: Atom) -> Option<Value> {
         let frame_index = self.frames.len().checked_sub(1)?;
-        if let Some(binding) = self.name_binding(frame_index, atom)
-            && binding.kind == crate::bytecode::LexicalBindingKind::PrivateName
-        {
-            return self.load_name_binding(p, frame_index, binding).ok();
-        }
         let start = self.captured_parent_environment(frame_index);
         let key = PrivateHomeKey {
             environment: start,
@@ -805,6 +800,25 @@ impl<H: Host> Vm<H> {
             function: self.frames[frame_index].function,
             name: atom,
         };
+        // Without binding sites no eval-introduced private binding is in reach, so the name
+        // bindings resolve the same initialized home whenever the closure's environment chain
+        // is the same.
+        let static_bindings = p
+            .functions
+            .get(key.function as usize)
+            .is_some_and(|function| function.binding_sites.is_empty());
+        if static_bindings && let Some(home) = self.private_homes.get(&key) {
+            return Some(*home);
+        }
+        if let Some(binding) = self.name_binding(frame_index, atom)
+            && binding.kind == crate::bytecode::LexicalBindingKind::PrivateName
+        {
+            let home = self.load_name_binding(p, frame_index, binding).ok();
+            if static_bindings && let Some(home) = home {
+                self.private_homes.insert(key, home);
+            }
+            return home;
+        }
         if let Some(home) = self.private_homes.get(&key) {
             return Some(*home);
         }
