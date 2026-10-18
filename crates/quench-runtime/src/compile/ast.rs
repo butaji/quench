@@ -6,6 +6,7 @@ mod destructure;
 mod disposal;
 mod expression;
 mod iteration;
+mod literal_template;
 mod object;
 mod optional;
 mod statement;

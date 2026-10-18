@@ -1627,6 +1627,23 @@ impl<H: Host> Vm<H> {
         Ok(self.intern_dynamic_value(text))
     }
 
+    /// `+` of two operands that become strings without guest code, Numbers and strings,
+    /// at least one a string: `concatenate`'s result. `None` for any other pair, or a result
+    /// `concatenate` refuses, which leaves the operation to `binary_slow`.
+    pub(super) fn primitive_concatenation(
+        &mut self,
+        p: &ResidualProgram,
+        left: Value,
+        right: Value,
+    ) -> Option<Value> {
+        let (left_string, right_string) = (self.is_string(left), self.is_string(right));
+        let converts = |string: bool, value: Value| string || value.as_number().is_some();
+        if !(left_string || right_string) || !converts(left_string, left) || !converts(right_string, right) {
+            return None;
+        }
+        self.concatenate(p, left, right).ok()
+    }
+
     pub(super) fn binary_slow(
         &mut self,
         p: &ResidualProgram,

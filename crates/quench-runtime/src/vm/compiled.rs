@@ -41,6 +41,7 @@ use cranelift_codegen::ir::{
 };
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
+use std::cell::UnsafeCell;
 use std::rc::{Rc, Weak};
 
 /// How the shared VM executes JavaScript and Wasm functions. Compiled code is
@@ -297,6 +298,10 @@ const JIT_WASM_SELECTIVE_ENV: &str = "QUENCH_WASM_JIT_SELECTIVE";
 const MAX_JIT_ROOT_FUNCTIONS: usize = 128;
 const MAX_JIT_ROOT_BYTECODES_PER_FUNCTION: usize = 80_000;
 const MAX_JIT_ROOT_CODE_BYTES: usize = 2 * 1024 * 1024;
+/// A selective root may include a few hot callees learned from earlier
+/// indirect-call executions. Keep the profile-guided closure bounded so one
+/// polymorphic module cannot turn a tier promotion into eager compilation.
+const MAX_JIT_PROFILED_INDIRECT_TARGETS: usize = 8;
 pub(super) const MAX_JIT_TIER_BYTECODES_PER_FUNCTION: usize = 2_048;
 
 fn jit_root_override() -> Result<Option<usize>, ()> {
@@ -419,6 +424,11 @@ struct CallContext {
     /// terminated; empty when compiled code checks the flag instead.
     poll_start: usize,
     poll_end: usize,
+    /// VM-local epoch advanced by table writes and collections. Fast indirect
+    /// calls are valid only while their artifact-local cached epoch matches.
+    reference_epoch: *const u64,
+    /// Stable per-site cache storage owned by the current compiled artifact.
+    reference_fast_caches: *mut FastReferenceCache,
 }
 
 impl CallContext {
@@ -453,6 +463,8 @@ impl CallContext {
             reference_call_site_count: self.reference_call_site_count,
             poll_start: self.poll_start,
             poll_end: self.poll_end,
+            reference_epoch: self.reference_epoch,
+            reference_fast_caches: self.reference_fast_caches,
         }
     }
 }
@@ -474,14 +486,48 @@ const CONTEXT_CALL_REFERENCE: i32 = std::mem::offset_of!(CallContext, call_refer
 const CONTEXT_MEMORY_LENGTH: i32 = std::mem::offset_of!(CallContext, memory_length) as i32;
 const CONTEXT_CALL_REFERENCE_DIAGNOSTIC: i32 =
     std::mem::offset_of!(CallContext, call_reference_diagnostic) as i32;
+const CONTEXT_REFERENCE_EPOCH: i32 = std::mem::offset_of!(CallContext, reference_epoch) as i32;
+const CONTEXT_ENV: i32 = std::mem::offset_of!(CallContext, env) as i32;
+const CONTEXT_REFERENCE_FAST_CACHES: i32 =
+    std::mem::offset_of!(CallContext, reference_fast_caches) as i32;
 
 /// The callout's signature: (context, function index, arguments, result) ->
 /// status; arguments and result are Wasm bits, one word each.
 type Callout = unsafe extern "C" fn(*mut CallContext, u64, *const u64, *mut u64) -> i64;
-type ReferenceCallout =
-    unsafe extern "C" fn(*mut CallContext, u64, u64, u64, u64, *const u64, *mut u64) -> i64;
-type DiagnosticReferenceCallout =
-    unsafe extern "C" fn(*mut CallContext, u64, u64, u64, u64, *const u64, *mut u64) -> i64;
+type ReferenceCallout = unsafe extern "C" fn(
+    *mut CallContext,
+    u64,
+    u64,
+    u64,
+    u64,
+    *const u64,
+    *mut u64,
+    *mut FastReferenceCache,
+) -> i64;
+type DiagnosticReferenceCallout = ReferenceCallout;
+
+/// A monomorphic target certificate for one artifact-local indirect-call site.
+/// The VM publishes the epoch last after a successful target return and a
+/// table-slot recheck. A nonzero epoch is the validity bit.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct FastReferenceCache {
+    epoch: u64,
+    env: Value,
+    index: u64,
+    function: u64,
+}
+
+impl Default for FastReferenceCache {
+    fn default() -> Self {
+        Self {
+            epoch: 0,
+            env: Value::NULL,
+            index: 0,
+            function: 0,
+        }
+    }
+}
 
 /// Fill an already bounds-checked range in the instance's unshared memory.
 /// The compiler checks against the exact current length before calling this
@@ -510,15 +556,32 @@ struct ReferenceCallSiteCounts {
     total: u64,
     native: u64,
     fallback: u64,
+    same_artifact_direct: u64,
+}
+
+#[derive(Clone, Copy, Default)]
+struct ReferenceCallTargetCounts {
+    function: usize,
+    total: u64,
+    native: u64,
+    same_artifact_native: u64,
 }
 
 struct ReferenceCallSiteDiagnostics {
     function: usize,
     pc: usize,
     counts: std::cell::Cell<ReferenceCallSiteCounts>,
+    targets: std::cell::RefCell<Vec<ReferenceCallTargetCounts>>,
 }
 
-fn note_reference_call_site(context: &CallContext, site: u64, native: bool) {
+fn note_reference_call_site(
+    context: &CallContext,
+    site: u64,
+    native: bool,
+    same_artifact_direct: bool,
+    target_function: Option<usize>,
+    target_same_artifact_native: bool,
+) {
     let Ok(site) = usize::try_from(site) else {
         return;
     };
@@ -536,7 +599,33 @@ fn note_reference_call_site(context: &CallContext, site: u64, native: bool) {
     } else {
         updated.fallback = updated.fallback.saturating_add(1);
     }
+    if same_artifact_direct {
+        updated.same_artifact_direct = updated.same_artifact_direct.saturating_add(1);
+    }
     counts.counts.set(updated);
+    if let Some(function) = target_function {
+        let mut targets = counts.targets.borrow_mut();
+        let target_index = if let Some(target_index) = targets
+            .iter()
+            .position(|target| target.function == function)
+        {
+            target_index
+        } else {
+            targets.push(ReferenceCallTargetCounts {
+                function,
+                ..ReferenceCallTargetCounts::default()
+            });
+            targets.len() - 1
+        };
+        let target = &mut targets[target_index];
+        target.total = target.total.saturating_add(1);
+        if native {
+            target.native = target.native.saturating_add(1);
+        }
+        if native && target_same_artifact_native {
+            target.same_artifact_native = target.same_artifact_native.saturating_add(1);
+        }
+    }
 }
 
 fn refresh_memory_length<H: Host>(context: &mut CallContext, vm: &Vm<H>) {
@@ -573,6 +662,7 @@ unsafe extern "C" fn reference_callout<H: Host>(
     site: u64,
     args: *const u64,
     out: *mut u64,
+    fast_cache: *mut FastReferenceCache,
 ) -> i64 {
     // A stable call-site id is present even without diagnostics so the VM can
     // find the per-site monomorphic cache without a hash lookup.
@@ -585,6 +675,7 @@ unsafe extern "C" fn reference_callout<H: Host>(
             site,
             args,
             out,
+            fast_cache,
         )
     }
 }
@@ -599,6 +690,7 @@ unsafe extern "C" fn diagnostic_reference_callout<H: Host>(
     site: u64,
     args: *const u64,
     out: *mut u64,
+    fast_cache: *mut FastReferenceCache,
 ) -> i64 {
     unsafe {
         reference_callout_inner::<H, true>(
@@ -609,6 +701,7 @@ unsafe extern "C" fn diagnostic_reference_callout<H: Host>(
             site,
             args,
             out,
+            fast_cache,
         )
     }
 }
@@ -624,6 +717,7 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
     site: u64,
     args: *const u64,
     out: *mut u64,
+    fast_cache: *mut FastReferenceCache,
 ) -> i64 {
     // SAFETY: generated code passes the context, table binding, table index,
     // signature index, argument words, and output storage for this call.
@@ -633,6 +727,11 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
     let active = ACTIVE_CONTEXT.with(|current| current.replace(std::ptr::null_mut()));
     let program = context.program;
     let mut native_target_hit = false;
+    let mut same_artifact_direct_hit = false;
+    let mut target_same_artifact_native = false;
+    let mut reference_target_function = None;
+    let mut fast_target: Option<(usize, Value, Value, u32, u64)> = None;
+    let mut direct_target_root = None;
     let mut direct_status = None;
     let called = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let (
@@ -713,12 +812,12 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
                         *target_program == program && *target_env == context.env
                     })
                     .and_then(|(_, function, _)| {
-                        let compiled = vm
-                            .programs
-                            .compiled(program)
-                            .flatten()
-                            .filter(|compiled| compiled.has_function(function as usize))
-                            .or_else(|| vm.programs.wasm_tier_containing(program, function))?;
+                        let compiled = compiled_reference_target(
+                            vm,
+                            program,
+                            function as usize,
+                            context.compiled,
+                        )?;
                         direct_reference_entry(
                             vm,
                             compiled,
@@ -741,9 +840,21 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
                 )
             }
         };
+        if DIAGNOSTICS {
+            reference_target_function = direct_entry.as_ref().map(|entry| entry.1).or_else(|| {
+                same_program_function
+                    .as_ref()
+                    .map(|(_, function, _)| *function as usize)
+            });
+        }
         if let Some((compiled, function, entry, (base, length), memory_binding, guard, globals)) =
             direct_entry
         {
+            // A re-entrant import can mutate the table and collect while this
+            // body is running. Keep its function cell alive until the call
+            // returns so a freed slot cannot be reused before cache publish.
+            let callee_root = unsafe { &mut *vm_pointer }.heap.root(callee);
+            direct_target_root = Some(callee_root);
             if !cache_hit
                 && let Ok(site) = usize::try_from(site)
                 && !context.compiled.is_null()
@@ -764,6 +875,7 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
                             function: function as u32,
                             env: context.env,
                             compiled: Rc::downgrade(&compiled),
+                            hits: 0,
                         },
                     );
                 }
@@ -771,6 +883,7 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
             compiled.note_direct_reference_entry(function);
             let mut nested = context.nested_entry();
             nested.compiled = Rc::as_ptr(&compiled);
+            nested.reference_fast_caches = compiled.reference_fast_caches_ptr();
             nested.table = compiled.table.as_ptr();
             nested.globals = globals.as_ptr();
             nested.memory = memory_binding;
@@ -799,6 +912,15 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
             // the Wasm ABI shape expected by this compiled entry, and `compiled`
             // keeps its executable mapping alive for the duration of the call.
             native_target_hit = true;
+            let same_artifact = !context.compiled.is_null()
+                && std::ptr::eq(context.compiled, Rc::as_ptr(&compiled));
+            if same_artifact {
+                fast_target = Some((function, callee, table, table_slot, index));
+            }
+            if DIAGNOSTICS {
+                same_artifact_direct_hit = same_artifact;
+                target_same_artifact_native = same_artifact_direct_hit;
+            }
             let status = match guard_trampoline() {
                 Some(trampoline) => {
                     let outer = ACTIVE_CONTEXT.with(|active| active.replace(&mut nested));
@@ -842,6 +964,17 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
             vm.run_compiled(target_program, env, function, &values)
         });
         native_target_hit = compiled_result.is_some();
+        if DIAGNOSTICS
+            && native_target_hit
+            && let Some(function) = reference_target_function
+        {
+            let target_compiled =
+                compiled_reference_target(vm, program, function, context.compiled);
+            target_same_artifact_native = !context.compiled.is_null()
+                && target_compiled
+                    .as_ref()
+                    .is_some_and(|compiled| std::ptr::eq(context.compiled, Rc::as_ptr(compiled)));
+        }
         let result = match compiled_result {
             Some(result) => result?,
             None => {
@@ -875,10 +1008,50 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
         Ok(())
     }));
     ACTIVE_CONTEXT.with(|current| current.set(active));
-    if DIAGNOSTICS {
-        note_reference_call_site(context, site, native_target_hit);
-    }
     let vm = unsafe { &mut *vm_pointer };
+    if let Some((function, target, table, table_slot, index)) = fast_target {
+        let target_still_matches = direct_target_root
+            .and_then(|root| vm.heap.root_value(root))
+            .is_some_and(|rooted| {
+                rooted == target
+                    && reference_target_matches(vm, target, program, function as u32, context.env)
+            });
+        if !fast_cache.is_null()
+            && direct_status == Some(0)
+            && called.as_ref().is_ok_and(|result| result.is_ok())
+            && target_still_matches
+        {
+            let table_binding = vm.heap.environment_slot(context.env, table_slot as usize);
+            let current_target = usize::try_from(index)
+                .ok()
+                .and_then(|index| vm.wasm_table_elements(table).ok()?.get(index).copied());
+            if table_binding == Some(table) && current_target == Some(target) {
+                // SAFETY: generated code passes a correctly aligned pointer to
+                // this site's UnsafeCell in the owning artifact. The artifact is
+                // retained throughout the call and native code is suspended until
+                // the callout returns.
+                let cache = unsafe { &mut *fast_cache };
+                cache.epoch = 0;
+                cache.env = context.env;
+                cache.index = index;
+                cache.function = function as u64;
+                cache.epoch = vm.wasm_reference_epoch.get();
+            }
+        }
+    }
+    if let Some(root) = direct_target_root {
+        vm.heap.release_root(root);
+    }
+    if DIAGNOSTICS {
+        note_reference_call_site(
+            context,
+            site,
+            native_target_hit,
+            same_artifact_direct_hit,
+            reference_target_function,
+            target_same_artifact_native,
+        );
+    }
     refresh_memory_length(context, vm);
     direct_status.map_or_else(|| finish_callout(context, called), i64::from)
 }
@@ -956,6 +1129,7 @@ struct IndirectCallCacheEntry {
     function: u32,
     env: Value,
     compiled: Weak<CompiledProgram>,
+    hits: u64,
 }
 
 type DirectReferenceEntry = (
@@ -1025,6 +1199,47 @@ fn direct_reference_entry<H: Host>(
     ))
 }
 
+/// Pick a compiled artifact for an indirect target, preferring the artifact
+/// that is already executing when it contains the target. This is the case
+/// after profile-guided selective promotion closes over a hot indirect callee.
+fn compiled_reference_target<H: Host>(
+    vm: &Vm<H>,
+    program: ProgramId,
+    function: usize,
+    caller: *const CompiledProgram,
+) -> Option<Rc<CompiledProgram>> {
+    let current_artifact = if caller.is_null() {
+        None
+    } else {
+        vm.programs
+            .compiled(program)
+            .flatten()
+            .filter(|compiled| std::ptr::eq(Rc::as_ptr(compiled), caller))
+            .filter(|compiled| compiled.has_function(function))
+            .or_else(|| {
+                u32::try_from(function).ok().and_then(|function| {
+                    vm.programs.wasm_tier_for_artifact_containing(
+                        program,
+                        function as usize,
+                        caller,
+                    )
+                })
+            })
+    };
+    current_artifact
+        .or_else(|| {
+            vm.programs
+                .compiled(program)
+                .flatten()
+                .filter(|compiled| compiled.has_function(function))
+        })
+        .or_else(|| {
+            u32::try_from(function)
+                .ok()
+                .and_then(|function| vm.programs.wasm_tier_containing(program, function))
+        })
+}
+
 /// Check the cache's guards without turning any miss into a Wasm trap. The
 /// ordinary resolver below remains authoritative for OOB, null, and mismatch
 /// cases, and for artifacts that cannot currently activate the cached target.
@@ -1065,6 +1280,7 @@ fn cached_direct_reference<H: Host>(
         }) if *program == cache.program && *function == cache.function && *env == cache.env => {}
         _ => return None,
     }
+    caller.note_indirect_cache_hit(site);
     let compiled = cache.compiled.upgrade()?;
     let direct = direct_reference_entry(
         vm,
@@ -1079,6 +1295,23 @@ fn cached_direct_reference<H: Host>(
         .reference_cache_hits
         .set(caller.reference_cache_hits.get().saturating_add(1));
     Some((element, direct))
+}
+
+fn reference_target_matches<H: Host>(
+    vm: &Vm<H>,
+    target: Value,
+    program: ProgramId,
+    function: u32,
+    env: Value,
+) -> bool {
+    matches!(
+        vm.heap.get(target),
+        Some(Cell::Function {
+            kind: crate::heap::FunctionKind::User(target_program, target_function),
+            env: target_env,
+            ..
+        }) if *target_program == program && *target_function == function && *target_env == env
+    )
 }
 
 pub(super) struct CompiledProgram {
@@ -1106,6 +1339,11 @@ pub(super) struct CompiledProgram {
     /// site. The vector is only pointers until a site becomes hot, and each
     /// cache weakly references its callee artifact to avoid Rc cycles.
     reference_call_caches: std::cell::RefCell<Vec<Option<Box<IndirectCallCacheEntry>>>>,
+    /// Stable per-site target certificates for native direct dispatch. These
+    /// do not retain heap values and are invalidated by the VM epoch.
+    reference_fast_caches: Box<[UnsafeCell<FastReferenceCache>]>,
+    /// The owner and bytecode PC for each entry in `reference_call_caches`.
+    reference_cache_sites: Vec<(usize, usize, u32)>,
     #[cfg(test)]
     reference_cache_hits: std::cell::Cell<u64>,
 }
@@ -1167,8 +1405,30 @@ impl Drop for CompiledProgram {
             })
             .collect::<Vec<_>>()
             .join(",");
+        let mut reference_targets = Vec::new();
+        for site in &stats.reference_call_sites {
+            for target in site.targets.borrow().iter() {
+                if target.total > 0 {
+                    reference_targets.push(format!(
+                        "[{},{},{},{},{},{}]",
+                        site.function,
+                        site.pc,
+                        target.function,
+                        target.total,
+                        target.native,
+                        target.same_artifact_native
+                    ));
+                }
+            }
+        }
+        let reference_targets = reference_targets.join(",");
+        let same_artifact_direct_hits = stats
+            .reference_call_sites
+            .iter()
+            .map(|site| site.counts.get().same_artifact_direct)
+            .fold(0u64, u64::saturating_add);
         eprintln!(
-            "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compiled_functions\":{},\"total_functions\":{},\"code_bytes\":{},\"mapped_bytes\":{},\"compile_ns\":{},\"native_entry_requests\":[{}],\"interpreter_fallback_entries\":[{}],\"compiled_to_vm_callouts\":{},\"compiled_import_callouts\":{},\"compiled_known_callouts\":{},\"compiled_reference_callouts\":{},\"reference_call_sites\":[{}]}}",
+            "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compiled_functions\":{},\"total_functions\":{},\"code_bytes\":{},\"mapped_bytes\":{},\"compile_ns\":{},\"native_entry_requests\":[{}],\"interpreter_fallback_entries\":[{}],\"compiled_to_vm_callouts\":{},\"compiled_import_callouts\":{},\"compiled_known_callouts\":{},\"compiled_reference_callouts\":{},\"reference_call_sites\":[{}],\"same_artifact_direct_reference_hits\":{},\"reference_call_targets\":[{}]}}",
             stats.program,
             stats.compiled_functions,
             stats.total_functions,
@@ -1182,6 +1442,8 @@ impl Drop for CompiledProgram {
             stats.compiled_known_callouts.get(),
             stats.compiled_reference_callouts.get(),
             reference_sites,
+            same_artifact_direct_hits,
+            reference_targets,
         );
     }
 }
@@ -1191,6 +1453,12 @@ fn jit_diagnostics_enabled() -> bool {
 }
 
 impl CompiledProgram {
+    fn reference_fast_caches_ptr(&self) -> *mut FastReferenceCache {
+        self.reference_fast_caches
+            .first()
+            .map_or(std::ptr::null_mut(), |cache| cache.get())
+    }
+
     fn indirect_call_cache(&self, site: usize) -> Option<IndirectCallCacheEntry> {
         self.reference_call_caches
             .borrow()
@@ -1203,6 +1471,52 @@ impl CompiledProgram {
         if let Some(slot) = self.reference_call_caches.borrow_mut().get_mut(site) {
             *slot = Some(Box::new(entry));
         }
+    }
+
+    fn note_indirect_cache_hit(&self, site: usize) {
+        if let Some(Some(entry)) = self.reference_call_caches.borrow_mut().get_mut(site) {
+            entry.hits = entry.hits.saturating_add(1);
+        }
+    }
+
+    /// Return recently observed targets for call sites in a selective root's
+    /// static closure, hottest first. The target cache already includes the
+    /// exact program and instance environment guards.
+    pub(super) fn profiled_indirect_targets<H: Host>(
+        &self,
+        vm: &Vm<H>,
+        program: ProgramId,
+        env: Value,
+        callers: &[bool],
+    ) -> Vec<usize> {
+        let caches = self.reference_call_caches.borrow();
+        let mut targets = self
+            .reference_cache_sites
+            .iter()
+            .enumerate()
+            .filter(|(_, (caller, _, _))| callers.get(*caller).copied().unwrap_or(false))
+            .filter_map(|(site, (_, _, table_slot))| {
+                let entry = caches.get(site)?.as_deref()?;
+                let current_table = vm.heap.environment_slot(env, *table_slot as usize)?;
+                (entry.program == program
+                    && entry.env == env
+                    && entry.table == current_table
+                    && vm.wasm_table_get(current_table, entry.index).ok() == Some(entry.target)
+                    && vm.heap.weak_value(entry.target_weak) == Some(entry.target))
+                    .then_some((entry.function as usize, entry.hits))
+            })
+            .collect::<Vec<_>>();
+        targets.sort_unstable_by_key(|(_, hits)| std::cmp::Reverse(*hits));
+        let mut unique = Vec::new();
+        for (target, _) in targets {
+            if !unique.contains(&target) {
+                unique.push(target);
+                if unique.len() == MAX_JIT_PROFILED_INDIRECT_TARGETS {
+                    break;
+                }
+            }
+        }
+        unique
     }
 
     pub(super) fn clear_indirect_call_caches(&self) {
@@ -1272,6 +1586,47 @@ impl CompiledProgram {
                     )
                 })
                 .collect(),
+        )
+    }
+
+    #[cfg(test)]
+    pub(super) fn reference_call_target_counts(
+        &self,
+    ) -> Option<Vec<(usize, usize, usize, u64, u64, u64)>> {
+        Some(
+            self.diagnostics
+                .as_ref()?
+                .reference_call_sites
+                .iter()
+                .flat_map(|site| {
+                    site.targets
+                        .borrow()
+                        .iter()
+                        .map(|target| {
+                            (
+                                site.function,
+                                site.pc,
+                                target.function,
+                                target.total,
+                                target.native,
+                                target.same_artifact_native,
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect(),
+        )
+    }
+
+    #[cfg(test)]
+    pub(super) fn same_artifact_direct_reference_hits(&self) -> Option<u64> {
+        Some(
+            self.diagnostics
+                .as_ref()?
+                .reference_call_sites
+                .iter()
+                .map(|site| site.counts.get().same_artifact_direct)
+                .fold(0u64, u64::saturating_add),
         )
     }
 
@@ -3113,6 +3468,171 @@ impl<H: Host> Emitter<'_, '_, H> {
             .ok()
             .map(|index| self.reference_site_ids[index].1)
             .expect("compiled indirect call has a cache site id");
+        let fast_cache_base = self.builder.ins().load(
+            types::I64,
+            invariant(),
+            self.context,
+            CONTEXT_REFERENCE_FAST_CACHES,
+        );
+        let fast_cache = self.builder.ins().iadd_imm_s(
+            fast_cache_base,
+            (site_id * std::mem::size_of::<FastReferenceCache>()) as i64,
+        );
+        let cached_epoch = self.builder.ins().load(
+            types::I64,
+            MemFlagsData::trusted(),
+            fast_cache,
+            std::mem::offset_of!(FastReferenceCache, epoch) as i32,
+        );
+        let cache_initialized = self
+            .builder
+            .ins()
+            .icmp_imm_u(IntCC::NotEqual, cached_epoch, 0);
+        let check_cache = self.builder.create_block();
+        let check_entry = self.builder.create_block();
+        let fast_call = self.builder.create_block();
+        let slow_call = self.builder.create_block();
+        let done = self.builder.create_block();
+        let status_slot = self.builder.create_sized_stack_slot(ir::StackSlotData::new(
+            ir::StackSlotKind::ExplicitSlot,
+            types::I64.bytes() as u32,
+            types::I64.bytes().trailing_zeros() as u8,
+        ));
+        self.builder
+            .ins()
+            .brif(cache_initialized, check_cache, &[], slow_call, &[]);
+
+        // Table writes and collection advance the VM-local epoch. This makes
+        // artifact-local certificates stale without invalidation walks through
+        // recursive native frames.
+        self.builder.switch_to_block(check_cache);
+        let epoch_pointer = self.builder.ins().load(
+            types::I64,
+            MemFlagsData::trusted(),
+            self.context,
+            CONTEXT_REFERENCE_EPOCH,
+        );
+        let current_epoch =
+            self.builder
+                .ins()
+                .load(types::I64, MemFlagsData::trusted(), epoch_pointer, 0);
+        let epoch_matches = self
+            .builder
+            .ins()
+            .icmp(IntCC::Equal, current_epoch, cached_epoch);
+        let current_env =
+            self.builder
+                .ins()
+                .load(types::I64, invariant(), self.context, CONTEXT_ENV);
+        let cached_env = self.builder.ins().load(
+            types::I64,
+            MemFlagsData::trusted(),
+            fast_cache,
+            std::mem::offset_of!(FastReferenceCache, env) as i32,
+        );
+        let env_matches = self
+            .builder
+            .ins()
+            .icmp(IntCC::Equal, current_env, cached_env);
+        let cached_index = self.builder.ins().load(
+            types::I64,
+            MemFlagsData::trusted(),
+            fast_cache,
+            std::mem::offset_of!(FastReferenceCache, index) as i32,
+        );
+        let index_matches = self.builder.ins().icmp(IntCC::Equal, index, cached_index);
+        let epoch_and_env_match = self.builder.ins().band(epoch_matches, env_matches);
+        let cache_matches = self.builder.ins().band(epoch_and_env_match, index_matches);
+        self.builder
+            .ins()
+            .brif(cache_matches, check_entry, &[], slow_call, &[]);
+        self.builder.seal_block(check_cache);
+
+        // A valid cache is populated only from a checked same-artifact target,
+        // but keep the index and non-null tests here as a cheap corruption
+        // guard before indexing the artifact's entry table.
+        self.builder.switch_to_block(check_entry);
+        let cached_function = self.builder.ins().load(
+            types::I64,
+            MemFlagsData::trusted(),
+            fast_cache,
+            std::mem::offset_of!(FastReferenceCache, function) as i32,
+        );
+        let function_in_range = self.builder.ins().icmp_imm_u(
+            IntCC::UnsignedLessThan,
+            cached_function,
+            self.plans.len() as i64,
+        );
+        let lookup_entry = self.builder.create_block();
+        self.builder
+            .ins()
+            .brif(function_in_range, lookup_entry, &[], slow_call, &[]);
+        self.builder.seal_block(check_entry);
+        self.builder.switch_to_block(lookup_entry);
+        let artifact_table =
+            self.builder
+                .ins()
+                .load(types::I64, invariant(), self.context, CONTEXT_TABLE);
+        let entry_offset = self.builder.ins().ishl_imm_u(cached_function, 3);
+        let entry_address = self.builder.ins().iadd(artifact_table, entry_offset);
+        let entry = self
+            .builder
+            .ins()
+            .load(types::I64, MemFlagsData::trusted(), entry_address, 0);
+        let entry_present = self.builder.ins().icmp_imm_u(IntCC::NotEqual, entry, 0);
+        self.builder
+            .ins()
+            .brif(entry_present, fast_call, &[], slow_call, &[]);
+        self.builder.seal_block(lookup_entry);
+
+        self.builder.switch_to_block(fast_call);
+        let mut direct_args = vec![self.context];
+        if self.memory.base {
+            direct_args.push(self.base);
+        }
+        direct_args.extend(self.length);
+        for (offset, ty) in wasm_signature.params.iter().enumerate() {
+            let raw = self.builder.ins().load(
+                types::I64,
+                MemFlagsData::trusted(),
+                args,
+                (offset as u32 * word) as i32,
+            );
+            direct_args.push(match Kind::of(*ty).expect("planned") {
+                Kind::I32 => self.builder.ins().ireduce(types::I32, raw),
+                Kind::I64 => raw,
+            });
+        }
+        let entry_signature = self.builder.import_signature(internal_signature(
+            self.memory,
+            &wasm_signature.params,
+            wasm_signature.results.first().copied(),
+            self.call_conv,
+        ));
+        let call = self
+            .builder
+            .ins()
+            .call_indirect(entry_signature, entry, &direct_args);
+        let fast_results = self.builder.inst_results(call).to_vec();
+        let fast_status = fast_results[0];
+        if let Some(result) = wasm_signature.results.first() {
+            let value = match Kind::of(*result).expect("planned") {
+                Kind::I32 => self.builder.ins().uextend(types::I64, fast_results[1]),
+                Kind::I64 => fast_results[1],
+            };
+            self.builder
+                .ins()
+                .store(MemFlagsData::trusted(), value, out, 0);
+        }
+        let status_address = self.builder.ins().stack_addr(types::I64, status_slot, 0);
+        self.builder
+            .ins()
+            .store(MemFlagsData::trusted(), fast_status, status_address, 0);
+        self.builder.ins().jump(done, &[]);
+        self.builder.seal_block(fast_call);
+
+        self.builder.switch_to_block(slow_call);
+        self.builder.set_cold_block(slow_call);
         let target_offset = if self.diagnostics_enabled {
             CONTEXT_CALL_REFERENCE_DIAGNOSTIC
         } else {
@@ -3123,7 +3643,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             .ins()
             .load(types::I64, invariant(), self.context, target_offset);
         let mut call_signature = Signature::new(self.call_conv);
-        for _ in 0..7 {
+        for _ in 0..8 {
             call_signature.params.push(AbiParam::new(types::I64));
         }
         call_signature.returns.push(AbiParam::new(types::I64));
@@ -3140,9 +3660,24 @@ impl<H: Host> Emitter<'_, '_, H> {
                 site_id,
                 args,
                 out,
+                fast_cache,
             ],
         );
-        let status = self.builder.inst_results(call)[0];
+        let slow_status = self.builder.inst_results(call)[0];
+        let status_address = self.builder.ins().stack_addr(types::I64, status_slot, 0);
+        self.builder
+            .ins()
+            .store(MemFlagsData::trusted(), slow_status, status_address, 0);
+        self.builder.ins().jump(done, &[]);
+        self.builder.seal_block(slow_call);
+
+        self.builder.switch_to_block(done);
+        self.builder.seal_block(done);
+        let status_address = self.builder.ins().stack_addr(types::I64, status_slot, 0);
+        let status =
+            self.builder
+                .ins()
+                .load(types::I64, MemFlagsData::trusted(), status_address, 0);
         self.propagate(status);
         let destination = instruction.result_register();
         match wasm_signature.results.first() {
@@ -4262,6 +4797,14 @@ fn target_isa(opt_level: &str) -> Option<std::sync::Arc<dyn cranelift_codegen::i
 }
 
 impl<H: Host> Vm<H> {
+    /// Invalidate artifact-local indirect-call certificates when VM state that
+    /// native code cannot inspect directly changes: table contents or heap IDs.
+    pub(super) fn invalidate_wasm_reference_caches(&self) {
+        let next = self.wasm_reference_epoch.get().wrapping_add(1);
+        self.wasm_reference_epoch
+            .set(if next == 0 { 1 } else { next });
+    }
+
     pub(crate) fn set_execution_mode(&mut self, mode: ExecutionMode) {
         self.execution_mode = mode;
     }
@@ -4433,6 +4976,58 @@ impl<H: Host> Vm<H> {
                     }
                 }
             }
+            // A selective tier normally follows only statically known calls.
+            // Before this promotion, however, the eager artifact has already
+            // observed hot `call_indirect` targets. Add a bounded set of those
+            // callees from call sites inside this root's static closure; the
+            // generated call still keeps the dynamic resolver as its miss
+            // path.
+            if let Some(baseline) = self.programs.compiled(program).flatten() {
+                let profiled_targets =
+                    baseline.profiled_indirect_targets(self, program, env, &selected);
+                for target in profiled_targets {
+                    if target >= count || selected[target] {
+                        continue;
+                    }
+                    if diagnostics_enabled {
+                        eprintln!(
+                            "QUENCH_WASM_JIT_PROFILED_INDIRECT_TARGET root={root} function={target}"
+                        );
+                    }
+                    pending.push(target);
+                }
+                while let Some(index) = pending.pop() {
+                    let Some(selected_function) = selected.get_mut(index) else {
+                        if diagnostics_enabled {
+                            eprintln!(
+                                "QUENCH_WASM_JIT_ROOT_REJECTION root={root} invalid-function={index}"
+                            );
+                        }
+                        return None;
+                    };
+                    if *selected_function {
+                        continue;
+                    }
+                    let function = code.functions.get(index)?;
+                    if function.code.len() > MAX_JIT_ROOT_BYTECODES_PER_FUNCTION {
+                        if diagnostics_enabled {
+                            eprintln!(
+                                "QUENCH_WASM_JIT_ROOT_REJECTION root={root} function={index} bytecodes={} limit={MAX_JIT_ROOT_BYTECODES_PER_FUNCTION}",
+                                function.code.len()
+                            );
+                        }
+                        return None;
+                    }
+                    *selected_function = true;
+                    for packed in &function.code {
+                        let instruction =
+                            super::dispatch_fast::decoded_instruction(function, *packed);
+                        if instruction.op() == Op::CallKnown {
+                            pending.push(usize::from(instruction.known_function_index()));
+                        }
+                    }
+                }
+            }
             let selected_count = selected.iter().filter(|selected| **selected).count();
             if selected_count > MAX_JIT_ROOT_FUNCTIONS {
                 if diagnostics_enabled {
@@ -4522,6 +5117,7 @@ impl<H: Host> Vm<H> {
         let plan = |index: usize| analysis.plan(index, &callable, &mut memory_slot.clone());
         let mut reference_site_ids = vec![Vec::new(); count];
         let mut reference_call_sites = Vec::new();
+        let mut reference_cache_sites = Vec::new();
         let mut reference_cache_count = 0usize;
         for index in 0..count {
             if plans[index].is_none() {
@@ -4532,16 +5128,18 @@ impl<H: Host> Vm<H> {
             for (pc, packed) in function.code.iter().enumerate() {
                 let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
                 if instruction.op() == Op::Call
-                    && matches!(full_plan.operand(pc), Slot::IndirectReference { .. })
+                    && let Slot::IndirectReference { table, .. } = full_plan.operand(pc)
                 {
                     let site_id = reference_cache_count;
                     reference_cache_count += 1;
                     reference_site_ids[index].push((pc, site_id));
+                    reference_cache_sites.push((index, pc, table));
                     if diagnostics_enabled {
                         reference_call_sites.push(ReferenceCallSiteDiagnostics {
                             function: index,
                             pc,
                             counts: std::cell::Cell::new(ReferenceCallSiteCounts::default()),
+                            targets: std::cell::RefCell::new(Vec::new()),
                         });
                     }
                 }
@@ -4705,6 +5303,11 @@ impl<H: Host> Vm<H> {
                     .take(reference_cache_count)
                     .collect(),
             ),
+            reference_fast_caches: (0..reference_cache_count)
+                .map(|_| UnsafeCell::new(FastReferenceCache::default()))
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+            reference_cache_sites,
             #[cfg(test)]
             reference_cache_hits: std::cell::Cell::new(0),
         })
@@ -4994,6 +5597,8 @@ impl<H: Host> Vm<H> {
                     .map_or(0, |stats| stats.reference_call_sites.len()),
                 poll_start: poll.map_or(0, |(start, _)| start),
                 poll_end: poll.map_or(0, |(start, bytes)| start + bytes),
+                reference_epoch: self.wasm_reference_epoch.as_ptr(),
+                reference_fast_caches: compiled.reference_fast_caches_ptr(),
             };
             let mut out = 0u64;
             compiled.note_native_entry(id as usize);
@@ -5161,7 +5766,44 @@ impl<H: Host> Vm<H> {
                 return Ok(());
             }
         }
-        let result = self.call_value(&code, callee, receiver, &values)?;
+        let js_import = match self.heap.get(callee) {
+            Some(Cell::Function {
+                kind: FunctionKind::Native(Native::WasmHost),
+                env,
+                ..
+            }) => match self.heap.get(*env) {
+                Some(Cell::WasmHostFunction {
+                    target,
+                    signature,
+                }) if values.len() == signature.params.len() => match target {
+                    crate::heap::WasmHostTarget::Js(target) => {
+                        Some((*target, None, signature.clone()))
+                    }
+                    crate::heap::WasmHostTarget::JsEmscriptenMemcpy(target) => Some((
+                        target.function,
+                        Some((target.view_environment, target.view_slot)),
+                        signature.clone(),
+                    )),
+                    crate::heap::WasmHostTarget::Host(_) => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        };
+        let result = if let Some((target, memcpy_capture, signature)) = js_import {
+            self.call_compiled_js_wasm_import(
+                program,
+                &code,
+                callee,
+                target,
+                memcpy_capture,
+                &signature,
+                receiver,
+                &values,
+            )?
+        } else {
+            self.call_value(&code, callee, receiver, &values)?
+        };
         if let Some(ty) = result_type {
             let bits = match self.decode_wasm_value(result, ty)?.bits() {
                 Some(crate::wasm::ScalarBits::Bits32(bits)) => u64::from(bits),

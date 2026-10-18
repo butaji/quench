@@ -189,6 +189,7 @@ mod tests {
             field_sites: Vec::new(),
             object_sites: Vec::new(),
             regexp_literal_sites: Vec::new(),
+            literal_templates: Vec::new(),
             superinstructions: Vec::new(),
         };
         let mut pairs = vec![0; PAIRS];
