@@ -1295,8 +1295,9 @@ lane_handler! {
     }
 }
 
-/// A `Unary` record's value where it runs no guest code: logical not and `typeof` of any
-/// value, and the numeric operators of a Number.
+/// A `Unary` record's value where it runs no guest code and throws nothing: logical not and
+/// `typeof` of any value, and every other operator of a Number, String, Boolean, null or
+/// undefined, whose conversions are pure.
 ///
 /// # Safety
 /// `cx` is the running lane's context and `r` its registers.
@@ -1318,11 +1319,23 @@ unsafe fn lane_unary_value<H: Host>(
         note_allocation(vm);
         return Some(name);
     }
-    if operand.as_number().is_none() || !super::coercion::numeric_unary(operator) {
+    if operand.as_number().is_some() && super::coercion::numeric_unary(operator) {
+        // SAFETY: the context's program outlives the lane run.
+        return vm.unary(unsafe { &*(*cx).code }, operator, operand).ok();
+    }
+    let pure_primitive = operand.as_bool().is_some()
+        || operand.is_null()
+        || operand.is_undefined()
+        || operand.as_number().is_some()
+        || vm.is_string(operand);
+    if !pure_primitive {
         return None;
     }
     // SAFETY: the context's program outlives the lane run.
-    vm.unary(unsafe { &*(*cx).code }, operator, operand).ok()
+    let value = vm.unary(unsafe { &*(*cx).code }, operator, operand).ok()?;
+    // Converting to a string can allocate.
+    note_allocation(vm);
+    Some(value)
 }
 
 lane_handler! {

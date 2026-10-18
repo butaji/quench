@@ -442,7 +442,8 @@ impl<H: Host> Vm<H> {
     /// read is left to `get_index` with every other `None`.
     pub(super) fn plain_keyed_get(&self, object: Value, key: Value) -> Option<Value> {
         match self.heap.get(key)? {
-            Cell::Symbol(data) if data.kind != crate::heap::SymbolKind::HostPrivate => {
+            // A host-private symbol names only an own property, which the general path reads.
+            Cell::Symbol(symbol) if symbol.kind != crate::heap::SymbolKind::HostPrivate => {
                 self.plain_property_get(object, PropertyKey::symbol(key))
             }
             Cell::String(text) => self.plain_named_get(object, self.lookup_js_atom(text)?),
