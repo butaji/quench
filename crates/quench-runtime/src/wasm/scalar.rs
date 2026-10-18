@@ -567,6 +567,13 @@ impl WasmSignatures {
         let Some(actual_type) = actual.types.get(actual_index as usize) else {
             return false;
         };
+        // A signature index is meaningful only inside its owning pool. When
+        // both references name the very same interned type, it is already a
+        // proof of compatibility (including exact matches) and avoids walking
+        // recursive declaration graphs on hot indirect-call paths.
+        if std::ptr::eq(self, actual) && expected_index == actual_index {
+            return true;
+        }
         match expected.declaration {
             Some(target) => {
                 actual.matches_declaration(actual_index, &self.declarations, target, exact)
@@ -582,6 +589,48 @@ impl WasmSignatures {
 #[cfg(test)]
 mod signature_pool_tests {
     use super::*;
+
+    #[test]
+    fn accepts_uses_pool_identity_only_as_a_sufficient_fast_path() {
+        let i32_signature = WasmSignature {
+            params: vec![WasmType::I32],
+            results: vec![WasmType::I32],
+        };
+        let i64_signature = WasmSignature {
+            params: vec![WasmType::I32],
+            results: vec![WasmType::I64],
+        };
+        let declarations = super::super::WasmTypes::default();
+        let same_pool = WasmSignatures::with_imports(
+            "signature-identity",
+            &[],
+            [
+                WasmCallableType::Embedded(i32_signature.clone()),
+                WasmCallableType::Embedded(i64_signature.clone()),
+            ],
+            &declarations,
+        )
+        .unwrap();
+        let structurally_equal_other_pool = WasmSignatures::with_imports(
+            "signature-identity",
+            &[],
+            [WasmCallableType::Embedded(i32_signature)],
+            &declarations,
+        )
+        .unwrap();
+        let different_other_pool = WasmSignatures::with_imports(
+            "signature-identity",
+            &[],
+            [WasmCallableType::Embedded(i64_signature)],
+            &declarations,
+        )
+        .unwrap();
+
+        assert!(same_pool.accepts(0, &same_pool, 0, true));
+        assert!(!same_pool.accepts(0, &same_pool, 1, false));
+        assert!(same_pool.accepts(0, &structurally_equal_other_pool, 0, false));
+        assert!(!same_pool.accepts(0, &different_other_pool, 0, false));
+    }
 
     #[test]
     fn equal_function_facts_share_one_signature_and_unused_types_do_not_become_functions() {
