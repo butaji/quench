@@ -300,3 +300,35 @@ They therefore confirm a memory opportunity without a score win. Full commands,
 environment wrapper, diagnostic details, and raw reports are in
 `evidence/jit-jetstream3-wasm-2026-10-18/sparse-analysis-baseline-screen/`.
 No case has yet met the paired score-and-RSS rule; the target remains open.
+
+## Selective handoff from `CallKnown`
+
+Commit `7961b7bde` lets a hot eligible Wasm `CallKnown` activation leave the
+frameless fast interpreter lane and reach the existing one-shot Cranelift
+promotion gate. Cold calls stay on the lane, terminal calls retain the
+existing tail path, and the general dispatcher remains the sole owner of the
+compile attempt. The regression uses a four-function chain so the frontend
+does not inline away the target; it checks the residual `CallKnown`, correct
+result, tier threshold, and native entries.
+
+On the same clean source revision, an 11-round selective-mode screen improved
+gcc-loops median Score from 57.11 to 71.28 (+24.8%) relative to default JIT;
+the median first timed iteration fell from about 306 ms to 118 ms, while
+average iteration time changed from about 33 ms to 35 ms. QuickSort Score was
+roughly flat (183.47 default, 180.05 selective). Both modes retain lower RSS
+than Bun and Node but remain below both peers on Score. The default paired
+analysis has Score ratios of 0.320 [0.311, 0.351] for gcc-loops vs Bun and
+0.474 [0.459, 0.514] for QuickSort vs Bun. Selective mode intentionally has
+`qualification_ready: false`; its medians are a screen without a paired
+qualification claim. Raw reports and diagnostic limits are documented in
+`evidence/jit-jetstream3-wasm-2026-10-18/selective-callknown-handoff/`.
+
+The selective one-round diagnostic reports 309,089 gcc-loops native-to-VM
+callouts (309,039 imported), against 9,955 total for QuickSort. It reports
+345.5 ms summed tier compilation time for gcc-loops and 39.7 ms for QuickSort.
+The aggregate does not attribute individual import symbols. This separates
+two next optimization problems: attribute and lower repeated imported-call
+boundary costs for gcc-loops, and improve generated code or native-entry
+overhead for QuickSort, whose hot sort path has few callouts. Selective tier-up
+is only an admission mechanism; it does not by itself solve either runtime
+cost and it does not satisfy the requested peer-score target.
