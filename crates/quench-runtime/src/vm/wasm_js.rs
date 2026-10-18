@@ -12,6 +12,225 @@ use crate::heap::{WasmHostTarget, WasmObjectSlot};
 use crate::{WasmType, WasmValue};
 use wasmparser::ExternalKind;
 
+const DIRECT_EMSCRIPTEN_COPY_ENV: &str = "QUENCH_WASM_EMSCRIPTEN_MEMCPY_DIRECT";
+const RAW_I32_EMSCRIPTEN_COPY_ENV: &str = "QUENCH_WASM_EMSCRIPTEN_MEMCPY_RAW_I32";
+const EARLY_IMPORT_EMSCRIPTEN_COPY_ENV: &str = "QUENCH_WASM_EMSCRIPTEN_MEMCPY_EARLY_IMPORT";
+
+static DIRECT_EMSCRIPTEN_COPY_SWITCH: std::sync::OnceLock<Option<bool>> =
+    std::sync::OnceLock::new();
+static RAW_I32_EMSCRIPTEN_COPY_SWITCH: std::sync::OnceLock<Option<bool>> =
+    std::sync::OnceLock::new();
+static EARLY_IMPORT_EMSCRIPTEN_COPY_SWITCH: std::sync::OnceLock<Option<bool>> =
+    std::sync::OnceLock::new();
+
+#[cfg(test)]
+thread_local! {
+    static DIRECT_EMSCRIPTEN_COPY_TEST_OVERRIDE: std::cell::Cell<Option<bool>> =
+        const { std::cell::Cell::new(None) };
+    static RAW_I32_EMSCRIPTEN_COPY_TEST_OVERRIDE: std::cell::Cell<Option<bool>> =
+        const { std::cell::Cell::new(None) };
+    static EARLY_IMPORT_EMSCRIPTEN_COPY_TEST_OVERRIDE: std::cell::Cell<Option<bool>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Whether the guarded direct-copy path is enabled in this process. Separate
+/// processes can use this switch for an on/off A/B without rebuilding.
+pub(super) fn emscripten_memcpy_direct_copy_enabled() -> bool {
+    #[cfg(test)]
+    if let Some(enabled) = DIRECT_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(std::cell::Cell::get) {
+        return enabled;
+    }
+
+    DIRECT_EMSCRIPTEN_COPY_SWITCH
+        .get_or_init(
+            || match std::env::var(DIRECT_EMSCRIPTEN_COPY_ENV).as_deref() {
+                Ok("0") => Some(false),
+                Ok("1") => Some(true),
+                _ => None,
+            },
+        )
+        .unwrap_or(true)
+}
+
+pub(super) fn emscripten_memcpy_direct_copy_switch() -> &'static str {
+    #[cfg(test)]
+    if let Some(enabled) = DIRECT_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(std::cell::Cell::get) {
+        return if enabled { "1" } else { "0" };
+    }
+
+    match DIRECT_EMSCRIPTEN_COPY_SWITCH.get_or_init(|| {
+        match std::env::var(DIRECT_EMSCRIPTEN_COPY_ENV).as_deref() {
+            Ok("0") => Some(false),
+            Ok("1") => Some(true),
+            _ => None,
+        }
+    }) {
+        Some(false) => "0",
+        Some(true) => "1",
+        None => "default",
+    }
+}
+
+/// The raw-argument import path is opt-in so the late-bound path remains the
+/// control arm unless an experiment explicitly selects it.
+pub(super) fn emscripten_memcpy_raw_i32_enabled() -> bool {
+    #[cfg(test)]
+    if let Some(enabled) = RAW_I32_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(std::cell::Cell::get) {
+        return enabled;
+    }
+
+    RAW_I32_EMSCRIPTEN_COPY_SWITCH
+        .get_or_init(
+            || match std::env::var(RAW_I32_EMSCRIPTEN_COPY_ENV).as_deref() {
+                Ok("0") => Some(false),
+                Ok("1") => Some(true),
+                _ => None,
+            },
+        )
+        .unwrap_or(false)
+}
+
+pub(super) fn emscripten_memcpy_raw_i32_switch() -> &'static str {
+    #[cfg(test)]
+    if let Some(enabled) = RAW_I32_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(std::cell::Cell::get) {
+        return if enabled { "1" } else { "0" };
+    }
+
+    match RAW_I32_EMSCRIPTEN_COPY_SWITCH.get_or_init(|| {
+        match std::env::var(RAW_I32_EMSCRIPTEN_COPY_ENV).as_deref() {
+            Ok("0") => Some(false),
+            Ok("1") => Some(true),
+            _ => None,
+        }
+    }) {
+        Some(false) => "0",
+        Some(true) => "1",
+        None => "default",
+    }
+}
+
+/// Whether compiled import callouts may try the raw memcpy guard before the
+/// general Wasm import dispatcher. The exact-import and current-view checks
+/// remain mandatory; this switch only selects where they run.
+pub(super) fn emscripten_memcpy_early_import_enabled() -> bool {
+    #[cfg(test)]
+    if let Some(enabled) = EARLY_IMPORT_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(std::cell::Cell::get) {
+        return enabled;
+    }
+
+    EARLY_IMPORT_EMSCRIPTEN_COPY_SWITCH
+        .get_or_init(
+            || match std::env::var(EARLY_IMPORT_EMSCRIPTEN_COPY_ENV).as_deref() {
+                Ok("0") => Some(false),
+                Ok("1") => Some(true),
+                _ => None,
+            },
+        )
+        .unwrap_or(false)
+}
+
+pub(super) fn emscripten_memcpy_early_import_switch() -> &'static str {
+    #[cfg(test)]
+    if let Some(enabled) = EARLY_IMPORT_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(std::cell::Cell::get) {
+        return if enabled { "1" } else { "0" };
+    }
+
+    match EARLY_IMPORT_EMSCRIPTEN_COPY_SWITCH.get_or_init(|| {
+        match std::env::var(EARLY_IMPORT_EMSCRIPTEN_COPY_ENV).as_deref() {
+            Ok("0") => Some(false),
+            Ok("1") => Some(true),
+            _ => None,
+        }
+    }) {
+        Some(false) => "0",
+        Some(true) => "1",
+        None => "default",
+    }
+}
+
+fn copy_within_relative_index(index: i64, length: usize) -> usize {
+    if index < 0 {
+        let magnitude = usize::try_from(index.unsigned_abs()).unwrap_or(usize::MAX);
+        length.saturating_sub(magnitude)
+    } else {
+        usize::try_from(index).unwrap_or(usize::MAX).min(length)
+    }
+}
+
+fn note_emscripten_memcpy_fast_path(counter: *mut u64) {
+    if !counter.is_null() {
+        // SAFETY: diagnostics allocate this counter for the duration of the
+        // compiled invocation; normal execution passes a null pointer.
+        unsafe {
+            *counter = (*counter).saturating_add(1);
+        }
+    }
+}
+
+fn note_emscripten_memcpy_raw_i32_hit(counter: *mut u64) {
+    if !counter.is_null() {
+        // SAFETY: the diagnostic counter lives for the compiled invocation.
+        unsafe {
+            *counter = (*counter).saturating_add(1);
+        }
+    }
+}
+
+#[cfg(test)]
+pub(super) fn with_emscripten_memcpy_direct_copy_for_test<R>(
+    enabled: bool,
+    run: impl FnOnce() -> R,
+) -> R {
+    struct Restore(Option<bool>);
+
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            DIRECT_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(|value| value.set(self.0));
+        }
+    }
+
+    let previous = DIRECT_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(|value| value.replace(Some(enabled)));
+    let _restore = Restore(previous);
+    run()
+}
+
+#[cfg(test)]
+pub(super) fn with_emscripten_memcpy_raw_i32_for_test<R>(
+    enabled: bool,
+    run: impl FnOnce() -> R,
+) -> R {
+    struct Restore(Option<bool>);
+
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            RAW_I32_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(|value| value.set(self.0));
+        }
+    }
+
+    let previous = RAW_I32_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(|value| value.replace(Some(enabled)));
+    let _restore = Restore(previous);
+    run()
+}
+
+#[cfg(test)]
+pub(super) fn with_emscripten_memcpy_early_import_for_test<R>(
+    enabled: bool,
+    run: impl FnOnce() -> R,
+) -> R {
+    struct Restore(Option<bool>);
+
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            EARLY_IMPORT_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(|value| value.set(self.0));
+        }
+    }
+
+    let previous =
+        EARLY_IMPORT_EMSCRIPTEN_COPY_TEST_OVERRIDE.with(|value| value.replace(Some(enabled)));
+    let _restore = Restore(previous);
+    run()
+}
+
 /// The main realm's interface prototypes, which every new Wasm object of the matching kind
 /// receives. Null until the namespace is installed.
 #[derive(Clone, Copy, Debug)]
@@ -813,13 +1032,18 @@ impl<H: Host> Vm<H> {
             .ok_or_else(|| JsError::validation("invalid Wasm import signature".into()))?;
         let target = self
             .emscripten_memcpy_view_capture(value, &signature)
-            .map_or(WasmHostTarget::Js(value), |(view_environment, view_slot)| {
-                WasmHostTarget::JsEmscriptenMemcpy(Box::new(crate::heap::WasmHostMemcpyTarget {
-                    function: value,
-                    view_environment,
-                    view_slot,
-                }))
-            });
+            .map_or(
+                WasmHostTarget::Js(value),
+                |(view_environment, view_slot)| {
+                    WasmHostTarget::JsEmscriptenMemcpy(Box::new(
+                        crate::heap::WasmHostMemcpyTarget {
+                            function: value,
+                            view_environment,
+                            view_slot,
+                        },
+                    ))
+                },
+            );
         self.create_wasm_host_function(&name.name, target, signature)
     }
 
@@ -877,9 +1101,7 @@ impl<H: Host> Vm<H> {
             .try_into()
             .ok()?;
         let binding = metadata.name_bindings.get(view_atom)?;
-        if binding.with_depth != 0
-            || binding.kind != crate::bytecode::LexicalBindingKind::Mutable
-        {
+        if binding.with_depth != 0 || binding.kind != crate::bytecode::LexicalBindingKind::Mutable {
             return None;
         }
         let crate::bytecode::EvalBindingLocation::Capture { depth, slot } = binding.location else {
@@ -1174,6 +1396,8 @@ impl<H: Host> Vm<H> {
         memcpy_capture: Option<(Value, usize)>,
         signature: &crate::WasmSignature,
         args: &[Value],
+        current_memory: Value,
+        memcpy_fast_path_hits: *mut u64,
     ) -> Result<Value, JsError> {
         let program = self
             .programs
@@ -1189,7 +1413,18 @@ impl<H: Host> Vm<H> {
                 .environment_slot(view_environment, view_slot)
                 .unwrap_or(Value::UNDEFINED);
             let copy_within_atom = self.intern_atom("copyWithin");
-            if self.can_inline_emscripten_memcpy(view, copy_within_atom) {
+            let direct_copy = emscripten_memcpy_direct_copy_enabled()
+                && self.try_emscripten_memcpy_same_memory(
+                    view,
+                    current_memory,
+                    signature,
+                    args,
+                    copy_within_atom,
+                )?;
+            if direct_copy {
+                note_emscripten_memcpy_fast_path(memcpy_fast_path_hits);
+                Value::UNDEFINED
+            } else if self.can_inline_emscripten_memcpy(view, copy_within_atom) {
                 let _stack = self.enter_stack()?;
                 self.check_execution_interrupt()?;
                 let end = Value::number(
@@ -1242,6 +1477,134 @@ impl<H: Host> Vm<H> {
                 }))
             }
         }
+    }
+
+    /// Copy the canonical Emscripten helper's bytes directly only when its
+    /// current captured view is the full, live view of the active unshared
+    /// Wasm memory. All other cases retain the existing JS/typed-array path.
+    fn try_emscripten_memcpy_same_memory(
+        &mut self,
+        view: Value,
+        current_memory: Value,
+        signature: &crate::WasmSignature,
+        args: &[Value],
+        copy_within_atom: crate::bytecode::Atom,
+    ) -> Result<bool, JsError> {
+        if signature.params.as_slice() != [WasmType::I32, WasmType::I32, WasmType::I32]
+            || !signature.results.is_empty()
+            || args.len() != 3
+        {
+            return Ok(false);
+        }
+
+        let mut indices = [0i32; 3];
+        for (index, argument) in args.iter().copied().enumerate() {
+            let WasmValue::I32(value) = self.decode_wasm_value(argument, WasmType::I32)? else {
+                return Ok(false);
+            };
+            indices[index] = value;
+        }
+        Ok(self.try_emscripten_memcpy_same_memory_raw(
+            view,
+            current_memory,
+            indices,
+            copy_within_atom,
+        ))
+    }
+
+    /// The compiled callout's opt-in raw-i32 admission path. It reloads the
+    /// captured view here on every call and shares W-08's complete memory guard.
+    pub(super) fn try_emscripten_memcpy_same_memory_raw_capture(
+        &mut self,
+        view_environment: Value,
+        view_slot: usize,
+        current_memory: Value,
+        indices: [i32; 3],
+        raw_i32_fast_path_hits: *mut u64,
+    ) -> bool {
+        let view = self
+            .heap
+            .environment_slot(view_environment, view_slot)
+            .unwrap_or(Value::UNDEFINED);
+        let copy_within_atom = self.intern_atom("copyWithin");
+        let hit = self.try_emscripten_memcpy_same_memory_raw(
+            view,
+            current_memory,
+            indices,
+            copy_within_atom,
+        );
+        if hit {
+            note_emscripten_memcpy_raw_i32_hit(raw_i32_fast_path_hits);
+        }
+        hit
+    }
+
+    fn try_emscripten_memcpy_same_memory_raw(
+        &mut self,
+        view: Value,
+        current_memory: Value,
+        indices: [i32; 3],
+        copy_within_atom: crate::bytecode::Atom,
+    ) -> bool {
+        if !self.can_inline_emscripten_memcpy(view, copy_within_atom) {
+            return false;
+        }
+
+        let (view_buffer, view_offset) = match self.heap.get(view) {
+            Some(Cell::TypedArray {
+                buffer,
+                kind: crate::heap::TypedArrayKind::Uint8,
+                object,
+                ..
+            }) => (*buffer, object.offset),
+            _ => return false,
+        };
+        if view_offset != 0 {
+            return false;
+        }
+
+        let (memory_bytes, memory_buffer) = match self.heap.get(current_memory) {
+            Some(Cell::WasmMemory { bytes, buffer, .. }) => (bytes, *buffer),
+            _ => return false,
+        };
+        if memory_buffer.is_undefined() || view_buffer != memory_buffer {
+            return false;
+        }
+
+        let buffer_bytes = match self.heap.get(view_buffer) {
+            Some(Cell::ArrayBuffer {
+                bytes,
+                shared: false,
+                detached: false,
+                immutable: false,
+                ..
+            }) if bytes.is_wasm_view_of(memory_bytes) => bytes,
+            _ => return false,
+        };
+        let Some((base, memory_length)) =
+            super::dispatch_fast::unshared_memory(self, current_memory)
+        else {
+            return false;
+        };
+        if self.typed_array_length(view) != Some(memory_length)
+            || buffer_bytes.len() != memory_length
+        {
+            return false;
+        }
+        let target = copy_within_relative_index(i64::from(indices[0]), memory_length);
+        let start = copy_within_relative_index(i64::from(indices[1]), memory_length);
+        let raw_end = i64::from(indices[1]) + i64::from(indices[2]);
+        let end = copy_within_relative_index(raw_end, memory_length);
+        let count = end.saturating_sub(start).min(memory_length - target);
+        if count > 0 {
+            // SAFETY: the active memory is unshared; the current live view
+            // names that exact allocation, and target/start/count are clamped
+            // to its current length. The compiled caller is suspended here.
+            unsafe {
+                std::ptr::copy(base.add(start), base.add(target), count);
+            }
+        }
+        true
     }
 
     /// Whether the exact Emscripten helper call can be inlined without running any
