@@ -255,6 +255,11 @@ struct CallContext {
     memory_length: u64,
     /// What a callout that returned `RAISED_STATUS` raised.
     raised: Option<Raised>,
+    // Diagnostic-only ABI fields are appended so existing repr(C) offsets
+    // used by generated code stay fixed.
+    call_reference_diagnostic: usize,
+    reference_call_sites: *const ReferenceCallSiteDiagnostics,
+    reference_call_site_count: usize,
 }
 
 /// An error, or a panic to resume once compiled frames are gone.
@@ -272,12 +277,16 @@ const CONTEXT_GLOBALS: i32 = std::mem::offset_of!(CallContext, globals) as i32;
 const CONTEXT_CALLOUT: i32 = std::mem::offset_of!(CallContext, callout) as i32;
 const CONTEXT_CALL_REFERENCE: i32 = std::mem::offset_of!(CallContext, call_reference) as i32;
 const CONTEXT_MEMORY_LENGTH: i32 = std::mem::offset_of!(CallContext, memory_length) as i32;
+const CONTEXT_CALL_REFERENCE_DIAGNOSTIC: i32 =
+    std::mem::offset_of!(CallContext, call_reference_diagnostic) as i32;
 
 /// The callout's signature: (context, function index, arguments, result) ->
 /// status; arguments and result are Wasm bits, one word each.
 type Callout = unsafe extern "C" fn(*mut CallContext, u64, *const u64, *mut u64) -> i64;
 type ReferenceCallout =
     unsafe extern "C" fn(*mut CallContext, u64, u64, u64, *const u64, *mut u64) -> i64;
+type DiagnosticReferenceCallout =
+    unsafe extern "C" fn(*mut CallContext, u64, u64, u64, u64, *const u64, *mut u64) -> i64;
 
 /// Fill an already bounds-checked range in the instance's unshared memory.
 /// The compiler checks against the exact current length before calling this
@@ -299,6 +308,40 @@ fn note_compiled_callout(counter: *mut u64) {
             *counter = (*counter).saturating_add(1);
         }
     }
+}
+
+#[derive(Clone, Copy, Default)]
+struct ReferenceCallSiteCounts {
+    total: u64,
+    native: u64,
+    fallback: u64,
+}
+
+struct ReferenceCallSiteDiagnostics {
+    function: usize,
+    pc: usize,
+    counts: std::cell::Cell<ReferenceCallSiteCounts>,
+}
+
+fn note_reference_call_site(context: &CallContext, site: u64, native: bool) {
+    let Ok(site) = usize::try_from(site) else {
+        return;
+    };
+    if context.reference_call_sites.is_null() || site >= context.reference_call_site_count {
+        return;
+    }
+    // SAFETY: diagnostic call sites are a stable vector owned by the compiled
+    // program for the full native invocation, and generated ids are assigned
+    // from that vector at compile time.
+    let counts = unsafe { &*context.reference_call_sites.add(site) };
+    let mut updated = counts.counts.get();
+    updated.total = updated.total.saturating_add(1);
+    if native {
+        updated.native = updated.native.saturating_add(1);
+    } else {
+        updated.fallback = updated.fallback.saturating_add(1);
+    }
+    counts.counts.set(updated);
 }
 
 fn refresh_memory_length<H: Host>(context: &mut CallContext, vm: &Vm<H>) {
@@ -335,6 +378,57 @@ unsafe extern "C" fn reference_callout<H: Host>(
     args: *const u64,
     out: *mut u64,
 ) -> i64 {
+    // Keep the production callout ABI and generated hot path unchanged. The
+    // diagnostic instantiation below carries a call-site id in its own ABI.
+    unsafe {
+        reference_callout_inner::<H, false>(
+            context,
+            table_slot,
+            index,
+            signature_index,
+            0,
+            args,
+            out,
+        )
+    }
+}
+
+/// Diagnostic-only reference callout. Its extra site id is emitted only when
+/// Wasm JIT diagnostics were enabled at compilation time.
+unsafe extern "C" fn diagnostic_reference_callout<H: Host>(
+    context: *mut CallContext,
+    table_slot: u64,
+    index: u64,
+    signature_index: u64,
+    site: u64,
+    args: *const u64,
+    out: *mut u64,
+) -> i64 {
+    unsafe {
+        reference_callout_inner::<H, true>(
+            context,
+            table_slot,
+            index,
+            signature_index,
+            site,
+            args,
+            out,
+        )
+    }
+}
+
+/// Shared implementation, monomorphized so ordinary callouts have no
+/// diagnostic counter branch or extra site lookup.
+#[inline(always)]
+unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
+    context: *mut CallContext,
+    table_slot: u64,
+    index: u64,
+    signature_index: u64,
+    site: u64,
+    args: *const u64,
+    out: *mut u64,
+) -> i64 {
     // SAFETY: generated code passes the context, table binding, table index,
     // signature index, argument words, and output storage for this call.
     let context = unsafe { &mut *context };
@@ -342,6 +436,7 @@ unsafe extern "C" fn reference_callout<H: Host>(
     let vm = unsafe { &mut *context.vm.cast::<Vm<H>>() };
     let active = ACTIVE_CONTEXT.with(|current| current.replace(std::ptr::null_mut()));
     let program = context.program;
+    let mut native_target_hit = false;
     let called = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let table_slot = usize::try_from(table_slot)
             .map_err(|_| JsError::validation("invalid Wasm table binding".into()))?;
@@ -392,6 +487,7 @@ unsafe extern "C" fn reference_callout<H: Host>(
         let compiled_result = same_program_function.and_then(|(target_program, function, env)| {
             vm.run_compiled(target_program, env, function, &values)
         });
+        native_target_hit = compiled_result.is_some();
         let result = match compiled_result {
             Some(result) => result?,
             None => {
@@ -425,6 +521,9 @@ unsafe extern "C" fn reference_callout<H: Host>(
         Ok(())
     }));
     ACTIVE_CONTEXT.with(|current| current.set(active));
+    if DIAGNOSTICS {
+        note_reference_call_site(context, site, native_target_hit);
+    }
     refresh_memory_length(context, vm);
     finish_callout(context, called)
 }
@@ -507,6 +606,7 @@ struct WasmJitDiagnostics {
     compiled_to_vm_callouts: std::cell::Cell<u64>,
     compiled_import_callouts: std::cell::Cell<u64>,
     compiled_reference_callouts: std::cell::Cell<u64>,
+    reference_call_sites: Vec<ReferenceCallSiteDiagnostics>,
 }
 
 impl Drop for CompiledProgram {
@@ -534,8 +634,22 @@ impl Drop for CompiledProgram {
             })
             .collect::<Vec<_>>()
             .join(",");
+        let reference_sites = stats
+            .reference_call_sites
+            .iter()
+            .filter_map(|site| {
+                let counts = site.counts.get();
+                (counts.total > 0).then(|| {
+                    format!(
+                        "[{},{},{},{},{}]",
+                        site.function, site.pc, counts.total, counts.native, counts.fallback
+                    )
+                })
+            })
+            .collect::<Vec<_>>()
+            .join(",");
         eprintln!(
-            "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compiled_functions\":{},\"total_functions\":{},\"code_bytes\":{},\"mapped_bytes\":{},\"compile_ns\":{},\"native_entry_requests\":[{}],\"interpreter_fallback_entries\":[{}],\"compiled_to_vm_callouts\":{},\"compiled_import_callouts\":{},\"compiled_reference_callouts\":{}}}",
+            "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compiled_functions\":{},\"total_functions\":{},\"code_bytes\":{},\"mapped_bytes\":{},\"compile_ns\":{},\"native_entry_requests\":[{}],\"interpreter_fallback_entries\":[{}],\"compiled_to_vm_callouts\":{},\"compiled_import_callouts\":{},\"compiled_reference_callouts\":{},\"reference_call_sites\":[{}]}}",
             stats.program,
             stats.compiled_functions,
             stats.total_functions,
@@ -547,6 +661,7 @@ impl Drop for CompiledProgram {
             stats.compiled_to_vm_callouts.get(),
             stats.compiled_import_callouts.get(),
             stats.compiled_reference_callouts.get(),
+            reference_sites,
         );
     }
 }
@@ -558,6 +673,27 @@ fn jit_diagnostics_enabled() -> bool {
 impl CompiledProgram {
     pub(super) fn has_function(&self, function: usize) -> bool {
         self.functions.get(function).is_some_and(Option::is_some)
+    }
+
+    #[cfg(test)]
+    pub(super) fn reference_call_site_counts(&self) -> Option<Vec<(usize, usize, u64, u64, u64)>> {
+        Some(
+            self.diagnostics
+                .as_ref()?
+                .reference_call_sites
+                .iter()
+                .map(|site| {
+                    let counts = site.counts.get();
+                    (
+                        site.function,
+                        site.pc,
+                        counts.total,
+                        counts.native,
+                        counts.fallback,
+                    )
+                })
+                .collect(),
+        )
     }
 
     pub(super) fn has_function_or_note_fallback(&self, function: usize) -> bool {
@@ -1640,6 +1776,9 @@ struct Emitter<'a, 'b, H: Host> {
     variables: Vec<[Variable; VIEW_TYPES.len()]>,
     blocks: Vec<Option<ir::Block>>,
     context: ir::Value,
+    /// Present only for opt-in reference-call attribution; ids index the
+    /// diagnostic site's counter array stored in CallContext.
+    reference_site_ids: Option<&'a [Option<usize>]>,
     base: ir::Value,
     /// The memory's exact length for checked accesses and bulk operations.
     length: Option<ir::Value>,
@@ -2315,28 +2454,62 @@ impl<H: Host> Emitter<'_, '_, H> {
             .ins()
             .stack_addr(types::I64, slot, result_offset);
         let index = self.read(instruction.b(), Kind::I64);
-        let target = self.builder.ins().load(
-            types::I64,
-            invariant(),
-            self.context,
-            CONTEXT_CALL_REFERENCE,
-        );
-        let mut call_signature = Signature::new(self.call_conv);
-        for _ in 0..6 {
-            call_signature.params.push(AbiParam::new(types::I64));
-        }
-        call_signature.returns.push(AbiParam::new(types::I64));
-        let call_signature = self.builder.import_signature(call_signature);
         let table_slot = self.builder.ins().iconst(types::I64, i64::from(table));
         let signature_index = self
             .builder
             .ins()
             .iconst(types::I64, i64::from(signature_index));
-        let call = self.builder.ins().call_indirect(
-            call_signature,
-            target,
-            &[self.context, table_slot, index, signature_index, args, out],
-        );
+        let call = if let Some(site_id) = self
+            .reference_site_ids
+            .and_then(|sites| sites.get(pc))
+            .copied()
+            .flatten()
+        {
+            let target = self.builder.ins().load(
+                types::I64,
+                invariant(),
+                self.context,
+                CONTEXT_CALL_REFERENCE_DIAGNOSTIC,
+            );
+            let mut call_signature = Signature::new(self.call_conv);
+            for _ in 0..7 {
+                call_signature.params.push(AbiParam::new(types::I64));
+            }
+            call_signature.returns.push(AbiParam::new(types::I64));
+            let call_signature = self.builder.import_signature(call_signature);
+            let site_id = self.builder.ins().iconst(types::I64, site_id as i64);
+            self.builder.ins().call_indirect(
+                call_signature,
+                target,
+                &[
+                    self.context,
+                    table_slot,
+                    index,
+                    signature_index,
+                    site_id,
+                    args,
+                    out,
+                ],
+            )
+        } else {
+            let target = self.builder.ins().load(
+                types::I64,
+                invariant(),
+                self.context,
+                CONTEXT_CALL_REFERENCE,
+            );
+            let mut call_signature = Signature::new(self.call_conv);
+            for _ in 0..6 {
+                call_signature.params.push(AbiParam::new(types::I64));
+            }
+            call_signature.returns.push(AbiParam::new(types::I64));
+            let call_signature = self.builder.import_signature(call_signature);
+            self.builder.ins().call_indirect(
+                call_signature,
+                target,
+                &[self.context, table_slot, index, signature_index, args, out],
+            )
+        };
         let status = self.builder.inst_results(call)[0];
         self.propagate(status);
         let destination = instruction.result_register();
@@ -2813,7 +2986,7 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 }
 
-impl<H: Host> Analysis<'_, H> {
+impl<'a, H: Host> Analysis<'a, H> {
     /// Compile `index` with `plan`; `None` when Cranelift refuses it or its
     /// code needs a relocation other than a call to a compiled function.
     fn compile_function(
@@ -2826,6 +2999,7 @@ impl<H: Host> Analysis<'_, H> {
         wraps: bool,
         fixed_base: Option<i32>,
         globals: &[u32],
+        reference_site_ids: Option<&'a [Option<usize>]>,
     ) -> Option<(Vec<u8>, Vec<Call>)> {
         let function = &self.code.functions[index];
         let call_conv = isa.default_call_conv();
@@ -2889,6 +3063,7 @@ impl<H: Host> Analysis<'_, H> {
             variables,
             blocks: vec![None; function.code.len()],
             context,
+            reference_site_ids,
             base,
             length,
             memory,
@@ -3502,11 +3677,19 @@ impl<H: Host> Vm<H> {
     /// Compile every function of `program` that has a compiled denotation,
     /// with `env` as the instance whose bindings fix global types and memory.
     fn compile_program(&self, program: ProgramId, env: Value) -> Option<CompiledProgram> {
+        self.compile_program_with_diagnostics(program, env, jit_diagnostics_enabled())
+    }
+
+    fn compile_program_with_diagnostics(
+        &self,
+        program: ProgramId,
+        env: Value,
+        diagnostics_enabled: bool,
+    ) -> Option<CompiledProgram> {
         let code = self.programs.get(program)?;
         if code.kind != crate::bytecode::ProgramKind::Wasm {
             return None;
         }
-        let diagnostics_enabled = jit_diagnostics_enabled();
         let compile_started = diagnostics_enabled.then(std::time::Instant::now);
         let compile_rejections =
             diagnostics_enabled.then(|| std::cell::RefCell::new(vec![None; code.functions.len()]));
@@ -3577,6 +3760,36 @@ impl<H: Host> Vm<H> {
         let isa = target_isa()?;
         // The full plan of a callable function, derived again where needed.
         let plan = |index: usize| analysis.plan(index, &callable, &mut memory_slot.clone());
+        let mut reference_site_ids = diagnostics_enabled.then(|| {
+            code.functions
+                .iter()
+                .map(|function| vec![None; function.code.len()])
+                .collect::<Vec<_>>()
+        });
+        let mut reference_call_sites = Vec::new();
+        if let Some(reference_site_ids) = &mut reference_site_ids {
+            for index in 0..count {
+                if plans[index].is_none() {
+                    continue;
+                }
+                let full_plan = plan(index)?;
+                let function = &code.functions[index];
+                for (pc, packed) in function.code.iter().enumerate() {
+                    let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
+                    if instruction.op() == Op::Call
+                        && matches!(full_plan.operand(pc), Slot::IndirectReference { .. })
+                    {
+                        let site_id = reference_call_sites.len();
+                        reference_site_ids[index][pc] = Some(site_id);
+                        reference_call_sites.push(ReferenceCallSiteDiagnostics {
+                            function: index,
+                            pc,
+                            counts: std::cell::Cell::new(ReferenceCallSiteCounts::default()),
+                        });
+                    }
+                }
+            }
+        }
         // The globals compiled code accesses, each once.
         let mut globals: Vec<u32> = Vec::new();
         for index in 0..count {
@@ -3620,6 +3833,9 @@ impl<H: Host> Vm<H> {
                 wraps,
                 fixed_base,
                 &globals,
+                reference_site_ids
+                    .as_ref()
+                    .map(|site_ids| site_ids[index].as_slice()),
             )?;
             let offset = place(&mut bytes, body);
             offsets[index] = Some(offset);
@@ -3672,6 +3888,7 @@ impl<H: Host> Vm<H> {
             compiled_to_vm_callouts: std::cell::Cell::new(0),
             compiled_import_callouts: std::cell::Cell::new(0),
             compiled_reference_callouts: std::cell::Cell::new(0),
+            reference_call_sites,
         });
         Some(CompiledProgram {
             _code: memory,
@@ -3684,6 +3901,22 @@ impl<H: Host> Vm<H> {
             globals,
             diagnostics,
         })
+    }
+
+    #[cfg(test)]
+    pub(super) fn install_compiled_diagnostics_for_test(
+        &mut self,
+        program: ProgramId,
+        env: Value,
+    ) -> bool {
+        let Some(compiled) = self
+            .compile_program_with_diagnostics(program, env, true)
+            .map(Rc::new)
+        else {
+            return false;
+        };
+        self.programs.set_compiled(program, Some(compiled));
+        true
     }
 
     /// Run known function `id` of the caller's program as native code, with
@@ -3837,6 +4070,19 @@ impl<H: Host> Vm<H> {
                 memory: memory_binding,
                 memory_length: length,
                 raised: None,
+                call_reference_diagnostic: compiled.diagnostics.as_ref().map_or(0, |_| {
+                    diagnostic_reference_callout::<H> as DiagnosticReferenceCallout as usize
+                }),
+                reference_call_sites: compiled
+                    .diagnostics
+                    .as_ref()
+                    .map_or(std::ptr::null(), |stats| {
+                        stats.reference_call_sites.as_ptr()
+                    }),
+                reference_call_site_count: compiled
+                    .diagnostics
+                    .as_ref()
+                    .map_or(0, |stats| stats.reference_call_sites.len()),
             };
             let mut out = 0u64;
             if let Some(stats) = &compiled.diagnostics

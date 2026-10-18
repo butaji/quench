@@ -2097,6 +2097,127 @@ mod tests {
     }
 
     #[test]
+    fn compiled_wasm_indirect_call_diagnostics_attribute_native_and_fallback_sites() {
+        let signature = crate::WasmSignature {
+            params: vec![],
+            results: vec![crate::WasmType::I32],
+        };
+        let module = crate::Engine::lower_wasm_module_with_elements(
+            "compiled-indirect-call-site-diagnostics",
+            [
+                crate::WasmFunctionBody {
+                    ty: crate::WasmCallableType::Embedded(signature.clone()),
+                    locals: vec![],
+                    operators: vec![Operator::I32Const { value: 42 }, Operator::End]
+                        .into_iter()
+                        .map(Ok),
+                },
+                crate::WasmFunctionBody {
+                    ty: crate::WasmCallableType::Embedded(signature.clone()),
+                    locals: vec![],
+                    operators: vec![Operator::Unreachable, Operator::End]
+                        .into_iter()
+                        .map(Ok),
+                },
+                crate::WasmFunctionBody {
+                    ty: crate::WasmCallableType::Embedded(signature.clone()),
+                    locals: vec![],
+                    operators: vec![
+                        Operator::I32Const { value: 0 },
+                        Operator::CallIndirect {
+                            type_index: 0,
+                            table_index: 0,
+                        },
+                        Operator::End,
+                    ]
+                    .into_iter()
+                    .map(Ok),
+                },
+                crate::WasmFunctionBody {
+                    ty: crate::WasmCallableType::Embedded(signature),
+                    locals: vec![],
+                    operators: vec![
+                        Operator::I32Const { value: 1 },
+                        Operator::CallIndirect {
+                            type_index: 0,
+                            table_index: 0,
+                        },
+                        Operator::End,
+                    ]
+                    .into_iter()
+                    .map(Ok),
+                },
+            ],
+            &crate::WasmTypes::from_functions([wasmparser::FuncType::new(
+                [],
+                [wasmparser::ValType::I32],
+            )]),
+            &[],
+            &[],
+            &[],
+            &[crate::WasmTable {
+                ty: wasmparser::TableType {
+                    element_type: wasmparser::RefType::FUNCREF,
+                    table64: false,
+                    initial: 2,
+                    maximum: Some(2),
+                    shared: false,
+                },
+                initializer: crate::WasmReferenceInitializer::Null.into(),
+            }],
+            &[crate::WasmElement {
+                mode: crate::WasmElementMode::Active {
+                    table: 0,
+                    offset: crate::WasmValue::I32(0).into(),
+                },
+                element_type: wasmparser::RefType::FUNCREF,
+                items: vec![
+                    crate::WasmReferenceInitializer::Function(0),
+                    crate::WasmReferenceInitializer::Function(1),
+                ]
+                .into(),
+            }],
+        )
+        .unwrap();
+        let mut vm = Vm::new(crate::SystemHost);
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        let instance = vm.instantiate_wasm_module(&module).unwrap();
+        let program = vm
+            .programs
+            .find_shared(&module.program)
+            .expect("registered Wasm program");
+        let env = vm
+            .root_value(instance.environment)
+            .expect("live Wasm instance environment");
+        assert!(vm.install_compiled_diagnostics_for_test(program, env));
+
+        assert_eq!(
+            vm.invoke_wasm(&instance, 2, &[]).unwrap(),
+            Some(crate::WasmValue::I32(42))
+        );
+        let compiled = vm
+            .programs
+            .compiled(program)
+            .flatten()
+            .expect("diagnostic Wasm program");
+        assert!(compiled.reference_call_site_counts().unwrap().iter().any(
+            |(function, _, total, native, fallback)| {
+                *function == 2 && *total == 1 && *native == 1 && *fallback == 0
+            }
+        ));
+
+        assert_eq!(
+            vm.invoke_wasm(&instance, 3, &[]).unwrap_err().wasm_trap(),
+            Some(crate::WasmTrap::Unreachable)
+        );
+        assert!(compiled.reference_call_site_counts().unwrap().iter().any(
+            |(function, _, total, native, fallback)| {
+                *function == 3 && *total == 1 && *native == 0 && *fallback == 1
+            }
+        ));
+    }
+
+    #[test]
     fn unguarded_memory_indirect_growth_stays_on_the_vm_fallback() {
         let callee_signature = crate::WasmSignature {
             params: vec![],
