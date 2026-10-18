@@ -1965,6 +1965,9 @@ impl<H: Host> Vm<H> {
         value: Value,
         receiver: Value,
     ) -> Result<bool, JsError> {
+        if target == receiver && self.set_plain_named_property(target, atom, value).is_some() {
+            return Ok(true);
+        }
         let _stack = self.enter_stack()?;
         if self.is_private_name(atom) {
             self.check_private_brand(p, target, atom)?;
