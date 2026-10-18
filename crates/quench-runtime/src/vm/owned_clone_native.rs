@@ -98,7 +98,10 @@ impl<H: Host> Vm<H> {
         {
             return Err(self.type_error(&program, "Invalid owned clone BigInt".into()));
         }
-        Ok(self.heap.alloc(Cell::BigInt(text.to_owned())))
+        let Ok(value) = text.parse() else {
+            return Err(self.type_error(&program, "Invalid owned clone BigInt".into()));
+        };
+        Ok(self.heap.alloc(Cell::bigint(value)))
     }
     pub(crate) fn embedding_clone_allocate(
         &mut self,
