@@ -10757,7 +10757,7 @@ fn anonymous_function_definitions_are_named_by_their_plan() {
             program
                 .functions
                 .iter()
-                .any(|function| function.name.is_some_and(|atom| program.atoms[atom as usize] == *name)),
+                .any(|function| function.inferred_name.is_some_and(|atom| program.atoms[atom as usize] == *name)),
             "{name} is named by its plan"
         );
     }
