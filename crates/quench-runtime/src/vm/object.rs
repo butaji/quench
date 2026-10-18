@@ -1087,7 +1087,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// The data field of a direct object, or of its immediate prototype held in an object
-    /// record, among the site's inline megamorphic entries, which include the primary entry:
+    /// record, among the site's megamorphic entries, which include the primary entry:
     /// `cached_field_hit` and its holder tier for a site past one shape.
     #[inline(always)]
     pub(super) fn polymorphic_field_hit(
@@ -1106,10 +1106,27 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let set = unsafe { self.megamorphic_fields.get_unchecked(table_index as usize) };
-        if set.overflow.is_some() {
-            return None;
-        }
         let shape = receiver.shape();
+        if set.overflow.is_some() {
+            // The hashed entries: an own one for the receiver's shape, else one for its
+            // immediate prototype in an object record. A shape either holds the atom or not,
+            // so at most one of the two is recorded.
+            if let Some(entry) = set.get(shape, NO_FIELD_HOLDER) {
+                // SAFETY: as for `cached_field_hit`.
+                let value = unsafe { self.heap.property_get_shaped(receiver, usize::from(entry.slot)) }?;
+                self.profile.field_cache_hit(2, 0);
+                return Some(value);
+            }
+            let holder = self.heap.object_record(receiver.proto())?;
+            if holder.is_module_namespace() {
+                return None;
+            }
+            let entry = set.get(shape, holder.shape())?;
+            // SAFETY: as for the inline holder entries below.
+            let value = unsafe { self.heap.property_get_shaped(holder, usize::from(entry.slot)) }?;
+            self.profile.field_cache_hit(2, 1);
+            return Some(value);
+        }
         for entry in &set.entries[..usize::from(set.len)] {
             if entry.receiver != shape {
                 continue;
@@ -1161,12 +1178,10 @@ impl<H: Host> Vm<H> {
         self.field_miss_data_value(object, atom, index)
     }
 
-    /// Whether the site's shapes moved to inline megamorphic entries without an overflow:
+    /// Whether the site's shapes moved to megamorphic entries, inline or hashed:
     /// `polymorphic_field_hit` then sees every entry the site has recorded.
     pub(super) fn field_site_polymorphic(&self, site: u16) -> bool {
-        let table_index = self.megamorphic_field_indices[self.field_cache_index(site)];
-        table_index != NO_MEGAMORPHIC_FIELD
-            && self.megamorphic_fields[table_index as usize].overflow.is_none()
+        self.megamorphic_field_indices[self.field_cache_index(site)] != NO_MEGAMORPHIC_FIELD
     }
 
     /// An own-data slot from a site's inline megamorphic entries; the hashed overflow is
