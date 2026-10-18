@@ -12,17 +12,14 @@ impl Profile {
 }
 
 pub(super) fn report(profile: &Profile, program_id: u32, program: &ResidualProgram) {
-    let distinct: FxHashSet<_> = program
-        .functions
+    let maps = (0..program.functions.len() as u32)
+        .filter_map(|function| program.register_root_masks(function))
+        .collect::<Vec<_>>();
+    let entries = maps.iter().map(|masks| masks.len()).sum::<usize>();
+    let distinct: FxHashSet<_> = maps.iter().flat_map(|masks| masks.iter().copied()).collect();
+    let runs = maps
         .iter()
-        .filter(|function| function.register_root_offset != u32::MAX)
-        .flat_map(|function| function_masks(function, program))
-        .collect();
-    let runs = program
-        .functions
-        .iter()
-        .filter(|function| function.register_root_offset != u32::MAX)
-        .map(|function| function_runs(function, program))
+        .map(|masks| masks.windows(2).filter(|pair| pair[0] != pair[1]).count() + 1)
         .sum::<usize>();
     let observed_masks: FxHashSet<_> = profile
         .gc_frame_pcs
@@ -47,13 +44,8 @@ pub(super) fn report(profile: &Profile, program_id: u32, program: &ResidualProgr
         .sum::<u64>();
     eprint!(
         ",\"root_maps\":{{\"full_entries\":{},\"full_bytes\":{},\"distinct_masks\":{},\"mask_runs\":{runs},\"observed_sites\":{},\"observed_masks\":{},\"frame_observations\":{observations},\"active_observations\":{active},\"suspended_observations\":{}}}",
-        program
-            .functions
-            .iter()
-            .filter(|function| function.register_root_offset != u32::MAX)
-            .map(|function| function.code.len() + 1)
-            .sum::<usize>(),
-        program.register_roots.bytes().len(),
+        entries,
+        entries * size_of::<u64>(),
         distinct.len(),
         profile
             .gc_frame_pcs
@@ -65,32 +57,6 @@ pub(super) fn report(profile: &Profile, program_id: u32, program: &ResidualProgr
     );
 }
 
-fn function_masks<'a>(
-    function: &crate::bytecode::Function,
-    program: &'a ResidualProgram,
-) -> impl Iterator<Item = u64> + Clone + 'a {
-    program
-        .register_roots
-        .masks(function.register_root_offset, function.registers, function.code.len() + 1)
-        .into_iter()
-        .flatten()
-}
-
-fn function_runs(function: &crate::bytecode::Function, program: &ResidualProgram) -> usize {
-    let masks = function_masks(function, program);
-    masks
-        .clone()
-        .zip(masks.skip(1))
-        .filter(|(first, second)| first != second)
-        .count()
-        + 1
-}
-
 fn root_mask(program: &ResidualProgram, function: u32, pc: u32) -> Option<u64> {
-    let function = program.functions.get(function as usize)?;
-    (function.register_root_offset != u32::MAX)
-        .then(|| {
-            program.register_roots.mask(function.register_root_offset, function.registers, pc as usize)
-        })
-        .flatten()
+    program.register_root_mask(function, pc as usize)
 }

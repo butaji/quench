@@ -11,6 +11,11 @@ fn bytes<T>(values: &Vec<T>) -> usize {
     values.capacity() * size_of::<T>()
 }
 
+/// A thin slice's elements, which it holds at exactly their length.
+fn slice_bytes<T>(values: &[T]) -> usize {
+    size_of_val(values)
+}
+
 /// Each function's atom lists: names of parameters, locals, environment and globals.
 fn atom_bytes(function: &Function) -> usize {
     [
@@ -20,7 +25,7 @@ fn atom_bytes(function: &Function) -> usize {
         &function.lexical_atoms,
     ]
     .into_iter()
-    .map(|atoms| size_of_val::<[Atom]>(atoms))
+    .map(|atoms| slice_bytes::<Atom>(atoms))
     .sum::<usize>()
         + function.global_declarations.as_deref().map_or(0, |declarations| {
             size_of::<crate::bytecode::GlobalDeclarations>()
@@ -39,10 +44,10 @@ fn atom_bytes(function: &Function) -> usize {
 
 /// Layout tables beside the code: registers, capture slots, binding sites and clones.
 fn layout_bytes(function: &Function) -> usize {
-    bytes::<LocalRegister>(&function.local_registers)
+    slice_bytes::<LocalRegister>(&function.local_registers)
         + function.selective_capture_slots.as_ref().map_or(0, bytes::<u16>)
-        + bytes::<BindingSite>(&function.binding_sites)
-        + bytes::<EnvironmentClone>(&function.environment_clones)
+        + slice_bytes::<BindingSite>(&function.binding_sites)
+        + slice_bytes::<EnvironmentClone>(&function.environment_clones)
 }
 
 pub(super) fn report(program: &ResidualProgram) {
@@ -61,7 +66,7 @@ pub(super) fn report(program: &ResidualProgram) {
         sum(|function| bytes::<Instr>(&function.code)),
         sum(|function| bytes::<WideInstruction>(&function.wide)),
         sum(|function| function.source_positions.capacity_bytes()),
-        sum(|function| bytes::<Handler>(&function.handlers)),
+        sum(|function| slice_bytes::<Handler>(&function.handlers)),
         sum(atom_bytes),
         sum(layout_bytes),
         bytes::<Constant>(&program.constants),
@@ -71,6 +76,6 @@ pub(super) fn report(program: &ResidualProgram) {
             + bytes::<ObjectSite>(&program.object_sites)
             + bytes::<RegExpLiteralSite>(&program.regexp_literal_sites)
             + bytes::<Superinstruction>(&program.superinstructions),
-        program.register_roots.capacity_bytes(),
+        sum(|function| function.register_roots.capacity_bytes()),
     );
 }
