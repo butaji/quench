@@ -47,6 +47,10 @@ pub(crate) const FIXTURES: &[&str] = &[
     "sqlite3-wasm",
     "zlib-wasm",
     "argon2-wasm",
+    "HashSet-wasm",
+    "gcc-loops-wasm",
+    "quicksort-wasm",
+    "tsf-wasm",
 ];
 
 /// Resources load on demand inside each benchmark realm, so no engine needs
@@ -171,7 +175,15 @@ mod tests {
             Path::new(env!("CARGO_MANIFEST_DIR")).join("jetstream/JetStreamDriver.js"),
         )
         .expect("pinned JetStream driver");
-        for wasm in ["quicksort-wasm", "sqlite3-wasm", "zlib-wasm", "argon2-wasm"] {
+        for wasm in [
+            "HashSet-wasm",
+            "gcc-loops-wasm",
+            "quicksort-wasm",
+            "tsf-wasm",
+            "sqlite3-wasm",
+            "zlib-wasm",
+            "argon2-wasm",
+        ] {
             assert!(driver_tags_wasm(&driver, wasm), "{wasm}");
         }
         for javascript in ["web-ssr", "json-parse-inspector", "doxbee-async"] {
