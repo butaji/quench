@@ -7,20 +7,32 @@
 
 use super::liveness::ROOT_MAP_REGISTERS;
 use super::rewrite::{fixed_width, relocate};
+/// The binding legacy argument reflection looks for.
+const ARGUMENTS_NAME: &str = "arguments";
+
 use crate::bytecode::{
-    EvalBindingLocation, FieldLayout, Function, ImmediateRole, Instr, InstructionField, Op,
+    WITH_ENTER_BINDING, EvalBindingLocation, FieldLayout, Function, ImmediateRole, Instr, InstructionField, Op,
     Operand, OperandKind, REGISTER_MASK, Register, Superinstruction, WideInstruction,
 };
 
-pub(super) fn promote(
+pub(super) fn promote<'a>(
     function: &mut Function,
     superinstructions: &[Superinstruction],
-    is_with_enter: impl Fn(usize) -> bool,
+    atom_name: impl Fn(usize) -> Option<&'a str>,
 ) {
     let mut eligible = function.plain_local_slots(superinstructions);
     // A by-name read inside `with` resolves a local through its frame slot.
-    if !eligible.contains(&true) || function.contains_with_statement(is_with_enter) {
+    if !eligible.contains(&true)
+        || function.contains_with_statement(|atom| atom_name(atom) == Some(WITH_ENTER_BINDING))
+    {
         return;
+    }
+    // Legacy `f.arguments` reflection decides from the accesses of a local named
+    // `arguments` (`Function::reflects_live_parameters`), which keep their slot.
+    for (slot, atom) in function.local_atoms.iter().enumerate() {
+        if atom_name(*atom as usize) == Some(ARGUMENTS_NAME) {
+            eligible[slot] = false;
+        }
     }
     // Parameters arrive in their slots, and these slots are named outside the code: the
     // `arguments` and self bindings, eval binding sites, handlers' completion slots and
