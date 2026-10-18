@@ -381,14 +381,6 @@ unsafe extern "C" fn reference_callout<H: Host>(
                 },
             )));
         }
-        let code = vm
-            .programs
-            .get(program)
-            .ok_or_else(|| JsError::validation("missing Wasm program".into()))?;
-        let receiver = vm
-            .programs
-            .constant(program, VOID_RESULT_CONSTANT)
-            .ok_or_else(|| JsError::validation("missing Wasm void constant".into()))?;
         let same_program_function = match vm.heap.get(callee) {
             Some(Cell::Function {
                 kind: crate::heap::FunctionKind::User(target_program, function),
@@ -402,7 +394,17 @@ unsafe extern "C" fn reference_callout<H: Host>(
         });
         let result = match compiled_result {
             Some(result) => result?,
-            None => vm.call_value(&code, callee, receiver, &values)?,
+            None => {
+                let code = vm
+                    .programs
+                    .get(program)
+                    .ok_or_else(|| JsError::validation("missing Wasm program".into()))?;
+                let receiver = vm
+                    .programs
+                    .constant(program, VOID_RESULT_CONSTANT)
+                    .ok_or_else(|| JsError::validation("missing Wasm void constant".into()))?;
+                vm.call_value(&code, callee, receiver, &values)?
+            }
         };
         let bits = match result_type {
             Some(ty) => match vm
