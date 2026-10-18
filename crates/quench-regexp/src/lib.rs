@@ -395,8 +395,9 @@ impl Regex {
         // changing observable match results.
         // Since the compiled backtracking matcher (`backtrack::Program`), the automata cost
         // more than they save: on V8-v7 RegExp (static x86_64, 2026-10-18) leaving them out
-        // takes max RSS from 9544 to 8660 KiB and Score from 869 to 971. They stay available,
-        // as a linear-time bound on backtracking, for embedders that ask for them.
+        // takes max RSS from 9544 to 8660 KiB and Score from 869 to 971, and on the npm top
+        // 300 they add up to 5 MiB (semver 20.5 -> 25.4). They stay available, as a
+        // linear-time bound on backtracking, for embedders that ask for them.
         let backend_enabled = !flags.unicode_sets
             && !flags.unicode
             && std::env::var_os("QUENCH_COMPILED_REGEXP").is_some();
