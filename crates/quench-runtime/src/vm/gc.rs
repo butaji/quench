@@ -684,18 +684,10 @@ impl<H: Host> Vm<H> {
             // A missing map means the function uses a register form
             // the liveness pass cannot represent; keep the safe
             // conservative scan for that activation.
-            let register_mask = self.programs.get(frame.program).and_then(|program| {
-                let function = program.functions.get(frame.function as usize)?;
-                (function.register_root_offset != crate::bytecode::NO_REGISTER_ROOT_MAP)
-                    .then(|| {
-                        program.register_roots.mask(
-                            function.register_root_offset,
-                            function.registers,
-                            frame.pc,
-                        )
-                    })
-                    .flatten()
-            });
+            let register_mask = self
+                .programs
+                .residual(frame.program)
+                .and_then(|program| program.register_root_mask(frame.function, frame.pc));
             [frame.env, frame.this]
                 .into_iter()
                 .chain(frame.context.callee())

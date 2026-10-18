@@ -3421,7 +3421,7 @@ impl<H: Host> Vm<H> {
         ) {
             return None;
         }
-        if tier.is_none() && !super::js_compiled::function_candidate(function, &program.atoms) {
+        if tier.is_none() && !super::js_compiled::function_candidate(function, program) {
             return None;
         }
 

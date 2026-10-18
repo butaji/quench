@@ -913,14 +913,14 @@ impl Engine {
                 local_atoms: vec![].into(),
                 environment_atoms: vec![].into(),
                 selective_capture_slots: None,
-                local_registers: Vec::new(),
+                local_registers: Vec::new().into(),
                 inherited_with_scope: false,
                 lexical_atoms: vec![].into(),
                 global_declarations: None,
                 name_bindings: Default::default(),
-                binding_sites: vec![],
+                binding_sites: vec![].into(),
                 source_positions: Default::default(),
-                environment_clones: vec![],
+                environment_clones: vec![].into(),
                 code: lowering.code,
                 wide: lowering.wide,
                 registers: lowering.registers,
@@ -932,8 +932,8 @@ impl Engine {
                 live_parameter_reflection: Default::default(),
                 static_name_scope: Default::default(),
                 call_plan: Default::default(),
-                handlers: lowering.handlers,
-                register_root_offset: crate::bytecode::NO_REGISTER_ROOT_MAP,
+                handlers: lowering.handlers.into(),
+                register_roots: Default::default(),
                 undefined_register: None,
                 parameter_registers: lowering.local_base,
                 initial_register: crate::bytecode::InitialRegister::I32Zero,
@@ -941,7 +941,8 @@ impl Engine {
             functions.push(function);
             constants = lowering.constants;
         }
-        let register_roots = crate::compile::liveness::derive(&mut functions, &[], &[], &[]);
+        let no_method_sites: &[crate::compile::liveness::MethodSite] = &[];
+        crate::compile::liveness::mark_register_roots(&mut functions, no_method_sites, &[], &[]);
         let program = ResidualProgram {
             specialized: false,
             kind: ProgramKind::Wasm,
@@ -960,7 +961,6 @@ impl Engine {
             object_sites: vec![],
             regexp_literal_sites: vec![],
             superinstructions: vec![],
-            register_roots,
         };
         program
             .validate()

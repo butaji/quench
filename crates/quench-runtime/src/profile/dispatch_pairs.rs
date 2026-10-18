@@ -154,7 +154,7 @@ mod tests {
             static_name_scope: Default::default(),
             call_plan: Default::default(),
             handlers: Vec::new(),
-            register_root_offset: 0,
+            register_roots: Default::default(),
             undefined_register: None,
             parameter_registers: None,
             initial_register: Default::default(),
@@ -190,7 +190,6 @@ mod tests {
             object_sites: Vec::new(),
             regexp_literal_sites: Vec::new(),
             superinstructions: Vec::new(),
-            register_roots: Default::default(),
         };
         let mut pairs = vec![0; PAIRS];
         pairs[Op::LoadLocal as usize * Op::COUNT + Op::StoreLocal as usize] = 4;
