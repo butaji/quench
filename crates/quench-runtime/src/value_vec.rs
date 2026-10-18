@@ -646,6 +646,26 @@ mod tests {
     }
 
     #[test]
+    fn compaction_is_due_once_released_ranges_hold_a_share_of_the_arena() {
+        let mut arena = ValueArena::default();
+        arena.register_shape(1, 2);
+        let pair = [Value::number(1.0), Value::number(2.0)];
+        let vectors: Vec<_> = (0..2 * COMPACTION_RELEASED_SHARE_DIVISOR)
+            .map(|_| arena.with_values(1, &pair))
+            .collect();
+        assert!(!arena.compaction_due());
+        arena.release(vectors[0]);
+        assert!(!arena.compaction_due(), "one range of eight stays for reuse");
+        arena.release(vectors[1]);
+        assert!(arena.compaction_due(), "a quarter of the arena is released");
+        // Reusing a released range takes it off the free lists.
+        arena.with_values(1, &pair);
+        assert!(!arena.compaction_due());
+        arena.finish_compaction(arena.stats().0);
+        assert!(!arena.compaction_due());
+    }
+
+    #[test]
     fn initialized_vector_uses_the_shape_length_and_preserves_values() {
         let mut arena = ValueArena::default();
         arena.register_shape(1, 3);
