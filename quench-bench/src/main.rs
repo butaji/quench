@@ -11,6 +11,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     process::{Command, Output},
+    sync::OnceLock,
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -684,6 +685,10 @@ fn main() {
     report.qualification_ready = complete
         && options.rounds >= MIN_QUALIFYING_ROUNDS
         && !options.jit_diagnostics
+        && report
+            .fixtures
+            .values()
+            .all(|fixture| fixture.source.sha256.as_deref().is_some_and(valid_sha256))
         && fixture_selection_is_valid(options.suite, &files)
         && report.corpus.checkout_clean
         && report.corpus.pinned_revision == report.corpus.checkout_revision
@@ -798,7 +803,7 @@ fn validate_resume(saved: &SuiteRecord, expected: &SuiteRecord, files: &[PathBuf
             .iter()
             .find(|file| file.display().to_string() == *key)
             .expect("fixture key validated above");
-        if !same_json(&fixture.source, &artifact(file)) {
+        if !same_json(&fixture.source, &fixture_artifact(expected.suite, file)) {
             fail(&format!("checkpoint fixture input changed: {key}"));
         }
         if fixture.valid && fixture.output_equal {
@@ -1829,7 +1834,7 @@ fn run_fixture(
         .map(|engine| (engine.name.to_string(), summary(&results, engine.name)))
         .collect();
     FixtureRecord {
-        source: artifact(file),
+        source: fixture_artifact(suite, file),
         valid,
         output_equal,
         summaries,
@@ -2417,8 +2422,29 @@ fn artifact(path: &Path) -> Artifact {
     }
 }
 
+fn fixture_artifact(suite: Suite, file: &Path) -> Artifact {
+    if suite != Suite::JetStream3 {
+        return artifact(file);
+    }
+    let mut source = artifact(&jetstream::source_path(file));
+    source.path = file.display().to_string();
+    source
+}
+
+fn valid_sha256(hash: &str) -> bool {
+    hash.len() == 64 && hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
 pub(crate) fn sha256(path: &Path) -> Option<String> {
     if fs::metadata(path).ok()?.is_dir() {
+        static JETSTREAM_ROOT_HASH: OnceLock<Option<String>> = OnceLock::new();
+        if fs::canonicalize(path).ok().is_some_and(|path| {
+            fs::canonicalize(jetstream::SUITE_DIR).is_ok_and(|root| path == root)
+        }) {
+            return JETSTREAM_ROOT_HASH
+                .get_or_init(|| sha256_directory(path))
+                .clone();
+        }
         return sha256_directory(path);
     }
     sha256_file(path)
@@ -2448,6 +2474,9 @@ fn sha256_directory(root: &Path) -> Option<String> {
     fn collect(directory: &Path, entries: &mut Vec<PathBuf>) -> std::io::Result<()> {
         for entry in fs::read_dir(directory)? {
             let entry = entry?;
+            if entry.file_name() == ".git" {
+                continue;
+            }
             let path = entry.path();
             let file_type = entry.file_type()?;
             entries.push(path.clone());
@@ -2806,11 +2835,15 @@ mod fixed_work_tests {
 #[cfg(all(test, unix, not(target_os = "macos")))]
 mod tests {
     use super::{
-        artifact, now_ns, peak_rss_bytes, read_checkpoint, validate_resume, wait_child,
-        write_checkpoint, CorpusRecord, FixtureRecord, HostRecord, SuiteRecord,
+        artifact, fixture_artifact, now_ns, peak_rss_bytes, read_checkpoint, validate_resume,
+        wait_child, write_checkpoint, CorpusRecord, FixtureRecord, HostRecord, SuiteRecord,
     };
     use std::process::Command;
-    use std::{collections::BTreeMap, fs, path::PathBuf};
+    use std::{
+        collections::BTreeMap,
+        fs,
+        path::{Path, PathBuf},
+    };
 
     #[test]
     fn converts_wait4_peak_rss_to_bytes() {
@@ -2933,5 +2966,16 @@ mod tests {
         );
 
         fs::remove_dir_all(directory).expect("remove directory fixture");
+    }
+
+    #[test]
+    fn synthetic_wasm_fixture_artifact_hashes_its_module_directory() {
+        let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("workspace root");
+        let fixture = workspace.join(super::jetstream::fixture_path("HashSet-wasm"));
+        let source = fixture_artifact(super::Suite::JetStream3, &fixture);
+        assert_eq!(source.path, fixture.display().to_string());
+        assert!(source.sha256.as_deref().is_some_and(super::valid_sha256));
     }
 }
