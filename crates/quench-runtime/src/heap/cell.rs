@@ -812,10 +812,9 @@ impl Native {
         )
     }
 
-    /// Natives a lane `Call` makes in place from the running frame (`lane_call_native`):
-    /// the string, RegExp and `Math` functions, which read no caller state beyond the frame's
-    /// published PC and run guest code only through ordinary nested calls.
-    pub(crate) fn runs_from_lane(self) -> bool {
+    /// The string, RegExp and `Math` functions, which `call_native_table` dispatches
+    /// directly.
+    pub(crate) fn is_string_regexp_or_math(self) -> bool {
         self.is_pure_string_method()
             || self.is_math_function()
             || matches!(
@@ -828,6 +827,62 @@ impl Native {
                     | Self::StringMatchAll
                     | Self::StringSearch
                     | Self::StringSplit
+            )
+    }
+
+    /// Natives a lane `Call` makes in place from the running frame (`lane_call_native`):
+    /// the string, RegExp and `Math` functions, the Array, Object, Reflect and JSON
+    /// functions and the primitive conversions, which read no caller state beyond the
+    /// frame's published PC and run guest code only through ordinary nested calls.
+    pub(crate) fn runs_from_lane(self) -> bool {
+        self.is_string_regexp_or_math()
+            || matches!(
+                self,
+                Self::ArrayIsArray
+                    | Self::ArrayIndexOf
+                    | Self::ArrayLastIndexOf
+                    | Self::ArrayIncludes
+                    | Self::ArraySlice
+                    | Self::ArrayJoin
+                    | Self::ArrayConcat
+                    | Self::ArrayMap
+                    | Self::ArrayForEach
+                    | Self::ArrayFilter
+                    | Self::ArraySome
+                    | Self::ArrayEvery
+                    | Self::ArrayFind
+                    | Self::ArrayFindIndex
+                    | Self::ArrayReduce
+                    | Self::ArraySplice
+                    | Self::ArrayShift
+                    | Self::ArrayUnshift
+                    | Self::ArrayFrom
+                    | Self::ArrayOf
+                    | Self::ObjectKeys
+                    | Self::ObjectValues
+                    | Self::ObjectEntries
+                    | Self::ObjectCreate
+                    | Self::ObjectAssign
+                    | Self::ObjectDefineProperty
+                    | Self::ObjectFreeze
+                    | Self::ObjectGetPrototypeOf
+                    | Self::ObjectSetPrototypeOf
+                    | Self::ObjectHasOwn
+                    | Self::ObjectGetOwnPropertyDescriptor
+                    | Self::ObjectPrototypeHasOwnProperty
+                    | Self::ReflectGet
+                    | Self::ReflectSet
+                    | Self::ReflectOwnKeys
+                    | Self::ReflectDefineProperty
+                    | Self::ReflectGetOwnPropertyDescriptor
+                    | Self::FunctionBind
+                    | Self::JsonStringify
+                    | Self::JsonParse
+                    | Self::NumberIsInteger
+                    | Self::ParseInt
+                    | Self::String
+                    | Self::Number
+                    | Self::Boolean
             )
     }
 
