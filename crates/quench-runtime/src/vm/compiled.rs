@@ -412,6 +412,10 @@ struct CallContext {
     call_reference_diagnostic: usize,
     reference_call_sites: *const ReferenceCallSiteDiagnostics,
     reference_call_site_count: usize,
+    /// The VM's poll page (`ExecutionInterrupt::poll_page`), whose fault ends the call as
+    /// terminated; empty when compiled code checks the flag instead.
+    poll_start: usize,
+    poll_end: usize,
 }
 
 impl CallContext {
@@ -443,6 +447,8 @@ impl CallContext {
             call_reference_diagnostic: self.call_reference_diagnostic,
             reference_call_sites: self.reference_call_sites,
             reference_call_site_count: self.reference_call_site_count,
+            poll_start: self.poll_start,
+            poll_end: self.poll_end,
         }
     }
 }
@@ -2219,6 +2225,13 @@ struct Emitter<'a, 'b, H: Host> {
     redirect: Option<(usize, ir::Block)>,
     /// Whether jumps may enter threaded copies (not from within one).
     threading: bool,
+    /// The VM's poll page when every entry runs through the fault-resuming trampoline: an
+    /// interrupt check is then one read of it.
+    poll: Option<i64>,
+    /// Indices the current block, or a block it alone leads to, has checked against a limit of
+    /// the wrapped reservation (`address`): a later access through one of them needs no check
+    /// at the same or a higher limit.
+    checked: Vec<(ir::Value, i64)>,
 }
 
 impl<H: Host> Emitter<'_, '_, H> {
@@ -2313,15 +2326,27 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 
     fn interrupt_safepoint(&mut self) {
+        if let Some(poll) = self.poll {
+            // The read faults once termination is requested, and the fault resumes as the
+            // termination (`guard_fault`). Atomic, so it is neither merged nor dropped.
+            let page = self.builder.ins().iconst(types::I64, poll);
+            self.builder
+                .ins()
+                .atomic_load(types::I8, MemFlagsData::trusted(), page);
+            return;
+        }
+        // The flag's address is fixed for the call; only the flag changes.
         let pointer = self.builder.ins().load(
             types::I64,
-            MemFlagsData::trusted(),
+            invariant(),
             self.context,
             CONTEXT_INTERRUPT,
         );
         let requested = self
             .builder
             .ins()
+            // Atomic, so no check reuses an earlier one's load: Cranelift's alias analysis
+            // would merge plain loads of the flag across the loop.
             .atomic_load(types::I8, MemFlagsData::trusted(), pointer);
         let stop = self.builder.ins().icmp_imm_u(IntCC::NotEqual, requested, 0);
         let termination = match self.termination_block {
@@ -2623,13 +2648,20 @@ impl<H: Host> Emitter<'_, '_, H> {
                 RESERVED_LIMIT
             } else {
                 WRAP_ALIAS - offset as usize
-            };
-            let past = self.builder.ins().icmp_imm_u(
-                IntCC::UnsignedGreaterThanOrEqual,
-                address,
-                limit as i64,
-            );
-            self.trap_if(past, crate::WasmTrap::OutOfBoundsMemory);
+            } as i64;
+            let known = self
+                .checked
+                .iter()
+                .any(|&(index, checked)| index == address && checked <= limit);
+            if !known {
+                let past = self.builder.ins().icmp_imm_u(
+                    IntCC::UnsignedGreaterThanOrEqual,
+                    address,
+                    limit,
+                );
+                self.trap_if(past, crate::WasmTrap::OutOfBoundsMemory);
+                self.checked.push((address, limit));
+            }
         }
         let address = self.builder.ins().uextend(types::I64, address);
         if self.guarded {
@@ -2982,8 +3014,17 @@ impl<H: Host> Emitter<'_, '_, H> {
         }
     }
 
-    fn jump(&mut self, target: usize) {
-        self.interrupt_safepoint();
+    /// A jump from `pc` to `target`. Only an edge back to `pc` or before can repeat code
+    /// without a call, so only such an edge (and each function entry) checks for an
+    /// interrupt: a run that never stops passes one of them again and again.
+    fn jump(&mut self, pc: usize, target: usize) {
+        if target <= pc {
+            self.interrupt_safepoint();
+        }
+        self.jump_to(target);
+    }
+
+    fn jump_to(&mut self, target: usize) {
         let mut block = self.edge(target);
         if self.threading
             && Some(block) == self.blocks[target]
@@ -2999,8 +3040,10 @@ impl<H: Host> Emitter<'_, '_, H> {
     /// fallthrough) leaves the loop through a block of its own, so values
     /// only the exit passes (merge arguments) are computed after the loop,
     /// not on every iteration. The back edge stays direct.
-    fn branch(&mut self, condition: ir::Value, target: usize, fallthrough: usize) {
-        self.interrupt_safepoint();
+    fn branch(&mut self, pc: usize, condition: ir::Value, target: usize, fallthrough: usize) {
+        if target <= pc || fallthrough <= pc {
+            self.interrupt_safepoint();
+        }
         let taken = self.edge(target);
         let next = self.edge(fallthrough);
         if target >= fallthrough {
@@ -3049,6 +3092,7 @@ impl<H: Host> Emitter<'_, '_, H> {
     /// Emit the threaded copy `thread` into `block`.
     fn emit_thread(&mut self, function: &Function, block: ir::Block, thread: &Thread) {
         self.builder.switch_to_block(block);
+        self.checked.clear();
         self.interrupt_safepoint();
         for (index, &pc) in thread.path.iter().enumerate() {
             let instruction = self.instructions[pc];
@@ -3070,6 +3114,7 @@ impl<H: Host> Emitter<'_, '_, H> {
                     self.instruction(function, pc, instruction);
                     self.redirect = None;
                     self.builder.switch_to_block(continuation);
+                    self.checked.clear();
                 }
                 _ => {
                     self.instruction(function, pc, instruction);
@@ -3116,14 +3161,14 @@ impl<H: Host> Emitter<'_, '_, H> {
             let left = self.read(a, Kind::I32);
             let right = self.read(b, Kind::I32);
             let holds = self.integer_binary(widen_binary(operator), left, right);
-            self.branch(holds, instruction.jump_target() as usize, pc + 1);
+            self.branch(pc, holds, instruction.jump_target() as usize, pc + 1);
             return false;
         }
         if let Some(operator) = I32BinaryOperator::from_immediate_jump_op(op) {
             let left = self.read(a, Kind::I32);
             let right = self.builder.ins().iconst(types::I32, i64::from(b as i16));
             let holds = self.integer_binary(widen_binary(operator), left, right);
-            self.branch(holds, instruction.jump_target() as usize, pc + 1);
+            self.branch(pc, holds, instruction.jump_target() as usize, pc + 1);
             return false;
         }
         if let Some(load) = MemoryLoad::from_direct_op(op) {
@@ -3297,21 +3342,21 @@ impl<H: Host> Emitter<'_, '_, H> {
                 let addend = self.builder.ins().iconst(types::I32, i64::from(c as i16));
                 let sum = self.builder.ins().iadd(input, addend);
                 self.write(a, Kind::I32, sum);
-                self.branch(sum, instruction.jump_target() as usize, pc + 1);
+                self.branch(pc, sum, instruction.jump_target() as usize, pc + 1);
                 return false;
             }
             Op::WasmJumpI32Zero | Op::WasmJumpI32NonZero => {
                 let value = self.read(a, Kind::I32);
                 let (taken, other) = (instruction.jump_target() as usize, pc + 1);
                 if op == Op::WasmJumpI32NonZero {
-                    self.branch(value, taken, other);
+                    self.branch(pc, value, taken, other);
                 } else {
-                    self.branch(value, other, taken);
+                    self.branch(pc, value, other, taken);
                 }
                 return false;
             }
             Op::Jump => {
-                self.jump(instruction.jump_target() as usize);
+                self.jump(pc, instruction.jump_target() as usize);
                 return false;
             }
             Op::WasmBranchTable => {
@@ -3540,6 +3585,10 @@ impl<'a, H: Host> Analysis<'a, H> {
             pending: Vec::new(),
             redirect: None,
             threading: true,
+            poll: guard_support()
+                .and_then(|_| self.vm.execution_interrupt.poll_page())
+                .map(|(start, _)| start as i64),
+            checked: Vec::new(),
         };
         // Registers start at i32 zero, as an activation's register file does.
         for register in 0..function.registers {
@@ -3568,7 +3617,9 @@ impl<'a, H: Host> Analysis<'a, H> {
             .icmp(IntCC::UnsignedLessThan, stack_pointer, limit);
         emitter.trap_if(exhausted, crate::WasmTrap::CallStackExhausted);
         emitter.known.clear();
-        emitter.jump(0);
+        emitter.checked.clear();
+        emitter.interrupt_safepoint();
+        emitter.jump_to(0);
         // Every jump target starts a block, created before emission so a
         // backward jump finds its target's block already placed.
         for (pc, instruction) in instructions.iter().copied().enumerate() {
@@ -3601,6 +3652,7 @@ impl<'a, H: Host> Analysis<'a, H> {
             let is_leader = emitter.blocks[pc].is_some() || !open;
             if is_leader {
                 emitter.known.clear();
+                emitter.checked.clear();
                 let block = emitter.block(pc);
                 if open {
                     emitter.builder.ins().jump(block, &[]);
@@ -3799,6 +3851,9 @@ struct GuardSupport {
     trampoline: Trampoline,
     #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
     landing: usize,
+    /// Where a fault on the poll page resumes: the terminated status.
+    #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+    termination: usize,
 }
 
 // SAFETY: immutable executable code, shared by every thread.
@@ -3808,7 +3863,7 @@ unsafe impl Sync for GuardSupport {}
 /// The x86-64 System V trampoline, as machine code. Offsets of `RESUME` and
 /// `LANDING` are into this array.
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
-const TRAMPOLINE_CODE: [u8; 50] = [
+const TRAMPOLINE_CODE: [u8; 60] = [
     0x55, // push rbp
     0x48,
     0x89,
@@ -3859,6 +3914,17 @@ const TRAMPOLINE_CODE: [u8; 50] = [
     0,
     0,
     0,
+    0, // jmp RESUME (patched)
+    // TERMINATION (49):
+    0xb8,
+    0,
+    0,
+    0,
+    0, // mov eax, terminated status (patched)
+    0xe9,
+    0,
+    0,
+    0,
     0,    // jmp RESUME (patched)
     0xcc, // int3
 ];
@@ -3867,6 +3933,8 @@ const TRAMPOLINE_CODE: [u8; 50] = [
 const TRAMPOLINE_RESUME: usize = 24;
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 const TRAMPOLINE_LANDING: usize = 39;
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+const TRAMPOLINE_TERMINATION: usize = 49;
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 static PREVIOUS_SEGV: std::sync::OnceLock<libc::sigaction> = std::sync::OnceLock::new();
@@ -3879,17 +3947,21 @@ fn guard_support() -> Option<&'static GuardSupport> {
     SUPPORT
         .get_or_init(|| {
             let mut code = TRAMPOLINE_CODE;
-            let status = trap_status(crate::WasmTrap::OutOfBoundsMemory) as u32;
-            code[TRAMPOLINE_LANDING + 1..TRAMPOLINE_LANDING + 5]
-                .copy_from_slice(&status.to_le_bytes());
-            let after_jump = TRAMPOLINE_LANDING + 10;
-            let displacement = TRAMPOLINE_RESUME as i32 - after_jump as i32;
-            code[TRAMPOLINE_LANDING + 6..TRAMPOLINE_LANDING + 10]
-                .copy_from_slice(&displacement.to_le_bytes());
+            // Each landing loads its status and jumps back to the epilogue.
+            for (landing, status) in [
+                (TRAMPOLINE_LANDING, trap_status(crate::WasmTrap::OutOfBoundsMemory) as u32),
+                (TRAMPOLINE_TERMINATION, TERMINATED_STATUS as u32),
+            ] {
+                code[landing + 1..landing + 5].copy_from_slice(&status.to_le_bytes());
+                let after_jump = landing + 10;
+                let displacement = TRAMPOLINE_RESUME as i32 - after_jump as i32;
+                code[landing + 6..landing + 10].copy_from_slice(&displacement.to_le_bytes());
+            }
             let memory = CodeMemory::new(&code)?;
             // SAFETY: the code implements `Trampoline` for this ABI.
             let trampoline = unsafe { std::mem::transmute::<*mut u8, Trampoline>(memory.pointer) };
             let landing = memory.pointer as usize + TRAMPOLINE_LANDING;
+            let termination = memory.pointer as usize + TRAMPOLINE_TERMINATION;
             // SAFETY: installs a handler that only redirects faults inside an
             // active compiled call's guard and forwards every other fault to
             // the previous handler.
@@ -3908,6 +3980,7 @@ fn guard_support() -> Option<&'static GuardSupport> {
                 _code: memory,
                 trampoline,
                 landing,
+                termination,
             })
         })
         .as_ref()
@@ -3932,14 +4005,21 @@ extern "C" fn guard_fault(signal: i32, info: *mut libc::siginfo_t, context: *mut
     unsafe {
         let address = (*info).si_addr() as usize;
         if !active.is_null()
-            && (*active).guard_start <= address
-            && address < (*active).guard_end
             && let Some(support) = guard_support()
         {
-            let context = &mut *context.cast::<libc::ucontext_t>();
-            context.uc_mcontext.gregs[libc::REG_RSP as usize] = (*active).entry_stack as i64;
-            context.uc_mcontext.gregs[libc::REG_RIP as usize] = support.landing as i64;
-            return;
+            let landing = if (*active).guard_start <= address && address < (*active).guard_end {
+                Some(support.landing)
+            } else if (*active).poll_start <= address && address < (*active).poll_end {
+                Some(support.termination)
+            } else {
+                None
+            };
+            if let Some(landing) = landing {
+                let context = &mut *context.cast::<libc::ucontext_t>();
+                context.uc_mcontext.gregs[libc::REG_RSP as usize] = (*active).entry_stack as i64;
+                context.uc_mcontext.gregs[libc::REG_RIP as usize] = landing as i64;
+                return;
+            }
         }
         let Some(previous) = PREVIOUS_SEGV.get() else {
             return;
@@ -4719,6 +4799,7 @@ impl<H: Host> Vm<H> {
                     std::ptr::null_mut(),
                 )
             };
+            let poll = self.execution_interrupt.poll_page();
             let mut context = CallContext {
                 stack_limit: stack_pointer.saturating_sub(COMPILED_STACK_BUDGET),
                 interrupt: self.execution_interrupt.atomic_flag(),
@@ -4751,6 +4832,8 @@ impl<H: Host> Vm<H> {
                     .diagnostics
                     .as_ref()
                     .map_or(0, |stats| stats.reference_call_sites.len()),
+                poll_start: poll.map_or(0, |(start, _)| start),
+                poll_end: poll.map_or(0, |(start, bytes)| start + bytes),
             };
             let mut out = 0u64;
             compiled.note_native_entry(id as usize);
