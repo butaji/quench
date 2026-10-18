@@ -4,18 +4,21 @@ These reports investigate the HashSet-wasm residual function 3 (`main`) and
 function 31 (`operator new`) after sparse per-PC register analysis was added.
 They are one-round, root-selected screens. Every report has
 `qualification_ready: false`; none establishes a JetStream win.
+All reports were captured from clean source revision
+`b1f4ec69f9278bc619b9ed79a51b4eb22fc9cda9` on the same Linux x86_64 host;
+root selection itself remains an explicitly experimental benchmark mode.
 
 The diagnostic root-3 run recorded 66,145 reachable bytecodes and 97 registers.
 It estimated 76,992,780 bytes for a dense register-state matrix and
 6,962,568 bytes for the sparse states, including the state table and allocated
-slot capacities (about 11.1x smaller). Planning took 6.9-10.2 ms. The Cranelift
-body still dominated memory: with `opt_level=none`, function 3 took 866 ms to
-compile and process high-water RSS reached 265,424 KiB. The full diagnostic
-compile took 941 ms and emitted 1,544,754 native code bytes.
+slot capacities (about 11.1x smaller). Planning took 5.7-10.2 ms. The Cranelift
+body still dominated memory: with `opt_level=none`, function 3 took 875 ms to
+compile and process high-water RSS reached 266,068 KiB. The full diagnostic
+compile took 944 ms and emitted 1,544,754 native code bytes.
 
 JetStream 3 scores the first, worst, and average iteration components with a
 geometric mean. In the diagnostic run, Quench's first HashSet iteration took
-1,005 ms (Score 4.98) while the later average was 23.99 ms (Score 208.41).
+1,002 ms (Score 4.99) while the later average was 22.60 ms (Score 221.24).
 The compilation delay falls inside that first timed iteration: HashSet's
 `init()` loads only the binary, and its first `runIteration()` initializes the
 Emscripten module and reaches Quench's lazy whole-program compile. See
@@ -26,11 +29,11 @@ Emscripten module and reaches Quench's lazy whole-program compile. See
 
 | Selection and Cranelift level | Quench Score / RSS MiB | Bun Score / RSS MiB | Node Score / RSS MiB |
 | --- | ---: | ---: | ---: |
-| root 3, speed | 56.77 / 308.7 | 215.78 / 51.7 | 234.06 / 111.0 |
-| root 3, none | 49.04 / 259.1 | 181.26 / 51.9 | 187.45 / 111.0 |
-| root 3, speed_and_size | 56.20 / 284.2 | 208.51 / 51.6 | 225.64 / 110.9 |
-| root 31, none | 23.49 / 43.6 | 202.08 / 51.4 | 235.10 / 110.8 |
-| root 27, speed | 22.57 / 44.0 | 197.48 / 50.9 | 215.09 / 111.0 |
+| root 3, speed | 58.70 / 285.0 | 205.34 / 51.6 | 267.88 / 111.0 |
+| root 3, none | 57.00 / 259.1 | 203.81 / 51.5 | 258.26 / 110.9 |
+| root 3, speed_and_size | 58.32 / 284.7 | 206.16 / 51.2 | 224.01 / 110.8 |
+| root 31, none | 24.15 / 43.7 | 215.82 / 52.1 | 239.56 / 110.8 |
+| root 27, speed | 23.48 / 44.6 | 208.04 / 51.1 | 253.61 / 110.9 |
 
 The root-31 and root-27 screens keep RSS below both peers, but their Scores
 remain far behind. Root 3 improves warm throughput but loses on aggregate

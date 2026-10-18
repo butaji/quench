@@ -4,11 +4,11 @@
   "jit_mode": "jit",
   "jit_diagnostics": false,
   "jit_wasm_root": 31,
-  "created_unix_ns": 1792303391916229050,
+  "created_unix_ns": 1792303804307815308,
   "rounds_requested": 1,
   "timeout_ms": 600000,
-  "source_revision": "756bbe306dcc89a61328a65bdf9c288bfcd34343",
-  "source_dirty": true,
+  "source_revision": "b1f4ec69f9278bc619b9ed79a51b4eb22fc9cda9",
+  "source_dirty": false,
   "corpus": {
     "pinned_revision": "06785cf861ac44855f168cbbe829278c2802e6de",
     "checkout_revision": "06785cf861ac44855f168cbbe829278c2802e6de",
@@ -96,7 +96,7 @@
         "-e",
         "function hot(x) { return x + 1; } for (let i = 0; i < 100000; i++) hot(i);"
       ],
-      "jit_proof": "command succeeded and reported \"completed compiling\": [marking 0x0e4b4bdf7a31 <JSFunction hot (sfi = 0xe4b4bdf4211)> for optimization to MAGLEV, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[compiling method 0x0e4b4bdf7a31 <JSFunction hot (sfi = 0xe4b4bdf4211)> (target MAGLEV), mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x0e4b4bdf7a31 <JSFunction hot (sfi = 0xe4b4bdf4211)> (target MAGLEV) - took 0.004, 0.112, 0.001 ms]\n[marking 0x0e4b4bdf79c1 <JSFunction (sfi = 0xe4b4bdf4169)> for optimization to MAGLEV, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[marking 0x0e4b4bdf7a31 <JSFunction hot (sfi = 0xe4b4bdf4211)> for optimization to TURBOFAN_JS, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[compiling method 0x0e4b4bdf7a31 <JSFunction hot (sfi = 0xe4b4bdf4211)> (target TURBOFAN_JS), mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x0e4b4bdf7a31 <JSFunction hot (sfi = 0xe4b4bdf4211)> (target TURBOFAN_JS) - took 0.004, 0.430, 0.007 ms]\n[compiling method 0x0e4b4bdf79c1 <JSFunction (sfi = 0xe4b4bdf4169)> (target MAGLEV) OSR, mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x0e4b4bdf79c1 <JSFunction (sfi = 0xe4b4bdf4169)> (target MAGLEV) OSR - took 0.000, 0.118, 0.002 ms]",
+      "jit_proof": "command succeeded and reported \"completed compiling\": [marking 0x3ac6d2db7a31 <JSFunction hot (sfi = 0x3ac6d2db4211)> for optimization to MAGLEV, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[compiling method 0x3ac6d2db7a31 <JSFunction hot (sfi = 0x3ac6d2db4211)> (target MAGLEV), mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x3ac6d2db7a31 <JSFunction hot (sfi = 0x3ac6d2db4211)> (target MAGLEV) - took 0.004, 0.113, 0.001 ms]\n[marking 0x3ac6d2db79c1 <JSFunction (sfi = 0x3ac6d2db4169)> for optimization to MAGLEV, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[marking 0x3ac6d2db7a31 <JSFunction hot (sfi = 0x3ac6d2db4211)> for optimization to TURBOFAN_JS, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[compiling method 0x3ac6d2db7a31 <JSFunction hot (sfi = 0x3ac6d2db4211)> (target TURBOFAN_JS), mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x3ac6d2db7a31 <JSFunction hot (sfi = 0x3ac6d2db4211)> (target TURBOFAN_JS) - took 0.004, 0.698, 0.007 ms]\n[compiling method 0x3ac6d2db79c1 <JSFunction (sfi = 0x3ac6d2db4169)> (target MAGLEV) OSR, mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x3ac6d2db79c1 <JSFunction (sfi = 0x3ac6d2db4169)> (target MAGLEV) OSR - took 0.000, 0.120, 0.002 ms]",
       "webassembly": true
     }
   ],
@@ -141,18 +141,18 @@
       "output_equal": true,
       "summaries": {
         "bun": {
-          "median_score": 202.08,
-          "median_max_rss_bytes": 53854208,
+          "median_score": 215.82,
+          "median_max_rss_bytes": 54644736,
           "valid_samples": 1
         },
         "node": {
-          "median_score": 235.1,
+          "median_score": 239.56,
           "median_max_rss_bytes": 116137984,
           "valid_samples": 1
         },
         "quench": {
-          "median_score": 23.49,
-          "median_max_rss_bytes": 45719552,
+          "median_score": 24.15,
+          "median_max_rss_bytes": 45830144,
           "valid_samples": 1
         }
       },
@@ -169,26 +169,26 @@
             "bun": {
               "status": 0,
               "timed_out": false,
-              "wall_ns": 965566388,
-              "peak_rss_bytes": 53854208,
-              "score": 202.08,
+              "wall_ns": 915860360,
+              "peak_rss_bytes": 54644736,
+              "score": 215.82,
               "instructions": null,
               "cycles": null,
-              "page_faults": 6207,
-              "page_reclaims": 6207,
-              "involuntary_context_switches": 8,
+              "page_faults": 6450,
+              "page_reclaims": 6450,
+              "involuntary_context_switches": 10,
               "host_before": {
-                "captured_unix_ns": 1792303402146760364,
+                "captured_unix_ns": 1792303814027300323,
                 "load_average": {
-                  "one_minute": 0.39,
-                  "five_minutes": 1.05,
-                  "fifteen_minutes": 1.07
+                  "one_minute": 1.33,
+                  "five_minutes": 1.37,
+                  "fifteen_minutes": 1.18
                 },
                 "load_average_error": null,
                 "top_cpu_consumers": [
                   {
-                    "pid": 306082,
-                    "cpu_percent": 1.2,
+                    "pid": 316203,
+                    "cpu_percent": 1.1,
                     "command": "quench-bench"
                   },
                   {
@@ -215,17 +215,17 @@
                 "process_list_error": null
               },
               "host_after": {
-                "captured_unix_ns": 1792303403116821618,
+                "captured_unix_ns": 1792303814950322030,
                 "load_average": {
-                  "one_minute": 0.39,
-                  "five_minutes": 1.05,
-                  "fifteen_minutes": 1.07
+                  "one_minute": 1.33,
+                  "five_minutes": 1.37,
+                  "fifteen_minutes": 1.18
                 },
                 "load_average_error": null,
                 "top_cpu_consumers": [
                   {
-                    "pid": 306082,
-                    "cpu_percent": 1.3,
+                    "pid": 316203,
+                    "cpu_percent": 1.1,
                     "command": "quench-bench"
                   },
                   {
@@ -251,32 +251,32 @@
                 ],
                 "process_list_error": null
               },
-              "stdout": "Starting JetStream3\nRunning HashSet-wasm:\nHashSet-wasm First-Score                       128.63 pts\nHashSet-wasm Worst-Score                       236.12 pts\nHashSet-wasm Average-Score                     271.73 pts\nHashSet-wasm Score                             202.08 pts\nHashSet-wasm First-Time                         38.87 ms \nHashSet-wasm Worst-Time                         21.18 ms \nHashSet-wasm Average-Time                       18.40 ms \nHashSet-wasm Total-Time                         78.45 ms \nHashSet-wasm Wall-Time                         946.63 ms \n\nOverall:\nOverall First-Score                            128.63 pts\nOverall Worst-Score                            236.12 pts\nOverall Average-Score                          271.73 pts\nOverall First-Time                              38.87 ms \nOverall Worst-Time                              21.18 ms \nOverall Average-Time                            18.40 ms \n\nOverall Score                                  202.08 pts\nOverall Wall-Time                              947.95 ms \n\n",
+              "stdout": "Starting JetStream3\nRunning HashSet-wasm:\nHashSet-wasm First-Score                       136.10 pts\nHashSet-wasm Worst-Score                       257.16 pts\nHashSet-wasm Average-Score                     287.21 pts\nHashSet-wasm Score                             215.82 pts\nHashSet-wasm First-Time                         36.74 ms \nHashSet-wasm Worst-Time                         19.44 ms \nHashSet-wasm Average-Time                       17.41 ms \nHashSet-wasm Total-Time                         73.59 ms \nHashSet-wasm Wall-Time                         897.47 ms \n\nOverall:\nOverall First-Score                            136.10 pts\nOverall Worst-Score                            257.16 pts\nOverall Average-Score                          287.21 pts\nOverall First-Time                              36.74 ms \nOverall Worst-Time                              19.44 ms \nOverall Average-Time                            17.41 ms \n\nOverall Score                                  215.82 pts\nOverall Wall-Time                              898.91 ms \n\n",
               "stderr": ""
             },
             "node": {
               "status": 0,
               "timed_out": false,
-              "wall_ns": 832458151,
+              "wall_ns": 868817151,
               "peak_rss_bytes": 116137984,
-              "score": 235.1,
+              "score": 239.56,
               "instructions": null,
               "cycles": null,
-              "page_faults": 18821,
-              "page_reclaims": 18821,
-              "involuntary_context_switches": 28,
+              "page_faults": 18824,
+              "page_reclaims": 18824,
+              "involuntary_context_switches": 84,
               "host_before": {
-                "captured_unix_ns": 1792303403120284619,
+                "captured_unix_ns": 1792303814955962849,
                 "load_average": {
-                  "one_minute": 0.39,
-                  "five_minutes": 1.05,
-                  "fifteen_minutes": 1.07
+                  "one_minute": 1.33,
+                  "five_minutes": 1.37,
+                  "fifteen_minutes": 1.18
                 },
                 "load_average_error": null,
                 "top_cpu_consumers": [
                   {
-                    "pid": 306082,
-                    "cpu_percent": 1.3,
+                    "pid": 316203,
+                    "cpu_percent": 1.1,
                     "command": "quench-bench"
                   },
                   {
@@ -303,17 +303,17 @@
                 "process_list_error": null
               },
               "host_after": {
-                "captured_unix_ns": 1792303403956898822,
+                "captured_unix_ns": 1792303815829151359,
                 "load_average": {
-                  "one_minute": 0.39,
-                  "five_minutes": 1.05,
-                  "fifteen_minutes": 1.07
+                  "one_minute": 1.33,
+                  "five_minutes": 1.37,
+                  "fifteen_minutes": 1.18
                 },
                 "load_average_error": null,
                 "top_cpu_consumers": [
                   {
-                    "pid": 306082,
-                    "cpu_percent": 1.3,
+                    "pid": 316203,
+                    "cpu_percent": 1.1,
                     "command": "quench-bench"
                   },
                   {
@@ -339,26 +339,26 @@
                 ],
                 "process_list_error": null
               },
-              "stdout": "Starting JetStream3\nRunning HashSet-wasm:\nHashSet-wasm First-Score                       148.73 pts\nHashSet-wasm Worst-Score                       266.48 pts\nHashSet-wasm Average-Score                     327.86 pts\nHashSet-wasm Score                             235.10 pts\nHashSet-wasm First-Time                         33.62 ms \nHashSet-wasm Worst-Time                         18.76 ms \nHashSet-wasm Average-Time                       15.25 ms \nHashSet-wasm Total-Time                         67.63 ms \nHashSet-wasm Wall-Time                         791.83 ms \n\nOverall:\nOverall First-Score                            148.73 pts\nOverall Worst-Score                            266.48 pts\nOverall Average-Score                          327.86 pts\nOverall First-Time                              33.62 ms \nOverall Worst-Time                              18.76 ms \nOverall Average-Time                            15.25 ms \n\nOverall Score                                  235.10 pts\nOverall Wall-Time                              794.19 ms \n\n",
+              "stdout": "Starting JetStream3\nRunning HashSet-wasm:\nHashSet-wasm First-Score                       160.85 pts\nHashSet-wasm Worst-Score                       274.68 pts\nHashSet-wasm Average-Score                     311.16 pts\nHashSet-wasm Score                             239.56 pts\nHashSet-wasm First-Time                         31.08 ms \nHashSet-wasm Worst-Time                         18.20 ms \nHashSet-wasm Average-Time                       16.07 ms \nHashSet-wasm Total-Time                         65.36 ms \nHashSet-wasm Wall-Time                         826.62 ms \n\nOverall:\nOverall First-Score                            160.85 pts\nOverall Worst-Score                            274.68 pts\nOverall Average-Score                          311.16 pts\nOverall First-Time                              31.08 ms \nOverall Worst-Time                              18.20 ms \nOverall Average-Time                            16.07 ms \n\nOverall Score                                  239.56 pts\nOverall Wall-Time                              828.59 ms \n\n",
               "stderr": ""
             },
             "quench": {
               "status": 0,
               "timed_out": false,
-              "wall_ns": 10113752878,
-              "peak_rss_bytes": 45719552,
-              "score": 23.49,
+              "wall_ns": 9566032393,
+              "peak_rss_bytes": 45830144,
+              "score": 24.15,
               "instructions": null,
               "cycles": null,
-              "page_faults": 15368,
-              "page_reclaims": 15368,
-              "involuntary_context_switches": 68,
+              "page_faults": 15366,
+              "page_reclaims": 15366,
+              "involuntary_context_switches": 997,
               "host_before": {
-                "captured_unix_ns": 1792303392025803031,
+                "captured_unix_ns": 1792303804454144643,
                 "load_average": {
-                  "one_minute": 0.28,
-                  "five_minutes": 1.05,
-                  "fifteen_minutes": 1.07
+                  "one_minute": 1.39,
+                  "five_minutes": 1.38,
+                  "fifteen_minutes": 1.18
                 },
                 "load_average_error": null,
                 "top_cpu_consumers": [
@@ -391,17 +391,17 @@
                 "process_list_error": null
               },
               "host_after": {
-                "captured_unix_ns": 1792303402143778669,
+                "captured_unix_ns": 1792303814024088816,
                 "load_average": {
-                  "one_minute": 0.39,
-                  "five_minutes": 1.05,
-                  "fifteen_minutes": 1.07
+                  "one_minute": 1.33,
+                  "five_minutes": 1.37,
+                  "fifteen_minutes": 1.18
                 },
                 "load_average_error": null,
                 "top_cpu_consumers": [
                   {
-                    "pid": 306082,
-                    "cpu_percent": 1.2,
+                    "pid": 316203,
+                    "cpu_percent": 1.1,
                     "command": "quench-bench"
                   },
                   {
@@ -427,7 +427,7 @@
                 ],
                 "process_list_error": null
               },
-              "stdout": "Starting JetStream3\nRunning HashSet-wasm:\nHashSet-wasm First-Score                        21.43 pts\nHashSet-wasm Worst-Score                        23.59 pts\nHashSet-wasm Average-Score                      25.62 pts\nHashSet-wasm Score                              23.49 pts\nHashSet-wasm First-Time                        233.30 ms \nHashSet-wasm Worst-Time                        211.94 ms \nHashSet-wasm Average-Time                      195.14 ms \nHashSet-wasm Total-Time                        640.39 ms \nHashSet-wasm Wall-Time                        9822.78 ms \n\nOverall:\nOverall First-Score                             21.43 pts\nOverall Worst-Score                             23.59 pts\nOverall Average-Score                           25.62 pts\nOverall First-Time                             233.30 ms \nOverall Worst-Time                             211.94 ms \nOverall Average-Time                           195.14 ms \n\nOverall Score                                   23.49 pts\nOverall Wall-Time                             9826.13 ms \n\n",
+              "stdout": "Starting JetStream3\nRunning HashSet-wasm:\nHashSet-wasm First-Score                        20.16 pts\nHashSet-wasm Worst-Score                        25.58 pts\nHashSet-wasm Average-Score                      27.31 pts\nHashSet-wasm Score                              24.15 pts\nHashSet-wasm First-Time                        248.00 ms \nHashSet-wasm Worst-Time                        195.49 ms \nHashSet-wasm Average-Time                      183.06 ms \nHashSet-wasm Total-Time                        626.55 ms \nHashSet-wasm Wall-Time                        9250.61 ms \n\nOverall:\nOverall First-Score                             20.16 pts\nOverall Worst-Score                             25.58 pts\nOverall Average-Score                           27.31 pts\nOverall First-Time                             248.00 ms \nOverall Worst-Time                             195.49 ms \nOverall Average-Time                           183.06 ms \n\nOverall Score                                   24.15 pts\nOverall Wall-Time                             9254.38 ms \n\n",
               "stderr": ""
             }
           }
