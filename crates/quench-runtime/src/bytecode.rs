@@ -14,7 +14,7 @@ pub type Register = u16;
 
 mod atoms;
 mod control_flow;
-mod initialization;
+pub(crate) mod initialization;
 mod instruction;
 mod name_bindings;
 pub(crate) use name_bindings::{CapturedNames, NameBindings};
@@ -1345,7 +1345,6 @@ impl Iterator for SourcePositionIter<'_> {
         Some(self.previous)
     }
 }
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PlainLocalContextIneligibility {
     RootFunction,
@@ -1482,7 +1481,7 @@ impl Function {
         for (slot, dead_zone) in dead_zone.iter_mut().enumerate() {
             *dead_zone &= plain[slot];
         }
-        let initialized = initialization::initialized_before_reads(self, superinstructions, &dead_zone);
+        let initialized = initialization::initialized_before_reads(self, superinstructions, &dead_zone, &[]);
         for (slot, plain) in plain.iter_mut().enumerate() {
             *plain &= !dead_zone[slot] || initialized[slot];
         }
@@ -2526,7 +2525,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 98;
+    pub const FORMAT_VERSION: u8 = 99;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

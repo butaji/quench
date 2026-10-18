@@ -560,8 +560,11 @@ fn math_atanh(value: f64) -> f64 {
     (ATANH_LOG_SCALE * argument.ln_1p()).copysign(value)
 }
 
-pub(super) fn math_unary(native: Native, value: f64) -> f64 {
-    match native {
+/// The value of a Math function of one Number argument (`Math.sqrt` and its kin); `None`
+/// for any other native. Such a function reads only its first argument.
+pub(super) fn math_unary(native: Native, value: f64) -> Option<f64> {
+    Some(match native {
+        Native::MathFloor => value.floor(),
         Native::MathAbs => value.abs(),
         Native::MathCeil => value.ceil(),
         Native::MathRound => {
@@ -610,8 +613,8 @@ pub(super) fn math_unary(native: Native, value: f64) -> f64 {
                 1.0
             }
         }
-        _ => unreachable!("non-unary Math native"),
-    }
+        _ => return None,
+    })
 }
 
 impl<H: Host> Vm<H> {

@@ -1,0 +1,966 @@
+{
+  "schema": 2,
+  "created_unix_ns": 1792314083806110695,
+  "input_report_path": "target/jetstream3-importalloc-baseline.json",
+  "input_report_sha256": "84e2f7ba23c93d362b2330b588275f06851acf22299281e0f5c82f37905019ea",
+  "suite": "jet-stream3",
+  "jit_mode": "jit",
+  "quench_bench_binary": {
+    "path": "/workspace/quench/target/production/quench-bench",
+    "size_bytes": 1530400,
+    "modified_unix_ns": 1792310755674740341,
+    "sha256": "05b7c8c99eea823b8834c657dfaf68a9f3a135738b9a6111695df183aca5ee73"
+  },
+  "source_revision": "280b9a0114e926702cdd6f0ab23f8dbc67ece809",
+  "source_dirty": false,
+  "corpus_revision": "06785cf861ac44855f168cbbe829278c2802e6de",
+  "timeout_ms": 600000,
+  "host": {
+    "uname": "Linux f3da3ef8e0e6 6.18.55 #1 SMP Wed Oct 14 19:45:18 UTC 2026 x86_64 GNU/Linux",
+    "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.1\nLLVM version: 23.1.1",
+    "model": null,
+    "memory_bytes": 18882674688,
+    "memory_limit_bytes": 17179869184,
+    "cpu_quota": "400000 100000",
+    "process_metrics_backend": "Linux wait4 rusage"
+  },
+  "engine_provenance": [
+    {
+      "name": "quench",
+      "executable": "/workspace/quench/target/quench-node-e955",
+      "executable_sha256": "6cdd85fefcdba3983eab5f3cd1aa371bbb6668404e7ffa3122670f72783c28cd",
+      "version": "Quench shared-VM JIT build; package 0.1.0",
+      "argv": [
+        "--jit"
+      ],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/workspace/.cargo/bin:/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-by-cli-flag",
+      "jit_proof_command": [
+        "/workspace/quench/target/quench-node-e955",
+        "--jit"
+      ],
+      "jit_proof": "the measured Quench process is launched with --jit"
+    },
+    {
+      "name": "bun",
+      "executable": "/workspace/.local/bench-runtimes/bun-v1.4.3/bun-linux-x64/bun",
+      "executable_sha256": "7ce7d6b654eddeec20afddf2396317fba6dc19ab52788a27e894e1806bf8f24b",
+      "version": "1.4.3",
+      "argv": [],
+      "environment": {
+        "BUN_JSC_useJIT": "1",
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/workspace/.cargo/bin:/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-and-probed",
+      "jit_proof_command": [
+        "BUN_JSC_useJIT=1",
+        "BUN_JSC_dumpOptions=1",
+        "/workspace/.local/bench-runtimes/bun-v1.4.3/bun-linux-x64/bun",
+        "-e",
+        "console.log(Bun.version)"
+      ],
+      "jit_proof": "command succeeded and reported \"useJIT=true\": 1.4.3\n\nModified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=true (default: true)"
+    },
+    {
+      "name": "node",
+      "executable": "/workspace/.local/bench-runtimes/node-v26.12.0-linux-x64/bin/node",
+      "executable_sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943",
+      "version": "v26.12.0",
+      "argv": [],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/workspace/.cargo/bin:/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-and-probed",
+      "jit_proof_command": [
+        "/workspace/.local/bench-runtimes/node-v26.12.0-linux-x64/bin/node",
+        "--trace-opt",
+        "--no-concurrent-recompilation",
+        "-e",
+        "function hot(x) { return x + 1; } for (let i = 0; i < 100000; i++) hot(i);"
+      ],
+      "jit_proof": "command succeeded and reported \"completed compiling\": [marking 0x2a2c24ab7a31 <JSFunction hot (sfi = 0x2a2c24ab4211)> for optimization to MAGLEV, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[compiling method 0x2a2c24ab7a31 <JSFunction hot (sfi = 0x2a2c24ab4211)> (target MAGLEV), mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x2a2c24ab7a31 <JSFunction hot (sfi = 0x2a2c24ab4211)> (target MAGLEV) - took 0.004, 0.122, 0.002 ms]\n[marking 0x2a2c24ab79c1 <JSFunction (sfi = 0x2a2c24ab4169)> for optimization to MAGLEV, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[marking 0x2a2c24ab7a31 <JSFunction hot (sfi = 0x2a2c24ab4211)> for optimization to TURBOFAN_JS, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[compiling method 0x2a2c24ab7a31 <JSFunction hot (sfi = 0x2a2c24ab4211)> (target TURBOFAN_JS), mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x2a2c24ab7a31 <JSFunction hot (sfi = 0x2a2c24ab4211)> (target TURBOFAN_JS) - took 0.003, 0.442, 0.007 ms]\n[compiling method 0x2a2c24ab79c1 <JSFunction (sfi = 0x2a2c24ab4169)> (target MAGLEV) OSR, mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x2a2c24ab79c1 <JSFunction (sfi = 0x2a2c24ab4169)> (target MAGLEV) OSR - took 0.001, 0.125, 0.002 ms]"
+    }
+  ],
+  "rounds_per_fixture": 11,
+  "analysis_runtime": "quench-bench Rust analyzer; rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.1\nLLVM version: 23.1.1",
+  "suite_inputs": [
+    {
+      "path": "quench-bench/jetstream/cli.js",
+      "size_bytes": 5600,
+      "modified_unix_ns": 1792229119091972874,
+      "sha256": "22ee4b987b07940dd7397ed7f88345c71acc415e2549b64bf45ba43f7572e5f0"
+    },
+    {
+      "path": "quench-bench/jetstream/JetStreamDriver.js",
+      "size_bytes": 110633,
+      "modified_unix_ns": 1792229118593919588,
+      "sha256": "f105bddfd402514b2325fe9ea6e1df5ce776a4ad4570a8006c7c8559159440fc"
+    },
+    {
+      "path": "quench-bench/jetstream/utils/params.js",
+      "size_bytes": 8047,
+      "modified_unix_ns": 1792229119770704165,
+      "sha256": "0e9d28c0fd2de5583c64678ffc61307b10d983bcb419fe2e3bb383c8b7ded647"
+    },
+    {
+      "path": "quench-bench/jetstream/utils/shell-config.js",
+      "size_bytes": 2352,
+      "modified_unix_ns": 1792229119770904880,
+      "sha256": "9a83000be5e6526a3c26a414fc3a23043e57ef8e4cd67aaff459066a2c347bca"
+    }
+  ],
+  "bootstrap": {
+    "name": "paired percentile bootstrap of median log-ratios, reported as ratios",
+    "interval_level": 0.95,
+    "replicates": 100000,
+    "base_seed": "0x51a7beefcafe2c31",
+    "resampling": "resample round indices jointly for Quench and comparator",
+    "statistic": "exp(median(log(Quench / comparator)))",
+    "interval": "exponentiated linear-interpolated log-ratio percentiles"
+  },
+  "fixtures": {
+    "gcc-loops-wasm": {
+      "input_sha256": "22e54dd411e29379a6ba08d84e54b890d620f7c1f2ba9b37ff108c4fe3c98c48",
+      "paired_rounds": 11,
+      "raw_rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1139864441,
+              "score": 193.17,
+              "peak_rss_bytes": 53403648
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1180122364,
+              "score": 181.97,
+              "peak_rss_bytes": 81141760
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2282269056,
+              "score": 58.68,
+              "peak_rss_bytes": 51011584
+            }
+          }
+        },
+        {
+          "round": 1,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1239988267,
+              "score": 165.26,
+              "peak_rss_bytes": 54255616
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1202174013,
+              "score": 183.44,
+              "peak_rss_bytes": 81211392
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2302456592,
+              "score": 58.53,
+              "peak_rss_bytes": 50999296
+            }
+          }
+        },
+        {
+          "round": 2,
+          "execution_order": [
+            "node",
+            "quench",
+            "bun"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1141518272,
+              "score": 192.09,
+              "peak_rss_bytes": 53170176
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1216931555,
+              "score": 177.46,
+              "peak_rss_bytes": 80891904
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2168728428,
+              "score": 62.92,
+              "peak_rss_bytes": 51011584
+            }
+          }
+        },
+        {
+          "round": 3,
+          "execution_order": [
+            "quench",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1228047145,
+              "score": 166.45,
+              "peak_rss_bytes": 53796864
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1186157828,
+              "score": 179.78,
+              "peak_rss_bytes": 81215488
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2210009226,
+              "score": 58.61,
+              "peak_rss_bytes": 51007488
+            }
+          }
+        },
+        {
+          "round": 4,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1163928329,
+              "score": 183.51,
+              "peak_rss_bytes": 53862400
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1196868661,
+              "score": 186.73,
+              "peak_rss_bytes": 81080320
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2420741439,
+              "score": 52.86,
+              "peak_rss_bytes": 51019776
+            }
+          }
+        },
+        {
+          "round": 5,
+          "execution_order": [
+            "node",
+            "quench",
+            "bun"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1189036272,
+              "score": 168.12,
+              "peak_rss_bytes": 54124544
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1241265417,
+              "score": 177.1,
+              "peak_rss_bytes": 81018880
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2463598484,
+              "score": 53.5,
+              "peak_rss_bytes": 50987008
+            }
+          }
+        },
+        {
+          "round": 6,
+          "execution_order": [
+            "quench",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1204142843,
+              "score": 174.36,
+              "peak_rss_bytes": 53600256
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1208445082,
+              "score": 166.5,
+              "peak_rss_bytes": 81080320
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2327947750,
+              "score": 56.22,
+              "peak_rss_bytes": 50987008
+            }
+          }
+        },
+        {
+          "round": 7,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1120520821,
+              "score": 195.46,
+              "peak_rss_bytes": 53338112
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1220352236,
+              "score": 176.3,
+              "peak_rss_bytes": 81154048
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2235404014,
+              "score": 60.04,
+              "peak_rss_bytes": 50995200
+            }
+          }
+        },
+        {
+          "round": 8,
+          "execution_order": [
+            "node",
+            "quench",
+            "bun"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1149754601,
+              "score": 191.89,
+              "peak_rss_bytes": 55631872
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1179361164,
+              "score": 185.12,
+              "peak_rss_bytes": 82087936
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2210810321,
+              "score": 59.63,
+              "peak_rss_bytes": 51023872
+            }
+          }
+        },
+        {
+          "round": 9,
+          "execution_order": [
+            "quench",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1142503620,
+              "score": 192.1,
+              "peak_rss_bytes": 53272576
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1232030572,
+              "score": 174.47,
+              "peak_rss_bytes": 81154048
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2246806800,
+              "score": 60.58,
+              "peak_rss_bytes": 50974720
+            }
+          }
+        },
+        {
+          "round": 10,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1155630433,
+              "score": 190.92,
+              "peak_rss_bytes": 52748288
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1139894073,
+              "score": 194.24,
+              "peak_rss_bytes": 81219584
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2191839754,
+              "score": 61.55,
+              "peak_rss_bytes": 51036160
+            }
+          }
+        }
+      ],
+      "engine_medians": {
+        "bun": {
+          "score": 190.92,
+          "max_rss_bytes": 53600256.0
+        },
+        "node": {
+          "score": 179.78,
+          "max_rss_bytes": 81154048.0
+        },
+        "quench": {
+          "score": 58.68,
+          "max_rss_bytes": 51007488.0
+        }
+      },
+      "comparisons": {
+        "bun": {
+          "score": {
+            "quench_median": 58.68,
+            "comparator_median": 190.92,
+            "median_ratio": 0.3182250773257197,
+            "paired_ratio_interval_95": [
+              0.30717282308400695,
+              0.32755479202457183
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x33f1e49d50c5cfcd"
+          },
+          "max_rss": {
+            "quench_median": 51007488.0,
+            "comparator_median": 53600256.0,
+            "median_ratio": 0.9512456059911356,
+            "paired_ratio_interval_95": [
+              0.9420311790525201,
+              0.9568660618176227
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0xe4f0b3089c1b7766"
+          },
+          "qualified": false
+        },
+        "node": {
+          "score": {
+            "quench_median": 58.68,
+            "comparator_median": 179.78,
+            "median_ratio": 0.32247073693465955,
+            "paired_ratio_interval_95": [
+              0.3168760296540362,
+              0.3405558706749858
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0xd9124273d455e824"
+          },
+          "max_rss": {
+            "quench_median": 51007488.0,
+            "comparator_median": 81154048.0,
+            "median_ratio": 0.6283753091404634,
+            "paired_ratio_interval_95": [
+              0.6280512406697599,
+              0.6292498105582218
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x7e01dfa333eb37a3"
+          },
+          "qualified": false
+        }
+      },
+      "qualified": false
+    },
+    "quicksort-wasm": {
+      "input_sha256": "9db1f95f13c3d9817439554e7f851465828d58c136f6988bd39fd854a2afa3ec",
+      "paired_rounds": 11,
+      "raw_rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 617235670,
+              "score": 296.42,
+              "peak_rss_bytes": 46063616
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 458931618,
+              "score": 450.48,
+              "peak_rss_bytes": 77422592
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1302354802,
+              "score": 167.0,
+              "peak_rss_bytes": 45756416
+            }
+          }
+        },
+        {
+          "round": 1,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 469050490,
+              "score": 428.07,
+              "peak_rss_bytes": 46129152
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 465915241,
+              "score": 429.11,
+              "peak_rss_bytes": 77529088
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1229275441,
+              "score": 158.68,
+              "peak_rss_bytes": 45617152
+            }
+          }
+        },
+        {
+          "round": 2,
+          "execution_order": [
+            "node",
+            "quench",
+            "bun"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 587109357,
+              "score": 348.66,
+              "peak_rss_bytes": 46551040
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 531074022,
+              "score": 384.1,
+              "peak_rss_bytes": 77578240
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1238926539,
+              "score": 149.87,
+              "peak_rss_bytes": 46006272
+            }
+          }
+        },
+        {
+          "round": 3,
+          "execution_order": [
+            "quench",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 489289271,
+              "score": 389.13,
+              "peak_rss_bytes": 45928448
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 430844422,
+              "score": 509.76,
+              "peak_rss_bytes": 77750272
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1159732097,
+              "score": 188.19,
+              "peak_rss_bytes": 45985792
+            }
+          }
+        },
+        {
+          "round": 4,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 551813844,
+              "score": 367.96,
+              "peak_rss_bytes": 45879296
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 517412429,
+              "score": 417.05,
+              "peak_rss_bytes": 78241792
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1050606728,
+              "score": 213.14,
+              "peak_rss_bytes": 45740032
+            }
+          }
+        },
+        {
+          "round": 5,
+          "execution_order": [
+            "node",
+            "quench",
+            "bun"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 552662508,
+              "score": 329.17,
+              "peak_rss_bytes": 46026752
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 445891923,
+              "score": 470.89,
+              "peak_rss_bytes": 77631488
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1208893135,
+              "score": 172.69,
+              "peak_rss_bytes": 44937216
+            }
+          }
+        },
+        {
+          "round": 6,
+          "execution_order": [
+            "quench",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 463262568,
+              "score": 436.73,
+              "peak_rss_bytes": 46723072
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 424861530,
+              "score": 517.27,
+              "peak_rss_bytes": 77791232
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1032336751,
+              "score": 201.42,
+              "peak_rss_bytes": 45588480
+            }
+          }
+        },
+        {
+          "round": 7,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 472151918,
+              "score": 422.96,
+              "peak_rss_bytes": 46395392
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 506672784,
+              "score": 411.79,
+              "peak_rss_bytes": 77631488
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1082644264,
+              "score": 194.64,
+              "peak_rss_bytes": 45608960
+            }
+          }
+        },
+        {
+          "round": 8,
+          "execution_order": [
+            "node",
+            "quench",
+            "bun"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 516458551,
+              "score": 357.99,
+              "peak_rss_bytes": 46194688
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 463821634,
+              "score": 424.73,
+              "peak_rss_bytes": 78131200
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1052399941,
+              "score": 198.68,
+              "peak_rss_bytes": 45543424
+            }
+          }
+        },
+        {
+          "round": 9,
+          "execution_order": [
+            "quench",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 625114246,
+              "score": 280.96,
+              "peak_rss_bytes": 46460928
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 503597844,
+              "score": 385.36,
+              "peak_rss_bytes": 77475840
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1135922366,
+              "score": 176.28,
+              "peak_rss_bytes": 45965312
+            }
+          }
+        },
+        {
+          "round": 10,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 599676510,
+              "score": 326.02,
+              "peak_rss_bytes": 45838336
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 452695094,
+              "score": 428.36,
+              "peak_rss_bytes": 77402112
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1259852617,
+              "score": 172.23,
+              "peak_rss_bytes": 45604864
+            }
+          }
+        }
+      ],
+      "engine_medians": {
+        "bun": {
+          "score": 357.99,
+          "max_rss_bytes": 46129152.0
+        },
+        "node": {
+          "score": 428.36,
+          "max_rss_bytes": 77631488.0
+        },
+        "quench": {
+          "score": 176.28,
+          "max_rss_bytes": 45617152.0
+        }
+      },
+      "comparisons": {
+        "bun": {
+          "score": {
+            "quench_median": 176.28,
+            "comparator_median": 357.99,
+            "median_ratio": 0.5246225354679952,
+            "paired_ratio_interval_95": [
+              0.46018536031776053,
+              0.5633897847648607
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x812fc9670575c1d3"
+          },
+          "max_rss": {
+            "quench_median": 45617152.0,
+            "comparator_median": 46129152.0,
+            "median_ratio": 0.9889007281122358,
+            "paired_ratio_interval_95": [
+              0.9830493511079721,
+              0.9949066213921901
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x9bf4e6d7981308ec"
+          },
+          "qualified": false
+        },
+        "node": {
+          "score": {
+            "quench_median": 176.28,
+            "comparator_median": 428.36,
+            "median_ratio": 0.3901848476959125,
+            "paired_ratio_interval_95": [
+              0.36978863228542797,
+              0.4677795305252749
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0xb3fa438b4b8a492e"
+          },
+          "max_rss": {
+            "quench_median": 45617152.0,
+            "comparator_median": 77631488.0,
+            "median_ratio": 0.588387573964497,
+            "paired_ratio_interval_95": [
+              0.584598471364255,
+              0.5914550626909704
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0xca64b5ca0a317e35"
+          },
+          "qualified": false
+        }
+      },
+      "qualified": false
+    }
+  },
+  "qualified": false
+}

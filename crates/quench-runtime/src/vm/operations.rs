@@ -404,7 +404,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         // The string and RegExp methods belong to none of the families below.
-        if native.runs_from_lane() {
+        if native.is_string_regexp_or_math() {
             return self.call_native_table(p, native, this, args);
         }
         if let Some(result) = self.string_html_method(p, native, this, args) {
@@ -1625,6 +1625,23 @@ impl<H: Host> Vm<H> {
         let mut text = self.coerce_js_string(p, left)?;
         text.push_js_string(&self.coerce_js_string(p, right)?);
         Ok(self.intern_dynamic_value(text))
+    }
+
+    /// `+` of two operands that become strings without guest code, Numbers and strings,
+    /// at least one a string: `concatenate`'s result. `None` for any other pair, or a result
+    /// `concatenate` refuses, which leaves the operation to `binary_slow`.
+    pub(super) fn primitive_concatenation(
+        &mut self,
+        p: &ResidualProgram,
+        left: Value,
+        right: Value,
+    ) -> Option<Value> {
+        let (left_string, right_string) = (self.is_string(left), self.is_string(right));
+        let converts = |string: bool, value: Value| string || value.as_number().is_some();
+        if !(left_string || right_string) || !converts(left_string, left) || !converts(right_string, right) {
+            return None;
+        }
+        self.concatenate(p, left, right).ok()
     }
 
     pub(super) fn binary_slow(

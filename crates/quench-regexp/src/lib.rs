@@ -296,7 +296,15 @@ struct CompleteMatcher {
     /// lookbehind or multi-unit classes.
     backtracking: Option<backtrack::Program>,
     /// `required_literal` as bytes, when every unit is ASCII.
-    required_bytes: Option<memchr::memmem::Finder<'static>>,
+    required_bytes: Option<LiteralFinder>,
+}
+
+/// A searcher for a literal byte run. The searcher is several hundred bytes, so it is boxed:
+/// most patterns have no such literal, and theirs need not carry the space.
+pub(crate) type LiteralFinder = Box<memchr::memmem::Finder<'static>>;
+
+pub(crate) fn literal_finder(bytes: &[u8]) -> LiteralFinder {
+    Box::new(memchr::memmem::Finder::new(bytes).into_owned())
 }
 
 impl CompleteMatcher {
@@ -309,7 +317,7 @@ impl CompleteMatcher {
             && required_literal.iter().all(|unit| *unit <= u32::from(ASCII_MAX)))
         .then(|| {
             let bytes = required_literal.iter().map(|unit| *unit as u8).collect::<Vec<_>>();
-            memchr::memmem::Finder::new(&bytes).into_owned()
+            literal_finder(&bytes)
         });
         let tree = OnceCell::new();
         if backtracking.is_none() {
@@ -385,13 +393,14 @@ impl Regex {
         // mode modifiers).  Keep compilation behind a source-shape guard so
         // those patterns use the repository matcher instead of silently
         // changing observable match results.
-        // Since the compiled backtracking matcher (`backtrack::Program`), the automata cost
-        // more than they save: on V8-v7 RegExp (static x86_64, 2026-10-18) leaving them out
-        // takes max RSS from 9544 to 8660 KiB and Score from 869 to 971. They stay available,
-        // as a linear-time bound on backtracking, for embedders that ask for them.
+        // The trunk leaves the automata out for memory (V8-v7 RegExp max RSS 9544 -> 8660
+        // KiB, static x86_64, 2026-10-18). The Score lane (`v2-cloud-c`) keeps them: with
+        // its Score-first collection pacing, paired V8-v7 RegExp runs of one binary score
+        // 1121 without them and 1201 with them (+7.1%, 7/9, max RSS 18.2 -> 20.4 MB, Linux
+        // x86_64, 4 vCPU, 2026-10-18). `QUENCH_DISABLE_COMPILED_REGEXP` leaves them out.
         let backend_enabled = !flags.unicode_sets
             && !flags.unicode
-            && std::env::var_os("QUENCH_COMPILED_REGEXP").is_some();
+            && std::env::var_os("QUENCH_DISABLE_COMPILED_REGEXP").is_none();
         let compiled = (backend_enabled
             && compiled_source_syntax_is_safe(source, NonCapturingGroups::Allowed)
             && compiled_structure_is_safe(&parsed.body))
@@ -914,11 +923,7 @@ impl Subject {
 
     /// Whether this subject spells exactly the ASCII `text`, compared by content.
     pub fn spells_ascii(&self, text: &str) -> bool {
-        match &self.text {
-            SubjectText::Ascii { .. } => self.ascii() == Some(text.as_bytes()),
-            SubjectText::Inline { length, bytes } => bytes[..usize::from(*length)] == *text.as_bytes(),
-            SubjectText::Wide { .. } => false,
-        }
+        self.ascii() == Some(text.as_bytes())
     }
 }
 
@@ -2462,9 +2467,7 @@ fn class_item_matches(item: &ClassItem, value: u32, ignore_case: bool, unicode: 
             // The range matches when one of its members has `value`'s canonical form.
             let key = canonical(value, unicode);
             (canonical(key, unicode) == key && in_range(key))
-                || canonical_preimages(unicode)
-                    .get(&key)
-                    .is_some_and(|members| members.iter().copied().any(in_range))
+                || canonical_preimages_of(key, unicode).any(in_range)
         }
         ClassItem::Escape(escape) => escape_matches(*escape, value, ignore_case, unicode),
         ClassItem::Property {
@@ -3015,21 +3018,33 @@ fn equal(left: u32, right: u32, ignore_case: bool, unicode: bool) -> bool {
     }
 }
 /// For each canonicalization mode, the code points whose canonical form is another code point,
-/// grouped by that form: the inverse of `canonical`, which case-insensitive class ranges need.
-fn canonical_preimages(unicode: bool) -> &'static std::collections::HashMap<u32, Vec<u32>> {
-    static TABLES: [std::sync::OnceLock<std::collections::HashMap<u32, Vec<u32>>>; 2] =
+/// as `(form, member)` pairs ordered by form: the inverse of `canonical`, which
+/// case-insensitive class ranges need. One flat table, not a map of lists, since it is held
+/// for the process's life.
+fn canonical_preimages(unicode: bool) -> &'static [(u32, u32)] {
+    static TABLES: [std::sync::OnceLock<Box<[(u32, u32)]>>; 2] =
         [std::sync::OnceLock::new(), std::sync::OnceLock::new()];
     TABLES[usize::from(unicode)].get_or_init(|| {
         let last = if unicode { u32::from(char::MAX) } else { BMP_MAX };
-        let mut preimages = std::collections::HashMap::<u32, Vec<u32>>::new();
-        for member in 0..=last {
-            let key = canonical(member, unicode);
-            if key != member {
-                preimages.entry(key).or_default().push(member);
-            }
-        }
-        preimages
+        let mut preimages: Vec<(u32, u32)> = (0..=last)
+            .filter_map(|member| {
+                let key = canonical(member, unicode);
+                (key != member).then_some((key, member))
+            })
+            .collect();
+        preimages.sort_unstable();
+        preimages.into_boxed_slice()
     })
+}
+
+/// The code points other than `key` itself whose canonical form is `key`.
+fn canonical_preimages_of(key: u32, unicode: bool) -> impl Iterator<Item = u32> {
+    let table = canonical_preimages(unicode);
+    let first = table.partition_point(|(form, _)| *form < key);
+    table[first..]
+        .iter()
+        .take_while(move |(form, _)| *form == key)
+        .map(|(_, member)| *member)
 }
 
 fn canonical(value: u32, unicode: bool) -> u32 {
