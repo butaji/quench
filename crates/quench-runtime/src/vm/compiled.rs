@@ -262,6 +262,38 @@ struct CallContext {
     reference_call_site_count: usize,
 }
 
+impl CallContext {
+    /// A nested native entry shares the caller's instance and callout state,
+    /// but needs its own stack budget, guard-resume stack pointer and raised
+    /// completion, as a nested `run_compiled` invocation would.
+    fn nested_entry(&self) -> Self {
+        let marker = 0u8;
+        let stack_pointer = std::hint::black_box(&marker as *const u8 as usize);
+        Self {
+            stack_limit: stack_pointer.saturating_sub(COMPILED_STACK_BUDGET),
+            interrupt: self.interrupt,
+            table: self.table,
+            vm: self.vm,
+            env: self.env,
+            entry_stack: 0,
+            guard_start: self.guard_start,
+            guard_end: self.guard_end,
+            globals: self.globals,
+            callout: self.callout,
+            call_reference: self.call_reference,
+            program: self.program,
+            import_callouts: self.import_callouts,
+            reference_callouts: self.reference_callouts,
+            memory: self.memory,
+            memory_length: self.memory_length,
+            raised: None,
+            call_reference_diagnostic: self.call_reference_diagnostic,
+            reference_call_sites: self.reference_call_sites,
+            reference_call_site_count: self.reference_call_site_count,
+        }
+    }
+}
+
 /// An error, or a panic to resume once compiled frames are gone.
 enum Raised {
     Error(JsError),
@@ -433,35 +465,128 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
     // signature index, argument words, and output storage for this call.
     let context = unsafe { &mut *context };
     note_compiled_callout(context.reference_callouts);
-    let vm = unsafe { &mut *context.vm.cast::<Vm<H>>() };
+    let vm_pointer = context.vm.cast::<Vm<H>>();
     let active = ACTIVE_CONTEXT.with(|current| current.replace(std::ptr::null_mut()));
     let program = context.program;
     let mut native_target_hit = false;
+    let mut direct_status = None;
     let called = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let table_slot = usize::try_from(table_slot)
-            .map_err(|_| JsError::validation("invalid Wasm table binding".into()))?;
-        let signature_index = u32::try_from(signature_index)
-            .map_err(|_| JsError::validation("invalid Wasm signature index".into()))?;
-        let table = vm
-            .heap
-            .environment_slot(context.env, table_slot)
-            .ok_or_else(|| JsError::validation("invalid Wasm table binding".into()))?;
-        let callee = vm.wasm_indirect_target(program, table, index, signature_index)?;
-        let (params, result_type) = {
-            let signature = vm
-                .programs
-                .wasm_signatures(program)
-                .and_then(|signatures| signatures.type_signature(signature_index))
-                .ok_or_else(|| JsError::validation("invalid Wasm signature index".into()))?;
+        let (callee, params, result_type, same_program_function, direct_entry) = {
+            // Do all heap/program inspection before entering native code. The
+            // VM is re-entered through callouts, so no `&mut Vm` may live
+            // across that boundary.
+            let vm = unsafe { &mut *vm_pointer };
+            let table_slot = usize::try_from(table_slot)
+                .map_err(|_| JsError::validation("invalid Wasm table binding".into()))?;
+            let signature_index = u32::try_from(signature_index)
+                .map_err(|_| JsError::validation("invalid Wasm signature index".into()))?;
+            let table = vm
+                .heap
+                .environment_slot(context.env, table_slot)
+                .ok_or_else(|| JsError::validation("invalid Wasm table binding".into()))?;
+            let callee = vm.wasm_indirect_target(program, table, index, signature_index)?;
+            let (params, result_type) = {
+                let signature = vm
+                    .programs
+                    .wasm_signatures(program)
+                    .and_then(|signatures| signatures.type_signature(signature_index))
+                    .ok_or_else(|| JsError::validation("invalid Wasm signature index".into()))?;
+                (
+                    signature
+                        .params
+                        .iter()
+                        .copied()
+                        .collect::<smallvec::SmallVec<[crate::WasmType; 8]>>(),
+                    signature.results.first().copied(),
+                )
+            };
+            let same_program_function = match vm.heap.get(callee) {
+                Some(Cell::Function {
+                    kind: crate::heap::FunctionKind::User(target_program, function),
+                    env,
+                    ..
+                }) if *target_program == program => Some((*target_program, *function, *env)),
+                _ => None,
+            };
+            let direct_entry = same_program_function
+                .filter(|(target_program, _, target_env)| {
+                    *target_program == program && *target_env == context.env
+                })
+                .and_then(|(_, function, _)| {
+                    let compiled = vm.programs.compiled(program)??;
+                    let native = compiled.functions.get(function as usize)?.as_ref()?;
+                    if native.params.as_slice() != params.as_slice() || native.result != result_type
+                    {
+                        return None;
+                    }
+                    let entry = native.entry;
+                    let memory = match compiled.memory_slot {
+                        None => Some((0, 0)),
+                        Some(slot) => {
+                            let binding = vm.heap.environment_slot(context.env, slot as usize)?;
+                            if binding != context.memory {
+                                return None;
+                            }
+                            let (base, length) =
+                                super::dispatch_fast::unshared_memory(vm, binding)?;
+                            let guard = guarded_memory(vm, binding);
+                            if compiled.guarded && guard.is_none()
+                                || compiled.wraps && !wrapping_memory(vm, binding)
+                                || compiled.fixed_base.is_some_and(|fixed| {
+                                    guard.map(|(base, _)| displacement_base(base))
+                                        != Some(Some(fixed))
+                                })
+                            {
+                                return None;
+                            }
+                            Some((base as u64, length as u64))
+                        }
+                    }?;
+                    Some((compiled, function as usize, entry, memory))
+                });
             (
-                signature
-                    .params
-                    .iter()
-                    .copied()
-                    .collect::<smallvec::SmallVec<[crate::WasmType; 8]>>(),
-                signature.results.first().copied(),
+                callee,
+                params,
+                result_type,
+                same_program_function,
+                direct_entry,
             )
         };
+        if let Some((compiled, function, entry, (base, length))) = direct_entry {
+            compiled.note_direct_reference_entry(function);
+            let mut nested = context.nested_entry();
+            nested.memory_length = length;
+            // SAFETY: the table/signature resolver ran first; same program,
+            // exact instance environment, and exact scalar signature were
+            // checked above. The caller's raw argument/result buffers have
+            // the Wasm ABI shape expected by this compiled entry, and `compiled`
+            // keeps its executable mapping alive for the duration of the call.
+            native_target_hit = true;
+            let status = match guard_trampoline() {
+                Some(trampoline) => {
+                    let outer = ACTIVE_CONTEXT.with(|active| active.replace(&mut nested));
+                    let status = unsafe { trampoline(&mut nested, base, length, args, out, entry) };
+                    ACTIVE_CONTEXT.with(|active| active.set(outer));
+                    status
+                }
+                None => unsafe { entry(&mut nested, base, length, args, out) },
+            };
+            if status == RAISED_STATUS as u32 {
+                match nested.raised.take() {
+                    Some(Raised::Error(error)) => return Err(error),
+                    Some(Raised::Panic(panic)) => std::panic::resume_unwind(panic),
+                    None => {
+                        return Err(JsError::validation(
+                            "compiled indirect callee raised without an error".into(),
+                        ));
+                    }
+                }
+            }
+            direct_status = Some(status);
+            return Ok(());
+        }
+
+        let vm = unsafe { &mut *vm_pointer };
         let mut values: smallvec::SmallVec<[Value; 8]> = smallvec::SmallVec::new();
         for (offset, ty) in params.iter().enumerate() {
             let kind = Kind::of(*ty)
@@ -476,14 +601,6 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
                 },
             )));
         }
-        let same_program_function = match vm.heap.get(callee) {
-            Some(Cell::Function {
-                kind: crate::heap::FunctionKind::User(target_program, function),
-                env,
-                ..
-            }) if *target_program == program => Some((*target_program, *function, *env)),
-            _ => None,
-        };
         let compiled_result = same_program_function.and_then(|(target_program, function, env)| {
             vm.run_compiled(target_program, env, function, &values)
         });
@@ -524,8 +641,9 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
     if DIAGNOSTICS {
         note_reference_call_site(context, site, native_target_hit);
     }
+    let vm = unsafe { &mut *vm_pointer };
     refresh_memory_length(context, vm);
-    finish_callout(context, called)
+    direct_status.map_or_else(|| finish_callout(context, called), i64::from)
 }
 
 /// Make imported call `function` for compiled code, as the interpreter's
@@ -565,6 +683,8 @@ pub(super) struct CompiledFunction {
     result: Option<crate::WasmType>,
     #[cfg(test)]
     native_entries: std::cell::Cell<u64>,
+    #[cfg(test)]
+    direct_reference_entries: std::cell::Cell<u64>,
 }
 
 /// A program's compiled functions, sharing one code mapping and one call
@@ -671,6 +791,30 @@ fn jit_diagnostics_enabled() -> bool {
 }
 
 impl CompiledProgram {
+    fn note_direct_reference_entry(&self, function: usize) {
+        self.note_native_entry(function);
+        #[cfg(test)]
+        if let Some(Some(function)) = self.functions.get(function) {
+            function
+                .direct_reference_entries
+                .set(function.direct_reference_entries.get().saturating_add(1));
+        }
+    }
+
+    fn note_native_entry(&self, function: usize) {
+        if let Some(stats) = &self.diagnostics
+            && let Some(entries) = stats.native_entry_requests.get(function)
+        {
+            entries.set(entries.get().saturating_add(1));
+        }
+        #[cfg(test)]
+        if let Some(Some(function)) = self.functions.get(function) {
+            function
+                .native_entries
+                .set(function.native_entries.get().saturating_add(1));
+        }
+    }
+
     pub(super) fn has_function(&self, function: usize) -> bool {
         self.functions.get(function).is_some_and(Option::is_some)
     }
@@ -713,6 +857,14 @@ impl CompiledProgram {
             .get(function)?
             .as_ref()
             .map(|function| function.native_entries.get())
+    }
+
+    #[cfg(test)]
+    pub(super) fn direct_reference_entries(&self, function: usize) -> Option<u64> {
+        self.functions
+            .get(function)?
+            .as_ref()
+            .map(|function| function.direct_reference_entries.get())
     }
 }
 
@@ -3869,6 +4021,8 @@ impl<H: Host> Vm<H> {
                     result: plan.result,
                     #[cfg(test)]
                     native_entries: std::cell::Cell::new(0),
+                    #[cfg(test)]
+                    direct_reference_entries: std::cell::Cell::new(0),
                 })
             })
             .collect();
@@ -4085,19 +4239,11 @@ impl<H: Host> Vm<H> {
                     .map_or(0, |stats| stats.reference_call_sites.len()),
             };
             let mut out = 0u64;
-            if let Some(stats) = &compiled.diagnostics
-                && let Some(entries) = stats.native_entry_requests.get(id as usize)
-            {
-                entries.set(entries.get().saturating_add(1));
-            }
-            #[cfg(test)]
-            function
-                .native_entries
-                .set(function.native_entries.get().saturating_add(1));
+            compiled.note_native_entry(id as usize);
             let status = match guard_trampoline() {
                 Some(trampoline) => {
-                    // Compiled calls nest only through the interpreter, so the
-                    // outer context returns when this call does.
+                    // The trampoline gives this entry its own resumable stack
+                    // point, including when a compiled indirect call nests it.
                     let outer = ACTIVE_CONTEXT.with(|active| active.replace(&mut context));
                     // SAFETY: as below; the trampoline saves the caller's registers
                     // and records where a guard fault resumes.
