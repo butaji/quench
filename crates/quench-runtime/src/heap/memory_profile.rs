@@ -591,9 +591,9 @@ fn cell_bytes(cell: &Cell) -> usize {
             Cell::String(value) => value.capacity(),
             Cell::BigInt(value) => crate::bigint::magnitude_bytes(value),
             Cell::Error(value) => value.capacity(),
-            Cell::Promise { record, .. } => {
-                size_of::<super::PromiseRecord>()
-                    + record.reactions.capacity() * size_of::<super::PromiseReaction>()
+            Cell::Promise(promise) => {
+                size_of::<super::PromiseCell>()
+                    + promise.record.reactions.capacity() * size_of::<super::PromiseReaction>()
             }
             Cell::Symbol(value) => value.as_ref().map_or(0, |description| description.len()),
             Cell::Date { .. } => 0,
