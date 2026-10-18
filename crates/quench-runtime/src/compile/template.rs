@@ -144,8 +144,14 @@ impl FunctionCompiler<'_, '_> {
         let mut result = self.literal(super::string::template_constant(&first.value));
         for (index, expression) in template.expressions.iter().enumerate() {
             let expression_value = self.expression(expression);
-            let expression_string =
-                self.call_template_intrinsic("\0quench:to-string", &[expression_value]);
+            let expression_string = self.reg();
+            self.emit(
+                Op::Unary,
+                expression_string,
+                expression_value,
+                0,
+                crate::bytecode::UNARY_TO_STRING,
+            );
             result = self.emit_binary(
                 BinaryOperator::Addition as u32,
                 Operand::register(result),

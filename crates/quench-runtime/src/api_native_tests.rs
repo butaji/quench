@@ -1896,3 +1896,44 @@ fn host_private_symbols_preserve_explicit_access_and_bypass_public_object_protoc
         runtime.execute(&program).unwrap();
     }
 }
+
+#[derive(Default)]
+struct IdentityHost;
+
+impl Host for IdentityHost {
+    fn write_line(&mut self, _: &str) {}
+    fn clock_millis(&mut self) -> f64 {
+        0.0
+    }
+    fn functions(&self) -> &[HostFunction<Self>] {
+        crate::host_functions![method "identity" (1) => identity]
+    }
+    fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
+        let operation = context.host_function(HostFunctionId(0))?;
+        let global = context.global_root()?;
+        let key = context.string_rooted("identity");
+        assert!(context.set_property_rooted(global, key, operation, global)?);
+        Ok(())
+    }
+}
+
+fn identity(
+    context: &mut NativeContext<'_, IdentityHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    Ok(args.first().copied().unwrap_or_else(|| context.undefined()))
+}
+
+#[test]
+fn native_calls_reuse_root_lists_instead_of_accumulating_them() {
+    let mut runtime = Runtime::new(IdentityHost);
+    let program = Engine::specialize(
+        "for (let i = 0; i < 1000; i++) identity(i, [i]);",
+        "native-root-lists.js",
+    )
+    .unwrap();
+    runtime.execute(&program).unwrap();
+    let pooled = runtime.vm.native_root_lists.len();
+    assert!(pooled <= 1, "{pooled} root lists pooled after sequential native calls");
+}

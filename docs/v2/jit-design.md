@@ -16,7 +16,9 @@ The first memory risk is the granularity of code ownership: compiling all eligib
 
 Current engines use tiers because compilation speed, warm-up cost, code quality and code size pull in different directions. V8's Sparkplug emits a baseline from bytecode, Maglev is a faster mid-tier, and its top tier spends more work on hot code; V8 also scales interrupt budgets using invocation count and bytecode length. JavaScriptCore keeps bytecode as the source of truth and tracks execution counts, including loop backedges, before tier-up. These mechanisms support size-aware, workload-sensitive admission, but their numeric thresholds should not be copied into Quench. The inference for Quench is to add one small native tier first and measure its compile cost and code bytes before adding a second optimizing tier. [V8 Maglev](https://v8.dev/blog/maglev), [V8 tiering manager](https://chromium.googlesource.com/v8/v8/+/HEAD/src/execution/tiering-manager.cc), [JavaScriptCore speculation and tier-up](https://webkit.org/blog/10308/speculation-in-javascriptcore/), [JavaScriptCore bytecode format](https://webkit.org/blog/9329/a-new-bytecode-format-for-javascriptcore/), [SpiderMonkey optimization tiers](https://d2r03xnqvbcxrv.cloudfront.net/js/how-we-optimize.html)
 
-Futamura's first projection specializes an interpreter for a fixed program. Quench already has the useful static input: validated residual bytecode with fixed opcodes, operands, branch layout, constants and function boundaries. Lower that residual form to Cranelift, so native execution removes opcode dispatch, operand decoding and the generic register file where the function proves those facts. This is the practical projection; a general self-applicable partial evaluator or compiler generator is outside the goal. Dynamic JavaScript values remain dynamic: emit a guard only when it proves a fast representation, and use the same semantic slow path or resume the interpreter when it fails. [Futamura's paper](https://www.jstage.jst.go.jp/article/jssst/21/5/21_5_343/_article/-char/en), [practical partial evaluation for dynamic-language runtimes](https://dl.acm.org/doi/10.1145/3062341.3062381)
+For Wasm, V8's Liftoff and JavaScriptCore's BBQ show the same split more clearly: a fast baseline compiler generates code on demand, while TurboFan or OMG recompiles selected hot functions with more expensive optimization. V8 describes Liftoff as a one-pass compiler and delays top-tier work until functions heat up; WebKit reports BBQ compiles around four times faster than OMG while producing code roughly twice as slow. These are design points, not target ratios for Quench. Quench currently compiles its supported Wasm functions together when first entering the module, so a future lazy per-function tier can reduce work on cold code; the earlier root-closure screen did not improve RSS or score, so that direction still needs stronger admission and code-lifetime evidence. [V8 Wasm compilation pipeline](https://v8.dev/docs/wasm-compilation-pipeline), [WebKit BBQ and OMG](https://webkit.org/blog/7691/webassembly/)
+
+Futamura's first projection specializes an interpreter for a fixed program. Quench already has the useful static input: validated residual bytecode with fixed opcodes, operands, branch layout, constants and function boundaries. Lower that residual form to Cranelift, so native execution removes opcode dispatch, operand decoding and the generic register file where the function proves those facts. This is the practical projection; a general self-applicable partial evaluator or compiler generator is outside the goal. Dynamic JavaScript values remain dynamic: emit a guard only when it proves a fast representation, and use the same semantic slow path or resume the interpreter when it fails. [Futamura's paper](https://www.jstage.jst.go.jp/article/jssst/21/5/21_5_343/_article/-char/en), [Ershov on mixed computation](https://doi.org/10.1016/0304-3975(82)90111-6), [practical partial evaluation for dynamic-language runtimes](https://dl.acm.org/doi/10.1145/3062341.3062381)
 
 Ershov/Sethi-Ullman numbering estimates the register demand of expression trees and schedules the higher-demand child first. Use it to order tree-local evaluation or short straight-line expression regions when the values are unboxed. Do not use the tree number as a whole-function allocation strategy: JavaScript control flow has joins, loops, calls and deoptimization edges. Lower those to Cranelift's SSA graph and let its allocator handle live ranges and spills. [Optimal code generation for expression trees](https://doi.org/10.1145/800116.803770)
 
@@ -50,3 +52,182 @@ Tier metadata is sparse and capped at 256 functions per VM. At most eight functi
 The default PATH has Node 24.19.0. The Linux screen used Node 26.10.0 and Bun 1.4.2 from `.local/bench-runtimes`; the M4 comparison is unavailable in this host. The Node 26 build of Quench is 26.12.0. Full JIT qualification still requires the whole suite on both Linux and M4.
 
 The clean-source Linux Web-SSR screen for source revision `4237e8e39` used 11 valid rounds per Quench mode and JIT-enabled Node/Bun (Node 26.10.0, Bun 1.4.2). Quench JIT's median Score was 14.70 versus Bun 129.34 and Node 119.96. Paired median log-score ratios were 0.114 (95% bootstrap interval 0.110–0.119) and 0.122 (0.116–0.133). Quench JIT's median peak RSS was 124.82 MiB versus Bun 232.77 MiB and Node 214.88 MiB; paired RSS ratios were 0.536 (0.522–0.550) and 0.580 (0.576–0.626). Against the same source in interpreted mode, the independent median Score ratio was 0.970 (95% interval 0.929–1.034), which includes a tie; the peak-RSS ratio was 1.002 (0.998–1.007), also including a tie. Quench remains about 8.8× below Bun and 8.2× below Node on score, while peak RSS is lower by 46% and 42%, respectively. This is not a score win or qualification: one of 30 fixtures ran and M4 is unavailable. Benchmark provenance records Quench's `--jit` selection rather than native-entry counts; the targeted runtime test confirms actual native entries for the supported string-return shape. The exact raw reports and 100,000-replicate paired/independent bootstrap summary are under `evidence/jit-jetstream3-2026-10-17/web-ssr-sequential-profile-gate/`. The report's `host.rustc` field is empty because rustc was not on the benchmark shell PATH; the build used rustc 1.99.1. The no-JIT JetStream lane control tracked by Linear TOD-121 remains separate.
+
+The no-JIT audit found no V8-v7 or JavaScript JetStream fixture where Quench beat every measured peer on both Score and peak RSS. Five JetStream Wasm fixtures did beat Bun with JIT disabled on both metrics in 11-round Linux measurements; Node `--jitless` does not expose WebAssembly. I screened those five with Cranelift JIT enabled against JIT-enabled Bun 1.4.2 and Node 26.10.0 on the same Linux host. Every fixture validated and produced equal output, but the following root-closure experiment was one round per fixture and is diagnostic only:
+
+| Wasm fixture | Quench no-JIT vs Bun no-JIT (Score / RSS MiB, 11 rounds) | Quench JIT (Score / RSS MiB, 1 round) | Bun JIT | Node JIT | Screen result |
+| --- | ---: | ---: | ---: | ---: | --- |
+| HashSet | 21.96 / 35.2 vs 5.90 / 42.1 | 12.27 / 91.0 | 210.92 / 53.8 | 228.02 / 127.0 | loses score to both; RSS only beats Node |
+| gcc-loops | 17.69 / 37.2 vs 4.00 / 42.9 | 47.24 / 46.8 | 164.42 / 53.4 | 174.19 / 91.8 | beats both RSS bars, loses both scores |
+| quicksort | 40.51 / 27.0 vs 12.98 / 40.2 | 146.76 / 41.8 | 235.95 / 45.6 | 376.42 / 88.4 | beats both RSS bars, loses both scores |
+| tsf | 12.07 / 52.4 vs 5.47 / 52.6 | 6.81 / 224.8 | 184.09 / 137.5 | 193.58 / 145.2 | loses both metrics to both peers |
+| zlib | 18.08 / 34.5 vs 6.24 / 46.5 | 9.31 / 112.6 | 80.08 / 98.0 | 81.74 / 111.4 | loses score to both and RSS to both |
+
+The experiment compiled only the direct-call closure of each requested root, rebuilding the shared code mapping when later roots appeared. It did not lower peak RSS and its scores did not beat either JIT peer, so the runtime change was removed rather than retained as a regression. The native-entry test remains and asserts that an eligible first Wasm call actually enters compiled code. Raw reports and the exact one-round command are in `evidence/jit-jetstream3-wasm-2026-10-17/root-closure-screen/`.
+
+The follow-up adds opt-in `--jit-diagnostics` reports for JetStream Wasm. The counters record compiled and interpreted function entries, compile time, emitted and mapped code bytes, and compiled-to-VM callouts; diagnostic runs are excluded from qualification. Compiled Wasm `CallKnown` instructions now stay on the fast lane when their target is unsupported, so an interpreted caller can still enter an eligible native callee. The regression test covers an interpreted root, an interpreted fallback function, and a native leaf. The five latest one-round, uninstrumented screens remain below both JIT peers on Score. They beat one or both peers on RSS in four cases; TSF loses on RSS to both. The emitted code maps are only 8–164 KiB while process peak RSS ranges from 41.5 to 224.5 MiB, so executable mapping size alone does not explain the memory gap. Native-entry and fallback counts, raw reports, and reproduction commands are in `evidence/jit-jetstream3-wasm-2026-10-17/fastlane-screens/README.md`. The data point to hot functions outside the current compiled subset and to compile-time/transient memory as the next profiling targets; this iteration does not meet the score-win goal.
+
+## Clean five-case JIT comparison
+
+After adding fused indirect-call handling, same-pool signature identity checks, and allocation-free common call signatures, I ran the five Wasm fixtures that had beaten Bun with JIT off on Score and peak RSS for 11 matched rounds. The source tree and pinned JetStream checkout were clean; each fixture passed stock validation, produced equal outputs, and carried an input hash. The runner's source-to-fixture mapping handles Wasm module directories, and subset checkpoints bind to the exact fixture list. The production report and paired bootstrap analysis are preserved in `evidence/jit-jetstream3-wasm-2026-10-18/qualification/`.
+
+The ratios below compare Quench JIT with each JIT-enabled peer. They are paired median log-ratios with 95% bootstrap intervals; a score ratio above 1 favors Quench, and an RSS ratio below 1 favors Quench.
+
+| Fixture | Quench median Score / RSS MiB | Score vs Bun | RSS vs Bun | Score vs Node | RSS vs Node |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| HashSet | 29.62 / 113.1 | 0.147 [0.141, 0.154] | 2.035 [2.019, 2.041] | 0.128 [0.118, 0.141] | 0.892 [0.891, 0.893] |
+| gcc-loops | 70.96 / 48.1 | 0.414 [0.384, 0.429] | 0.856 [0.847, 0.866] | 0.400 [0.361, 0.410] | 0.524 [0.524, 0.525] |
+| quicksort | 209.84 / 42.0 | 0.605 [0.554, 0.715] | 0.863 [0.860, 0.867] | 0.497 [0.476, 0.538] | 0.476 [0.475, 0.476] |
+| tsf | 13.38 / 224.8 | 0.068 [0.062, 0.072] | 1.677 [1.611, 1.692] | 0.071 [0.067, 0.073] | 1.614 [1.547, 1.631] |
+| zlib | 13.62 / 112.9 | 0.156 [0.151, 0.162] | 1.126 [1.116, 1.134] | 0.154 [0.151, 0.158] | 1.018 [0.998, 1.021] |
+
+No case wins both metrics against either peer. gcc-loops and quicksort are the only cases that beat both RSS bars; both still lose Score decisively. HashSet's two hot `HashTable::add` functions do enter native code (9.49M and 39.53M entries in the separate diagnostics), yet its Score is 0.147 of Bun's. Quicksort runs native code with no VM callouts in its hot sorting function but reaches only 0.605 of Bun's Score, which points to native code quality or runtime overhead rather than interpreter dispatch alone. The earlier TSF combined counter recorded 2,816,456 compiled-to-VM callouts and 224.8 MiB RSS; reducing those boundaries and attributing non-code RSS are higher-value next steps than broadening the eager supported-opcode set. The attempted broad `unreachable` lowering illustrates the admission risk: it expanded TSF from 156 to 244 compiled functions and code from 178 KiB to 9.2 MiB, while the one-round score fell and RSS rose. That change was reverted. These data keep the requested JIT score-and-RSS goal open; they do not support a win claim.
+
+## Same-program indirect-callee fast path
+
+Revision `744f2f9c9` extends the fused Wasm reference-call helper to invoke an eligible same-program target through `run_compiled` directly. Table bounds, nullability, and canonical signature checks still run first; the target's own instance environment is used, and a missing compiled entry falls back to the ordinary VM call path. The regression test verifies a native caller invokes a nine-parameter native callee and returns the same result. The focused Wasm tests and full runtime suite pass (701 unit tests, 18 integration tests).
+
+The five-case clean 11-round report for this revision is in `evidence/jit-jetstream3-wasm-2026-10-18/indirect-call-followup/`. It is complete and qualification-ready, but no score interval reaches parity with Bun or Node, and no case wins both Score and RSS against either peer:
+
+| Fixture | Quench median Score / RSS MiB | Score vs Bun | RSS vs Bun | Score vs Node | RSS vs Node |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| HashSet | 30.69 / 113.1 | 0.157 [0.153, 0.174] | 2.028 [2.014, 2.034] | 0.144 [0.137, 0.157] | 0.891 [0.891, 0.892] |
+| gcc-loops | 71.94 / 47.9 | 0.417 [0.398, 0.455] | 0.859 [0.847, 0.870] | 0.409 [0.379, 0.443] | 0.522 [0.521, 0.523] |
+| quicksort | 184.60 / 41.7 | 0.590 [0.539, 0.607] | 0.853 [0.851, 0.859] | 0.455 [0.391, 0.466] | 0.473 [0.472, 0.473] |
+| tsf | 14.28 / 224.6 | 0.074 [0.073, 0.079] | 1.670 [1.650, 1.703] | 0.074 [0.072, 0.079] | 1.542 [1.532, 1.546] |
+| zlib | 13.47 / 112.6 | 0.157 [0.148, 0.160] | 1.124 [1.121, 1.133] | 0.155 [0.149, 0.160] | 1.011 [0.992, 1.018] |
+
+gcc-loops and quicksort still beat both RSS bars but remain well below both score bars. HashSet beats Node on RSS only; zlib's Node RSS interval includes parity. This fast path reduces interpreter activation for eligible indirect targets, but the reference-call boundary still enters the VM and does not explain TSF's full score gap. The full candidate result did not change the performance conclusion: native-callout attribution and hot generated-code quality remain the next targets.
+
+## TSF callout attribution
+
+The diagnostic counter was split into imported-function callouts and
+reference/table callouts, retaining the old aggregate as their saturating sum.
+A clean-source one-round TSF diagnostic on revision `adf1b4077464f2b6932d2142a24c36da7cb6336a`
+reports 27,006 import callouts and 2,869,000 reference callouts, for a total
+of 2,896,006. About 99.1% of these boundaries are table/reference calls. The
+run also compiled 156/244 functions, emitted 177,800 bytes, mapped 180,224
+bytes, and reported 137.0 ms compilation time. This is a call-count screen,
+not timing evidence: diagnostics add overhead and the report has one round.
+The signature parameter copy already uses an inline `SmallVec` for up to eight
+types, so a repeated heap clone is not the current bottleneck. The split
+counter distinguishes reference/table calls from statically imported calls,
+but does not show which reference calls enter compiled callees versus VM
+fallback. Raw diagnostic data and reproduction details are in
+`evidence/jit-jetstream3-wasm-2026-10-18/callout-attribution/`.
+
+## Deferred indirect-call fallback lookups
+
+Commit `ba75d8978` moved residual-program and void-receiver lookup into the
+`call_value` fallback branch of `reference_callout`, so a compiled same-program
+target avoids those two unused lookups and an `Rc` clone per call. A new test
+covers a compiled zero-argument indirect callee with no result. The full runtime
+suite passes (702 unit and 18 integration tests).
+
+The clean-source 11-round follow-up is preserved in
+`evidence/jit-jetstream3-wasm-2026-10-18/indirect-call-fallback-cleanup/`.
+Every fixture validated and produced equal output, but no Score ratio reached
+parity with Bun or Node:
+
+| Fixture | Quench Score / RSS MiB | Score vs Bun | RSS vs Bun | Score vs Node | RSS vs Node |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| HashSet | 32.51 / 113.2 | 0.153 [0.148, 0.172] | 2.033 [2.026, 2.045] | 0.133 [0.125, 0.134] | 0.892 [0.892, 0.893] |
+| gcc-loops | 71.53 / 48.1 | 0.398 [0.384, 0.415] | 0.853 [0.847, 0.867] | 0.391 [0.367, 0.425] | 0.524 [0.522, 0.526] |
+| quicksort | 189.91 / 41.9 | 0.549 [0.526, 0.601] | 0.860 [0.858, 0.862] | 0.481 [0.432, 0.509] | 0.475 [0.474, 0.475] |
+| tsf | 14.41 / 224.7 | 0.070 [0.066, 0.080] | 1.689 [1.624, 1.695] | 0.072 [0.072, 0.074] | 1.552 [1.536, 1.626] |
+| zlib | 13.38 / 112.8 | 0.155 [0.150, 0.160] | 1.125 [1.117, 1.129] | 0.157 [0.146, 0.161] | 0.996 [0.992, 1.015] |
+
+gcc-loops and quicksort beat both RSS bars but remain far below both score
+bars; HashSet beats Node on RSS only; TSF loses on both metrics; zlib's Node
+RSS interval contains parity. This keeps the requested JIT score-and-RSS goal
+open. The direct same-instance native-entry path now bypasses argument boxing
+and nested `run_compiled` setup while retaining table bounds, null, signature,
+memory-guard, and cross-instance checks. Targeted correctness tests prove the
+shortcut runs for same-instance calls and stays on fallback for a foreign
+instance; clean benchmark qualification is pending.
+
+The remaining design work follows a staged-specialization path: keep validated
+Wasm and residual JS bytecode as the static input, specialize only hot
+operations and call sites whose guards pay for compilation, and make fallback
+an explicit continuation into the existing VM. This is the practical first
+Futamura projection rather than a general-purpose self-applicable partial
+evaluator. V8's official Wasm pipeline likewise separates fast baseline
+compilation from selective top-tier compilation, while the Deegen paper's
+single semantics source and Copy-and-Patch baseline suggest a later route to
+lower compile cost if measurements show compiler allocation is still the RSS
+driver. These sources motivate tiering and specialization; they do not predict
+Quench's benchmark outcome. [V8 Wasm compilation pipeline](https://v8.dev/docs/wasm-compilation-pipeline), [Deegen paper](https://arxiv.org/abs/2411.11469), [Futamura's partial-evaluation paper](https://www.jstage.jst.go.jp/article/jssst/21/5/21_5_343/_article/-char/en).
+
+## Per-site TSF indirect-call attribution
+
+An opt-in diagnostic ABI records each compiled indirect call site's total,
+same-program native-target hits, and VM fallback/trap resolutions. The ordinary
+JIT ABI and generated call path remain unchanged, and the diagnostic report is
+excluded from qualification. A one-round TSF diagnostic reports 2,869,000
+reference calls: 2,859,000 (99.65%) reached same-program compiled functions,
+while 10,000 used VM fallback/trap handling. The hottest site is runtime
+function 221 at PC 63 (`read` in the pinned TSF symbols), with 2,663,108 native
+target hits and no fallback. The complete report and source/binary hashes are in
+`evidence/jit-jetstream3-wasm-2026-10-18/site-attribution/README.md`.
+
+This confirms a high-volume VM transition even when both caller and target are
+compiled. Commit `3399bb547` calls the existing fixed native entry directly
+for same-program, same-instance targets using raw Wasm words. Table bounds,
+null, signature, memory-guard, and cross-instance checks stay in the VM; other
+targets retain the existing fallback. The tests prove direct entry, guard-trap
+propagation, nested raised-error propagation, and foreign-instance fallback.
+
+The clean five-case follow-up used 11 matched rounds on Node v26.12.0 and Bun
+1.4.3. It is preserved in
+`evidence/jit-jetstream3-wasm-2026-10-18/direct-entry/`. All fixtures validated
+and produced equal output, but no fixture passed the Score-and-RSS rule:
+
+| Fixture | Quench Score / RSS MiB | Score vs Bun | RSS vs Bun | Score vs Node | RSS vs Node |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| HashSet | 32.21 / 112.87 | 0.157 [0.147, 0.167] | 2.289 [2.278, 2.300] | 0.136 [0.134, 0.141] | 1.065 [1.064, 1.065] |
+| gcc-loops | 72.94 / 47.68 | 0.422 [0.404, 0.446] | 0.981 [0.957, 0.984] | 0.398 [0.384, 0.420] | 0.669 [0.669, 0.672] |
+| quicksort | 206.68 / 41.46 | 0.604 [0.501, 0.686] | 0.985 [0.978, 0.987] | 0.473 [0.455, 0.533] | 0.608 [0.605, 0.608] |
+| TSF | 14.73 / 224.47 | 0.076 [0.069, 0.079] | 1.881 [1.838, 1.890] | 0.077 [0.074, 0.080] | 1.883 [1.783, 1.903] |
+| zlib | 13.65 / 112.55 | 0.154 [0.150, 0.155] | 1.031 [1.029, 1.032] | 0.159 [0.152, 0.165] | 1.224 [1.194, 1.232] |
+
+gcc-loops and quicksort retain their RSS wins but remain far behind on Score.
+The direct-entry optimization does not materially close the TSF score or RSS
+gap. The next target is HashSet's interpreted `main`: its compiled callees
+receive 49 million `CallKnown` entries across the benchmark. The bounded root
+compilation screen below tests that caller path; `WasmUnreachable` remains
+opt-in because the prior global experiment expanded TSF code about 52× and
+increased both compile time and RSS.
+
+## Bounded HashSet root compilation
+
+Commit `ea7c76c6c327f76f18376b75ab278c22ce7c585e` adds an explicitly selected,
+bounded Wasm root mode. It compiles the transitive `CallKnown` closure for the
+requested residual function and permits `WasmUnreachable` only in that mode,
+lowering it to the ordinary Wasm trap. Known callees outside the native plan
+use the existing VM callout and may re-enter another compiled function. The
+callout converts defined-local IDs to absolute Wasm function indices; a
+regression covers an imported function before the defined root. Multi-result
+fallbacks are rejected because the current callout ABI returns at most one
+value. The direct-entry raw argument path also marshals directly from the
+caller register window into owned Wasm words before native entry.
+
+The root mode has limits of 32 selected functions, 80,000 bytecodes per
+function, and 2 MiB emitted code. It is opt-in with
+`--jit-wasm-root <residual-function-id>` and never marks a report eligible for
+qualification. The one-round HashSet diagnostic confirms root 3 entered native
+code (50 times); functions 22 and 23 also entered. It compiled 22 of 35
+functions, emitted 1.30 MiB (1,357,938 bytes) of code, and took 1.28 seconds
+to compile.
+
+The clean, uninstrumented one-round screen is in
+`evidence/jit-jetstream3-wasm-2026-10-18/root3-bounded-experiment/`. It passed
+validation and output equality, but measured Quench at 54.45 Score / 305.3 MiB
+RSS, Bun 1.4.3 at 207.01 / 50.6 MiB, and Node 26.12.0 at 202.50 / 110.9 MiB.
+The score rises relative to the earlier HashSet JIT result, but this is an
+unpaired one-round screen; the RSS cost grows by about 190 MiB, consistent with
+a large compilation-footprint cost. It loses both metrics against both peers,
+so it was not expanded to 11 rounds. This Futamura-style specialization is
+useful for pinpointing the hot caller, but this Cranelift admission strategy is
+not suitable for the requested score-and-RSS win. Lower-memory baseline code
+generation or reducing Quench's JIT-mode base footprint is the next research
+direction.

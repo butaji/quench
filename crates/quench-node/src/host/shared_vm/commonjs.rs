@@ -16,14 +16,26 @@ fn is_bare_specifier(specifier: &str) -> bool {
     !specifier.starts_with('.') && !Path::new(specifier).is_absolute()
 }
 
+/// The require resolver: each ancestor's `node_modules`, then Node's global paths.
 pub(super) fn commonjs_resolver() -> oxc_resolver::Resolver {
+    let modules = std::iter::once(NODE_MODULES.to_owned())
+        .chain(
+            crate::modules::module_shared_vm::global_paths()
+                .iter()
+                .map(|path| path.to_string_lossy().into_owned()),
+        )
+        .collect();
     oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
         extensions: vec![".js".into(), ".json".into(), ".node".into()],
         main_files: vec!["index".into()],
         condition_names: vec!["node".into(), "require".into(), "default".into()],
+        modules,
         ..Default::default()
     })
 }
+
+/// The directory each ancestor of a requester searches for packages.
+const NODE_MODULES: &str = "node_modules";
 
 /// An existing explicit filesystem target needs no package or extension search.
 /// URL delimiters and percent escapes stay with the full resolver.
@@ -968,6 +980,7 @@ pub(super) fn require_node_library(
     require(context, receiver, args)
 }
 
+/// `require.resolve(request, options)`: `Module._resolveFilename(request, module, false, options)`.
 pub(super) fn resolve(
     context: &mut Context<'_>,
     _: RootId,
@@ -975,7 +988,91 @@ pub(super) fn resolve(
 ) -> Result<RootId, RootedError> {
     let specifier = specifier(context, args, Request::Resolve)?;
     let parent = context.host_function_data()?;
-    resolve_request(context, &specifier, parent)
+    let lookup = lookup_paths(context, args.get(1).copied())?;
+    resolve_request(context, &specifier, parent, lookup.as_deref())
+}
+
+/// `require.resolve.paths(request)`: `Module._resolveLookupPaths(request, module)`. A builtin
+/// has none; a relative request resolves from its parent's directory; any other searches the
+/// parent's `node_modules` chain, then the global paths.
+pub(super) fn resolve_paths(
+    context: &mut Context<'_>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let specifier = specifier(context, args, Request::Resolve)?;
+    if requested_builtin(context, &specifier).is_some() {
+        return Ok(context.null());
+    }
+    let parent = context.host_function_data()?;
+    let filename = get(context, parent, "filename")?;
+    let filename = context.string_text(filename)?;
+    let paths: Vec<String> = if is_relative_request(&specifier) {
+        let directory = filename
+            .as_deref()
+            .and_then(|filename| Path::new(filename).parent())
+            .map_or_else(|| ".".to_owned(), |directory| directory.to_string_lossy().into_owned());
+        vec![directory]
+    } else {
+        let parent_paths = get(context, parent, "paths")?;
+        let mut paths = Vec::new();
+        if context.is_array_rooted(parent_paths)? {
+            let length = get(context, parent_paths, "length")?;
+            for index in 0..context.to_number(length)? as usize {
+                let path = get(context, parent_paths, &index.to_string())?;
+                paths.push(context.to_string(path)?);
+            }
+        }
+        paths.extend(
+            crate::modules::module_shared_vm::global_paths()
+                .iter()
+                .map(|path| path.to_string_lossy().into_owned()),
+        );
+        paths
+    };
+    let paths = paths.iter().map(|path| context.string_rooted(path)).collect::<Vec<_>>();
+    context.array_rooted(&paths)
+}
+
+/// `_resolveLookupPaths`' relative request: a `.` followed by nothing, `.` or `/`.
+fn is_relative_request(specifier: &str) -> bool {
+    let mut characters = specifier.chars();
+    characters.next() == Some('.') && matches!(characters.next(), None | Some('.' | '/'))
+}
+
+/// `options.paths` of `Module._resolveFilename`, each element passed through `path.resolve`.
+/// Options that are not an object, or have no `paths`, resolve from the parent.
+fn lookup_paths(context: &mut Context<'_>, options: Option<RootId>) -> Result<Option<Vec<PathBuf>>, RootedError> {
+    let Some(options) = options else { return Ok(None) };
+    if !context.is_object_rooted(options)? || context.is_callable_rooted(options)? {
+        return Ok(None);
+    }
+    let paths = get(context, options, "paths")?;
+    if context.rooted_value(paths).is_some_and(|value| value.is_undefined()) {
+        return Ok(None);
+    }
+    if !context.is_array_rooted(paths)? {
+        let name = context.string_rooted("options.paths");
+        return Err(throw_node_error(context, "ERR_INVALID_ARG_VALUE", &[name, paths])?);
+    }
+    let path = crate::modules::path_shared_vm::module(context)?;
+    let resolve = get(context, path, "resolve")?;
+    let length = get(context, paths, "length")?;
+    let mut directories = Vec::new();
+    for index in 0..context.to_number(length)? as usize {
+        let entry = get(context, paths, &index.to_string())?;
+        let resolved = context.call_rooted(resolve, path, &[entry])?;
+        directories.push(PathBuf::from(context.to_string(resolved)?));
+    }
+    Ok(Some(directories))
+}
+
+/// Throws Node's `code` error built by lib/internal/errors.js from `args`.
+fn throw_node_error(context: &mut Context<'_>, code: &str, args: &[RootId]) -> Result<RootedError, RootedError> {
+    let codes = node_library_export(context, "internal/modules/cjs/loader.js", "internal/errors.js", "codes")?;
+    let constructor = get(context, codes, code)?;
+    let error = context.construct_rooted(constructor, constructor, args)?;
+    Ok(context.throw(error))
 }
 
 pub(crate) fn resolve_from_parent(
@@ -994,18 +1091,20 @@ pub(crate) fn resolve_from_parent(
             module_record(context, &filename, None, false)?
         }
     };
-    resolve_request(context, &specifier, parent)
+    let lookup = lookup_paths(context, args.get(3).copied())?;
+    resolve_request(context, &specifier, parent, lookup.as_deref())
 }
 
 fn resolve_request(
     context: &mut Context<'_>,
     specifier: &str,
     parent: RootId,
+    lookup: Option<&[PathBuf]>,
 ) -> Result<RootId, RootedError> {
     if requested_builtin(context, specifier).is_some() {
         return Ok(context.string_rooted(specifier));
     }
-    let filename = resolve_filename(context, specifier, parent)?;
+    let filename = resolve_filename_in(context, specifier, parent, lookup)?;
     Ok(context.string_rooted(&filename.to_string_lossy()))
 }
 
@@ -1179,6 +1278,7 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("internal/crypto/keys", BuiltinModule::Internal("internal/crypto/keys")),
     ("internal/abort_controller", BuiltinModule::Internal("internal/abort_controller")),
     ("internal/worker/io", BuiltinModule::Internal("internal/worker/io")),
+    ("internal/worker", BuiltinModule::Internal("internal/worker")),
     ("constants", BuiltinModule::Internal("constants")),
     ("node:constants", BuiltinModule::Internal("constants")),
     ("dns/promises", BuiltinModule::DnsPromises),
@@ -1633,6 +1733,20 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         }
         BuiltinModule::Internal("internal/worker/io") =>
             native_global_namespace(context, &["MessageChannel", "MessagePort"]),
+        // Node's lib reads its thread facts here (`process.execve`, `crypto.setFips`,
+        // `trace_events`, Web Locks); they are the public `worker_threads` module's.
+        BuiltinModule::Internal("internal/worker") => {
+            let threads = cached_builtin(context, BuiltinModule::WorkerThreads)?;
+            let module = context.object_rooted()?;
+            for name in ["isMainThread", "isInternalThread", "threadId", "threadName", "resourceLimits"] {
+                let value = get(context, threads, name)?;
+                set(context, module, name, value)?;
+            }
+            // Only the main thread owns process-wide state (Node's `ownsProcessState`).
+            let main = get(context, threads, "isMainThread")?;
+            set(context, module, "ownsProcessState", main)?;
+            Ok(module)
+        }
         BuiltinModule::Internal("internal/abort_controller") => {
             let module=native_global_namespace(context, &["AbortController", "AbortSignal"])?;
             let data=context.host_mut().shared_state().borrow().event_targets_api
@@ -1877,6 +1991,17 @@ fn resolve_filename(
     specifier: &str,
     parent: RootId,
 ) -> Result<PathBuf, RootedError> {
+    resolve_filename_in(context, specifier, parent, None)
+}
+
+/// `Module._resolveFilename`: `lookup` holds `options.paths`, the directories a request
+/// resolves from in order instead of its parent's directory.
+fn resolve_filename_in(
+    context: &mut Context<'_>,
+    specifier: &str,
+    parent: RootId,
+    lookup: Option<&[PathBuf]>,
+) -> Result<PathBuf, RootedError> {
     let filename = get(context, parent, "filename")?;
     let directory = match context.string_text(filename)? {
         Some(filename) => Path::new(&filename).parent().unwrap_or(Path::new(".")).to_owned(),
@@ -1923,19 +2048,25 @@ fn resolve_filename(
             }
         }
     }
-    let (base, resolved_specifier) = if node_internal {
-        (node_lib.as_path(), format!("./{internal_specifier}"))
+    let (bases, resolved_specifier) = if node_internal {
+        (vec![node_lib], format!("./{internal_specifier}"))
     } else {
-        (
-            directory.as_path(),
-            specifier.to_owned(),
-        )
+        (lookup.map_or_else(|| vec![directory], <[PathBuf]>::to_vec), specifier.to_owned())
     };
-    if let Some(path) = exact_file_path(base, &resolved_specifier) {
-        return std::fs::canonicalize(path).map_err(|error| RootedError::host(error.to_string()));
-    }
     let resolver = commonjs_resolver();
-    match resolver.resolve(base, &resolved_specifier) {
+    let mut outcome = Err(oxc_resolver::ResolveError::NotFound(resolved_specifier.clone()));
+    let mut base = bases.first().map_or(Path::new("."), PathBuf::as_path);
+    for directory in &bases {
+        base = directory;
+        if let Some(path) = exact_file_path(base, &resolved_specifier) {
+            return std::fs::canonicalize(path).map_err(|error| RootedError::host(error.to_string()));
+        }
+        outcome = resolver.resolve(base, &resolved_specifier);
+        if !matches!(outcome, Err(oxc_resolver::ResolveError::NotFound(_))) {
+            break;
+        }
+    }
+    match outcome {
         Ok(resolution) => Ok(resolution.full_path()),
         Err(oxc_resolver::ResolveError::NotFound(_)) if !node_internal && is_bare_specifier(specifier) && let Some(super::esm_errors::MissingPackageFile::ExportsTarget { target, package }) =
             super::esm_errors::missing_package_file(&resolver, base, specifier) =>
@@ -2196,14 +2327,21 @@ fn module_record(
         set(context, process, "mainModule", module)?;
     }
     let require = context.host_function_with_data(super::operation("require"), module)?;
-    let resolve = context.host_function_with_data(super::operation("resolve"), module)?;
-    set(context, require, "resolve", resolve)?;
+    install_resolve(context, require, module)?;
     let main = get(context, process, "mainModule")?;
     set(context, require, "main", main)?;
     let cache = commonjs_cache(context)?;
     set(context, require, "cache", cache)?;
     set(context, module, "require", require)?;
     Ok(module)
+}
+
+/// `require.resolve` and `require.resolve.paths` for `module` (`makeRequireFunction`).
+fn install_resolve(context: &mut Context<'_>, require: RootId, module: RootId) -> Result<(), RootedError> {
+    let resolve = context.host_function_with_data(super::operation("resolve"), module)?;
+    let paths = context.host_function_named_with_data(super::operation("resolvePaths"), "paths", module)?;
+    set(context, resolve, "paths", paths)?;
+    set(context, require, "resolve", resolve)
 }
 
 pub(crate) fn create_require(
@@ -2419,22 +2557,28 @@ fn load_with_resolution(
             set(context, module, "loaded", loaded)?;
             return Ok(exports);
         }
-        let file_text = match std::fs::read(filename) {
+        let file_text: std::borrow::Cow<'static, str> = match std::fs::read(filename) {
             Ok(bytes) => String::from_utf8(bytes)
-                .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned()),
+                .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned())
+                .into(),
             Err(error) => crate::node_sources::source(filename, &context.host_mut().node_library_root)
-                .ok_or_else(|| RootedError::host(error.to_string()))?.to_owned(),
+                .ok_or_else(|| RootedError::host(error.to_string()))?
+                .into(),
         };
-        let file_text = match library_relative {
+        let file_text: std::borrow::Cow<'static, str> = match library_relative {
             Some(path) if path == Path::new("lib/internal/child_process.js") =>
-                super::policy_projection::project(&file_text, &["setupChannel", "kChannelHandle"]).map_err(RootedError::host)?,
-            Some(path) if path == Path::new("lib/internal/child_process/serialization.js") =>
-                super::policy_projection::project(&file_text, &["json"]).map_err(RootedError::host)?,
+                super::policy_projection::project(&file_text, &["setupChannel", "kChannelHandle"]).map_err(RootedError::host)?.into(),
             Some(path) if path == Path::new("lib/net.js") =>
-                super::policy_projection::project(&file_text, &["BoundSocket"]).map_err(RootedError::host)?,
+                super::policy_projection::project(&file_text, &["BoundSocket"]).map_err(RootedError::host)?.into(),
             Some(path) if path == Path::new("lib/child_process.js") =>
-                super::policy_projection::project(&file_text, &["_forkChild"]).map_err(RootedError::host)?,
+                super::policy_projection::project(&file_text, &["_forkChild"]).map_err(RootedError::host)?.into(),
             _ => file_text,
+        };
+        // An embedded library file is static text the compiled program can retain as is;
+        // a projected one is new text.
+        let embedded = match file_text {
+            std::borrow::Cow::Borrowed(text) => Some(script_body(text)),
+            std::borrow::Cow::Owned(_) => None,
         };
         let text = file_text.strip_prefix('\u{feff}').unwrap_or(&file_text);
         match filename
@@ -2451,11 +2595,7 @@ fn load_with_resolution(
                 ));
             }
             _ => {
-                let text = if text.starts_with("#!") {
-                    text.find('\n').map_or("", |end| &text[end..])
-                } else {
-                    text
-                };
+                let text = script_body(text);
                 let primordial_seed = if is_primordials {
                     Some(context.object_rooted()?)
                 } else {
@@ -2518,15 +2658,29 @@ const getLinkedBinding = () => ({});
                 } else {
                     format!("{WRAPPER_PREFIX}{internal_binding}")
                 };
-                // Sized exactly: a formatted string grows by doubling, copying the module text each time.
-                let wrapper_source = [prefix.as_str(), &text, WRAPPER_SUFFIX].concat();
-                // The wrapper holds the text now, so the file is released before compiling it.
-                drop(text);
-                drop(file_text);
-                let wrapper = evaluate_wrapper(context, &prefix, &wrapper_source, &key)?;
-                // The compiled program keeps its own source; the module body runs inside this
-                // call, so the wrapper is released before it.
-                drop(wrapper_source);
+                if parent.is_none() {
+                    // The entry's compilation is the start-up peak: only the parser's and
+                    // compiler's pages, not the bootstrap's, need be resident across it.
+                    crate::host::resident_pages::release_read_only_pages();
+                }
+                let wrapper = match embedded.filter(|_| !is_primordials) {
+                    // The program retains the embedded text itself, not a wrapped copy.
+                    Some(body) => context
+                        .evaluate_specialized_static_body_rooted(&prefix, body, WRAPPER_SUFFIX, &key)?,
+                    None => {
+                        // Sized exactly: a formatted string grows by doubling, copying the module text each time.
+                        let wrapper_source = [prefix.as_str(), &text, WRAPPER_SUFFIX].concat();
+                        // The wrapper holds the text now, so the file is released before
+                        // compiling it.
+                        drop(text);
+                        drop(file_text);
+                        let wrapper = evaluate_wrapper(context, &prefix, &wrapper_source, &key)?;
+                        // The compiled program keeps its own source; the module body runs
+                        // inside this call, so the wrapper is released before it.
+                        drop(wrapper_source);
+                        wrapper
+                    }
+                };
                 if parent.is_none() {
                     crate::host::resident_pages::release_read_only_pages();
                     crate::host::resident_pages::quench_entry_compiled();
@@ -2610,11 +2764,20 @@ const getLinkedBinding = () => ({});
     result
 }
 
+/// A CommonJS module's executed text: its file without a byte-order mark or a leading
+/// `#!` line, which keeps the line terminator so positions stay on their lines.
+fn script_body(text: &str) -> &str {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    if text.starts_with("#!") {
+        text.find('\n').map_or("", |end| &text[end..])
+    } else {
+        text
+    }
+}
+
 fn evaluate_wrapper(context: &mut Context<'_>, prefix: &str, source: &str, filename: &str) -> Result<RootId, RootedError> {
-    let line_offset = u32::try_from(prefix.bytes().filter(|byte| *byte == b'\n').count())
-        .map_err(|_| RootedError::host("CommonJS wrapper line origin exceeds compiler positions"))?;
-    let column_offset = u32::try_from(prefix.rsplit('\n').next().unwrap_or("").encode_utf16().count())
-        .map_err(|_| RootedError::host("CommonJS wrapper column origin exceeds compiler positions"))?;
+    let (line_offset, column_offset) = quench_runtime::wrapper_origin(prefix)
+        .ok_or_else(|| RootedError::host("CommonJS wrapper origin exceeds compiler positions"))?;
     context.evaluate_specialized_script_with_origin_rooted(source, filename, line_offset, column_offset)
 }
 
@@ -2629,8 +2792,7 @@ pub(crate) fn compile_public(context: &mut Context<'_>, module: RootId, args: &[
     let wrapper = evaluate_wrapper(context, WRAPPER_PREFIX, &source, &name)?;
     let exports = get(context, module, "exports")?;
     let require = context.host_function_with_data(super::operation("require"), module)?;
-    let resolve = context.host_function_with_data(super::operation("resolve"), module)?;
-    set(context, require, "resolve", resolve)?;
+    install_resolve(context, require, module)?;
     let global = context.global_root()?;
     let process = get(context, global, "process")?;
     let main = get(context, process, "mainModule")?;
@@ -2753,7 +2915,8 @@ pub(crate) fn node_internal_binding_source() -> &'static str {
     case "string_decoder": return __nativeInternalBinding("string_decoder");
     case "buffer":
     case "url":
-    case "blob": return __nativeInternalBinding(name);
+    case "blob":
+    case "ipc_serdes": return __nativeInternalBinding(name);
     case "fs": return __nativeInternalBinding("fs");
     case "crypto": {
       const native = __nativeInternalBinding("crypto");
@@ -2824,10 +2987,8 @@ pub(crate) fn node_library_module_in_realm(
         node_internal_binding_source(),
     );
     let wrapper = format!("{prefix}{source}\n}})");
-    let line_offset = u32::try_from(prefix.bytes().filter(|byte| *byte == b'\n').count())
-        .map_err(|_| RootedError::host("realm wrapper line origin exceeds compiler positions"))?;
-    let column_offset = u32::try_from(prefix.rsplit('\n').next().unwrap_or("").encode_utf16().count())
-        .map_err(|_| RootedError::host("realm wrapper column origin exceeds compiler positions"))?;
+    let (line_offset, column_offset) = quench_runtime::wrapper_origin(prefix.as_str())
+        .ok_or_else(|| RootedError::host("realm wrapper origin exceeds compiler positions"))?;
     let shared = context.host_mut().shared_state();
     let cached = shared.borrow().realm_module_programs.get(&path)
         .filter(|cached| cached.source.as_ref() == wrapper)
@@ -2883,11 +3044,15 @@ pub(crate) fn initialize_cluster_worker(context: &mut Context<'_>) -> Result<(),
     if !context.truthy_rooted(entry)? {
         return Ok(());
     }
-    let env = get(context, process, "env")?;
-    let worker_id = get(context, env, "NODE_UNIQUE_ID")?;
-    if !context.truthy_rooted(worker_id)? {
+    // The environment as `process.env` starts from: reading `process.env` itself would copy
+    // every variable on each run that is no cluster worker.
+    if !crate::modules::process_shared_vm::environment(context)
+        .iter()
+        .any(|(name, value)| name == "NODE_UNIQUE_ID" && !value.is_empty())
+    {
         return Ok(());
     }
+    let env = get(context, process, "env")?;
     let cluster = cached_builtin(context, BuiltinModule::Cluster)?;
     let setup = get(context, cluster, "_setupWorker")?;
     context.call_rooted(setup, cluster, &[])?;

@@ -609,6 +609,12 @@ impl ProgramStore {
         }
     }
 
+    /// Every live program's compiled form.
+    #[cfg(feature = "profile-memory")]
+    pub(crate) fn residuals(&self) -> impl Iterator<Item = &ResidualProgram> {
+        self.programs.iter().flatten().map(|entry| &*entry.residual)
+    }
+
     pub(crate) fn module_environment(&self, id: ProgramId) -> Option<Value> {
         self.entry(id)?.module_environment
     }
@@ -676,6 +682,16 @@ impl ProgramStore {
         id: ProgramId,
     ) -> Option<Option<Rc<super::compiled::CompiledProgram>>> {
         self.entry(id)?.compiled.clone()
+    }
+
+    pub(super) fn has_compiled_function_or_note_fallback(
+        &self,
+        id: ProgramId,
+        function: usize,
+    ) -> bool {
+        self.entry(id)
+            .and_then(|entry| entry.compiled.as_ref()?.as_ref())
+            .is_some_and(|program| program.has_function_or_note_fallback(function))
     }
 
     pub(super) fn set_compiled(

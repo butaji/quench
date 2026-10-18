@@ -403,6 +403,10 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        // The string and RegExp methods belong to none of the families below.
+        if native.runs_from_lane() {
+            return self.call_native_table(p, native, this, args);
+        }
         if let Some(result) = self.string_html_method(p, native, this, args) {
             return result;
         }
@@ -494,6 +498,17 @@ impl<H: Host> Vm<H> {
         if native.is_data_view_native() {
             return self.data_view_native(p, native, this, args);
         }
+        self.call_native_table(p, native, this, args)
+    }
+
+    /// The natives no family above claims, by kind.
+    fn call_native_table(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
         match native {
             Native::IsHTMLDDA => Ok(Value::NULL),
             Native::Proxy => Err(self.type_error(p, "Proxy must be called with new".into())),
@@ -520,11 +535,6 @@ impl<H: Host> Vm<H> {
             Native::CollectGarbage => {
                 self.collect_now(p);
                 Ok(Value::UNDEFINED)
-            }
-            Native::ToString => {
-                let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-                let value = self.coerce_js_string(p, value)?;
-                Ok(self.heap.alloc(Cell::String(value)))
             }
             Native::ProxyRevocable => self.proxy_revocable(p, args),
             Native::ArrayBuffer | Native::SharedArrayBuffer => {
@@ -1741,17 +1751,22 @@ impl<H: Host> Vm<H> {
             .then_some(negated)
     }
 
-    /// `==`, `!=`, `===` or `!==` of non-number operands when no conversion can decide it:
-    /// equal bits are the same value; distinct strict operands are equal only as strings or
-    /// BigInts of equal contents, as are loose operands of one of those types; a loose null or
-    /// undefined equals only null, undefined and [[IsHTMLDDA]] objects; two distinct objects
-    /// are loosely unequal. `None` leaves numbers and every comparison that may coerce to the
-    /// full algorithm.
+    /// `==`, `!=`, `===` or `!==` when no conversion can decide it: a Number is strictly
+    /// equal only to a Number; equal bits are the same value; distinct strict operands are
+    /// equal only as strings or BigInts of equal contents, as are loose operands of one of
+    /// those types; a loose null or undefined equals only null, undefined and [[IsHTMLDDA]]
+    /// objects; two distinct objects are loosely unequal. `None` leaves two Numbers, which
+    /// Number comparison decides, and every comparison that may coerce to the full algorithm.
     #[inline(always)]
     pub(super) fn identity_equality(&self, op: u32, left: Value, right: Value) -> Option<bool> {
         let (strict, negated) = equality_operator(op)?;
-        if left.as_number().is_some() || right.as_number().is_some() {
-            return None;
+        match (left.as_number().is_some(), right.as_number().is_some()) {
+            // Number comparison decides two Numbers (NaN, signed zeros).
+            (true, true) => return None,
+            // A Number is strictly equal only to a Number; loose equality converts the other
+            // operand, which can run guest code.
+            (true, false) | (false, true) => return strict.then_some(negated),
+            (false, false) => {}
         }
         let equal = if left == right {
             true

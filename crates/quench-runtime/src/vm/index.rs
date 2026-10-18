@@ -61,6 +61,18 @@ impl<H: Host> Vm<H> {
         Some(self.heap.alloc(Cell::String(JsString::from_units(&[unit]))))
     }
 
+    /// `get_index` of a typed array at an index key where it allocates nothing: an element
+    /// of a non-BigInt kind, or `undefined` past the end. `None` for any other read.
+    pub(super) fn plain_typed_element(&mut self, object: Value, key: Value) -> Option<Value> {
+        let index = self.array_index_key(key)? as usize;
+        match self.heap.get(object) {
+            Some(Cell::TypedArray { kind, .. })
+                if !matches!(kind, TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64) => {}
+            _ => return None,
+        }
+        self.typed_array_get(object, index)
+    }
+
     pub(super) fn get_index(
         &mut self,
         p: &ResidualProgram,
@@ -303,6 +315,14 @@ impl<H: Host> Vm<H> {
         key.as_int()
             .and_then(|index| usize::try_from(index).ok())
             .is_some_and(|index| self.append_dense_element(object, index, value))
+    }
+
+    /// `object[key] = value` that fills a hole of a dense array (`fill_dense_hole`); `false`
+    /// leaves the store, unobserved, to the general path.
+    pub(super) fn try_fill_dense_hole(&mut self, object: Value, key: Value, value: Value) -> bool {
+        key.as_int()
+            .and_then(|index| usize::try_from(index).ok())
+            .is_some_and(|index| self.fill_dense_hole(object, index, value))
     }
 
     /// `try_replace_dense_element` of an array whose object is a record and whose elements no

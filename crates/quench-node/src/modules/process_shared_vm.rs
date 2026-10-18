@@ -1107,16 +1107,39 @@ fn throw_os_process_error(
     error: std::io::Error,
 ) -> Result<RootedError, RootedError> {
     let errno = error.raw_os_error().unwrap_or(libc::EINVAL);
-    let code = errno_name(errno);
-    let message = unsafe {
+    let error = errno_exception(context, errno, syscall, None)?;
+    Ok(context.throw(error))
+}
+
+/// Node's C++ `ErrnoException`: `"<code>, <strerror>"`, then ` '<path>'` when a path is
+/// given, with `errno` (positive), `code`, `path` and `syscall` set in that order.
+pub(crate) fn errno_exception(
+    context: &mut NativeContext<'_, NodeHost>,
+    errno: i32,
+    syscall: &str,
+    path: Option<&str>,
+) -> Result<RootId, RootedError> {
+    let code = super::util_system_error_shared_vm::system_error_code(-f64::from(errno))
+        .unwrap_or("UNKNOWN");
+    // libc's message is copied before any other host operation can overwrite it.
+    let description = unsafe {
         std::ffi::CStr::from_ptr(libc::strerror(errno))
             .to_string_lossy()
             .into_owned()
     };
-    let error = context.error_rooted(&format!("{code}, {message}"))?;
+    let message = match path {
+        Some(path) => format!("{code}, {description} '{path}'"),
+        None => format!("{code}, {description}"),
+    };
+    let error = context.error_rooted(&message)?;
+    let errno = context.number(f64::from(errno));
+    install(context, error, "errno", errno)?;
     set_text(context, error, "code", code)?;
+    if let Some(path) = path {
+        set_text(context, error, "path", path)?;
+    }
     set_text(context, error, "syscall", syscall)?;
-    Ok(context.throw(error))
+    Ok(error)
 }
 
 fn groups_type_error(
@@ -2577,13 +2600,10 @@ fn drain_shared_jobs(
             let epoch = runtime.collection_epoch();
             let prune_promises = {
                 let shared = runtime.host_mut().shared_state();
-                let mut state = shared.borrow_mut();
-                let due = !state.async_hooks.promise_resources.is_empty()
-                    && state.async_hooks.promise_prune_epoch != Some(epoch);
-                if due {
-                    state.async_hooks.promise_prune_epoch = Some(epoch);
-                }
-                due
+                let state = shared.borrow();
+                // The prune records the epoch it ran at.
+                !state.async_hooks.promise_resources.is_empty()
+                    && state.async_hooks.promise_resources_pruned_epoch != epoch
             };
             if prune_promises {
                 let prune = runtime.host_function(crate::host::shared_vm::operation("asyncPromisePrune"))
@@ -3566,7 +3586,7 @@ fn warning_export(context: &mut NativeContext<'_, NodeHost>, name: &str) -> Resu
 }
 
 /// The environment `process.env` starts from: a worker's own, else the OS environment.
-fn environment(context: &mut NativeContext<'_, NodeHost>) -> Vec<(String, String)> {
+pub(crate) fn environment(context: &mut NativeContext<'_, NodeHost>) -> Vec<(String, String)> {
     let worker_env = context.host_mut().shared_state().borrow().messaging.context.as_ref().map(|worker| worker.env.clone());
     worker_env.unwrap_or_else(|| std::env::vars().collect())
 }

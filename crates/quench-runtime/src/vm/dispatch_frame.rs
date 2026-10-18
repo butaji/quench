@@ -408,7 +408,7 @@ impl<H: Host> Vm<H> {
         context: CallContext,
     ) -> Result<usize, JsError> {
         let function = &p.functions[id as usize];
-        if id != super::ROOT_FUNCTION_ID && function.plain_activation(&p.atoms) {
+        if id != super::ROOT_FUNCTION_ID && function.plain_activation(p) {
             self.activate_plain_frame(p, id, function, parent, this, args, context)
         } else {
             self.activate_general_frame(p, id, parent, this, args, context)
@@ -435,13 +435,13 @@ impl<H: Host> Vm<H> {
             .function(self.active_program.raw(), id as usize);
         let this = self.call_this_value(this, function.strict)?;
         let mut frame = self.pooled_frame();
-        let local_count = if function.call_plan(&p.atoms).addresses_locals {
+        let local_count = if function.call_plan(p).addresses_locals {
             usize::from(function.locals)
         } else {
             0
         };
         frame.reset_locals_undefined(local_count);
-        self.initialize_frame_invocation(&p.atoms, &mut frame, function, context, args);
+        self.initialize_frame_invocation(p, &mut frame, function, context, args);
         frame.function = id;
         frame.program = self.active_program;
         frame.pc = 0;
@@ -512,7 +512,7 @@ impl<H: Host> Vm<H> {
         }
         let function = &p.functions[id as usize];
         let mut frame = self.pooled_frame();
-        self.bind_activation_arguments(&p.atoms, &mut frame, function, context, args)?;
+        self.bind_activation_arguments(p, &mut frame, function, context, args)?;
         frame.function = id;
         frame.program = self.active_program;
         frame.pc = 0;
@@ -554,7 +554,8 @@ impl<H: Host> Vm<H> {
             &mut frame,
             arrow,
             new_target,
-            id == super::ROOT_FUNCTION_ID || function.activation_bindings_observable(&p.atoms),
+            id == super::ROOT_FUNCTION_ID
+                || function.activation_bindings_observable(&p.atoms, &p.functions),
         );
         frame.prepare_registers_for(function);
         frame.bind_register_parameters(function, args);
@@ -598,7 +599,7 @@ impl<H: Host> Vm<H> {
         self.with_stack.truncate(old.with_base);
         let mut frame = old;
         Self::recycle_frame(&mut frame);
-        self.bind_activation_arguments(&p.atoms, &mut frame, function, context, args)?;
+        self.bind_activation_arguments(p, &mut frame, function, context, args)?;
         frame.program = self.active_program;
         frame.function = id;
         frame.pc = 0;
@@ -630,7 +631,8 @@ impl<H: Host> Vm<H> {
             &mut frame,
             arrow,
             new_target,
-            id == super::ROOT_FUNCTION_ID || function.activation_bindings_observable(&p.atoms),
+            id == super::ROOT_FUNCTION_ID
+                || function.activation_bindings_observable(&p.atoms, &p.functions),
         );
         frame.prepare_registers_for(function);
         frame.bind_register_parameters(function, args);
@@ -645,7 +647,7 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     fn bind_activation_arguments(
         &mut self,
-        atoms: &crate::bytecode::AtomTable,
+        p: &ResidualProgram,
         frame: &mut Frame,
         function: &crate::bytecode::Function,
         context: CallContext,
@@ -667,7 +669,7 @@ impl<H: Host> Vm<H> {
         if let Some(slot) = function.self_binding_slot {
             frame.locals[usize::from(slot)] = context.callee().unwrap_or(Value::UNDEFINED);
         }
-        let forwards_arguments = function.call_plan(atoms).forwards_arguments;
+        let forwards_arguments = function.call_plan(p).forwards_arguments;
         if let Some(slot) = function.arguments_slot {
             frame.locals[usize::from(slot)] = if forwards_arguments {
                 Value::UNMATERIALIZED_ARGUMENTS
@@ -675,7 +677,7 @@ impl<H: Host> Vm<H> {
                 self.activation_arguments_object(function, context, args)?
             };
         }
-        self.initialize_frame_invocation(atoms, frame, function, context, args);
+        self.initialize_frame_invocation(p, frame, function, context, args);
         if forwards_arguments {
             // The frame keeps every argument for the object it may still materialize; legacy
             // reflection reads the same values, since such a frame reflects no parameter.
@@ -773,7 +775,7 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn initialize_frame_invocation(
         &self,
-        atoms: &crate::bytecode::AtomTable,
+        p: &ResidualProgram,
         frame: &mut Frame,
         function: &crate::bytecode::Function,
         context: CallContext,
@@ -782,7 +784,7 @@ impl<H: Host> Vm<H> {
         frame.context = context;
         frame.original_arguments.clear();
         frame.reflected_parameters = 0;
-        let plan = function.call_plan(atoms);
+        let plan = function.call_plan(p);
         if context.callable().is_none() || !plan.legacy_reflection {
             return;
         }
@@ -967,34 +969,36 @@ impl<H: Host> Vm<H> {
             return self.frames[frame].env;
         }
         let parent = self.frames[frame].env;
-        let function = self.frames[frame].function as usize;
-        let selective_capture_slots =
-            self.programs
-                .get(self.frames[frame].program)
-                .and_then(|program| {
-                    program
-                        .functions
-                        .get(function)
-                        .and_then(|function| function.selective_capture_slots.clone())
-                });
-        let slots = if let Some(captured) = selective_capture_slots {
-            let mut slots = self.frames[frame].locals.clone();
-            for slot in 0..slots.len() {
-                if u16::try_from(slot).is_ok_and(|slot| captured.binary_search(&slot).is_ok()) {
-                    self.frames[frame].locals[slot] = Value::DELETED;
-                } else {
-                    slots[slot] = Value::DELETED;
-                }
+        // The environment copies the slots it captures out of the frame's locals, whose
+        // buffer stays with the frame for its next activation; captured slots read as
+        // deleted in the frame from now on.
+        let program = self.programs.get(self.frames[frame].program);
+        let state = &mut *self.frames[frame];
+        let selective = program
+            .as_ref()
+            .and_then(|program| program.functions.get(state.function as usize))
+            .and_then(|function| function.selective_capture_slots.as_deref());
+        let slots = match selective {
+            Some(captured) => crate::heap::EnvironmentSlots::from_values(
+                state.locals.iter_mut().enumerate().map(|(slot, value)| {
+                    if u16::try_from(slot).is_ok_and(|slot| captured.binary_search(&slot).is_ok()) {
+                        std::mem::replace(value, Value::DELETED)
+                    } else {
+                        Value::DELETED
+                    }
+                }),
+            ),
+            None => {
+                let slots = crate::heap::EnvironmentSlots::from_values(state.locals.iter().copied());
+                state.locals.clear();
+                slots
             }
-            slots
-        } else {
-            std::mem::take(&mut self.frames[frame].locals)
         };
         let env = self.heap.alloc(Cell::Environment {
             parent,
             function: self.frames[frame].function,
-            slots: slots.into(),
-            scope: Box::new(crate::heap::EnvironmentScope {
+            slots,
+            scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
                 program: Some(self.frames[frame].program.raw()),
                 root_eval_scope: false,
                 binding_site_pc: None,
@@ -1038,12 +1042,12 @@ impl<H: Host> Vm<H> {
             parent: *parent,
             function: *function,
             slots,
-            scope: Box::new(crate::heap::EnvironmentScope {
-                program: scope.program,
-                root_eval_scope: scope.root_eval_scope,
-                binding_site_pc: scope.binding_site_pc,
+            scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+                program: scope.program(),
+                root_eval_scope: scope.root_eval_scope(),
+                binding_site_pc: scope.binding_site_pc(),
                 dynamic_bindings: crate::heap::EnvironmentBindings::Shared(owner),
-                with_objects: scope.with_objects.clone(),
+                with_objects: scope.with_objects().into(),
             }),
         };
         let env = self.heap.alloc(environment);
@@ -1576,6 +1580,8 @@ impl<H: Host> Vm<H> {
             // Returns and inline calls produce their step result here rather than through the
             // general `step` dispatch.
             let step = match ins.op() {
+                // A call the lane made returned its callee's completion from this frame.
+                _ if let Some(value) = self.lane_returned.take() => Ok(StepResult::Return(value)),
                 Op::Return => Ok(StepResult::Return(self.read(frame, ins.register_a()))),
                 Op::Call if allow_inline_calls => {
                     match self.try_inline_user_call(p, frame, ins, pc) {
@@ -1860,8 +1866,8 @@ impl<H: Host> Vm<H> {
         }
         let mut layers = Vec::new();
         while let Some(Cell::Environment { parent, scope, .. }) = self.heap.get(env) {
-            if !scope.with_objects.is_empty() {
-                layers.push(scope.with_objects.to_vec());
+            if !scope.with_objects().is_empty() {
+                layers.push(scope.with_objects().to_vec());
             }
             env = *parent;
             if env.is_null() {

@@ -39,6 +39,16 @@ pub(super) fn apply(functions: &mut [Function], atoms: &CompilerAtoms<'_>, dynam
             );
             captured[id].sort_unstable();
             captured[id].dedup();
+            // An `arguments` binding that no instruction addresses and no closure captures is
+            // unobservable, as `Compiler::compile_function` finds for a closure-free body.
+            if let Some(slot) = function.arguments_slot
+                && captured[id].binary_search(&slot).is_err()
+                && !function
+                    .instructions()
+                    .any(|instruction| instruction.addressed_local_slots().any(|local| local == slot))
+            {
+                function.arguments_slot = None;
+            }
             function.selective_capture_slots = Some(captured[id].clone());
             rewrite_local_ownership(function, &captured[id]);
             remove_unobservable_clones(function, &captured[id]);

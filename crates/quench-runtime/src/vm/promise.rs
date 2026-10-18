@@ -775,7 +775,6 @@ fn native_length(kind: Native) -> Option<f64> {
         | Native::SetIsSupersetOf => 1.0,
         Native::SetSpeciesGetter => 0.0,
         Native::SetClear | Native::SetKeys | Native::SetValues | Native::SetEntries => 0.0,
-        Native::ToString => 1.0,
         Native::ArrayFrom | Native::ArrayFromAsync | Native::ArrayIsArray => 1.0,
         Native::TypedArrayFrom => 1.0,
         Native::Uint8Array
@@ -1133,41 +1132,37 @@ pub(super) struct PromiseRuntime {
 }
 
 impl PromiseRuntime {
-    pub(super) fn owned_edges(&self) -> impl Iterator<Item = (Value, Value)> + '_ {
+    /// Visits each `(owner, edge)` the promise tables hold outside their owner's cell. Plain
+    /// loops per table: a chained iterator costs every edge a step through each nesting level,
+    /// and a collection visits every in-flight promise (doxbee-promise: 170k records).
+    pub(super) fn for_each_owned_edge(&self, mut visit: impl FnMut(Value, Value)) {
         macro_rules! edges {
             ($table:expr, |$record:ident| $roots:expr) => {
-                $table.iter().flat_map(|(owner, $record)| {
-                    ($roots).into_iter().map(move |root| (*owner, root))
-                })
+                for (owner, $record) in &$table {
+                    for root in $roots {
+                        visit(*owner, root);
+                    }
+                }
             };
         }
-        edges!(self.records, |record| record.roots())
-            .chain(edges!(self.thenable_jobs, |job| [
-                job.then,
-                job.thenable,
-                job.promise
-            ]))
-            .chain(edges!(self.finally_handler_callbacks, |callback| [
-                callback.handler,
-                callback.constructor
-            ]))
-            .chain(edges!(self.finally_continuation_callbacks, |callback| [
-                callback.original
-            ]))
-            .chain(edges!(self.aggregates, |record| {
-                [record.output, record.resolve, record.reject]
-                    .into_iter()
-                    .chain(record.values.iter().copied())
-                    .chain(record.keys.iter().flatten().copied())
-            }))
-            .chain(edges!(self.aggregate_jobs, |job| [job.aggregate]))
-            .chain(edges!(self.reaction_capabilities, |capability| [
-                capability.0,
-                capability.1
-            ]))
-            .chain(edges!(self.async_resume_jobs, |job| {
-                [Some(job.promise), job.generator].into_iter().flatten()
-            }))
+        edges!(self.records, |record| record.roots());
+        edges!(self.thenable_jobs, |job| [job.then, job.thenable, job.promise]);
+        edges!(self.finally_handler_callbacks, |callback| [
+            callback.handler,
+            callback.constructor
+        ]);
+        edges!(self.finally_continuation_callbacks, |callback| [callback.original]);
+        edges!(self.aggregates, |record| {
+            [record.output, record.resolve, record.reject]
+                .into_iter()
+                .chain(record.values.iter().copied())
+                .chain(record.keys.iter().flatten().copied())
+        });
+        edges!(self.aggregate_jobs, |job| [job.aggregate]);
+        edges!(self.reaction_capabilities, |capability| [capability.0, capability.1]);
+        edges!(self.async_resume_jobs, |job| {
+            [Some(job.promise), job.generator].into_iter().flatten()
+        });
     }
 }
 
@@ -1390,7 +1385,7 @@ impl<H: Host> Vm<H> {
             .copied()
             .unwrap_or(Value::NULL);
         let promise = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
-        let host_context = if H::OBSERVE_PROMISE_LIFECYCLE {
+        let host_context = if self.host.observes_promise_lifecycle() {
             self.host.create_promise_context(parent)
         } else {
             None
@@ -2536,9 +2531,10 @@ impl<H: Host> Vm<H> {
         let Some(source) = self.object_data(source).cloned() else {
             return Err(self.type_error(p, "evaluated module namespace is invalid".into()));
         };
-        if let Some(target) = self.object_data_mut(target) {
+        if self.heap.copy_property_storage(&source, target)
+            && let Some(target) = self.object_data_mut(target)
+        {
             target.set_proto(source.proto());
-            target.copy_property_storage_from(&source);
             if source.is_module_namespace() {
                 target.set_module_namespace();
             }
@@ -2797,7 +2793,7 @@ impl<H: Host> Vm<H> {
             parent: Value::NULL,
             function: super::ROOT_FUNCTION_ID,
             slots: slots.into(),
-            scope: Box::new(crate::heap::EnvironmentScope {
+            scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
                 program: Some(program.raw()),
                 root_eval_scope: false,
                 binding_site_pc: None,
