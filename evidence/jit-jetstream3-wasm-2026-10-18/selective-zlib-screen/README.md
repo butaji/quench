@@ -13,6 +13,8 @@ these reports can qualify a JetStream subset.
 | --- | ---: | ---: | ---: |
 | JIT, selective tier | 13.76 / 112.76 | 91.37 / 114.53 | 89.69 / 110.66 |
 | JIT, default tier | 13.20 / 112.58 | 90.00 / 114.04 | 89.26 / 110.99 |
+| JIT, root-only 11 | 12.53 / 112.04 | 86.12 / 114.46 | 88.69 / 111.46 |
+| JIT, root-first 11 | 12.71 / 112.77 | 90.55 / 114.25 | 91.91 / 111.42 |
 | Interpreter | 12.15 / 93.96 | 7.07 / 43.33 (Bun no-JIT) | unsupported (Node no-JIT has no Wasm) |
 
 Selective mode raised the median score by 4.2% over default JIT in separate
@@ -23,6 +25,12 @@ qualification (`evidence/jetstream3-wasm-qualification-linux-2026-10-16/`)
 recorded 18.08 / 34.5 MiB for Quench and 6.24 / 46.5 MiB for Bun. Those
 different revisions and runtime versions should not be combined as one paired
 measurement.
+
+The root-only and root-first reports also validate with equal output. Root-only
+uses Cranelift “no optimization” by design; its lower score is not evidence
+about optimized root compilation. Root-first uses speed optimization but did
+not improve the score or RSS over the default run. Neither admission policy
+is a useful zlib setting without a stronger code-generation change.
 
 An opt-in one-round diagnostic attributes 7,704,769 native entries to
 `longest_match` (runtime function 11, module function 21), compiled alone in
@@ -52,4 +60,5 @@ target/production/quench-bench --fixtures zlib-wasm --suite jetstream3 \
 ```
 
 Raw artifacts are `selective-3-round.json`, `default-3-round.json`,
-`nojit-3-round.json`, and `selective-diagnostic-1-round.json`.
+`root11-only-3-round.json`, `root11-first-3-round.json`, `nojit-3-round.json`,
+and `selective-diagnostic-1-round.json`.
