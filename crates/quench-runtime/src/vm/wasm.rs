@@ -4327,6 +4327,93 @@ mod tests {
     }
 
     #[test]
+    fn compiled_wasm_selective_tiering_promotes_a_hot_fast_call_known() {
+        let root = vec![
+            Operator::I32Const { value: 40 },
+            Operator::LocalSet { local_index: 0 },
+            Operator::I32Const { value: 0 },
+            Operator::LocalSet { local_index: 1 },
+            Operator::Loop {
+                blockty: wasmparser::BlockType::Empty,
+            },
+            Operator::LocalGet { local_index: 1 },
+            Operator::Call { function_index: 1 },
+            Operator::I32Add,
+            Operator::LocalSet { local_index: 1 },
+            Operator::LocalGet { local_index: 0 },
+            Operator::I32Const { value: -1 },
+            Operator::I32Add,
+            Operator::LocalTee { local_index: 0 },
+            Operator::BrIf { relative_depth: 0 },
+            Operator::End,
+            Operator::LocalGet { local_index: 1 },
+            Operator::End,
+        ];
+        let module = crate::Engine::lower_wasm_i32_module(
+            "compiled-wasm-selective-fast-call-known",
+            0,
+            [
+                (0, 2, true, root),
+                (
+                    0,
+                    0,
+                    true,
+                    vec![Operator::Call { function_index: 2 }, Operator::End],
+                ),
+                (
+                    0,
+                    0,
+                    true,
+                    vec![Operator::Call { function_index: 3 }, Operator::End],
+                ),
+                (0, 0, true, vec![Operator::I32Const { value: 42 }, Operator::End]),
+            ]
+            .into_iter()
+            .map(|(params, locals, result, ops)| (params, locals, result, ops.into_iter().map(Ok))),
+        )
+        .unwrap();
+        let root_code = &module.module.program.functions[0];
+        let root_instructions = root_code
+            .code
+            .iter()
+            .map(|packed| super::super::dispatch_fast::decoded_instruction(root_code, *packed))
+            .collect::<Vec<_>>();
+        assert!(
+            root_instructions
+                .iter()
+                .any(|instruction| instruction.op() == Op::CallKnown
+                    && instruction.known_function_index() == 1),
+            "root instructions: {root_instructions:?}"
+        );
+        let function = module.select_function(0).unwrap();
+        let mut vm = Vm::new(crate::SystemHost);
+        assert_eq!(vm.execute_wasm_i32(&function, &[]).unwrap(), Some(1_680));
+        let program = vm
+            .programs
+            .find_shared(&function.module.program)
+            .expect("registered Wasm program");
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        // Selective mode has no eager artifact. Recreate that state directly
+        // so this regression test does not depend on process environment.
+        vm.programs.set_compiled(program, None);
+
+        assert_eq!(vm.execute_wasm_i32(&function, &[]).unwrap(), Some(1_680));
+        assert!(matches!(vm.programs.compiled(program), Some(None)));
+        assert_eq!(
+            vm.programs.wasm_tier_entry_count(program, 1),
+            Some(super::super::program_store::WASM_JIT_PROMOTION_ENTRIES)
+        );
+        assert_eq!(vm.programs.wasm_tier_attempted(program, 1), Some(true));
+        let tier = vm
+            .programs
+            .wasm_tier(program, 1)
+            .expect("hot `CallKnown` target was promoted");
+        // The threshold call enters native code, and the remaining calls in
+        // the same loop are routed back through the general native path.
+        assert_eq!(tier.native_entries(1), Some(9));
+    }
+
+    #[test]
     fn compiled_wasm_unreachable_raises_the_interpreter_trap() {
         let module = crate::Engine::lower_wasm_i32_module(
             "compiled-wasm-unreachable-trap",

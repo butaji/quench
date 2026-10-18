@@ -734,6 +734,24 @@ impl ProgramStore {
             .is_some_and(|program| program.has_function_or_note_fallback(function))
     }
 
+    /// Whether an already retained selective-tier artifact contains this
+    /// function. This check is intentionally borrow-only so lane dispatches
+    /// do not clone its `Rc` on every call.
+    pub(super) fn has_wasm_tier_containing(&self, id: ProgramId, function: usize) -> bool {
+        let Some(tiers) = self.entry(id).map(|entry| &entry.wasm_tiers) else {
+            return false;
+        };
+        tiers
+            .get(&(function as u32))
+            .is_some_and(|state| state.compiled.is_some())
+            || tiers.values().any(|state| {
+                state
+                    .compiled
+                    .as_ref()
+                    .is_some_and(|compiled| compiled.has_function(function))
+            })
+    }
+
     pub(super) fn set_compiled(
         &mut self,
         id: ProgramId,
@@ -765,6 +783,36 @@ impl ProgramStore {
         }
         state.hotness |= 0x80;
         true
+    }
+
+    /// Count a nonterminal `CallKnown` activation that stays in the fast
+    /// interpreter lane. On the threshold call, leave the count unchanged and
+    /// hand it to the general dispatcher, whose normal entry hook records the
+    /// final observation and claims the one-shot compile attempt.
+    pub(super) fn note_wasm_tier_lane_entry(&mut self, id: ProgramId, function: u32) -> bool {
+        let Some(entry) = self.entry_mut(id) else {
+            return false;
+        };
+        if !entry
+            .residual
+            .functions
+            .get(function as usize)
+            .is_some_and(|function| {
+                function.code.len() <= super::compiled::MAX_JIT_TIER_BYTECODES_PER_FUNCTION
+            })
+        {
+            return false;
+        }
+        let state = entry.wasm_tiers.entry(function).or_default();
+        if state.compiled.is_some() || state.hotness & 0x80 != 0 {
+            return false;
+        }
+        let count = state.hotness & 0x7f;
+        if count.saturating_add(1) >= WASM_JIT_PROMOTION_ENTRIES {
+            return true;
+        }
+        state.hotness = count.saturating_add(1);
+        false
     }
 
     pub(super) fn wasm_tier(
