@@ -115,7 +115,7 @@ impl<H: Host> Vm<H> {
     /// its program, which the loop executes from the push (`StepResult::PushFrame`) until the
     /// return restores the caller's.
     #[allow(clippy::too_many_arguments)]
-    fn push_in_loop_call(
+    pub(super) fn push_in_loop_call(
         &mut self,
         p: &ResidualProgram,
         f: usize,
@@ -159,7 +159,7 @@ impl<H: Host> Vm<H> {
     /// JavaScript program in the current realm that the loop may push in place: a non-root
     /// ordinary body (`CallPlan::in_loop`). Resolved targets are cached (`InLoopCallTarget`).
     #[inline(always)]
-    fn in_loop_call_target(
+    pub(super) fn in_loop_call_target(
         &mut self,
         p: &ResidualProgram,
         callee: Value,
