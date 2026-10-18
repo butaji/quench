@@ -86,7 +86,7 @@ fn write_field(
         | FieldLayout::WriteRegister
         | FieldLayout::ReadWriteRegister
         | FieldLayout::OptionalRegister
-        | FieldLayout::OptionalSourceRegister
+        | FieldLayout::OptionalReadRegister
         | FieldLayout::FunctionIndex
         | FieldLayout::ElementCount
         | FieldLayout::SignedConstant
@@ -139,7 +139,7 @@ fn write_scalar_field(
         );
     }
     match (field, layout) {
-        (InstructionField::B, FieldLayout::OptionalRegister | FieldLayout::OptionalSourceRegister) => {
+        (InstructionField::B, FieldLayout::OptionalRegister | FieldLayout::OptionalReadRegister) => {
             write!(output, " b={:?}", instruction.optional_register_b())
         }
         (InstructionField::B, FieldLayout::FunctionIndex) => {

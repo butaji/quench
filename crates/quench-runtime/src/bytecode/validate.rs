@@ -256,7 +256,7 @@ fn field_domains_in_bounds(instruction: super::WideInstruction, bounds: Validati
             }
             FieldLayout::RegisterCount => true, // The associated window base owns the bounds check.
             FieldLayout::SignedConstant => true,
-            FieldLayout::OptionalRegister | FieldLayout::OptionalSourceRegister => instruction
+            FieldLayout::OptionalRegister | FieldLayout::OptionalReadRegister => instruction
                 .optional_register_b()
                 .is_none_or(|register| register_in_bounds(register, bounds.registers, 0)),
             FieldLayout::CacheSiteIndex => cache_in_bounds(value, bounds.cache_sites),
@@ -527,7 +527,7 @@ impl ResidualProgram {
                 return Err(format!("function {index} has invalid arrow-function facts"));
             }
             if function
-                .global_var_atoms
+                .global_var_atoms()
                 .iter()
                 .any(|atom| !atom_in_bounds(*atom, self.atoms.len()))
             {
@@ -603,9 +603,12 @@ function.plain_local_slots(&self.superinstructions)
                 return Err(format!("function {index} has invalid name bindings"));
             }
             let code_len = function.code.len() as u32;
-            let positions = function.source_positions.to_vec();
-            if positions.windows(2).any(|pair| pair[0].pc >= pair[1].pc)
-                || positions.iter().any(|position| {
+            let positions = function.source_positions.iter();
+            if positions
+                .clone()
+                .zip(positions.clone().skip(1))
+                .any(|(first, second)| first.pc >= second.pc)
+                || positions.clone().any(|position| {
                     position.pc >= code_len || position.line == 0 || position.column == 0
                 })
             {
@@ -1017,10 +1020,12 @@ fn selective_capture_layout_is_eligible(
         });
     let mapped_parameter_is_captured =
         function.arguments_are_mapped() && captured.iter().any(|slot| *slot < function.params);
+    // A mapped `arguments` object shares the captured parameters, so it lives in the
+    // environment with them; a body that keeps no `arguments` binding maps nothing.
     let mapped_arguments_are_captured = !mapped_parameter_is_captured
         || function
             .arguments_slot
-            .is_some_and(|slot| captured.binary_search(&slot).is_ok());
+            .is_none_or(|slot| captured.binary_search(&slot).is_ok());
 
     index != 0
         && function.parent.is_some()
@@ -1146,6 +1151,7 @@ mod tests {
         Function {
             parent: None,
             name: None,
+            inferred_name: None,
             is_arrow: false,
             self_binding_slot: None,
             source_span: None,
@@ -1173,11 +1179,7 @@ mod tests {
             local_registers: vec![].into(),
             inherited_with_scope: false,
             lexical_atoms: vec![].into(),
-            global_lexical_atoms: vec![].into(),
-            global_var_atoms: vec![].into(),
-            global_function_atoms: vec![].into(),
-            global_annex_b_var_atoms: vec![].into(),
-            global_immutable_atoms: vec![].into(),
+            global_declarations: None,
             name_bindings: Default::default(),
             binding_sites: vec![].into(),
             source_positions: Default::default(),
@@ -1188,6 +1190,7 @@ mod tests {
             dispatch: DispatchClass::General,
             decoded: Default::default(),
             plain_locals: Default::default(),
+            declared_atom_sets: Default::default(),
             activation_bindings: Default::default(),
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),

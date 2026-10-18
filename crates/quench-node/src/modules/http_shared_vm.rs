@@ -30,6 +30,13 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     operations::module(context)
 }
 
+pub(crate) fn https_module(
+    context: &mut NativeContext<'_, NodeHost>,
+    http: RootId,
+) -> Result<RootId, RootedError> {
+    operations::https_module(context, http)
+}
+
 pub(crate) fn poll(
     runtime: &mut quench_runtime::Runtime<NodeHost>,
     program: &quench_runtime::ResidualProgram,

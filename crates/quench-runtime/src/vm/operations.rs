@@ -14,29 +14,56 @@ const EXPONENTIATION_ONE: f64 = 1.0;
 const EXPONENTIATION_TWO: f64 = 2.0;
 const ODD_INTEGER_PARITY: f64 = 1.0;
 /// The comparison operators occupy the binary operator discriminants up to this one.
-const LAST_COMPARISON_OPERATOR: u32 = BinaryOperator::GreaterEqualThan as u32;
+pub(super) const LAST_COMPARISON_OPERATOR: u32 = BinaryOperator::GreaterEqualThan as u32;
+
+/// The semantic relation shared by Number interpretation and guarded native
+/// lowering. Strict and non-strict equality coincide once both operands are
+/// known to be Numbers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum NumberRelation {
+    Equal,
+    NotEqual,
+    LessThan,
+    LessEqual,
+    GreaterThan,
+    GreaterEqual,
+}
+
+impl NumberRelation {
+    pub(super) fn from_operator(op: u32) -> Option<Self> {
+        Some(match op {
+            value if value == BinaryOperator::Equality as u32
+                || value == BinaryOperator::StrictEquality as u32 => Self::Equal,
+            value if value == BinaryOperator::Inequality as u32
+                || value == BinaryOperator::StrictInequality as u32 => Self::NotEqual,
+            value if value == BinaryOperator::LessThan as u32 => Self::LessThan,
+            value if value == BinaryOperator::LessEqualThan as u32 => Self::LessEqual,
+            value if value == BinaryOperator::GreaterThan as u32 => Self::GreaterThan,
+            value if value == BinaryOperator::GreaterEqualThan as u32 => Self::GreaterEqual,
+            _ => return None,
+        })
+    }
+
+    #[inline(always)]
+    fn holds<T: PartialOrd>(self, left: T, right: T) -> bool {
+        match self {
+            Self::Equal => left == right,
+            Self::NotEqual => left != right,
+            Self::LessThan => left < right,
+            Self::LessEqual => left <= right,
+            Self::GreaterThan => left > right,
+            Self::GreaterEqual => left >= right,
+        }
+    }
+}
 
 /// A comparison operator applied to two numbers, or to two integers, which compare as the
 /// numbers they denote.
 #[inline(always)]
 fn number_comparison<T: PartialOrd>(op: u32, a: T, b: T) -> bool {
-    const EQUALITY: u32 = BinaryOperator::Equality as u32;
-    const INEQUALITY: u32 = BinaryOperator::Inequality as u32;
-    const STRICT_EQUALITY: u32 = BinaryOperator::StrictEquality as u32;
-    const STRICT_INEQUALITY: u32 = BinaryOperator::StrictInequality as u32;
-    const LESS_THAN: u32 = BinaryOperator::LessThan as u32;
-    const LESS_EQUAL_THAN: u32 = BinaryOperator::LessEqualThan as u32;
-    const GREATER_THAN: u32 = BinaryOperator::GreaterThan as u32;
-    const GREATER_EQUAL_THAN: u32 = BinaryOperator::GreaterEqualThan as u32;
-    match op {
-        EQUALITY | STRICT_EQUALITY => a == b,
-        INEQUALITY | STRICT_INEQUALITY => a != b,
-        LESS_THAN => a < b,
-        LESS_EQUAL_THAN => a <= b,
-        GREATER_THAN => a > b,
-        GREATER_EQUAL_THAN => a >= b,
-        _ => unreachable!("comparison operators end at GreaterEqualThan"),
-    }
+    NumberRelation::from_operator(op)
+        .expect("comparison operators end at GreaterEqualThan")
+        .holds(a, b)
 }
 
 const FIRST_NUMERIC_BINARY_OPERATOR: u32 = BinaryOperator::Addition as u32;
@@ -360,6 +387,7 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        self.check_execution_interrupt()?;
         self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
             let receiver = vm.string_method_receiver(p, native, this)?;
             vm.with_call_roots([receiver], |vm| {
@@ -375,6 +403,10 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        // The string and RegExp methods belong to none of the families below.
+        if native.runs_from_lane() {
+            return self.call_native_table(p, native, this, args);
+        }
         if let Some(result) = self.string_html_method(p, native, this, args) {
             return result;
         }
@@ -466,6 +498,17 @@ impl<H: Host> Vm<H> {
         if native.is_data_view_native() {
             return self.data_view_native(p, native, this, args);
         }
+        self.call_native_table(p, native, this, args)
+    }
+
+    /// The natives no family above claims, by kind.
+    fn call_native_table(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
         match native {
             Native::IsHTMLDDA => Ok(Value::NULL),
             Native::Proxy => Err(self.type_error(p, "Proxy must be called with new".into())),

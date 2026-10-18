@@ -25,13 +25,18 @@ impl<H: Host> Vm<H> {
         hasher.finish()
     }
 
+    /// The name of `index`, an atom the VM appended after its program's (`atom_text`).
+    pub(super) fn dynamic_atom(&self, index: usize) -> &JsString {
+        self.atom_sequence.appended(index - self.atom_text.len())
+    }
+
     pub(super) fn atom_units_equal_str(&self, atom: Atom, text: &str) -> bool {
         let index = atom as usize;
         if index < self.atom_text.len() {
             // Both are UTF-8 text, whose UTF-16 forms are equal exactly when they are.
             &self.atom_text[index] == text
         } else {
-            match self.dynamic_atoms[index - self.atom_text.len()].units() {
+            match self.dynamic_atom(index).units() {
                 Units::Ascii(bytes) => bytes == text.as_bytes(),
                 units => units.iter().eq(text.encode_utf16()),
             }
@@ -43,15 +48,7 @@ impl<H: Host> Vm<H> {
         hash: u64,
         mut matches: impl FnMut(Atom) -> bool,
     ) -> Option<Atom> {
-        let primary = self.atoms.get(&hash).copied()?;
-        if matches(primary) {
-            return Some(primary);
-        }
-        self.atom_collisions
-            .get(&hash)?
-            .iter()
-            .copied()
-            .find(|atom| matches(*atom))
+        self.atoms.find(hash, |&atom| matches(atom)).copied()
     }
 
     /// The atom for a run of code units, interned without a string when it already exists.
@@ -73,7 +70,7 @@ impl<H: Host> Vm<H> {
         if index < self.atom_text.len() {
             JsString::from_str(&self.atom_text[index])
         } else {
-            self.dynamic_atoms[index - self.atom_text.len()].clone()
+            self.dynamic_atom(index).clone()
         }
     }
 
@@ -85,7 +82,7 @@ impl<H: Host> Vm<H> {
                 units => self.atom_text[index].encode_utf16().eq(units.iter()),
             }
         } else {
-            self.dynamic_atoms[index - self.atom_text.len()].units() == units
+            self.dynamic_atom(index).units() == units
         }
     }
 }
@@ -94,7 +91,7 @@ impl<H: Host> Vm<H> {
 /// VM's, read through the shared sequence instead of copied.
 impl<H: Host> crate::compile::AtomPrefix for Vm<H> {
     fn len(&self) -> usize {
-        self.atom_text.len() + self.dynamic_atoms.len()
+        self.atom_sequence.len()
     }
 
     fn name(&self, atom: Atom) -> &str {

@@ -162,10 +162,12 @@ pub(crate) enum FieldLayout {
     Register,
     WriteRegister,
     ReadWriteRegister,
-    /// An optional register the instruction writes (a store's copy of its value).
+    /// A register the instruction may also write its result to (`NO_OPTIONAL_REGISTER` for
+    /// none): an output.
     OptionalRegister,
-    /// An optional register the instruction reads (an appended element).
-    OptionalSourceRegister,
+    /// A register the instruction reads when present (`NO_OPTIONAL_REGISTER` for none): an
+    /// input, encoded as `OptionalRegister` is.
+    OptionalReadRegister,
     NumericLocalTarget,
     NumericLocalStoreMarker,
     FunctionIndex,
@@ -617,7 +619,7 @@ opcodes!(
     IteratorClose => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
     // ArrayAccumulation past a literal's static prefix: `length` elisions, then the optional
     // value (iterated when the flag marks a spread), appended at the array's length.
-    AppendArray => CALL_EFFECT; layout Scalar; meaning ArrayLength, @ Register, @ fields(Register, OptionalSourceRegister, BooleanFlag),
+    AppendArray => CALL_EFFECT; layout Scalar; meaning ArrayLength, @ Register, @ fields(Register, OptionalReadRegister, BooleanFlag),
     RequireObjectCoercible => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(Unused, Register, Unused),
     RequireIteratorResult => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(Unused, Register, Unused),
     SuperCallCheck => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(Unused, Unused, Unused),
@@ -1009,10 +1011,57 @@ pub struct SourceSpan {
     pub end: u32,
 }
 
+/// Membership views of a function's declared-name lists, which stay the authority for
+/// their order and serialization: a name's declaration kind is one lookup, not a scan.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct DeclaredAtomSets {
+    global_lexical: rustc_hash::FxHashSet<Atom>,
+    global_var: rustc_hash::FxHashSet<Atom>,
+    global_immutable: rustc_hash::FxHashSet<Atom>,
+    environment: rustc_hash::FxHashSet<Atom>,
+    /// Per local slot: whether its name is a global var or global lexical declaration.
+    slots: Box<[SlotDeclaration]>,
+}
+
+/// Whether a local slot's name is among `global_var_atoms` and `global_lexical_atoms`.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct SlotDeclaration {
+    pub(crate) global_var: bool,
+    pub(crate) global_lexical: bool,
+}
+
+/// The names a Script's or eval's GlobalDeclarationInstantiation (EvalDeclarationInstantiation)
+/// creates: lexical bindings, var-scoped names, hoisted functions, Annex B function vars and
+/// the immutable (const and class) lexical names.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GlobalDeclarations {
+    pub lexical: Vec<Atom>,
+    pub var: Vec<Atom>,
+    pub function: Vec<Atom>,
+    pub annex_b_var: Vec<Atom>,
+    pub immutable: Vec<Atom>,
+}
+
+impl GlobalDeclarations {
+    /// The declarations, boxed only when there are any.
+    pub fn boxed(self) -> Option<Box<Self>> {
+        let empty = self.lexical.is_empty()
+            && self.var.is_empty()
+            && self.function.is_empty()
+            && self.annex_b_var.is_empty()
+            && self.immutable.is_empty();
+        (!empty).then(|| Box::new(self))
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Function {
     pub parent: Option<u32>,
     pub name: Option<Atom>,
+    /// The name NamedEvaluation gives an anonymous function definition at a statically
+    /// named position (`const f = () => {}`): its closures are made with it, as
+    /// SetFunctionName would name them right after creation.
+    pub inferred_name: Option<Atom>,
     pub is_arrow: bool,
     pub self_binding_slot: Option<u16>,
     /// The function's source text as a range of the program's `source`, which
@@ -1051,11 +1100,9 @@ pub struct Function {
     /// so unresolved names in descendants can still observe its outer locals.
     pub(crate) inherited_with_scope: bool,
     pub lexical_atoms: crate::heap::ThinBoxSlice<Atom>,
-    pub global_lexical_atoms: crate::heap::ThinBoxSlice<Atom>,
-    pub global_var_atoms: crate::heap::ThinBoxSlice<Atom>,
-    pub global_function_atoms: crate::heap::ThinBoxSlice<Atom>,
-    pub global_annex_b_var_atoms: crate::heap::ThinBoxSlice<Atom>,
-    pub global_immutable_atoms: crate::heap::ThinBoxSlice<Atom>,
+    /// What a Script or eval body declares in the global scope; `None` for every other
+    /// function, which declares nothing there.
+    pub global_declarations: Option<Box<GlobalDeclarations>>,
     /// Bindings a dynamic name lookup in this function can see.
     pub(crate) name_bindings: NameBindings,
     /// Lexical projections at eval calls and dynamic name operations.
@@ -1071,6 +1118,8 @@ pub struct Function {
     pub(crate) decoded: HotDecoding,
     /// Lazily derived `plain_local_slots`; never serialized.
     pub(crate) plain_locals: std::cell::OnceCell<Box<[bool]>>,
+    /// Lazily derived `declared_atoms`; never serialized.
+    pub(crate) declared_atom_sets: std::cell::OnceCell<Box<DeclaredAtomSets>>,
     /// Lazily derived `activation_bindings_observable`; never serialized.
     pub(crate) activation_bindings: std::cell::OnceCell<bool>,
     /// Lazily derived `reflects_live_parameters`; never serialized.
@@ -1155,81 +1204,138 @@ impl RegisterRoots {
     }
 }
 
-/// A function's source positions in ascending pc order, as LEB128 varints of each entry's
-/// differences from the one before: the pc, then the line and column zigzag-signed.
-/// Positions are read only when an error records a stack or a diagnostic names a
-/// location, by decoding the one function's table, so the table is kept at a few bytes
-/// an entry rather than three words.
+/// A function's source positions in increasing pc order, each delta-coded against the one
+/// before it as LEB128 varints: the pc advance, the line change (zigzag), then the column,
+/// as a change (zigzag) on the same line and absolute on a new one. Most entries take three
+/// bytes, a quarter of a `SourcePosition`, and a function keeps one per source location
+/// change while it compiles and for as long as it lives.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct SourcePositions(Box<[u8]>);
+pub(crate) struct SourcePositions {
+    bytes: Vec<u8>,
+    /// The final entry, which the next one is coded against.
+    last: Option<SourcePosition>,
+}
 
-/// Payload bits per LEB128 byte; the high bit marks a continuation.
-const VARINT_PAYLOAD_BITS: u32 = 7;
-const VARINT_CONTINUATION: u8 = 1 << VARINT_PAYLOAD_BITS;
+/// The payload bits of one LEB128 byte; the high bit marks a continuation.
+const LEB128_PAYLOAD_BITS: u32 = 7;
+const LEB128_CONTINUATION: u8 = 1 << LEB128_PAYLOAD_BITS;
 
 impl SourcePositions {
-    pub(crate) fn iter(&self) -> impl Iterator<Item = SourcePosition> + '_ {
-        let mut bytes = self.0.iter().copied();
-        let mut varint = move || -> Option<u32> {
-            let mut value = 0_u32;
-            let mut shift = 0;
-            loop {
-                let byte = bytes.next()?;
-                value |= u32::from(byte & !VARINT_CONTINUATION) << shift;
-                if byte & VARINT_CONTINUATION == 0 {
-                    return Some(value);
-                }
-                shift += VARINT_PAYLOAD_BITS;
+    pub(crate) fn last(&self) -> Option<SourcePosition> {
+        self.last
+    }
+
+    /// Appends `position`. Compiled code orders positions by pc; a decoded table keeps any
+    /// order exactly, for validation to judge.
+    pub(crate) fn push(&mut self, position: SourcePosition) {
+        let previous = self.last.unwrap_or(SourcePosition { pc: 0, line: 0, column: 0 });
+        let line_change = i64::from(position.line) - i64::from(previous.line);
+        self.write(u64::from(position.pc.wrapping_sub(previous.pc)));
+        self.write(zigzag(line_change));
+        self.write(if line_change == 0 {
+            zigzag(i64::from(position.column) - i64::from(previous.column))
+        } else {
+            u64::from(position.column)
+        });
+        self.last = Some(position);
+    }
+
+    fn write(&mut self, mut value: u64) {
+        loop {
+            let byte = (value & u64::from(!LEB128_CONTINUATION)) as u8;
+            value >>= LEB128_PAYLOAD_BITS;
+            if value == 0 {
+                self.bytes.push(byte);
+                return;
             }
-        };
-        let unzigzag = |value: u32| ((value >> 1) as i32 ^ -((value & 1) as i32)) as u32;
-        let mut previous = SourcePosition { pc: 0, line: 0, column: 0 };
-        std::iter::from_fn(move || {
-            previous = SourcePosition {
-                pc: previous.pc.wrapping_add(varint()?),
-                line: previous.line.wrapping_add(unzigzag(varint()?)),
-                column: previous.column.wrapping_add(unzigzag(varint()?)),
-            };
-            Some(previous)
-        })
+            self.bytes.push(byte | LEB128_CONTINUATION);
+        }
     }
 
-    pub(crate) fn to_vec(&self) -> Vec<SourcePosition> {
-        self.iter().collect()
+    pub(crate) fn iter(&self) -> SourcePositionIter<'_> {
+        SourcePositionIter {
+            bytes: &self.bytes,
+            previous: SourcePosition { pc: 0, line: 0, column: 0 },
+        }
     }
 
-    /// The position of the last entry at or before `pc`.
+    /// The position in effect at `pc`: the last entry at or before it.
     pub(crate) fn at(&self, pc: u32) -> Option<SourcePosition> {
         self.iter().take_while(|position| position.pc <= pc).last()
     }
-}
 
-impl From<Vec<SourcePosition>> for SourcePositions {
-    fn from(positions: Vec<SourcePosition>) -> Self {
-        fn push(bytes: &mut Vec<u8>, mut value: u32) {
-            loop {
-                let byte = (value & u32::from(!VARINT_CONTINUATION)) as u8;
-                value >>= VARINT_PAYLOAD_BITS;
-                if value == 0 {
-                    bytes.push(byte);
-                    return;
-                }
-                bytes.push(byte | VARINT_CONTINUATION);
-            }
-        }
-        let zigzag = |delta: u32| ((delta as i32) << 1 ^ ((delta as i32) >> (u32::BITS - 1))) as u32;
-        let mut bytes = Vec::new();
-        let mut previous = SourcePosition { pc: 0, line: 0, column: 0 };
-        for position in positions {
-            push(&mut bytes, position.pc.wrapping_sub(previous.pc));
-            push(&mut bytes, zigzag(position.line.wrapping_sub(previous.line)));
-            push(&mut bytes, zigzag(position.column.wrapping_sub(previous.column)));
-            previous = position;
-        }
-        Self(bytes.into_boxed_slice())
+    pub(crate) fn shrink_to_fit(&mut self) {
+        self.bytes.shrink_to_fit();
+    }
+
+    #[cfg(feature = "profile-memory")]
+    pub(crate) fn capacity_bytes(&self) -> usize {
+        self.bytes.capacity()
     }
 }
 
+impl FromIterator<SourcePosition> for SourcePositions {
+    fn from_iter<I: IntoIterator<Item = SourcePosition>>(positions: I) -> Self {
+        let mut table = Self::default();
+        for position in positions {
+            table.push(position);
+        }
+        table
+    }
+}
+
+fn zigzag(value: i64) -> u64 {
+    ((value << 1) ^ (value >> (i64::BITS - 1))) as u64
+}
+
+fn unzigzag(value: u64) -> i64 {
+    (value >> 1) as i64 ^ -((value & 1) as i64)
+}
+
+/// Decodes a `SourcePositions` table in order.
+#[derive(Clone)]
+pub(crate) struct SourcePositionIter<'a> {
+    bytes: &'a [u8],
+    previous: SourcePosition,
+}
+
+impl SourcePositionIter<'_> {
+    fn read(&mut self) -> u64 {
+        let mut value = 0;
+        let mut shift = 0;
+        while let Some((&byte, rest)) = self.bytes.split_first() {
+            self.bytes = rest;
+            value |= u64::from(byte & !LEB128_CONTINUATION) << shift;
+            if byte & LEB128_CONTINUATION == 0 {
+                break;
+            }
+            shift += LEB128_PAYLOAD_BITS;
+        }
+        value
+    }
+}
+
+impl Iterator for SourcePositionIter<'_> {
+    type Item = SourcePosition;
+
+    fn next(&mut self) -> Option<SourcePosition> {
+        if self.bytes.is_empty() {
+            return None;
+        }
+        let previous = self.previous;
+        let pc = previous.pc.wrapping_add(self.read() as u32);
+        let line_change = unzigzag(self.read());
+        let column = self.read();
+        let column = if line_change == 0 {
+            (i64::from(previous.column) + unzigzag(column)) as u32
+        } else {
+            column as u32
+        };
+        let line = (i64::from(previous.line) + line_change) as u32;
+        self.previous = SourcePosition { pc, line, column };
+        Some(self.previous)
+    }
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PlainLocalContextIneligibility {
     RootFunction,
@@ -1246,6 +1352,30 @@ pub(crate) enum PlainLocalSlotIneligibility {
 }
 
 impl Function {
+    fn global_declarations_or_none(&self) -> Option<&GlobalDeclarations> {
+        self.global_declarations.as_deref()
+    }
+
+    pub fn global_lexical_atoms(&self) -> &[Atom] {
+        self.global_declarations_or_none().map_or(&[], |declarations| &declarations.lexical)
+    }
+
+    pub fn global_var_atoms(&self) -> &[Atom] {
+        self.global_declarations_or_none().map_or(&[], |declarations| &declarations.var)
+    }
+
+    pub fn global_function_atoms(&self) -> &[Atom] {
+        self.global_declarations_or_none().map_or(&[], |declarations| &declarations.function)
+    }
+
+    pub fn global_annex_b_var_atoms(&self) -> &[Atom] {
+        self.global_declarations_or_none().map_or(&[], |declarations| &declarations.annex_b_var)
+    }
+
+    pub fn global_immutable_atoms(&self) -> &[Atom] {
+        self.global_declarations_or_none().map_or(&[], |declarations| &declarations.immutable)
+    }
+
     /// Reusing an activation is observable while its call is protected by a handler.
     /// A terminal return may skip its following Return instruction without being a
     /// proper tail call: the caller must still catch the callee's abrupt completion.
@@ -1349,6 +1479,59 @@ impl Function {
         plain
     }
 
+    fn declared_atoms(&self) -> &DeclaredAtomSets {
+        self.declared_atom_sets.get_or_init(|| {
+            let global_lexical: rustc_hash::FxHashSet<Atom> =
+                self.global_lexical_atoms().iter().copied().collect();
+            let global_var: rustc_hash::FxHashSet<Atom> =
+                self.global_var_atoms().iter().copied().collect();
+            let slots = self
+                .local_atoms
+                .iter()
+                .map(|atom| SlotDeclaration {
+                    global_var: global_var.contains(atom),
+                    global_lexical: global_lexical.contains(atom),
+                })
+                .collect();
+            Box::new(DeclaredAtomSets {
+                global_lexical,
+                global_var,
+                global_immutable: self.global_immutable_atoms().iter().copied().collect(),
+                environment: self.environment_atoms.iter().copied().collect(),
+                slots,
+            })
+        })
+    }
+
+    /// The declaration kinds of local `slot`'s name (none for a slot outside the function).
+    pub(crate) fn slot_declaration(&self, slot: usize) -> SlotDeclaration {
+        self.declared_atoms()
+            .slots
+            .get(slot)
+            .copied()
+            .unwrap_or_default()
+    }
+
+    /// Whether `atom` is among `global_lexical_atoms`.
+    pub(crate) fn declares_global_lexical(&self, atom: Atom) -> bool {
+        self.declared_atoms().global_lexical.contains(&atom)
+    }
+
+    /// Whether `atom` is among `global_var_atoms`.
+    pub(crate) fn declares_global_var(&self, atom: Atom) -> bool {
+        self.declared_atoms().global_var.contains(&atom)
+    }
+
+    /// Whether `atom` is among `global_immutable_atoms`.
+    pub(crate) fn declares_global_immutable(&self, atom: Atom) -> bool {
+        self.declared_atoms().global_immutable.contains(&atom)
+    }
+
+    /// Whether `atom` is among `environment_atoms`.
+    pub(crate) fn declares_environment_atom(&self, atom: Atom) -> bool {
+        self.declared_atoms().environment.contains(&atom)
+    }
+
     /// Whether anything can read an activation's implicit `new.target` and lexical-this
     /// bindings: by-name resolution or direct eval in the body, closures or cloned scopes
     /// that can capture the activation, `with` scopes, and constructors, initializers,
@@ -1356,39 +1539,54 @@ impl Function {
     /// Otherwise the frame's own `this` is authoritative and the bindings are never read.
     /// By-name loads of source names resolve only their own atom; the implicit `this` and
     /// `new.target` bindings are reachable by name only through engine-internal atoms.
-    pub(crate) fn activation_bindings_observable(&self, atoms: &AtomTable) -> bool {
+    /// Whether the activation's implicit `this` and `new.target` bindings can be read: by
+    /// its own name lookups (`activation_binding_reads`) or by an arrow function it makes,
+    /// which inherits them. Any other closure has its own. `functions` is the owning
+    /// program's table.
+    pub(crate) fn activation_bindings_observable(&self, atoms: &AtomTable, functions: &[Function]) -> bool {
         *self.activation_bindings.get_or_init(|| {
-            self.is_async
-                || self.is_generator
-                || self.is_class_constructor
-                || self.derived_constructor
-                || self.class_initializer
-                || self.instance_initializer.is_some()
-                || self.inherited_with_scope
-                || !self.binding_sites.is_empty()
+            self.activation_binding_reads(atoms)
                 || self.instructions().any(|instruction| {
-                    matches!(
-                        instruction.op(),
-                        Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof
-                    ) && usize::try_from(instruction.atom_index())
-                        .is_ok_and(|atom| atom >= atoms.len() || atoms[atom].starts_with('\0'))
-                        || matches!(
-                            instruction.op(),
-                            Op::ResolveName
-                                | Op::LoadResolvedName
-                                | Op::DeleteName
-                                | Op::StoreName
-                                | Op::StoreResolvedName
-                                | Op::StoreVarBinding
-                                | Op::MakeClosure
-                                | Op::CloneEnv
-                                | Op::InitializeThis
-                                | Op::SuperCallCheck
-                        )
-                        || (instruction.op().is_call_with_eval_flags()
-                            && (instruction.direct_eval() || instruction.parameter_eval()))
+                    instruction.op() == Op::MakeClosure
+                        && functions
+                            .get(instruction.closure_function_index() as usize)
+                            .is_none_or(|closure| closure.is_arrow)
                 })
         })
+    }
+
+    /// Whether the activation itself may read its implicit bindings through a name or scope
+    /// operation, or must keep them for its kind of activation.
+    fn activation_binding_reads(&self, atoms: &AtomTable) -> bool {
+        self.is_async
+            || self.is_generator
+            || self.is_class_constructor
+            || self.derived_constructor
+            || self.class_initializer
+            || self.instance_initializer.is_some()
+            || self.inherited_with_scope
+            || !self.binding_sites.is_empty()
+            || self.instructions().any(|instruction| {
+                matches!(
+                    instruction.op(),
+                    Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof
+                ) && usize::try_from(instruction.atom_index())
+                    .is_ok_and(|atom| atom >= atoms.len() || atoms[atom].starts_with('\0'))
+                    || matches!(
+                        instruction.op(),
+                        Op::ResolveName
+                            | Op::LoadResolvedName
+                            | Op::DeleteName
+                            | Op::StoreName
+                            | Op::StoreResolvedName
+                            | Op::StoreVarBinding
+                            | Op::CloneEnv
+                            | Op::InitializeThis
+                            | Op::SuperCallCheck
+                    )
+                    || (instruction.op().is_call_with_eval_flags()
+                        && (instruction.direct_eval() || instruction.parameter_eval()))
+            })
     }
 
     /// Every instruction in fixed-width form.
@@ -1480,7 +1678,9 @@ impl Function {
                 && !self.is_generator
                 && !self.is_async
                 && promoted_parameters == usize::from(self.params)
-                && !self.activation_bindings_observable(atoms);
+                && !self.activation_binding_reads(atoms)
+                // A plain activation makes no closure, whichever bindings it would see.
+                && !self.instructions().any(|instruction| instruction.op() == Op::MakeClosure);
             let in_loop = !self.is_async
                 && !self.is_generator
                 && !self.is_class_constructor
@@ -1516,6 +1716,54 @@ impl Function {
                         reaches_only_forwarded_arguments
                     },
             }
+        })
+    }
+
+    /// Whether the body's whole effect is storing parameters into fields of `this`, then
+    /// returning `undefined`: `SetThisField` records whose values are parameter registers,
+    /// followed by the return of an undefined constant or of a register nothing writes.
+    /// `constants` is the owning program's table. In a plain activation, where parameter `k`
+    /// lives in register `k` (`CallPlan::registers_only`), the body is its stores
+    /// (`this_field_stores`) alone.
+    pub(crate) fn only_initializes_this_fields(&self, constants: &[Constant]) -> bool {
+        if !self.handlers.is_empty() {
+            return false;
+        }
+        let mut stores = 0;
+        for store in self.this_field_stores() {
+            if store.a() >= self.params {
+                return false;
+            }
+            stores += 1;
+        }
+        let undefined_load = |load: &WideInstruction| {
+            load.op() == Op::LoadConst
+                && matches!(constants.get(load.constant_index()), Some(Constant::Undefined))
+        };
+        stores != 0
+            && match self.instructions().skip(stores).collect::<Vec<_>>().as_slice() {
+                [completion] => {
+                    (undefined_load(completion) && completion.returns_from_frame())
+                        || (completion.op() == Op::Return
+                            && completion.register_a() >= self.params
+                            && self.initial_register == InitialRegister::Undefined)
+                }
+                [load, completion] => {
+                    undefined_load(load)
+                        && !load.returns_from_frame()
+                        && completion.op() == Op::Return
+                        && completion.register_a() == load.result_register()
+                }
+                _ => false,
+            }
+    }
+
+    /// The `SetThisField` records a body opens with (`only_initializes_this_fields`), in their
+    /// packed form: each holds its value register in `a`, its cache site in `c` and its atom
+    /// in `imm`.
+    pub(crate) fn this_field_stores(&self) -> impl Iterator<Item = Instr> + '_ {
+        self.code.iter().copied().take_while(|store| {
+            !store.is_wide() && matches!(store.op(), Op::SetThisField | Op::SetThisFieldStrict)
         })
     }
 
@@ -2254,7 +2502,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 95;
+    pub const FORMAT_VERSION: u8 = 97;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;
@@ -2275,8 +2523,8 @@ impl ResidualProgram {
     /// slot of its environment is the binding itself.
     pub(crate) fn root_slots_are_bindings(&self) -> bool {
         self.functions.first().is_some_and(|root| {
-            (self.root_variables_are_local() || root.global_var_atoms.is_empty())
-                && (self.kind != ProgramKind::Script || root.global_lexical_atoms.is_empty())
+            (self.root_variables_are_local() || root.global_var_atoms().is_empty())
+                && (self.kind != ProgramKind::Script || root.global_lexical_atoms().is_empty())
         })
     }
 

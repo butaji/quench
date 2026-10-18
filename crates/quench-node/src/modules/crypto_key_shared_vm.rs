@@ -1,11 +1,13 @@
 //! Native key slot ownership for the configured Node key classes.
+use super::crypto_secret_material::Material;
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
+use std::sync::Arc;
 type Context<'a> = NativeContext<'a, NodeHost>;
 // Node crypto_keys.cc's native key type and slot tuple ABI.
-const KEY_TYPE_SECRET: f64 = 0.0;
-const KEY_TYPE_PUBLIC: f64 = 1.0;
-const KEY_TYPE_PRIVATE: f64 = 2.0;
+const KEY_TYPE_SECRET: f64 = super::crypto_key_layout::Kind::Secret as u32 as f64;
+const KEY_TYPE_PUBLIC: f64 = super::crypto_key_layout::Kind::Public as u32 as f64;
+const KEY_TYPE_PRIVATE: f64 = super::crypto_key_layout::Kind::Private as u32 as f64;
 const KEY_SLOT_COUNT: usize = 2;
 const CRYPTO_KEY_SLOT_COUNT: usize = 7;
 const CACHE: &str = "\0builtin:crypto/native-key-slots";
@@ -22,6 +24,17 @@ fn fail(c: &mut Context<'_>, message: &str) -> RootedError {
         Ok(e) => c.throw(e),
         Err(e) => e,
     }
+}
+// NativeKeyObject::GetSlots and NativeCryptoKey::GetSlots reject unbranded
+// receivers before the source classes access their private lazy caches.
+fn invalid_this(c: &mut Context<'_>, kind: &str) -> RootedError {
+    let result = (|| {
+        let error = c.type_error_rooted(&format!("Value of \"this\" must be of type {kind}"))?;
+        let code = c.string_rooted("ERR_INVALID_THIS");
+        set(c, error, "code", code)?;
+        Ok::<_, RootedError>(c.throw(error))
+    })();
+    result.unwrap_or_else(|error| error)
 }
 fn function(
     c: &mut Context<'_>,
@@ -175,7 +188,19 @@ fn key_slots(c: &mut Context<'_>, state: RootId, key: RootId) -> Result<RootId, 
         let record = lookup(c, state, "handles", handle)?;
         let kind = c.number(kind);
         set(c, record, "type", kind)?;
-        set(c, record, "bytes", bytes)?;
+        if secret {
+            let bytes = c
+                .bytes_prefix_rooted(bytes, usize::MAX)
+                .ok_or_else(|| fail(c, "Legacy secret bytes are unavailable"))?;
+            super::crypto_key_material_shared_vm::register_secret(
+                c,
+                handle,
+                Arc::new(Material::new(bytes)),
+            )?;
+        } else {
+            set(c, record, "bytes", bytes)?;
+        }
+
         let slots = c.array_rooted(&[kind, handle])?;
         store(c, state, "keys", key, slots)?;
         return Ok(slots);
@@ -229,25 +254,23 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
                 "equals",
                 "getKeyType",
                 "getSymmetricKeySize",
+                "getAsymmetricKeyType",
+                "keyDetail",
+                "exportJwk",
+                "rawPublicKey",
+                "rawPrivateKey",
+                "exportECPublicRaw",
+                "exportECPrivateRaw",
+                "exportECPrivatePkcs8",
+                "checkEcKeyData",
             ] {
                 let method = function(c, state, name, false)?;
                 set(c, proto, name, method)?;
             }
         }
     }
-    for (name, n) in [
-        ("kKeyTypeSecret", KEY_TYPE_SECRET),
-        ("kKeyTypePublic", KEY_TYPE_PUBLIC),
-        ("kKeyTypePrivate", KEY_TYPE_PRIVATE),
-        ("kKeyFormatDER", 0.0),
-        ("kKeyFormatPEM", 1.0),
-        ("kKeyFormatJWK", 2.0),
-        ("kKeyEncodingPKCS1", 0.0),
-        ("kKeyEncodingPKCS8", 1.0),
-        ("kKeyEncodingSPKI", 2.0),
-        ("kKeyEncodingSEC1", 3.0),
-    ] {
-        let value = c.number(n);
+    for &(name, n) in super::crypto_key_layout::CONSTANTS {
+        let value = c.number(f64::from(n));
         set(c, module, name, value)?;
     }
     set(c, state, "binding", module)?;
@@ -276,7 +299,12 @@ pub(crate) fn operation(
                 },
                 true,
             )?;
-            c.call_rooted(arg, missing, &[base])
+            let classes = c.call_rooted(arg, missing, &[base])?;
+            if op == "cryptoClass" {
+                let internal = get(c, classes, "1")?;
+                set(c, state, "internalCryptoKeyConstructor", internal)?;
+            }
+            Ok(classes)
         }
         "handle" => {
             let value = c.null_object_rooted()?;
@@ -289,23 +317,42 @@ pub(crate) fn operation(
                 return Err(fail(c, "Invalid key handle"));
             }
             let kind = c.to_number(arg)?;
+            #[cfg(quench_openssl_provider)]
+            if kind != KEY_TYPE_SECRET {
+                let kind = super::crypto_asymmetric_shared_vm::initialize(c, receiver, args)?;
+                let kind = c.number(f64::from(kind));
+                set(c, value, "type", kind)?;
+                let format = args.get(2).copied().unwrap_or(missing);
+                return if c.to_number(format)? == 2.0 {
+                    Ok(kind)
+                } else {
+                    Ok(c.undefined())
+                };
+            }
+            #[cfg(not(quench_openssl_provider))]
+            if kind != KEY_TYPE_SECRET {
+                let bytes = args.get(1).copied().unwrap_or(missing);
+                let bytes = c
+                    .bytes_prefix_rooted(bytes, usize::MAX)
+                    .ok_or_else(|| fail(c, "Key material must be a byte view"))?;
+                let bytes = c.uint8_array_rooted(&bytes)?;
+                set(c, value, "bytes", bytes)?;
+                set(c, value, "type", arg)?;
+                return Ok(c.boolean(true));
+            }
             let bytes = args.get(1).copied().unwrap_or(missing);
-            let Some(bytes) = c.view_bytes_rooted(bytes) else {
+            let Some(bytes) = c.bytes_prefix_rooted(bytes, usize::MAX) else {
                 return Err(fail(c, "Key material must be a byte view"));
             };
-            // Secret key bytes have no ASN.1 policy; asymmetric parsing remains on the
-            // existing OpenSSL key operations until that handle ABI is implemented.
-            if kind != KEY_TYPE_SECRET {
-                return Err(fail(
-                    c,
-                    "Asymmetric native key initialization is unsupported",
-                ));
-            }
-            let material = c.uint8_array_rooted(&bytes)?;
-            set(c, value, "bytes", material)?;
+            super::crypto_key_material_shared_vm::register_secret(
+                c,
+                receiver,
+                Arc::new(Material::new(bytes)),
+            )?;
             set(c, value, "type", arg)?;
-            Ok(c.boolean(true))
+            Ok(c.undefined())
         }
+
         "keyBase" | "cryptoBase" => {
             let handle = lookup(c, state, "handles", arg)?;
             if !c.is_object_rooted(handle)? {
@@ -332,6 +379,18 @@ pub(crate) fn operation(
                 receiver,
                 slots,
             )?;
+            // Source-created secrets and the existing cipher/KDF provider share
+            // this exact native byte owner. No second material copy or key ID.
+            if op == "keyBase"
+                && c.rooted_value(kind).and_then(|value| value.as_number()) == Some(KEY_TYPE_SECRET)
+            {
+                let brands = get(c, state, "secretBrands")?;
+                if c.is_object_rooted(brands)? {
+                    let bytes = arg;
+                    let setter = get(c, state, "set")?;
+                    c.call_rooted(setter, brands, &[receiver, bytes])?;
+                }
+            }
             Ok(receiver)
         }
         "getKeyObjectHandle" | "getKeyObjectType" => {
@@ -392,8 +451,54 @@ pub(crate) fn operation(
                 }
                 c.array_rooted(&values)
             } else {
-                Err(fail(c, "Invalid native key receiver"))
+                Err(invalid_this(c, if op == "keySlots" { "KeyObject" } else { "CryptoKey" }))
             }
+        }
+        #[cfg(quench_openssl_provider)]
+        "getAsymmetricKeyType" => super::crypto_asymmetric_shared_vm::key_type(c, receiver),
+        #[cfg(quench_openssl_provider)]
+        "keyDetail" => super::crypto_asymmetric_shared_vm::key_detail(c, receiver, arg),
+        #[cfg(quench_openssl_provider)]
+        "exportJwk" => {
+            #[cfg(quench_openssl_provider)]
+            let allow = {
+                let allow = args.get(1).copied().unwrap_or(missing);
+                c.truthy_rooted(allow)?
+            };
+            #[cfg(quench_openssl_provider)]
+            if super::crypto_asymmetric_shared_vm::key(c, receiver)?.is_some() {
+                return super::crypto_asymmetric_shared_vm::export_jwk(c, receiver, arg, allow);
+            }
+            {
+                let bytes = secret_bytes(c, receiver)?;
+                let kty = c.string_rooted("oct");
+                set(c, arg, "kty", kty)?;
+                let mut text = super::buffer_codec::base64_encode(&bytes, false, true);
+                let encoded = c.string_rooted(&text);
+                super::crypto_secret_material::cleanse(unsafe { text.as_bytes_mut() });
+                set(c, arg, "k", encoded)?;
+                Ok(arg)
+            }
+        }
+        #[cfg(quench_openssl_provider)]
+        "rawPublicKey" | "exportECPublicRaw" => {
+            let compressed = op == "exportECPublicRaw" && c.to_number(arg)? == 2.0;
+            super::crypto_asymmetric_shared_vm::raw(c, receiver, false, compressed)
+        }
+        #[cfg(quench_openssl_provider)]
+        "rawPrivateKey" | "exportECPrivateRaw" => {
+            super::crypto_asymmetric_shared_vm::raw(c, receiver, true, false)
+        }
+        #[cfg(quench_openssl_provider)]
+        "exportECPrivatePkcs8" => {
+            let format = c.number(0.0);
+            let encoding = c.number(1.0);
+            super::crypto_asymmetric_shared_vm::export(c, receiver, &[format, encoding])
+        }
+        #[cfg(quench_openssl_provider)]
+        "checkEcKeyData" => {
+            let key = super::crypto_asymmetric_shared_vm::key(c, receiver)?;
+            Ok(c.boolean(key.is_some_and(|key| key.check_ec_key_data())))
         }
         "getKeyType" | "getSymmetricKeySize" | "export" | "equals" => {
             let value = lookup(c, state, "handles", receiver)?;
@@ -402,6 +507,34 @@ pub(crate) fn operation(
             }
             if op == "getKeyType" {
                 return get(c, value, "type");
+            }
+            #[cfg(quench_openssl_provider)]
+            if let Some(key) = super::crypto_asymmetric_shared_vm::key(c, receiver)? {
+                return match op.as_str() {
+                    "export" => super::crypto_asymmetric_shared_vm::export(c, receiver, args),
+                    "equals" => {
+                        let other = super::crypto_asymmetric_shared_vm::key(c, arg)?;
+                        Ok(c.boolean(
+                            other.is_some_and(|other| {
+                                key.kind() == other.kind() && key.equals(&other)
+                            }),
+                        ))
+                    }
+                    _ => Err(fail(c, "Asymmetric key has no symmetric size")),
+                };
+            }
+            if let Some(bytes) = super::crypto_key_material_shared_vm::secret(c, receiver)? {
+                return match op.as_str() {
+                    "getSymmetricKeySize" => Ok(c.number(bytes.len() as f64)),
+                    "export" => super::buffer_shared_vm::from_bytes(c, &bytes),
+                    "equals" => {
+                        let other = super::crypto_key_material_shared_vm::secret(c, arg)?;
+                        Ok(c.boolean(other.is_some_and(|other| {
+                            bytes.len() == other.len() && openssl::memcmp::eq(&bytes, &other)
+                        })))
+                    }
+                    _ => Err(fail(c, "Invalid secret key operation")),
+                };
             }
             let bytes = get(c, value, "bytes")?;
             let Some(bytes) = c.view_bytes_rooted(bytes) else {
@@ -468,4 +601,100 @@ fn public_material(
                 PKey::private_key_from_der(bytes).or_else(|_| PKey::private_key_from_pem(bytes))?;
             PKey::public_key_from_der(&private.public_key_to_der()?)
         })
+}
+
+/// Build actual generated-key handles using the same secret ownership/slot path.
+/// No new brand map, global key IDs, or duplicated key material representation.
+pub(crate) fn generated_secret(
+    c: &mut Context<'_>,
+    bytes: Material,
+    crypto: Option<(RootId, RootId, RootId)>,
+) -> Result<RootId, RootedError> {
+    let binding = binding(c)?;
+    let constructor = get(c, binding, "KeyObjectHandle")?;
+    let handle = c.construct_rooted(constructor, constructor, &[])?;
+    let state = state(c)?;
+    let record = lookup(c, state, "handles", handle)?;
+    super::crypto_key_material_shared_vm::register_secret(c, handle, Arc::new(bytes))?;
+    let kind = c.number(KEY_TYPE_SECRET);
+    set(c, record, "type", kind)?;
+    if let Some((algorithm, usages, extractable)) = crypto {
+        let constructor = get(c, state, "internalCryptoKeyConstructor")?;
+        if !c.is_callable_rooted(constructor)? {
+            return Err(RootedError::host("SDK InternalCryptoKey not initialized"));
+        }
+        c.construct_rooted(
+            constructor,
+            constructor,
+            &[handle, algorithm, usages, extractable],
+        )
+    } else {
+        Ok(handle)
+    }
+}
+
+/// A native Hmac/HKDF retains the same immutable native secret owner. Guest
+/// fields and mutable public constructors cannot grant key access.
+#[cfg(quench_openssl_provider)]
+pub(crate) fn secret_bytes(
+    c: &mut Context<'_>,
+    value: RootId,
+) -> Result<Arc<Material>, RootedError> {
+    if let Some(secret) = super::crypto_key_material_shared_vm::secret(c, value)? {
+        return Ok(secret);
+    }
+    if let Some(bytes) = c.bytes_prefix_rooted(value, usize::MAX) {
+        return Ok(Arc::new(Material::new(bytes)));
+    }
+    Err(fail(c, "Invalid native secret key handle"))
+}
+/// Actual asymmetric handles use the same source-owned KeyObject slot authority.
+#[cfg(quench_openssl_provider)]
+pub(crate) fn generated_asymmetric(
+    c: &mut Context<'_>,
+    key: std::sync::Arc<super::crypto_asymmetric::OwnedKey>,
+    crypto: Option<(RootId, RootId, RootId)>,
+) -> Result<RootId, RootedError> {
+    let binding = binding(c)?;
+    let constructor = get(c, binding, "KeyObjectHandle")?;
+    let handle = c.construct_rooted(constructor, constructor, &[])?;
+    let state = state(c)?;
+    let record = lookup(c, state, "handles", handle)?;
+    let kind = c.number(
+        if key.kind() == super::crypto_asymmetric::KeyKind::Private {
+            KEY_TYPE_PRIVATE
+        } else {
+            KEY_TYPE_PUBLIC
+        },
+    );
+    set(c, record, "type", kind)?;
+    super::crypto_asymmetric_shared_vm::register(c, handle, key)?;
+    if let Some((algorithm, usages, extractable)) = crypto {
+        let constructor = get(c, state, "internalCryptoKeyConstructor")?;
+        if !c.is_callable_rooted(constructor)? {
+            return Err(RootedError::host("SDK InternalCryptoKey not initialized"));
+        }
+        c.construct_rooted(
+            constructor,
+            constructor,
+            &[handle, algorithm, usages, extractable],
+        )
+    } else {
+        Ok(handle)
+    }
+}
+
+/// Existing byte-oriented cipher/KDF adapters snapshot canonical native material
+/// only when an operation consumes it. Old normalized arrays remain owned by
+/// the legacy backend; neither path installs a second canonical secret backing.
+pub(crate) fn secret_material(
+    c: &mut Context<'_>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let value = args.first().copied().unwrap_or_else(|| c.undefined());
+    if let Some(material) = super::crypto_key_material_shared_vm::secret(c, value)? {
+        return super::buffer_shared_vm::from_bytes(c, &material);
+    }
+    Ok(value)
 }

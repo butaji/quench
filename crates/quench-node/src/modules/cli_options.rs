@@ -1,11 +1,17 @@
 //! Parsed startup values for implemented Node feature switches.
 include!(concat!(env!("OUT_DIR"), "/node_option_defaults.rs"));
 const BOOLEAN_OPTIONS: &[(&str, bool)] = &[
+    // These switches are consumed by the unchanged SDK harness even when
+    // tests are run directly rather than through the file-runner CLI.
+    ("--test-only", false),
+    ("--test-randomize", false),
+    ("--test-update-snapshots", false),
     ("--experimental-vfs", false),
     ("--experimental-stream-iter", false),
     ("--expose-internals", false),
     ("--warnings", true),
     ("--deprecation", true),
+    ("--pending-deprecation", false),
     ("--trace-warnings", false),
     ("--trace-deprecation", false),
     ("--throw-deprecation", false),
@@ -17,6 +23,7 @@ const BOOLEAN_OPTIONS: &[(&str, bool)] = &[
     ("--report-uncaught-exception", false),
 ];
 const STRING_OPTIONS: &[(&str, &str)] = &[
+    ("--dns-result-order", "verbatim"),
     ("--report-dir", ""),
     ("--report-filename", ""),
     ("--report-signal", "SIGUSR2"),
@@ -39,8 +46,9 @@ impl Default for CliOptions {
     } }
 }
 impl CliOptions {
-    pub(crate) fn parse(environment: Option<&str>, invocation: &[String]) -> Result<Self, String> {
+    pub(crate) fn parse(environment: Option<&str>, invocation: &[String], pending_deprecation: bool) -> Result<Self, String> {
         let mut options=Self::default();
+        options.booleans.insert("--pending-deprecation", pending_deprecation);
         if let Some(environment)=environment { options.apply(&parse_node_options(environment).map_err(str::to_owned)?)?; }
         options.apply(invocation)?;Ok(options)
     }

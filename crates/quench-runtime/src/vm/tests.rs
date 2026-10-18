@@ -291,7 +291,7 @@ fn rootless_shapes_survive_collection_and_shape_compaction() {
     let mut vm = Vm::new(SilentHost);
     let atom = vm.intern_atom("survivor");
     let live_shape = vm.transition_shape(0, atom);
-    assert!(!vm.shapes[live_shape as usize].may_have_gc_roots);
+    assert!(!vm.shapes[live_shape as usize].facts.may_have_gc_roots());
     let owner =
         vm.heap
             .alloc_object_with_properties(Value::NULL, live_shape, &[Value::integer(42)]);
@@ -327,7 +327,7 @@ fn shape_roots_keep_symbols_and_active_accessors_alive() {
 
     let program = Engine::specialize("", "shape-roots.js").unwrap();
     let mut vm = Vm::new(SilentHost);
-    let symbol = vm.heap.alloc(Cell::Symbol(None));
+    let symbol = vm.heap.alloc(Cell::Symbol(crate::heap::SymbolData::public(None)));
     let symbol_weak = vm.heap.weak_handle(symbol).unwrap();
     let symbol_shape = vm.transition_property_shape(0, PropertyKey::symbol(symbol));
     let first =
@@ -495,36 +495,42 @@ fn accessor_descriptor_transitions_do_not_root_values_in_the_cache() {
     let atom = vm.intern_atom("field");
     let first_getter = vm.native_value(Native::Object);
     let second_getter = vm.native_value(Native::Array);
-    let first = vm.object();
-    let second = vm.object();
-    for (object, getter) in [(first, first_getter), (second, second_getter)] {
-        vm.set_property(object, atom, Value::UNDEFINED).unwrap();
-        vm.set_property_attributes(
-            object,
-            PropertyKey::string(atom),
-            super::PropertyAttributes {
-                writable: false,
-                enumerable: false,
-                configurable: true,
-                accessor: true,
-                getter: Some(getter),
-                setter: None,
-            },
+    let setter = vm.native_value(Native::Function);
+    // A lone getter lives in its object's slot, so the two objects share one shape; a getter
+    // with a setter lives in the shape's accessor table, so each object keeps its own.
+    for (setter, shared) in [(None, true), (Some(setter), false)] {
+        let first = vm.object();
+        let second = vm.object();
+        for (object, getter) in [(first, first_getter), (second, second_getter)] {
+            vm.set_property(object, atom, Value::UNDEFINED).unwrap();
+            vm.set_property_attributes(
+                object,
+                PropertyKey::string(atom),
+                super::PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: true,
+                    getter: Some(getter),
+                    setter,
+                },
+            );
+        }
+
+        let first_attributes = vm
+            .property_attributes(first, PropertyKey::string(atom))
+            .unwrap();
+        let second_attributes = vm
+            .property_attributes(second, PropertyKey::string(atom))
+            .unwrap();
+        assert_eq!(first_attributes.getter, Some(first_getter));
+        assert_eq!(second_attributes.getter, Some(second_getter));
+        assert_eq!((first_attributes.setter, second_attributes.setter), (setter, setter));
+        assert_eq!(
+            vm.object_data(first).unwrap().shape() == vm.object_data(second).unwrap().shape(),
+            shared
         );
     }
-
-    let first_attributes = vm
-        .property_attributes(first, PropertyKey::string(atom))
-        .unwrap();
-    let second_attributes = vm
-        .property_attributes(second, PropertyKey::string(atom))
-        .unwrap();
-    assert_eq!(first_attributes.getter, Some(first_getter));
-    assert_eq!(second_attributes.getter, Some(second_getter));
-    assert_ne!(
-        vm.object_data(first).unwrap().shape(),
-        vm.object_data(second).unwrap().shape()
-    );
 }
 
 #[test]
@@ -1122,16 +1128,20 @@ fn typed_array_index_stores_convert_and_ignore_out_of_range_indices() {
 fn finished_jobs_release_their_values_while_the_queue_keeps_draining() {
     // A job leaves the queue before it runs, so a value only its arguments held is
     // collectable while later jobs of the same drain still run: its cleanup is observed
-    // inside the await loop instead of never.
-    let source = "var finalized = false, registry = new FinalizationRegistry(function () { finalized = true; });\n\
-         function make() { var o = {}; registry.register(o, 0); return o; }\n\
+    // inside the await loop instead of never. Each iteration allocates at least one cell,
+    // so the bound lets the drain pass the collection headroom several times.
+    let iterations = 4 * crate::heap::FULL_COLLECTION_ALLOCATION_BOUND;
+    let source = format!(
+        "var finalized = false, registry = new FinalizationRegistry(function () {{ finalized = true; }});\n\
+         function make() {{ var o = {{}}; registry.register(o, 0); return o; }}\n\
          var result = 'pending';\n\
-         (async function () {\n\
+         (async function () {{\n\
            await Promise.resolve(make());\n\
-           for (var i = 0; i < 20000 && !finalized; i++) await { i: i };\n\
+           for (var i = 0; i < {iterations} && !finalized; i++) await {{ i: i }};\n\
            result = String(finalized);\n\
-         })();";
-    assert_eq!(global_text(source, "result"), "true");
+         }})();"
+    );
+    assert_eq!(global_text(&source, "result"), "true");
 }
 
 #[test]
@@ -1696,7 +1706,7 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
         parent: crate::Value::NULL,
         function: u32::MAX,
         slots: Vec::<Value>::new().into_boxed_slice().into(),
-        scope: Box::new(crate::heap::EnvironmentScope {
+        scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
             program: None,
             root_eval_scope: false,
             binding_site_pc: None,
@@ -1708,7 +1718,7 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
         parent: crate::Value::NULL,
         function: u32::MAX,
         slots: Vec::<Value>::new().into_boxed_slice().into(),
-        scope: Box::new(crate::heap::EnvironmentScope {
+        scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
             program: None,
             root_eval_scope: false,
             binding_site_pc: None,
@@ -1754,7 +1764,7 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
         parent: crate::Value::NULL,
         function: u32::MAX,
         slots: Vec::<Value>::new().into_boxed_slice().into(),
-        scope: Box::new(crate::heap::EnvironmentScope {
+        scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
             program: None,
             root_eval_scope: false,
             binding_site_pc: None,
@@ -2932,7 +2942,7 @@ fn module_namespace_operations_share_uninitialized_export_errors() {
                 slots: vec![Value::DELETED; program.functions[0].local_atoms.len()]
                     .into_boxed_slice()
                     .into(),
-                scope: Box::new(crate::heap::EnvironmentScope {
+                scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
                     program: Some(super::program_store::ProgramId::MAIN.raw()),
                     root_eval_scope: false,
                     binding_site_pc: None,
@@ -4571,7 +4581,7 @@ fn suspended_continuations_are_rooted_until_generation_checked_resume() {
         parent: Value::NULL,
         function: u32::MAX,
         slots: Vec::<Value>::new().into_boxed_slice().into(),
-        scope: Box::new(crate::heap::EnvironmentScope {
+        scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
             program: None,
             root_eval_scope: false,
             binding_site_pc: None,
@@ -4817,7 +4827,7 @@ fn error_data_survives_collection_without_retaining_dead_errors() {
         vm.initialize(&program).unwrap();
         let exhausted = vm.stack_exhaustion_error().thrown_value().unwrap();
         assert!(vm.error_is_error(exhausted));
-        let aggregate = vm.aggregate_error(vec![]).unwrap();
+        let aggregate = vm.aggregate_error(&program, vec![]).unwrap();
         assert!(vm.error_is_error(aggregate));
     }
 }
@@ -4856,7 +4866,7 @@ fn aggregate_error_intrinsics_and_reason_roots_follow_the_active_realm() {
             let roots = vm.heap.root_count_for_test();
             let reason = vm.object();
             let reason_weak = vm.heap.weak_handle(reason).unwrap();
-            let error = vm.aggregate_error(vec![reason]).unwrap();
+            let error = vm.aggregate_error(&program, vec![reason]).unwrap();
             assert!(vm.error_is_error(error));
             assert_eq!(vm.object_data(error).unwrap().proto(), error_prototype);
             let errors_atom = vm.intern_atom("errors");
@@ -5653,7 +5663,7 @@ fn proxy_reads_root_operands_and_results_through_nested_callbacks() {
                 let atom = vm.intern_atom("entry");
                 let property = if symbol {
                     super::property_key::PropertyKey::symbol(
-                        vm.heap.alloc(super::Cell::Symbol(Some("entry".into()))),
+                        vm.heap.alloc(super::Cell::Symbol(crate::heap::SymbolData::public(Some("entry".into())))),
                     )
                 } else {
                     super::property_key::PropertyKey::string(atom)
@@ -5723,7 +5733,7 @@ fn proxy_reads_root_operands_and_results_through_nested_callbacks() {
                         if symbol {
                             assert_eq!(returned_key, key);
                             assert!(
-                                matches!(vm.heap.get(returned_key), Some(super::Cell::Symbol(Some(name))) if name == "entry")
+                                matches!(vm.heap.get(returned_key), Some(super::Cell::Symbol(crate::heap::SymbolData { description: Some(name), .. })) if name.as_ref() == "entry")
                             );
                         } else {
                             assert_eq!(vm.to_string(&program, returned_key).unwrap(), "entry");
@@ -5732,7 +5742,7 @@ fn proxy_reads_root_operands_and_results_through_nested_callbacks() {
                     }
                     Ok(result) if phase == "result-symbol" => {
                         assert!(
-                            matches!(vm.heap.get(result),Some(super::Cell::Symbol(Some(name))) if name=="answer")
+                            matches!(vm.heap.get(result),Some(super::Cell::Symbol(crate::heap::SymbolData { description: Some(name), .. })) if name.as_ref()=="answer")
                         );
                         Some(vm.heap.weak_handle(result).unwrap())
                     }
@@ -6116,7 +6126,7 @@ fn proxy_presence_and_delete_root_fresh_operands_and_restore_scopes() {
                         .map(|elements| (elements[0], elements[1]))
                         .expect("operands");
                     let key = if symbol {
-                        vm.heap.alloc(super::Cell::Symbol(Some("entry".into())))
+                        vm.heap.alloc(super::Cell::Symbol(crate::heap::SymbolData::public(Some("entry".into()))))
                     } else if phase == "coercion" {
                         let atom = vm.intern_atom("keyOperand");
                         let factory = vm.own_property(vm.realm.globals, atom).unwrap();
@@ -6183,7 +6193,7 @@ fn proxy_presence_and_delete_root_fresh_operands_and_restore_scopes() {
                             );
                             assert_eq!(vm.heap.weak_value(handles[1]), Some(key));
                             assert!(if symbol {
-                                matches!(vm.heap.get(key),Some(super::Cell::Symbol(Some(name))) if name=="entry")
+                                matches!(vm.heap.get(key),Some(super::Cell::Symbol(crate::heap::SymbolData { description: Some(name), .. })) if name.as_ref()=="entry")
                             } else {
                                 matches!(vm.heap.get(key),Some(super::Cell::String(name)) if name.host_string()=="entry")
                             });
@@ -6408,7 +6418,7 @@ fn proxy_own_keys_keeps_captured_target_after_revoking_getter() {
                         assert_eq!(keys.len(), 2);
                         assert_eq!(vm.to_string(&program, keys[0]).unwrap(), "first");
                         assert!(
-                            matches!(vm.heap.get(keys[1]),Some(super::Cell::Symbol(Some(name))) if name=="entry")
+                            matches!(vm.heap.get(keys[1]),Some(super::Cell::Symbol(crate::heap::SymbolData { description: Some(name), .. })) if name.as_ref()=="entry")
                         );
                         for (handle, value) in handles.iter().zip([proxy, target, handler]) {
                             assert_eq!(
@@ -10291,6 +10301,212 @@ if(fn().getFunctionName()!=='anonymous')throw Error('deleted length layout');
 }
 
 #[test]
+#[cfg(not(any(
+    feature = "profile-aggregate",
+    feature = "profile-trace",
+    feature = "profile-memory",
+    feature = "profile-gc-time"
+)))]
+fn js_jit_compiles_hot_numeric_functions_and_guards_polymorphic_inputs() {
+    let source = r#"
+      function add(left, right) { return left + right; }
+      function divide(left, right) { return left / right; }
+      for (let index = 0; index < 40; index++) {
+        if (add(index, 2) !== index + 2) throw new Error('numeric result');
+        if (divide(index + 1, 2) !== (index + 1) / 2) throw new Error('division result');
+      }
+      if (add('value:', 2) !== 'value:2') throw new Error('guard fallback');
+      if (add(1n, 2n) !== 3n) throw new Error('BigInt fallback');
+      let coercions = 0;
+      const boxed = { valueOf() { coercions++; return 3; } };
+      if (add(boxed, 4) !== 7 || coercions !== 1) throw new Error('effectful fallback');
+      if (!(new add(1, 2) instanceof add)) throw new Error('constructor unwind');
+      if (!Object.is(divide(-0, 2), -0)) throw new Error('signed zero');
+      if (!Number.isNaN(divide(0, 0))) throw new Error('NaN');
+      if (divide(1, 0) !== Infinity) throw new Error('infinity');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest {
+        source,
+        name: "js-jit-number-guard.js",
+        kind: crate::SourceKind::Script,
+    })
+    .unwrap();
+    let mut vm = Vm::new(SilentHost);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+
+    for function in [1, 2] {
+        assert!(matches!(
+            vm.programs
+                .js_tier(super::program_store::ProgramId::MAIN, function),
+            Some(super::program_store::JsTierState::Compiled(_))
+        ));
+    }
+}
+
+#[test]
+#[cfg(not(any(
+    feature = "profile-aggregate",
+    feature = "profile-trace",
+    feature = "profile-memory",
+    feature = "profile-gc-time"
+)))]
+fn js_jit_compiles_forward_numeric_branches_to_rooted_string_returns() {
+    let source = r#"
+      const rating = price => price < 100 ? '€' : price < 1000 ? '€€' : '€€€';
+      for (let i = 0; i < 40; i++) {
+        if (rating(99.99) !== '€') throw Error('below first boundary');
+        if (rating(100) !== '€€') throw Error('first boundary');
+        if (rating(999.99) !== '€€') throw Error('below second boundary');
+        if (rating(1000) !== '€€€') throw Error('second boundary');
+      }
+      if (rating(-0) !== '€' || rating(-Infinity) !== '€') throw Error('negative number');
+      if (rating(NaN) !== '€€€' || rating(Infinity) !== '€€€') throw Error('unordered/large number');
+
+      let coercions = 0;
+      const boxed = { valueOf() { coercions++; return 150; } };
+      if (rating(boxed) !== '€€' || coercions !== 2) throw Error('guard fallback');
+
+      function constructible(price) { return price < 100 ? '€' : '€€'; }
+      for (let i = 0; i < 40; i++) constructible(i);
+      const instance = new constructible(1);
+      if (instance === '€' || !(instance instanceof constructible)) throw Error('constructor return');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest {
+        source,
+        name: "js-jit-string-branch.js",
+        kind: crate::SourceKind::Script,
+    })
+    .unwrap();
+    let function_count = program.functions.len();
+    let mut vm = Vm::new(SilentHost);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+
+    let compiled_string_functions: Vec<_> = (1..function_count)
+        .filter_map(|function| {
+            match vm
+                .programs
+                .js_tier(super::program_store::ProgramId::MAIN, function as u32)
+            {
+                Some(super::program_store::JsTierState::Compiled(compiled))
+                    if compiled.has_string_returns() =>
+                {
+                    Some(compiled)
+                }
+                _ => None,
+            }
+        })
+        .collect();
+    assert!(
+        !compiled_string_functions.is_empty(),
+        "at least one forward-branch string function should reach native code"
+    );
+    assert!(compiled_string_functions
+        .iter()
+        .all(|compiled| compiled.native_entries() > 0));
+}
+
+#[test]
+fn js_jit_tier_tracking_has_a_hard_bound() {
+    let program = Engine::compile(crate::ExecutionRequest::script("void 0", "js-jit-cap.js"))
+        .unwrap();
+    let mut programs = super::program_store::ProgramStore::default();
+    let id = programs.insert(program).unwrap();
+    for function in 0..512 {
+        assert!(!programs.note_js_function_entry(id, function, false));
+    }
+    assert_eq!(programs.js_jit_tracked_function_count(), 256);
+}
+
+#[test]
+fn js_jit_promotion_requires_a_confident_numeric_profile() {
+    let program = Engine::compile(crate::ExecutionRequest::script("void 0", "js-jit-profile-gate.js"))
+        .unwrap();
+    let mut programs = super::program_store::ProgramStore::default();
+    let id = programs.insert(program).unwrap();
+    for observation in 0..16 {
+        assert!(!programs.note_js_function_entry(id, 1, observation < 15));
+    }
+    assert!(matches!(
+        programs.js_tier(id, 1),
+        Some(super::program_store::JsTierState::Hot {
+            observations: 16,
+            numeric: 15
+        })
+    ));
+}
+
+#[test]
+fn js_jit_profile_gate_uses_prespecified_exact_binomial_looks() {
+    use super::program_store::JS_JIT_PROMOTION_LOOKS;
+
+    fn upper_tail(n: u8, k: u8, p: f64) -> f64 {
+        let n = u32::from(n);
+        let k = u32::from(k);
+        let mut mass = (1.0 - p).powi(n as i32);
+        let mut total = 0.0;
+        for successes in 0..=n {
+            if successes >= k {
+                total += mass;
+            }
+            if successes < n {
+                mass *= (n - successes) as f64 / f64::from(successes + 1) * p / (1.0 - p);
+            }
+        }
+        total
+    }
+
+    // Each fixed look spends alpha/4 under p=0.8. Testing at these points
+    // bounds false promotion across looks for this function at 5%.
+    for (observations, minimum) in JS_JIT_PROMOTION_LOOKS {
+        assert!(upper_tail(observations, minimum, 0.8) <= 0.05 / 4.0);
+        assert!(upper_tail(observations, minimum - 1, 0.8) > 0.05 / 4.0);
+    }
+
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        "void 0",
+        "js-jit-sequential-profile-gate.js",
+    ))
+    .unwrap();
+    let mut programs = super::program_store::ProgramStore::default();
+    let id = programs.insert(program).unwrap();
+    for observation in 0..31 {
+        assert!(!programs.note_js_function_entry(id, 1, observation != 0));
+    }
+    assert!(programs.note_js_function_entry(id, 1, true));
+    assert!(matches!(
+        programs.js_tier(id, 1),
+        Some(super::program_store::JsTierState::Hot {
+            observations: 32,
+            numeric: 31
+        })
+    ));
+}
+
+#[cfg(any(
+    feature = "profile-aggregate",
+    feature = "profile-trace",
+    feature = "profile-memory",
+    feature = "profile-gc-time"
+))]
+#[test]
+fn js_jit_leaves_profiling_builds_on_the_instrumented_dispatcher() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        "function add(a, b) { return a + b; } for (let i = 0; i < 40; i++) if (add(i, 2) !== i + 2) throw Error('bad result');",
+        "js-jit-profile.js",
+    ))
+    .unwrap();
+    let mut vm = Vm::new(SilentHost);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    assert!(vm
+        .programs
+        .js_tier(super::program_store::ProgramId::MAIN, 1)
+        .is_none());
+}
+
+#[test]
 fn dynamic_function_canonical_source_and_wrapper_origins_match_in_both_modes() {
     let source = r#"
 Error.prepareStackTrace=(_,frames)=>frames;
@@ -10315,7 +10531,12 @@ fn private_data_fields_keep_distinct_homes_and_duplicate_values_in_both_modes() 
 class Base {constructor(object){return object}}
 function make(){return class extends Base {#x;constructor(object,value){super(object);this.#x=value}read(){return this.#x}write(value){this.#x=value}evaluate(){return eval('this.#x')}}}
 const A=make(),B=make();
-for(const object of [{},[],function(){},Object.create(null),Object.freeze({}),Object.seal({}),Object.preventExtensions({})]) {
+for(const object of [Object.freeze({}),Object.seal({}),Object.preventExtensions({})]) {
+ let rejected;
+ try{new A(object,1)}catch(error){rejected=error instanceof TypeError}
+ if(!rejected)throw Error('private field added to a non-extensible object');
+}
+for(const object of [{},[],function(){},Object.create(null)]) {
  new A(object,1);new B(object,2);
  if(A.prototype.read.call(object)!==1||B.prototype.read.call(object)!==2)throw Error('aliased class home');
  A.prototype.write.call(object,3);let duplicate;

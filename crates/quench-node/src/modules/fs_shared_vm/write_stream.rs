@@ -1,4 +1,4 @@
-use super::{resolve_shared_path, set, stream_io_error};
+use super::{get, resolve_shared_path, set, stream_io_error};
 use crate::host::NodeHost;
 use crate::modules::fs_ops as ops;
 use quench_runtime::{NativeContext, RootId, RootedError};
@@ -231,8 +231,27 @@ const CREATE_WRITE_STREAM: &str = r#"(openFile, writeFile, closeFile, Writable) 
 pub(crate) fn install(
     context: &mut NativeContext<'_, NodeHost>,
     module: RootId,
-    writable: RootId,
 ) -> Result<(), RootedError> {
+    // The write stream extends `stream.Writable`: it is created when a script first observes
+    // either name, so loading `fs` does not build the streams graph.
+    let initialize = context.host_function_with_data(
+        crate::host::shared_vm::operation("fsWriteStreamInitialize"), module,
+    )?;
+    context.define_lazy_data_properties_rooted(
+        module, &["createWriteStream", "WriteStream"], true, initialize,
+    )
+}
+
+/// Defines `fs.createWriteStream` and `fs.WriteStream` over `stream.Writable` (the lazy group
+/// `install` defines).
+pub(crate) fn initialize(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let module = context.host_function_data()?;
+    let streams = crate::host::shared_vm::commonjs::stream_module(context)?;
+    let writable = get(context, streams, "Writable")?;
     let open = context.host_function(crate::host::shared_vm::operation("fsWriteStreamOpen"))?;
     let write = context.host_function(crate::host::shared_vm::operation("fsWriteStreamWrite"))?;
     let close = context.host_function(crate::host::shared_vm::operation("fsWriteStreamClose"))?;
@@ -240,8 +259,10 @@ pub(crate) fn install(
         .evaluate_script_rooted(CREATE_WRITE_STREAM, "node:fs/shared-create-write-stream.js")?;
     let undefined = context.undefined();
     let constructor = context.call_rooted(factory, undefined, &[open, write, close, writable])?;
-    set(context, module, "createWriteStream", constructor)?;
-    set(context, module, "WriteStream", constructor)
+    let create = super::metadata_public::wrap(context, constructor, "createWriteStream")?;
+    set(context, module, "createWriteStream", create)?;
+    set(context, module, "WriteStream", constructor)?;
+    Ok(context.undefined())
 }
 
 pub(crate) fn open(

@@ -1,0 +1,52 @@
+'use strict';
+const assert = require('node:assert/strict');
+const path = require('node:path');
+const fs = require('node:fs');
+const { devNull } = require('node:os');
+const capturedVfsState = require('internal/fs/utils').vfsState;
+const { create, VirtualFileSystem } = require('node:vfs');
+const ownSource = fs.readFileSync(__filename, 'utf8');
+const first = create({ emitExperimentalWarning: false });
+const second = create({ emitExperimentalWarning: false });
+first.writeFileSync('/same', 'first');
+second.writeFileSync('/same', 'second');
+assert.equal(first.mount.length, 0);
+globalThis['\0quench:vfsState'] = { handlers: { readFileSync() { throw new Error('global alias poisoned'); } } };
+const firstRoot = first.mount('/ignored-custom-path');
+const secondRoot = second.mount(null);
+assert.equal(typeof firstRoot, 'string');
+assert.equal(path.dirname(firstRoot), path.join(devNull, 'vfs'));
+assert.notEqual(firstRoot, secondRoot);
+assert.equal(first.mountPoint, firstRoot);
+assert.equal(first.mounted, true);
+assert.throws(() => first.mount(), { code: 'ERR_INVALID_STATE' });
+assert.equal(fs.readFileSync(path.join(firstRoot, 'same'), 'utf8'), 'first');
+assert.equal(fs.readFileSync(path.join(secondRoot, 'same'), 'utf8'), 'second');
+first.unmount();
+assert.equal(first.mountPoint, null);
+assert.equal(first.mounted, false);
+assert.equal(fs.existsSync(path.join(firstRoot, 'same')), false);
+assert.equal(fs.readFileSync(path.join(secondRoot, 'same'), 'utf8'), 'second');
+assert.equal(first.mount(), firstRoot);
+assert.equal(fs.readFileSync(path.join(firstRoot, 'same'), 'utf8'), 'first');
+first.unmount();
+second.unmount();
+console.log('SDK mount lifecycle passed');
+const { RealFSProvider } = require('internal/vfs/providers/real');
+const real = new VirtualFileSystem(new RealFSProvider(__dirname), { emitExperimentalWarning: false });
+const realRoot = real.mount();
+assert.equal(fs.readFileSync(realRoot + '/' + path.basename(__filename), 'utf8'), ownSource);
+real.unmount();
+console.log('real provider fallback passed');
+
+const poisonVfs = create({ emitExperimentalWarning: false });
+poisonVfs.mount();
+const activeHandlers = capturedVfsState.handlers;
+Object.prototype.readFileSync = () => { throw new Error('inherited handler poisoned'); };
+try {
+  assert.equal(fs.readFileSync(__filename, 'utf8'), ownSource);
+} finally {
+  delete Object.prototype.readFileSync;
+  poisonVfs.unmount();
+}
+console.log('captured state and own handler diagnostics passed');

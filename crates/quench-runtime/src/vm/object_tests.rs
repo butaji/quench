@@ -199,6 +199,46 @@ fn cached_field_reads_follow_in_place_writes() {
 }
 
 #[test]
+fn spread_sources_stay_rooted_through_the_loop_that_reuses_them() {
+    // `AppendArray` reads its optional value register, so a spread source the next iteration
+    // reads again is in every root map of the loop, the resume point of the call the spread
+    // feeds included: a collection inside that call must not free it.
+    let source = "function parse(texts, next) { let token; while (token = next(...texts)) {} return token; }";
+    let program = Engine::specialize(source, "spread-roots.js").unwrap();
+    let (function_id, function) = program
+        .functions
+        .iter()
+        .enumerate()
+        .find(|(_, function)| {
+            function
+                .name
+                .is_some_and(|name| &program.atoms[name as usize] == "parse")
+        })
+        .unwrap();
+    let (spread_pc, spread) = function
+        .code
+        .iter()
+        .copied()
+        .enumerate()
+        .find(|(_, instruction)| instruction.op() == Op::AppendArray)
+        .unwrap();
+    let register = spread.optional_register_b().expect("spread source register");
+    let (back_edge, head) = function
+        .code
+        .iter()
+        .enumerate()
+        .find_map(|(pc, instruction)| {
+            (instruction.op() == Op::Jump && instruction.jump_target() as usize <= spread_pc)
+                .then(|| (pc, instruction.jump_target() as usize))
+        })
+        .unwrap();
+    for pc in head..=back_edge {
+        let root_map = program.register_root_mask(function_id as u32, pc).unwrap();
+        assert_ne!(root_map & (1u64 << register), 0, "pc {pc} drops register {register}");
+    }
+}
+
+#[test]
 fn static_three_field_object_literals_share_the_shape_site() {
     let source = r#"
       var order = "";
@@ -976,4 +1016,136 @@ fn exhausted_field_cache_preserves_generic_reads() {
             );
         }
     }
+}
+
+#[test]
+fn getter_only_accessors_keep_their_getters_in_slots_and_share_shapes() {
+    let source = r#"
+      function say() { print(Array.prototype.join.call(arguments, " ")); }
+      function bind(target, source, key) {
+        Object.defineProperty(target, key, {
+          enumerable: true, configurable: true, get: function () { return source[key]; },
+        });
+      }
+      var objects = [];
+      for (var i = 0; i < 64; i++) {
+        var o = {};
+        var source = { a: i, b: i * 2, c: i * 3 };
+        for (var key in source) bind(o, source, key);
+        objects.push(o);
+      }
+      // Only the slots keep the getters alive across these collections.
+      for (var g = 0; g < 200000; g++) [g, g];
+      function readC(o) { return o.c; }
+      var inherited = 0;
+      for (var round = 0; round < 4; round++)
+        for (var j = 0; j < 64; j++) inherited += readC(Object.create(objects[j]));
+      say(objects[0].b + objects[63].b, inherited);
+      var first = Object.getOwnPropertyDescriptor(objects[0], "a").get;
+      var last = Object.getOwnPropertyDescriptor(objects[63], "a").get;
+      say(first !== last, first() === 0, last() === 63, Object.keys(objects[5]).join());
+      say(JSON.stringify(objects[3]), JSON.stringify(Object.assign({}, objects[4])));
+      Object.defineProperty(objects[1], "a", { writable: true });
+      say(String(objects[1].a), JSON.stringify(Object.getOwnPropertyDescriptor(objects[1], "a")), objects[2].a);
+      var setTo;
+      Object.defineProperty(objects[6], "b", { set: function (v) { setTo = v; } });
+      objects[6].b = 5;
+      say(objects[6].b, setTo, objects[7].b);
+      var data = { x: 5 };
+      Object.defineProperty(data, "x", { get: function () { return 7; }, configurable: true });
+      var whileGetter = data.x;
+      Object.defineProperty(data, "x", { value: 9 });
+      say(whileGetter, data.x, Object.getOwnPropertyDescriptor(data, "x").writable);
+      // A data property made from an accessor without a value starts as undefined, not as
+      // the value the slot held before the accessor.
+      var stale = { y: 5 };
+      Object.defineProperty(stale, "y", { get: function () { return 1; }, set: function () {}, configurable: true });
+      Object.defineProperty(stale, "y", { writable: true });
+      say(String(stale.y));
+      Object.freeze(objects[8]);
+      say(Object.isFrozen(objects[8]), objects[8].c, typeof Object.getOwnPropertyDescriptor(objects[8], "c").get);
+      delete objects[9].a;
+      objects[9].a = "data";
+      say(objects[9].a, objects[9].b, Object.keys(objects[9]).join());
+      var symbol = Symbol("s"), symbolic = {};
+      Object.defineProperty(symbolic, symbol, { get: function () { return "sym"; }, configurable: true });
+      say(symbolic[symbol]);
+    "#;
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let program = compile(source, "slot-getters.js").unwrap();
+        vm.execute(&program).unwrap();
+        assert_eq!(
+            output.borrow().as_slice(),
+            [
+                "126 24192",
+                "true true true a,b,c",
+                r#"{"a":3,"b":6,"c":9} {"a":4,"b":8,"c":12}"#,
+                r#"undefined {"writable":true,"enumerable":true,"configurable":true} 2"#,
+                "12 5 14",
+                "7 9 false",
+                "undefined",
+                "true 24 function",
+                "data 18 b,c,a",
+                "sym",
+            ],
+            "{mode}"
+        );
+        // 64 objects of three getters each share one chain instead of owning one each: the
+        // same layout built for one object costs as many shapes.
+        let layout_shapes = |count: usize| {
+            let source = format!(
+                "for (var i = 0; i < {count}; i++) {{ var o = {{}}; for (var key of ['a', 'b', 'c']) \
+                 Object.defineProperty(o, key, {{ get: function () {{ return i; }} }}); }}"
+            );
+            let mut vm = Vm::new(SilentHost);
+            vm.execute(&compile(&source, "slot-getter-shapes.js").unwrap()).unwrap();
+            vm.shapes.len()
+        };
+        assert_eq!(layout_shapes(64), layout_shapes(1), "{mode}");
+    }
+}
+
+#[test]
+fn only_arrow_closures_keep_their_creator_s_implicit_bindings() {
+    let source = r#"
+      function plain(m, k) { return function () { return m[k]; }; }
+      function arrow() { return () => this; }
+      var made = plain({ x: 1 }, "x");
+      var lexical = arrow.call("outer");
+      function nested() { return function () { return () => () => this; }.call("inner")()(); }
+      function viaEval() { return function () { return eval("this"); }.call("evaluated"); }
+      function target() { var g = function () { return () => new.target; }; return [typeof g()(), new.target === target]; }
+      print([made(), String(lexical()), String(nested.call("outer")), String(viaEval.call({})),
+        target().join(), new target().join()].join(" "));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "implicit-bindings.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["1 outer inner evaluated undefined,false undefined,true"]
+    );
+    let environment_bindings = |vm: &mut Vm<RecordingHost>, name: &str| {
+        let atom = vm.intern_atom(name);
+        let closure = vm.own_property(vm.realm.globals, atom).unwrap();
+        let Some(Cell::Function { env, .. }) = vm.heap.get(closure) else {
+            panic!("{name} is a closure");
+        };
+        let Some(Cell::Environment { scope, .. }) = vm.heap.get(*env) else {
+            panic!("{name} captured its creator's environment");
+        };
+        match scope.dynamic_bindings() {
+            crate::heap::EnvironmentBindings::Owned(bindings) => bindings.len(),
+            crate::heap::EnvironmentBindings::Shared(_) => usize::MAX,
+        }
+    };
+    // A non-arrow closure has its own `this` and `new.target`, so its creator records none;
+    // an arrow inherits them from the bindings its creator keeps.
+    assert_eq!(environment_bindings(&mut vm, "made"), 0);
+    assert_ne!(environment_bindings(&mut vm, "lexical"), 0);
 }

@@ -3,6 +3,7 @@
 //! Async identity counters are shared by both adapters; shared roots and the
 //! exported classes live on the shared-VM side of the host boundary.
 
+use super::async_hooks_state::{StoreContext, JobContext};
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError, Runtime};
 use std::{cell::RefCell, rc::Rc};
@@ -12,7 +13,8 @@ const LOCAL_ID: &str = "\0quench:async_hooks:local:id";
 const CLASS_FACTORY: &str = r#"(function(initializeResource, runInAsyncScope, emitDestroy,
     initializeStorage, enterWith, getStore, disableStorage,
     initializeHook, enableHook, disableHook, executionIdNative, triggerIdNative,
-    executionResourceNative, hooksEnabledNative, initNative) {
+    executionResourceNative, hooksEnabledNative, initNative, defaultTriggerScopeNative,
+    getDefaultTriggerNative, symbolsNative) {
   class AsyncResource {
     constructor(type, options) {
       initializeResource.call(this, type, options);
@@ -125,12 +127,57 @@ const CLASS_FACTORY: &str = r#"(function(initializeResource, runInAsyncScope, em
     AsyncLocalStorage,
     createHook,
     enabledHooksExist: function enabledHooksExist() { return hooksEnabledNative(); },
-    symbols: { async_id_symbol: Symbol.for("quench.async_hooks.async_id") },
+    symbols: { async_id_symbol: symbolsNative.async_id_symbol, owner_symbol: symbolsNative.owner_symbol },
+    defaultTriggerAsyncIdScope: function defaultTriggerAsyncIdScope(triggerAsyncId, block, ...args) {
+      return defaultTriggerScopeNative(triggerAsyncId, block, ...args);
+    },
+    getDefaultTriggerAsyncId: function getDefaultTriggerAsyncId() { return getDefaultTriggerNative(); },
     executionAsyncId: function executionAsyncId() { return executionIdNative(); },
     triggerAsyncId: function triggerAsyncId() { return triggerIdNative(); },
     executionAsyncResource: function executionAsyncResource() { return executionResourceNative(); },
   };
 })"#;
+
+/// Restore the default constructor trigger on normal, thrown, and reentrant
+/// callback exits. This does not allocate an async resource or alter ALS.
+pub(crate) struct DefaultTriggerScope {
+    shared: Rc<RefCell<crate::host::SharedNodeState>>,
+    previous: Option<f64>,
+}
+impl Drop for DefaultTriggerScope {
+    fn drop(&mut self) {
+        self.shared.borrow_mut().async_hooks.default_trigger_async_id = self.previous;
+    }
+}
+pub(crate) fn enter_default_trigger(shared:&Rc<RefCell<crate::host::SharedNodeState>>,trigger:f64)->DefaultTriggerScope {
+    let previous=shared.borrow_mut().async_hooks.default_trigger_async_id.replace(trigger);
+    DefaultTriggerScope{shared:shared.clone(),previous}
+}
+pub(crate) fn default_trigger_scope(
+    context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let undefined = context.undefined();
+    let trigger = args.first().copied().unwrap_or(undefined);
+    let block = args.get(1).copied().unwrap_or(undefined);
+    let scope = if context.rooted_value(trigger).is_some_and(|value| value.is_undefined()) {
+        None
+    } else {
+        // Node stores through Float64Array; use its ordinary ToNumber coercion.
+        let trigger = context.to_number(trigger)?;
+        let shared = context.host_mut().shared_state();
+        Some(enter_default_trigger(&shared,trigger))
+    };
+    let receiver = context.null();
+    let result = context.call_rooted(block, receiver, args.get(2..).unwrap_or_default());
+    drop(scope);
+    result
+}
+pub(crate) fn get_default_trigger(
+    context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let trigger = context.host_mut().shared_state().borrow().async_hooks.default_trigger_async_id();
+    Ok(context.number(trigger))
+}
 
 /// Allocate an async identity for a host-created request context.
 ///
@@ -138,29 +185,34 @@ const CLASS_FACTORY: &str = r#"(function(initializeResource, runInAsyncScope, em
 /// AsyncLocalStorage is keyed by the shared identity owner used by AsyncResource.
 pub(crate) fn create_context(shared_state: &Rc<RefCell<crate::host::SharedNodeState>>) -> u64 {
     let identity = shared_state.borrow().async_hooks.identity.clone();
-    let parent = identity.current_async_id();
+    let parent = identity.store_context();
     let id = identity.allocate_async_id();
     let mut shared = shared_state.borrow_mut();
-    let trigger = visible_async_id(&shared.async_hooks);
+    let trigger = shared.async_hooks.default_trigger_async_id();
     shared.async_hooks.context_triggers.insert(id, trigger as i64);
     inherit_stores(&mut shared.async_hooks, parent, id);
     id
 }
 
 fn visible_async_id(state: &super::async_hooks_state::SharedAsyncHooksState) -> u64 {
-    let current = state.identity.current_async_id();
-    state.job_resources.get(&current).copied().unwrap_or(current)
+    state.identity.current_async_id()
 }
 
+/// A promise's async-hooks identity, made only while promises are tracked
+/// (`SharedAsyncHooksState::tracks_promises`): an untracked promise holds no id, trigger or
+/// resource entry for a later destroy.
 pub(crate) fn create_promise_context(
     shared: &Rc<RefCell<crate::host::SharedNodeState>>,
     parent: Option<quench_runtime::HostExecutionContext>,
-) -> quench_runtime::HostExecutionContext {
+) -> Option<quench_runtime::HostExecutionContext> {
     let mut state = shared.borrow_mut();
-    let trigger = parent.map_or_else(|| visible_async_id(&state.async_hooks), |id| id.0);
+    if !state.async_hooks.tracks_promises() {
+        return None;
+    }
+    let trigger = parent.map_or_else(|| state.async_hooks.default_trigger_async_id(), |id| id.0 as f64);
     let id = state.async_hooks.identity.allocate_async_id();
     state.async_hooks.context_triggers.insert(id, trigger as i64);
-    quench_runtime::HostExecutionContext(id)
+    Some(quench_runtime::HostExecutionContext(id))
 }
 
 pub(crate) fn initialize_promise(
@@ -168,6 +220,19 @@ pub(crate) fn initialize_promise(
     promise: RootId,
     resource: quench_runtime::HostExecutionContext,
 ) -> Result<(), RootedError> {
+    // A long run of promises can stay within one event-loop turn, where the turn-end prune
+    // never comes: every new promise first prunes the table once a collection has run since
+    // the last prune, so it holds only promises that may still be live.
+    let prune_due = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .async_hooks
+        .promise_resources_pruned_epoch
+        != context.collection_epoch();
+    if prune_due {
+        prune_promise_resources(context)?;
+    }
     let weak = context.host_weak_root(promise)?;
     context.host_mut().shared_state().borrow_mut().async_hooks.promise_resources.insert(resource.0, weak);
     emit_init(context, promise, "PROMISE", resource.0)
@@ -178,7 +243,15 @@ pub(crate) fn prune_promises(
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
+    prune_promise_resources(context)?;
+    Ok(context.undefined())
+}
+
+/// Releases the weak references of collected promises and queues their destroy hooks.
+fn prune_promise_resources(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
+    let epoch = context.collection_epoch();
     let shared = context.host_mut().shared_state();
+    shared.borrow_mut().async_hooks.promise_resources_pruned_epoch = epoch;
     let entries: Vec<_> = shared.borrow().async_hooks.promise_resources.iter().map(|(&id, &weak)| (id, weak)).collect();
     for (id, weak) in entries {
         if context.resolve_host_weak_root(weak).is_none() {
@@ -188,7 +261,7 @@ pub(crate) fn prune_promises(
             queue_destroy(context, id)?;
         }
     }
-    Ok(context.undefined())
+    Ok(())
 }
 
 pub(crate) fn promise_job_boundary(
@@ -197,14 +270,28 @@ pub(crate) fn promise_job_boundary(
     before: bool,
 ) -> Result<(), RootedError> {
     let shared = context.host_mut().shared_state();
-    let resource = shared.borrow().async_hooks.job_resources.get(&snapshot.0).copied();
+    // A long run of promise jobs can stay within one event-loop turn, where the turn-end
+    // prune never comes: prune here once a collection has run since the last prune, so the
+    // table holds only promises that may still be live.
+    let prune_due = {
+        let state = shared.borrow();
+        !state.async_hooks.promise_resources.is_empty()
+            && state.async_hooks.promise_resources_pruned_epoch != context.collection_epoch()
+    };
+    if before && prune_due {
+        prune_promise_resources(context)?;
+    }
+    let resource = tracked_job(&mut shared.borrow_mut().async_hooks, snapshot.0).resource;
     let Some(resource) = resource else { return Ok(()); };
-    let id = context.number(resource as f64);
     let kind = if before {
         super::async_hook_registry_shared_vm::HookKind::Before
     } else {
         super::async_hook_registry_shared_vm::HookKind::After
     };
+    if !super::async_hook_registry_shared_vm::has_hooks(context, kind) {
+        return Ok(());
+    }
+    let id = context.number(resource as f64);
     super::async_hook_registry_shared_vm::emit(context, kind, &[id])
 }
 
@@ -212,10 +299,12 @@ pub(crate) fn promise_settled(
     context: &mut NativeContext<'_, NodeHost>,
     resource: quench_runtime::HostExecutionContext,
 ) -> Result<(), RootedError> {
+    let kind = super::async_hook_registry_shared_vm::HookKind::PromiseResolve;
+    if !super::async_hook_registry_shared_vm::has_hooks(context, kind) {
+        return Ok(());
+    }
     let id = context.number(resource.0 as f64);
-    super::async_hook_registry_shared_vm::emit(
-        context, super::async_hook_registry_shared_vm::HookKind::PromiseResolve, &[id],
-    )
+    super::async_hook_registry_shared_vm::emit(context, kind, &[id])
 }
 
 /// Snapshot the currently visible stores under a fresh identity for one
@@ -225,74 +314,67 @@ pub(crate) fn capture_job_context(
     shared_state: &Rc<RefCell<crate::host::SharedNodeState>>,
     resource: Option<quench_runtime::HostExecutionContext>,
 ) -> Option<u64> {
-    let identity = shared_state.borrow().async_hooks.identity.clone();
-    let parent_id = identity.current_async_id();
-    let context_id = identity.allocate_async_id();
-    if let Some(resource) = resource {
-        shared_state.borrow_mut().async_hooks.job_resources.insert(context_id, resource.0);
-    }
-    shared_state
-        .borrow_mut()
-        .async_hooks
-        .context_triggers
-        .insert(context_id, parent_id as i64);
-    inherit_stores(
-        &mut shared_state.borrow_mut().async_hooks,
-        parent_id,
-        context_id,
-    );
-    Some(context_id)
+    let mut shared = shared_state.borrow_mut();
+    let state = &mut shared.async_hooks;
+    let token = state.next_job_id;
+    state.next_job_id = token.checked_add(1).expect("private Promise job token space exhausted");
+    let execution = resource.map_or(state.identity.current_async_id(), |id| id.0);
+    let trigger = if resource.is_some() {
+        *state.context_triggers.get(&execution).expect("Promise resource trigger registered")
+    } else { state.identity.current_trigger_id() };
+    state.job_resources.insert(token, JobContext { resource: resource.map(|id| id.0), execution, trigger });
+    let source = state.identity.store_context();
+    inherit_stores(state, source, StoreContext::Job(token));
+    Some(token)
 }
 
-/// Switch the current Node async identity while a Promise reaction executes.
+/// A Promise created while no promise hook was installed has no async resource. Like
+/// Node's promise before/after hooks, a job running once a hook is installed gives its
+/// Promise one on demand, without an init event or destroy tracking.
+fn tracked_job(state: &mut super::async_hooks_state::SharedAsyncHooksState, token: u64) -> JobContext {
+    let job = *state.job_resources.get(&token).expect("live Promise job context");
+    if job.resource.is_some() || !state.tracks_promises() {
+        return job;
+    }
+    let trigger = state.default_trigger_async_id() as i64;
+    let id = state.identity.allocate_async_id();
+    let job = JobContext { resource: Some(id), execution: id, trigger };
+    state.job_resources.insert(token, job);
+    job
+}
+
+/// Public identity and private ALS ownership are separate projections.
 pub(crate) fn enter_job_context(
-    shared_state: &Rc<RefCell<crate::host::SharedNodeState>>,
-    context_id: u64,
+    shared_state: &Rc<RefCell<crate::host::SharedNodeState>>, token: u64,
 ) -> u64 {
-    let (identity, trigger) = {
-        let state = shared_state.borrow();
-        (
-            state.async_hooks.identity.clone(),
-            state
-                .async_hooks
-                .context_triggers
-                .get(&context_id)
-                .copied()
-                .unwrap_or(super::async_hooks_state::ROOT_TRIGGER_ASYNC_ID),
-        )
-    };
-    identity.replace_current_trigger_id(trigger);
-    identity.replace_current_async_id(context_id)
+    let mut shared = shared_state.borrow_mut();
+    let state = &mut shared.async_hooks;
+    let job = tracked_job(state, token);
+    let previous = (state.identity.current_async_id(), state.identity.current_trigger_id(), state.identity.store_context());
+    state.job_stack.push(previous);
+    state.identity.replace_current_async_id(job.execution);
+    state.identity.replace_current_trigger_id(job.trigger);
+    state.identity.replace_store_context(StoreContext::Job(token));
+    previous.0
 }
 
 pub(crate) fn restore_job_context(
-    shared_state: &Rc<RefCell<crate::host::SharedNodeState>>,
-    previous_id: u64,
+    shared_state: &Rc<RefCell<crate::host::SharedNodeState>>, previous_id: u64,
 ) {
-    let (identity, trigger) = {
-        let state = shared_state.borrow();
-        (
-            state.async_hooks.identity.clone(),
-            state
-                .async_hooks
-                .context_triggers
-                .get(&previous_id)
-                .copied()
-                .unwrap_or(super::async_hooks_state::ROOT_TRIGGER_ASYNC_ID),
-        )
-    };
-    identity.replace_current_async_id(previous_id);
-    identity.replace_current_trigger_id(trigger);
+    let mut shared = shared_state.borrow_mut();
+    let state = &mut shared.async_hooks;
+    let (id, trigger, stores) = state.job_stack.pop().expect("balanced Promise job scope");
+    debug_assert_eq!(id, previous_id);
+    state.identity.replace_current_async_id(id);
+    state.identity.replace_current_trigger_id(trigger);
+    state.identity.replace_store_context(stores);
 }
 
-/// Remove the per-reaction store snapshot and return roots that have no other
-/// async-resource mapping.
 pub(crate) fn release_job_context(
-    shared_state: &Rc<RefCell<crate::host::SharedNodeState>>,
-    context_id: u64,
+    shared_state: &Rc<RefCell<crate::host::SharedNodeState>>, token: u64,
 ) -> Vec<RootId> {
-    shared_state.borrow_mut().async_hooks.job_resources.remove(&context_id);
-    take_context_stores(shared_state, context_id)
+    shared_state.borrow_mut().async_hooks.job_resources.remove(&token);
+    take_store_context(shared_state, StoreContext::Job(token))
 }
 
 /// Enter a named async identity and restore the previous identity on every
@@ -344,12 +426,14 @@ pub(crate) fn enter_context(
         .get(&async_id)
         .copied()
         .unwrap_or(super::async_hooks_state::ROOT_TRIGGER_ASYNC_ID);
+    let previous_store = identity.store_context();
     let previous_id = identity.replace_current_async_id(async_id);
     let previous_trigger = identity.replace_current_trigger_id(trigger);
     ContextScope {
         identity,
         previous_id,
         previous_trigger,
+        previous_store,
     }
 }
 
@@ -367,6 +451,12 @@ pub(crate) fn clear_context(
 pub(crate) fn take_context_stores(
     shared_state: &Rc<RefCell<crate::host::SharedNodeState>>,
     async_id: u64,
+) -> Vec<RootId> {
+    take_store_context(shared_state, StoreContext::Resource(async_id))
+}
+
+fn take_store_context(
+    shared_state: &Rc<RefCell<crate::host::SharedNodeState>>, async_id: StoreContext,
 ) -> Vec<RootId> {
     let mut shared = shared_state.borrow_mut();
     let keys = shared
@@ -387,9 +477,11 @@ pub(crate) fn take_context_stores(
 
 fn inherit_stores(
     async_hooks: &mut crate::modules::async_hooks_state::SharedAsyncHooksState,
-    source_id: u64,
-    target_id: u64,
+    source_id: impl Into<StoreContext>,
+    target_id: impl Into<StoreContext>,
 ) {
+    let source_id = source_id.into();
+    let target_id = target_id.into();
     let inherited = async_hooks
         .local_stores
         .iter()
@@ -410,6 +502,7 @@ pub(crate) struct ContextScope {
     identity: crate::modules::async_hooks_state::AsyncIdentity,
     previous_id: u64,
     previous_trigger: i64,
+    previous_store: StoreContext,
 }
 
 impl Drop for ContextScope {
@@ -417,6 +510,7 @@ impl Drop for ContextScope {
         self.identity.replace_current_async_id(self.previous_id);
         self.identity
             .replace_current_trigger_id(self.previous_trigger);
+        self.identity.replace_store_context(self.previous_store);
     }
 }
 
@@ -433,7 +527,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
 
     let api = super::async_hook_registry_shared_vm::initialize(context)?;
     let factory = context.evaluate_script_rooted(CLASS_FACTORY, "node:async_hooks/shared.js")?;
-    let functions = [
+    let mut functions = [
         "asyncResourceInit",
         "asyncResourceRunInAsyncScope",
         "asyncResourceEmitDestroy",
@@ -449,10 +543,13 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         "asyncExecutionResource",
         "asyncHooksEnabled",
         "asyncExternalInit",
+        "asyncDefaultTriggerScope",
+        "asyncGetDefaultTrigger",
     ]
     .map(|name| context.host_function_with_data(crate::host::shared_vm::operation(name), api))
     .into_iter()
     .collect::<Result<Vec<_>, _>>()?;
+    functions.push(super::util_shared_vm::symbols_binding(context)?);
     let undefined = context.undefined();
     let module = context.call_rooted(factory, undefined, &functions)?;
     let retained = context.retain(module)?;
@@ -477,12 +574,18 @@ pub(crate) fn emit_init(
     let state = context.host_mut().shared_state();
     {
         let mut state = state.borrow_mut();
-        let parent = visible_async_id(&state.async_hooks);
+        let parent = state.async_hooks.default_trigger_async_id();
         state
             .async_hooks
             .context_triggers
             .entry(async_id)
             .or_insert(parent as i64);
+    }
+    if !super::async_hook_registry_shared_vm::has_hooks(
+        context,
+        super::async_hook_registry_shared_vm::HookKind::Init,
+    ) {
+        return Ok(());
     }
     let trigger = state.borrow().async_hooks.context_triggers[&async_id];
     let id = context.number(async_id as f64);
@@ -585,8 +688,8 @@ pub(crate) fn initialize_resource(
     };
     let state = context.host_mut().shared_state();
     let identity = state.borrow().async_hooks.identity.clone();
-    let parent = identity.current_async_id();
-    let trigger_parent = visible_async_id(&state.borrow().async_hooks);
+    let parent = identity.store_context();
+    let trigger_parent = state.borrow().async_hooks.default_trigger_async_id();
     let trigger = if context
         .rooted_value(options)
         .and_then(|v| v.as_number())
@@ -676,6 +779,7 @@ pub(crate) fn run_in_async_scope(
         .get(&id)
         .copied()
         .unwrap_or(super::async_hooks_state::ROOT_TRIGGER_ASYNC_ID);
+    let previous_store = identity.store_context();
     let previous_id = identity.replace_current_async_id(id);
     let previous_trigger = identity.replace_current_trigger_id(trigger);
     let previous_resource = state
@@ -703,6 +807,7 @@ pub(crate) fn run_in_async_scope(
     })();
     identity.replace_current_async_id(previous_id);
     identity.replace_current_trigger_id(previous_trigger);
+    identity.replace_store_context(previous_store);
     state.borrow_mut().async_hooks.scoped_resource = previous_resource;
     result
 }
@@ -805,8 +910,9 @@ pub(crate) fn enter_with(
             .borrow()
             .async_hooks
             .identity
-            .current_async_id();
+            .store_context();
         let mut shared = shared_state.borrow_mut();
+        shared.async_hooks.enabled_local_storages.insert(local_id);
         let previous = shared
             .async_hooks
             .local_stores
@@ -830,7 +936,7 @@ pub(crate) fn get_store(
     let store = {
         let shared = context.host_mut().shared_state();
         let shared = shared.borrow();
-        let current_id = shared.async_hooks.identity.current_async_id();
+        let current_id = shared.async_hooks.identity.store_context();
         shared
             .async_hooks
             .local_stores
@@ -850,6 +956,7 @@ pub(crate) fn disable_storage(
     let released = {
         let shared_state = context.host_mut().shared_state();
         let mut shared = shared_state.borrow_mut();
+        shared.async_hooks.enabled_local_storages.remove(&local_id);
         let keys = shared
             .async_hooks
             .local_stores

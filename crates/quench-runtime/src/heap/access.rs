@@ -1,5 +1,5 @@
 use super::{
-    ArrayObject, Cell, EnvironmentBindings, EnvironmentSlot, EnvironmentSlots, Heap, Object,
+    ArrayObject, Cell, EnvironmentBindings, EnvironmentSlot, EnvironmentSlotState, EnvironmentSlots, Heap, Object,
 };
 use crate::bytecode::Atom;
 use crate::value::{HeapReference, Value};
@@ -50,9 +50,9 @@ impl Heap {
 
     pub(crate) fn environment_binding_owner(&self, environment: Value) -> Option<Value> {
         match self.get(environment)? {
-            Cell::Environment { scope, .. } => match scope.dynamic_bindings {
+            Cell::Environment { scope, .. } => match scope.dynamic_bindings() {
                 EnvironmentBindings::Owned(_) => Some(environment),
-                EnvironmentBindings::Shared(owner) => Some(owner),
+                EnvironmentBindings::Shared(owner) => Some(*owner),
             },
             _ => None,
         }
@@ -61,7 +61,7 @@ impl Heap {
     pub(crate) fn environment_bindings(&self, environment: Value) -> Option<&Vec<(Atom, Value)>> {
         let owner = self.environment_binding_owner(environment)?;
         match self.get(owner)? {
-            Cell::Environment { scope, .. } => match &scope.dynamic_bindings {
+            Cell::Environment { scope, .. } => match scope.dynamic_bindings() {
                 EnvironmentBindings::Owned(bindings) => Some(bindings),
                 EnvironmentBindings::Shared(_) => None,
             },
@@ -75,7 +75,7 @@ impl Heap {
     ) -> Option<&mut Vec<(Atom, Value)>> {
         let owner = self.environment_binding_owner(environment)?;
         match self.get_mut(owner)? {
-            Cell::Environment { scope, .. } => match &mut scope.dynamic_bindings {
+            Cell::Environment { scope, .. } => match &mut scope.make_mut().dynamic_bindings {
                 EnvironmentBindings::Owned(bindings) => Some(bindings),
                 EnvironmentBindings::Shared(_) => None,
             },
@@ -87,9 +87,9 @@ impl Heap {
         let Cell::Environment { slots, .. } = self.get(environment)? else {
             return None;
         };
-        match slots.0.get(slot)? {
-            EnvironmentSlot::Owned(_) => Some(environment),
-            EnvironmentSlot::Shared(owner) => Some(*owner),
+        match slots.0.get(slot)?.state() {
+            EnvironmentSlotState::Owned(_) => Some(environment),
+            EnvironmentSlotState::Shared(owner) => Some(owner),
         }
     }
 
@@ -97,17 +97,14 @@ impl Heap {
         let Cell::Environment { slots, .. } = self.get(environment)? else {
             return None;
         };
-        match slots.0.get(slot)? {
-            EnvironmentSlot::Owned(value) => Some(*value),
+        match slots.0.get(slot)?.state() {
+            EnvironmentSlotState::Owned(value) => Some(value),
             // A shared slot names its owner, which holds the slot itself.
-            EnvironmentSlot::Shared(owner) => {
-                let Cell::Environment { slots, .. } = self.get(*owner)? else {
+            EnvironmentSlotState::Shared(owner) => {
+                let Cell::Environment { slots, .. } = self.get(owner)? else {
                     return None;
                 };
-                match slots.0.get(slot)? {
-                    EnvironmentSlot::Owned(value) => Some(*value),
-                    EnvironmentSlot::Shared(_) => None,
-                }
+                slots.owned(slot)
             }
         }
     }
@@ -121,10 +118,7 @@ impl Heap {
         let Cell::Environment { slots, .. } = self.get_mut(owner)? else {
             return None;
         };
-        match slots.0.get_mut(slot)? {
-            EnvironmentSlot::Owned(value) => Some(value),
-            EnvironmentSlot::Shared(_) => None,
-        }
+        slots.0.get_mut(slot)?.owned_mut()
     }
 
     pub(crate) fn clone_environment_slots(
@@ -136,20 +130,27 @@ impl Heap {
         let Cell::Environment { slots, .. } = self.get(environment)? else {
             return None;
         };
-        (0..slots.len())
-            .map(|slot| {
-                if reset.binary_search(&(slot as u16)).is_ok() {
-                    Some(EnvironmentSlot::Owned(Value::UNDEFINED))
-                } else if fresh.binary_search(&(slot as u16)).is_ok() {
-                    self.environment_slot(environment, slot)
-                        .map(EnvironmentSlot::Owned)
-                } else {
-                    self.environment_slot_owner(environment, slot)
-                        .map(EnvironmentSlot::Shared)
+        let source = &slots.0;
+        super::thin_slice::ThinBoxSlice::try_from_fn(source.len(), |index| {
+            let slot = index as u16;
+            if reset.binary_search(&slot).is_ok() {
+                return Some(EnvironmentSlot::owned(Value::UNDEFINED));
+            }
+            let fresh = fresh.binary_search(&slot).is_ok();
+            Some(match source[index].state() {
+                EnvironmentSlotState::Owned(value) if fresh => EnvironmentSlot::owned(value),
+                EnvironmentSlotState::Owned(_) => EnvironmentSlot::shared(environment),
+                // A shared slot names its owner, which holds the slot itself.
+                EnvironmentSlotState::Shared(owner) if fresh => {
+                    let Cell::Environment { slots, .. } = self.get(owner)? else {
+                        return None;
+                    };
+                    EnvironmentSlot::owned(slots.owned(index)?)
                 }
+                EnvironmentSlotState::Shared(_) => source[index],
             })
-            .collect::<Option<Box<[_]>>>()
-            .map(|slots| EnvironmentSlots(slots.into()))
+        })
+        .map(EnvironmentSlots)
     }
 
     #[inline(always)]
@@ -200,16 +201,50 @@ impl Heap {
     #[inline(always)]
     pub(crate) fn object_mut(&mut self, value: Value) -> Option<&mut Object> {
         if let Some(record_id) = value.direct_object_index() {
-            self.remember_record(HeapReference::ObjectRecord(record_id));
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
             return Some(unsafe { self.object_records.get_live_mut(record_id) });
         }
         if let Some(record_id) = value.direct_array_index() {
-            self.remember_record(HeapReference::ArrayRecord(record_id));
             // SAFETY: direct-array Values name live records; `&mut self` is exclusive.
             return Some(unsafe { self.array_records.get_live_mut(record_id) });
         }
         self.get_mut(value)?.object_mut()
+    }
+
+    /// `object_mut` for a store of `stored`: a record skips the write barrier unless `stored`
+    /// is a heap reference.
+    #[inline(always)]
+    pub(crate) fn object_store_mut(&mut self, value: Value, stored: Value) -> Option<&mut Object> {
+        if let Some(record_id) = value.direct_object_index() {
+            // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
+            return Some(unsafe { self.object_records.get_live_mut_storing(record_id, stored) });
+        }
+        if let Some(record_id) = value.direct_array_index() {
+            // SAFETY: direct-array Values name live records; `&mut self` is exclusive.
+            return Some(unsafe { self.array_records.get_live_mut_storing(record_id, stored) });
+        }
+        self.get_mut(value)?.object_mut()
+    }
+
+    /// `record_array_mut` for a store of `stored` into the array's elements.
+    #[inline(always)]
+    pub(crate) fn record_array_store_mut(
+        &mut self,
+        value: Value,
+        stored: Value,
+    ) -> Option<&mut ArrayObject> {
+        let record_id = value.direct_array_index()?;
+        // SAFETY: direct-array Values name live records; `&mut self` is exclusive.
+        Some(unsafe { self.array_records.get_live_mut_storing(record_id, stored) })
+    }
+
+    /// `array_mut` for a store of `stored` into the array's elements.
+    #[inline(always)]
+    pub(crate) fn array_store_mut(&mut self, value: Value, stored: Value) -> Option<&mut ArrayObject> {
+        if value.direct_array_index().is_some() {
+            return self.record_array_store_mut(value, stored);
+        }
+        self.array_mut(value)
     }
 
     /// `object_mut` with the property arena, borrowed apart so a caller can grow an owner's
@@ -219,9 +254,8 @@ impl Heap {
         value: Value,
     ) -> Option<(&mut Object, &mut ValueArena)> {
         let reference = value.heap_reference()?;
-        match reference {
-            HeapReference::LegacySlot(index) => self.remember(index as usize),
-            record => self.remember_record(record),
+        if let HeapReference::LegacySlot(index) = reference {
+            self.remember(index as usize);
         }
         let Self {
             object_records,
@@ -244,6 +278,18 @@ impl Heap {
             }
         };
         Some((object, properties))
+    }
+
+    /// Gives `target` its own copy of `source`'s properties and releases the storage it held.
+    /// Two objects never share arena storage: sweeping either would free the other's values.
+    pub(crate) fn copy_property_storage(&mut self, source: &Object, target: Value) -> bool {
+        let Some((object, properties)) = self.object_and_arena_mut(target) else {
+            return false;
+        };
+        let storage = properties.duplicate(source.properties());
+        let previous = object.copy_property_storage_from(source, storage);
+        properties.release(previous);
+        true
     }
 
     pub(crate) fn array(&self, value: Value) -> Option<&ArrayObject> {
@@ -281,7 +327,6 @@ impl Heap {
     #[inline(always)]
     pub(crate) fn record_array_mut(&mut self, value: Value) -> Option<&mut ArrayObject> {
         let record_id = value.direct_array_index()?;
-        self.remember_record(HeapReference::ArrayRecord(record_id));
         // SAFETY: direct-array Values name live records; `&mut self` is exclusive.
         Some(unsafe { self.array_records.get_live_mut(record_id) })
     }
@@ -332,7 +377,6 @@ impl Heap {
     #[cfg(test)]
     pub(crate) fn object_record_mut(&mut self, value: Value) -> Option<&mut Object> {
         let record_id = value.direct_object_index()?;
-        self.remember_record(HeapReference::ObjectRecord(record_id));
         // SAFETY: direct-object Values name live records and `&mut self` is exclusive.
         Some(unsafe { self.object_records.get_live_mut(record_id) })
     }

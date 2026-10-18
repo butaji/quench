@@ -100,7 +100,7 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     pub(super) locals: Vec<Atom>,
     pub(super) code: Vec<Instr>,
     pub(super) wide: Vec<WideInstruction>,
-    pub(super) source_positions: Vec<crate::bytecode::SourcePosition>,
+    pub(super) source_positions: crate::bytecode::SourcePositions,
     current_source_position: Option<(u32, u32)>,
     pub(super) next_reg: Register,
     pub(super) max_reg: Register,
@@ -121,6 +121,9 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     annex_b_collisions: FxHashSet<u32>,
     pub(super) scopes: Vec<Rc<FxHashMap<Atom, u16>>>,
     pub(super) function_id: u32,
+    /// `Compiler::private_name_references` when this function began, so a later count
+    /// shows that it or a function it encloses names a private member.
+    private_name_references: u64,
     pub(super) handlers: Vec<crate::bytecode::Handler>,
     pub(super) binding_sites: Vec<crate::bytecode::BindingSite>,
     pub(super) environment_clones: Vec<Vec<u16>>,
@@ -216,12 +219,13 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         // The register after the promoted locals holds `undefined` for plain-call receivers.
         let shared_undefined = promoted_local_slots.len() as Register;
         let local_register_count = shared_undefined + 1;
+        let private_name_references = owner.private_name_references;
         Self {
             owner,
             locals,
             code: vec![],
             wide: vec![],
-            source_positions: vec![],
+            source_positions: Default::default(),
             current_source_position: None,
             next_reg: local_register_count,
             max_reg: local_register_count,
@@ -238,6 +242,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             annex_b_collisions,
             scopes,
             function_id,
+            private_name_references,
             handlers: vec![],
             binding_sites: vec![],
             environment_clones: vec![],
@@ -374,31 +379,6 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         };
         self.scoped_statements(body);
         self.statement_completion = previous;
-    }
-
-    /// NamedEvaluation of an anonymous function definition whose value `value` holds. When
-    /// the definition's closure is the instruction just made into `value`, nothing observes
-    /// it unnamed, so the name joins its plan and closure creation defines it; any other
-    /// value (a class, or a closure that control can reach here without) is named at run time.
-    pub(super) fn name_function_definition(&mut self, value: Register, name: Atom) {
-        let made = self.code.last().map(|packed| {
-            if packed.is_wide() {
-                self.wide[packed.wide_index()]
-            } else {
-                packed.as_wide()
-            }
-        });
-        if let Some(made) = made
-            && made.op() == Op::MakeClosure
-            && made.result_register() == value
-            && let Some(Some(plan)) = self.owner.functions.get_mut(made.closure_function_index() as usize)
-            && plan.name.is_none()
-            && !plan.is_class_constructor
-        {
-            plan.name = Some(name);
-            return;
-        }
-        self.emit(Op::SetFunctionName, value, 0, 0, name);
     }
 
     pub(super) fn emit(
@@ -698,6 +678,25 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         }
     }
 
+    /// SetFunctionName of `value` to `name`. A closure just made into `value` from an
+    /// anonymous function definition is instead made with the name (`inferred_name`): no
+    /// code runs between its creation and the naming, and the definition always gets this
+    /// name, so it is static.
+    pub(super) fn emit_function_name(&mut self, value: Register, name: Atom) {
+        if let Some(made) = self.code.last()
+            && made.op() == Op::MakeClosure
+            && made.result_register() == value
+            && let Some(Some(function)) = self.owner.functions.get_mut(made.closure_function_index() as usize)
+            && function.name.is_none()
+            && function.inferred_name.is_none()
+            && !function.is_class_constructor
+        {
+            function.inferred_name = Some(name);
+            return;
+        }
+        self.emit(Op::SetFunctionName, value, 0, 0, name);
+    }
+
     pub(super) fn hidden_local(&mut self, name: &str) -> Atom {
         let mut candidate = name.to_owned();
         while self.local_slots.contains_key(&self.owner.atom(&candidate)) {
@@ -766,7 +765,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                     && Self::anonymous_function_definition(initializer)
                 {
                     let name = self.owner.atom(identifier.name.as_str());
-                    self.name_function_definition(value, name);
+                    self.emit_function_name(value, name);
                 }
                 self.emit(Op::Move, current, value, 0, 0);
                 self.patch(skip);
@@ -1150,7 +1149,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                                 && !LexicalBindingKind::ALL
                                     .into_iter()
                                     .any(|kind| kind != LexicalBindingKind::PrivateName && name.starts_with(kind.capture_prefix()))
-                                && !name.starts_with("\0quench:catch-capture:"))
+                                && !name.starts_with(super::CATCH_CAPTURE_PREFIX))
                             .then_some((*atom, *slot))
                         })
                         .collect(),
@@ -1192,8 +1191,8 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                         .get(source)
                         .copied()
                         .unwrap_or(LexicalBindingKind::Mutable);
-                    let name = self.owner.atoms[*source as usize].to_owned();
                     if kind == LexicalBindingKind::PrivateName {
+                        let name = self.owner.atoms[*source as usize].to_owned();
                         let label = crate::bytecode::private_identity_label(&name);
                         let stale = scope.keys().copied().filter(|atom| {
                             let text: &str = self.owner.atoms[*atom as usize].as_ref();
@@ -1203,20 +1202,20 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                         for atom in stale { scope.remove(&atom); }
                         scope.insert(*source, slot);
                     }
-                    for kind in LexicalBindingKind::ALL {
-                        let marker = format!("{}{name}", kind.capture_prefix());
-                        if let Some(marker) = self.owner.atoms.find(&marker).as_ref() {
-                            scope.remove(marker);
-                        }
+                    // Only markers this loop inserted can be in `scope`, and each was made
+                    // through `capture_marker`, which records it.
+                    for marker in LexicalBindingKind::ALL
+                        .map(Some)
+                        .into_iter()
+                        .chain([None])
+                        .filter_map(|kind| self.owner.capture_markers.get(&(kind, *source)).copied())
+                    {
+                        scope.remove(&marker);
                     }
-                    let catch_name = format!("\0quench:catch-capture:{name}");
-                    if let Some(marker) = self.owner.atoms.find(&catch_name).as_ref() {
-                        scope.remove(marker);
-                    }
-                    let marker = self.owner.atom(&format!("{}{name}", kind.capture_prefix()));
+                    let marker = self.owner.capture_marker(Some(kind), *source);
                     scope.insert(marker, slot);
                     if lexical.catch_parameter {
-                        let marker = self.owner.atom(&catch_name);
+                        let marker = self.owner.capture_marker(None, *source);
                         scope.insert(marker, slot);
                     }
                 }

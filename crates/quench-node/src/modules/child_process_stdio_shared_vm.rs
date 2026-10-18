@@ -341,7 +341,7 @@ fn invalid(
     Ok(context.throw(error))
 }
 
-use super::child_process_ipc_shared_vm::IpcChannel;
+use super::child_process_ipc_shared_vm::{IpcChannel, Serialization, SERIALIZATION_MODE_VARIABLE};
 
 pub(crate) struct Configured {
     pub(crate) ipc: Option<IpcChannel>,
@@ -352,12 +352,13 @@ pub(crate) struct Configured {
 pub(crate) fn configure(
     command: &mut std::process::Command,
     specifications: &[Specification],
+    serialization: Serialization,
 ) -> std::io::Result<Configured> {
     let ipc_index = specifications
         .iter()
         .position(|value| matches!(value, Specification::Ipc));
     let channel = match ipc_index {
-        Some(index) => Some(ipc_channel(command, index, specifications.len())?),
+        Some(index) => Some(ipc_channel(command, index, specifications.len(), serialization)?),
         None => None,
     };
     #[cfg(unix)]
@@ -397,10 +398,10 @@ pub(crate) fn configure(
     // NODE_CHANNEL_FD is a child bootstrap contract, never inherited into a
     // grandchild that was spawned without its own channel.
     command.env_remove("NODE_CHANNEL_FD");
-    command.env_remove("NODE_CHANNEL_SERIALIZATION_MODE");
+    command.env_remove(SERIALIZATION_MODE_VARIABLE);
     if let Some(index) = ipc_index {
         command.env("NODE_CHANNEL_FD", index.to_string());
-        command.env("NODE_CHANNEL_SERIALIZATION_MODE", "json");
+        command.env(SERIALIZATION_MODE_VARIABLE, serialization.mode());
     }
     Ok(Configured {
         ipc: channel,
@@ -443,6 +444,7 @@ fn ipc_channel(
     command: &mut std::process::Command,
     index: usize,
     count: usize,
+    serialization: Serialization,
 ) -> std::io::Result<IpcChannel> {
     use std::os::{
         fd::{AsRawFd, FromRawFd, OwnedFd},
@@ -487,11 +489,11 @@ fn ipc_channel(
             });
         }
     }
-    Ok(IpcChannel::new(parent))
+    Ok(IpcChannel::new(parent, serialization))
 }
 
 #[cfg(not(unix))]
-fn ipc_channel(_: &mut std::process::Command, _: usize, _: usize) -> std::io::Result<IpcChannel> {
+fn ipc_channel(_: &mut std::process::Command, _: usize, _: usize, _: Serialization) -> std::io::Result<IpcChannel> {
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
         "IPC channels are unavailable on this platform",

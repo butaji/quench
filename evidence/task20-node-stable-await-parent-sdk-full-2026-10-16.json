@@ -1,0 +1,96 @@
+{
+  "scope": "Complete unchanged stable parallel inventory after callback scopes, original SDK policy, canonical warnings and primitive-await parent identity",
+  "source_commit": "943bc893b88bef08f0ffa0bd3b1723c447bb568a",
+  "release": "v26.12.0",
+  "fixture_commit": "26e72d85a611e222e3f06025de8a3c496923bacd",
+  "counts": {
+    "timeout": 108,
+    "fail": 2398,
+    "pass": 1871,
+    "skip": 638
+  },
+  "total": 5015,
+  "inventory_hash": "a3820c977f97ed07",
+  "baseline": {
+    "counts": {
+      "timeout": 107,
+      "fail": 2418,
+      "pass": 1852,
+      "skip": 638
+    },
+    "total": 5015,
+    "inventory_hash": "a3820c977f97ed07"
+  },
+  "gained": [
+    "test-async-hooks-async-await.js",
+    "test-async-hooks-disable-gc-tracking.js",
+    "test-async-hooks-enable-before-promise-resolve.js",
+    "test-async-hooks-enable-during-promise.js",
+    "test-async-hooks-execution-async-resource.js",
+    "test-async-hooks-prevent-double-destroy.js",
+    "test-async-hooks-top-level-clearimmediate.js",
+    "test-async-wrap-trigger-id.js",
+    "test-env-var-no-warnings.js",
+    "test-err-name-deprecation.js",
+    "test-global-console-exists.js",
+    "test-internal-process-binding.js",
+    "test-memory-usage-emfile.js",
+    "test-process-binding-util.js",
+    "test-process-binding.js",
+    "test-process-redirect-warnings.js",
+    "test-resource-usage.js",
+    "test-runner-get-test-context.js",
+    "test-timers-clearImmediate-als.js",
+    "test-unicode-node-options.js"
+  ],
+  "lost": [
+    "test-stream2-read-sync-stack.js"
+  ],
+  "skip_changes": {},
+  "memory_events_delta": {
+    "low": 0,
+    "high": 0,
+    "max": 1969,
+    "oom": 0,
+    "oom_kill": 0,
+    "oom_group_kill": 0
+  },
+  "elapsed_seconds": 2028.4011518780026,
+  "raw": [
+    {
+      "path": "work/full-await-parent-durable-stable/results.json",
+      "bytes": 31526182,
+      "sha256": "133df77c457f3d20942152933aa3ae990c87c7b8a705bfc1b1be2991c5c5c014"
+    },
+    {
+      "path": "work/full-await-parent-durable-stable/runner.log",
+      "bytes": 516225,
+      "sha256": "4be40c449697f4582f19b3d4903ccc07f6e2eb72d2db5a0d1af922b5d4c6c422"
+    },
+    {
+      "path": "work/full-await-parent-durable-stable/receipt-before.json",
+      "bytes": 1120,
+      "sha256": "bcdb545021c20aa3987e08b63b7300a5298935c348dc422c32526a90055cf4c8"
+    },
+    {
+      "path": "work/full-await-parent-durable-stable/receipt.json",
+      "bytes": 1764,
+      "sha256": "50f21e94c203793996de8843ace0ed41f19ecdee9790ba88eb5d1290de30ce6d"
+    },
+    {
+      "path": "work/full-await-parent-durable-stable/summary.json",
+      "bytes": 151,
+      "sha256": "cf7cb2db03bef1dc2142e34816ff798bec73cd7c232e6e3c0e34a27abe9ea6c7"
+    },
+    {
+      "path": "work/full-await-parent-durable-stable/comparison.json",
+      "bytes": 918,
+      "sha256": "a74e714b35868e220d12bcbcf0e0748f6d2e1391f1c83874a1d7009e9b5ed2c6"
+    }
+  ],
+  "limitations": [
+    "Goal remains open; all nonpass outcomes retained. No selected-case sums, skips/deadline/budget changes or speed claim.",
+    "This frozen943 run includes real callback scopes, public process.binding, canonical pending-deprecation warnings and primitive-await parent identity with sharedb7 SDK/Core changes. Later d067 Core fastpaths and unknown internal-binding error changes are excluded.",
+    "Native compilation overlapped part of this run. Actual memory.events deltas are retained below; concurrent resource pressure is not subtracted from outcomes. All full outcomes retained, no speed claim or adjusted totals."
+  ]
+}

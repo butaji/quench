@@ -67,37 +67,33 @@ impl<H: Host> Vm<H> {
         Err(JsError("value is not callable".into()))
     }
 
-    /// A string query of a primitive string whose arguments are numbers, `undefined` or
-    /// strings: its general implementation then runs no guest code, raises nothing and
-    /// allocates no cell, so a lane completes the call in place. `None` for any other call.
-    pub(super) fn pure_string_query(
+    /// A call of `callee` that `Native::is_pure_string_method` admits for `receiver` and
+    /// `args`, answered without the general call path. `None` leaves the call to it: a call
+    /// outside the method's admission, or one that fails, which the general path repeats
+    /// to raise the same error, since the attempt had no observable effect.
+    #[inline(never)]
+    pub(super) fn pure_string_method_call(
         &mut self,
         p: &ResidualProgram,
-        native: Native,
-        this: Value,
+        callee: Value,
+        receiver: Value,
         args: &[Value],
     ) -> Option<Value> {
-        let query = matches!(
-            native,
-            Native::StringCharCodeAt
-                | Native::StringIndexOf
-                | Native::StringLastIndexOf
-                | Native::StringIncludes
-                | Native::StringStartsWith
-                | Native::StringEndsWith
-        );
-        let primitive = |value: &Value| {
-            value.is_undefined()
-                || value.as_number().is_some()
-                || matches!(self.heap.get(*value), Some(Cell::String(_)))
+        let Some(Cell::Function {
+            kind: FunctionKind::Native(native),
+            ..
+        }) = self.heap.get(callee)
+        else {
+            return None;
         };
-        if !query
-            || !matches!(self.heap.get(this), Some(Cell::String(_)))
-            || !args.iter().all(primitive)
+        let native = *native;
+        if !native.is_pure_string_method()
+            || !matches!(self.heap.get(receiver), Some(Cell::String(_)))
+            || args.iter().any(|argument| self.is_object_like(*argument))
         {
             return None;
         }
-        self.call_primitive_native(p, native, this, args).ok()
+        self.call_primitive_native(p, native, receiver, args).ok()
     }
 
     pub(super) fn call_primitive_native(

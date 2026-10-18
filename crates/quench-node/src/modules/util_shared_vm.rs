@@ -101,12 +101,12 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         return Ok(api.module);
     }
     let module = crate::host::shared_vm::commonjs::node_library_module(context, "util.js", "util.js")?;
-    // These policies still need genuine weak-event/transfer or signal-tracing
-    // backends. Keep their pre-existing absence until those primitives exist.
+    // Transfer and signal tracing still need native backends. The original
+    // aborted export now uses the native weak listener retention substrate.
     let global = context.global_root()?;
     let reflect = get(context, global, "Reflect")?;
     let delete = get(context, reflect, "deleteProperty")?;
-    for name in ["aborted", "transferableAbortSignal", "transferableAbortController", "setTraceSigInt"] {
+    for name in ["transferableAbortSignal", "transferableAbortController", "setTraceSigInt"] {
         let key = context.string_rooted(name);
         let removed = context.call_rooted(delete, reflect, &[module, key])?;
         if !context.truthy_rooted(removed)? {
@@ -615,9 +615,38 @@ pub(crate) fn mark_promise_handled(
 pub(crate) fn key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     crate::host::shared_vm::commonjs::cached_native_binding(context, "\0binding:util", build_key_binding)
 }
+// Node src/env_properties.h: PER_ISOLATE_PRIVATE_SYMBOL_PROPERTIES.
+// Every entry is a distinct host-private primitive. The cached util binding
+// owns the table's roots for this environment; repeat consumers share identity.
+const PRIVATE_SYMBOL_PROPERTIES: &[(&str, &str)] = &[
+    ("arrow_message_private_symbol", "node:arrowMessage"),
+    ("contextify_context_private_symbol", "node:contextify:context"),
+    ("decorated_private_symbol", "node:decorated"),
+    ("empty_context_frame_sentinel_symbol", "node:empty_context_frame_sentinel"),
+    ("ffi_pointer_address_private_symbol", "node:ffi:pointer_address"),
+    ("transfer_mode_private_symbol", "node:transfer_mode"),
+    ("host_defined_option_symbol", "node:host_defined_option_symbol"),
+    ("js_transferable_wrapper_private_symbol", "node:js_transferable_wrapper"),
+    ("entry_point_module_private_symbol", "node:entry_point_module"),
+    ("entry_point_promise_private_symbol", "node:entry_point_promise"),
+    ("module_source_private_symbol", "node:module_source"),
+    ("module_export_names_private_symbol", "node:module_export_names"),
+    ("module_circular_visited_private_symbol", "node:module_circular_visited"),
+    ("module_export_private_symbol", "node:module_export"),
+    ("module_first_parent_private_symbol", "node:module_first_parent"),
+    ("module_last_parent_private_symbol", "node:module_last_parent"),
+    ("napi_type_tag", "node:napi:type_tag"),
+    ("napi_wrapper", "node:napi:wrapper"),
+    ("untransferable_object_private_symbol", "node:untransferableObject"),
+    ("exit_info_private_symbol", "node:exit_info_private_symbol"),
+    ("promise_trace_id", "node:promise_trace_id"),
+    ("source_map_data_private_symbol", "node:source_map_data_private_symbol"),
+];
+
 fn build_key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let binding = context.object_rooted()?;
     for (name, operation) in [
+        ("guessHandleType", "utilGuessHandleType"),
         ("getConstructorName", "utilConstructorName"),
         ("getCallSites", "utilGetCallSites"),
         ("getCallerLocation", "utilGetCallerLocation"),
@@ -628,6 +657,7 @@ fn build_key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         ("getExternalValue", "utilExternalValue"),
         ("markPromiseAsHandled", "utilMarkPromiseHandled"),
         ("defineLazyProperties", "utilDefineLazyProperties"),
+        ("isInsideNodeModules", "utilIsInsideNodeModules"),
     ] {
         let operation = crate::host::shared_vm::operation(operation);
         let function = context.host_function_named(operation, name)?;
@@ -635,13 +665,9 @@ fn build_key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         context.define_data_property_rooted(binding, key, function, true, true, true)?;
     }
     let symbols = context.object_rooted()?;
-    for (name, description) in [
-        ("arrow_message_private_symbol", "node:arrowMessage"),
-        ("decorated_private_symbol", "node:decorated"),
-        ("transfer_mode_private_symbol", "node:transfer_mode"),
-    ] {
+    for &(name, description) in PRIVATE_SYMBOL_PROPERTIES {
         let key = context.string_rooted(name);
-        let symbol = context.symbol_rooted(Some(description));
+        let symbol = context.private_symbol_rooted(Some(description));
         context.define_data_property_rooted(symbols, key, symbol, true, true, true)?;
     }
     let key = context.string_rooted("privateSymbols");
@@ -670,6 +696,12 @@ pub(crate) fn symbols_binding(context: &mut NativeContext<'_, NodeHost>) -> Resu
 }
 fn build_symbols_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let binding = context.object_rooted()?;
+    let owner = super::net_reference_shared_vm::owner_symbol(context)?;
+    let key = context.string_rooted("owner_symbol");
+    context.define_data_property_rooted(binding, key, owner, true, true, true)?;
+    let key = context.string_rooted("async_id_symbol");
+    let async_id = context.symbol_rooted(Some("async_id_symbol"));
+    context.define_data_property_rooted(binding, key, async_id, true, true, true)?;
     for name in ["messaging_deserialize_symbol", "messaging_transfer_symbol", "messaging_clone_symbol", "messaging_transfer_list_symbol"] {
         let key = context.string_rooted(name);
         let symbol = context.symbol_rooted(Some(name));
@@ -836,15 +868,78 @@ pub(crate) fn define_lazy_properties(
     let enumerable = match args.get(3) { Some(value) => context.truthy_rooted(*value)?, None => true };
     for index in 0..length {
         let key = get(context, *keys, &index.to_string())?;
-        let name = context.to_string(key)?;
-        let flag = context.boolean(enumerable);
-        let data = context.array_rooted(&[*target, *id, key, flag])?;
-        let initializer = context.host_function_with_data(
-            crate::host::shared_vm::operation("utilLazyPropertyInitialize"), data,
-        )?;
-        context.define_lazy_data_properties_rooted(*target, &[&name], enumerable, initializer)?;
+        define_lazy_property(context, *target, *id, key, enumerable)?;
     }
     Ok(context.undefined())
+}
+
+/// One `defineLazyProperties` entry: `key` on `target` reads the same-named export of
+/// library module `id` on first access.
+fn define_lazy_property(
+    context: &mut NativeContext<'_, NodeHost>, target: RootId, id: RootId, key: RootId, enumerable: bool,
+) -> Result<(), RootedError> {
+    define_lazy_export(context, target, id, key, key, enumerable)
+}
+
+/// `property` on `target` reads export `export` of library module `id` on first access.
+fn define_lazy_export(
+    context: &mut NativeContext<'_, NodeHost>, target: RootId, id: RootId, property: RootId, export: RootId, enumerable: bool,
+) -> Result<(), RootedError> {
+    let name = context.to_string(property)?;
+    let flag = context.boolean(enumerable);
+    let data = context.array_rooted(&[target, id, property, flag, export])?;
+    let initializer = context.host_function_with_data(
+        crate::host::shared_vm::operation("utilLazyPropertyInitialize"), data,
+    )?;
+    context.define_lazy_data_properties_rooted(target, &[&name], enumerable, initializer)
+}
+
+/// Globals Node's bootstrap defines lazily from its library, each `(property, module,
+/// export, enumerable)`: `defineLazyProperties(globalThis, 'buffer', ['atob', 'btoa'])`
+/// and `exposeLazyInterfaces` for the URL and Blob interfaces. The `__node*` names are
+/// the host's own aliases of the original interfaces.
+const LAZY_GLOBALS: &[(&str, &str, &str, bool)] = &[
+    ("atob", "buffer", "atob", true),
+    ("btoa", "buffer", "btoa", true),
+    ("URL", "internal/url", "URL", false),
+    ("URLSearchParams", "internal/url", "URLSearchParams", false),
+    ("Blob", "internal/blob", "Blob", false),
+    ("File", "internal/file", "File", false),
+    ("__nodeURL", "internal/url", "URL", false),
+    ("__nodeURLSearchParams", "internal/url", "URLSearchParams", false),
+];
+
+pub(crate) fn install_lazy_globals(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
+    let global = context.global_root()?;
+    for &(property, id, export, enumerable) in LAZY_GLOBALS {
+        let property = context.string_rooted(property);
+        let id = context.string_rooted(id);
+        let export = context.string_rooted(export);
+        define_lazy_export(context, global, id, property, export, enumerable)?;
+    }
+    Ok(())
+}
+
+/// Frames `isInsideNodeModules` inspects without an explicit limit (node_util.cc).
+const DEFAULT_NODE_MODULES_FRAMES: usize = 10;
+
+/// `isInsideNodeModules(frameLimit)`: whether the nearest frame outside Node's own library
+/// runs from a node_modules path.
+pub(crate) fn is_inside_node_modules(
+    context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let limit = match args.first().and_then(|value| context.rooted_value(*value)).and_then(|value| value.as_number()) {
+        Some(limit) if limit.fract() == 0.0 && limit >= f64::from(i32::MIN) && limit <= f64::from(i32::MAX) => limit.max(0.0) as usize,
+        _ => DEFAULT_NODE_MODULES_FRAMES,
+    };
+    let library = context.host_mut().node_library_root.join("lib");
+    let inside = context
+        .call_stack_source_names()
+        .into_iter()
+        .take(limit)
+        .find(|name| !name.is_empty() && !name.starts_with("node:") && !name.starts_with('<') && !std::path::Path::new(name).starts_with(&library))
+        .is_some_and(|name| ["/node_modules/", "\\node_modules\\", "/node_modules\\", "\\node_modules/"].iter().any(|part| name.contains(part)));
+    Ok(context.boolean(inside))
 }
 
 pub(crate) fn initialize_lazy_property(
@@ -855,11 +950,18 @@ pub(crate) fn initialize_lazy_property(
     let id = get(context, data, "1")?;
     let key = get(context, data, "2")?;
     let flag = get(context, data, "3")?;
+    let export = get(context, data, "4")?;
+    let export = if context.rooted_value(export).is_some_and(|value| value.is_undefined()) { key } else { export };
     let enumerable = context.truthy_rooted(flag)?;
     let id = context.to_string(id)?;
-    let id = if id.ends_with(".js") { id } else { format!("{id}.js") };
-    let module = crate::host::shared_vm::commonjs::node_library_module(context, "internal/util.js", &id)?;
-    let value = context.get_property_rooted(module, key)?;
+    let module = crate::host::shared_vm::commonjs::library_require(context, &id)?;
+    let value = context.get_property_rooted(module, export)?;
     context.define_data_property_rooted(target, key, value, true, enumerable, true)?;
     Ok(context.undefined())
+}
+
+pub(crate) fn guess_handle_type(context: &mut NativeContext<'_, NodeHost>, _:RootId, args:&[RootId])->Result<RootId,RootedError>{
+    let missing=context.undefined();let value=context.to_number(args.first().copied().unwrap_or(missing))?;
+    let fd=super::native_number::uint32(value) as i32;
+    Ok(context.number(super::fd_handle_type::guess(fd) as u8 as f64))
 }

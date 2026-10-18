@@ -79,7 +79,7 @@ impl Host for Test262RuntimeHost {
         &mut self,
         referrer: &str,
         specifier: &str,
-    ) -> Result<Option<ModuleSource>, String> {
+    ) -> Result<Option<ModuleSource>, quench_runtime::ModuleLoadError> {
         if specifier == TEST262_MODULE_SOURCE_SPECIFIER {
             return Ok(Some(ModuleSource {
                 name: specifier.to_string(),

@@ -364,9 +364,7 @@ pub(crate) fn internal_binding(
         return Ok(value);
     }
     let binding = build_internal_binding(context, &name)?;
-    if !context.rooted_value(binding).is_some_and(|value| value.is_undefined())
-        && !shared.borrow().builtin_cache.contains_key(&key)
-    {
+    if !shared.borrow().builtin_cache.contains_key(&key) {
         let retained = context.retain(binding)?;
         shared.borrow_mut().builtin_cache.insert(key, retained);
     }
@@ -376,8 +374,6 @@ pub(crate) fn internal_binding(
 fn build_internal_binding(
     context: &mut NativeContext<'_, NodeHost>, name: &str,
 ) -> Result<RootId, RootedError> {
-    let absent = context.undefined();
-    let binding = context.object_rooted()?;
     match name {
         #[cfg(target_os = "linux")]
         "os" => return super::os_binding_shared_vm::os_binding(context),
@@ -391,28 +387,46 @@ fn build_internal_binding(
         "modules" => return crate::host::shared_vm::commonjs::cached_native_binding(
             context, "\0binding:modules", module_protocol_binding,
         ),
+        "stream_wrap" => return super::stream_binding::binding(context),
+        "udp_wrap" => return super::udp_binding::binding(context),
+        "pipe_wrap" => return super::pipe_binding::binding(context),
+        "tcp_wrap" => return super::tcp_binding::binding(context),
         "contextify" => return super::contextify_shared_vm::binding(context),
         "types" => return super::util_shared_vm::types_binding(context),
+        #[cfg(quench_openssl_provider)]
+        "messaging" => return super::dom_exception_shared_vm::module(context),
         "crypto_keys" => return super::crypto_key_shared_vm::binding(context),
         "util" => return super::util_shared_vm::key_binding(context),
         "options" => return super::cli_options_shared_vm::binding(context),
         "string_decoder" => return super::string_decoder_shared_vm::binding(context),
         "zlib" => return super::zlib_native_shared_vm::binding(context),
+        "serdes" => return super::serdes_shared_vm::binding(context),
+        "ipc_serdes" => return super::ipc_serdes_shared_vm::binding(context),
+        "v8" => return super::v8_shared_vm::binding(context),
+        "heap_utils" => return super::v8_shared_vm::heap_utils_binding(context),
+        "internal_only_v8" => return super::v8_shared_vm::internal_only_binding(context),
         "encoding_binding" => return super::encoding_binding_shared_vm::binding(context),
         #[cfg(quench_icu)]
         "icu" => return super::icu_binding_shared_vm::binding(context),
         "config" => {
+            let binding = context.object_rooted()?;
             let has_intl = context.boolean(cfg!(quench_icu));
             put(context, binding, "hasIntl", has_intl)?;
+            Ok(binding)
         }
         "symbols" => return super::util_shared_vm::symbols_binding(context),
+        "cares_wrap" => return crate::host::shared_vm::commonjs::cares_binding(context),
         "http2" => return crate::host::shared_vm::commonjs::http2_binding(context),
-        "buffer" => return super::buffer_fill_shared_vm::binding(context),
+        "buffer" => return super::buffer_binding_shared_vm::binding(context),
+        "url" => return super::url_binding_shared_vm::binding(context),
+        "blob" => return super::blob_binding_shared_vm::binding(context),
         "crypto" => return super::tls_shared_vm::facade::binding(context),
         "timers" => return super::timers_shared_vm::binding(context),
+        "performance" => return super::performance_binding_shared_vm::binding(context),
         "uv" => return super::util_system_error_shared_vm::uv_binding(context),
         "fs_event_wrap" => return super::fs_watch_shared_vm::event_binding(context),
         "trace_events" => {
+            let binding = context.object_rooted()?;
             for (name, operation) in [
                 ("getCategoryEnabledBuffer", "traceCategoryBuffer"),
                 ("trace", "traceRecord"),
@@ -425,8 +439,10 @@ fn build_internal_binding(
             }
             let perfetto = context.boolean(false);
             put(context, binding, "usePerfetto", perfetto)?;
+            Ok(binding)
         }
         "constants" => {
+            let binding = context.object_rooted()?;
             let fs = super::fs_shared_vm::fs_constants(context)?;
             put(context, binding, "fs", fs)?;
             #[cfg(target_os = "linux")]
@@ -434,8 +450,9 @@ fn build_internal_binding(
                 let os = super::os_binding_shared_vm::constants(context)?;
                 put(context, binding, "os", os)?;
             }
-            let zlib = super::zlib_shared_vm::constants(context)?;
+            let zlib = super::zlib_constants::constants(context)?;
             put(context, binding, "zlib", zlib)?;
+            let crypto=super::crypto_constants::binding(context)?;put(context,binding,"crypto",crypto)?;
             let trace = context.object_rooted()?;
             for (name, code) in [
                 ("TRACE_EVENT_PHASE_BEGIN", b'B'),
@@ -450,10 +467,15 @@ fn build_internal_binding(
                 put(context, trace, name, code)?;
             }
             put(context, binding, "trace", trace)?;
+            Ok(binding)
         }
-        _ => return Ok(absent),
+        _ => {
+            let error = context.error_rooted(&format!("No such binding: {name}"))?;
+            let code = context.string_rooted("ERR_INVALID_MODULE");
+            put(context, error, "code", code)?;
+            return Err(context.throw(error));
+        }
     }
-    Ok(binding)
 }
 
 fn required_string(

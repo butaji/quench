@@ -6,6 +6,8 @@ use std::collections::VecDeque;
 
 const PROMISE_CAPABILITY_RESOLVE: &str = "\0quench:promise-capability-resolve";
 const PROMISE_CAPABILITY_REJECT: &str = "\0quench:promise-capability-reject";
+/// The module type of an import without a `type` attribute.
+const JAVASCRIPT_MODULE_TYPE: &str = "javascript";
 use crate::{ModuleSource, module_identity::ModuleIdentity};
 use rustc_hash::FxHashSet;
 
@@ -41,16 +43,43 @@ enum StaticModuleValue {
 
 type ActiveModuleExports = FxHashMap<ModuleIdentity, Vec<(String, StaticModuleValue)>>;
 
-type StaticModuleNodes = FxHashMap<ModuleIdentity, StaticModuleNode>;
+type StaticModuleNodes = FxHashMap<ModuleIdentity, Rc<StaticModuleNode>>;
 type StaticModuleResolveSet = FxHashSet<(ModuleIdentity, String)>;
 
-#[derive(Clone)]
-enum StaticModuleNode {
-    Direct(Vec<(String, StaticModuleValue)>),
-    Planned {
+/// A module's static exports: its own bindings and its re-exports. Each resolution step
+/// looks a name up once, so resolving every export of a module is linear in its exports.
+struct StaticModuleNode {
+    locals: Vec<(String, StaticModuleValue)>,
+    reexports: Vec<crate::compile::StaticModuleReexport>,
+    /// Where each export name is defined: a local binding wins over a named or namespace
+    /// re-export, and an earlier re-export over a later one. Star re-exports are unnamed.
+    sites: FxHashMap<String, StaticExportSite>,
+}
+
+#[derive(Clone, Copy)]
+enum StaticExportSite {
+    Local(usize),
+    Reexport(usize),
+}
+
+impl StaticModuleNode {
+    fn new(
         locals: Vec<(String, StaticModuleValue)>,
         reexports: Vec<crate::compile::StaticModuleReexport>,
-    },
+    ) -> Rc<Self> {
+        let mut sites = FxHashMap::default();
+        for (index, (name, _)) in locals.iter().enumerate() {
+            sites.entry(name.clone()).or_insert(StaticExportSite::Local(index));
+        }
+        for (index, reexport) in reexports.iter().enumerate() {
+            if let crate::compile::StaticModuleReexport::Named { exported, .. }
+            | crate::compile::StaticModuleReexport::Namespace { exported, .. } = reexport
+            {
+                sites.entry(exported.clone()).or_insert(StaticExportSite::Reexport(index));
+            }
+        }
+        Rc::new(Self { locals, reexports, sites })
+    }
 }
 
 enum StaticModuleResolution {
@@ -1360,7 +1389,7 @@ impl<H: Host> Vm<H> {
             .copied()
             .unwrap_or(Value::NULL);
         let promise = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
-        let host_context = if H::OBSERVE_PROMISE_LIFECYCLE {
+        let host_context = if self.host.observes_promise_lifecycle() {
             self.host.create_promise_context(parent)
         } else {
             None
@@ -1649,8 +1678,14 @@ impl<H: Host> Vm<H> {
             let referrer = vm.active_script_or_module(p);
             let resolution = vm.host.resolve_dynamic_import(&referrer, &specifier);
             match resolution {
-                Err(message) => return Err(vm.type_error(p, message)),
+                Err(error) => return Err(vm.module_load_error(p, error)),
                 Ok(Some(module)) => {
+                    if phase != crate::bytecode::ModuleRequestPhase::Source {
+                        let requested = module_type.as_deref().unwrap_or(JAVASCRIPT_MODULE_TYPE);
+                        if let Err(error) = vm.host.validate_module_type(&module, requested) {
+                            return Err(vm.module_load_error(p, error));
+                        }
+                    }
                     if phase == crate::bytecode::ModuleRequestPhase::Source {
                         let source = vm.module_source_value(p, &module)?;
                         vm.promise_resolve_value(p, promise, source)?;
@@ -2266,8 +2301,8 @@ impl<H: Host> Vm<H> {
         module: &ModuleSource,
     ) -> Result<Value, JsError> {
         self.instantiate_static_module_graph(p, module, None)?;
-        if crate::Engine::static_module_has_early_error(&module.source) {
-            return self.syntax_error_result(p, "module source has an early error");
+        if let Some(message) = crate::Engine::static_module_early_error(&module.source) {
+            return self.syntax_error_result(p, &message);
         }
         if let Some(plan) = crate::Engine::static_module_plan(&module.source, &module.name) {
             let mut active = ModuleEvaluationStack::default();
@@ -2311,10 +2346,7 @@ impl<H: Host> Vm<H> {
             .iter()
             .filter(|request| request.phase == crate::bytecode::ModuleRequestPhase::Evaluation)
         {
-            let dependency = self
-                .host
-                .resolve_dynamic_import(&module.name, &request.source)
-                .map_err(|message| self.type_error(p, message))?;
+            let dependency = self.resolve_module_request(p, &module.name, request)?;
             let Some(dependency) = dependency else {
                 return Err(self.type_error(p, "static module request was not resolved".into()));
             };
@@ -2480,10 +2512,7 @@ impl<H: Host> Vm<H> {
             return Ok(false);
         }
         for request in plan.requests {
-            let dependency = self
-                .host
-                .resolve_dynamic_import(&module.name, &request.source)
-                .map_err(|message| self.type_error(p, message))?
+            let dependency = self.resolve_module_request(p, &module.name, &request)?
                 .ok_or_else(|| {
                     self.type_error(p, "static module request was not resolved".into())
                 })?;
@@ -2506,9 +2535,10 @@ impl<H: Host> Vm<H> {
         let Some(source) = self.object_data(source).cloned() else {
             return Err(self.type_error(p, "evaluated module namespace is invalid".into()));
         };
-        if let Some(target) = self.object_data_mut(target) {
+        if self.heap.copy_property_storage(&source, target)
+            && let Some(target) = self.object_data_mut(target)
+        {
             target.set_proto(source.proto());
-            target.copy_property_storage_from(&source);
             if source.is_module_namespace() {
                 target.set_module_namespace();
             }
@@ -2767,7 +2797,7 @@ impl<H: Host> Vm<H> {
             parent: Value::NULL,
             function: super::ROOT_FUNCTION_ID,
             slots: slots.into(),
-            scope: Box::new(crate::heap::EnvironmentScope {
+            scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
                 program: Some(program.raw()),
                 root_eval_scope: false,
                 binding_site_pc: None,
@@ -2842,7 +2872,7 @@ impl<H: Host> Vm<H> {
             let module = self
                 .host
                 .resolve_dynamic_import(referrer, &import.source)
-                .map_err(|message| self.type_error(p, message))?
+                .map_err(|error| self.module_load_error(p, error))?
                 .ok_or_else(|| self.type_error(p, "module import was not resolved".into()))?;
             let local = self
                 .lookup_atom(&import.local)
@@ -3036,9 +3066,7 @@ impl<H: Host> Vm<H> {
         let resolved = requests
             .iter()
             .map(|request| {
-                self.host
-                    .resolve_dynamic_import(referrer, &request.source)
-                    .map_err(|message| self.type_error(p, message))?
+                self.resolve_module_request(p, referrer, request)?
                     .ok_or_else(|| {
                         self.type_error(p, "static module request was not resolved".into())
                     })
@@ -3160,9 +3188,9 @@ impl<H: Host> Vm<H> {
         if record.and_then(ModuleRecord::deferred_namespace).is_some() {
             return Ok(());
         }
-        if record.is_none() && crate::Engine::static_module_has_early_error(&module.source) {
+        if record.is_none() && let Some(message) = crate::Engine::static_module_early_error(&module.source) {
             return self
-                .syntax_error_result(p, "module source has an early error")
+                .syntax_error_result(p, &message)
                 .map(|_| ());
         }
         let namespace = self.deferred_module_namespace(p, module)?;
@@ -3280,6 +3308,28 @@ impl<H: Host> Vm<H> {
         Ok(namespace)
     }
 
+    /// Resolve a static module request and, for an evaluation, validate its type.
+    fn resolve_module_request(
+        &mut self,
+        p: &ResidualProgram,
+        referrer: &str,
+        request: &crate::bytecode::ModuleRequest,
+    ) -> Result<Option<ModuleSource>, JsError> {
+        let module = self
+            .host
+            .resolve_dynamic_import(referrer, &request.source)
+            .map_err(|error| self.module_load_error(p, error))?;
+        if let Some(module) = &module
+            && request.phase == crate::bytecode::ModuleRequestPhase::Evaluation
+        {
+            let requested = request.module_type.as_deref().unwrap_or(JAVASCRIPT_MODULE_TYPE);
+            self.host
+                .validate_module_type(module, requested)
+                .map_err(|error| self.module_load_error(p, error))?;
+        }
+        Ok(module)
+    }
+
     fn evaluate_static_module_request(
         &mut self,
         p: &ResidualProgram,
@@ -3386,10 +3436,7 @@ impl<H: Host> Vm<H> {
                 {
                     continue;
                 }
-                let dependency = self
-                    .host
-                    .resolve_dynamic_import(&module.name, &request.source)
-                    .map_err(|message| self.type_error(p, message))?
+                let dependency = self.resolve_module_request(p, &module.name, request)?
                     .ok_or_else(|| {
                         self.type_error(p, "static module request was not resolved".into())
                     })?;
@@ -3451,9 +3498,9 @@ impl<H: Host> Vm<H> {
         let program = match precompiled {
             Some(program) => program,
             None => {
-                if crate::Engine::static_module_has_early_error(&module.source) {
+                if let Some(message) = crate::Engine::static_module_early_error(&module.source) {
                     return self
-                        .syntax_error_result(p, "module source has an early error")
+                        .syntax_error_result(p, &message)
                         .map(|_| ());
                 }
                 let residual = crate::Engine::specialize_module_unspecialized_with_atom_prefix(
@@ -3509,9 +3556,7 @@ impl<H: Host> Vm<H> {
             .module_requests
             .iter()
             .map(|request| {
-                self.host
-                    .resolve_dynamic_import(&module.name, &request.source)
-                    .map_err(|message| self.type_error(p, message))?
+                self.resolve_module_request(p, &module.name, request)?
                     .ok_or_else(|| {
                         self.type_error(p, "static module request was not resolved".into())
                     })
@@ -3615,9 +3660,9 @@ impl<H: Host> Vm<H> {
             }
             None => {}
         }
-        if crate::Engine::static_module_has_early_error(&module.source) {
+        if let Some(message) = crate::Engine::static_module_early_error(&module.source) {
             return self
-                .syntax_error_result(p, "module source has an early error")
+                .syntax_error_result(p, &message)
                 .map(|_| ());
         }
         let Some(plan) = crate::Engine::static_module_plan(&module.source, &module.name) else {
@@ -3740,12 +3785,12 @@ impl<H: Host> Vm<H> {
         cache_key: &str,
         error: JsError,
     ) -> Result<(), JsError> {
-        let waiters = self
-            .realm
-            .promise
-            .modules
-            .get_mut(cache_key)
-            .and_then(ModuleRecord::retry_instantiation)
+        // A source rejected before its record exists (an early error) has nothing to retry.
+        let Some(record) = self.realm.promise.modules.get_mut(cache_key) else {
+            return Err(error);
+        };
+        let waiters = record
+            .retry_instantiation()
             .ok_or_else(|| self.type_error(p, "module was not being instantiated".into()))?;
         // Queued imports own their promises outside the module record. Return
         // the transient error to that job instead of leaving it waiting on an
@@ -3798,10 +3843,7 @@ impl<H: Host> Vm<H> {
                 request.phase == crate::bytecode::ModuleRequestPhase::Evaluation
                     && request.module_type.as_deref().unwrap_or("javascript") == "javascript"
             }) {
-                let dependency = self
-                    .host
-                    .resolve_dynamic_import(&parent.name, &request.source)
-                    .map_err(|message| self.type_error(p, message))?
+                let dependency = self.resolve_module_request(p, &parent.name, request)?
                     .ok_or_else(|| {
                         self.type_error(p, "static module request was not resolved".into())
                     })?;
@@ -3929,10 +3971,7 @@ impl<H: Host> Vm<H> {
             if request.module_type.as_deref().unwrap_or("javascript") != "javascript" {
                 continue;
             }
-            let dependency = self
-                .host
-                .resolve_dynamic_import(&module.name, &request.source)
-                .map_err(|message| self.type_error(p, message))?
+            let dependency = self.resolve_module_request(p, &module.name, request)?
                 .ok_or_else(|| {
                     self.type_error(p, "static module request was not resolved".into())
                 })?;
@@ -4243,13 +4282,7 @@ impl<H: Host> Vm<H> {
                     .ok_or_else(|| self.type_error(p, "module import was not resolved".into()))?;
                 *value = StaticModuleValue::ModuleSource(self.module_source_value(p, &dependency)?);
             }
-            nodes.insert(
-                identity,
-                StaticModuleNode::Planned {
-                    locals,
-                    reexports: plan.reexports.clone(),
-                },
-            );
+            nodes.insert(identity, StaticModuleNode::new(locals, plan.reexports.clone()));
             return Ok(true);
         }
         if let Some(exports) = crate::Engine::static_module_exports(&module.source, &module.name) {
@@ -4266,7 +4299,7 @@ impl<H: Host> Vm<H> {
                     )
                 })
                 .collect();
-            nodes.insert(identity, StaticModuleNode::Direct(exports));
+            nodes.insert(identity, StaticModuleNode::new(exports, Vec::new()));
             return Ok(true);
         }
         let Some(plan) = crate::Engine::static_module_plan(&module.source, &module.name) else {
@@ -4305,13 +4338,7 @@ impl<H: Host> Vm<H> {
                 &mut ActiveModuleExports::default(),
             )?
         };
-        nodes.insert(
-            identity,
-            StaticModuleNode::Planned {
-                locals,
-                reexports: link_plan.reexports,
-            },
-        );
+        nodes.insert(identity, StaticModuleNode::new(locals, link_plan.reexports));
         Ok(true)
     }
 
@@ -4332,33 +4359,25 @@ impl<H: Host> Vm<H> {
         let Some(node) = nodes.get(&identity).cloned() else {
             return Ok(None);
         };
-        let mut names = Vec::new();
-        match node {
-            StaticModuleNode::Direct(exports) => {
-                names.extend(exports.into_iter().map(|(name, _)| name));
-            }
-            StaticModuleNode::Planned { locals, reexports } => {
-                names.extend(locals.into_iter().map(|(name, _)| name));
-                for reexport in reexports {
-                    match reexport {
-                        crate::compile::StaticModuleReexport::Named { exported, .. }
-                        | crate::compile::StaticModuleReexport::Namespace { exported, .. } => {
-                            names.push(exported);
-                        }
-                        crate::compile::StaticModuleReexport::Star { source } => {
-                            let Some(dependency) =
-                                self.static_module_dependency(p, &module.name, &source)?
-                            else {
-                                return Ok(None);
-                            };
-                            let Some(dependency_names) =
-                                self.static_module_export_names(p, &dependency, nodes, visited)?
-                            else {
-                                return Ok(None);
-                            };
-                            names.extend(dependency_names);
-                        }
-                    }
+        let mut names: Vec<String> = node.locals.iter().map(|(name, _)| name.clone()).collect();
+        for reexport in &node.reexports {
+            match reexport {
+                crate::compile::StaticModuleReexport::Named { exported, .. }
+                | crate::compile::StaticModuleReexport::Namespace { exported, .. } => {
+                    names.push(exported.clone());
+                }
+                crate::compile::StaticModuleReexport::Star { source } => {
+                    let Some(dependency) =
+                        self.static_module_dependency(p, &module.name, source)?
+                    else {
+                        return Ok(None);
+                    };
+                    let Some(dependency_names) =
+                        self.static_module_export_names(p, &dependency, nodes, visited)?
+                    else {
+                        return Ok(None);
+                    };
+                    names.extend(dependency_names);
                 }
             }
         }
@@ -4395,7 +4414,7 @@ impl<H: Host> Vm<H> {
         }
         self.host
             .resolve_dynamic_import(referrer, source)
-            .map_err(|message| self.type_error(p, message))
+            .map_err(|error| self.module_load_error(p, error))
     }
 
     fn resolve_static_module_export(
@@ -4416,99 +4435,93 @@ impl<H: Host> Vm<H> {
         let Some(node) = nodes.get(&identity).cloned() else {
             return Ok(StaticModuleResolution::Unsupported);
         };
-        let (locals, reexports) = match node {
-            StaticModuleNode::Direct(exports) => (exports, Vec::new()),
-            StaticModuleNode::Planned { locals, reexports } => (locals, reexports),
-        };
-        if let Some((_, value)) = locals.into_iter().find(|(export, _)| export == name) {
-            return Ok(StaticModuleResolution::Binding(value));
-        }
-        for reexport in &reexports {
-            if let crate::compile::StaticModuleReexport::Named {
-                source,
-                imported,
-                exported,
-            } = reexport
-                && exported == name
-            {
-                let Some(dependency) = self.static_module_dependency(p, &module.name, source)?
-                else {
-                    return Ok(StaticModuleResolution::Missing);
-                };
-                return self.resolve_static_module_export(
-                    p,
-                    &dependency,
-                    imported,
-                    nodes,
-                    resolve_set,
-                );
+        match node.sites.get(name).copied() {
+            Some(StaticExportSite::Local(index)) => {
+                return Ok(StaticModuleResolution::Binding(node.locals[index].1.clone()));
             }
-            if let crate::compile::StaticModuleReexport::Namespace { source, exported } = reexport
-                && exported == name
-            {
-                let Some(dependency) = self.static_module_dependency(p, &module.name, source)?
-                else {
-                    return Ok(StaticModuleResolution::Missing);
-                };
-                let key = module_cache_key(&dependency.name, "javascript");
-                if let Some(namespace) =
-                    self.realm
-                        .promise
-                        .modules
-                        .get(&key)
-                        .and_then(|record| match record.outcome {
-                            ModuleOutcome::Evaluated(namespace)
-                            | ModuleOutcome::Deferred(namespace) => Some(namespace),
-                            ModuleOutcome::Pending(_) => record.pending_namespace(),
-                            ModuleOutcome::Errored(_) => None,
-                        })
-                {
-                    return Ok(StaticModuleResolution::Binding(StaticModuleValue::Cached(
-                        namespace,
-                    )));
-                }
-                let Some(names) = self.static_module_export_names(
-                    p,
-                    &dependency,
-                    nodes,
-                    &mut FxHashSet::default(),
-                )?
-                else {
-                    return Ok(StaticModuleResolution::Unsupported);
-                };
-                let mut exports = Vec::new();
-                for name in names {
-                    match self.resolve_static_module_export(
+            Some(StaticExportSite::Reexport(index)) => match &node.reexports[index] {
+                crate::compile::StaticModuleReexport::Named { source, imported, .. } => {
+                    let Some(dependency) = self.static_module_dependency(p, &module.name, source)?
+                    else {
+                        return Ok(StaticModuleResolution::Missing);
+                    };
+                    return self.resolve_static_module_export(
                         p,
                         &dependency,
-                        &name,
+                        imported,
                         nodes,
-                        &mut StaticModuleResolveSet::default(),
-                    )? {
-                        StaticModuleResolution::Binding(value) => exports.push((name, value)),
-                        StaticModuleResolution::Missing | StaticModuleResolution::Ambiguous => {}
-                        StaticModuleResolution::Unsupported => {
-                            return Ok(StaticModuleResolution::Unsupported);
+                        resolve_set,
+                    );
+                }
+                crate::compile::StaticModuleReexport::Namespace { source, .. } => {
+                    let Some(dependency) = self.static_module_dependency(p, &module.name, source)?
+                    else {
+                        return Ok(StaticModuleResolution::Missing);
+                    };
+                    let key = module_cache_key(&dependency.name, "javascript");
+                    if let Some(namespace) =
+                        self.realm
+                            .promise
+                            .modules
+                            .get(&key)
+                            .and_then(|record| match record.outcome {
+                                ModuleOutcome::Evaluated(namespace)
+                                | ModuleOutcome::Deferred(namespace) => Some(namespace),
+                                ModuleOutcome::Pending(_) => record.pending_namespace(),
+                                ModuleOutcome::Errored(_) => None,
+                            })
+                    {
+                        return Ok(StaticModuleResolution::Binding(StaticModuleValue::Cached(
+                            namespace,
+                        )));
+                    }
+                    let Some(names) = self.static_module_export_names(
+                        p,
+                        &dependency,
+                        nodes,
+                        &mut FxHashSet::default(),
+                    )?
+                    else {
+                        return Ok(StaticModuleResolution::Unsupported);
+                    };
+                    let mut exports = Vec::new();
+                    for name in names {
+                        match self.resolve_static_module_export(
+                            p,
+                            &dependency,
+                            &name,
+                            nodes,
+                            &mut StaticModuleResolveSet::default(),
+                        )? {
+                            StaticModuleResolution::Binding(value) => exports.push((name, value)),
+                            StaticModuleResolution::Missing | StaticModuleResolution::Ambiguous => {}
+                            StaticModuleResolution::Unsupported => {
+                                return Ok(StaticModuleResolution::Unsupported);
+                            }
                         }
                     }
+                    return Ok(StaticModuleResolution::Binding(
+                        StaticModuleValue::Namespace {
+                            name: dependency.name,
+                            exports,
+                        },
+                    ));
                 }
-                return Ok(StaticModuleResolution::Binding(
-                    StaticModuleValue::Namespace {
-                        name: dependency.name,
-                        exports,
-                    },
-                ));
-            }
+                crate::compile::StaticModuleReexport::Star { .. } => {
+                    unreachable!("star re-exports define no named site")
+                }
+            },
+            None => {}
         }
         let mut star_resolution: Option<StaticModuleValue> = None;
-        for reexport in reexports {
+        for reexport in &node.reexports {
             let crate::compile::StaticModuleReexport::Star { source } = reexport else {
                 continue;
             };
             if name == "default" {
                 continue;
             }
-            let Some(dependency) = self.static_module_dependency(p, &module.name, &source)? else {
+            let Some(dependency) = self.static_module_dependency(p, &module.name, source)? else {
                 return Ok(StaticModuleResolution::Missing);
             };
             let mut branch = resolve_set.clone();
@@ -4549,11 +4562,10 @@ impl<H: Host> Vm<H> {
         if !self.ensure_static_module_node(p, module, nodes)? {
             return Ok(None);
         }
-        let Some(StaticModuleNode::Planned { reexports, .. }) = nodes.get(&identity).cloned()
-        else {
+        let Some(node) = nodes.get(&identity).cloned() else {
             return Ok(Some(true));
         };
-        for reexport in reexports {
+        for reexport in node.reexports.iter().cloned() {
             let (source, named) = match reexport {
                 crate::compile::StaticModuleReexport::Named {
                     source, imported, ..
@@ -4785,7 +4797,7 @@ impl<H: Host> Vm<H> {
                 let dependency = self
                     .host
                     .resolve_dynamic_import(&module.name, source)
-                    .map_err(|message| self.type_error(p, message))?;
+                    .map_err(|error| self.module_load_error(p, error))?;
                 let Some(dependency) = dependency else {
                     return Ok(StaticModuleGraph::LinkError);
                 };
@@ -4985,21 +4997,23 @@ impl<H: Host> Vm<H> {
             object.set_module_namespace();
         }
         self.mark_object_dictionary(namespace, DictionaryTrigger::ModuleNamespace);
+        // Export names are distinct, so each is appended with its final attributes and
+        // without a lookup: a lookup would index every intermediate dictionary shape,
+        // making a namespace of N exports cost O(N^2).
+        let export_attributes = DataAttributes {
+            writable: false,
+            enumerable: true,
+            configurable: false,
+        };
+        let mut defined = FxHashSet::default();
         for (name, value) in exports {
             let atom = self.intern_atom(&name);
-            self.set_property(namespace, atom, value)?;
-            self.set_property_attributes(
-                namespace,
-                crate::vm::property_key::PropertyKey::string(atom),
-                PropertyAttributes {
-                    writable: false,
-                    enumerable: true,
-                    configurable: false,
-                    accessor: false,
-                    getter: None,
-                    setter: None,
-                },
-            );
+            let key = crate::vm::property_key::PropertyKey::string(atom);
+            if defined.insert(atom) {
+                self.create_shape_data_property(namespace, key, value, export_attributes)?;
+            } else {
+                self.set_property(namespace, atom, value)?;
+            }
         }
         if let Some(symbol) = self.well_known_symbols.get("toStringTag").copied() {
             let module = self
@@ -5079,6 +5093,9 @@ impl<H: Host> Vm<H> {
         let then_atom = self.runtime_atoms.then;
         let then = match self.get_property(p, value, then_atom) {
             Ok(then) => then,
+            // Cancellation must unwind the active job, not become a guest
+            // rejection or an allocated Error during thenable assimilation.
+            Err(error) if error.is_execution_terminated() => return Err(error),
             Err(error) => {
                 let reason = error
                     .thrown_value()

@@ -472,3 +472,67 @@ Crypto 0.00%, DeltaBlue +0.76%, EarleyBoyer +0.56%, NavierStokes 0.00%, RayTrace
 RegExp +0.67%, Richards 0.00%, Splay +0.56%: the added collections. Splay's set-up runs
 +144M (its extra collections, which take 6 MiB off its peak). Runtime lib 671/671,
 Test262 stages 29–92 and `framework-core` 43/43 pass.
+
+## The SDK console on the V8-v7 boards
+
+The trunk made the global `console` Node's SDK console. Every V8-v7 fixture prints through
+`console.log`, and the first call loads `console.js` and its requirements (inspect, errors,
+validators, buffer, util, debuglog, diagnostics_channel, trace_events) and the primordials:
+static unbolted, an empty script 3152 KiB, `console.log("x")` 12336 KiB, about 8.5 MiB of it
+anonymous and resident for the rest of the run. Bolted against QuickJS
+(`board-bolt-vs-qjs-b27-sdk-console.txt`): Richards 12104–12268 vs 3256–3484, Crypto
+12812–12964 vs 3492–3612, Splay 50724–50752 vs 146916–147164; only Splay stays lower.
+
+This batch keeps the load lazy (console, warning listener, process wrappers: an empty script
+15.5 → 5.1 MiB on the iteration build), reserves the compiler's function slots once and drops
+the parse tree before a compilation's finishing passes (Crypto 4560 → 4352 KiB unbolted,
+before the SDK console), and releases read-only pages after a library loads on first use
+(file pages after a console load 4084 → 1472 KiB). The console's own cost needs a decision
+outside this lane (TOD-123).
+
+## Memory-first pacing and compact program metadata (2026-10-17)
+
+Host: Linux 6.18.44 x86_64, 4 vCPU, 16 GiB; static C runtime, BOLT-ordered build,
+evicted page cache before each run, environment of 155 variables.
+
+The trunk's Score-only collection pacing (e14aadb13: at least 2^18 cells between
+collections, two to four live sets, the regex lazy DFA) took fixed-work max RSS to 17–94 MB
+(Crypto 21.2, DeltaBlue 19.5, EarleyBoyer 47.6, RayTrace 17.3, RegExp 25.8, Splay 93.8 MB).
+On the owner's memory-first direction, this batch restores the earlier pacing (384 cells,
+1/2, 1/1, 1/1) and the literal, one-pass and backtrack regex engines. It also:
+- keeps dynamic atom names once, in stable chunks (which fixes a dangling short name);
+- delta-codes source positions;
+- sizes register root masks to each function's registers;
+- builds CommonJS wrappers at their exact length;
+- lowers the complete regexp matcher on first use;
+- copies `process.env` on its first read.
+
+Bolted static against QuickJS (`board-b30.txt`, 5 runs, KiB):
+
+| Fixture | Quench | QuickJS |
+|---|---|---|
+| Richards | 3000 | 3328–3432 |
+| DeltaBlue | 3196–3512 | 3608–3780 |
+| NavierStokes | 4664 | 4884–5016 |
+| EarleyBoyer | 8904–9108 | 16540–16892 |
+| Splay | 40240–40248 | 146924–147048 |
+| RayTrace | 3336 | 3164–3388 (median 3348) |
+| Crypto | 3592–3752 | 3444–3676 |
+| RegExp | 9936–10088 | 6696–6792 |
+
+Guard (`guard-memory-first-raw.txt`, base `origin/v2-merged` bbb9d359b, unbolted), per run:
+
+| Fixture | Change |
+|---|---|
+| Crypto | −1.1% |
+| NavierStokes | −2.2% |
+| Richards | −2.4% |
+| Splay | −0.1% |
+| DeltaBlue | +5.5% |
+| EarleyBoyer | +24.5% |
+| RayTrace | +28.3% |
+| RegExp | +65.7% |
+
+Start-up: RegExp and Splay +41% (pacing and regex engines), the rest −1% to −4%. These
+costs are the memory-first choice, not regressions in the compactions. Runtime lib 684/684,
+`framework-core` 43/43, Test262 stages 29–92 (23633) and 10 (11087) pass.

@@ -1,0 +1,5 @@
+/* Node-API symbols native addons resolve from the executable at dlopen time. */
+{
+  napi_*;
+  node_api_*;
+};

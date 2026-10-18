@@ -1,0 +1,121 @@
+{
+  "schema": 2,
+  "suite": "jetstream3",
+  "fixture": "web-ssr",
+  "qualification": "screen only: 1 of 30 fixtures; Linux only; no M4 result",
+  "validity": {
+    "jit": {
+      "source_revision": "eeb97d914ddb98b6d3bff749d4aed83c787bf1bc",
+      "source_dirty": false,
+      "rounds": 11,
+      "fixture_valid": true,
+      "output_equal": true,
+      "qualification_ready": false,
+      "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.1\nLLVM version: 23.1.1"
+    },
+    "interpreted": {
+      "source_revision": "307844f0f3209ff16bab23d10ed0e45675d6495d",
+      "source_dirty": false,
+      "rounds": 11,
+      "fixture_valid": true,
+      "output_equal": true,
+      "qualification_ready": false,
+      "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.1\nLLVM version: 23.1.1"
+    }
+  },
+  "inputs": {
+    "web-ssr-final-jit.json": "15d7912a8da1c0c3bbaabea92f1c90bbddae0ea1e1b68ef47005428198e2af14",
+    "web-ssr-final-nojit.json": "15a397f69a741731615623773d93def205d9706134f4c874114700770e41e44b"
+  },
+  "bootstrap": {
+    "method": "percentile bootstrap of paired median log-ratios; joint round-index resampling",
+    "replicates": 100000,
+    "confidence_level": 0.95,
+    "quantile": "linear interpolation"
+  },
+  "jit_mode": {
+    "rounds": 11,
+    "median_score": 14.52,
+    "median_peak_rss_bytes": 131284992.0,
+    "comparisons": {
+      "bun": {
+        "score": {
+          "quench_median": 14.52,
+          "comparator_median": 128.38,
+          "median_paired_ratio": 0.11479686917629522,
+          "paired_ratio_ci95": [
+            0.1101544898616028,
+            0.1189091480666457
+          ],
+          "seed": "0x6de97dc99102fc5a"
+        },
+        "max_rss": {
+          "quench_median": 131284992.0,
+          "comparator_median": 250753024.0,
+          "median_paired_ratio": 0.5229258890213823,
+          "paired_ratio_ci95": [
+            0.5188289935753241,
+            0.535122796494385
+          ],
+          "seed": "0x2ca8a83e3e4a3f01"
+        }
+      },
+      "node": {
+        "score": {
+          "quench_median": 14.52,
+          "comparator_median": 128.11,
+          "median_paired_ratio": 0.11706845118116582,
+          "paired_ratio_ci95": [
+            0.11236837969511239,
+            0.12627862768172354
+          ],
+          "seed": "0x821c5240de5e1acd"
+        },
+        "max_rss": {
+          "quench_median": 131284992.0,
+          "comparator_median": 257712128.0,
+          "median_paired_ratio": 0.5093484057415657,
+          "paired_ratio_ci95": [
+            0.5068282636248416,
+            0.5127697295915923
+          ],
+          "seed": "0x731d63f8ea007a66"
+        }
+      }
+    }
+  },
+  "interpreted_mode": {
+    "rounds": 11,
+    "median_score": 14.47,
+    "median_peak_rss_bytes": 130502656.0,
+    "comparisons": {}
+  },
+  "jit_vs_interpreted": {
+    "score": {
+      "jit_median": 14.52,
+      "interpreted_median": 14.47,
+      "median_ratio": 1.0034554250172771,
+      "independent_ratio_ci95": [
+        0.9490196078431372,
+        1.0555170020818876
+      ],
+      "seed": "0x0000000000c0ffee"
+    },
+    "bootstrap": {
+      "method": "independent percentile bootstrap of median ratios; each mode resampled separately",
+      "replicates": 100000,
+      "confidence_level": 0.95,
+      "quantile": "linear interpolation"
+    },
+    "max_rss": {
+      "jit_median": 131284992.0,
+      "interpreted_median": 130502656.0,
+      "median_ratio": 1.0059947898684913,
+      "independent_ratio_ci95": [
+        1.0000624785230077,
+        1.008651879817524
+      ],
+      "seed": "0x0000000000c0ffef"
+    }
+  }
+}

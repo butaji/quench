@@ -92,6 +92,7 @@ enum ErrorDescription {
         message: String,
 
     },
+    ExecutionTerminated,
     DataClone(String),
     WasmTrap(crate::WasmTrap),
     WasmException,
@@ -128,11 +129,18 @@ impl fmt::Display for JsError {
             ErrorDescription::DataClone(message) => write!(f, "DataCloneError: {message}"),
             ErrorDescription::WasmTrap(trap) => fmt::Display::fmt(trap, f),
             ErrorDescription::WasmException => f.write_str("uncaught Wasm exception"),
+            ErrorDescription::ExecutionTerminated => f.write_str("execution terminated"),
         }
     }
 }
 
 impl JsError {
+    pub(crate) fn execution_terminated()->Self {
+        Self(ErrorMessage { payload: Box::new(ErrorPayload { description: ErrorDescription::ExecutionTerminated, thrown: None, source_location: None }) })
+    }
+    /// A host termination is uncatchable, not a guest Error object or throw.
+    pub fn is_execution_terminated(&self)->bool { matches!(self.0.payload.description,ErrorDescription::ExecutionTerminated) }
+
     pub(crate) fn thrown(value: Value, message: String) -> Self {
         Self(ErrorMessage {
             payload: Box::new(ErrorPayload {
@@ -229,7 +237,8 @@ impl JsError {
             ErrorDescription::Text { .. }
             | ErrorDescription::WasmLink(_)
             | ErrorDescription::DataClone(_)
-            | ErrorDescription::WasmException => None,
+            | ErrorDescription::WasmException
+            | ErrorDescription::ExecutionTerminated => None,
         }
     }
 
@@ -273,6 +282,7 @@ impl JsError {
             ErrorDescription::DataClone(message) => format!("DataCloneError: {message}"),
             ErrorDescription::WasmTrap(trap) => trap.to_string(),
             ErrorDescription::WasmException => "uncaught Wasm exception".into(),
+            ErrorDescription::ExecutionTerminated => "execution terminated".into(),
         }
     }
 }
@@ -692,11 +702,10 @@ impl<H: Host> Vm<H> {
         result
     }
 
-    pub(super) fn install_error_stack(
+    fn define_error_stack_property(
         &mut self,
         program: &ResidualProgram,
         target: Value,
-        data: StackData,
     ) -> Result<(), JsError> {
         let intrinsics = self.realm.intrinsics.error_intrinsics[&self.realm.globals];
         let getter = intrinsics.stack_getter;
@@ -715,6 +724,16 @@ impl<H: Host> Vm<H> {
                 setter: Some(setter),
             },
         )?;
+        Ok(())
+    }
+
+    pub(super) fn install_error_stack(
+        &mut self,
+        program: &ResidualProgram,
+        target: Value,
+        data: StackData,
+    ) -> Result<(), JsError> {
+        self.define_error_stack_property(program, target)?;
         self.object_data_mut(target)
             .expect("stack target remains object-like")
             .set_stack_data(data);
@@ -977,6 +996,33 @@ impl<H: Host> Vm<H> {
     ) -> JsError {
         let name = crate::bytecode::source_binding_name(self.atom_name(atom)).to_owned();
         self.reference_error(program, format!("Cannot access '{name}' before initialization"))
+    }
+
+    /// A host's module-load failure as its error object, with the host's `code` as an
+    /// ordinary data property.
+    pub(super) fn module_load_error(&mut self, program: &ResidualProgram, error: crate::ModuleLoadError) -> JsError {
+        let native = match error.kind {
+            crate::ModuleLoadErrorKind::Error => Native::Error,
+            crate::ModuleLoadErrorKind::TypeError => Native::TypeError,
+        };
+        let message = self.heap.alloc(Cell::String(JsString::from_str(&error.message)));
+        let object = match self.construct_error_native(program, native, &[message]) {
+            Ok(object) => object,
+            Err(failure) => return failure,
+        };
+        let code = error.code.map(|code| ("code", code.to_owned()));
+        for (name, value) in code.into_iter().chain(error.fields) {
+            let name = self.heap.alloc(Cell::String(JsString::from_str(name)));
+            let value = self.heap.alloc(Cell::String(JsString::from_str(&value)));
+            let defined = self.to_property_key(program, name).and_then(|key| {
+                let record = super::object_descriptors::PropertyDescriptorRecord::data(value);
+                self.define_own_property_record(program, object, key, record)
+            });
+            if let Err(failure) = defined {
+                return failure;
+            }
+        }
+        JsError::thrown(object, error.message)
     }
 
     pub(super) fn reference_error(&mut self, program: &ResidualProgram, text: String) -> JsError {
@@ -1377,7 +1423,7 @@ impl<H: Host> Vm<H> {
             }
             let message = diagnostics
                 .first()
-                .map_or("invalid Function source".to_owned(), ToString::to_string);
+                .map_or("invalid Function source".to_owned(), |diagnostic| diagnostic.syntax_message().to_owned());
             self.syntax_error_result(program, &message)
                 .expect_err("dynamic Function syntax errors must throw")
         })?;
@@ -2338,7 +2384,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let prototype = self.intrinsic_builtin_prototype(native);
-        self.construct_error_with_prototype(program, native, args, prototype)
+        self.construct_error_with_prototype(program, native, args, prototype, None)
     }
 
     pub(super) fn construct_error_with_new_target(
@@ -2356,9 +2402,23 @@ impl<H: Host> Vm<H> {
                     .ok_or_else(|| {
                         JsError::validation("error constructor has no intrinsic prototype".into())
                     })?;
-                vm.construct_error_with_prototype(program, native, args, prototype)
+                let stack_target = vm.error_constructor_stack_target(native, new_target);
+                vm.construct_error_with_prototype(program, native, args, prototype, stack_target)
             },
         )
+    }
+
+    // V8 ErrorUtils::Construct selects SKIP_UNTIL_SEEN only for a plain
+    // JSFunction newTarget. Callable proxies and bound functions are distinct
+    // callable forms. Our intrinsic constructor has no JS activation to find.
+    fn error_constructor_stack_target(&self, native: Native, new_target: Value) -> Option<Value> {
+        match self.heap.get(new_target) {
+            Some(Cell::Function { kind: FunctionKind::Native(target), object, .. })
+                if *target == native && object.realm == self.realm.globals => None,
+            Some(Cell::Function { kind, .. })
+                if !matches!(kind, FunctionKind::Native(Native::FunctionBoundCall)) => Some(new_target),
+            _ => None,
+        }
     }
 
     fn construct_error_with_prototype(
@@ -2367,7 +2427,9 @@ impl<H: Host> Vm<H> {
         native: Native,
         args: &[Value],
         prototype: Value,
+        stack_target: Option<Value>,
     ) -> Result<Value, JsError> {
+        let stack_target = stack_target.map(|target| self.heap.root(target));
         let (message, options, suppressed) = match native {
             Native::SuppressedError => (
                 args.get(SUPPRESSED_MESSAGE_ARGUMENT)
@@ -2397,6 +2459,9 @@ impl<H: Host> Vm<H> {
         let object = self.heap.alloc(Cell::Object(Object::error(prototype)));
         let root = self.heap.root(object);
         let outcome = (|| {
+            // Reserve the native stack accessor before message/cause fields,
+            // then capture after their observable conversions have completed.
+            self.define_error_stack_property(program, self.heap.root_value(root).unwrap())?;
             if let Some(message) = message {
                 let value = self.heap.root_value(message).unwrap();
                 let message = self.coerce_js_string(program, value)?;
@@ -2415,10 +2480,13 @@ impl<H: Host> Vm<H> {
                 self.install_error_cause(program, root, options)?;
             }
             let object = self.heap.root_value(root).unwrap();
-            self.error_capture_stack_trace(program, &[object])?;
+            let stack_target = stack_target
+                .and_then(|root| self.heap.root_value(root))
+                .unwrap_or(Value::UNDEFINED);
+            self.error_capture_stack_trace(program, &[object, stack_target])?;
             Ok(self.heap.root_value(root).unwrap())
         })();
-        for root in [Some(root), message, options]
+        for root in [Some(root), message, options, stack_target]
             .into_iter()
             .flatten()
             .chain(suppressed.into_iter().flatten())
@@ -2478,6 +2546,7 @@ impl<H: Host> Vm<H> {
             let value = self.heap.alloc(Cell::Object(Object::error(prototype)));
             let root = self.heap.root(value);
             object = Some(root);
+            self.define_error_stack_property(program, value)?;
             if let Some(message) = message {
                 let message = self.heap.root_value(message).unwrap();
                 let message = self.coerce_js_string(program, message)?;
@@ -2489,7 +2558,10 @@ impl<H: Host> Vm<H> {
                 self.install_error_cause(program, root, options)?;
             }
             let value = self.heap.root_value(root).unwrap();
-            self.error_capture_stack_trace(program, &[value])?;
+            let target = self.heap.root_value(new_target).unwrap();
+            let stack_target = self.error_constructor_stack_target(Native::AggregateError, target)
+                .unwrap_or(Value::UNDEFINED);
+            self.error_capture_stack_trace(program, &[value, stack_target])?;
             let input = self.heap.root_value(input).unwrap();
             errors_list = self.iterable_to_rooted_list(program, input)?;
             let prototype = self.array_prototype_for_realm(self.realm.globals);

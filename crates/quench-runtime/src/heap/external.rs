@@ -7,6 +7,21 @@ impl Cell {
             _ => 0,
         }
     }
+
+    /// The memory a cell owns beyond its slot, which allocation weight and live weight
+    /// charge: string units, array element storage and external buffers.
+    pub(super) fn payload_bytes(&self) -> usize {
+        match self {
+            Self::String(text) => text.flat_unit_bytes(),
+            Self::Array { object } => array_payload_bytes(object),
+            cell => cell.external_bytes(),
+        }
+    }
+}
+
+/// Element storage an array owns.
+pub(super) fn array_payload_bytes(array: &super::ArrayObject) -> usize {
+    array.elements().capacity() * size_of::<super::Value>()
 }
 
 impl Heap {
@@ -22,9 +37,14 @@ impl Heap {
         )
     }
 
+    /// Records a buffer, Wasm memory or table resizing outside `alloc`. Growth counts toward
+    /// the next collection like any other payload (TOD-125).
     pub(crate) fn adjust_external_bytes(&mut self, before: usize, after: usize) {
         match after.cmp(&before) {
-            std::cmp::Ordering::Greater => self.charge_external_growth(after - before),
+            std::cmp::Ordering::Greater => {
+                self.charge_external_growth(after - before);
+                self.charge_payload_growth(after - before);
+            }
             std::cmp::Ordering::Less => {
                 self.external_bytes = self.external_bytes.saturating_sub(before - after)
             }

@@ -1,0 +1,6 @@
+running 2 tests
+test missing_and_unregistered_addons_fail_like_node ... ok
+test native_addon_contract_matches_node ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.10s
+

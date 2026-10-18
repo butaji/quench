@@ -33,6 +33,23 @@ pub(super) struct PendingGeneralCall {
     /// `None` only for a lane activation materialized past the guest-call budget, which
     /// `WASM_ACTIVATION_LIMIT` bounds instead.
     pub(super) call_guard: Option<crate::stack::GuestCallGuard>,
+    /// The caller's program when the callee belongs to another one: the return or unwind
+    /// into the caller makes it executing again. `None` when both share their program.
+    pub(super) caller_program: Option<SavedProgram>,
+}
+
+/// The general loop's executing program: its id and the residual keeping it alive (`None`
+/// for the loop's entry program).
+pub(super) struct ExecutingProgram {
+    pub(super) id: ProgramId,
+    pub(super) retained: Option<Rc<ResidualProgram>>,
+}
+
+/// An executing program set aside while an in-loop callee of another program runs.
+pub(super) struct SavedProgram {
+    pub(super) id: ProgramId,
+    /// The residual that kept it alive, `None` for the loop's entry program.
+    pub(super) retained: Option<Rc<ResidualProgram>>,
 }
 
 /// Activations the dispatch loop holds before a Wasm call exhausts the call
@@ -90,7 +107,7 @@ impl<H: Host> Vm<H> {
         lane: bool,
     ) -> GeneralCodeCursor {
         GeneralCodeCursor {
-            lane: if lane {
+            lane: if lane && self.lane_admits(program) {
                 self.lane_view(program_id, function)
             } else {
                 std::ptr::null()
@@ -537,7 +554,8 @@ impl<H: Host> Vm<H> {
             &mut frame,
             arrow,
             new_target,
-            id == super::ROOT_FUNCTION_ID || function.activation_bindings_observable(&p.atoms),
+            id == super::ROOT_FUNCTION_ID
+                || function.activation_bindings_observable(&p.atoms, &p.functions),
         );
         frame.prepare_registers_for(function);
         frame.bind_register_parameters(function, args);
@@ -613,7 +631,8 @@ impl<H: Host> Vm<H> {
             &mut frame,
             arrow,
             new_target,
-            id == super::ROOT_FUNCTION_ID || function.activation_bindings_observable(&p.atoms),
+            id == super::ROOT_FUNCTION_ID
+                || function.activation_bindings_observable(&p.atoms, &p.functions),
         );
         frame.prepare_registers_for(function);
         frame.bind_register_parameters(function, args);
@@ -979,7 +998,7 @@ impl<H: Host> Vm<H> {
             parent,
             function: self.frames[frame].function,
             slots,
-            scope: Box::new(crate::heap::EnvironmentScope {
+            scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
                 program: Some(self.frames[frame].program.raw()),
                 root_eval_scope: false,
                 binding_site_pc: None,
@@ -1023,12 +1042,12 @@ impl<H: Host> Vm<H> {
             parent: *parent,
             function: *function,
             slots,
-            scope: Box::new(crate::heap::EnvironmentScope {
-                program: scope.program,
-                root_eval_scope: scope.root_eval_scope,
-                binding_site_pc: scope.binding_site_pc,
+            scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+                program: scope.program(),
+                root_eval_scope: scope.root_eval_scope(),
+                binding_site_pc: scope.binding_site_pc(),
                 dynamic_bindings: crate::heap::EnvironmentBindings::Shared(owner),
-                with_objects: scope.with_objects.clone(),
+                with_objects: scope.with_objects().into(),
             }),
         };
         let env = self.heap.alloc(environment);
@@ -1228,6 +1247,23 @@ impl<H: Host> Vm<H> {
             // call, or at the residual `current_program` keeps alive until it is replaced,
             // and it is re-derived at that replacement.
             let p = unsafe { &*executing_residual };
+            if let Err(error)=self.check_execution_interrupt() {
+                let mut executing = ExecutingProgram { id: executing_program, retained: current_program.take() };
+                return self.unwind_general_loop(entry_program,frame,pc,pc as u32,error,&mut pending_calls,&mut cursor,&mut executing,fast_lane)
+                    .map(|_|unreachable!("host termination cannot select a guest handler"));
+            }
+            // A supported native function still returns through the ordinary
+            // Return instruction, preserving the dispatch loop's frame and
+            // constructor unwind path. Guard misses leave pc at zero.
+            if pc == 0
+                && self.execution_mode == ExecutionMode::Compiled
+                && let Some((return_pc, return_register, value)) =
+                    self.js_jit_at_entry(p, frame)
+            {
+                self.write(frame, return_register, value);
+                pc = return_pc;
+                continue;
+            }
             if Self::lane_runs(cursor.lane, pc) {
                 pc = self.run_fast_lane(
                     p,
@@ -1249,6 +1285,31 @@ impl<H: Host> Vm<H> {
                         self.frames[frame].function,
                         fast_lane,
                     );
+                }
+                // A call the lane made in place failed: it throws at its instruction, as the
+                // general path's call would have.
+                if let Some(error) = self.lane_raised.take() {
+                    let mut executing = ExecutingProgram {
+                        id: executing_program,
+                        retained: current_program.take(),
+                    };
+                    let unwound = self.unwind_general_loop(
+                        p,
+                        frame,
+                        pc + 1,
+                        pc as u32,
+                        error,
+                        &mut pending_calls,
+                        &mut cursor,
+                        &mut executing,
+                        fast_lane,
+                    );
+                    executing_program = executing.id;
+                    current_program = executing.retained;
+                    executing_residual = current_program.as_deref().unwrap_or(entry_program);
+                    (frame, pc) = unwound?;
+                    published_pc = &mut self.frames[frame].pc;
+                    continue;
                 }
             }
             if STOPS && stop_pc == Some(pc) {
@@ -1519,6 +1580,8 @@ impl<H: Host> Vm<H> {
             // Returns and inline calls produce their step result here rather than through the
             // general `step` dispatch.
             let step = match ins.op() {
+                // A call the lane made returned its callee's completion from this frame.
+                _ if let Some(value) = self.lane_returned.take() => Ok(StepResult::Return(value)),
                 Op::Return => Ok(StepResult::Return(self.read(frame, ins.register_a()))),
                 Op::Call if allow_inline_calls => {
                     match self.try_inline_user_call(p, frame, ins, pc) {
@@ -1530,7 +1593,7 @@ impl<H: Host> Vm<H> {
             };
             match step {
                 Ok(StepResult::Return(mut value)) => loop {
-                    if let Some(pending) = pending_calls.pop() {
+                    if let Some(mut pending) = pending_calls.pop() {
                         debug_assert_eq!(frame, pending.caller + 1);
                         let completed_frame = self.frames.pop().unwrap();
                         self.finish_frame_scopes(&completed_frame);
@@ -1548,6 +1611,12 @@ impl<H: Host> Vm<H> {
                         );
                         self.pool_frame(completed_frame);
                         frame = pending.caller;
+                        if let Some(saved) = pending.caller_program.take() {
+                            executing_program = saved.id;
+                            current_program = saved.retained;
+                            executing_residual = current_program.as_deref().unwrap_or(entry_program);
+                            self.set_active_program(executing_program);
+                        }
                         self.active_registers = self.frames[frame].registers.as_mut_ptr();
                         // [[Construct]] of an ordinary constructor yields its returned object,
                         // otherwise the receiver it allocated.
@@ -1559,7 +1628,8 @@ impl<H: Host> Vm<H> {
                         cursor = pending.caller_cursor.unwrap_or_else(|| {
                             self.general_cursor(
                                 executing_program,
-                                p,
+                                // SAFETY: as for `p` at the top of the loop.
+                                unsafe { &*executing_residual },
                                 self.frames[frame].function,
                                 fast_lane,
                             )
@@ -1582,6 +1652,23 @@ impl<H: Host> Vm<H> {
                     call_guard,
                     construct_this,
                 }) => {
+                    // A callee of another program became active when its frame was pushed;
+                    // the loop executes that program until the callee returns.
+                    let callee_program = self.frames[frame + 1].program;
+                    let caller_program = if callee_program == executing_program {
+                        None
+                    } else {
+                        let retained = self.programs.get(callee_program).ok_or_else(|| {
+                            JsError::validation("missing callee program".into())
+                        })?;
+                        let saved = SavedProgram {
+                            id: executing_program,
+                            retained: current_program.replace(retained),
+                        };
+                        executing_program = callee_program;
+                        executing_residual = current_program.as_deref().unwrap_or(entry_program);
+                        Some(saved)
+                    };
                     pending_calls.push(PendingGeneralCall {
                         caller: frame,
                         caller_cursor: Some(cursor),
@@ -1590,14 +1677,14 @@ impl<H: Host> Vm<H> {
                         construct_this,
                         returns: ins.returns_from_frame(),
                         call_guard: Some(call_guard),
+                        caller_program,
                     });
                     frame += 1;
                     pc = self.frames[frame].pc;
-                    let callee_program = self.frames[frame].program;
-                    debug_assert_eq!(callee_program, executing_program);
                     cursor = self.general_cursor(
                         callee_program,
-                        p,
+                        // SAFETY: as for `p` at the top of the loop.
+                        unsafe { &*executing_residual },
                         self.frames[frame].function,
                         fast_lane,
                     );
@@ -1653,17 +1740,25 @@ impl<H: Host> Vm<H> {
                     });
                 }
                 Err(error) => {
-                    (frame, pc) = self.unwind_general_loop(
-                        p,
+                    let mut executing = ExecutingProgram {
+                        id: executing_program,
+                        retained: current_program.take(),
+                    };
+                    let unwound = self.unwind_general_loop(
+                        entry_program,
                         frame,
                         pc,
                         instruction_pc as u32,
                         error,
                         &mut pending_calls,
                         &mut cursor,
-                        executing_program,
+                        &mut executing,
                         fast_lane,
-                    )?;
+                    );
+                    executing_program = executing.id;
+                    current_program = executing.retained;
+                    executing_residual = current_program.as_deref().unwrap_or(entry_program);
+                    (frame, pc) = unwound?;
                     published_pc = &mut self.frames[frame].pc;
                 }
             }
@@ -1678,24 +1773,26 @@ impl<H: Host> Vm<H> {
     #[allow(clippy::too_many_arguments)]
     fn unwind_general_loop(
         &mut self,
-        p: &ResidualProgram,
+        entry_program: &ResidualProgram,
         mut frame: usize,
         mut pc: usize,
         mut throwing_pc: u32,
         mut error: JsError,
         pending_calls: &mut Vec<PendingGeneralCall>,
         cursor: &mut GeneralCodeCursor,
-        executing_program: ProgramId,
+        executing: &mut ExecutingProgram,
         fast_lane: bool,
     ) -> Result<(usize, usize), JsError> {
         loop {
+            let retained = executing.retained.clone();
+            let p = retained.as_deref().unwrap_or(entry_program);
             let function = self.frames[frame].function as usize;
             match self.exception_handler_target(p, frame, function, throwing_pc, error) {
                 Ok(target) => return Ok((frame, target)),
                 Err(unhandled) => {
                     self.frames[frame].pc = pc;
                     self.frames[frame].pc_is_resume = true;
-                    let Some(pending) = pending_calls.pop() else {
+                    let Some(mut pending) = pending_calls.pop() else {
                         return Err(unhandled);
                     };
                     debug_assert_eq!(frame, pending.caller + 1);
@@ -1705,10 +1802,16 @@ impl<H: Host> Vm<H> {
                     self.persist_global_lexical_bindings(p, &failed_frame);
                     frame = pending.caller;
                     pc = self.frames[frame].pc;
+                    if let Some(saved) = pending.caller_program.take() {
+                        executing.id = saved.id;
+                        executing.retained = saved.retained;
+                        self.set_active_program(saved.id);
+                    }
+                    let caller_residual = executing.retained.clone();
                     *cursor = pending.caller_cursor.unwrap_or_else(|| {
                         self.general_cursor(
-                            executing_program,
-                            p,
+                            executing.id,
+                            caller_residual.as_deref().unwrap_or(entry_program),
                             self.frames[frame].function,
                             fast_lane,
                         )
@@ -1733,6 +1836,7 @@ impl<H: Host> Vm<H> {
         throwing_pc: u32,
         error: JsError,
     ) -> Result<usize, JsError> {
+        if error.is_execution_terminated() { return Err(error); }
         let wasm = program.kind == crate::bytecode::ProgramKind::Wasm;
         if wasm && error.wasm_exception().is_none() {
             return Err(error);
@@ -1762,8 +1866,8 @@ impl<H: Host> Vm<H> {
         }
         let mut layers = Vec::new();
         while let Some(Cell::Environment { parent, scope, .. }) = self.heap.get(env) {
-            if !scope.with_objects.is_empty() {
-                layers.push(scope.with_objects.to_vec());
+            if !scope.with_objects().is_empty() {
+                layers.push(scope.with_objects().to_vec());
             }
             env = *parent;
             if env.is_null() {

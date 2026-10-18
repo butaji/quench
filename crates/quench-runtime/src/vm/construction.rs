@@ -290,7 +290,7 @@ impl<H: Host> Vm<H> {
                 parent: env,
                 function: u32::MAX,
                 slots: Vec::<Value>::new().into_boxed_slice().into(),
-                scope: Box::new(crate::heap::EnvironmentScope {
+                scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
                     program: None,
                     root_eval_scope: false,
                     binding_site_pc: None,
@@ -350,8 +350,8 @@ impl<H: Host> Vm<H> {
                     .expect("new closure is live"),
             );
         }
-        let name_atom = function_plan.name.unwrap_or(self.runtime_atoms.empty);
-        let name_value = self.atom_string(name_atom);
+        let plan_name = function_plan.name.or(function_plan.inferred_name);
+        let name_value = self.atom_string(plan_name.unwrap_or(self.runtime_atoms.empty));
         let length_value = Value::number(function_plan.length as f64);
         // An ordinary closure's own properties and its prototype's `constructor` take the
         // shapes the first one recorded; every other closure defines them one by one.
@@ -368,8 +368,7 @@ impl<H: Host> Vm<H> {
                 self.heap.property_add(function, prototype, with_prototype);
                 self.heap.property_add(prototype, function, constructor);
             }
-            // The plan's atom is the name the string spells, so no interning is needed.
-            self.name_fresh_function(function, name_atom);
+            self.capture_fresh_closure_name(function, plan_name);
             return Ok(function);
         }
         let mut recorded = ClosureShapes {
@@ -443,7 +442,7 @@ impl<H: Host> Vm<H> {
         {
             self.closure_shapes[shapes_key] = Some(recorded);
         }
-        self.name_fresh_function(function, name_atom);
+        self.capture_fresh_closure_name(function, plan_name);
         Ok(function)
     }
 
@@ -722,12 +721,18 @@ impl<H: Host> Vm<H> {
     /// The receiver an in-place [[Construct]] of `callee` allocates: an ordinary object
     /// whose prototype is the callee's own data `prototype`, when that is an object.
     pub(super) fn inline_construct_receiver(&mut self, callee: Value) -> Option<Value> {
+        let object = self.inline_construct_template(callee)?;
+        Some(self.heap.alloc_object(object))
+    }
+
+    /// The object `inline_construct_receiver` allocates, before it is allocated.
+    pub(super) fn inline_construct_template(&mut self, callee: Value) -> Option<Object> {
         let prototype_atom = self.prototype_atom();
         let prototype = self.own_function_prototype_data(callee, prototype_atom)?;
         self.object_data(prototype)?;
         let mut object = Self::empty_object(prototype);
         self.capture_constructed_name(&mut object, callee, true);
-        Some(self.heap.alloc(Cell::Object(object)))
+        Some(object)
     }
 
     pub(super) fn own_function_prototype_data(
@@ -763,6 +768,39 @@ impl<H: Host> Vm<H> {
             return None;
         }
         self.heap.property_get(object, slot as usize)
+    }
+
+    /// `constructor`'s own shape and the slot of its own data `prototype` there, for a shape
+    /// that fixes both (not a dictionary) once `own_function_prototype_data` has found it.
+    pub(super) fn function_prototype_layout(&self, constructor: Value) -> Option<(u32, usize)> {
+        let Some(cell @ Cell::Function { .. }) = self.heap.get(constructor) else {
+            return None;
+        };
+        let shape = cell.object()?.shape();
+        if self.shape_is_dictionary(shape) {
+            return None;
+        }
+        match self.shapes[shape as usize].prototype_slot.get() {
+            PROTOTYPE_SLOT_UNKNOWN | PROTOTYPE_SLOT_NONE => None,
+            slot => Some((shape, slot as usize)),
+        }
+    }
+
+    /// `constructor`'s own data `prototype` while its own shape is still the one `layout`
+    /// names (`function_prototype_layout`), which fixes the property and its slot.
+    #[inline(always)]
+    pub(super) fn function_prototype_in_layout(
+        &self,
+        constructor: Value,
+        (shape, slot): (u32, usize),
+    ) -> Option<Value> {
+        let Some(Cell::Function { object, .. }) = self.heap.get(constructor) else {
+            return None;
+        };
+        if object.shape() != shape {
+            return None;
+        }
+        self.heap.property_get(object, slot)
     }
 
     fn prototype_from_constructor(

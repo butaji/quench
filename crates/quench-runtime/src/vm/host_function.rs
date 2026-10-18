@@ -23,7 +23,7 @@ impl<H: Host> Vm<H> {
             parent: Value::NULL,
             function: NATIVE_ENVIRONMENT_FUNCTION,
             slots: slots.into(),
-            scope: Box::new(crate::heap::EnvironmentScope {
+            scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
                 program: None,
                 root_eval_scope: false,
                 binding_site_pc: None,
@@ -250,7 +250,12 @@ impl<H: Host> Vm<H> {
             .get(index as usize)
             .map(|binding| binding.call)
             .ok_or_else(|| JsError("unknown host function index".into()))?;
-        let mut context = NativeContext::new(self);
+        let callee = self.active_native_callable();
+        let new_target = self
+            .construct_target
+            .filter(|target| Some(target.callee) == callee)
+            .map(|target| target.new_target);
+        let mut context = NativeContext::with_new_target(self, new_target);
         let receiver = context.scoped_value(receiver);
         let arguments = args
             .iter()

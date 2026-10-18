@@ -363,6 +363,16 @@ impl<H: Host> Vm<H> {
         key: Value,
         receiver: Value,
     ) -> Result<Value, JsError> {
+        if self.is_host_private_symbol(key) {
+            if matches!(self.heap.get(object), Some(Cell::Proxy { .. })) { return Ok(Value::UNDEFINED); }
+            let Some((value, attributes)) = self.ordinary_own_property(p, object, key)? else { return Ok(Value::UNDEFINED); };
+            return if attributes.accessor {
+                match attributes.getter.filter(|value| !value.is_undefined()) {
+                    Some(getter) => self.call_value(p, getter, receiver, &[]),
+                    None => Ok(Value::UNDEFINED),
+                }
+            } else { Ok(value) };
+        }
         if object == receiver
             && let Some(value) = self.plain_property_get(object, PropertyKey::symbol(key))
         {
@@ -462,7 +472,7 @@ impl<H: Host> Vm<H> {
             }
             let shape = data.shape();
             if let Some(slot) = self.property_shape_slot(shape, key) {
-                if self.shape_attribute(shape, slot)?.accessor {
+                if self.slot_attributes(data, slot)?.accessor {
                     return None;
                 }
                 return self.heap.property_get(data, slot).map(Some);
@@ -667,7 +677,7 @@ impl<H: Host> Vm<H> {
                                 return Ok(description
                                     .as_ref()
                                     .map(|value| {
-                                        self.heap.alloc(Cell::String(value.clone().into()))
+                                        self.heap.alloc(Cell::String(value.as_ref().into()))
                                     })
                                     .unwrap_or(Value::UNDEFINED));
                             }
@@ -745,10 +755,17 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn initialize_private_field(&mut self, p: &ResidualProgram, target: Value, home: Value, atom: Atom, value: Value) -> Result<(), JsError> {
-        let Some(object) = self.object_data_mut(target) else {
+        let Some(extensible) = self.object_data(target).map(Object::is_extensible) else {
             return Err(self.type_error(p, "Cannot add private field to a non-object".into()));
         };
-        if object.initialize_private_field(PrivateBrand { home, name: atom }, value) { return Ok(()); }
+        if !extensible {
+            return Err(self.type_error(p, "Cannot add private field to a non-extensible object".into()));
+        }
+        if let Some(object) = self.object_data_mut(target)
+            && object.initialize_private_field(PrivateBrand { home, name: atom }, value)
+        {
+            return Ok(());
+        }
         let name = crate::bytecode::private_identity_label(self.atom_name(atom)).unwrap_or_else(|| self.atom_name(atom).to_owned());
         Err(self.type_error(p, format!("Cannot initialize #{name} twice on the same object")))
     }
@@ -794,11 +811,6 @@ impl<H: Host> Vm<H> {
     /// so a found home is memoized while that environment lives.
     fn private_name_home(&mut self, p: &ResidualProgram, atom: Atom) -> Option<Value> {
         let frame_index = self.frames.len().checked_sub(1)?;
-        if let Some(binding) = self.name_binding(frame_index, atom)
-            && binding.kind == crate::bytecode::LexicalBindingKind::PrivateName
-        {
-            return self.load_name_binding(p, frame_index, binding).ok();
-        }
         let start = self.captured_parent_environment(frame_index);
         let key = PrivateHomeKey {
             environment: start,
@@ -806,6 +818,25 @@ impl<H: Host> Vm<H> {
             function: self.frames[frame_index].function,
             name: atom,
         };
+        // Without binding sites no eval-introduced private binding is in reach, so the name
+        // bindings resolve the same initialized home whenever the closure's environment chain
+        // is the same.
+        let static_bindings = p
+            .functions
+            .get(key.function as usize)
+            .is_some_and(|function| function.binding_sites.is_empty());
+        if static_bindings && let Some(home) = self.private_homes.get(&key) {
+            return Some(*home);
+        }
+        if let Some(binding) = self.name_binding(frame_index, atom)
+            && binding.kind == crate::bytecode::LexicalBindingKind::PrivateName
+        {
+            let home = self.load_name_binding(p, frame_index, binding).ok();
+            if static_bindings && let Some(home) = home {
+                self.private_homes.insert(key, home);
+            }
+            return home;
+        }
         if let Some(home) = self.private_homes.get(&key) {
             return Some(*home);
         }
@@ -831,7 +862,7 @@ impl<H: Host> Vm<H> {
             scope,
         }) = self.heap.get(environment)
         {
-            let program = &scope.program;
+            let program = &scope.program();
             let dynamic_bindings = self.heap.environment_bindings(environment)?;
             if let Some((_, home)) = dynamic_bindings
                 .iter()

@@ -20,7 +20,7 @@ const TYPED_BRANDS: &[(crate::BuiltinBrand, TypedArrayKind)] = &[
     (crate::BuiltinBrand::Float32Array, TypedArrayKind::Float32),
     (crate::BuiltinBrand::Float64Array, TypedArrayKind::Float64),
 ];
-fn typed_array_brand(kind: TypedArrayKind) -> crate::BuiltinBrand {
+pub(super) fn typed_array_brand(kind: TypedArrayKind) -> crate::BuiltinBrand {
     TYPED_BRANDS
         .iter()
         .find(|(_, candidate)| *candidate == kind)
@@ -64,6 +64,10 @@ impl<H: Host> Vm<H> {
             target: Some(target),
         });
         Ok(self.heap.root(reference))
+    }
+
+    pub(crate) fn embedding_collection_epoch(&self) -> u64 {
+        self.heap.collection_epoch()
     }
 
     pub(crate) fn embedding_host_weak_value(&self, reference: RootId) -> Option<Value> {
@@ -769,6 +773,30 @@ impl<H: Host> Vm<H> {
         self.embedding_has_builtin_brand(root, crate::BuiltinBrand::Promise)
     }
 
+    pub(crate) fn embedding_pending_promise(&mut self) -> Result<Value, JsError> {
+        self.promise_object()
+    }
+
+    pub(crate) fn embedding_resolve_promise(&mut self, promise: RootId, value: RootId) -> Result<(), JsError> {
+        let promise = self.embedding_value(promise)?;
+        let value = self.embedding_value(value)?;
+        let state = self.realm.promise.records.get(&promise)
+            .ok_or_else(|| JsError("value does not have Promise internal slots".into()))?.state;
+        if state != super::promise::PromiseState::Pending { return Ok(()); }
+        let program = self.embedding_program()?;
+        self.promise_resolve_value(&program, promise, value)
+    }
+
+    pub(crate) fn embedding_reject_promise(&mut self, promise: RootId, reason: RootId) -> Result<(), JsError> {
+        let promise = self.embedding_value(promise)?;
+        let reason = self.embedding_value(reason)?;
+        if !self.realm.promise.records.contains_key(&promise) {
+            return Err(JsError("value does not have Promise internal slots".into()));
+        }
+        let program = self.embedding_program()?;
+        self.promise_settle(&program, promise, super::promise::PromiseState::Rejected, reason)
+    }
+
     pub(crate) fn embedding_promise_snapshot(&self, root: RootId) -> Result<Option<crate::PromiseSnapshot<Value>>, JsError> {
         use crate::PromiseSnapshot as Snapshot;
         let value = self.embedding_value(root)?;
@@ -1054,7 +1082,11 @@ impl<H: Host> Vm<H> {
     }
 
     pub(crate) fn embedding_symbol(&mut self, description: Option<String>) -> Value {
-        self.heap.alloc(Cell::Symbol(description))
+        self.heap.alloc(Cell::Symbol(crate::heap::SymbolData::public(description)))
+    }
+
+    pub(crate) fn embedding_private_symbol(&mut self, description: Option<String>) -> Value {
+        self.heap.alloc(Cell::Symbol(crate::heap::SymbolData::host_private(description)))
     }
 
     fn create_embedding_object_with_prototype(
@@ -1183,6 +1215,7 @@ impl<H: Host> Vm<H> {
     fn is_realm_global(&self, value: Value) -> bool {
         value == self.realm.globals
             || self.realm.global_lexical_states.contains_key(&value)
+            || self.realm.parked.as_ref().is_some_and(|parked| parked.global == value)
             || self
                 .realm
                 .intrinsics
@@ -1341,12 +1374,23 @@ impl<H: Host> Vm<H> {
         enumerable: bool,
         initializer: RootId,
     ) -> Result<(), JsError> {
+        let members = names.iter().map(|name| (*name, enumerable)).collect::<Vec<_>>();
+        self.define_lazy_group_rooted(holder, &members, false, initializer)
+    }
+
+    pub(crate) fn define_lazy_group_rooted(
+        &mut self,
+        holder: RootId,
+        members: &[(&str, bool)],
+        completes_keys: bool,
+        initializer: RootId,
+    ) -> Result<(), JsError> {
         let holder = self.embedding_value(holder)?;
         let initializer = self.embedding_value(initializer)?;
         let program = self.embedding_program()?;
-        let keys = names
+        let keys = members
             .iter()
-            .map(|name| {
+            .map(|(name, _)| {
                 // The key shares the atom table's text.
                 let atom = self.intern_atom(name);
                 let name = self.heap.alloc(Cell::String(self.atom_value(atom)));
@@ -1355,10 +1399,16 @@ impl<H: Host> Vm<H> {
             .collect::<Vec<_>>();
         let values = keys
             .iter()
-            .map(|&key| self.heap.root_value(key).unwrap())
+            .zip(members)
+            .map(|(&key, &(_, enumerable))| (self.heap.root_value(key).unwrap(), enumerable))
             .collect::<Vec<_>>();
-        let defined =
-            self.define_lazy_data_properties(&program, holder, &values, enumerable, initializer);
+        let defined = self.define_lazy_data_properties(
+            &program,
+            holder,
+            &values,
+            completes_keys,
+            initializer,
+        );
         for key in keys {
             self.heap.release_root(key);
         }
