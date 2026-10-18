@@ -1110,9 +1110,14 @@ impl<H: Host> Vm<H> {
     }
 
     fn outer_dynamic_binding(&self, frame: usize, atom: Atom) -> Option<(Value, usize)> {
+        self.outer_dynamic_binding_in(&NameLookup::new(frame, atom))
+    }
+
+    fn outer_dynamic_binding_in(&self, lookup: &NameLookup) -> Option<(Value, usize)> {
+        let (frame, atom) = (lookup.frame, lookup.atom);
         self.frames.get(frame)?;
         let mut env = self.captured_parent_environment(frame);
-        let named = self.name_binding(frame, atom);
+        let named = lookup.named(self);
         if named.is_some_and(|binding| {
             matches!(
                 binding.location,
@@ -1131,9 +1136,7 @@ impl<H: Host> Vm<H> {
             binding.declaration != crate::bytecode::EvalBindingDeclaration::Variable
                 && binding.kind != crate::bytecode::LexicalBindingKind::FunctionName
         });
-        let static_owner = self
-            .outer_environment_binding(env, atom)
-            .map(|(env, _)| env);
+        let static_owner = lookup.static_owner(self).map(|(env, _)| env);
         while let Some(Cell::Environment { parent, .. }) = self.heap.get(env) {
             if lexical_capture && named_owner == Some(env) {
                 return None;
@@ -1170,6 +1173,11 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn dynamic_binding(&self, frame: usize, atom: Atom) -> Option<Value> {
+        self.dynamic_binding_in(&NameLookup::new(frame, atom))
+    }
+
+    fn dynamic_binding_in(&self, lookup: &NameLookup) -> Option<Value> {
+        let (frame, atom) = (lookup.frame, lookup.atom);
         if let Some(value) = self.own_dynamic_bindings(frame).and_then(|bindings| {
             bindings
                 .iter()
@@ -1181,7 +1189,7 @@ impl<H: Host> Vm<H> {
         if self.activation_has_static_binding(frame, atom) {
             return None;
         }
-        let (env, index) = self.outer_dynamic_binding(frame, atom)?;
+        let (env, index) = self.outer_dynamic_binding_in(lookup)?;
         self.heap
             .environment_bindings(env)?
             .get(index)
@@ -1963,13 +1971,16 @@ impl<H: Host> Vm<H> {
         {
             return self.checked_binding_read(p, atom, value);
         }
-        if let Some(value) = self.dynamic_binding(self.frames.len().saturating_sub(1), atom) {
+        // One lookup consults the frame's static binding and the outer static owner from
+        // more than one rule; each is found once.
+        let lookup = NameLookup::new(self.frames.len().saturating_sub(1), atom);
+        if let Some(value) = self.dynamic_binding_in(&lookup) {
             return self.checked_binding_read(p, atom, value);
         }
-        if let Some(frame) = self.frames.len().checked_sub(1)
-            && let Some(binding) = self.name_binding(frame, atom)
+        if !self.frames.is_empty()
+            && let Some(binding) = lookup.named(self)
         {
-            return self.load_name_binding(p, frame, binding);
+            return self.load_name_binding(p, lookup.frame, binding);
         }
         if !internal {
             if let Some(frame) = self.frames.last()
@@ -1992,10 +2003,8 @@ impl<H: Host> Vm<H> {
             if let Some(value) = self.realm.global_lexical_bindings.get(&atom).copied() {
                 return self.checked_binding_read(p, atom, value);
             }
-            if let Some((env, slot)) = self.outer_environment_binding(
-                self.captured_parent_environment(self.frames.len().saturating_sub(1)),
-                atom,
-            ) && let Some(value) = self.heap.environment_slot(env, slot)
+            if let Some((env, slot)) = lookup.static_owner(self)
+                && let Some(value) = self.heap.environment_slot(env, slot)
             {
                 return self.checked_binding_read(p, atom, value);
             }
@@ -2378,4 +2387,38 @@ fn internal_name_native(name: &str) -> Option<Native> {
         "\0quench:object-freeze" => Native::ObjectFreeze,
         _ => return None,
     })
+}
+
+/// The facts one by-name lookup of `atom` from `frame` consults under more than one rule:
+/// the frame's static binding for the name (`Vm::name_binding`) and the outer environment
+/// that statically declares it (`Vm::outer_environment_binding` from the frame's captured
+/// parent). Each is found on first use and stays valid for the lookup, which runs no guest
+/// code between consulting them.
+struct NameLookup {
+    frame: usize,
+    atom: Atom,
+    named: std::cell::OnceCell<Option<crate::bytecode::EvalBinding>>,
+    static_owner: std::cell::OnceCell<Option<(Value, usize)>>,
+}
+
+impl NameLookup {
+    fn new(frame: usize, atom: Atom) -> Self {
+        Self {
+            frame,
+            atom,
+            named: std::cell::OnceCell::new(),
+            static_owner: std::cell::OnceCell::new(),
+        }
+    }
+
+    fn named<H: Host>(&self, vm: &Vm<H>) -> Option<crate::bytecode::EvalBinding> {
+        *self.named.get_or_init(|| vm.name_binding(self.frame, self.atom))
+    }
+
+    fn static_owner<H: Host>(&self, vm: &Vm<H>) -> Option<(Value, usize)> {
+        *self.static_owner.get_or_init(|| {
+            vm.frames.get(self.frame)?;
+            vm.outer_environment_binding(vm.captured_parent_environment(self.frame), self.atom)
+        })
+    }
 }
