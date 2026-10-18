@@ -368,3 +368,24 @@ both engines. Full reports and executable hashes are in
 optimization removes container churn, not the Wasm-to-VM-to-JS callout;
 reducing that boundary remains a separate opportunity with realm, caller
 masking, and dynamic property semantics to preserve.
+
+## Wrapped indexed-memory addresses
+
+Commit `ee75becfe` zero-extends the Wasm `i32` effective address after its
+32-bit arithmetic on the repeated-memory path. The boundary regression checks
+wrapped loads/stores, alias coherence, carried out-of-bounds addresses,
+access-width traps, and nonzero memarg carries. This also exposes a codegen
+tradeoff: Quicksort function 1 shrinks from 573 to 476 native bytes and reuses
+the formed address for swap stores, while indexed loads still need a separate
+address-forming instruction.
+
+In two consecutive but separately randomized 11-round windows, QuickSort
+Score moved from 163.89 to 232.81; an independent bootstrap of the round
+samples gives a candidate/baseline ratio of 1.421 (95% interval 1.280–1.561).
+Normalizing each window to its paired Bun samples gives a 1.344× relative
+improvement (1.201–1.536). This is a strong QuickSort gain, but not a
+randomized per-round A/B. GCC Score stayed flat (58.47 to 57.83), and peak
+RSS did not materially change. The candidate still scores below Bun and Node
+on both fixtures, while keeping lower peak RSS. The raw reports, executable
+hashes, peer-normalized comparison, and machine-code notes are in
+`evidence/jit-jetstream3-wasm-2026-10-18/indexed-address-zeroextend/`.
