@@ -4294,6 +4294,17 @@ fn lane_call_native<H: Host>(
         }) => None,
         _ => return None,
     };
+    let window = ImmediateLayout::call_window_base(i.imm());
+    let argc = ImmediateLayout::argument_count(i.imm());
+    // A unary Math function of a Number runs no guest code and observes no frame, so it
+    // runs from any activation.
+    if let Some(native) = native
+        && argc > 0
+        && let Some(value) = r.get(window).as_number()
+        && let Some(result) = super::number::math_unary(native, value)
+    {
+        return Some(Value::number(result));
+    }
     if !unsafe { (*cx).script_calls } || !vm.lane_stack.activations.is_empty() {
         return None;
     }
@@ -4308,8 +4319,6 @@ fn lane_call_native<H: Host>(
     };
     vm.frames[frame].pc = call_pc + 1;
     vm.frames[frame].pc_is_resume = true;
-    let window = ImmediateLayout::call_window_base(i.imm());
-    let argc = ImmediateLayout::argument_count(i.imm());
     // SAFETY: the call's window is registers of the running frame, copied before the call.
     let arguments = super::call_arguments::CallArguments::from_slice(unsafe {
         std::slice::from_raw_parts(r.0.add(usize::from(window)), usize::from(argc))
