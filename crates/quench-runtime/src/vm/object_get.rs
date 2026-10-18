@@ -454,7 +454,7 @@ impl<H: Host> Vm<H> {
             }
             let shape = data.shape();
             if let Some(slot) = self.property_shape_slot(shape, key) {
-                if self.shape_attribute(shape, slot)?.accessor {
+                if self.slot_attributes(data, slot)?.accessor {
                     return None;
                 }
                 return self.heap.property_get(data, slot);
@@ -844,7 +844,7 @@ impl<H: Host> Vm<H> {
             scope,
         }) = self.heap.get(environment)
         {
-            let program = &scope.program;
+            let program = &scope.program();
             let dynamic_bindings = self.heap.environment_bindings(environment)?;
             if let Some((_, home)) = dynamic_bindings
                 .iter()

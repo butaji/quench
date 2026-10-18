@@ -19,6 +19,8 @@ impl FunctionCompiler<'_, '_> {
             && !Self::anonymous_function_definition(&second.value)
             && let (Some(first_key), Some(second_key)) =
                 (Self::static_key(&first.key), Self::static_key(&second.key))
+            // A shape gains only keys it lacks; `{ a, a }` defines one property.
+            && first_key != second_key
         {
             let first_value = self.expression(&first.value);
             let second_value = self.expression(&second.value);
