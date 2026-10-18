@@ -112,3 +112,50 @@ target/production/quench-bench --fixtures HashSet-wasm,gcc-loops-wasm,quicksort-
 target/production/quench-bench --analyze target/jetstream3-wasm-jit.json \
   --out target/jetstream3-wasm-jit-analysis.json
 ```
+
+## Indirect-callee fast path follow-up
+
+Commit `744f2f9c9` invokes eligible same-program Wasm table targets with
+`run_compiled` after the existing table and signature checks, using the
+callee's instance environment. If the target has no native entry, execution
+falls back through the ordinary VM call path. The regression test verifies a
+compiled indirect caller reaches a nine-parameter compiled callee. Focused
+Wasm tests and the full runtime suite pass (701 unit tests and 18 integration
+tests).
+
+The full five-fixture report and paired bootstrap analysis are in
+`indirect-call-followup/`. They use the clean source revision
+`744f2f9c9090d2620061bc9719f840ba6d3f1446`; all fixtures have 11 valid matched
+rounds, valid JetStream outputs, and input hashes. The report is complete and
+qualification-ready, but performance qualification failed. Ratios are
+Quench divided by the JIT-enabled peer; intervals are paired 95% bootstrap
+intervals.
+
+| Fixture | Quench median Score / RSS MiB | Score vs Bun | RSS vs Bun | Score vs Node | RSS vs Node |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| HashSet | 30.69 / 113.1 | 0.157 [0.153, 0.174] | 2.028 [2.014, 2.034] | 0.144 [0.137, 0.157] | 0.891 [0.891, 0.892] |
+| gcc-loops | 71.94 / 47.9 | 0.417 [0.398, 0.455] | 0.859 [0.847, 0.870] | 0.409 [0.379, 0.443] | 0.522 [0.521, 0.523] |
+| quicksort | 184.60 / 41.7 | 0.590 [0.539, 0.607] | 0.853 [0.851, 0.859] | 0.455 [0.391, 0.466] | 0.473 [0.472, 0.473] |
+| tsf | 14.28 / 224.6 | 0.074 [0.073, 0.079] | 1.670 [1.650, 1.703] | 0.074 [0.072, 0.079] | 1.542 [1.532, 1.546] |
+| zlib | 13.47 / 112.6 | 0.157 [0.148, 0.160] | 1.124 [1.121, 1.133] | 0.155 [0.149, 0.160] | 1.011 [0.992, 1.018] |
+
+No fixture beats both Score and RSS against either peer. gcc-loops and
+quicksort remain below both score bars while beating both RSS bars; TSF loses
+on both metrics. The code change removes an interpreter activation for some
+indirect calls, but each call still crosses into the VM. The 2.8 million TSF
+callout counter therefore remains a useful, though currently unattributed,
+target for profiling.
+
+Reproduction:
+
+```sh
+target/production/quench-bench --fixtures HashSet-wasm,gcc-loops-wasm,quicksort-wasm,tsf-wasm,zlib-wasm \
+  --suite jetstream3 --jit --runs 11 --timeout-ms 600000 \
+  --quench target/production/quench-node \
+  --node /workspace/.local/bench-runtimes/node-v26.10.0-linux-x64/bin/node \
+  --bun /workspace/.local/bench-runtimes/bun-linux-x64/bun \
+  --checkpoint target/jetstream3-wasm-jit-744f2f9.checkpoint.json \
+  --out target/jetstream3-wasm-jit-744f2f9.json
+target/production/quench-bench --analyze target/jetstream3-wasm-jit-744f2f9.json \
+  --out target/jetstream3-wasm-jit-744f2f9-analysis.json
+```
