@@ -4746,9 +4746,26 @@ fn lane_forwarded_construction<H: Host>(
     // SAFETY: the context's program outlives the lane run, and the constructor belongs to it
     // (`Vm::resolve_script_call_target`), so the body's sites index the run's caches.
     let code = unsafe { &*(*cx).code };
-    let function = lane_cached_field(cx, code, this, method.method.0, method.method.1)?;
-    let apply = lane_cached_field(cx, code, function, method.apply.0, method.apply.1)?;
     let vm = unsafe { vm(cx) };
+    // The tiers the lane's own reads of these sites take: a constructor every class shares
+    // reads its method through the site's megamorphic entries, and `apply` lives on the
+    // method's prototype, `Function.prototype`. Any other read takes the general cached one.
+    // A read of `name` or `length` prepares its lookup (`Vm::reads_function_info`), which
+    // only the general read does.
+    let function = match (!vm.reads_function_info(method.method.0))
+        .then(|| vm.polymorphic_field_hit(code, this, method.method.1))
+        .flatten()
+    {
+        Some(function) => function,
+        None => lane_cached_field(cx, code, this, method.method.0, method.method.1)?,
+    };
+    let apply = match (!vm.reads_function_info(method.apply.0))
+        .then(|| vm.cell_holder_field_hit(code, function, method.apply.1))
+        .flatten()
+    {
+        Some(apply) => apply,
+        None => lane_cached_field(cx, code, function, method.apply.0, method.apply.1)?,
+    };
     if !matches!(
         vm.heap.get(apply),
         Some(Cell::Function {
