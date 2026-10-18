@@ -1122,7 +1122,7 @@ impl<H: Host> Vm<H> {
                 Ok(self.json_raw_text(value).map(JsonValue::Raw))
             }
             _ if self.is_array(p, value)? => self.json_serialize_array(p, value, state).map(Some),
-            Some(Cell::Object(_) | Cell::Promise { .. }) => {
+            Some(Cell::Object(_) | Cell::Promise(_)) => {
                 self.json_serialize_object(p, value, state).map(Some)
             }
             Some(Cell::Proxy { .. })

@@ -1345,17 +1345,17 @@ impl<H: Host> Vm<H> {
         } else {
             None
         };
-        let promise = self.heap.alloc(Cell::Promise {
-            object: Box::new(Self::empty_object(prototype)),
-            record: Box::new(PromiseRecord {
+        let promise = self.heap.alloc(Cell::Promise(Box::new(crate::heap::PromiseCell {
+            object: Self::empty_object(prototype),
+            record: PromiseRecord {
                 state: PromiseState::Pending,
                 result: Value::UNDEFINED,
                 reactions: vec![],
                 rejection: PromiseRejectionState::Unobserved,
                 rejection_id: None,
                 host_context,
-            }),
-        });
+            },
+        })));
         if let Some(identity) = host_context {
             let mut context = crate::NativeContext::new(self);
             let resource = context.scoped_value(promise);

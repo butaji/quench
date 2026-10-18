@@ -17,7 +17,6 @@ impl Cell {
             Self::ArrayBuffer { object, .. }
             | Self::Map { object, .. }
             | Self::Set { object, .. }
-            | Self::Promise { object, .. }
             | Self::ShadowRealm { object, .. }
             | Self::WeakMap { object, .. }
             | Self::WeakSet { object, .. }
@@ -36,6 +35,7 @@ impl Cell {
             | Self::TemporalInstant { object, .. }
             | Self::WasmObject { object, .. }
             | Self::WasmTable { object, .. } => Some(object),
+            Self::Promise(promise) => Some(&promise.object),
             Self::WasmGlobal { header, .. } => Some(&header.object),
             Self::WasmMemory { header, .. } => Some(&header.object),
             Self::Function { object, .. } => Some(&object.object),
@@ -53,7 +53,6 @@ impl Cell {
             Self::ArrayBuffer { object, .. }
             | Self::Map { object, .. }
             | Self::Set { object, .. }
-            | Self::Promise { object, .. }
             | Self::ShadowRealm { object, .. }
             | Self::WeakMap { object, .. }
             | Self::WeakSet { object, .. }
@@ -72,6 +71,7 @@ impl Cell {
             | Self::TemporalInstant { object, .. }
             | Self::WasmObject { object, .. }
             | Self::WasmTable { object, .. } => Some(object),
+            Self::Promise(promise) => Some(&mut promise.object),
             Self::WasmGlobal { header, .. } => Some(&mut header.object),
             Self::WasmMemory { header, .. } => Some(&mut header.object),
             Self::Function { object, .. } => Some(&mut object.object),

@@ -18,7 +18,7 @@ pub use memory_stats::HeapMemoryComposition;
 mod memory_profile;
 mod pacing;
 mod promise_record;
-pub(crate) use promise_record::{PromiseReaction, PromiseRecord, PromiseRejectionState, PromiseState};
+pub(crate) use promise_record::{PromiseCell, PromiseReaction, PromiseRecord, PromiseRejectionState, PromiseState};
 mod records;
 mod root;
 mod slots;
@@ -171,8 +171,8 @@ impl<'slots> ParallelSweepSlab<'slots> {
 
             let cell = slot.cell.take().expect("occupied dead sweep slot");
             result.external_bytes = result.external_bytes.saturating_add(cell.external_bytes());
-            if let Cell::Promise { record, .. } = &cell {
-                result.abandoned_job_contexts.extend(record.reaction_job_contexts());
+            if let Cell::Promise(promise) = &cell {
+                result.abandoned_job_contexts.extend(promise.record.reaction_job_contexts());
             }
             if let Some(object) = cell.object() {
                 result.released_properties.push(object.properties());
@@ -1618,8 +1618,8 @@ impl Heap {
             let mut reclaim = |properties: &mut ValueArena, index: usize, cell: Cell| {
                 *external_bytes = external_bytes.saturating_sub(cell.external_bytes());
                 *payload_bytes = payload_bytes.saturating_sub(cell.payload_bytes());
-                if let Cell::Promise { record, .. } = &cell {
-                    abandoned_job_contexts.extend(record.reaction_job_contexts());
+                if let Cell::Promise(promise) = &cell {
+                    abandoned_job_contexts.extend(promise.record.reaction_job_contexts());
                 }
                 #[cfg(feature = "profile-memory")]
                 {
@@ -2678,9 +2678,9 @@ impl Heap {
                 work.extend(payload.iter().copied());
             }
             Cell::PromiseResolvingState { promise, .. } => work.push(*promise),
-            Cell::Promise { object: value, record } => {
-                object(value);
-                work.extend(record.roots());
+            Cell::Promise(promise) => {
+                object(&promise.object);
+                work.extend(promise.record.roots());
             }
             Cell::Date { object: value, .. }
             | Cell::TemporalDuration { object: value, .. }
@@ -2757,7 +2757,7 @@ impl Heap {
             | Cell::ShadowRealm { .. }
             | Cell::Proxy { .. }
             | Cell::PromiseResolvingState { .. }
-            | Cell::Promise { .. } => CellKind::Object,
+            | Cell::Promise(_) => CellKind::Object,
             Cell::Array { .. } => CellKind::Array,
             Cell::Map { .. } => CellKind::Map,
             Cell::Set { .. } => CellKind::Set,
@@ -2820,9 +2820,9 @@ impl Heap {
                 | Cell::WasmV128(_)
                 | Cell::WasmExtern(_)
                 | Cell::WasmTag { .. } => 0,
-                Cell::Promise { record, .. } => {
-                    size_of::<crate::heap::PromiseRecord>()
-                        + record.reactions.capacity() * size_of::<crate::heap::PromiseReaction>()
+                Cell::Promise(promise) => {
+                    size_of::<PromiseCell>()
+                        + promise.record.reactions.capacity() * size_of::<PromiseReaction>()
                 }
                 Cell::WasmException { payload, .. } => payload.capacity() * size_of::<Value>(),
                 Cell::WasmHostFunction { signature, .. } => {
