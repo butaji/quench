@@ -10305,15 +10305,22 @@ fn js_jit_compiles_hot_numeric_functions_and_guards_polymorphic_inputs() {
     let source = r#"
       function add(left, right) { return left + right; }
       function divide(left, right) { return left / right; }
+      function plusOne(value) { return value + 1; }
       for (let index = 0; index < 40; index++) {
         if (add(index, 2) !== index + 2) throw new Error('numeric result');
         if (divide(index + 1, 2) !== (index + 1) / 2) throw new Error('division result');
+        if (plusOne(index) !== index + 1) throw new Error('numeric constant result');
       }
       if (add('value:', 2) !== 'value:2') throw new Error('guard fallback');
+      if (plusOne('value') !== 'value1') throw new Error('constant string fallback');
       if (add(1n, 2n) !== 3n) throw new Error('BigInt fallback');
+      let bigintAdditionThrew = false;
+      try { plusOne(1n); } catch (error) { bigintAdditionThrew = error instanceof TypeError; }
+      if (!bigintAdditionThrew) throw new Error('constant BigInt fallback');
       let coercions = 0;
       const boxed = { valueOf() { coercions++; return 3; } };
       if (add(boxed, 4) !== 7 || coercions !== 1) throw new Error('effectful fallback');
+      if (plusOne(boxed) !== 4 || coercions !== 2) throw new Error('constant effectful fallback');
       if (!(new add(1, 2) instanceof add)) throw new Error('constructor unwind');
       if (!Object.is(divide(-0, 2), -0)) throw new Error('signed zero');
       if (!Number.isNaN(divide(0, 0))) throw new Error('NaN');
@@ -10329,7 +10336,7 @@ fn js_jit_compiles_hot_numeric_functions_and_guards_polymorphic_inputs() {
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
     vm.execute(&program).unwrap();
 
-    for function in [1, 2] {
+    for function in [1, 2, 3] {
         assert!(matches!(
             vm.programs
                 .js_tier(super::program_store::ProgramId::MAIN, function),
@@ -10476,6 +10483,26 @@ fn js_jit_profile_gate_uses_prespecified_exact_binomial_looks() {
             numeric: 31
         })
     ));
+}
+
+#[test]
+fn js_jit_keeps_promotion_pending_until_a_numeric_entry() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        "void 0",
+        "js-jit-pending-promotion.js",
+    ))
+    .unwrap();
+    let mut programs = super::program_store::ProgramStore::default();
+    let id = programs.insert(program).unwrap();
+    for _ in 0..31 {
+        assert!(!programs.note_js_function_entry(id, 1, true));
+    }
+    assert!(!programs.note_js_function_entry(id, 1, false));
+    assert!(matches!(
+        programs.js_tier(id, 1),
+        Some(super::program_store::JsTierState::PromotionPending)
+    ));
+    assert!(programs.note_js_function_entry(id, 1, true));
 }
 
 #[cfg(any(
