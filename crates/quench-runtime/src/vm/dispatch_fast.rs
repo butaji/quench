@@ -1220,8 +1220,8 @@ lane_handler! {
 }
 
 lane_handler! {
-    /// `lane_set_index` past a record array, appending to a dense array at its length, or
-    /// filling one of its holes.
+    /// `lane_set_index` past a record array, appending to a dense array at its length,
+    /// filling one of its holes, or a plain symbol-keyed write.
     #[inline(never)]
     fn lane_set_index_slot<>(cx, r, ip, i, view) {
         let (object, key, value) = (r.get(i.b), r.get(i.c), r.get(i.a));
@@ -1229,9 +1229,12 @@ lane_handler! {
         if !vm.try_replace_dense_element(object, key, value)
             && !vm.try_append_dense_element(object, key, value)
             && !vm.try_fill_dense_hole(object, key, value)
+            && !vm.try_plain_symbol_set(object, key, value)
         {
             return exit(ip);
         }
+        // Appending an element or adding a property can allocate.
+        note_allocation(vm);
         next!(cx, r, following(ip), view)
     }
 }
@@ -1415,6 +1418,34 @@ lane_handler! {
     /// `MakeObject2`: a two-property literal allocates and runs no guest code.
     fn lane_make_object2<>(cx, r, ip, i, view) {
         let value = lane_object_pair(cx, r, i);
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `MakeObjectLiteral`: an ordinary object of the literal site's shape holding the
+    /// record's window of registers, as the general loop makes it.
+    fn lane_make_object_literal<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        // SAFETY: the context's program outlives the lane run.
+        let shape = vm.object_site_shape(unsafe { &*(*cx).code }, i.imm() as usize);
+        // SAFETY: `lane_fields_fit` admitted the window inside the register file, and no
+        // other reference into it is live while the object is allocated.
+        let properties = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(i.b)), usize::from(i.c)) };
+        let value = vm.heap.alloc_object_with_properties(vm.object_proto, shape, properties);
+        note_allocation(vm);
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `MakeArray`: a fresh array of the record's length in holes (`Vm::hole_array`).
+    fn lane_make_array<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let value = vm.hole_array(i.imm() as usize);
+        note_allocation(vm);
         r.set(i.a, value);
         next!(cx, r, following(ip), view)
     }
@@ -2120,7 +2151,7 @@ lane_handler! {
         let vm = unsafe { vm(cx) };
         let polymorphic = vm.field_site_polymorphic(i.c);
         let adds = vm.field_site_adds(i.c);
-        let handler: Option<Handler> = if adds && !polymorphic && vm.field_cache_atom_eligible(i.imm()) {
+        let handler: Option<Handler> = if adds && !polymorphic && vm.field_add_atom_eligible(i.imm()) {
             Some(if THIS { lane_set_this_field_add::<H> } else { lane_set_object_field_add::<H> })
         } else if adds || polymorphic {
             Some(if THIS { lane_set_this_field::<H> } else { lane_set_object_field::<H> })
@@ -4718,7 +4749,7 @@ fn lane_initialize_fields<H: Host>(
     for store in code.functions[function as usize].this_field_stores() {
         let atom = store.imm();
         let parameter = store.a();
-        if !vm.field_cache_atom_eligible(atom)
+        if !vm.field_add_atom_eligible(atom)
             || !vm.primary_field_add_hit(code, this, atom, argument(parameter), store.c())
         {
             return Some((this, false));
@@ -5440,6 +5471,8 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::Construct => Some(lane_script_construct::<H>),
         Op::LoadName => Some(lane_load_name_first::<H>),
         Op::MakeObject2 => Some(lane_make_object2::<H>),
+        Op::MakeObjectLiteral => Some(lane_make_object_literal::<H>),
+        Op::MakeArray => Some(lane_make_array::<H>),
         Op::CreateRegExpLiteral => Some(lane_regexp_literal::<H>),
         Op::CallForwardingArguments => Some(lane_forward_call::<H>),
         Op::SuperConstArrayObject2 => Some(lane_const_array_object2::<H>),
@@ -5590,7 +5623,7 @@ pub(super) fn lane_fields_fit(instruction: WideInstruction, function: &Function)
             }
             layout => !layout.is_register_field() || value < registers,
         });
-    let window_fits = op != Op::WasmFillRegisters
+    let window_fits = !matches!(op, Op::WasmFillRegisters | Op::MakeObjectLiteral)
         || u32::from(instruction.b()) + u32::from(instruction.c()) <= u32::from(registers);
     let pair_fits = op.immediate_layout() != ImmediateLayout::RegisterPair || {
         let (first, second) = ImmediateLayout::register_pair(instruction.imm());
