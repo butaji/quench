@@ -114,6 +114,17 @@ fn view(ty: crate::WasmType) -> usize {
         .expect("compiled values are numeric scalars")
 }
 
+/// The machine type of a register's view as `ty`. An i32 view holds its value zero-extended to
+/// 64 bits, so an access can use it as an address offset as it is: x64's 32-bit operations
+/// already clear the upper half, and Cranelift elides the extension of their results, but not
+/// across the block parameters a loop carries.
+fn view_ir(ty: crate::WasmType) -> ir::Type {
+    match ty {
+        crate::WasmType::I32 => types::I64,
+        _ => scalar_ir(ty),
+    }
+}
+
 /// The machine type of a scalar Wasm type.
 fn scalar_ir(ty: crate::WasmType) -> ir::Type {
     match ty {
@@ -1306,7 +1317,6 @@ fn direct_reference_entry<H: Host>(
             let (base, length) = super::dispatch_fast::unshared_memory(vm, binding)?;
             let guard = guarded_memory(vm, binding);
             if compiled.guarded && guard.is_none()
-                || compiled.wraps && !wrapping_memory(vm, binding)
                 || compiled.fixed_base.is_some_and(|fixed| {
                     guard.map(|(base, _)| displacement_base(base)) != Some(Some(fixed))
                 })
@@ -1463,10 +1473,6 @@ pub(super) struct CompiledProgram {
     /// displacement (see `displacement_base`); calls with another base fall
     /// back to the interpreter.
     fixed_base: Option<i32>,
-    /// The guarded memory repeats itself above 2^32, so an i32 sum may be
-    /// formed in 64 bits (see `WRAP_ALIAS`); calls with a memory that does
-    /// not fall back to the interpreter.
-    wraps: bool,
     /// The environment slots of the globals compiled code accesses, in the
     /// order of the context's global addresses.
     globals: Vec<u32>,
@@ -2758,6 +2764,98 @@ enum ThreadEnd {
     Dispatch,
 }
 
+/// Instructions all copies of an unrolled loop body may hold together, and the most copies.
+/// A body of up to a fourth of the budget runs as four copies: one interrupt check, one back
+/// edge and one set of loop-carried moves per four iterations (V8's optimizing tier unrolls
+/// small innermost Wasm loops for the same reasons); a body of more than half of it is not
+/// unrolled.
+const UNROLL_BUDGET: usize = 48;
+const MAX_UNROLL_FACTOR: usize = 4;
+
+/// An innermost loop unrolled at its latch: the back edge enters the next of `factor - 1`
+/// copies of the body, and the last copy's back edge returns to `header` with the loop's
+/// interrupt check (`Emitter::backedge`).
+#[derive(Clone, Copy)]
+struct UnrolledLoop {
+    header: usize,
+    factor: usize,
+}
+
+/// Whether `op` may sit in an unrolled body: no call, and no operation that calls out to the
+/// VM or ends the body other than by a branch out of the loop.
+fn unrollable_op(op: Op) -> bool {
+    !matches!(
+        op,
+        Op::WasmMemoryGrow
+            | Op::WasmMemoryFill
+            | Op::WasmMemoryCopy
+            | Op::WasmMemoryInit
+            | Op::WasmTableGet
+            | Op::WasmTableSet
+            | Op::WasmTableGrow
+            | Op::WasmTableFill
+            | Op::WasmTableCopy
+            | Op::WasmTableInit
+            | Op::WasmTableSize
+            | Op::WasmIndirectTarget
+    )
+}
+
+/// The innermost loops to unroll, by latch: a back edge from `latch` to `header` whose body
+/// `header..=latch` runs straight through but for branches that leave the loop, has no other
+/// entry, and fits the budget at least twice.
+fn unrollable_loops(instructions: &[WideInstruction], plan: &Plan) -> Vec<Option<UnrolledLoop>> {
+    let mut entered = vec![false; instructions.len() + 1];
+    for (pc, instruction) in instructions.iter().enumerate() {
+        if !plan.reachable(pc) {
+            continue;
+        }
+        match instruction.op().control_flow_layout() {
+            ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump => {
+                entered[instruction.jump_target() as usize] = true;
+            }
+            ControlFlowLayout::BranchTable => {
+                for entry in crate::bytecode::branch_table_entries(pc, *instruction) {
+                    entered[instructions[entry].jump_target() as usize] = true;
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut loops = vec![None; instructions.len()];
+    for (latch, instruction) in instructions.iter().enumerate() {
+        let layout = instruction.op().control_flow_layout();
+        if !plan.reachable(latch)
+            || !matches!(layout, ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump)
+        {
+            continue;
+        }
+        let header = instruction.jump_target() as usize;
+        if header > latch {
+            continue;
+        }
+        let length = latch - header + 1;
+        let factor = (UNROLL_BUDGET / length).min(MAX_UNROLL_FACTOR);
+        if factor < 2 {
+            continue;
+        }
+        let straight = (header..latch).all(|pc| {
+            let body = instructions[pc];
+            plan.reachable(pc)
+                && unrollable_op(body.op())
+                && match body.op().control_flow_layout() {
+                    ControlFlowLayout::Fallthrough => true,
+                    ControlFlowLayout::ConditionalJump => body.jump_target() as usize > latch,
+                    _ => false,
+                }
+        });
+        if straight && !entered[header + 1..=latch].iter().any(|&entered| entered) {
+            loops[latch] = Some(UnrolledLoop { header, factor });
+        }
+    }
+    loops
+}
+
 /// A copy of the instructions from a jump target to a branch table, for a
 /// jump that leaves the table's selector holding a known constant: along
 /// the copy the selector cannot change, so branches on it are decided and
@@ -2930,8 +3028,6 @@ struct Emitter<'a, 'b, H: Host> {
     /// When enabled, branch-only i32 comparisons remain Cranelift booleans
     /// instead of being extended to a Wasm i32 and tested again.
     direct_compare_branches: bool,
-    /// The guarded memory repeats above 2^32 (`CompiledProgram::wraps`).
-    wraps: bool,
     /// Per `Region`, its alias region in this function.
     regions: [ir::AliasRegion; Region::COUNT],
     globals: &'a [u32],
@@ -2972,10 +3068,17 @@ struct Emitter<'a, 'b, H: Host> {
     /// The VM's poll page when every entry runs through the fault-resuming trampoline: an
     /// interrupt check is then one read of it.
     poll: Option<i64>,
-    /// Indices the current block, or a block it alone leads to, has checked against a limit of
-    /// the wrapped reservation (`address`): a later access through one of them needs no check
-    /// at the same or a higher limit.
-    checked: Vec<(ir::Value, i64)>,
+    /// Each i32 read from a register's view, by the zero-extended value it was read from.
+    zero_extended: std::collections::HashMap<ir::Value, ir::Value>,
+    /// The innermost loops to unroll, by latch (`unrollable_loops`).
+    unrolled: Vec<Option<UnrolledLoop>>,
+    /// While a latch of an unrolled loop is emitted: its header and the copy its back edge
+    /// enters instead, or `None` for the last copy, whose back edge returns to the header and
+    /// checks for an interrupt.
+    backedge: Option<(usize, Option<ir::Block>)>,
+    /// Copies of an unrolled body to emit right after its latch: the block, the loop, and the
+    /// copy its back edge enters.
+    pending_copies: Vec<(ir::Block, UnrolledLoop, usize, Option<ir::Block>)>,
 }
 
 impl<H: Host> Emitter<'_, '_, H> {
@@ -2996,8 +3099,31 @@ impl<H: Host> Emitter<'_, '_, H> {
 
     /// The register's value viewed as `ty`.
     fn read_typed(&mut self, register: u16, ty: crate::WasmType) -> ir::Value {
-        self.builder
-            .use_var(self.variables[usize::from(register)][view(ty)])
+        let stored = self
+            .builder
+            .use_var(self.variables[usize::from(register)][view(ty)]);
+        if ty != crate::WasmType::I32 {
+            return stored;
+        }
+        let value = self.builder.ins().ireduce(types::I32, stored);
+        self.zero_extended.insert(value, stored);
+        value
+    }
+
+    /// `value`, an i32, zero-extended to 64 bits: the i32 view it was read from, if any.
+    fn zero_extend(&mut self, value: ir::Value) -> ir::Value {
+        match self.zero_extended.get(&value) {
+            Some(&wide) => wide,
+            None => self.builder.ins().uextend(types::I64, value),
+        }
+    }
+
+    /// The stored form of `value` in the register's view as `ty` (`view_ir`).
+    fn view_value(&mut self, ty: crate::WasmType, value: ir::Value) -> ir::Value {
+        match ty {
+            crate::WasmType::I32 => self.zero_extend(value),
+            _ => value,
+        }
     }
 
     /// Define the register as `value` of type `ty`, in both views; a view no
@@ -3009,8 +3135,10 @@ impl<H: Host> Emitter<'_, '_, H> {
             .builder
             .ins()
             .bitcast(scalar_ir(other), MemFlagsData::new(), value);
+        let stored = self.view_value(ty, value);
+        let converted = self.view_value(other, converted);
         let variables = self.variables[usize::from(register)];
-        self.builder.def_var(variables[view(ty)], value);
+        self.builder.def_var(variables[view(ty)], stored);
         self.builder.def_var(variables[view(other)], converted);
     }
 
@@ -3021,8 +3149,11 @@ impl<H: Host> Emitter<'_, '_, H> {
             self.known.push((register, bits as i32));
         }
         let (integer, float) = match kind {
+            // The i32 view holds the constant zero-extended (`view_ir`).
             Kind::I32 => (
-                self.builder.ins().iconst(types::I32, bits),
+                self.builder
+                    .ins()
+                    .iconst(types::I64, i64::from(bits as u32)),
                 self.builder.ins().f32const(Ieee32::with_bits(bits as u32)),
             ),
             Kind::I64 => (
@@ -3395,42 +3526,7 @@ impl<H: Host> Emitter<'_, '_, H> {
 
     /// The host address of a checked `width`-byte access at `address + offset`.
     fn address(&mut self, address: ir::Value, offset: u32, width: usize) -> ir::Value {
-        if self.wraps && offset == 0 {
-            // The Wasm effective address is already an i32 bit pattern, so
-            // preserve its modulo-2^32 result before extending it. This also
-            // lets x64 lower an i32 base-plus-scaled-index to a 32-bit LEA;
-            // the repeated mapping makes that result equivalent to the old
-            // widened sum when the i32 addition carried past 2^32.
-            let address = self.builder.ins().uextend(types::I64, address);
-            return self.builder.ins().iadd(self.base, address);
-        }
-        if self.wraps && offset != 0 {
-            // An index whose offset carries it past 2^32 would meet the
-            // repeated memory instead of the guard: it traps here. The
-            // memory ends below `RESERVED_LIMIT`, so for offsets up to a Wasm
-            // page that limit bounds the index alone, and accesses through
-            // one index share one check.
-            use crate::wasm::memory::{RESERVED_LIMIT, WASM_PAGE, WRAP_ALIAS};
-            let limit = if offset as usize <= WASM_PAGE {
-                RESERVED_LIMIT
-            } else {
-                WRAP_ALIAS - offset as usize
-            } as i64;
-            let known = self
-                .checked
-                .iter()
-                .any(|&(index, checked)| index == address && checked <= limit);
-            if !known {
-                let past = self.builder.ins().icmp_imm_u(
-                    IntCC::UnsignedGreaterThanOrEqual,
-                    address,
-                    limit,
-                );
-                self.trap_if(past, crate::WasmTrap::OutOfBoundsMemory);
-                self.checked.push((address, limit));
-            }
-        }
-        let address = self.builder.ins().uextend(types::I64, address);
+        let address = self.zero_extend(address);
         if self.guarded {
             // Index plus offset plus width stays inside the reservation; past
             // the accessible prefix the access faults, and the fault handler
@@ -3936,7 +4032,7 @@ impl<H: Host> Emitter<'_, '_, H> {
     /// only the exit passes (merge arguments) are computed after the loop,
     /// not on every iteration.
     fn branch(&mut self, pc: usize, condition: ir::Value, target: usize, fallthrough: usize) {
-        if target <= pc || fallthrough <= pc {
+        if self.polls(pc, target) || self.polls(pc, fallthrough) {
             self.interrupt_safepoint();
         }
         let taken = self.edge(target);
@@ -3951,6 +4047,12 @@ impl<H: Host> Emitter<'_, '_, H> {
         self.builder.ins().jump(next, &[]);
     }
 
+    /// Whether an edge from `pc` to `target` checks for an interrupt: a back edge does, except
+    /// one into a copy of an unrolled body, whose last copy's back edge checks for all.
+    fn polls(&self, pc: usize, target: usize) -> bool {
+        target <= pc && !matches!(self.backedge, Some((header, Some(_))) if header == target)
+    }
+
     /// The block a jump from here to `target` enters: a threaded copy when
     /// a known selector decides a branch table ahead, else the target's.
     fn edge(&mut self, target: usize) -> ir::Block {
@@ -3958,6 +4060,11 @@ impl<H: Host> Emitter<'_, '_, H> {
             && redirected == target
         {
             return block;
+        }
+        if let Some((header, Some(copy))) = self.backedge
+            && header == target
+        {
+            return copy;
         }
         if self.threading {
             for (selector, value) in self.known.clone() {
@@ -3985,9 +4092,58 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 
     /// Emit the threaded copy `thread` into `block`.
+    /// Emit the latch at `pc`; at an unrolled loop's latch the back edge enters the first copy
+    /// of the body, queued with the rest (`pending_copies`).
+    fn latch(&mut self, function: &Function, pc: usize, instruction: WideInstruction) -> bool {
+        let Some(unrolled) = self.unrolled[pc] else {
+            return self.instruction(function, pc, instruction);
+        };
+        let copies = (1..unrolled.factor)
+            .map(|_| self.builder.create_block())
+            .collect::<Vec<_>>();
+        for (index, &copy) in copies.iter().enumerate() {
+            let next = copies.get(index + 1).copied();
+            self.pending_copies.push((copy, unrolled, pc, next));
+        }
+        self.backedge = Some((unrolled.header, copies.first().copied()));
+        let open = self.instruction(function, pc, instruction);
+        self.backedge = None;
+        open
+    }
+
+    /// Emit a copy of the body of the unrolled loop with latch `latch` into `block`: branches
+    /// out of the loop leave through the original blocks, and the back edge enters `next`, or
+    /// the header from the last copy.
+    fn emit_unrolled_copy(
+        &mut self,
+        function: &Function,
+        block: ir::Block,
+        unrolled: UnrolledLoop,
+        latch: usize,
+        next: Option<ir::Block>,
+    ) {
+        self.builder.switch_to_block(block);
+        self.known.clear();
+        for pc in unrolled.header..latch {
+            let instruction = self.instructions[pc];
+            if instruction.op().control_flow_layout() == ControlFlowLayout::ConditionalJump {
+                let continuation = self.builder.create_block();
+                self.redirect = Some((pc + 1, continuation));
+                self.instruction(function, pc, instruction);
+                self.redirect = None;
+                self.builder.switch_to_block(continuation);
+                self.known.clear();
+            } else {
+                self.instruction(function, pc, instruction);
+            }
+        }
+        self.backedge = Some((unrolled.header, next));
+        self.instruction(function, latch, self.instructions[latch]);
+        self.backedge = None;
+    }
+
     fn emit_thread(&mut self, function: &Function, block: ir::Block, thread: &Thread) {
         self.builder.switch_to_block(block);
-        self.checked.clear();
         self.interrupt_safepoint();
         for (index, &pc) in thread.path.iter().enumerate() {
             let instruction = self.instructions[pc];
@@ -4009,7 +4165,6 @@ impl<H: Host> Emitter<'_, '_, H> {
                     self.instruction(function, pc, instruction);
                     self.redirect = None;
                     self.builder.switch_to_block(continuation);
-                    self.checked.clear();
                 }
                 _ => {
                     self.instruction(function, pc, instruction);
@@ -4257,7 +4412,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             }
             Op::Jump => {
                 let target = instruction.jump_target() as usize;
-                self.jump(target, target <= pc);
+                self.jump(target, self.polls(pc, target));
                 return false;
             }
             Op::WasmBranchTable => {
@@ -4407,7 +4562,6 @@ impl<'a, H: Host> Analysis<'a, H> {
         plan: &Plan,
         plans: &[Option<Plan>],
         guarded: bool,
-        wraps: bool,
         fixed_base: Option<i32>,
         globals: &[u32],
         reference_site_ids: &'a [(usize, usize)],
@@ -4423,7 +4577,7 @@ impl<'a, H: Host> Analysis<'a, H> {
         let mut builder_context = FunctionBuilderContext::new();
         let mut builder = FunctionBuilder::new(&mut func, &mut builder_context);
         let variables: Vec<[Variable; VIEW_TYPES.len()]> = (0..function.registers)
-            .map(|_| VIEW_TYPES.map(|ty| builder.declare_var(scalar_ir(ty))))
+            .map(|_| VIEW_TYPES.map(|ty| builder.declare_var(view_ir(ty))))
             .collect();
         let entry = builder.create_block();
         builder.append_block_params_for_function_params(entry);
@@ -4466,7 +4620,6 @@ impl<'a, H: Host> Analysis<'a, H> {
         let mut emitter = Emitter {
             guarded,
             direct_compare_branches: jit_direct_compare_branches_enabled(),
-            wraps,
             regions,
             globals,
             analysis: self,
@@ -4496,7 +4649,10 @@ impl<'a, H: Host> Analysis<'a, H> {
             poll: guard_support()
                 .and_then(|_| self.vm.execution_interrupt.poll_page())
                 .map(|(start, _)| start as i64),
-            checked: Vec::new(),
+            zero_extended: std::collections::HashMap::new(),
+            unrolled: unrollable_loops(&instructions, plan),
+            backedge: None,
+            pending_copies: Vec::new(),
         };
         // Registers start at i32 zero, as an activation's register file does.
         for register in 0..function.registers {
@@ -4525,7 +4681,6 @@ impl<'a, H: Host> Analysis<'a, H> {
             .icmp(IntCC::UnsignedLessThan, stack_pointer, limit);
         emitter.trap_if(exhausted, crate::WasmTrap::CallStackExhausted);
         emitter.known.clear();
-        emitter.checked.clear();
         emitter.jump(0, true);
         // Every jump target starts a block, created before emission so a
         // backward jump finds its target's block already placed.
@@ -4559,14 +4714,18 @@ impl<'a, H: Host> Analysis<'a, H> {
             let is_leader = emitter.blocks[pc].is_some() || !open;
             if is_leader {
                 emitter.known.clear();
-                emitter.checked.clear();
                 let block = emitter.block(pc);
                 if open {
                     emitter.builder.ins().jump(block, &[]);
                 }
                 emitter.builder.switch_to_block(block);
             }
-            open = emitter.instruction(function, pc, instruction);
+            open = emitter.latch(function, pc, instruction);
+            // Copies of an unrolled body follow its latch in the layout, so a loop that runs a few
+            // iterations stays in one stretch of code.
+            for (block, unrolled, latch, next) in std::mem::take(&mut emitter.pending_copies) {
+                emitter.emit_unrolled_copy(function, block, unrolled, latch, next);
+            }
             // A later jump may target the next instruction; give it a block
             // now so falling into it stays explicit.
             if open && emitter.blocks.get(pc + 1).is_some_and(Option::is_some) {
@@ -4715,11 +4874,6 @@ fn displacement_base(base: *mut u8) -> Option<i32> {
 
 fn guarded_memory<H: Host>(vm: &Vm<H>, binding: Value) -> Option<(*mut u8, usize)> {
     memory_bytes(vm, binding, crate::wasm::memory::LinearBytes::guard)
-}
-
-/// Whether the guarded memory `binding` names repeats above 2^32.
-fn wrapping_memory<H: Host>(vm: &Vm<H>, binding: Value) -> bool {
-    memory_bytes(vm, binding, |bytes| Some(bytes.wraps())) == Some(true)
 }
 
 /// `query` of the bytes of the unshared memory `binding` names.
@@ -5401,10 +5555,6 @@ impl<H: Host> Vm<H> {
                 displacement_base(guarded_memory(self, binding)?.0)
             })
             .flatten();
-        let wraps = guarded
-            && memory_slot
-                .and_then(|slot| self.heap.environment_slot(env, slot as usize))
-                .is_some_and(|binding| wrapping_memory(self, binding));
         let opt_level = jit_root_opt_level(root, root_only).ok()?;
         if diagnostics_enabled {
             eprintln!("QUENCH_WASM_JIT_OPT_LEVEL {opt_level}");
@@ -5491,7 +5641,6 @@ impl<H: Host> Vm<H> {
                 &full_plan,
                 &plans,
                 guarded,
-                wraps,
                 fixed_base,
                 &globals,
                 &reference_site_ids[index],
@@ -5595,7 +5744,6 @@ impl<H: Host> Vm<H> {
             memory_slot,
             guarded,
             fixed_base,
-            wraps,
             globals,
             diagnostics,
             reference_call_caches: std::cell::RefCell::new(
@@ -5884,9 +6032,6 @@ impl<H: Host> Vm<H> {
                     let guard = guarded_memory(self, binding);
                     // Code compiled without bounds checks needs this memory's guard.
                     if compiled.guarded && guard.is_none() {
-                        return None;
-                    }
-                    if compiled.wraps && !wrapping_memory(self, binding) {
                         return None;
                     }
                     if compiled.fixed_base.is_some_and(|fixed| {
