@@ -44,6 +44,6 @@ The paired on/off Score ratio is **1.0395** (95% interval **0.8684 to
 1.1094**), below the predeclared 1.05 median threshold and with the interval
 crossing a tie. Peak RSS increased by 0.19 MiB. The candidate remains well
 below Bun and Node on Score, though below their RSS. It fails the screen, so
-the 11-round confirmation was not run. A narrower prototype will track only
-registers that feed shift-by-two operations; that is a new candidate and will
-need its own predeclared screen.
+the 11-round confirmation was not run. A second candidate tracks only
+registers in the backward use slice of shift-by-two operations; it requires a
+separate screen and does not inherit Screen 1's result.

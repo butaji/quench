@@ -1887,6 +1887,8 @@ mod tests {
                     Operator::I32Const { value: 1 },
                     Operator::I32Add,
                     Operator::LocalSet { local_index: 0 },
+                    // The count also takes unit steps, but never feeds shl 2;
+                    // backward tracking should leave its companion unallocated.
                     Operator::LocalGet { local_index: 1 },
                     Operator::I32Const { value: 1 },
                     Operator::I32Sub,
@@ -1993,7 +1995,6 @@ mod tests {
             );
         }
     }
-
 
     #[test]
     fn compiled_wasm_wrapping_addresses_preserve_load_store_and_traps() {
