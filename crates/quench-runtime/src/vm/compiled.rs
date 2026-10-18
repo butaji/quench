@@ -387,7 +387,21 @@ unsafe extern "C" fn reference_callout<H: Host>(
             .programs
             .constant(program, VOID_RESULT_CONSTANT)
             .ok_or_else(|| JsError::validation("missing Wasm void constant".into()))?;
-        let result = vm.call_value(&code, callee, receiver, &values)?;
+        let same_program_function = match vm.heap.get(callee) {
+            Some(Cell::Function {
+                kind: crate::heap::FunctionKind::User(target_program, function),
+                env,
+                ..
+            }) if *target_program == program => Some((*target_program, *function, *env)),
+            _ => None,
+        };
+        let compiled_result = same_program_function.and_then(|(target_program, function, env)| {
+            vm.run_compiled(target_program, env, function, &values)
+        });
+        let result = match compiled_result {
+            Some(result) => result?,
+            None => vm.call_value(&code, callee, receiver, &values)?,
+        };
         let bits = match result_type {
             Some(ty) => match vm
                 .decode_wasm_value(result, ty)?
