@@ -669,13 +669,18 @@ fn out_of_line_private_brand_keeps_its_home_alive() {
 #[test]
 fn object_property_storage_migration_preserves_writes_and_gc_roots() {
     let mut heap = Heap::new();
-    heap.register_property_shape(1, 1);
-    heap.register_property_shape(2, 2);
-    heap.register_property_shape(3, 3);
+    // Shape `n` holds `n` properties; the add past the inline values migrates them.
+    let migrated = INLINE_PROPERTY_COUNT + 1;
+    for shape in 1..=migrated {
+        heap.register_property_shape(shape as u32, shape);
+    }
     let first = heap.alloc(Cell::String("first".into()));
     let replaced = heap.alloc(Cell::String("replaced".into()));
     let replacement = heap.alloc(Cell::String("replacement".into()));
-    let third = heap.alloc(Cell::String("third".into()));
+    let fillers = (2..INLINE_PROPERTY_COUNT)
+        .map(|_| heap.alloc(Cell::String("filler".into())))
+        .collect::<Vec<_>>();
+    let last = heap.alloc(Cell::String("last".into()));
     let object = heap.alloc(Cell::Object(plain_object()));
     assert!(heap.object(object).unwrap().inline_properties().is_some());
     heap.object_record_mut(object)
@@ -683,34 +688,41 @@ fn object_property_storage_migration_preserves_writes_and_gc_roots() {
         .set_extensible(false);
     heap.property_add(object, first, 1);
     heap.property_add(object, replaced, 2);
+    for (index, filler) in fillers.iter().enumerate() {
+        heap.property_add(object, *filler, (3 + index) as u32);
+    }
     assert!(heap.object(object).unwrap().inline_properties().is_some());
     heap.property_set(object, 1, replacement);
-    heap.property_add(object, third, 3);
+    heap.property_add(object, last, migrated as u32);
 
     heap.collect([object]);
     let data = heap.object(object).unwrap();
-    assert_eq!(data.shape(), 3);
+    assert_eq!(data.shape(), migrated as u32);
     assert!(data.inline_properties().is_none());
     assert!(!data.is_extensible());
     assert_eq!(heap.property_get(data, 0), Some(first));
     assert_eq!(heap.property_get(data, 1), Some(replacement));
-    assert_eq!(heap.property_get(data, 2), Some(third));
+    for (index, filler) in fillers.iter().enumerate() {
+        assert_eq!(heap.property_get(data, 2 + index), Some(*filler));
+    }
+    assert_eq!(heap.property_get(data, migrated - 1), Some(last));
     assert!(heap.is_live(first));
     assert!(!heap.is_live(replaced));
     assert!(heap.is_live(replacement));
-    assert!(heap.is_live(third));
+    assert!(heap.is_live(last));
 
     heap.collect([]);
     assert!(!heap.is_live(object));
     assert!(!heap.is_live(first));
     assert!(!heap.is_live(replacement));
-    assert!(!heap.is_live(third));
+    assert!(!heap.is_live(last));
 }
 
 #[test]
 fn inline_property_values_are_gc_roots_until_deleted_or_the_owner_dies() {
     let mut heap = Heap::new();
-    heap.register_property_shape(1, INLINE_PROPERTY_COUNT);
+    // A shape of two properties, the pair below, whatever the inline count.
+    heap.register_property_shape(1, 2);
     let kept = heap.alloc(Cell::String("kept".into()));
     let deleted = heap.alloc(Cell::String("deleted".into()));
     let object = heap.alloc_object_pair(Value::NULL, 1, kept, deleted);
@@ -947,4 +959,55 @@ fn weak_map_pending_fan_in_releases_every_value_and_resets_between_collections()
     assert!(!heap.is_live(key));
     assert!(values.iter().all(|value| !heap.is_live(*value)));
     assert!(maps.iter().all(|map| heap.is_live(*map)));
+}
+
+#[test]
+fn wide_environment_clones_store_only_the_slots_they_do_not_share() {
+    let mut heap = Heap::new();
+    let width = crate::heap::SPARSE_CLONE_MIN_SLOTS + 8;
+    let kept = heap.alloc(Cell::String("kept".into()));
+    let environment = |heap: &mut Heap, slots: EnvironmentSlots| {
+        heap.alloc(Cell::Environment {
+            parent: Value::NULL,
+            function: 0,
+            slots,
+            scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+                program: Some(0),
+                root_eval_scope: false,
+                binding_site_pc: None,
+                dynamic_bindings: Vec::new().into(),
+                with_objects: Box::default(),
+            }),
+        })
+    };
+    let mut values = (0..width).map(|slot| Value::number(slot as f64)).collect::<Vec<_>>();
+    values[width - 1] = kept;
+    let owner = environment(&mut heap, values.into());
+    let first = heap.clone_environment_slots(owner, &[3], &[5]).unwrap();
+    // A length and owner, then the fresh and reset slots, each with its index.
+    assert_eq!((first.len(), first.0.len()), (width, 6));
+    let first = environment(&mut heap, first);
+    assert_eq!(heap.environment_slot(first, 3), Some(Value::number(3.0)));
+    assert_eq!(heap.environment_slot(first, 5), Some(Value::UNDEFINED));
+    assert_eq!(heap.environment_slot(first, 7), Some(Value::number(7.0)));
+    assert_eq!(heap.environment_slot(first, width), None);
+    // Writes reach whichever environment owns the slot.
+    *heap.environment_slot_mut(first, 3).unwrap() = Value::number(30.0);
+    *heap.environment_slot_mut(first, 7).unwrap() = Value::number(70.0);
+    assert_eq!(heap.environment_slot(owner, 3), Some(Value::number(3.0)));
+    assert_eq!(heap.environment_slot(owner, 7), Some(Value::number(70.0)));
+    // A copy of a copy shares the first copy's own slots and the original's others.
+    let second = heap.clone_environment_slots(first, &[], &[]).unwrap();
+    assert_eq!(second.0.len(), 6);
+    let second = environment(&mut heap, second);
+    assert_eq!(heap.environment_slot_owner(second, 3), Some(first));
+    assert_eq!(heap.environment_slot_owner(second, 7), Some(owner));
+    assert_eq!(heap.environment_slot(second, 3), Some(Value::number(30.0)));
+    // The copies keep the original and its values alive.
+    heap.collect_with_object_roots([second], |_, _, _, _, _| {}, None, true);
+    assert_eq!(heap.environment_slot(second, width - 1), Some(kept));
+    assert!(matches!(heap.get(kept), Some(Cell::String(_))));
+    // A narrow environment's copy stays dense.
+    let narrow = environment(&mut heap, vec![Value::TRUE; 2].into());
+    assert_eq!(heap.clone_environment_slots(narrow, &[0], &[]).unwrap().0.len(), 2);
 }
