@@ -40,6 +40,12 @@ fn child_hash(shapes: &[Shape], child: u32) -> u64 {
     hash(origin.parent, key)
 }
 
+/// Whether `child` is the cached transition from `parent` by `key`.
+pub(super) fn is_transition(shapes: &[Shape], child: u32, parent: u32, key: ShapeTransitionKey) -> bool {
+    let origin = origin(shapes, child);
+    origin.parent == parent && origin.transition.cache_key() == Some(key)
+}
+
 impl ShapeTransitionIndex {
     pub(super) fn get(
         &self,
@@ -48,10 +54,7 @@ impl ShapeTransitionIndex {
         key: ShapeTransitionKey,
     ) -> Option<u32> {
         self.children
-            .find(hash(parent, key), |&child| {
-                let origin = origin(shapes, child);
-                origin.parent == parent && origin.transition.cache_key() == Some(key)
-            })
+            .find(hash(parent, key), |&child| is_transition(shapes, child, parent, key))
             .copied()
     }
 

@@ -1143,6 +1143,14 @@ lane_handler! {
     }
 }
 
+/// A string's element in the lane (`Vm::string_element`), which allocates its one-unit string.
+#[inline(never)]
+fn lane_string_element<H: Host>(vm: &mut Vm<H>, base: Value, key: Value) -> Option<Value> {
+    let value = vm.string_element(base, key)?;
+    note_allocation(vm);
+    Some(value)
+}
+
 lane_handler! {
     /// A present dense array element; any other read takes the general path.
     fn lane_get_index<>(cx, r, ip, i, view) {
@@ -1156,6 +1164,7 @@ lane_handler! {
             .dense_array_element(base, key)
             .or_else(|| vm.plain_keyed_get(base, key))
             .or_else(|| vm.plain_typed_element(base, key))
+            .or_else(|| lane_string_element(vm, base, key))
         else {
             return exit(ip);
         };
@@ -1188,6 +1197,7 @@ lane_handler! {
             .dense_array_element(base, key)
             .or_else(|| vm.plain_keyed_get(base, key))
             .or_else(|| vm.plain_typed_element(base, key))
+            .or_else(|| lane_string_element(vm, base, key))
         else {
             return exit(ip);
         };
@@ -1964,6 +1974,17 @@ fn lane_cached_field_miss<H: Host>(
     site: u16,
     probe: super::object::FieldCacheProbe,
 ) -> Option<Value> {
+    // A private field reads from the object's private elements before any cache, as the
+    // general loop's `GetField` does. Its home follows the running frame's environment, which
+    // is the lane's frame only while no frameless activation runs.
+    if vm.is_private_name(atom) {
+        return vm
+            .lane_stack
+            .activations
+            .is_empty()
+            .then(|| vm.private_field_value(code, object, atom))
+            .flatten();
+    }
     match probe {
         super::object::FieldCacheProbe::Hit(value) => Some(value),
         // The order `Vm::get_field_cached` takes: an array's `length` before the lookups.
