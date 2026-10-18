@@ -712,6 +712,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "fsWriteFilePublic" (3) => crate::modules::fs_shared_vm::write_public::write,
         method "fsAppendFilePublic" (3) => crate::modules::fs_shared_vm::write_public::append,
         method "fsVfsReadlinkPromise" (3) => crate::modules::fs_shared_vm::promise_public::readlink_continuation,
+        method "fsPromisesReadlinkInitialize" (0) => crate::modules::fs_shared_vm::promise_public::initialize,
         method "fsVfsExistsComplete" (1) => crate::modules::fs_shared_vm::callback_public::exists_complete,
         method "fsVfsCallback" (0) => crate::modules::fs_shared_vm::callback_public::dispatch,
         method "fsVfsMetadata" (0) => crate::modules::fs_shared_vm::metadata_public::dispatch,
@@ -1015,6 +1016,12 @@ pub(crate) fn operation(name: &str) -> HostFunctionId {
 impl quench_runtime::Host for NodeHost {
     fn observes_promise_lifecycle(&self) -> bool {
         self.shared_state.borrow().async_hooks.tracks_promises()
+    }
+
+    /// The code a long run touched once (start-up, set-up, one-time paths) leaves the
+    /// resident set at each full collection; what still runs comes back from the page cache.
+    fn after_full_collection(&mut self) {
+        crate::host::resident_pages::release_read_only_pages();
     }
 
     fn proper_tail_calls(&self) -> bool {

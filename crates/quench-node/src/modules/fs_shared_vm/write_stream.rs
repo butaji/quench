@@ -259,7 +259,8 @@ pub(crate) fn initialize(
         .evaluate_script_rooted(CREATE_WRITE_STREAM, "node:fs/shared-create-write-stream.js")?;
     let undefined = context.undefined();
     let constructor = context.call_rooted(factory, undefined, &[open, write, close, writable])?;
-    set(context, module, "createWriteStream", constructor)?;
+    let create = super::metadata_public::wrap(context, constructor, "createWriteStream")?;
+    set(context, module, "createWriteStream", create)?;
     set(context, module, "WriteStream", constructor)?;
     Ok(context.undefined())
 }
