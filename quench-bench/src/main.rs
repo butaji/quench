@@ -30,7 +30,7 @@ const MIN_QUALIFYING_ROUNDS: usize = 11;
 const DEFAULT_TIMEOUT_MS: u64 = 300_000;
 const MEASUREMENT_ENV: &[&str] = &["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TZ"];
 const FIXED_WORK_REPORT_SCHEMA: u32 = 5;
-const SUITE_REPORT_SCHEMA: u32 = 7;
+const SUITE_REPORT_SCHEMA: u32 = 8;
 const FIXED_WORK_MEASUREMENT_MODE: &str = "fixed_work_diagnostic";
 const FIXED_WORK_MARKER_PREFIX: &str = "__quenchFixedWork:";
 const FIXED_WORK_SUITE_COUNT: usize = 1;
@@ -395,6 +395,9 @@ struct SuiteRecord {
     host: HostRecord,
     engines: Vec<EngineRecord>,
     suite_inputs: Vec<Artifact>,
+    /// The exact canonical fixture selection, including unfinished checkpoint runs.
+    #[serde(default)]
+    selected_fixtures: Vec<String>,
     fixtures: BTreeMap<String, FixtureRecord>,
     complete: bool,
     qualification_ready: bool,
@@ -531,6 +534,7 @@ struct Options {
     jit_mode: JitMode,
     jit_diagnostics: bool,
     fixture: Option<String>,
+    fixtures: Option<Vec<String>>,
     all: bool,
     preflight_only: bool,
     node: PathBuf,
@@ -609,6 +613,10 @@ fn main() {
         host: host_identity(),
         engines: engine_records,
         suite_inputs: suite.inputs(),
+        selected_fixtures: files
+            .iter()
+            .map(|file| file.display().to_string())
+            .collect(),
         fixtures: BTreeMap::new(),
         complete: false,
         qualification_ready: false,
@@ -632,7 +640,7 @@ fn main() {
         write_checkpoint(path, &report);
     }
     let checkpoint_path = options.resume.as_ref().or(options.checkpoint.as_ref());
-    for file in files {
+    for file in &files {
         let key = file.display().to_string();
         if report.fixtures.get(&key).is_some_and(|fixture| {
             fixture.valid && fixture.output_equal && fixture.rounds.len() == options.rounds
@@ -644,7 +652,7 @@ fn main() {
             );
             continue;
         }
-        let fixture = run_fixture(suite, &file, &engines, options.rounds, options.timeout_ms);
+        let fixture = run_fixture(suite, file, &engines, options.rounds, options.timeout_ms);
         eprintln!(
             "{}: {} ({}/{} rounds)",
             file.display(),
@@ -667,13 +675,16 @@ fn main() {
         }
     }
 
-    let complete =
-        !report.fixtures.is_empty() && report.fixtures.values().all(|fixture| fixture.valid);
+    let complete = !report.fixtures.is_empty()
+        && report
+            .fixtures
+            .values()
+            .all(|fixture| fixture.valid && fixture.output_equal);
     report.complete = complete;
     report.qualification_ready = complete
         && options.rounds >= MIN_QUALIFYING_ROUNDS
         && !options.jit_diagnostics
-        && report.corpus.fixture_set_matches
+        && fixture_selection_is_valid(options.suite, &files)
         && report.corpus.checkout_clean
         && report.corpus.pinned_revision == report.corpus.checkout_revision
         && !report.source_dirty;
@@ -765,7 +776,8 @@ fn validate_resume(saved: &SuiteRecord, expected: &SuiteRecord, files: &[PathBuf
         && same_json(&saved.corpus, &expected.corpus)
         && same_json(&saved.host, &expected.host)
         && same_json(&saved.engines, &expected.engines)
-        && same_json(&saved.suite_inputs, &expected.suite_inputs);
+        && same_json(&saved.suite_inputs, &expected.suite_inputs)
+        && saved.selected_fixtures == expected.selected_fixtures;
     if !metadata_matches {
         fail(
             "checkpoint provenance does not match this source, host, corpus, engines, rounds, or timeout",
@@ -835,6 +847,7 @@ fn parse_options() -> Options {
         jit_mode: JitMode::NoJit,
         jit_diagnostics: false,
         fixture: None,
+        fixtures: None,
         all: first == "--all",
         preflight_only: first == "--preflight-only",
         node: "node".into(),
@@ -849,7 +862,12 @@ fn parse_options() -> Options {
         checkpoint: None,
         resume: None,
     };
-    if !options.all && !options.preflight_only {
+    if first == "--fixtures" {
+        let list = args
+            .next()
+            .unwrap_or_else(|| usage("--fixtures requires a comma-separated list"));
+        options.fixtures = Some(parse_fixture_list(&list));
+    } else if !options.all && !options.preflight_only {
         options.fixture = Some(first);
     }
     while let Some(arg) = args.next() {
@@ -859,6 +877,15 @@ fn parse_options() -> Options {
                     .next()
                     .unwrap_or_else(|| usage("missing value for --suite"));
                 options.suite = Suite::parse(&name);
+            }
+            "--fixtures" => {
+                if options.fixture.is_some() || options.fixtures.is_some() {
+                    usage("--fixtures cannot be combined with a positional fixture");
+                }
+                let list = args
+                    .next()
+                    .unwrap_or_else(|| usage("--fixtures requires a comma-separated list"));
+                options.fixtures = Some(parse_fixture_list(&list));
             }
             "--jit" => options.jit_mode = JitMode::Jit,
             "--jit-diagnostics" => options.jit_diagnostics = true,
@@ -890,14 +917,23 @@ fn parse_options() -> Options {
             _ => usage(&format!("unknown argument: {arg}")),
         }
     }
-    if options.preflight_only && options.fixture.is_some() {
-        usage("--preflight-only does not take a fixture");
+    if options.preflight_only && (options.fixture.is_some() || options.fixtures.is_some()) {
+        usage("--preflight-only does not take fixtures");
     }
     if options.checkpoint.is_some() && options.resume.is_some() {
         usage("--checkpoint and --resume are mutually exclusive");
     }
-    if (options.checkpoint.is_some() || options.resume.is_some()) && !options.all {
-        usage("--checkpoint and --resume require --all");
+    if (options.checkpoint.is_some() || options.resume.is_some())
+        && !options.all
+        && options.fixtures.is_none()
+    {
+        usage("--checkpoint and --resume require --all or --fixtures");
+    }
+    if options.all && options.fixtures.is_some() {
+        usage("use --fixtures by itself; it already selects an explicit fixture set");
+    }
+    if options.fixtures.is_some() && options.suite != Suite::JetStream3 {
+        usage("--fixtures is currently supported only with --suite jetstream3");
     }
     if options.preflight_only && (options.checkpoint.is_some() || options.resume.is_some()) {
         usage("--preflight-only cannot use checkpoints");
@@ -940,6 +976,47 @@ fn required_number(args: &mut impl Iterator<Item = String>, option: &str) -> u64
     args.next()
         .and_then(|value| value.parse().ok())
         .unwrap_or_else(|| usage(&format!("invalid value for {option}")))
+}
+
+fn parse_fixture_list(list: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut seen = BTreeSet::new();
+    for name in list.split(',').map(str::trim) {
+        if name.is_empty() || !seen.insert(name.to_string()) {
+            usage("--fixtures must be a non-empty comma-separated list without duplicates");
+        }
+        names.push(name.to_string());
+    }
+    names
+}
+
+fn fixture_selection_is_valid(suite: Suite, files: &[PathBuf]) -> bool {
+    if files.is_empty() {
+        return false;
+    }
+    let names = files
+        .iter()
+        .filter_map(|file| file.file_name()?.to_str())
+        .map(str::to_string)
+        .collect::<BTreeSet<_>>();
+    if names.len() != files.len()
+        || names
+            .iter()
+            .any(|name| !suite.fixture_names().contains(&name.as_str()))
+    {
+        return false;
+    }
+    match suite {
+        Suite::JetStream3 => files.iter().all(|file| {
+            file.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| suite.fixture(name) == *file)
+        }),
+        Suite::V8V7 => {
+            files.iter().cloned().collect::<BTreeSet<_>>()
+                == suite.fixtures().into_iter().collect::<BTreeSet<_>>()
+        }
+    }
 }
 
 fn prepare_engines(options: &Options) -> Vec<EngineSpec> {
@@ -1228,6 +1305,12 @@ fn capture_output(output: std::io::Result<Output>) -> Capture {
 }
 
 fn selected_fixtures(options: &Options) -> Vec<PathBuf> {
+    if let Some(fixtures) = &options.fixtures {
+        return fixtures
+            .iter()
+            .map(|fixture| options.suite.fixture(fixture))
+            .collect();
+    }
     if options.all {
         return options.suite.fixtures();
     }
@@ -2213,13 +2296,11 @@ fn parse_cpu_consumers(text: &str) -> Vec<CpuConsumer> {
                 && !command.is_empty()
                 && cpu_percent.is_finite()
                 && cpu_percent >= 0.0)
-            .then_some(
-                CpuConsumer {
+                .then_some(CpuConsumer {
                     pid,
                     cpu_percent,
                     command,
-                },
-            )
+                })
         })
         .collect::<Vec<_>>();
     consumers.sort_unstable_by(|left, right| {
@@ -2337,6 +2418,13 @@ fn artifact(path: &Path) -> Artifact {
 }
 
 pub(crate) fn sha256(path: &Path) -> Option<String> {
+    if fs::metadata(path).ok()?.is_dir() {
+        return sha256_directory(path);
+    }
+    sha256_file(path)
+}
+
+fn sha256_file(path: &Path) -> Option<String> {
     let output = Command::new("shasum")
         .args(["-a", "256"])
         .arg(path)
@@ -2350,6 +2438,90 @@ pub(crate) fn sha256(path: &Path) -> Option<String> {
                 .ok()
                 .filter(|output| output.status.success())
         })?;
+    String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .next()
+        .map(str::to_string)
+}
+
+fn sha256_directory(root: &Path) -> Option<String> {
+    fn collect(directory: &Path, entries: &mut Vec<PathBuf>) -> std::io::Result<()> {
+        for entry in fs::read_dir(directory)? {
+            let entry = entry?;
+            let path = entry.path();
+            let file_type = entry.file_type()?;
+            entries.push(path.clone());
+            if file_type.is_dir() {
+                collect(&path, entries)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn relative_name(root: &Path, path: &Path) -> Option<Vec<u8>> {
+        let relative = path.strip_prefix(root).ok()?;
+        let normalized = relative
+            .components()
+            .map(|component| component.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
+        Some(normalized.into_bytes())
+    }
+
+    let mut entries = Vec::new();
+    collect(root, &mut entries).ok()?;
+    entries.sort_by(|left, right| relative_name(root, left).cmp(&relative_name(root, right)));
+
+    let mut child = Command::new("sha256sum")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .or_else(|_| {
+            Command::new("shasum")
+                .args(["-a", "256"])
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+        })
+        .ok()?;
+    let mut input = child.stdin.take()?;
+    for path in entries {
+        let name = relative_name(root, &path)?;
+        let metadata = fs::symlink_metadata(&path).ok()?;
+        let file_type = metadata.file_type();
+        let name_len = u64::try_from(name.len()).ok()?;
+        if file_type.is_symlink() {
+            let target = fs::read_link(&path).ok()?.to_string_lossy().into_owned();
+            let target = target.as_bytes();
+            input.write_all(b"L").ok()?;
+            input.write_all(&name_len.to_be_bytes()).ok()?;
+            input.write_all(&name).ok()?;
+            input
+                .write_all(&u64::try_from(target.len()).ok()?.to_be_bytes())
+                .ok()?;
+            input.write_all(target).ok()?;
+        } else if file_type.is_dir() {
+            input.write_all(b"D").ok()?;
+            input.write_all(&name_len.to_be_bytes()).ok()?;
+            input.write_all(&name).ok()?;
+        } else if file_type.is_file() {
+            input.write_all(b"F").ok()?;
+            input.write_all(&name_len.to_be_bytes()).ok()?;
+            input.write_all(&name).ok()?;
+            input.write_all(&metadata.len().to_be_bytes()).ok()?;
+            let mut file = fs::File::open(&path).ok()?;
+            std::io::copy(&mut file, &mut input).ok()?;
+        } else {
+            return None;
+        }
+    }
+    drop(input);
+    let output = child.wait_with_output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
     String::from_utf8_lossy(&output.stdout)
         .split_whitespace()
         .next()
@@ -2374,7 +2546,7 @@ pub(crate) fn now_ns() -> u128 {
 
 fn usage(message: &str) -> ! {
     eprintln!(
-        "{message}\nusage: quench-bench <fixture.js>|--all [--suite v8-v7|jetstream3] [--jit] [--jit-diagnostics] [--fixed-work] [--quench PATH] [--quench-peer PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--checkpoint PATH|--resume PATH] [--out PATH]\n       quench-bench --preflight-only [--suite v8-v7|jetstream3] [--jit] [--jit-diagnostics] [engine options]\n       quench-bench --analyze REPORT [--out JSON]"
+        "{message}\nusage: quench-bench <fixture.js>|--all|--fixtures NAME,NAME,... [--suite v8-v7|jetstream3] [--jit] [--jit-diagnostics] [--fixed-work] [--quench PATH] [--quench-peer PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--checkpoint PATH|--resume PATH] [--out PATH]\n       quench-bench --preflight-only [--suite v8-v7|jetstream3] [--jit] [--jit-diagnostics] [engine options]\n       quench-bench --analyze REPORT [--out JSON]"
     );
     std::process::exit(2)
 }
@@ -2382,6 +2554,40 @@ fn usage(message: &str) -> ! {
 fn fail(message: &str) -> ! {
     eprintln!("{message}");
     std::process::exit(2)
+}
+
+#[cfg(test)]
+mod fixture_selection_tests {
+    use super::{fixture_selection_is_valid, Suite};
+
+    #[test]
+    fn jetstream_subset_accepts_only_unique_pinned_lane_fixtures() {
+        let selected = [
+            "HashSet-wasm",
+            "gcc-loops-wasm",
+            "quicksort-wasm",
+            "tsf-wasm",
+            "zlib-wasm",
+        ]
+        .map(|name| Suite::JetStream3.fixture(name))
+        .to_vec();
+        assert!(fixture_selection_is_valid(Suite::JetStream3, &selected));
+
+        let unknown = [Suite::JetStream3.fixture("unknown-wasm")];
+        assert!(!fixture_selection_is_valid(Suite::JetStream3, &unknown));
+        let duplicate = [
+            Suite::JetStream3.fixture("zlib-wasm"),
+            Suite::JetStream3.fixture("zlib-wasm"),
+        ];
+        assert!(!fixture_selection_is_valid(Suite::JetStream3, &duplicate));
+    }
+
+    #[test]
+    fn v8_qualification_still_requires_the_complete_fixture_set() {
+        let all = Suite::V8V7.fixtures();
+        assert!(fixture_selection_is_valid(Suite::V8V7, &all));
+        assert!(!fixture_selection_is_valid(Suite::V8V7, &all[..1]));
+    }
 }
 
 #[cfg(test)]
@@ -2681,6 +2887,7 @@ mod tests {
             },
             engines: Vec::new(),
             suite_inputs: Vec::new(),
+            selected_fixtures: vec![fixture_path.display().to_string()],
             fixtures: BTreeMap::new(),
             complete: false,
             qualification_ready: false,
@@ -2703,5 +2910,28 @@ mod tests {
         validate_resume(&loaded, &expected, &[PathBuf::from(&fixture_path)]);
         assert_eq!(loaded.fixtures.len(), 1);
         fs::remove_dir_all(directory).expect("remove checkpoint test directory");
+    }
+
+    #[test]
+    fn directory_artifacts_hash_sorted_relative_paths_and_contents() {
+        let directory = std::env::temp_dir().join(format!(
+            "quench-bench-directory-hash-{}-{}",
+            std::process::id(),
+            now_ns()
+        ));
+        fs::create_dir_all(directory.join("nested")).expect("create directory fixture");
+        fs::write(directory.join("z.js"), "last").expect("write first file");
+        fs::write(directory.join("nested/a.wasm"), "first").expect("write nested file");
+
+        let first = super::sha256(&directory).expect("hash directory fixture");
+        assert_eq!(first.len(), 64);
+        assert_eq!(first, super::sha256(&directory).expect("repeat hash"));
+        fs::write(directory.join("nested/a.wasm"), "changed").expect("change nested file");
+        assert_ne!(
+            first,
+            super::sha256(&directory).expect("hash changed fixture")
+        );
+
+        fs::remove_dir_all(directory).expect("remove directory fixture");
     }
 }

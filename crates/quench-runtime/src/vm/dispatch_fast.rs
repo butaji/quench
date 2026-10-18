@@ -5356,18 +5356,20 @@ fn lane_returns(instruction: WideInstruction) -> bool {
     instruction.result_flags() & !crate::bytecode::RETURN_REGISTER == 0
 }
 
-/// The register every direct memory access of `function` goes through, when
-/// there is exactly one.
+/// The register every compiled linear-memory access of `function` goes
+/// through, when there is exactly one.
 pub(super) fn memory_register(function: &Function) -> Option<u16> {
     let mut registers = function
         .code
         .iter()
         .map(|packed| decoded_instruction(function, *packed))
-        .filter(|instruction| {
-            MemoryLoad::from_direct_op(instruction.op()).is_some()
-                || MemoryStore::from_direct_op(instruction.op()).is_some()
-        })
-        .map(|instruction| instruction.b());
+        .filter_map(|instruction| match instruction.op() {
+            op if MemoryLoad::from_direct_op(op).is_some()
+                || MemoryStore::from_direct_op(op).is_some() => Some(instruction.b()),
+            Op::WasmMemorySize => Some(instruction.b()),
+            Op::WasmMemoryFill => Some(instruction.a()),
+            _ => None,
+        });
     let first = registers.next()?;
     registers.all(|register| register == first).then_some(first)
 }
