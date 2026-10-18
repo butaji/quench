@@ -2022,6 +2022,477 @@ mod tests {
         // argument buffers on both sides of the boundary.
         assert_eq!(compiled.native_entries(0), Some(1));
         assert_eq!(compiled.native_entries(1), Some(1));
+        assert_eq!(compiled.direct_reference_entries(0), Some(1));
+    }
+
+    #[test]
+    fn compiled_wasm_indirect_call_with_no_result_uses_compiled_callee() {
+        let module = crate::Engine::lower_wasm_module_with_tables(
+            "compiled-indirect-no-result",
+            [
+                crate::WasmFunctionBody {
+                    ty: crate::WasmCallableType::Embedded(crate::WasmSignature {
+                        params: vec![],
+                        results: vec![],
+                    }),
+                    locals: vec![],
+                    operators: vec![Operator::End].into_iter().map(Ok),
+                },
+                crate::WasmFunctionBody {
+                    ty: crate::WasmCallableType::Embedded(crate::WasmSignature {
+                        params: vec![],
+                        results: vec![crate::WasmType::I32],
+                    }),
+                    locals: vec![],
+                    operators: vec![
+                        Operator::I32Const { value: 0 },
+                        Operator::CallIndirect {
+                            type_index: 0,
+                            table_index: 0,
+                        },
+                        Operator::I32Const { value: 42 },
+                        Operator::End,
+                    ]
+                    .into_iter()
+                    .map(Ok),
+                },
+            ],
+            &crate::WasmTypes::from_functions([
+                wasmparser::FuncType::new([], []),
+                wasmparser::FuncType::new([], [wasmparser::ValType::I32]),
+            ]),
+            &[],
+            &[],
+            &[],
+            &[crate::WasmTable {
+                ty: wasmparser::TableType {
+                    element_type: wasmparser::RefType::FUNCREF,
+                    table64: false,
+                    initial: 1,
+                    maximum: Some(1),
+                    shared: false,
+                },
+                initializer: crate::WasmReferenceInitializer::Function(0).into(),
+            }],
+        )
+        .unwrap();
+        let mut vm = Vm::new(crate::SystemHost);
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        let instance = vm.instantiate_wasm_module(&module).unwrap();
+
+        assert_eq!(
+            vm.invoke_wasm(&instance, 1, &[]).unwrap(),
+            Some(crate::WasmValue::I32(42))
+        );
+        let program = vm
+            .programs
+            .find_shared(&module.program)
+            .expect("registered Wasm program");
+        let compiled = vm
+            .programs
+            .compiled(program)
+            .flatten()
+            .expect("indirect caller compiled");
+        assert_eq!(compiled.native_entries(0), Some(1));
+        assert_eq!(compiled.native_entries(1), Some(1));
+        assert_eq!(compiled.direct_reference_entries(0), Some(1));
+    }
+
+    #[test]
+    fn compiled_wasm_indirect_call_propagates_native_oob_trap() {
+        let signature = crate::WasmSignature {
+            params: vec![],
+            results: vec![crate::WasmType::I32],
+        };
+        let memarg = wasmparser::MemArg {
+            align: 2,
+            max_align: 2,
+            offset: 0,
+            memory: 0,
+        };
+        let module = crate::Engine::lower_wasm_module_with_tables(
+            "compiled-indirect-native-oob-trap",
+            [
+                crate::WasmFunctionBody {
+                    ty: crate::WasmCallableType::Embedded(signature.clone()),
+                    locals: vec![],
+                    operators: vec![
+                        Operator::I32Const { value: 65_536 },
+                        Operator::I32Load { memarg },
+                        Operator::End,
+                    ]
+                    .into_iter()
+                    .map(Ok),
+                },
+                crate::WasmFunctionBody {
+                    ty: crate::WasmCallableType::Embedded(signature),
+                    locals: vec![],
+                    operators: vec![
+                        Operator::I32Const { value: 0 },
+                        Operator::CallIndirect {
+                            type_index: 0,
+                            table_index: 0,
+                        },
+                        Operator::End,
+                    ]
+                    .into_iter()
+                    .map(Ok),
+                },
+            ],
+            &crate::WasmTypes::from_functions([wasmparser::FuncType::new(
+                [],
+                [wasmparser::ValType::I32],
+            )]),
+            &[],
+            &[crate::WasmMemory {
+                ty: wasmparser::MemoryType {
+                    initial: 1,
+                    maximum: Some(1),
+                    memory64: false,
+                    shared: false,
+                    page_size_log2: None,
+                },
+                import: None,
+            }],
+            &[],
+            &[crate::WasmTable {
+                ty: wasmparser::TableType {
+                    element_type: wasmparser::RefType::FUNCREF,
+                    table64: false,
+                    initial: 1,
+                    maximum: Some(1),
+                    shared: false,
+                },
+                initializer: crate::WasmReferenceInitializer::Function(0).into(),
+            }],
+        )
+        .unwrap();
+        let mut vm = Vm::new(crate::SystemHost);
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        let instance = vm.instantiate_wasm_module(&module).unwrap();
+
+        assert_eq!(
+            vm.invoke_wasm(&instance, 1, &[]).unwrap_err().wasm_trap(),
+            Some(crate::WasmTrap::OutOfBoundsMemory)
+        );
+        let program = vm
+            .programs
+            .find_shared(&module.program)
+            .expect("registered Wasm program");
+        let compiled = vm
+            .programs
+            .compiled(program)
+            .flatten()
+            .expect("indirect caller compiled");
+        assert_eq!(compiled.native_entries(0), Some(1));
+        assert_eq!(compiled.native_entries(1), Some(1));
+        assert_eq!(compiled.direct_reference_entries(0), Some(1));
+    }
+
+    #[test]
+    fn compiled_wasm_indirect_call_propagates_nested_callout_error() {
+        let signature = crate::WasmSignature {
+            params: vec![],
+            results: vec![crate::WasmType::I32],
+        };
+        let module = crate::Engine::lower_wasm_module_with_tables(
+            "compiled-indirect-nested-callout-error",
+            [
+                crate::WasmFunctionBody {
+                    ty: crate::WasmCallableType::Embedded(signature.clone()),
+                    locals: vec![],
+                    operators: vec![
+                        // The direct native target raises through its own
+                        // reference-call helper on the uninitialized slot.
+                        Operator::I32Const { value: 1 },
+                        Operator::CallIndirect {
+                            type_index: 0,
+                            table_index: 0,
+                        },
+                        Operator::End,
+                    ]
+                    .into_iter()
+                    .map(Ok),
+                },
+                crate::WasmFunctionBody {
+                    ty: crate::WasmCallableType::Embedded(signature),
+                    locals: vec![],
+                    operators: vec![
+                        Operator::I32Const { value: 0 },
+                        Operator::CallIndirect {
+                            type_index: 0,
+                            table_index: 0,
+                        },
+                        Operator::End,
+                    ]
+                    .into_iter()
+                    .map(Ok),
+                },
+            ],
+            &crate::WasmTypes::from_functions([wasmparser::FuncType::new(
+                [],
+                [wasmparser::ValType::I32],
+            )]),
+            &[],
+            &[],
+            &[],
+            &[crate::WasmTable {
+                ty: wasmparser::TableType {
+                    element_type: wasmparser::RefType::FUNCREF,
+                    table64: false,
+                    initial: 1,
+                    maximum: Some(1),
+                    shared: false,
+                },
+                initializer: crate::WasmReferenceInitializer::Function(0).into(),
+            }],
+        )
+        .unwrap();
+        let mut vm = Vm::new(crate::SystemHost);
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        let instance = vm.instantiate_wasm_module(&module).unwrap();
+
+        assert_eq!(
+            vm.invoke_wasm(&instance, 1, &[]).unwrap_err().wasm_trap(),
+            Some(crate::WasmTrap::UndefinedElement)
+        );
+        let program = vm
+            .programs
+            .find_shared(&module.program)
+            .expect("registered Wasm program");
+        let compiled = vm
+            .programs
+            .compiled(program)
+            .flatten()
+            .expect("indirect caller and target compiled");
+        assert_eq!(compiled.direct_reference_entries(0), Some(1));
+    }
+
+    #[test]
+    fn compiled_wasm_indirect_call_uses_foreign_instance_memory() {
+        let signature = crate::WasmSignature {
+            params: vec![],
+            results: vec![crate::WasmType::I32],
+        };
+        let memarg = wasmparser::MemArg {
+            align: 2,
+            max_align: 2,
+            offset: 0,
+            memory: 0,
+        };
+        let module = crate::Engine::lower_wasm_module_with_tables(
+            "compiled-indirect-foreign-instance-memory",
+            [
+                crate::WasmFunctionBody {
+                    ty: crate::WasmCallableType::Embedded(signature.clone()),
+                    locals: vec![],
+                    operators: vec![
+                        Operator::I32Const { value: 0 },
+                        Operator::I32Load { memarg },
+                        Operator::End,
+                    ]
+                    .into_iter()
+                    .map(Ok),
+                },
+                crate::WasmFunctionBody {
+                    ty: crate::WasmCallableType::Embedded(signature),
+                    locals: vec![],
+                    operators: vec![
+                        Operator::I32Const { value: 0 },
+                        Operator::CallIndirect {
+                            type_index: 0,
+                            table_index: 0,
+                        },
+                        Operator::End,
+                    ]
+                    .into_iter()
+                    .map(Ok),
+                },
+            ],
+            &crate::WasmTypes::from_functions([wasmparser::FuncType::new(
+                [],
+                [wasmparser::ValType::I32],
+            )]),
+            &[],
+            &[crate::WasmMemory {
+                ty: wasmparser::MemoryType {
+                    initial: 1,
+                    maximum: Some(1),
+                    memory64: false,
+                    shared: false,
+                    page_size_log2: None,
+                },
+                import: None,
+            }],
+            &[],
+            &[crate::WasmTable {
+                ty: wasmparser::TableType {
+                    element_type: wasmparser::RefType::FUNCREF,
+                    table64: false,
+                    initial: 1,
+                    maximum: Some(1),
+                    shared: false,
+                },
+                initializer: crate::WasmReferenceInitializer::Function(0).into(),
+            }],
+        )
+        .unwrap();
+        let mut vm = Vm::new(crate::SystemHost);
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        let first = vm.instantiate_wasm_module(&module).unwrap();
+        let second = vm.instantiate_wasm_module(&module).unwrap();
+        let first_env = vm.root_value(first.environment).unwrap();
+        let second_env = vm.root_value(second.environment).unwrap();
+        assert_ne!(first_env, second_env);
+        let first_memory = vm.wasm_memory(&first, 0).unwrap();
+        let second_memory = vm.wasm_memory(&second, 0).unwrap();
+        vm.wasm_memory_fill(first_memory, 0, 0x11, 4).unwrap();
+        vm.wasm_memory_fill(second_memory, 0, 0x22, 4).unwrap();
+
+        // Point the second instance's table at the first instance's function.
+        // It has the same ProgramId and signature, but must retain its own env.
+        let first_function = vm.wasm_function(&first, 0).unwrap();
+        let second_table = vm.wasm_table(&second, 0).unwrap();
+        vm.wasm_table_fill(second_table, 0, first_function, 1)
+            .unwrap();
+        assert_eq!(
+            vm.invoke_wasm(&second, 1, &[]).unwrap(),
+            Some(crate::WasmValue::I32(0x1111_1111))
+        );
+
+        let program = vm
+            .programs
+            .find_shared(&module.program)
+            .expect("registered Wasm program");
+        let compiled = vm
+            .programs
+            .compiled(program)
+            .flatten()
+            .expect("indirect caller and target compiled");
+        assert_eq!(compiled.native_entries(0), Some(1));
+        assert_eq!(compiled.native_entries(1), Some(1));
+        assert_eq!(compiled.direct_reference_entries(0), Some(0));
+    }
+
+    #[test]
+    fn compiled_wasm_indirect_call_diagnostics_attribute_native_and_fallback_sites() {
+        let signature = crate::WasmSignature {
+            params: vec![],
+            results: vec![crate::WasmType::I32],
+        };
+        let module = crate::Engine::lower_wasm_module_with_elements(
+            "compiled-indirect-call-site-diagnostics",
+            [
+                crate::WasmFunctionBody {
+                    ty: crate::WasmCallableType::Embedded(signature.clone()),
+                    locals: vec![],
+                    operators: vec![Operator::I32Const { value: 42 }, Operator::End]
+                        .into_iter()
+                        .map(Ok),
+                },
+                crate::WasmFunctionBody {
+                    ty: crate::WasmCallableType::Embedded(signature.clone()),
+                    locals: vec![],
+                    operators: vec![Operator::Unreachable, Operator::End]
+                        .into_iter()
+                        .map(Ok),
+                },
+                crate::WasmFunctionBody {
+                    ty: crate::WasmCallableType::Embedded(signature.clone()),
+                    locals: vec![],
+                    operators: vec![
+                        Operator::I32Const { value: 0 },
+                        Operator::CallIndirect {
+                            type_index: 0,
+                            table_index: 0,
+                        },
+                        Operator::End,
+                    ]
+                    .into_iter()
+                    .map(Ok),
+                },
+                crate::WasmFunctionBody {
+                    ty: crate::WasmCallableType::Embedded(signature),
+                    locals: vec![],
+                    operators: vec![
+                        Operator::I32Const { value: 1 },
+                        Operator::CallIndirect {
+                            type_index: 0,
+                            table_index: 0,
+                        },
+                        Operator::End,
+                    ]
+                    .into_iter()
+                    .map(Ok),
+                },
+            ],
+            &crate::WasmTypes::from_functions([wasmparser::FuncType::new(
+                [],
+                [wasmparser::ValType::I32],
+            )]),
+            &[],
+            &[],
+            &[],
+            &[crate::WasmTable {
+                ty: wasmparser::TableType {
+                    element_type: wasmparser::RefType::FUNCREF,
+                    table64: false,
+                    initial: 2,
+                    maximum: Some(2),
+                    shared: false,
+                },
+                initializer: crate::WasmReferenceInitializer::Null.into(),
+            }],
+            &[crate::WasmElement {
+                mode: crate::WasmElementMode::Active {
+                    table: 0,
+                    offset: crate::WasmValue::I32(0).into(),
+                },
+                element_type: wasmparser::RefType::FUNCREF,
+                items: vec![
+                    crate::WasmReferenceInitializer::Function(0),
+                    crate::WasmReferenceInitializer::Function(1),
+                ]
+                .into(),
+            }],
+        )
+        .unwrap();
+        let mut vm = Vm::new(crate::SystemHost);
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        let instance = vm.instantiate_wasm_module(&module).unwrap();
+        let program = vm
+            .programs
+            .find_shared(&module.program)
+            .expect("registered Wasm program");
+        let env = vm
+            .root_value(instance.environment)
+            .expect("live Wasm instance environment");
+        assert!(vm.install_compiled_diagnostics_for_test(program, env));
+
+        assert_eq!(
+            vm.invoke_wasm(&instance, 2, &[]).unwrap(),
+            Some(crate::WasmValue::I32(42))
+        );
+        let compiled = vm
+            .programs
+            .compiled(program)
+            .flatten()
+            .expect("diagnostic Wasm program");
+        assert!(compiled.reference_call_site_counts().unwrap().iter().any(
+            |(function, _, total, native, fallback)| {
+                *function == 2 && *total == 1 && *native == 1 && *fallback == 0
+            }
+        ));
+
+        assert_eq!(
+            vm.invoke_wasm(&instance, 3, &[]).unwrap_err().wasm_trap(),
+            Some(crate::WasmTrap::Unreachable)
+        );
+        assert!(compiled.reference_call_site_counts().unwrap().iter().any(
+            |(function, _, total, native, fallback)| {
+                *function == 3 && *total == 1 && *native == 0 && *fallback == 1
+            }
+        ));
     }
 
     #[test]
