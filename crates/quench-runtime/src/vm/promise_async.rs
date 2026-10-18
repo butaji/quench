@@ -80,11 +80,11 @@ impl<H: Host> Vm<H> {
         yielded: bool,
     ) -> Result<(), JsError> {
         let source = if self.host.observes_promise_lifecycle()
-            && !self.realm.promise.records.contains_key(&source)
+            && !self.is_promise(source)
             && !self.is_object_like(source)
         {
             self.with_call_roots([Some(source), Some(promise), generator].into_iter().flatten(), |vm| {
-                let parent = vm.realm.promise.records.get(&promise).and_then(|record| record.host_context);
+                let parent = vm.promise_record(promise).and_then(|record| record.host_context);
                 let awaited = vm.promise_object_with_parent(parent)?;
                 vm.with_call_roots([awaited], |vm| vm.promise_resolve_value(p, awaited, source))?;
                 Ok(awaited)
@@ -121,7 +121,7 @@ impl<H: Host> Vm<H> {
         let next = if self.host.observes_promise_lifecycle() {
             self.with_call_roots([fulfilled, rejected, source, promise], |vm| {
                 vm.promise_object_with_parent(
-                    vm.realm.promise.records.get(&source).and_then(|record| record.host_context),
+                    vm.promise_record(source).and_then(|record| record.host_context),
                 )
             })?
         } else {
@@ -131,7 +131,7 @@ impl<H: Host> Vm<H> {
         // after creating the reaction's observable resource.
         // `source` is a Promise, or a primitive standing for the fulfilled one an `await`
         // never materializes.
-        let (state, result) = match self.realm.promise.records.get(&source) {
+        let (state, result) = match self.promise_record(source) {
             Some(record) => (record.state, record.result),
             None if !self.is_object_like(source) => (PromiseState::Fulfilled, source),
             None => return Err(JsError("await source is not a Promise".into())),
@@ -141,13 +141,10 @@ impl<H: Host> Vm<H> {
             on_fulfilled: fulfilled,
             on_rejected: rejected,
             next,
-            execution_context: self.host.capture_job_context(self.realm.promise.records.get(&next).and_then(|record| record.host_context)),
+            execution_context: self.host.capture_job_context(self.promise_record(next).and_then(|record| record.host_context)),
         };
         if state == PromiseState::Pending {
-            self.realm
-                .promise
-                .records
-                .get_mut(&source)
+            self.promise_record_mut(source)
                 .expect("await source Promise record exists")
                 .reactions
                 .push(reaction);

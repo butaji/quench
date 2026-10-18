@@ -708,6 +708,10 @@ impl<H: Host> Vm<H> {
                 });
                 self.write(f, i.result_register(), v);
             }
+            Op::MakeLiteralTemplate => {
+                let v = self.literal_template(p, f, i.literal_template_index())?;
+                self.write(f, i.result_register(), v);
+            }
             Op::GetField => {
                 let lookup = i.field_lookup().ok_or_else(|| {
                     JsError::validation("invalid nested field lookup encoding".into())

@@ -960,3 +960,54 @@ fn weak_map_pending_fan_in_releases_every_value_and_resets_between_collections()
     assert!(values.iter().all(|value| !heap.is_live(*value)));
     assert!(maps.iter().all(|map| heap.is_live(*map)));
 }
+
+#[test]
+fn wide_environment_clones_store_only_the_slots_they_do_not_share() {
+    let mut heap = Heap::new();
+    let width = crate::heap::SPARSE_CLONE_MIN_SLOTS + 8;
+    let kept = heap.alloc(Cell::String("kept".into()));
+    let environment = |heap: &mut Heap, slots: EnvironmentSlots| {
+        heap.alloc(Cell::Environment {
+            parent: Value::NULL,
+            function: 0,
+            slots,
+            scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+                program: Some(0),
+                root_eval_scope: false,
+                binding_site_pc: None,
+                dynamic_bindings: Vec::new().into(),
+                with_objects: Box::default(),
+            }),
+        })
+    };
+    let mut values = (0..width).map(|slot| Value::number(slot as f64)).collect::<Vec<_>>();
+    values[width - 1] = kept;
+    let owner = environment(&mut heap, values.into());
+    let first = heap.clone_environment_slots(owner, &[3], &[5]).unwrap();
+    // A length and owner, then the fresh and reset slots, each with its index.
+    assert_eq!((first.len(), first.0.len()), (width, 6));
+    let first = environment(&mut heap, first);
+    assert_eq!(heap.environment_slot(first, 3), Some(Value::number(3.0)));
+    assert_eq!(heap.environment_slot(first, 5), Some(Value::UNDEFINED));
+    assert_eq!(heap.environment_slot(first, 7), Some(Value::number(7.0)));
+    assert_eq!(heap.environment_slot(first, width), None);
+    // Writes reach whichever environment owns the slot.
+    *heap.environment_slot_mut(first, 3).unwrap() = Value::number(30.0);
+    *heap.environment_slot_mut(first, 7).unwrap() = Value::number(70.0);
+    assert_eq!(heap.environment_slot(owner, 3), Some(Value::number(3.0)));
+    assert_eq!(heap.environment_slot(owner, 7), Some(Value::number(70.0)));
+    // A copy of a copy shares the first copy's own slots and the original's others.
+    let second = heap.clone_environment_slots(first, &[], &[]).unwrap();
+    assert_eq!(second.0.len(), 6);
+    let second = environment(&mut heap, second);
+    assert_eq!(heap.environment_slot_owner(second, 3), Some(first));
+    assert_eq!(heap.environment_slot_owner(second, 7), Some(owner));
+    assert_eq!(heap.environment_slot(second, 3), Some(Value::number(30.0)));
+    // The copies keep the original and its values alive.
+    heap.collect_with_object_roots([second], |_, _, _, _, _| {}, None, true);
+    assert_eq!(heap.environment_slot(second, width - 1), Some(kept));
+    assert!(matches!(heap.get(kept), Some(Cell::String(_))));
+    // A narrow environment's copy stays dense.
+    let narrow = environment(&mut heap, vec![Value::TRUE; 2].into());
+    assert_eq!(heap.clone_environment_slots(narrow, &[0], &[]).unwrap().0.len(), 2);
+}
