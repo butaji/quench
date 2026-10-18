@@ -25,6 +25,7 @@ mod capture_profile;
 mod class;
 mod early;
 mod syntax_message;
+mod frame_registers;
 pub(crate) mod liveness;
 mod locals;
 mod numeric;
@@ -1579,8 +1580,8 @@ impl<'a> Compiler<'a> {
     /// (`capture_layout::dynamic_name_scopes`), of every function private member access
     /// resolves through, and of the root; the rest keep their direct bindings, as no lookup
     /// reaches their captured names.
-    fn resolve_name_bindings(&mut self, functions: &mut [BcFunction]) {
-        let reachable = capture_layout::dynamic_name_scopes(functions, &self.atoms);
+    fn resolve_name_bindings(&mut self, functions: &mut [BcFunction], dynamic: &[bool]) {
+        let reachable = capture_layout::dynamic_name_scopes(functions, dynamic);
         for (id, function) in functions.iter_mut().enumerate() {
             let Some(deferred) = self.deferred_name_bindings.remove(&(id as u32)) else {
                 continue;
@@ -2088,11 +2089,9 @@ impl<'a> Compiler<'a> {
         // Functions the compiler synthesizes (class constructors and initializers) may have
         // grown the reservation.
         functions.shrink_to_fit();
-        self.resolve_name_bindings(&mut functions);
-        capture_layout::apply(&mut functions, &self.atoms);
-        for function in &mut functions {
-            Self::elide_unobservable_tdz(function, &self.atoms);
-        }
+        let dynamic = capture_layout::dynamic_name_resolution(&functions, &self.atoms);
+        self.resolve_name_bindings(&mut functions, &dynamic);
+        capture_layout::apply(&mut functions, &self.atoms, &dynamic);
         if self.mode == SpecializationMode::Enabled {
             Self::apply_rewrites(
                 &mut functions,
@@ -2116,13 +2115,14 @@ impl<'a> Compiler<'a> {
             if function.dispatch == DispatchClass::Numeric {
                 let live = liveness::analyze(
                     function,
-                    &self.method_sites,
+                    self.method_sites.as_slice(),
                     &self.field_sites,
                     &self.superinstructions,
                 );
                 numeric::apply(function, live.as_deref());
             }
-            Self::specialize_plain_local_operations(function, &self.atoms);
+            Self::specialize_plain_local_operations(function, &self.superinstructions);
+            frame_registers::promote(function, &self.superinstructions, |atom| self.atoms.get(atom));
             if function
                 .code
                 .iter()
@@ -2130,16 +2130,16 @@ impl<'a> Compiler<'a> {
             {
                 let live = liveness::analyze(
                     function,
-                    &self.method_sites,
+                    self.method_sites.as_slice(),
                     &self.field_sites,
                     &self.superinstructions,
                 );
                 numeric::apply_plain_local_stores(function, live.as_deref());
             }
         }
-        let register_roots = liveness::derive(
+        liveness::mark_register_roots(
             &mut functions,
-            &self.method_sites,
+            self.method_sites.as_slice(),
             &self.field_sites,
             &self.superinstructions,
         );
@@ -2155,7 +2155,6 @@ impl<'a> Compiler<'a> {
         for function in &mut functions {
             function.code.shrink_to_fit();
             function.wide.shrink_to_fit();
-            function.handlers.shrink_to_fit();
             function.source_positions.shrink_to_fit();
         }
         let (mut method_sites, mut method_arguments) =
@@ -2197,7 +2196,6 @@ impl<'a> Compiler<'a> {
             object_sites: self.object_sites,
             regexp_literal_sites: self.regexp_literal_sites,
             superinstructions: self.superinstructions,
-            register_roots,
         };
         #[cfg(feature = "profile-aggregate")]
         debug_assert!(crate::profile::instruction_word_domains_fit(&program));
@@ -2563,7 +2561,9 @@ impl<'a> Compiler<'a> {
         let annex_b_collisions = self.annex_b_collisions(body);
         let arguments_slot = if let Some(slot) = parameter_arguments_slot {
             Some(slot)
-        } else if parent.is_none() {
+        } else if parent.is_none() || options.class_initializer {
+            // Field initializers and static blocks cannot name `arguments` (an early error),
+            // so they have no binding to materialize.
             None
         } else {
             if parameter_shadows_arguments {
@@ -2726,6 +2726,10 @@ impl<'a> Compiler<'a> {
                 .map(|name| function.owner.atom(name))
                 .collect()
         });
+        // Grown by doubling, these would keep their slack beside the syntax tree until the
+        // whole program has compiled.
+        function.code.shrink_to_fit();
+        function.source_positions.shrink_to_fit();
         let name_bindings = function.name_bindings();
         let undefined_register = function.used_undefined_register();
         let environment_clones = function.per_site_environment_clones();
@@ -2746,7 +2750,7 @@ impl<'a> Compiler<'a> {
             } else {
                 0
             },
-            parameter_atoms,
+            parameter_atoms: parameter_atoms.into(),
             rest: options.rest_override
                 || options.defaults.is_some_and(|value| value.rest.is_some()),
             is_async: options.async_function,
@@ -2764,17 +2768,17 @@ impl<'a> Compiler<'a> {
             simple_parameters,
             strict: root_strict,
             locals: function.locals.len() as u16,
-            local_atoms: function.locals.clone(),
+            local_atoms: function.locals.clone().into(),
             environment_atoms,
             selective_capture_slots: None,
-            local_registers: function.promoted_local_layout(),
+            local_registers: function.promoted_local_layout().into(),
             inherited_with_scope: options.with_depth != 0,
-            lexical_atoms,
+            lexical_atoms: lexical_atoms.into(),
             global_declarations: None,
             name_bindings,
-            binding_sites: function.binding_sites,
-            source_positions: function.source_positions,
-            environment_clones,
+            binding_sites: function.binding_sites.into(),
+            source_positions: function.source_positions.into(),
+            environment_clones: environment_clones.into(),
             code: function.code,
             wide: function.wide,
             registers: function.max_reg,
@@ -2786,8 +2790,8 @@ impl<'a> Compiler<'a> {
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
             call_plan: Default::default(),
-            handlers: function.handlers,
-            register_root_offset: crate::bytecode::NO_REGISTER_ROOT_MAP,
+            handlers: function.handlers.into(),
+            register_roots: Default::default(),
             undefined_register,
             parameter_registers: None,
             initial_register: Default::default(),
@@ -2865,25 +2869,11 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    /// Drops the TDZ resets of slots whose uninitialized state no access can observe
-    /// (`unobservable_tdz_slots`), so their loads and stores need no TDZ check.
-    fn elide_unobservable_tdz(function: &mut BcFunction, atoms: &CompilerAtoms<'_>) {
-        let slots = function.unobservable_tdz_slots(|atom| atoms.get(atom as usize));
-        if !slots.contains(&true) {
-            return;
-        }
-        for instruction in &mut function.code {
-            if instruction.op() == Op::InitializeTdz
-                && slots.get(instruction.local_slot()) == Some(&true)
-            {
-                *instruction = Instr::new(Op::Nop, 0, 0, 0, 0);
-            }
-        }
-    }
-
-    fn specialize_plain_local_operations(function: &mut BcFunction, atoms: &CompilerAtoms<'_>) {
-        let plain_slots = function.plain_local_slots(|atom| atoms.get(atom as usize));
-
+    fn specialize_plain_local_operations(
+        function: &mut BcFunction,
+        superinstructions: &[crate::bytecode::Superinstruction],
+    ) {
+        let plain_slots = function.plain_local_slots(superinstructions);
         for instruction in &mut function.code {
             match instruction.op() {
                 Op::LoadLocal | Op::StoreLocal
