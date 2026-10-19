@@ -267,6 +267,20 @@ impl<T> RecordSpace<T> {
         unsafe { (*self.base.as_ptr().add(id as usize)).assume_init_mut() }
     }
 
+    /// Whether storing `stored` into record `id` logs it (`remember`): a reference into a
+    /// record the last collection left marked and no store has logged since. Any other
+    /// store passes the barrier without effect.
+    #[inline(always)]
+    pub(super) fn store_logs(&self, id: RecordId, stored: Value) -> bool {
+        if stored.heap_index().is_none() {
+            return false;
+        }
+        let (block_index, record_index) = Self::split_id(id);
+        // SAFETY: a live id belongs to an initialized block.
+        let block = unsafe { self.blocks.get_unchecked(block_index) };
+        block.marked[record_index / OCCUPANCY_WORD_BITS] & (1_u64 << (record_index % OCCUPANCY_WORD_BITS)) != 0
+    }
+
     #[inline(always)]
     pub(super) fn remember(&mut self, id: RecordId) {
         let (block_index, record_index) = Self::split_id(id);
