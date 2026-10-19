@@ -454,7 +454,7 @@ impl<H: Host> Vm<H> {
         frame.with_base = self.with_stack.len();
         if self.with_scope_entered {
             self.with_stack
-                .extend(self.captured_with_objects_for_function(parent, function, p.kind));
+                .extend(self.captured_with_objects_for_function(parent, function.inherited_with_scope, p.kind));
         }
         // A `new.target` set for this activation has no observable binding to land in.
         if self.take_construction_target(context).is_some() {
@@ -544,7 +544,7 @@ impl<H: Host> Vm<H> {
         frame.with_base = self.with_stack.len();
         if self.with_scope_entered {
             self.with_stack
-                .extend(self.captured_with_objects_for_function(parent, function, p.kind));
+                .extend(self.captured_with_objects_for_function(parent, function.inherited_with_scope, p.kind));
         }
         if id == super::ROOT_FUNCTION_ID {
             self.bind_module_imports(&mut frame)?;
@@ -625,7 +625,7 @@ impl<H: Host> Vm<H> {
         frame.captured = false;
         frame.with_base = self.with_stack.len();
         self.with_stack
-            .extend(self.captured_with_objects_for_function(parent, function, p.kind));
+            .extend(self.captured_with_objects_for_function(parent, function.inherited_with_scope, p.kind));
         let new_target = self.take_construction_target(context).unwrap_or(Value::UNDEFINED);
         self.initialize_activation_bindings(
             &mut frame,
@@ -1882,11 +1882,11 @@ impl<H: Host> Vm<H> {
     pub(super) fn captured_with_objects_for_function(
         &self,
         env: Value,
-        function: &crate::bytecode::Function,
+        inherited_with_scope: bool,
         program_kind: crate::bytecode::ProgramKind,
     ) -> Vec<Value> {
         if !self.with_scope_entered
-            || !function.inherited_with_scope && program_kind != crate::bytecode::ProgramKind::Eval
+            || !inherited_with_scope && program_kind != crate::bytecode::ProgramKind::Eval
         {
             return Vec::new();
         }

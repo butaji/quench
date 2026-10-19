@@ -238,8 +238,8 @@ impl<H: Host> Vm<H> {
             B::ArgumentsObject => self
                 .object_data(value)
                 .is_some_and(Object::is_arguments_object),
-            B::AsyncFunction | B::GeneratorFunction => match cell {
-                Some(Cell::Function {
+            B::AsyncFunction | B::GeneratorFunction => match self.heap.function(value) {
+                Some(FunctionRecord {
                     kind:
                         FunctionKind::User(program, function)
                         | FunctionKind::NumericUser(program, function),
@@ -249,10 +249,11 @@ impl<H: Host> Vm<H> {
                     .get(*program)
                     .and_then(|program| {
                         program.functions.get(*function as usize).map(|function| {
+                            let header = function.header();
                             if brand == B::AsyncFunction {
-                                function.is_async
+                                header.is_async
                             } else {
-                                function.is_generator
+                                header.is_generator
                             }
                         })
                     })
@@ -666,6 +667,7 @@ impl<H: Host> Vm<H> {
             Some(Cell::Map { .. }) => "#<Map>".into(),
             Some(Cell::Set { .. }) => "#<Set>".into(),
             Some(cell) => format!("[object {}]", Self::diagnostic_class_name(cell)),
+            None if self.heap.is_function_value(value) => "[object Function]".into(),
             None => "[object Unknown]".into(),
         }
     }
@@ -732,7 +734,7 @@ impl<H: Host> Vm<H> {
             Cell::Set { .. } => "Set",
             Cell::Date { .. } => "Date",
             Cell::RegExp { .. } => "RegExp",
-            Cell::Function { .. } => "Function",
+            Cell::Function(_) => "Function",
             Cell::Error(_) => "Error",
             _ => "Object",
         }
@@ -1306,6 +1308,24 @@ impl<H: Host> Vm<H> {
         Ok(accepted.as_bool().expect("Reflect.set returns a boolean"))
     }
 
+    /// `Reflect.set(object, name, value)` for a string key the host spells, without
+    /// allocating the key: the same `[[Set]]` that `Reflect.set` makes after `ToPropertyKey`.
+    pub(crate) fn set_named_property_rooted(
+        &mut self,
+        object: RootId,
+        name: &str,
+        value: RootId,
+    ) -> Result<bool, JsError> {
+        let object = self.embedding_value(object)?;
+        let value = self.embedding_value(value)?;
+        let program = self.embedding_program()?;
+        if !self.is_object_like(object) {
+            return Err(self.type_error(&program, "Reflect target is not an object".into()));
+        }
+        let atom = self.intern_atom(name);
+        self.set_property_with_receiver(&program, object, atom, value, object)
+    }
+
     pub(crate) fn define_data_property_rooted(
         &mut self,
         object: RootId,
@@ -1353,6 +1373,60 @@ impl<H: Host> Vm<H> {
         Ok(self.pending_lazy_data_property(holder, key, listener, index))
     }
 
+    /// `define_data_property_rooted` for a string key the host spells, without allocating
+    /// the key where it can: an absent key of an extensible plain object is a shape addition
+    /// with the given attributes, exactly as `[[DefineOwnProperty]]` adds it.
+    pub(crate) fn define_named_data_property_rooted(
+        &mut self,
+        object: RootId,
+        name: &str,
+        value: RootId,
+        writable: bool,
+        enumerable: bool,
+        configurable: bool,
+    ) -> Result<bool, JsError> {
+        let object = self.embedding_value(object)?;
+        let value = self.embedding_value(value)?;
+        let program = self.embedding_program()?;
+        let atom = self.intern_atom(name);
+        let key = super::property_key::PropertyKey::string(atom);
+        let absent_plain = self.plain_named_key(atom)
+            && !self.descriptors.contains_key(&(object, key))
+            && self.heap.ordinary_object(object).is_some_and(|data| {
+                data.is_extensible()
+                    && !data.is_module_namespace()
+                    && data.deferred_module().is_none()
+                    && self.property_shape_slot(data.shape(), key).is_none()
+            });
+        if absent_plain {
+            let attributes = super::PropertyAttributes {
+                writable,
+                enumerable,
+                configurable,
+                accessor: false,
+                getter: None,
+                setter: None,
+            };
+            self.set_property_with_attributes(object, atom, value, attributes)?;
+            return Ok(true);
+        }
+        let key = self.atom_string(atom);
+        let key = self.to_property_key(&program, key)?;
+        self.define_own_property_record(
+            &program,
+            object,
+            key,
+            super::object_descriptors::PropertyDescriptorRecord {
+                value: Some(value),
+                writable: Some(writable),
+                enumerable: Some(enumerable),
+                configurable: Some(configurable),
+                getter: None,
+                setter: None,
+            },
+        )
+    }
+
     pub(crate) fn materialize_lazy_data_property_rooted(
         &mut self,
         holder: RootId,
@@ -1362,6 +1436,16 @@ impl<H: Host> Vm<H> {
         let program = self.embedding_program()?;
         let key = PropertyKey::string(self.intern_atom(name));
         self.materialize_lazy_data_property(&program, holder, key)
+    }
+
+    pub(crate) fn is_pending_lazy_data_property_rooted(
+        &mut self,
+        holder: RootId,
+        name: &str,
+    ) -> Result<bool, JsError> {
+        let holder = self.embedding_value(holder)?;
+        let key = PropertyKey::string(self.intern_atom(name));
+        Ok(self.is_pending_lazy_data_property(holder, key))
     }
 
     pub(crate) fn define_lazy_data_properties_rooted(

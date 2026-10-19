@@ -68,11 +68,10 @@ enum AbstractValue {
     /// Two or more values flow to this formal.
     Many,
 
-    /// Exactly one value, as stated, flows to this formal.  The `Value`s that
-    /// can appear here are exactly: `Value`s defined by `Inst`s, plus the
-    /// `Value`s defined by the formals of the entry block.  Note that this is
-    /// exactly the set of `Value`s that are *not* tracked in the solver below
-    /// (see `SolverState`).
+    /// Exactly one value, as stated, flows to this formal: a `Value` defined
+    /// by an `Inst` or by the entry block's formals (the `Value`s the solver
+    /// below does not track, see `SolverState`), or (Quench) a tracked formal
+    /// that itself takes `Many` values.
     One(Value /*Group B*/),
 
     /// No value flows to this formal.
@@ -303,8 +302,18 @@ pub fn do_remove_constant_phis(func: &mut Function, domtree: &mut DominatorTree)
                     // to be found in the solver state.  If not, then it's a
                     // real value defining point (not a phi), in which case
                     // return it itself.
+                    //
+                    // Quench: a formal passed back to itself adds no value, and a formal
+                    // that several values flow to is still one value where it is passed,
+                    // its own. So a loop header's formal that only its entry value and its
+                    // own back edge reach is that entry value, a formal or not (the
+                    // trivial phi of Braun et al.): each edge passing the entry value runs
+                    // after that value's latest definition, and an edge passing the formal
+                    // itself keeps what the formal held since.
                     let actual_absval = match actual {
+                        BlockArg::Value(actual) if *actual == *formal => AbstractValue::None,
                         BlockArg::Value(actual) => match state.maybe_get(*actual) {
+                            Some(AbstractValue::Many) => AbstractValue::One(*actual),
                             Some(pt) => *pt,
                             None => AbstractValue::One(*actual),
                         },

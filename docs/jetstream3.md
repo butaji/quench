@@ -63,8 +63,14 @@ producing comparisons.
 top-level `jit_mode` (`no-jit` or `jit`) and each engine's version, effective
 arguments/environment, JIT mode, and mode proof. Checkpoints are bound to the
 mode, so resume a run with the same `--jit` setting.
-Quench's proof records that `--jit` selected the shared VM's compiled mode; it
-does not currently count whether a benchmark function entered native code.
+Quench's proof records that `--jit` selected the shared VM's compiled mode.
+The normal report records mode selection rather than per-function entry counts.
+For diagnostic runs, add `--jit-diagnostics`. This enables opt-in per-function
+JavaScript and Wasm tier counters in Quench's captured stderr; it adds overhead
+and is excluded from score qualification. JavaScript records the source and
+function names, candidate entries, numeric entries, promotion, compile attempts
+and time, mapped code bytes, and native entries. Wasm diagnostics retain their
+existing callout and mapped-code counters.
 
 A fixture is a JetStream test name. `--all` selects the lane's full test list;
 `--fixtures NAME,NAME,...` selects a pinned subset for paired measurement and

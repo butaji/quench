@@ -22,22 +22,22 @@ pub(super) fn is_ecma_whitespace_character(character: char) -> bool {
 
 impl<H: Host> Vm<H> {
     pub(super) fn call_target(&self, callee: Value) -> Result<CallTarget, JsError> {
-        match self.heap.get(callee) {
-            Some(Cell::Function {
+        match self.heap.function(callee) {
+            Some(FunctionRecord {
                 kind: FunctionKind::User(program, id),
                 env,
                 ..
             }) => Ok(CallTarget::User(*program, *id, *env)),
-            Some(Cell::Function {
+            Some(FunctionRecord {
                 kind: FunctionKind::NumericUser(program, id),
                 env,
                 ..
             }) => Ok(CallTarget::NumericUser(*program, *id, *env)),
-            Some(Cell::Function {
+            Some(FunctionRecord {
                 kind: FunctionKind::Native(native),
                 ..
             }) => Ok(CallTarget::Native(*native)),
-            other => self.non_callable_target(callee, other),
+            None => self.non_callable_target(callee, self.heap.get(callee)),
         }
     }
 
@@ -59,19 +59,19 @@ impl<H: Host> Vm<H> {
         &self,
         callee: Value,
     ) -> Option<(super::ProgramId, u32, Value, bool)> {
-        match self.heap.get(callee) {
-            Some(Cell::Function {
+        match self.heap.function(callee) {
+            Some(FunctionRecord {
                 kind: FunctionKind::User(program, id),
                 env,
-                object,
+                realm,
                 ..
-            }) if object.realm == self.realm.globals => Some((*program, *id, *env, false)),
-            Some(Cell::Function {
+            }) if *realm == self.realm.globals => Some((*program, *id, *env, false)),
+            Some(FunctionRecord {
                 kind: FunctionKind::NumericUser(program, id),
                 env,
-                object,
+                realm,
                 ..
-            }) if object.realm == self.realm.globals => Some((*program, *id, *env, true)),
+            }) if *realm == self.realm.globals => Some((*program, *id, *env, true)),
             _ => None,
         }
     }
@@ -96,10 +96,10 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         args: &[Value],
     ) -> Option<Value> {
-        let Some(Cell::Function {
+        let Some(FunctionRecord {
             kind: FunctionKind::Native(native),
             ..
-        }) = self.heap.get(callee)
+        }) = self.heap.function(callee)
         else {
             return None;
         };

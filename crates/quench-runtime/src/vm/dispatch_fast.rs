@@ -419,6 +419,10 @@ enum CallEntry {
     /// Its body is one returning `GetField` (`returning_kind` of its first instruction),
     /// whose hit a call answers without activating it (`lane_call_read`).
     Reads,
+    /// It needs a VM frame (`CallPlan::registers_only` fails, or its view has no
+    /// activation): a call takes `lane_frame_call`. Only the cache and the call's own
+    /// out-of-line form see such a target (`lane_script_target` leaves it out).
+    Frame,
     /// Its body reads a field of `this` or a parameter, then an element of that by a
     /// parameter, and returns it (`element_read_body`), which a call answers likewise.
     ReadsElement,
@@ -516,8 +520,26 @@ const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
     forwarded_method: NO_FORWARDED_METHOD,
 };
 
-/// Entries of the script call cache, indexed by the callee's heap index.
+/// Entries of the script call cache, in sets of `SCRIPT_TARGET_WAYS` that a hash of the
+/// callee's heap index picks (`script_target_set`).
 const SCRIPT_CALL_TARGETS: usize = 256;
+/// Entries per set: the one most recently resolved first, then the one before it, so two
+/// callees whose indices share a set both stay resolved.
+const SCRIPT_TARGET_WAYS: usize = 2;
+/// The Fibonacci hashing multiplier, 2^32 divided by the golden ratio: it spreads the dense
+/// indices a record family hands out, which index bits alone would map to sets by stride.
+const SCRIPT_TARGET_HASH: u32 = 0x9E37_79B9;
+const _: () = assert!(SCRIPT_CALL_TARGETS.is_power_of_two() && SCRIPT_TARGET_WAYS == 2);
+
+/// The first entry of `callee`'s set in the script call cache, when it names a heap cell;
+/// the set's other entry follows it (`| 1`).
+#[inline(always)]
+fn script_target_set(callee: Value) -> Option<usize> {
+    let hashed = callee.heap_index()?.wrapping_mul(SCRIPT_TARGET_HASH);
+    // The top bits of the product, as many as index an entry; the lowest names the way.
+    let index = (hashed >> (u32::BITS - SCRIPT_CALL_TARGETS.trailing_zeros())) as usize;
+    Some(index & (SCRIPT_CALL_TARGETS - SCRIPT_TARGET_WAYS))
+}
 
 /// What a constructor's initializer body (`ScriptCallTarget::initializes`) made of a receiver
 /// whose adds all hit: the callee's receiver template under `prototype`, which the callee and
@@ -629,6 +651,15 @@ impl Default for LaneStack {
 }
 
 impl LaneStack {
+    /// Record `target` first in its cache set `set`, the entry it displaces moving second.
+    /// Entry pointers (`Vm::script_call_entry`) are not held across a resolution.
+    fn remember_script_target(&mut self, set: usize, target: ScriptCallTarget) {
+        if self.script_targets[set].callee != target.callee {
+            self.script_targets[set | 1] = self.script_targets[set];
+        }
+        self.script_targets[set] = target;
+    }
+
     /// Forget resolved call targets, as the general loop's call target cache is reset.
     pub(super) fn clear_script_targets(&mut self) {
         *self.script_targets = [EMPTY_SCRIPT_CALL_TARGET; SCRIPT_CALL_TARGETS];
@@ -1469,8 +1500,8 @@ lane_handler! {
 }
 
 lane_handler! {
-    /// `lane_set_index` past a record array, appending to a dense array at its length, or
-    /// filling one of its holes.
+    /// `lane_set_index` past a record array, appending to a dense array at its length,
+    /// filling one of its holes, or a plain symbol-keyed write.
     #[inline(never)]
     fn lane_set_index_slot<>(cx, r, ip, i, view) {
         let (object, key, value) = (r.get(i.b), r.get(i.c), r.get(i.a));
@@ -1478,9 +1509,12 @@ lane_handler! {
         if !vm.try_replace_dense_element(object, key, value)
             && !vm.try_append_dense_element(object, key, value)
             && !vm.try_fill_dense_hole(object, key, value)
+            && !vm.try_plain_symbol_set(object, key, value)
         {
             return exit(ip);
         }
+        // Appending an element or adding a property can allocate.
+        note_allocation(vm);
         next!(cx, r, following(ip), view)
     }
 }
@@ -1671,6 +1705,34 @@ lane_handler! {
     /// `MakeObject2`: a two-property literal allocates and runs no guest code.
     fn lane_make_object2<>(cx, r, ip, i, view) {
         let value = lane_object_pair(cx, r, i);
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `MakeObjectLiteral`: an ordinary object of the literal site's shape holding the
+    /// record's window of registers, as the general loop makes it.
+    fn lane_make_object_literal<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        // SAFETY: the context's program outlives the lane run.
+        let shape = vm.object_site_shape(unsafe { &*(*cx).code }, i.imm() as usize);
+        // SAFETY: `lane_fields_fit` admitted the window inside the register file, and no
+        // other reference into it is live while the object is allocated.
+        let properties = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(i.b)), usize::from(i.c)) };
+        let value = vm.heap.alloc_object_with_properties(vm.object_proto, shape, properties);
+        note_allocation(vm);
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `MakeArray`: a fresh array of the record's length in holes (`Vm::hole_array`).
+    fn lane_make_array<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let value = vm.hole_array(i.imm() as usize);
+        note_allocation(vm);
         r.set(i.a, value);
         next!(cx, r, following(ip), view)
     }
@@ -2446,7 +2508,7 @@ lane_handler! {
         let vm = unsafe { vm(cx) };
         let polymorphic = vm.field_site_polymorphic(i.c);
         let adds = vm.field_site_adds(i.c);
-        let handler: Option<Handler> = if adds && !polymorphic && vm.field_cache_atom_eligible(i.imm()) {
+        let handler: Option<Handler> = if adds && !polymorphic && vm.field_add_atom_eligible(i.imm()) {
             Some(if THIS { lane_set_this_field_add::<H> } else { lane_set_object_field_add::<H> })
         } else if adds || polymorphic {
             Some(if THIS { lane_set_this_field::<H> } else { lane_set_object_field::<H> })
@@ -4389,10 +4451,15 @@ impl<H: Host> Vm<H> {
     /// replaces it, which no activation makes.
     #[inline(always)]
     fn script_call_entry(&self, callee: Value) -> Option<*const ScriptCallTarget> {
-        let index = callee.heap_index()? as usize & (SCRIPT_CALL_TARGETS - 1);
-        let cached = &self.lane_stack.script_targets[index];
-        (cached.callee == callee && cached.generation == self.lane_stack.generation)
-            .then_some(cached as *const ScriptCallTarget)
+        let set = script_target_set(callee)?;
+        let generation = self.lane_stack.generation;
+        let holds = |cached: &ScriptCallTarget| cached.callee == callee && cached.generation == generation;
+        let first = &self.lane_stack.script_targets[set];
+        if holds(first) {
+            return Some(first as *const ScriptCallTarget);
+        }
+        let second = &self.lane_stack.script_targets[set | 1];
+        holds(second).then_some(second as *const ScriptCallTarget)
     }
 
     /// Resolve and cache `callee` as a frameless lane call target: a user function of the
@@ -4404,29 +4471,42 @@ impl<H: Host> Vm<H> {
         code: &ResidualProgram,
         callee: Value,
     ) -> Option<ScriptCallTarget> {
-        let index = callee.heap_index()? as usize & (SCRIPT_CALL_TARGETS - 1);
+        let set = script_target_set(callee)?;
         let (program, function, env, numeric) = self.same_realm_script_target(callee)?;
         if function == super::ROOT_FUNCTION_ID || program != self.active_program {
             return None;
         }
         let body = code.functions.get(function as usize)?;
+        let plan = body.call_plan(code);
         // A numeric body's own frame constructs nothing in place
         // (`LaneContext::script_constructs`), which its activation would inherit from the
         // caller, so only one that constructs nothing runs frameless; its other records are
         // the lane's, with or without a frame.
-        if numeric
-            && body
-                .code
-                .iter()
-                .any(|packed| decoded_instruction(body, *packed).op() == Op::Construct)
+        let view = if !plan.registers_only
+            || numeric
+                && body
+                    .code
+                    .iter()
+                    .any(|packed| decoded_instruction(body, *packed).op() == Op::Construct)
         {
-            return None;
-        }
-        let plan = body.call_plan(code);
-        if !plan.registers_only {
-            return None;
-        }
-        let view = self.lane_view_any(program, function)?;
+            None
+        } else {
+            self.lane_view_any(program, function)
+        };
+        let Some(view) = view else {
+            // The function needs a frame, which the target records so its calls take one
+            // without resolving it again.
+            let target = ScriptCallTarget {
+                callee,
+                generation: self.lane_stack.generation,
+                function,
+                env,
+                entry: CallEntry::Frame,
+                ..EMPTY_SCRIPT_CALL_TARGET
+            };
+            self.lane_stack.remember_script_target(set, target);
+            return Some(target);
+        };
         // A frameless activation's function has no environment of its own.
         let capture = match self.environment_capture_slots(env, false, 0) {
             Some((slots, None)) => slots
@@ -4469,7 +4549,7 @@ impl<H: Host> Vm<H> {
                 None => NO_FORWARDED_METHOD,
             },
         };
-        self.lane_stack.script_targets[index] = target;
+        self.lane_stack.remember_script_target(set, target);
         Some(target)
     }
 
@@ -4574,6 +4654,9 @@ lane_handler! {
         };
         // SAFETY: as `Vm::script_call_entry`; a read resolves no target and collects nothing.
         let target = unsafe { &*target };
+        if target.entry == CallEntry::Frame {
+            sibling!(lane_frame_call::<H>, r, ip, Carried::SCRIPT)
+        }
         if target.forwards() {
             sibling!(lane_script_call_keeping::<H>, r, ip, Carried::SCRIPT)
         }
@@ -4621,8 +4704,8 @@ lane_handler! {
         // A site calling a native takes the native handler from now on, which hands any other
         // callee back.
         if matches!(
-            vm.heap.get(callee),
-            Some(Cell::Function {
+            vm.heap.function(callee),
+            Some(FunctionRecord {
                 kind: FunctionKind::Native(_),
                 ..
             })
@@ -4696,8 +4779,8 @@ lane_handler! {
         let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
         if (returns && vm.lane_stack.activations.is_empty())
             || !matches!(
-                vm.heap.get(callee),
-                Some(Cell::Function {
+                vm.heap.function(callee),
+                Some(FunctionRecord {
                     kind: FunctionKind::Native(Native::Array),
                     ..
                 })
@@ -4800,8 +4883,8 @@ lane_handler! {
     fn lane_native_call<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         if !matches!(
-            vm.heap.get(r.get(i.b)),
-            Some(Cell::Function {
+            vm.heap.function(r.get(i.b)),
+            Some(FunctionRecord {
                 kind: FunctionKind::Native(_) | FunctionKind::NumericUser(..),
                 ..
             })
@@ -4811,8 +4894,8 @@ lane_handler! {
         // A numeric function the lane activates without a frame
         // (`Vm::resolve_script_call_target`) takes the script call.
         if matches!(
-            vm.heap.get(r.get(i.b)),
-            Some(Cell::Function {
+            vm.heap.function(r.get(i.b)),
+            Some(FunctionRecord {
                 kind: FunctionKind::NumericUser(..),
                 ..
             })
@@ -4821,8 +4904,8 @@ lane_handler! {
             sibling!(lane_script_call::<H>, r, ip, Carried::SCRIPT)
         }
         if matches!(
-            vm.heap.get(r.get(i.b)),
-            Some(Cell::Function {
+            vm.heap.function(r.get(i.b)),
+            Some(FunctionRecord {
                 kind: FunctionKind::Native(Native::FunctionCall),
                 ..
             })
@@ -4838,8 +4921,8 @@ lane_handler! {
             return exit(ip);
         }
         let receiver = r.get(i.c);
-        let value = match vm.heap.get(r.get(i.b)) {
-            Some(Cell::Function {
+        let value = match vm.heap.function(r.get(i.b)) {
+            Some(FunctionRecord {
                 kind: FunctionKind::Native(Native::ArrayPush),
                 ..
             }) => {
@@ -4852,7 +4935,7 @@ lane_handler! {
                 };
                 vm.array_push_dense(receiver, args)
             }
-            Some(Cell::Function {
+            Some(FunctionRecord {
                 kind: FunctionKind::Native(Native::ArrayPop),
                 ..
             }) => vm.array_pop_dense(receiver),
@@ -4907,12 +4990,12 @@ fn lane_call_native<H: Host>(
     let vm = unsafe { vm(cx) };
     let callee = r.get(i.b);
     // A native the lane admits, or a numeric function, which its own executor runs.
-    let native = match vm.heap.get(callee) {
-        Some(Cell::Function {
+    let native = match vm.heap.function(callee) {
+        Some(FunctionRecord {
             kind: FunctionKind::Native(native),
             ..
         }) if native.runs_from_lane() => Some(*native),
-        Some(Cell::Function {
+        Some(FunctionRecord {
             kind: FunctionKind::NumericUser(..),
             ..
         }) => None,
@@ -5170,8 +5253,8 @@ fn lane_forwarded_construction<H: Host>(
         None => lane_cached_field(cx, code, function, method.apply.0, method.apply.1)?,
     };
     if !matches!(
-        vm.heap.get(apply),
-        Some(Cell::Function {
+        vm.heap.function(apply),
+        Some(FunctionRecord {
             kind: FunctionKind::Native(Native::FunctionApply),
             ..
         })
@@ -5220,7 +5303,7 @@ fn forwarded_resolution<H: Host>(
     }
     let prototype = vm.heap.object_record(plan.prototype)?;
     let (method_slot, found) = data_slot(prototype, method.method.0)?;
-    let Some(Cell::Function { object, .. }) = vm.heap.get(function) else {
+    let Some(FunctionRecord { object, .. }) = vm.heap.function(function) else {
         return None;
     };
     if found != function || vm.shape_slot(object.shape(), method.apply.0).is_some() {
@@ -5256,7 +5339,7 @@ fn lane_resolved_forwarding<H: Host>(
     let prototype = vm.heap.object_record(plan.prototype)?;
     // SAFETY: the plan's proof keeps the prototype's shape, which holds the slot.
     let function = unsafe { vm.heap.property_get_shaped(prototype, usize::from(resolution.method_slot)) }?;
-    let Some(Cell::Function { object, .. }) = vm.heap.get(function) else {
+    let Some(FunctionRecord { object, .. }) = vm.heap.function(function) else {
         return None;
     };
     if object.shape() != resolution.method_shape || object.proto() != resolution.apply_holder {
@@ -5266,8 +5349,8 @@ fn lane_resolved_forwarding<H: Host>(
     // SAFETY: the epoch the plan holds under keeps the holder's shape, which holds the slot.
     let apply = unsafe { vm.heap.property_get_shaped(holder, usize::from(resolution.apply_slot)) }?;
     if !matches!(
-        vm.heap.get(apply),
-        Some(Cell::Function {
+        vm.heap.function(apply),
+        Some(FunctionRecord {
             kind: FunctionKind::Native(Native::FunctionApply),
             ..
         })
@@ -5310,8 +5393,8 @@ fn lane_forward_activation<H: Host>(
     }
     let vm = unsafe { vm(cx) };
     if !matches!(
-        vm.heap.get(r.get(i.b)),
-        Some(Cell::Function {
+        vm.heap.function(r.get(i.b)),
+        Some(FunctionRecord {
             kind: FunctionKind::Native(Native::FunctionApply),
             ..
         })
@@ -5392,6 +5475,7 @@ fn lane_script_target<H: Host>(cx: *mut LaneContext<H>, callee: Value) -> Option
     }
     vm.script_call_target(callee)
         .or_else(|| vm.resolve_script_call_target(unsafe { &*(*cx).code }, callee))
+        .filter(|target| target.entry != CallEntry::Frame)
 }
 
 /// Activate `target`, which keeps no passed values (callers route those to
@@ -5524,7 +5608,7 @@ fn lane_initialize_fields<H: Host>(
     for store in code.functions[function as usize].this_field_stores() {
         let atom = store.imm();
         let parameter = store.a();
-        if !vm.field_cache_atom_eligible(atom)
+        if !vm.field_add_atom_eligible(atom)
             || !vm.primary_field_add_hit(code, this, atom, argument(parameter), store.c())
         {
             return Some((this, false));
@@ -6653,6 +6737,8 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::LoadName => Some(lane_load_name_first::<H>),
         Op::MakeObject2 => Some(lane_make_object2::<H>),
         Op::MakeClosure => Some(lane_make_closure::<H>),
+        Op::MakeObjectLiteral => Some(lane_make_object_literal::<H>),
+        Op::MakeArray => Some(lane_make_array::<H>),
         Op::CreateRegExpLiteral => Some(lane_regexp_literal::<H>),
         Op::CallForwardingArguments => Some(lane_forward_call::<H>),
         Op::SuperConstArrayObject2 => Some(lane_const_array_object2::<H>),
@@ -6803,7 +6889,7 @@ pub(super) fn lane_fields_fit(instruction: WideInstruction, function: &Function)
             }
             layout => !layout.is_register_field() || value < registers,
         });
-    let window_fits = op != Op::WasmFillRegisters
+    let window_fits = !matches!(op, Op::WasmFillRegisters | Op::MakeObjectLiteral)
         || u32::from(instruction.b()) + u32::from(instruction.c()) <= u32::from(registers);
     let pair_fits = op.immediate_layout() != ImmediateLayout::RegisterPair || {
         let (first, second) = ImmediateLayout::register_pair(instruction.imm());

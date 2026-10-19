@@ -1,0 +1,25 @@
+# max RSS KiB, 5 evicted runs each, static x86_64 4 vCPU, 2026-10-18: qn-r1b = bolted retrained v2-cloud-c2 (memory-first defaults), qn-r1 = same unbolted, qjs = QuickJS 2026-06-04
+crypto qn-r1b  3100 3176 3268 3268 3268
+crypto qn-r1  3740 3688 3688 3688 3688
+crypto qjs  3328 3524 3400 3512 3404
+deltablue qn-r1b  3044 3036 3080 3164 3036
+deltablue qn-r1  3292 3288 3544 3160 3380
+deltablue qjs  3632 3656 3712 3716 3616
+earley-boyer qn-r1b  7804 7680 7572 7808 7676
+earley-boyer qn-r1  8040 8040 7912 8040 7912
+earley-boyer qjs  16444 16820 16656 16444 16660
+navier-stokes qn-r1b  4112 4112 4112 4112 4112
+navier-stokes qn-r1  4332 4332 4344 4332 4332
+navier-stokes qjs  4920 5016 4996 4968 4868
+raytrace qn-r1b  2928 2928 2928 3032 2928
+raytrace qn-r1  3300 3300 3300 3300 3300
+raytrace qjs  3256 3288 3332 3412 3304
+regexp qn-r1b  7200 7200 7200 7200 7088
+regexp qn-r1  7520 7512 7500 7536 7308
+regexp qjs  6736 6736 6736 6624 6560
+richards qn-r1b  2612 2612 2612 2612 2612
+richards qn-r1  3000 3000 3000 2904 3000
+richards qjs  3384 3320 3320 3268 3424
+splay qn-r1b  39664 39692 39664 39664 39748
+splay qn-r1  39804 39732 39804 39804 39928
+splay qjs  146976 146980 147008 147004 146912

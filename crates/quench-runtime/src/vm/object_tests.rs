@@ -123,7 +123,7 @@ fn method_cache_program(mut program: ResidualProgram) -> ResidualProgram {
         .map(|site| (site.atom, site.cache, Vec::new(), site.receiver_path))
         .collect::<Vec<_>>();
     crate::compile::liveness::mark_register_roots(
-        &mut program.functions,
+        program.functions.iter_mut().map(|function| &mut **function),
         methods.as_slice(),
         &program.field_sites,
         &program.superinstructions,
@@ -1137,7 +1137,7 @@ fn only_arrow_closures_keep_their_creator_s_implicit_bindings() {
     let environment_bindings = |vm: &mut Vm<RecordingHost>, name: &str| {
         let atom = vm.intern_atom(name);
         let closure = vm.own_property(vm.realm.globals, atom).unwrap();
-        let Some(Cell::Function { env, .. }) = vm.heap.get(closure) else {
+        let Some(crate::heap::FunctionRecord { env, .. }) = vm.heap.function(closure) else {
             panic!("{name} is a closure");
         };
         let Some(Cell::Environment { scope, .. }) = vm.heap.get(*env) else {

@@ -71,15 +71,27 @@ impl FlatUnits {
     /// ASCII `text` in its canonical storage.
     fn ascii(text: &str) -> Self {
         debug_assert!(text.is_ascii());
-        if text.len() <= SHORT_ASCII_CAPACITY {
+        Self::ascii_with(text.len(), |bytes| bytes.copy_from_slice(text.as_bytes()))
+    }
+
+    /// The canonical storage of `length` ASCII bytes that `fill` writes in place: short text
+    /// inline, longer text straight into its shared allocation, with no staging copy.
+    fn ascii_with(length: usize, fill: impl FnOnce(&mut [u8])) -> Self {
+        if length <= SHORT_ASCII_CAPACITY {
             let mut bytes = [0; SHORT_ASCII_CAPACITY];
-            bytes[..text.len()].copy_from_slice(text.as_bytes());
+            fill(&mut bytes[..length]);
+            debug_assert!(bytes.is_ascii());
             return Self::Short(ShortAscii {
-                length: text.len() as u8,
+                length: length as u8,
                 bytes,
             });
         }
-        Self::Ascii(Rc::from(text))
+        // SAFETY: zeroed bytes are initialized `u8`s.
+        let mut storage = unsafe { Rc::<[u8]>::new_zeroed_slice(length).assume_init() };
+        fill(Rc::get_mut(&mut storage).expect("a new allocation is unshared"));
+        debug_assert!(storage.is_ascii());
+        // SAFETY: `str` and `[u8]` share a layout, and ASCII bytes are UTF-8.
+        Self::Ascii(unsafe { Rc::from_raw(Rc::into_raw(storage) as *const str) })
     }
 
     fn view(&self) -> Units<'_> {
@@ -341,8 +353,11 @@ fn is_ascii_unit(unit: u16) -> bool {
 /// `units` in their canonical storage.
 fn flat_units(units: &[u16]) -> FlatUnits {
     if units.iter().all(|unit| is_ascii_unit(*unit)) {
-        let text: String = units.iter().map(|unit| char::from(*unit as u8)).collect();
-        FlatUnits::ascii(&text)
+        FlatUnits::ascii_with(units.len(), |bytes| {
+            for (byte, unit) in bytes.iter_mut().zip(units) {
+                *byte = *unit as u8;
+            }
+        })
     } else {
         FlatUnits::Wide(Rc::from(units))
     }
@@ -485,6 +500,10 @@ fn checked_string_length(current: usize, additional: usize) -> Result<usize, Str
         .ok_or(StringBuildError::InvalidLength)
 }
 
+/// Parts a builder holds before it allocates: a replacement's prefix, substitution and
+/// rest, or a short join, need no allocation beside the result.
+const BUILDER_INLINE_PARTS: usize = 4;
+
 struct StringPart {
     units: FlatUnits,
     range: Range<usize>,
@@ -494,14 +513,14 @@ struct StringPart {
 /// canonical storage. Overflow stops storage growth, but callers still
 /// perform all replacement effects before finish reports the error.
 pub(super) struct JsStringBuilder {
-    parts: Vec<StringPart>,
+    parts: smallvec::SmallVec<[StringPart; BUILDER_INLINE_PARTS]>,
     length: Result<usize, StringBuildError>,
 }
 
 impl Default for JsStringBuilder {
     fn default() -> Self {
         Self {
-            parts: Vec::new(),
+            parts: smallvec::SmallVec::new(),
             length: Ok(0),
         }
     }
@@ -547,29 +566,38 @@ impl JsStringBuilder {
     pub(super) fn finish(self) -> Result<JsString, StringBuildError> {
         let length = self.length?;
         if self.parts.iter().all(|part| part.units.is_ascii()) {
-            let mut output = Vec::new();
-            output
-                .try_reserve_exact(length)
-                .map_err(|_| StringBuildError::Allocation)?;
-            for part in &self.parts {
-                if let Units::Ascii(bytes) = part.units.view().slice(part.range.clone()) {
-                    output.extend_from_slice(bytes);
+            return Ok(JsString::from_flat(FlatUnits::ascii_with(length, |output| {
+                let mut written = 0;
+                for part in &self.parts {
+                    if let Units::Ascii(bytes) = part.units.view().slice(part.range.clone()) {
+                        output[written..written + bytes.len()].copy_from_slice(bytes);
+                        written += bytes.len();
+                    }
                 }
-            }
-            let text = std::str::from_utf8(&output).expect("ASCII units are UTF-8");
-            return Ok(JsString::from_flat(FlatUnits::ascii(text)));
+            })));
         }
-        let mut output = Vec::new();
-        output
-            .try_reserve_exact(length)
-            .map_err(|_| StringBuildError::Allocation)?;
+        // SAFETY: zeroed units are initialized `u16`s.
+        let mut storage = unsafe { Rc::<[u16]>::new_zeroed_slice(length).assume_init() };
+        let output = Rc::get_mut(&mut storage).expect("a new allocation is unshared");
+        let mut written = 0;
         for part in &self.parts {
-            part.units
-                .view()
-                .slice(part.range.clone())
-                .extend_into(&mut output);
+            let units = part.units.view().slice(part.range.clone());
+            let target = &mut output[written..written + units.len()];
+            match units {
+                Units::Ascii(bytes) => {
+                    for (unit, byte) in target.iter_mut().zip(bytes) {
+                        *unit = u16::from(*byte);
+                    }
+                }
+                Units::Wide(units) => target.copy_from_slice(units),
+            }
+            written += units.len();
         }
-        Ok(JsString::from_units(&output))
+        // Wide parts can contribute only ASCII units; such text is stored narrow.
+        if storage.iter().all(|unit| is_ascii_unit(*unit)) {
+            return Ok(JsString::from_units(&storage));
+        }
+        Ok(JsString::from_flat(FlatUnits::Wide(storage)))
     }
 }
 

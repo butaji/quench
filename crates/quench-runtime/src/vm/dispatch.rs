@@ -192,7 +192,7 @@ impl<H: Host> Vm<H> {
             || !owner
                 .functions
                 .get(function as usize)
-                .is_some_and(|function| function.call_plan(p).in_loop)
+                .is_some_and(|function| function.call_plan(owner).in_loop)
         {
             return None;
         }
@@ -237,12 +237,12 @@ impl<H: Host> Vm<H> {
         let window = unsafe { &*window };
         let this = window.first().copied().unwrap_or(Value::UNDEFINED);
         let apply_arguments;
-        let arguments = match self.heap.get(callee) {
-            Some(Cell::Function {
+        let arguments = match self.heap.function(callee) {
+            Some(FunctionRecord {
                 kind: FunctionKind::Native(Native::FunctionCall),
                 ..
             }) => window.get(1..).unwrap_or_default(),
-            Some(Cell::Function {
+            Some(FunctionRecord {
                 kind: FunctionKind::Native(Native::FunctionApply),
                 ..
             }) => match window.get(1).copied().unwrap_or(Value::UNDEFINED) {
@@ -683,12 +683,7 @@ impl<H: Host> Vm<H> {
                 }
             }
             Op::MakeArray => {
-                let v = self.heap.alloc(Cell::Array {
-                    object: crate::heap::ArrayObject::new(
-                        Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
-                        Rc::new(vec![Value::DELETED; i.array_length()]),
-                    ),
-                });
+                let v = self.hole_array(i.array_length());
                 self.write(f, i.result_register(), v);
             }
             Op::MakeConstArray => {
@@ -1083,7 +1078,7 @@ impl<H: Host> Vm<H> {
             Op::DefineField => {
                 let object = self.read(f, i.register_b());
                 let value = self.read(f, i.register_a());
-                self.define_class_field(p, object, PropertyKey::string(i.atom_index()), value)?;
+                self.define_field_cached(p, object, i.atom_index(), value, i.cache_site_index())?;
             }
             Op::DefineComputedField => {
                 let object = self.read(f, i.register_b());
@@ -1273,12 +1268,12 @@ impl<H: Host> Vm<H> {
                 debug_assert_eq!(caller.program, self.active_program);
                 let direct_eval = i.direct_eval()
                     && matches!(
-                        self.heap.get(callee),
-                        Some(Cell::Function {
+                        self.heap.function(callee),
+                        Some(FunctionRecord {
                             kind: FunctionKind::Native(Native::Eval),
-                            object,
+                            realm,
                             ..
-                        }) if object.realm == self.realm.globals
+                        }) if *realm == self.realm.globals
                     );
                 let previous_binding_site_pc = if direct_eval {
                     Some(std::mem::replace(
@@ -1309,10 +1304,10 @@ impl<H: Host> Vm<H> {
                     let program = self.programs.get(program_id).ok_or_else(|| {
                         JsError::validation("missing Wasm tail-call program".into())
                     })?;
-                    let realm = match self.heap.get(callee) {
-                        Some(Cell::Function { object, .. }) => object.realm,
-                        _ => self.realm.globals,
-                    };
+                    let realm = self
+                        .heap
+                        .function(callee)
+                        .map_or(self.realm.globals, |function| function.realm);
                     let result = self.with_call_roots(
                         [callee, this].into_iter().chain(args.iter().copied()),
                         |vm| {

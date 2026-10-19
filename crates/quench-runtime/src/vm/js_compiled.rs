@@ -129,10 +129,18 @@ fn compile_numeric(program: &ResidualProgram, function_id: u32) -> Option<JsJitA
                 {
                     return None;
                 }
-                let (left, right) = (
-                    operand_value(instruction.operand_b(), &registers)?,
-                    operand_value(instruction.operand_c(), &registers)?,
-                );
+                let left = operand_value(
+                    &mut builder,
+                    program,
+                    instruction.operand_b(),
+                    &registers,
+                )?;
+                let right = operand_value(
+                    &mut builder,
+                    program,
+                    instruction.operand_c(),
+                    &registers,
+                )?;
                 let value = match (instruction.op(), instruction.binary_operator()) {
                     (Op::Binary, op) if op == BinaryOperator::Addition as u32 => {
                         builder.ins().fadd(left, right)
@@ -535,14 +543,23 @@ fn eligible(function: &Function, program: &crate::bytecode::ResidualProgram) -> 
 }
 
 fn operand_value(
+    builder: &mut FunctionBuilder<'_>,
+    program: &ResidualProgram,
     operand: crate::bytecode::Operand,
     registers: &[Option<ir::Value>],
 ) -> Option<ir::Value> {
-    if operand.kind() != Some(OperandKind::Register) {
-        return None;
+    match operand.kind()? {
+        OperandKind::Register => registers
+            .get(usize::from(operand.register_index()?))?
+            .as_ref()
+            .copied(),
+        OperandKind::Constant => {
+            let Constant::Number(value) = program.constants.get(usize::from(operand.payload()))?
+            else {
+                return None;
+            };
+            Some(builder.ins().f64const(Ieee64::with_bits(value.to_bits())))
+        }
+        OperandKind::Field | OperandKind::Local => None,
     }
-    registers
-        .get(usize::from(operand.register_index()?))?
-        .as_ref()
-        .copied()
 }
