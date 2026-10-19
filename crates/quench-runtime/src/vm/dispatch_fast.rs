@@ -5082,14 +5082,17 @@ fn lane_construct_keeping_activation<H: Host>(
     let target = lane_script_target(cx, callee)
         .filter(|target| target.constructs && target.forwards())
         .ok_or(None)?;
-    let Some(this) = lane_planned_receiver(vm, callee) else {
+    // One look at the plan serves the receiver and the forwarding: a plan the receiver's
+    // allocation leaves records no resolution yet.
+    let plan = holding_construct_plan(vm, callee);
+    let Some(this) = lane_planned_receiver(vm, callee, plan.as_ref()) else {
         return Err(Some(exit(ip)));
     };
     // Allocating the receiver can make a collection due.
     note_allocation(vm);
     let arguments = ActivationArguments::Window(i.c);
     if let Some(&method) = vm.lane_stack.forwarded_methods.get(target.forwarded_method as usize)
-        && let Some(forwarded) = lane_resolved_forwarding(cx, callee)
+        && let Some(forwarded) = lane_resolved_forwarding(cx, callee, plan.as_ref())
             .or_else(|| lane_forwarded_construction(cx, target, method, this))
     {
         let forwarder = SkippedForwarder {
@@ -5212,11 +5215,16 @@ fn forwarded_resolution<H: Host>(
 /// The method a forwarding constructor's construction activates, from `callee`'s plan's
 /// recorded resolution (`ConstructPlan::forwarded`): the values in the recorded slots, the
 /// method still of the recorded shape and prototype, `apply` still the intrinsic, and a
-/// frameless target. `None` resolves afresh (`lane_forwarded_construction`).
+/// frameless target, under `plan`, `callee`'s holding plan. `None` resolves afresh
+/// (`lane_forwarded_construction`).
 #[inline(always)]
-fn lane_resolved_forwarding<H: Host>(cx: *mut LaneContext<H>, callee: Value) -> Option<ScriptCallTarget> {
+fn lane_resolved_forwarding<H: Host>(
+    cx: *mut LaneContext<H>,
+    callee: Value,
+    plan: Option<&ConstructPlan>,
+) -> Option<ScriptCallTarget> {
     let vm = unsafe { vm(cx) };
-    let plan = holding_construct_plan(vm, callee)?;
+    let plan = plan?;
     let resolution = plan.forwarded?;
     let prototype = vm.heap.object_record(plan.prototype)?;
     // SAFETY: the plan's proof keeps the prototype's shape, which holds the slot.
@@ -5545,12 +5553,16 @@ fn holding_construct_plan<H: Host>(vm: &Vm<H>, callee: Value) -> Option<Construc
 }
 
 /// The receiver `Vm::inline_construct_receiver` allocates for a constructor that forwards its
-/// arguments (`lane_script_construct_keeping`): from `callee`'s plan of no fields while it
-/// holds, else from the template, which leaves that plan. `lane_script_construct` sends a
+/// arguments (`lane_script_construct_keeping`): from `callee`'s holding plan `plan` where it
+/// has no fields, else from the template, which leaves that plan. `lane_script_construct` sends a
 /// forwarding target here before it tests `ScriptCallTarget::initializes`, so a callee's plan
 /// is only ever this one or `lane_initialize_fields`'s.
-fn lane_planned_receiver<H: Host>(vm: &mut Vm<H>, callee: Value) -> Option<Value> {
-    if let Some(plan) = holding_construct_plan(vm, callee).filter(|plan| plan.fields == 0) {
+fn lane_planned_receiver<H: Host>(
+    vm: &mut Vm<H>,
+    callee: Value,
+    plan: Option<&ConstructPlan>,
+) -> Option<Value> {
+    if let Some(plan) = plan.filter(|plan| plan.fields == 0) {
         return Some(vm.heap.alloc_object_with_properties(plan.prototype, plan.shape, &[]));
     }
     let template = vm.inline_construct_template(callee)?;
