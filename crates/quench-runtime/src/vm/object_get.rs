@@ -525,7 +525,7 @@ impl<H: Host> Vm<H> {
             }
             let shape = data.shape();
             if let Some(slot) = self.property_shape_slot(shape, key) {
-                if self.slot_attributes(data, slot)?.accessor {
+                if self.shape_may_have_accessors(shape) && self.slot_attributes(data, slot)?.accessor {
                     return None;
                 }
                 return self.heap.property_get(data, slot).map(Some);
