@@ -2794,12 +2794,20 @@ impl<H: Host> Vm<H> {
             return Ok(Vec::new());
         };
         let mut values = Vec::with_capacity(imports.len());
+        // One import statement's bindings come together and name one module: it is resolved
+        // (and its source read) once for them, and only the latest is kept, so the sources of
+        // a long import list are never all held at once.
+        let mut resolved: Option<(&str, crate::ModuleSource)> = None;
         for import in imports {
-            let module = self
-                .host
-                .resolve_dynamic_import(referrer, &import.source)
-                .map_err(|error| self.module_load_error(p, error))?
-                .ok_or_else(|| self.type_error(p, "module import was not resolved".into()))?;
+            let module = match resolved.take() {
+                Some((source, module)) if source == import.source => module,
+                _ => self
+                    .host
+                    .resolve_dynamic_import(referrer, &import.source)
+                    .map_err(|error| self.module_load_error(p, error))?
+                    .ok_or_else(|| self.type_error(p, "module import was not resolved".into()))?,
+            };
+            let module = &resolved.insert((&import.source, module)).1;
             let local = self
                 .lookup_atom(&import.local)
                 .and_then(|atom| {

@@ -1100,9 +1100,13 @@ impl quench_runtime::Host for NodeHost {
     ) -> Result<Option<quench_runtime::ModuleSource>, quench_runtime::ModuleLoadError> {
         use std::path::Path;
 
-        let builtin_exports: std::collections::BTreeMap<String, Vec<String>> =
+        // Parsed once: every import resolves through here, and the table is 21 KB of JSON.
+        static BUILTIN_EXPORTS: std::sync::OnceLock<std::collections::BTreeMap<String, Vec<String>>> =
+            std::sync::OnceLock::new();
+        let builtin_exports = BUILTIN_EXPORTS.get_or_init(|| {
             serde_json::from_str(include_str!("builtin_esm_exports.json"))
-                .expect("generated Node builtin export names are valid JSON");
+                .expect("generated Node builtin export names are valid JSON")
+        });
         let builtin_name = specifier.strip_prefix("node:").unwrap_or(specifier);
         let builtin = crate::host::shared_vm::commonjs::is_builtin_specifier(specifier);
         if !builtin && specifier.starts_with("node:") {
