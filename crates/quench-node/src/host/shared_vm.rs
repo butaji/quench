@@ -1033,6 +1033,7 @@ impl quench_runtime::Host for NodeHost {
     fn at_collection_boundary(&mut self) {
         crate::host::resident_pages::release_read_only_pages();
         crate::host::resident_pages::release_free_heap_pages();
+        crate::host::resident_pages::note_collection();
     }
 
     fn proper_tail_calls(&self) -> bool {
