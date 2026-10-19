@@ -1251,14 +1251,16 @@ impl<H: Host> Vm<H> {
             // A supported native function still returns through the ordinary
             // Return instruction, preserving the dispatch loop's frame and
             // constructor unwind path. Guard misses leave pc at zero.
-            if pc == 0
-                && self.execution_mode == ExecutionMode::Compiled
-                && let Some((return_pc, return_register, value)) =
-                    self.js_jit_at_entry(p, frame)
-            {
-                self.write(frame, return_register, value);
-                pc = return_pc;
-                continue;
+            if pc == 0 && self.execution_mode == ExecutionMode::Compiled {
+                if let Some((return_pc, return_register, value)) = self.js_jit_at_entry(p, frame) {
+                    self.write(frame, return_register, value);
+                    pc = return_pc;
+                    continue;
+                }
+                let (program_id, function_id) =
+                    (self.frames[frame].program, self.frames[frame].function);
+                self.programs
+                    .record_js_jit_fallback_entry(program_id, function_id);
             }
             if Self::lane_runs(cursor.lane, pc) {
                 pc = self.run_fast_lane(
