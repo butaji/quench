@@ -118,6 +118,29 @@ but does not show which reference calls enter compiled callees versus VM
 fallback. Raw diagnostic data and reproduction details are in
 `evidence/jit-jetstream3-wasm-2026-10-18/callout-attribution/`.
 
+## Sampled native-entry timing
+
+The opt-in `QUENCH_WASM_JIT_STATS` record now samples every 256th native entry
+per artifact/function. It reports `[function, sample_count, elapsed_ns]`
+tuples in `native_entry_samples`. The timer starts after compilation and
+context setup and brackets the native entry/trampoline, so it includes
+callouts and trap work but excludes compilation. These are inclusive wall-time
+samples: recursive and nested entries overlap, deterministic periodic call
+patterns can alias with the sample interval, and linked `CallKnown` machine
+calls bypass the entry hook and are charged to the enclosing entry. Use the
+data to choose a function for deeper profiling, not as per-function CPU time
+or benchmark evidence.
+
+A clean-source, one-round selective diagnostic sampled QuickSort's defined
+body index 1 (`Quicksort`, symbol index 3) 12 times for 1.203 ms total, out of
+3,112 recorded entries. In GCC loops, the top sampled bodies were
+`example25` at 0.673 ms and `example10a` at 0.552 ms. This identifies
+QuickSort's recursive sort body as the next codegen inspection target, but
+does not isolate its loop-body cost or establish a JIT speed change. Both
+fixture outputs validated; the diagnostic report is not performance evidence.
+The report, sample mapping and reproduction command are in
+`evidence/jit-jetstream3-wasm-2026-10-19/native-entry-sampling/`.
+
 ## Deferred indirect-call fallback lookups
 
 Commit `ba75d8978` moved residual-program and void-receiver lookup into the
@@ -257,16 +280,28 @@ direction.
 
 The root selector also supports two distinct experimental admission policies.
 `--jit-wasm-root-only` with `--jit-wasm-root <residual-function-id>` compiles
-only that function, forces Cranelift `opt_level=none`, and permanently leaves
-known callees in the VM. `--jit-wasm-root-first` starts from the same single
-function artifact and compile level, then lets hot fallback callees use the
-existing bounded promotion tier. The strict mode is useful for measuring the
-cost of one native entry; root-first tests whether the selected root can benefit
-from a smaller first compile while retaining tier-up. The CLI records separate
-checkpoint/report fields and provenance for both, and neither mode is eligible
-for qualification. Root-first promotion is enabled only if the selected root
-compiles successfully; a rejected root leaves the workload interpreted. Their runtime switches are
+only that function and defaults Cranelift `opt_level=none`; `--jit-wasm-root-first`
+starts with the selected function at `speed`, then lets hot fallback callees use
+the existing bounded promotion tier. Either selected root can override its
+compile level with `QUENCH_WASM_JIT_ROOT_OPT_LEVEL=none|speed|speed_and_size`.
+The strict mode is useful for measuring the cost of one native entry; root-first
+tests whether the selected root can benefit from a smaller first compile while
+retaining tier-up. The CLI records separate checkpoint/report fields and
+provenance for both, and neither mode is eligible for qualification. Root-first
+promotion is enabled only if the selected root compiles successfully; a rejected
+root leaves the workload interpreted. Their runtime switches are
 `QUENCH_WASM_JIT_ROOT_ONLY=1` and `QUENCH_WASM_JIT_ROOT_FIRST=1`, respectively.
+
+On JetStream 3 QuickSort, root-only function 1 at `speed` scored 292.02 versus
+247.90 at its default `none` level over separate 11-round clean-source Linux
+windows; median RSS was 41.50 versus 41.36 MiB. Against full eager JIT in a
+matching 11-round window, root-only `speed` scored 292.02 versus 237.33 and used
+41.50 versus 42.83 MiB. It remained below Bun's 393.36 score, while using less
+RSS than both Bun (47.72 MiB) and Node (88.38 MiB). This is a promising opt-in
+tiering/codegen tradeoff, not a peer score win or qualification result; the
+root-only mode is intentionally excluded from qualification. See
+`evidence/jit-jetstream3-wasm-2026-10-19/root-only-opt-level/` for the reports
+and reproduction details.
 
 The root-first GCC-Wasm experiment selected residual function 19, then allowed
 hot fallback callees to use the bounded tier. An 11-round Linux screen scored
