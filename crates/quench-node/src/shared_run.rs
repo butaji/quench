@@ -163,7 +163,10 @@ fn execute_shared_on_worker(
                 EntryGoal::Module => SourceKind::Module,
             };
             let is_module = kind == SourceKind::Module;
-            let source = if is_module {
+            let wasm = path.extension().is_some_and(|extension| extension == "wasm");
+            let source = if is_module && wasm {
+                crate::host::shared_vm::esm_wasm::entry_facade(&path)?
+            } else if is_module {
                 std::fs::read_to_string(&path).map_err(|error| error.to_string())?
             } else {
                 String::new()
