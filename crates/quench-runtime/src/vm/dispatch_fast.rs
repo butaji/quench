@@ -393,8 +393,8 @@ pub(super) struct ScriptCallTarget {
     constructs: bool,
     /// `new` may run its body as the stores alone (`Function::only_initializes_this_fields`).
     initializes: bool,
-    /// It keeps the values it was passed for a forwarded `arguments` (`CallPlan::forwards_arguments`).
-    forwards: bool,
+    /// How a plain call enters it.
+    entry: CallEntry,
     /// The slots its depth-0 captures read (`LaneContext::capture`), or null where the walk
     /// does not end at a function environment or its storage is sparse. The storage of a live environment never
     /// moves, and the generation retires the target at the next collection.
@@ -404,6 +404,29 @@ pub(super) struct ScriptCallTarget {
     /// directly, or `NO_FORWARDED_METHOD`. An index, not the record, keeps every target's
     /// cache entry its size.
     forwarded_method: u16,
+}
+
+/// How a plain lane call enters a frameless target (`ScriptCallTarget::entry`), one byte so the
+/// call tests it once. The kinds exclude each other: a body that is one read keeps nothing.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum CallEntry {
+    /// Its activation holds its registers alone (`lane_activate`).
+    Activates,
+    /// It keeps the values it was passed for a forwarded `arguments`
+    /// (`CallPlan::forwards_arguments`, `lane_activate_keeping`).
+    Keeps,
+    /// Its body is one returning `GetField` (`returning_kind` of its first instruction),
+    /// whose hit a call answers without activating it (`lane_call_read`).
+    Reads,
+}
+
+impl ScriptCallTarget {
+    /// It keeps the values it was passed for a forwarded `arguments`.
+    #[inline(always)]
+    fn forwards(&self) -> bool {
+        self.entry == CallEntry::Keeps
+    }
 }
 
 /// A `ScriptCallTarget::forwarded_method` that names no record. A program with more distinct
@@ -422,7 +445,7 @@ const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
     strict: false,
     constructs: false,
     initializes: false,
-    forwards: false,
+    entry: CallEntry::Activates,
     capture: std::ptr::null(),
     forwarded_method: NO_FORWARDED_METHOD,
 };
@@ -1144,6 +1167,26 @@ fn lane_relation<H: Host>(operator: u32, left: Value, right: Value) -> Option<bo
         return Some(holds);
     }
     lane_relation_other::<H>(operator, left, right)
+}
+
+/// Return `value` from the running function at the record `ip`, as `Return` would: the
+/// innermost activation completes (`lane_complete_activation`); a script frame the lane
+/// pushed returns in place (`lane_return_script_frame`); any other VM frame returns the value
+/// from this record (`lane_frame_return`).
+macro_rules! lane_return_value {
+    ($cx:expr, $ip:expr, $value:expr) => {{
+        let (cx, ip, value): (*mut LaneContext<H>, Ip, Value) = ($cx, $ip, $value);
+        if let Some((registers, next, view)) = lane_complete_activation(cx, value) {
+            if is_exit(next) {
+                return next;
+            }
+            next!(cx, registers, next, view)
+        }
+        if !unsafe { (*cx).inline_calls } && unsafe { (*cx).script_calls } {
+            return lane_return_script_frame(cx, ip, value);
+        }
+        return lane_frame_return(unsafe { vm(cx) }, ip, value);
+    }};
 }
 
 /// Runs `handler` for the record at `ip` as a sibling call: the calling handler's fast path
@@ -2004,6 +2047,18 @@ unsafe fn lane_nested_own_value<H: Host>(
         Some(register) => r.get(register),
         None => unsafe { lane_fixed_this(cx) }?,
     };
+    nested_own_field_hit(vm, code, site, base)
+}
+
+/// A nested site's read of `base` where both steps hit primary own entries
+/// (`lane_nested_own_value`), which runs no guest code.
+#[inline(always)]
+fn nested_own_field_hit<H: Host>(
+    vm: &mut Vm<H>,
+    code: &ResidualProgram,
+    site: &crate::bytecode::FieldSite,
+    base: Value,
+) -> Option<Value> {
     let first = vm.primary_own_field_hit(code, base, site.first.1)?;
     match site.second {
         None => Some(first),
@@ -4193,10 +4248,20 @@ impl<H: Host> Vm<H> {
     /// The cached frameless target of a lane call to `callee`, if resolved.
     #[inline(always)]
     fn script_call_target(&self, callee: Value) -> Option<ScriptCallTarget> {
+        // SAFETY: the entry is read before anything else touches the cache.
+        self.script_call_entry(callee).map(|entry| unsafe { *entry })
+    }
+
+    /// `script_call_target` in place: its cache entry, which a call reads field by field
+    /// where it uses them rather than holding a copy in registers. The cache is boxed, so
+    /// the entry stays put; it holds this target until the next resolution or collection
+    /// replaces it, which no activation makes.
+    #[inline(always)]
+    fn script_call_entry(&self, callee: Value) -> Option<*const ScriptCallTarget> {
         let index = callee.heap_index()? as usize & (SCRIPT_CALL_TARGETS - 1);
-        let cached = self.lane_stack.script_targets[index];
+        let cached = &self.lane_stack.script_targets[index];
         (cached.callee == callee && cached.generation == self.lane_stack.generation)
-            .then_some(cached)
+            .then_some(cached as *const ScriptCallTarget)
     }
 
     /// Resolve and cache `callee` as a frameless lane call target: a user function of the
@@ -4239,7 +4304,15 @@ impl<H: Host> Vm<H> {
             constructs: Self::inline_constructible(body),
             initializes: Self::inline_constructible(body)
                 && body.only_initializes_this_fields(&code.constants),
-            forwards: plan.forwards_arguments,
+            entry: if plan.forwards_arguments {
+                CallEntry::Keeps
+            } else if body.code.first().is_some_and(|packed| {
+                returning_kind(decoded_instruction(body, *packed)) == Some(RETURNING_FIELD)
+            }) {
+                CallEntry::Reads
+            } else {
+                CallEntry::Activates
+            },
             capture,
             forwarded_method: match (plan.forwards_arguments && Self::inline_constructible(body))
                 .then(|| body.forwarded_this_method(&code.constants))
@@ -4280,26 +4353,95 @@ lane_handler! {
         if lane_constructing(vm, callee) {
             sibling!(lane_native_call::<H>, r, ip, Carried::SCRIPT)
         }
-        let Some(target) = vm.script_call_target(callee) else {
+        let Some(target) = vm.script_call_entry(callee) else {
             sibling!(lane_script_call_resolve::<H>, r, ip, Carried::SCRIPT)
         };
-        if target.forwards {
-            sibling!(lane_script_call_keeping::<H>, r, ip, Carried::SCRIPT)
+        // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
+        let target = unsafe { &*target };
+        match target.entry {
+            CallEntry::Activates => {}
+            CallEntry::Keeps => sibling!(lane_script_call_keeping::<H>, r, ip, Carried::SCRIPT),
+            CallEntry::Reads => sibling!(lane_script_call_full::<H>, r, ip, Carried::SCRIPT),
         }
-        let receiver = r.get(i.c);
-        // `call_this_value` without its boxing of primitives, which allocates.
-        let this = if target.strict || vm.is_object_like(receiver) {
-            receiver
-        } else if receiver.is_null() || receiver.is_undefined() {
-            vm.realm.globals
-        } else {
-            return exit(ip);
+        // A receiver whose binding needs the heap takes the out-of-line form, so this
+        // handler makes no call and keeps its registers.
+        let Some(this) = lane_direct_call_this(vm, target, r.get(i.c)) else {
+            sibling!(lane_script_call_full::<H>, r, ip, Carried::SCRIPT)
         };
         let arguments = ImmediateLayout::call_window_base(i.imm());
         match lane_activate(cx, r, ip, target, arguments, this, false) {
             Ok((registers, base)) => next!(cx, registers, base, Carried::SCRIPT),
             Err(next) => next,
         }
+    }
+}
+
+/// The `this` a plain call of `target` binds for `receiver`: `call_this_value` without its
+/// boxing of primitives, which allocates, so `None` for a sloppy callee's primitive.
+#[inline(always)]
+fn lane_call_this<H: Host>(vm: &Vm<H>, target: &ScriptCallTarget, receiver: Value) -> Option<Value> {
+    lane_direct_call_this(vm, target, receiver)
+        .or_else(|| vm.is_object_like(receiver).then_some(receiver))
+}
+
+/// `lane_call_this` where the receiver's own bits decide it: a strict callee, an object in
+/// the direct record table, or `null`/`undefined`. `None` for any other receiver, whose
+/// object test reads the heap.
+#[inline(always)]
+fn lane_direct_call_this<H: Host>(
+    vm: &Vm<H>,
+    target: &ScriptCallTarget,
+    receiver: Value,
+) -> Option<Value> {
+    if target.strict || receiver.direct_object_index().is_some() {
+        Some(receiver)
+    } else if receiver.is_null() || receiver.is_undefined() {
+        Some(vm.realm.globals)
+    } else {
+        None
+    }
+}
+
+lane_handler! {
+    /// `lane_script_call` out of line, so the plain call keeps its registers: a receiver
+    /// whose binding reads the heap (`lane_call_this`), and a target whose body is one
+    /// returning field read (`CallEntry::Reads`), whose hit (`lane_call_read`) completes the
+    /// call with its value as the callee's return would; a call that returns its callee's
+    /// completion completes its caller in turn (`lane_return_value!`). Anything else
+    /// activates the callee.
+    #[inline(never)]
+    fn lane_script_call_full<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let Some(target) = vm.script_call_target(r.get(i.b)) else {
+            return exit(ip);
+        };
+        if target.forwards() {
+            sibling!(lane_script_call_keeping::<H>, r, ip, Carried::SCRIPT)
+        }
+        let Some(this) = lane_call_this(vm, &target, r.get(i.c)) else {
+            return exit(ip);
+        };
+        let arguments = ImmediateLayout::call_window_base(i.imm());
+        let argc = ImmediateLayout::argument_count(i.imm());
+        let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
+        let value = if target.entry != CallEntry::Reads
+            || returns && !lane_returning_call_admitted(cx)
+        {
+            None
+        } else {
+            unsafe { lane_call_read(cx, r, &target, arguments, argc, this) }
+        };
+        let Some(value) = value else {
+            match lane_activate(cx, r, ip, &target, arguments, this, false) {
+                Ok((registers, base)) => next!(cx, registers, base, Carried::SCRIPT),
+                Err(next) => return next,
+            }
+        };
+        if !returns {
+            r.set(i.a, value);
+            next!(cx, r, following(ip), Carried::SCRIPT)
+        }
+        lane_return_value!(cx, ip, value)
     }
 }
 
@@ -4673,7 +4815,7 @@ lane_handler! {
         else {
             sibling!(lane_native_construct::<H>, r, ip, Carried::SCRIPT)
         };
-        if target.forwards {
+        if target.forwards() {
             // The site constructs a forwarding target: later runs enter the keeping
             // construction directly, which moves the record back for any other target.
             requicken(ip, lane_script_construct_keeping::<H>);
@@ -4708,7 +4850,7 @@ lane_handler! {
                 return lane_frame_return(vm, ip, this);
             }
         }
-        match lane_activate(cx, r, ip, target, i.c, this, true) {
+        match lane_activate(cx, r, ip, &target, i.c, this, true) {
             Ok((registers, base)) => next!(cx, registers, base, Carried::SCRIPT),
             Err(next) => next,
         }
@@ -4790,7 +4932,7 @@ fn lane_construct_keeping_activation<H: Host>(
         return Err(Some(exit(ip)));
     }
     let target = lane_script_target(cx, callee)
-        .filter(|target| target.constructs && target.forwards)
+        .filter(|target| target.constructs && target.forwards())
         .ok_or(None)?;
     let Some(this) = lane_planned_receiver(vm, callee) else {
         return Err(Some(exit(ip)));
@@ -5078,7 +5220,7 @@ fn lane_activate<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
     ip: Ip,
-    target: ScriptCallTarget,
+    target: &ScriptCallTarget,
     arguments: u16,
     this: Value,
     constructs: bool,
@@ -5307,7 +5449,7 @@ fn lane_activate_keeping<H: Host>(
     let count = usize::from(target.registers);
     // A forwarding activation keeps every value passed after its registers, as does one for
     // a skipped forwarding constructor, whose frame passed them on.
-    let keeps = target.forwards || forwarder.is_some();
+    let keeps = target.forwards() || forwarder.is_some();
     let window_size = if keeps { count + argc } else { count };
     // A call that returns its callee's completion completes its caller too, which only an
     // activation's return does in the lane. A host permitting proper tail calls
@@ -5739,6 +5881,72 @@ const RETURNING_FIELD_INHERITED: u8 = 8;
 /// (`lane_nested_own_value`).
 const RETURNING_FIELD_NESTED: u8 = 9;
 
+/// The cached read of a single-base returning `GetField` of `KIND` (`RETURNING_FIELD_OWN`,
+/// `_POLYMORPHIC`, `_HOLDER`, `_INHERITED`) at `cache`: a hit, which runs no guest code.
+#[inline(always)]
+fn returning_field_hit<H: Host, const KIND: u8>(
+    vm: &mut Vm<H>,
+    code: &ResidualProgram,
+    object: Value,
+    cache: u16,
+) -> Option<Value> {
+    match KIND {
+        RETURNING_FIELD_OWN => vm.primary_own_field_hit(code, object, cache),
+        RETURNING_FIELD_POLYMORPHIC => vm.polymorphic_field_hit(code, object, cache),
+        RETURNING_FIELD_HOLDER => vm.primary_holder_field_hit(code, object, cache),
+        _ => vm.inherited_field_hit(code, object, cache),
+    }
+}
+
+/// The value a frameless callee whose body is one returning `GetField`
+/// (`CallEntry::Reads`) returns for this call, where the read its entry record has
+/// quickened to hits: the record's own read, of `this` or a parameter as its activation
+/// would hold them (`lane_activate`). Answering it at the call leaves nothing for an
+/// activation to observe: the hit runs no guest code and allocates nothing. `None` for any
+/// other record state or a miss, which the call activates to run.
+///
+/// # Safety
+/// `cx` is the running lane's context, `r` the caller's registers, and `target` a target of
+/// its program.
+#[inline(always)]
+unsafe fn lane_call_read<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    target: &ScriptCallTarget,
+    arguments: u16,
+    argc: u16,
+    this: Value,
+) -> Option<Value> {
+    // SAFETY: the program store keeps a derived view alive with its program, and the
+    // context's program outlives the lane run.
+    let (entry, code) = unsafe { (&*(*target.view).records(), &*(*cx).code) };
+    let vm = unsafe { vm(cx) };
+    // Register `k` of the activation is argument `k`; an unpassed parameter or a local
+    // holds `undefined`, whose read never hits.
+    let base = |base: crate::bytecode::FieldBase| match base.register_index() {
+        Some(register) => (register < argc).then(|| r.get(arguments + register)),
+        None => Some(this),
+    };
+    let handler = entry.handler;
+    if handler == lane_returning::<H, RETURNING_FIELD_NESTED> as *const () {
+        // SAFETY: a nested record names its site.
+        let site = unsafe { code.field_sites.get_unchecked(entry.imm() as usize) };
+        return nested_own_field_hit(vm, code, site, base(site.base)?);
+    }
+    let object = base(crate::bytecode::FieldBase(entry.b))?;
+    if handler == lane_returning::<H, RETURNING_FIELD_POLYMORPHIC> as *const () {
+        returning_field_hit::<H, RETURNING_FIELD_POLYMORPHIC>(vm, code, object, entry.c)
+    } else if handler == lane_returning::<H, RETURNING_FIELD_OWN> as *const () {
+        returning_field_hit::<H, RETURNING_FIELD_OWN>(vm, code, object, entry.c)
+    } else if handler == lane_returning::<H, RETURNING_FIELD_HOLDER> as *const () {
+        returning_field_hit::<H, RETURNING_FIELD_HOLDER>(vm, code, object, entry.c)
+    } else if handler == lane_returning::<H, RETURNING_FIELD_INHERITED> as *const () {
+        returning_field_hit::<H, RETURNING_FIELD_INHERITED>(vm, code, object, entry.c)
+    } else {
+        None
+    }
+}
+
 /// The `lane_returning` kind of a value record that returns its result from the frame.
 fn returning_kind(instruction: WideInstruction) -> Option<u8> {
     if !instruction.returns_from_frame() {
@@ -5768,12 +5976,8 @@ lane_handler! {
                 | RETURNING_FIELD_INHERITED => {
                     let code = &*(*cx).code;
                     let vm = vm(cx);
-                    let value = lane_single_field_base(cx, r, i.b).and_then(|object| match KIND {
-                        RETURNING_FIELD_OWN => vm.primary_own_field_hit(code, object, i.c),
-                        RETURNING_FIELD_POLYMORPHIC => vm.polymorphic_field_hit(code, object, i.c),
-                        RETURNING_FIELD_HOLDER => vm.primary_holder_field_hit(code, object, i.c),
-                        _ => vm.inherited_field_hit(code, object, i.c),
-                    });
+                    let value = lane_single_field_base(cx, r, i.b)
+                        .and_then(|object| returning_field_hit::<H, KIND>(vm, code, object, i.c));
                     let Some(value) = value else {
                         if KIND == RETURNING_FIELD_POLYMORPHIC {
                             sibling!(lane_returning::<H, RETURNING_FIELD>, r, ip, Carried::SCRIPT)
@@ -5798,18 +6002,7 @@ lane_handler! {
         let Some(value) = value else {
             return exit(ip);
         };
-        if let Some((registers, next, view)) = lane_complete_activation(cx, value) {
-            if is_exit(next) {
-                return next;
-            }
-            next!(cx, registers, next, view)
-        }
-        // A script frame the lane pushed returns as `Return` would (`lane_return_script_frame`);
-        // any other VM frame returns the value from this record.
-        if !unsafe { (*cx).inline_calls } && unsafe { (*cx).script_calls } {
-            return lane_return_script_frame(cx, ip, value);
-        }
-        lane_frame_return(unsafe { vm(cx) }, ip, value)
+        lane_return_value!(cx, ip, value)
     }
 }
 
