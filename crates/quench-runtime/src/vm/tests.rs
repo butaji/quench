@@ -10430,6 +10430,45 @@ fn js_jit_compiles_pure_numeric_loops_with_backedge_polls() {
     feature = "profile-memory",
     feature = "profile-gc-time"
 )))]
+fn js_jit_compiles_guarded_string_hash_loop_and_falls_back_after_intrinsic_change() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function quickHash(str) {
+            let hash = 5381;
+            let index = str.length;
+            while (index > 0) {
+              hash = hash * 33 ^ (str.charCodeAt(index) | 0);
+              index -= 919;
+            }
+            return hash | 0;
+          }
+          if (quickHash('') !== 5381) throw Error('empty string');
+          if (quickHash('abc') !== 177573) throw Error('short string');
+          if (quickHash('😀') !== 177573) throw Error('surrogate pair');
+          if (quickHash('a'.repeat(2000)) !== 193375941) throw Error('long string');
+          String.prototype.charCodeAt = function() { return 99; };
+          if (quickHash('abc') !== 177606) throw Error('intrinsic mutation fallback');
+        "#,
+        "js-jit-string-hash.js",
+    ))
+    .unwrap();
+    let mut vm = Vm::new(SilentHost);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    assert!(matches!(
+        vm.programs
+            .js_tier(super::program_store::ProgramId::MAIN, 1),
+        Some(super::program_store::JsTierState::Compiled(_))
+    ));
+}
+
+#[test]
+#[cfg(not(any(
+    feature = "profile-aggregate",
+    feature = "profile-trace",
+    feature = "profile-memory",
+    feature = "profile-gc-time"
+)))]
 fn js_jit_compiles_forward_numeric_branches_to_rooted_string_returns() {
     let source = r#"
       const rating = price => price < 100 ? '€' : price < 1000 ? '€€' : '€€€';

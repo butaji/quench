@@ -973,7 +973,7 @@ impl ProgramStore {
         id: ProgramId,
         function: u32,
         numeric: bool,
-        numeric_loop_candidate: bool,
+        first_entry_candidate: bool,
     ) -> bool {
         let compiled_functions = self.js_jit_compiled_functions;
         let can_track = self.js_jit_tracked_functions < JS_JIT_MAX_TRACKED_FUNCTIONS;
@@ -991,7 +991,7 @@ impl ProgramStore {
                 if compiled_functions >= JS_JIT_MAX_FUNCTIONS {
                     slot.insert(JsTierState::Unsupported);
                     false
-                } else if numeric && numeric_loop_candidate {
+                } else if first_entry_candidate {
                     slot.insert(JsTierState::PromotionPending);
                     promoted = true;
                     true
@@ -1014,7 +1014,7 @@ impl ProgramStore {
                     if compiled_functions >= JS_JIT_MAX_FUNCTIONS {
                         *slot.get_mut() = JsTierState::Unsupported;
                         false
-                    } else if numeric && numeric_loop_candidate {
+                    } else if first_entry_candidate {
                         promoted = true;
                         true
                     } else if decision == Some(true) {
