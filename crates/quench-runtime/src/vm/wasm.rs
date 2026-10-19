@@ -1904,7 +1904,9 @@ mod tests {
                     locals: vec![],
                     operators: vec![
                         Operator::LocalGet { local_index: 0 },
-                        Operator::I32Load { memarg: memarg(0x20) },
+                        Operator::I32Load {
+                            memarg: memarg(0x20),
+                        },
                         Operator::End,
                     ]
                     .into_iter()
@@ -1995,10 +1997,7 @@ mod tests {
             vm.invoke_wasm(
                 &instance,
                 0,
-                &[
-                    crate::WasmValue::I32(-16),
-                    crate::WasmValue::I32(0x0f),
-                ],
+                &[crate::WasmValue::I32(-16), crate::WasmValue::I32(0x0f),],
             )
             .unwrap_err()
             .wasm_trap(),
@@ -2011,10 +2010,7 @@ mod tests {
             vm.invoke_wasm(
                 &instance,
                 0,
-                &[
-                    crate::WasmValue::I32(-16),
-                    crate::WasmValue::I32(0x1_0010),
-                ],
+                &[crate::WasmValue::I32(-16), crate::WasmValue::I32(0x1_0010),],
             )
             .unwrap_err()
             .wasm_trap(),
@@ -2027,10 +2023,7 @@ mod tests {
             vm.invoke_wasm(
                 &instance,
                 0,
-                &[
-                    crate::WasmValue::I32(-16),
-                    crate::WasmValue::I32(0x1_000f),
-                ],
+                &[crate::WasmValue::I32(-16), crate::WasmValue::I32(0x1_000f),],
             )
             .unwrap_err()
             .wasm_trap(),
@@ -2391,9 +2384,7 @@ mod tests {
         let promotion_entries = super::super::program_store::WASM_JIT_PROMOTION_ENTRIES;
         for _ in 0..promotion_entries {
             assert_eq!(
-                vm.invoke_wasm(&instance, 1, &[])
-                    .unwrap_err()
-                    .wasm_trap(),
+                vm.invoke_wasm(&instance, 1, &[]).unwrap_err().wasm_trap(),
                 Some(crate::WasmTrap::Unreachable)
             );
         }
@@ -2414,18 +2405,17 @@ mod tests {
         assert_eq!(baseline.native_entries(1), Some(promotion_entries as u64));
         assert_eq!(tier.native_entries(0), Some(1));
         assert_eq!(tier.direct_reference_entries(0), Some(0));
+        // The promoted target belongs to a separate artifact, so the caller
+        // must keep using the resolver instead of retaining its code pointer.
+        assert!(!baseline.reference_fast_cache_matches_target(0, 0));
         assert_eq!(
-            vm.invoke_wasm(&instance, 1, &[])
-                .unwrap_err()
-                .wasm_trap(),
+            vm.invoke_wasm(&instance, 1, &[]).unwrap_err().wasm_trap(),
             Some(crate::WasmTrap::Unreachable)
         );
         assert_eq!(tier.native_entries(0), Some(2));
         assert_eq!(tier.direct_reference_entries(0), Some(1));
         assert_eq!(
-            vm.invoke_wasm(&instance, 1, &[])
-                .unwrap_err()
-                .wasm_trap(),
+            vm.invoke_wasm(&instance, 1, &[]).unwrap_err().wasm_trap(),
             Some(crate::WasmTrap::Unreachable)
         );
         assert_eq!(tier.native_entries(0), Some(3));
@@ -2447,9 +2437,7 @@ mod tests {
         assert_eq!(baseline.reference_call_cache_target(0), Some(replacement));
         vm.wasm_table_fill(table, 0, Value::NULL, 1).unwrap();
         assert_eq!(
-            vm.invoke_wasm(&instance, 1, &[])
-                .unwrap_err()
-                .wasm_trap(),
+            vm.invoke_wasm(&instance, 1, &[]).unwrap_err().wasm_trap(),
             Some(crate::WasmTrap::UninitializedElement)
         );
     }
@@ -2986,6 +2974,7 @@ mod tests {
             .flatten()
             .expect("diagnostic Wasm program")
             .clone();
+        assert!(compiled.reference_fast_cache_matches_target(0, 0));
         assert_eq!(
             compiled.profiled_indirect_targets(&vm, program, env, &indirect_callers),
             vec![0]
@@ -2993,13 +2982,16 @@ mod tests {
         let table = vm.wasm_table(&instance, 0).unwrap();
         let replacement = vm.wasm_function(&instance, 3).unwrap();
         vm.wasm_table_fill(table, 0, replacement, 1).unwrap();
-        assert!(compiled
-            .profiled_indirect_targets(&vm, program, env, &indirect_callers)
-            .is_empty());
+        assert!(
+            compiled
+                .profiled_indirect_targets(&vm, program, env, &indirect_callers)
+                .is_empty()
+        );
         assert_eq!(
             vm.invoke_wasm(&instance, 1, &[]).unwrap(),
             Some(crate::WasmValue::I32(10))
         );
+        assert!(compiled.reference_fast_cache_matches_target(0, 3));
         assert_eq!(
             compiled.profiled_indirect_targets(&vm, program, env, &indirect_callers),
             vec![3]
@@ -3015,6 +3007,7 @@ mod tests {
             .flatten()
             .expect("diagnostic Wasm program");
         assert_eq!(compiled.same_artifact_direct_reference_hits(), Some(3));
+        assert!(compiled.reference_fast_cache_matches_target(0, 3));
         assert!(compiled.reference_call_site_counts().unwrap().iter().any(
             |(function, _, total, native, fallback)| {
                 *function == 2 && *total == 3 && *native == 3 && *fallback == 0
@@ -3100,8 +3093,8 @@ mod tests {
 
         let mut vm = Vm::new(GcTestHost);
         vm.set_execution_mode(crate::ExecutionMode::Compiled);
-        let bootstrap = crate::Engine::specialize("void 0", "jit-indirect-gc-bootstrap.js")
-            .unwrap();
+        let bootstrap =
+            crate::Engine::specialize("void 0", "jit-indirect-gc-bootstrap.js").unwrap();
         vm.execute(&bootstrap).unwrap();
         let helper = vm
             .compile_embedding_host_script(
@@ -3125,8 +3118,13 @@ mod tests {
         let table = vm.wasm_table(&instance, 0).unwrap();
         let replacement = vm.wasm_function(&instance, 2).unwrap();
         let replacement_wrapper = vm.wasm_js_function(replacement, Some(2)).unwrap();
-        vm.set_named(module.residual(), vm.realm.globals, "__jitIndirectTable", table)
-            .unwrap();
+        vm.set_named(
+            module.residual(),
+            vm.realm.globals,
+            "__jitIndirectTable",
+            table,
+        )
+        .unwrap();
         vm.set_named(
             module.residual(),
             vm.realm.globals,
