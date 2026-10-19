@@ -1419,15 +1419,13 @@ impl<H: Host> Vm<H> {
         }
         let legacy_cell = match heap_reference {
             Some(HeapReference::LegacySlot(index)) => self.heap.get_legacy(index),
-            Some(HeapReference::FunctionRecord(_)) => {
-                let lookup = match self.heap.function(object) {
-                    Some(function) if self.specialized && p.specialized => self
-                        .receiver_field_cache_read(
-                            self.shape_property_lookup_function(function, atom),
-                            atom,
-                            site,
-                        ),
-                    _ => FieldCacheRead::Generic,
+            // Function and iterator records have no cell; their shape answers like the
+            // slot forms' (`shape_property_lookup`).
+            Some(HeapReference::FunctionRecord(_) | HeapReference::IteratorRecord(_)) => {
+                let lookup = if self.specialized && p.specialized {
+                    self.receiver_field_cache_read(self.shape_property_lookup(object, atom), atom, site)
+                } else {
+                    FieldCacheRead::Generic
                 };
                 return self.finish_field_cache_read(p, object, atom, lookup);
             }
