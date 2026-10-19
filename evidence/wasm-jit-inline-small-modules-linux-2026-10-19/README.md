@@ -66,6 +66,20 @@ weighs (frames, checks, status tests) are what inlining removes. richards is unc
 base scores 68.92/89.45 and 77.28/94.66, inlining 80.04/95.20 and 80.39/85.57. Box2D has no
 harness here and is not in `quench-bench`'s corpus.
 
+## Innermost-loop unrolling returns for small programs
+
+`6620a135d` withdrew unrolling innermost loops (up to four copies, one interrupt check per
+group) because every function compiles eagerly: TSF's first iteration grew 6%, gcc-loops'
+2.5%, and HashSet's rehash spilled. It returns for programs of at most
+`UNROLL_PROGRAM_BYTECODES` (16,384) lowered bytecodes, counted once per compiled program.
+Program sizes: richards 1,800, quicksort 2,412, CoreMark 4,578 (unrolled); zlib 17,049, TSF
+31,077, gcc-loops 34,277, HashSet 70,268 (not unrolled, compiled exactly as before).
+`compiled_wasm_unrolled_loop_runs_every_trip_count` checks trip counts 0 to 12 through the
+copies.
+
+Callgrind, against inlining alone: CoreMark fixed work 3,604.0M → 3,296.8M (−8.5%); quicksort
+−1.51% (one iteration, compile included) and −3.76% (three); richards −0.60% and −0.57%.
+
 ## Campaign (`coremark-11.csv`, 11 rounds)
 
 `../wasm-coremark-rss-order-lazy-fs-linux-2026-10-19/run-coremark-evicted.sh` with
