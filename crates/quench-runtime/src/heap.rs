@@ -1395,7 +1395,9 @@ impl Heap {
         }
     }
     pub fn should_collect(&self) -> bool {
-        self.allocations >= self.threshold
+        self.allocations
+            .saturating_add(crate::vm::wtf16::materialized_bytes() / payload_unit())
+            >= self.threshold
     }
     /// The job contexts of promises freed since the last call, which their reactions held.
     pub(crate) fn take_abandoned_job_contexts(&mut self) -> Vec<crate::HostExecutionContext> {
@@ -1454,6 +1456,10 @@ impl Heap {
         full: bool,
     ) -> Vec<(Value, Value)> {
         let full = self.collection_is_full(full);
+        // Text made on demand since the last collection is allocation like any other.
+        let materialized = crate::vm::wtf16::take_materialized_bytes() / payload_unit();
+        self.allocations = self.allocations.saturating_add(materialized);
+        self.allocations_since_full = self.allocations_since_full.saturating_add(materialized);
         // The sweep may free a prototype whose record a later object reuses.
         advance_prototype_layout_epoch();
         debug_assert_eq!(self.collection_state, CollectionState::Idle);
