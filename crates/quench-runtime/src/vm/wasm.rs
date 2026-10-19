@@ -391,17 +391,13 @@ impl<H: Host> Vm<H> {
             })?;
         // An unshared memory32 lives in a guarded reservation in both
         // modes: its pages commit as they are first touched, and growth
-        // never copies. Compiled code also relies on the guard in place
-        // of bounds checks, and on the memory repeating above 2^32 to
-        // form i32 sums in 64 bits; the interpreter forms no addresses
-        // that way, so its memory stays private anonymous pages. The
-        // guard covers exactly the bytes past the memory's length only
-        // when every length is a whole number of host pages.
-        let wraps = self.execution_mode == super::ExecutionMode::Compiled;
+        // never copies. Compiled code relies on the guard in place of
+        // bounds checks, which covers exactly the bytes past the memory's
+        // length only when every length is a whole number of host pages.
         let guarded = (!ty.shared
             && !ty.memory64
             && (ty.page_size() as usize).is_multiple_of(crate::wasm::memory::HOST_PAGE))
-        .then(|| crate::wasm::memory::LinearBytes::reserved(length, wraps))
+        .then(|| crate::wasm::memory::LinearBytes::reserved(length))
         .flatten();
         let bytes = match guarded {
             Some(bytes) => bytes,
@@ -1607,8 +1603,8 @@ impl<H: Host> Vm<H> {
                 if value.is_null() {
                     return nullable;
                 }
-                match self.heap.get(value) {
-                    Some(Cell::Function {
+                match self.heap.function(value) {
+                    Some(FunctionRecord {
                         kind: FunctionKind::User(program, function),
                         ..
                     }) => self.programs.wasm_signatures(*program).is_some_and(|pool| {
@@ -1616,7 +1612,7 @@ impl<H: Host> Vm<H> {
                             pool.matches_declaration(actual, declarations, index, exact)
                         })
                     }),
-                    Some(Cell::Function {
+                    Some(FunctionRecord {
                         kind: FunctionKind::Native(Native::WasmHost),
                         ..
                     }) => self
@@ -1988,7 +1984,9 @@ mod tests {
                     locals: vec![],
                     operators: vec![
                         Operator::LocalGet { local_index: 0 },
-                        Operator::I32Load { memarg: memarg(0x20) },
+                        Operator::I32Load {
+                            memarg: memarg(0x20),
+                        },
                         Operator::End,
                     ]
                     .into_iter()
@@ -2014,14 +2012,6 @@ mod tests {
         let mut vm = Vm::new(crate::SystemHost);
         vm.set_execution_mode(crate::ExecutionMode::Compiled);
         let instance = vm.instantiate_wasm_module(&module).unwrap();
-        let memory = vm.wasm_memory(&instance, 0).unwrap();
-        let Cell::WasmMemory { bytes, .. } = vm.heap.get(memory).expect("memory binding") else {
-            panic!("memory binding must name a Wasm memory");
-        };
-        let crate::wasm::memory::MemoryStorage::Unshared(state) = &**bytes else {
-            panic!("memory must be unshared");
-        };
-        let repeats = state.borrow().bytes.wraps();
         let base = crate::WasmValue::I32(-16);
         let index = crate::WasmValue::I32(0x30);
         let stored = crate::WasmValue::I32(0x1234_5678);
@@ -2037,41 +2027,39 @@ mod tests {
             vm.invoke_wasm(&instance, 0, &[base, index]).unwrap(),
             Some(crate::WasmValue::I32(0x1234_5678))
         );
-        if repeats {
-            // Reads and writes through the repeated region stay coherent
-            // with accesses to the corresponding low address.
-            assert_eq!(
-                vm.invoke_wasm(
-                    &instance,
-                    1,
-                    &[
-                        crate::WasmValue::I32(0x20),
-                        crate::WasmValue::I32(0),
-                        crate::WasmValue::I32(0x2468_1357),
-                    ],
-                )
+        // Writes through the wrapped form of an address read back through its low form,
+        // and the other way round.
+        assert_eq!(
+            vm.invoke_wasm(
+                &instance,
+                1,
+                &[
+                    crate::WasmValue::I32(0x20),
+                    crate::WasmValue::I32(0),
+                    crate::WasmValue::I32(0x2468_1357),
+                ],
+            )
+            .unwrap(),
+            None
+        );
+        assert_eq!(
+            vm.invoke_wasm(&instance, 0, &[base, index]).unwrap(),
+            Some(crate::WasmValue::I32(0x2468_1357))
+        );
+        assert_eq!(
+            vm.invoke_wasm(&instance, 1, &[base, index, stored])
                 .unwrap(),
-                None
-            );
-            assert_eq!(
-                vm.invoke_wasm(&instance, 0, &[base, index]).unwrap(),
-                Some(crate::WasmValue::I32(0x2468_1357))
-            );
-            assert_eq!(
-                vm.invoke_wasm(&instance, 1, &[base, index, stored])
-                    .unwrap(),
-                None
-            );
-            assert_eq!(
-                vm.invoke_wasm(
-                    &instance,
-                    0,
-                    &[crate::WasmValue::I32(0x20), crate::WasmValue::I32(0)],
-                )
-                .unwrap(),
-                Some(crate::WasmValue::I32(0x1234_5678))
-            );
-        }
+            None
+        );
+        assert_eq!(
+            vm.invoke_wasm(
+                &instance,
+                0,
+                &[crate::WasmValue::I32(0x20), crate::WasmValue::I32(0)],
+            )
+            .unwrap(),
+            Some(crate::WasmValue::I32(0x1234_5678))
+        );
 
         // An i32 address of 0xffff_ffff still points outside this one-page
         // memory for a four-byte load.
@@ -2079,10 +2067,7 @@ mod tests {
             vm.invoke_wasm(
                 &instance,
                 0,
-                &[
-                    crate::WasmValue::I32(-16),
-                    crate::WasmValue::I32(0x0f),
-                ],
+                &[crate::WasmValue::I32(-16), crate::WasmValue::I32(0x0f),],
             )
             .unwrap_err()
             .wasm_trap(),
@@ -2095,10 +2080,7 @@ mod tests {
             vm.invoke_wasm(
                 &instance,
                 0,
-                &[
-                    crate::WasmValue::I32(-16),
-                    crate::WasmValue::I32(0x1_0010),
-                ],
+                &[crate::WasmValue::I32(-16), crate::WasmValue::I32(0x1_0010),],
             )
             .unwrap_err()
             .wasm_trap(),
@@ -2111,10 +2093,7 @@ mod tests {
             vm.invoke_wasm(
                 &instance,
                 0,
-                &[
-                    crate::WasmValue::I32(-16),
-                    crate::WasmValue::I32(0x1_000f),
-                ],
+                &[crate::WasmValue::I32(-16), crate::WasmValue::I32(0x1_000f),],
             )
             .unwrap_err()
             .wasm_trap(),
@@ -2475,9 +2454,7 @@ mod tests {
         let promotion_entries = super::super::program_store::WASM_JIT_PROMOTION_ENTRIES;
         for _ in 0..promotion_entries {
             assert_eq!(
-                vm.invoke_wasm(&instance, 1, &[])
-                    .unwrap_err()
-                    .wasm_trap(),
+                vm.invoke_wasm(&instance, 1, &[]).unwrap_err().wasm_trap(),
                 Some(crate::WasmTrap::Unreachable)
             );
         }
@@ -2498,18 +2475,17 @@ mod tests {
         assert_eq!(baseline.native_entries(1), Some(promotion_entries as u64));
         assert_eq!(tier.native_entries(0), Some(1));
         assert_eq!(tier.direct_reference_entries(0), Some(0));
+        // The promoted target belongs to a separate artifact, so the caller
+        // must keep using the resolver instead of retaining its code pointer.
+        assert!(!baseline.reference_fast_cache_matches_target(0, 0));
         assert_eq!(
-            vm.invoke_wasm(&instance, 1, &[])
-                .unwrap_err()
-                .wasm_trap(),
+            vm.invoke_wasm(&instance, 1, &[]).unwrap_err().wasm_trap(),
             Some(crate::WasmTrap::Unreachable)
         );
         assert_eq!(tier.native_entries(0), Some(2));
         assert_eq!(tier.direct_reference_entries(0), Some(1));
         assert_eq!(
-            vm.invoke_wasm(&instance, 1, &[])
-                .unwrap_err()
-                .wasm_trap(),
+            vm.invoke_wasm(&instance, 1, &[]).unwrap_err().wasm_trap(),
             Some(crate::WasmTrap::Unreachable)
         );
         assert_eq!(tier.native_entries(0), Some(3));
@@ -2531,9 +2507,7 @@ mod tests {
         assert_eq!(baseline.reference_call_cache_target(0), Some(replacement));
         vm.wasm_table_fill(table, 0, Value::NULL, 1).unwrap();
         assert_eq!(
-            vm.invoke_wasm(&instance, 1, &[])
-                .unwrap_err()
-                .wasm_trap(),
+            vm.invoke_wasm(&instance, 1, &[]).unwrap_err().wasm_trap(),
             Some(crate::WasmTrap::UninitializedElement)
         );
     }
@@ -3070,6 +3044,7 @@ mod tests {
             .flatten()
             .expect("diagnostic Wasm program")
             .clone();
+        assert!(compiled.reference_fast_cache_matches_target(0, 0));
         assert_eq!(
             compiled.profiled_indirect_targets(&vm, program, env, &indirect_callers),
             vec![0]
@@ -3077,13 +3052,16 @@ mod tests {
         let table = vm.wasm_table(&instance, 0).unwrap();
         let replacement = vm.wasm_function(&instance, 3).unwrap();
         vm.wasm_table_fill(table, 0, replacement, 1).unwrap();
-        assert!(compiled
-            .profiled_indirect_targets(&vm, program, env, &indirect_callers)
-            .is_empty());
+        assert!(
+            compiled
+                .profiled_indirect_targets(&vm, program, env, &indirect_callers)
+                .is_empty()
+        );
         assert_eq!(
             vm.invoke_wasm(&instance, 1, &[]).unwrap(),
             Some(crate::WasmValue::I32(10))
         );
+        assert!(compiled.reference_fast_cache_matches_target(0, 3));
         assert_eq!(
             compiled.profiled_indirect_targets(&vm, program, env, &indirect_callers),
             vec![3]
@@ -3099,6 +3077,7 @@ mod tests {
             .flatten()
             .expect("diagnostic Wasm program");
         assert_eq!(compiled.same_artifact_direct_reference_hits(), Some(3));
+        assert!(compiled.reference_fast_cache_matches_target(0, 3));
         assert!(compiled.reference_call_site_counts().unwrap().iter().any(
             |(function, _, total, native, fallback)| {
                 *function == 2 && *total == 3 && *native == 3 && *fallback == 0
@@ -3184,8 +3163,8 @@ mod tests {
 
         let mut vm = Vm::new(GcTestHost);
         vm.set_execution_mode(crate::ExecutionMode::Compiled);
-        let bootstrap = crate::Engine::specialize("void 0", "jit-indirect-gc-bootstrap.js")
-            .unwrap();
+        let bootstrap =
+            crate::Engine::specialize("void 0", "jit-indirect-gc-bootstrap.js").unwrap();
         vm.execute(&bootstrap).unwrap();
         let helper = vm
             .compile_embedding_host_script(
@@ -3209,8 +3188,13 @@ mod tests {
         let table = vm.wasm_table(&instance, 0).unwrap();
         let replacement = vm.wasm_function(&instance, 2).unwrap();
         let replacement_wrapper = vm.wasm_js_function(replacement, Some(2)).unwrap();
-        vm.set_named(module.residual(), vm.realm.globals, "__jitIndirectTable", table)
-            .unwrap();
+        vm.set_named(
+            module.residual(),
+            vm.realm.globals,
+            "__jitIndirectTable",
+            table,
+        )
+        .unwrap();
         vm.set_named(
             module.residual(),
             vm.realm.globals,
@@ -3358,6 +3342,7 @@ mod tests {
 
     #[test]
     fn compiled_wasm_fallback_caller_keeps_native_callee_entries() {
+        crate::wasm::COMPILED_CALLS_KEPT_FOR_TEST.with(|kept| kept.set(true));
         let caller_signature = crate::WasmSignature {
             params: vec![],
             results: vec![crate::WasmType::I32],
@@ -3483,6 +3468,7 @@ mod tests {
 
     #[test]
     fn compiled_wasm_known_fallback_offsets_defined_index_by_import_count() {
+        crate::wasm::COMPILED_CALLS_KEPT_FOR_TEST.with(|kept| kept.set(true));
         let signature = crate::WasmSignature {
             params: vec![],
             results: vec![crate::WasmType::I32],
@@ -5044,6 +5030,248 @@ mod tests {
         assert_eq!(compiled.native_entries(0), Some(1));
         assert_eq!(compiled.native_entries(1), None);
         assert_eq!(compiled.native_entries(2), None);
+    }
+
+    #[test]
+    fn compiled_wasm_root_only_calls_unselected_known_callees_in_the_vm() {
+        let module = crate::Engine::lower_wasm_i32_module(
+            "compiled-wasm-root-only-callout",
+            0,
+            [
+                (
+                    0,
+                    0,
+                    true,
+                    vec![
+                        Operator::Call { function_index: 1 },
+                        Operator::I32Const { value: 2 },
+                        Operator::I32Add,
+                        Operator::End,
+                    ],
+                ),
+                (
+                    0,
+                    0,
+                    true,
+                    vec![Operator::I32Const { value: 40 }, Operator::End],
+                ),
+                (
+                    0,
+                    0,
+                    true,
+                    vec![Operator::I32Const { value: 7 }, Operator::End],
+                ),
+            ]
+            .into_iter()
+            .map(|(params, locals, result, ops)| (params, locals, result, ops.into_iter().map(Ok))),
+        )
+        .unwrap();
+        let function = module.select_function(0).unwrap();
+        let mut vm = Vm::new(crate::SystemHost);
+        assert_eq!(vm.execute_wasm_i32(&function, &[]).unwrap(), Some(42));
+        let program = vm
+            .programs
+            .find_shared(&function.module.program)
+            .expect("registered Wasm program");
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        assert!(vm.install_compiled_root_only_for_test(program, Value::NULL, 0));
+
+        assert_eq!(vm.execute_wasm_i32(&function, &[]).unwrap(), Some(42));
+        let compiled = vm
+            .programs
+            .compiled(program)
+            .flatten()
+            .expect("root-only artifact installed");
+        assert!(compiled.has_function(0));
+        assert!(!compiled.has_function(1));
+        assert!(!compiled.has_function(2));
+        assert_eq!(compiled.native_entries(0), Some(1));
+    }
+
+    #[test]
+    fn compiled_wasm_root_only_rejects_an_invalid_selected_function() {
+        let function = crate::Engine::lower_wasm_i32_function(
+            "compiled-wasm-root-only-admission",
+            0,
+            0,
+            true,
+            [Operator::I32Const { value: 9 }, Operator::End]
+                .into_iter()
+                .map(Ok),
+        )
+        .unwrap();
+        let mut vm = Vm::new(crate::SystemHost);
+        assert_eq!(vm.execute_wasm_i32(&function, &[]).unwrap(), Some(9));
+        let program = vm
+            .programs
+            .find_shared(&function.module.program)
+            .expect("registered Wasm program");
+        assert!(!vm.install_compiled_root_only_for_test(program, Value::NULL, 1));
+        assert!(vm.programs.compiled(program).is_none());
+    }
+
+    fn root_first_hot_fallback_fixture() -> crate::WasmI32Function {
+        let root = vec![
+            Operator::I32Const { value: 40 },
+            Operator::LocalSet { local_index: 0 },
+            Operator::I32Const { value: 0 },
+            Operator::LocalSet { local_index: 1 },
+            Operator::Loop {
+                blockty: wasmparser::BlockType::Empty,
+            },
+            Operator::LocalGet { local_index: 1 },
+            Operator::Call { function_index: 1 },
+            Operator::I32Add,
+            Operator::LocalSet { local_index: 1 },
+            Operator::LocalGet { local_index: 0 },
+            Operator::I32Const { value: -1 },
+            Operator::I32Add,
+            Operator::LocalTee { local_index: 0 },
+            Operator::BrIf { relative_depth: 0 },
+            Operator::End,
+            Operator::LocalGet { local_index: 1 },
+            Operator::End,
+        ];
+        crate::Engine::lower_wasm_i32_module(
+            "compiled-wasm-root-first-hot-callee",
+            0,
+            [
+                (0, 2, true, root),
+                (
+                    0,
+                    0,
+                    true,
+                    vec![Operator::Call { function_index: 2 }, Operator::End],
+                ),
+                (
+                    0,
+                    0,
+                    true,
+                    vec![Operator::Call { function_index: 3 }, Operator::End],
+                ),
+                (
+                    0,
+                    0,
+                    true,
+                    vec![Operator::I32Const { value: 42 }, Operator::End],
+                ),
+            ]
+            .into_iter()
+            .map(|(params, locals, result, ops)| (params, locals, result, ops.into_iter().map(Ok))),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn compiled_wasm_root_first_promotes_a_hot_fallback_callee() {
+        let module = root_first_hot_fallback_fixture();
+        let function = module.select_function(0).unwrap();
+        let program_code = &module.module.program;
+        let root_code = &program_code.functions[0];
+        let root_instructions = root_code
+            .code
+            .iter()
+            .map(|packed| super::super::dispatch_fast::decoded_instruction(root_code, *packed))
+            .collect::<Vec<_>>();
+        assert!(
+            root_instructions.iter().any(|instruction| {
+                instruction.op() == Op::CallKnown && instruction.known_function_index() == 1
+            }),
+            "root instructions: {root_instructions:?}"
+        );
+        let expected = 1_680;
+
+        let mut root_first_vm = Vm::new(crate::SystemHost);
+        assert_eq!(
+            root_first_vm.execute_wasm_i32(&function, &[]).unwrap(),
+            Some(expected)
+        );
+        let program = root_first_vm
+            .programs
+            .find_shared(program_code)
+            .expect("registered Wasm program");
+        root_first_vm.set_execution_mode(crate::ExecutionMode::Compiled);
+
+        let result =
+            super::super::compiled::with_wasm_jit_mode_for_test(false, true, Some(0), || {
+                root_first_vm.execute_wasm_i32(&function, &[])
+            })
+            .unwrap();
+        assert_eq!(result, Some(expected));
+        let root_artifact = root_first_vm
+            .programs
+            .compiled(program)
+            .flatten()
+            .expect("root-first initial artifact");
+        assert!(root_artifact.has_function(0));
+        assert!(!root_artifact.has_function(1));
+        assert!(!root_artifact.has_function(2));
+        assert_eq!(root_artifact.native_entries(0), Some(1));
+        assert_eq!(
+            root_first_vm.programs.wasm_tier_entry_count(program, 1),
+            Some(super::super::program_store::WASM_JIT_PROMOTION_ENTRIES)
+        );
+        assert_eq!(
+            root_first_vm.programs.wasm_tier_attempted(program, 1),
+            Some(true)
+        );
+        let tier = root_first_vm
+            .programs
+            .wasm_tier(program, 1)
+            .expect("hot fallback callee is promoted");
+        assert_eq!(tier.native_entries(1), Some(9));
+
+        let mut strict_root_only_vm = Vm::new(crate::SystemHost);
+        assert_eq!(
+            strict_root_only_vm
+                .execute_wasm_i32(&function, &[])
+                .unwrap(),
+            Some(expected)
+        );
+        let strict_program = strict_root_only_vm
+            .programs
+            .find_shared(program_code)
+            .expect("registered strict-root-only Wasm program");
+        strict_root_only_vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        let result =
+            super::super::compiled::with_wasm_jit_mode_for_test(true, false, Some(0), || {
+                strict_root_only_vm.execute_wasm_i32(&function, &[])
+            })
+            .unwrap();
+        assert_eq!(result, Some(expected));
+        assert!(
+            strict_root_only_vm
+                .programs
+                .wasm_tier(strict_program, 1)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn compiled_wasm_root_first_does_not_promote_when_root_admission_fails() {
+        let module = root_first_hot_fallback_fixture();
+        let function = module.select_function(0).unwrap();
+        let program_code = &module.module.program;
+        let expected = 1_680;
+        let mut vm = Vm::new(crate::SystemHost);
+        assert_eq!(vm.execute_wasm_i32(&function, &[]).unwrap(), Some(expected));
+        let program = vm
+            .programs
+            .find_shared(program_code)
+            .expect("registered Wasm program");
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+
+        let result = super::super::compiled::with_wasm_jit_mode_for_test(
+            false,
+            true,
+            Some(usize::MAX),
+            || vm.execute_wasm_i32(&function, &[]),
+        )
+        .unwrap();
+        assert_eq!(result, Some(expected));
+        assert!(matches!(vm.programs.compiled(program), Some(None)));
+        assert!(vm.programs.wasm_tier(program, 1).is_none());
+        assert!(vm.programs.wasm_tier(program, 2).is_none());
     }
 
     #[test]

@@ -157,10 +157,16 @@ impl<H: Host> Vm<H> {
         self.lazy_member(getter).map(|_| getter)
     }
 
+    /// Whether `holder`'s own property `key` is still a lazy data property: its group has not
+    /// materialized and script has not replaced it.
+    pub(super) fn is_pending_lazy_data_property(&self, holder: Value, key: PropertyKey) -> bool {
+        self.lazy_data_accessor(holder, key).is_some()
+    }
+
     /// The member environment of `value` when it is a lazy data property's accessor.
     fn lazy_member(&self, value: Value) -> Option<Value> {
-        match self.heap.get(value) {
-            Some(Cell::Function {
+        match self.heap.function(value) {
+            Some(FunctionRecord {
                 kind: FunctionKind::Native(Native::LazyDataProperty),
                 env,
                 ..

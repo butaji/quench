@@ -24,8 +24,8 @@ impl<H: Host> Vm<H> {
             .and_then(|attributes| attributes.getter.filter(|_| attributes.accessor))
             .is_some_and(|getter| {
                 matches!(
-                    self.heap.get(getter),
-                    Some(Cell::Function {
+                    self.heap.function(getter),
+                    Some(FunctionRecord {
                         kind: FunctionKind::Native(native),
                         ..
                     }) if native.is_intrinsic_species_getter()
@@ -439,7 +439,7 @@ impl<H: Host> Vm<H> {
     /// Whether `atom` names a property that ordinary shapes alone decide: no private, index,
     /// `length` or legacy function key.
     #[inline]
-    fn plain_named_key(&self, atom: Atom) -> bool {
+    pub(super) fn plain_named_key(&self, atom: Atom) -> bool {
         const GENERAL_KEYS: u8 = AtomClass::PRIVATE
             | AtomClass::ARRAY_INDEX
             | AtomClass::TYPED_ARRAY_INDEX
@@ -566,7 +566,7 @@ impl<H: Host> Vm<H> {
             && self
                 .atom_class(atom)
                 .contains(AtomClass::RESTRICTED_FUNCTION_PROPERTY)
-            && matches!(self.heap.get(object), Some(Cell::Function { .. }))
+            && self.heap.is_function_value(object)
             && self.own_property(object, atom).is_none()
             && !self.function_caller_is_restricted(object)
         {
@@ -772,7 +772,7 @@ impl<H: Host> Vm<H> {
                     Some(Cell::WeakRef { object: x, .. }) => object = x.proto(),
                     Some(Cell::FinalizationRegistry { object: x, .. }) => object = x.proto(),
                     Some(Cell::Iterator { object: x, .. }) => object = x.proto(),
-                    Some(Cell::Function { object: x, .. }) => object = x.proto(),
+                    Some(Cell::Function(x)) => object = x.object.proto(),
                     _ => match self.heap.object(object) {
                         Some(x) => object = x.proto(),
                         None => return Ok(Value::UNDEFINED),

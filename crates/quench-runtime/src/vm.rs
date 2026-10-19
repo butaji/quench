@@ -17,7 +17,7 @@ use crate::bytecode::{
 #[cfg(feature = "profile-memory")]
 use crate::heap::CellKind;
 use crate::heap::{
-    CallSiteLocation, CallSiteName, CallSiteRecord, Cell, FunctionKind, GcTraceKind, Heap, IteratorConsumer,
+    CallSiteLocation, CallSiteName, CallSiteRecord, Cell, FunctionKind, FunctionRecord, GcTraceKind, Heap, IteratorConsumer,
     IteratorHelper, IteratorKind, Native, Object, ProxyKind, RootId, StackData, TypedArrayKind,
     WeakHandle,
 };
@@ -55,7 +55,6 @@ struct RuntimeAtoms {
     empty: Atom,
 }
 pub(crate) mod activation;
-mod activation_lifecycle;
 mod agent;
 mod arguments;
 mod array;
@@ -123,6 +122,7 @@ mod module;
 mod number;
 mod object;
 mod shape_memo;
+mod symbol_write_proof;
 mod name_atom_memo;
 mod object_assignment;
 mod object_array;
@@ -136,7 +136,6 @@ mod object_symbols;
 #[cfg(test)]
 mod object_tests;
 mod property_key;
-use activation::{Continuation, SuspendedEntry};
 use call_arguments::CallArguments;
 use object::AtomClass;
 pub(crate) use program_store::ProgramId;
@@ -1374,8 +1373,6 @@ pub(crate) struct Vm<H> {
     /// the only source of with objects, so until it runs no environment
     /// carries any.
     with_scope_entered: bool,
-    suspended: Vec<SuspendedEntry>,
-    suspended_free: Vec<u32>,
     test262_agent: Test262AgentState,
     shared_async_waiters:Vec<atomics::SharedAsyncWaiter>,
     programs: ProgramStore,
@@ -1401,6 +1398,7 @@ pub(crate) struct Vm<H> {
     shape_accessors: Vec<ShapeAccessors>,
     transitions: shape_transitions::ShapeTransitionIndex,
     shape_slot_memo: shape_memo::ShapeSlotMemo,
+    symbol_write_proofs: symbol_write_proof::SymbolWriteProofs,
     shape_attribute_memo: shape_memo::ShapeAttributeMemo,
     name_atom_memo: name_atom_memo::NameAtomMemo,
     atom_text: AtomTable,
@@ -1933,13 +1931,10 @@ impl<H: Host> Vm<H> {
         eprintln!("{{\"kind\":\"quench-live-cells\",\"top\":{:?}}}", &kinds[..kinds.len().min(8)]);
         let promise = &self.realm.promise;
         eprintln!(
-            "{{\"kind\":\"quench-vm-tables\",\"live_slots\":{},\"suspended\":{},\"suspended_free\":{},\"thenable_jobs\":{},\"reaction_capabilities\":{},\"async_resume_jobs\":{},\"jobs\":{},\"descriptors\":{},\"function_values\":{},\"frames\":{},\"active_call_roots\":{}}}",
+            "{{\"kind\":\"quench-vm-tables\",\"live_slots\":{},\"thenable_jobs\":{},\"reaction_capabilities\":{},\"jobs\":{},\"descriptors\":{},\"function_values\":{},\"frames\":{},\"active_call_roots\":{}}}",
             self.heap.live_slots(),
-            self.suspended.len(),
-            self.suspended_free.len(),
             promise.thenable_jobs.len(),
             promise.reaction_capabilities.len(),
-            promise.async_resume_jobs.len(),
             self.realm.jobs.len(),
             self.descriptors.len(),
             self.function_values.len(),
@@ -2098,6 +2093,8 @@ impl<H: Host> Vm<H> {
         let accounted_runtime_bytes = heap.slot_arena_reserved_bytes
             + heap.object_record_reserved_bytes
             + heap.array_record_reserved_bytes
+            + heap.function_record_reserved_bytes
+            + heap.promise_record_reserved_bytes
             + heap.legacy_cell_record_reserved_bytes
             + heap.free_slot_metadata_bytes
             + property_arena_bytes
@@ -2107,7 +2104,7 @@ impl<H: Host> Vm<H> {
             + heap.sparse_array_sidecar_bytes
             + vm_metadata_bytes;
         eprintln!(
-            "{{\"kind\":\"quench-memory-composition\",\"phase\":\"{phase}\",\"collection\":{},\"cell_kind_names\":{:?},\"cell_counts\":{:?},\"cell_variant_names\":{:?},\"cell_variant_counts\":{:?},\"occupied_slots\":{},\"complete_slot_slabs\":{},\"fully_free_slot_slabs\":{},\"partial_slot_slabs\":{},\"fully_empty_slot_pages\":{fully_empty_slot_pages},\"slot_arena_reserved_bytes\":{},\"object_record_reserved_bytes\":{},\"object_record_reusable_ids\":{},\"object_record_allocation_scan_cursor\":{},\"array_record_reserved_bytes\":{},\"array_record_reusable_ids\":{},\"array_record_allocation_scan_cursor\":{},\"legacy_cell_record_reserved_bytes\":{},\"free_slot_metadata_bytes\":{},\"object_headers\":{},\"embedded_object_headers\":{},\"boxed_object_headers\":{},\"boxed_object_header_bytes\":{},\"object_property_counts_by_width\":{:?},\"inline_property_attribution_bytes_overlapping_slots\":{},\"object_header_size_bytes\":{},\"cell_size_bytes\":{},\"slot_size_bytes\":{},\"property_arena_values_bytes\":{},\"property_arena_metadata_bytes\":{},\"property_arena_used_values\":{},\"property_arena_capacity_values\":{},\"live_property_used_values\":{},\"live_property_capacity_values\":{},\"live_property_used_values_by_width\":{:?},\"live_property_capacity_values_by_width\":{:?},\"dense_array_elements_bytes\":{},\"dense_array_headers_bytes\":{},\"dense_array_backing_count\":{},\"sparse_array_sidecar_bytes\":{},\"string_buffers_bytes\":{},\"string_buffer_count\":{},\"other_cell_payload_bytes\":{},\"cell_payload_total_bytes\":{},\"shape_table_bytes\":{},\"shape_count\":{},\"dictionary_shape_count\":{},\"shape_lookup_bytes\":{},\"transition_table_bytes\":{},\"descriptor_side_table_bytes\":{},\"cache_side_table_bytes\":{},\"atom_side_table_bytes\":{},\"frame_bytes\":{},\"profile_instrumentation_bytes\":{},\"accounted_runtime_bytes\":{},\"accounted_with_profile_bytes\":{}}}",
+            "{{\"kind\":\"quench-memory-composition\",\"phase\":\"{phase}\",\"collection\":{},\"cell_kind_names\":{:?},\"cell_counts\":{:?},\"cell_variant_names\":{:?},\"cell_variant_counts\":{:?},\"occupied_slots\":{},\"complete_slot_slabs\":{},\"fully_free_slot_slabs\":{},\"partial_slot_slabs\":{},\"fully_empty_slot_pages\":{fully_empty_slot_pages},\"slot_arena_reserved_bytes\":{},\"object_record_reserved_bytes\":{},\"object_record_reusable_ids\":{},\"object_record_allocation_scan_cursor\":{},\"array_record_reserved_bytes\":{},\"array_record_reusable_ids\":{},\"array_record_allocation_scan_cursor\":{},\"function_record_reserved_bytes\":{},\"promise_record_reserved_bytes\":{},\"legacy_cell_record_reserved_bytes\":{},\"free_slot_metadata_bytes\":{},\"object_headers\":{},\"embedded_object_headers\":{},\"boxed_object_headers\":{},\"boxed_object_header_bytes\":{},\"object_property_counts_by_width\":{:?},\"inline_property_attribution_bytes_overlapping_slots\":{},\"object_header_size_bytes\":{},\"cell_size_bytes\":{},\"slot_size_bytes\":{},\"property_arena_values_bytes\":{},\"property_arena_metadata_bytes\":{},\"property_arena_used_values\":{},\"property_arena_capacity_values\":{},\"live_property_used_values\":{},\"live_property_capacity_values\":{},\"live_property_used_values_by_width\":{:?},\"live_property_capacity_values_by_width\":{:?},\"dense_array_elements_bytes\":{},\"dense_array_headers_bytes\":{},\"dense_array_backing_count\":{},\"sparse_array_sidecar_bytes\":{},\"string_buffers_bytes\":{},\"string_buffer_count\":{},\"other_cell_payload_bytes\":{},\"cell_payload_total_bytes\":{},\"shape_table_bytes\":{},\"shape_count\":{},\"dictionary_shape_count\":{},\"shape_lookup_bytes\":{},\"transition_table_bytes\":{},\"descriptor_side_table_bytes\":{},\"cache_side_table_bytes\":{},\"atom_side_table_bytes\":{},\"frame_bytes\":{},\"profile_instrumentation_bytes\":{},\"accounted_runtime_bytes\":{},\"accounted_with_profile_bytes\":{}}}",
             self.heap.collection_count(),
             CellKind::NAMES,
             heap.cell_counts,
@@ -2124,6 +2121,8 @@ impl<H: Host> Vm<H> {
             heap.array_record_reserved_bytes,
             heap.array_record_reusable_ids,
             heap.array_record_allocation_scan_cursor,
+            heap.function_record_reserved_bytes,
+            heap.promise_record_reserved_bytes,
             heap.legacy_cell_record_reserved_bytes,
             heap.free_slot_metadata_bytes,
             heap.object_headers,
@@ -2175,7 +2174,9 @@ impl<H: Host> Vm<H> {
         scope: builtins::RealmScope,
     ) -> Result<(), JsError> {
         self.specialized = program.specialized;
-        self.realm.intrinsics.arguments_objects.clear();
+        // Every intrinsic names a value of the heap the reset discards; a new realm can reuse
+        // a discarded realm's identity, which must not find the old one's intrinsics.
+        self.realm.intrinsics = Default::default();
         // The snapshot contains heap values, shapes and atom ids from one realm.
         // A host may build a builtin before sealing the replacement realm.
         self.startup_intrinsics = Default::default();
@@ -2190,8 +2191,6 @@ impl<H: Host> Vm<H> {
         self.realm.global_lexical_bindings.clear();
         self.realm.immutable_global_lexical_bindings.clear();
         self.with_stack.clear();
-        self.suspended.clear();
-        self.suspended_free.clear();
         self.direct_eval = false;
         self.parameter_eval = false;
         self.eval_script_context = false;
@@ -2202,6 +2201,7 @@ impl<H: Host> Vm<H> {
         self.shapes[0].last_child.set(NO_LAST_CHILD);
         self.transitions.clear();
         self.shape_slot_memo.clear();
+        self.symbol_write_proofs.clear();
         self.shape_attribute_memo.clear();
         self.atom_strings.clear();
         // The sealed holders and their shapes belong to the discarded heap.
@@ -2547,10 +2547,10 @@ impl<H: Host> Vm<H> {
                     self.type_error(p, "function belongs to an unavailable program".into())
                 })?;
                 let active_program = self.replace_active_program(program_id);
-                let realm = match self.heap.get(callee) {
-                    Some(Cell::Function { object, .. }) => object.realm,
-                    _ => self.realm.globals,
-                };
+                let realm = self
+                    .heap
+                    .function(callee)
+                    .map_or(self.realm.globals, |function| function.realm);
                 let current_global = self.switch_realm_global(realm);
                 let result = if program
                     .functions
@@ -2599,13 +2599,13 @@ impl<H: Host> Vm<H> {
         callee: Value,
         args: &[Value],
     ) -> Result<(Value, Value), JsError> {
-        let (program_id, id, env, realm) = match self.heap.get(callee) {
-            Some(Cell::Function {
+        let (program_id, id, env, realm) = match self.heap.function(callee) {
+            Some(FunctionRecord {
                 kind: FunctionKind::User(program_id, id) | FunctionKind::NumericUser(program_id, id),
                 env,
-                object,
+                realm,
                 ..
-            }) => (*program_id, *id, *env, object.realm),
+            }) => (*program_id, *id, *env, *realm),
             _ => return Err(self.type_error(p, "constructor is not a user function".into())),
         };
         let program = self.programs.get(program_id).ok_or_else(|| {

@@ -668,7 +668,7 @@ opcodes!(
     InitializeThis => CALL_EFFECT.union(Effect::CONTROL); layout Scalar; meaning Unused, @ Register, @ fields(Register, Unused, Unused),
     CacheTemplateObject => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning TemplateSiteIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
     LoadCachedTemplateObject => Effect::READS_HEAP; layout Scalar; meaning TemplateSiteIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
-    DefineField => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Register, Unused),
+    DefineField => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Register, CacheSiteIndex),
     ValidateClassHeritage => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(Register, Unused, Unused),
     SetFieldStrict => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Register, CacheSiteIndex),
     SetThisFieldStrict => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Unused, CacheSiteIndex),
@@ -1142,6 +1142,97 @@ pub struct Function {
     pub(crate) initial_register: InitialRegister,
 }
 
+/// The facts about a function that are read before its first call: when its closure is
+/// made, by `IsConstructor` and brand checks, by `Function.prototype.toString`, and by an
+/// enclosing activation that asks whether a closure it makes is an arrow. A projection of
+/// the compiled record (`FunctionHeader::of`), so a slot answers them without its body.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct FunctionHeader {
+    pub(crate) parent: Option<u32>,
+    pub(crate) name: Option<Atom>,
+    pub(crate) inferred_name: Option<Atom>,
+    pub(crate) source_span: Option<SourceSpan>,
+    pub(crate) length: u16,
+    pub(crate) dispatch: DispatchClass,
+    pub(crate) is_arrow: bool,
+    pub(crate) is_async: bool,
+    pub(crate) is_generator: bool,
+    pub(crate) is_class_constructor: bool,
+    pub(crate) constructible: bool,
+    pub(crate) inherited_with_scope: bool,
+}
+
+impl FunctionHeader {
+    pub(crate) fn of(function: &Function) -> Self {
+        Self {
+            parent: function.parent,
+            name: function.name,
+            inferred_name: function.inferred_name,
+            source_span: function.source_span,
+            length: function.length,
+            dispatch: function.dispatch,
+            is_arrow: function.is_arrow,
+            is_async: function.is_async,
+            is_generator: function.is_generator,
+            is_class_constructor: function.is_class_constructor,
+            constructible: function.constructible,
+            inherited_with_scope: function.inherited_with_scope,
+        }
+    }
+}
+
+/// One entry of a program's function table: the header, always present, and the compiled
+/// record, written once. Reading the record through `Deref` requires that it was compiled.
+#[derive(Clone, Debug)]
+pub struct FunctionSlot {
+    header: FunctionHeader,
+    record: std::cell::OnceCell<Box<Function>>,
+}
+
+impl FunctionSlot {
+    pub(crate) fn compiled(function: Function) -> Self {
+        Self {
+            header: FunctionHeader::of(&function),
+            record: std::cell::OnceCell::from(Box::new(function)),
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn header(&self) -> &FunctionHeader {
+        &self.header
+    }
+
+    /// The compiled record, when it exists.
+    #[inline(always)]
+    pub(crate) fn record(&self) -> Option<&Function> {
+        self.record.get().map(|function| &**function)
+    }
+}
+
+impl std::ops::Deref for FunctionSlot {
+    type Target = Function;
+
+    #[inline(always)]
+    fn deref(&self) -> &Function {
+        self.record()
+            .expect("a function's record is read only once it is compiled")
+    }
+}
+
+impl std::ops::DerefMut for FunctionSlot {
+    fn deref_mut(&mut self) -> &mut Function {
+        self.record
+            .get_mut()
+            .expect("a function's record is changed only once it is compiled")
+    }
+}
+
+impl From<Function> for FunctionSlot {
+    fn from(function: Function) -> Self {
+        Self::compiled(function)
+    }
+}
+
 /// Call-setup facts derived once per function from its static layout, so an activation reads
 /// one cached word instead of re-testing each flag.
 #[derive(Clone, Copy, Debug)]
@@ -1552,14 +1643,18 @@ impl Function {
     /// its own name lookups (`activation_binding_reads`) or by an arrow function it makes,
     /// which inherits them. Any other closure has its own. `functions` is the owning
     /// program's table.
-    pub(crate) fn activation_bindings_observable(&self, atoms: &AtomTable, functions: &[Function]) -> bool {
+    pub(crate) fn activation_bindings_observable(
+        &self,
+        atoms: &AtomTable,
+        functions: &[FunctionSlot],
+    ) -> bool {
         *self.activation_bindings.get_or_init(|| {
             self.activation_binding_reads(atoms)
                 || self.instructions().any(|instruction| {
                     instruction.op() == Op::MakeClosure
                         && functions
                             .get(instruction.closure_function_index() as usize)
-                            .is_none_or(|closure| closure.is_arrow)
+                            .is_none_or(|closure| closure.header().is_arrow)
                 })
         })
     }
@@ -1690,11 +1785,13 @@ impl Function {
                 && !self.activation_binding_reads(atoms)
                 // A plain activation makes no closure, whichever bindings it would see.
                 && !self.instructions().any(|instruction| instruction.op() == Op::MakeClosure);
+            // A field initializer is an ordinary method call on the instance whose
+            // activation keeps its implicit bindings (`activation_binding_reads`); only the
+            // derived instance initializer, which `super()` runs, is entered natively.
             let in_loop = !self.is_async
                 && !self.is_generator
                 && !self.is_class_constructor
                 && !self.derived_constructor
-                && !self.class_initializer
                 && !self.parameter_eval_arguments_error;
             let legacy_reflection = !self.has_restricted_legacy_caller_access();
             let live_parameters = self.reflects_live_parameters(program);
@@ -1895,7 +1992,7 @@ impl Function {
     /// names, so a by-name load in it can only denote a global binding.
     pub(crate) fn names_resolve_statically(
         &self,
-        functions: &[Function],
+        functions: &[FunctionSlot],
         atoms: &AtomTable,
     ) -> bool {
         *self.static_name_scope.get_or_init(|| {
@@ -2513,7 +2610,7 @@ pub struct ResidualProgram {
     pub(crate) source: Option<ProgramSource>,
     pub(crate) atoms: AtomTable,
     pub(crate) constants: Vec<Constant>,
-    pub(crate) functions: Vec<Function>,
+    pub(crate) functions: Vec<FunctionSlot>,
     pub(crate) cache_sites: u16,
     pub(crate) method_sites: Vec<MethodSite>,
     pub(crate) method_arguments: Vec<Register>,
@@ -2522,6 +2619,8 @@ pub struct ResidualProgram {
     pub(crate) regexp_literal_sites: Vec<RegExpLiteralSite>,
     pub(crate) literal_templates: Vec<Box<[LiteralStep]>>,
     pub(crate) superinstructions: Vec<Superinstruction>,
+    /// How its functions can be compiled again from source, when they can.
+    pub(crate) replay: Option<std::rc::Rc<crate::compile::replay::ProgramReplay>>,
 }
 
 #[cold]
@@ -2590,7 +2689,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 99;
+    pub const FORMAT_VERSION: u8 = 100;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

@@ -74,24 +74,31 @@ impl<H: Host> Vm<H> {
 /// CreateDataPropertyOrThrow of a class field adds an ordinary data property and nothing
     /// else when the target is an extensible ordinary object (not a Proxy, array, arguments
     /// or other exotic object) that lacks the key and the key is no array index.
-    fn class_field_is_plain_add(&self, target: Value, key: PropertyKey) -> bool {
+    pub(super) fn class_field_is_plain_add(&self, target: Value, key: PropertyKey) -> bool {
         let index_key = match key {
             PropertyKey::String(atom) => self.atom_class(atom).contains(AtomClass::ARRAY_INDEX),
             PropertyKey::Symbol(_) => false,
             PropertyKey::Private(_) => return false,
         };
-        let Some(object) = self.heap.ordinary_object(target) else {
-            return false;
-        };
-        // Wrapper, error and arguments objects carry exotic or virtual own properties.
         !index_key
-            && object.is_extensible()
+            && self
+                .class_field_define_target(target)
+                .is_some_and(|shape| self.property_shape_slot(shape, key).is_none())
+            && !self.descriptors.contains_key(&(target, key))
+    }
+
+    /// The shape of `target` when it is an extensible ordinary object whose own properties
+    /// are all shape properties: wrapper, error and arguments objects carry exotic or virtual
+    /// own properties. A non-index descriptor kept outside a shape belongs to one of those
+    /// exotic objects, and recording one clears every field cache.
+    pub(super) fn class_field_define_target(&self, target: Value) -> Option<u32> {
+        let object = self.heap.ordinary_object(target)?;
+        (object.is_extensible()
             && !object.is_arguments_object()
             && object.boxed_primitive().is_none()
             && object.stack_data().is_none()
-            && !object.has_error_data()
-            && self.property_shape_slot(object.shape(), key).is_none()
-            && !self.descriptors.contains_key(&(target, key))
+            && !object.has_error_data())
+        .then(|| object.shape())
     }
 
     pub(super) fn define_class_field(
@@ -176,6 +183,8 @@ impl<H: Host> Vm<H> {
             } else {
                 "Array"
             }
+        } else if self.heap.is_function_value(value) {
+            "Function"
         } else {
             match self.heap.get(value) {
                 Some(Cell::Proxy { .. }) if proxy_array => "Array",
@@ -184,7 +193,6 @@ impl<H: Host> Vm<H> {
                 Some(Cell::BigInt(_) | Cell::Symbol(_)) => "Object",
                 Some(Cell::Date { .. }) => "Date",
                 Some(Cell::RegExp { .. }) => "RegExp",
-                Some(Cell::Function { .. }) => "Function",
                 Some(Cell::ArrayBuffer { .. }) => "ArrayBuffer",
                 Some(Cell::DataView { .. }) => "DataView",
                 Some(Cell::TypedArray { kind, .. }) => match kind {
