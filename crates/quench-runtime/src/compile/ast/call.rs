@@ -59,7 +59,7 @@ impl FunctionCompiler<'_, '_> {
                 let atom = self.owner.atom(identifier.name.as_str());
                 let bound = self.function_scope.contains(&atom)
                     || self.active_lexical_binding(atom).is_some()
-                    || self.scopes.iter().any(|scope| scope.contains_key(&atom));
+                    || self.scopes.contains(atom);
                 if bound {
                     self.expression(operand)
                 } else {
@@ -176,6 +176,7 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn call(&mut self, value: &CallExpression<'_>) -> Register {
+        self.owner.note_invoked_callee(&value.callee);
         if Self::has_spread(&value.arguments) {
             if super::super::early::is_direct_eval_call(value) {
                 return self.direct_eval_spread_call(value);
@@ -369,11 +370,11 @@ impl FunctionCompiler<'_, '_> {
         if self.dynamic_eval && let Some(atom) = self.super_home_atom {
             let location = self.local_slots.get(&atom).copied()
                 .map(crate::bytecode::EvalBindingLocation::Local)
-                .or_else(|| self.scopes.iter().enumerate().find_map(|(depth, scope)| {
-                    let slot = *scope.get(&atom)?;
+                .or_else(|| {
+                    let (depth, slot) = self.scopes.find(atom)?;
                     let depth = u16::try_from(depth).ok()?;
                     Some(crate::bytecode::EvalBindingLocation::Capture { depth, slot })
-                }));
+                });
             if let Some(location) = location
                 && !direct.iter().any(|binding| binding.atom == atom)
             {

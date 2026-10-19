@@ -596,7 +596,7 @@ impl Lowering<'_> {
                 .map_err(|_| self.control_error("Wasm handler end out of bounds"))?,
             target: u32::try_from(target)
                 .map_err(|_| self.control_error("Wasm handler target out of bounds"))?,
-            slot: Some(slot),
+            slot: Some(crate::bytecode::ThrownValueSlot::Local(slot)),
             return_target: None,
             return_slot: None,
             with_depth: 0,
