@@ -252,12 +252,12 @@ impl<H: Host> Vm<H> {
         let window = unsafe { &*window };
         let this = window.first().copied().unwrap_or(Value::UNDEFINED);
         let apply_arguments;
-        let arguments = match self.heap.get(callee) {
-            Some(Cell::Function {
+        let arguments = match self.heap.function(callee) {
+            Some(FunctionRecord {
                 kind: FunctionKind::Native(Native::FunctionCall),
                 ..
             }) => window.get(1..).unwrap_or_default(),
-            Some(Cell::Function {
+            Some(FunctionRecord {
                 kind: FunctionKind::Native(Native::FunctionApply),
                 ..
             }) => match window.get(1).copied().unwrap_or(Value::UNDEFINED) {
@@ -1283,12 +1283,12 @@ impl<H: Host> Vm<H> {
                 debug_assert_eq!(caller.program, self.active_program);
                 let direct_eval = i.direct_eval()
                     && matches!(
-                        self.heap.get(callee),
-                        Some(Cell::Function {
+                        self.heap.function(callee),
+                        Some(FunctionRecord {
                             kind: FunctionKind::Native(Native::Eval),
-                            object,
+                            realm,
                             ..
-                        }) if object.realm == self.realm.globals
+                        }) if *realm == self.realm.globals
                     );
                 let previous_binding_site_pc = if direct_eval {
                     Some(std::mem::replace(
@@ -1319,10 +1319,10 @@ impl<H: Host> Vm<H> {
                     let program = self.programs.get(program_id).ok_or_else(|| {
                         JsError::validation("missing Wasm tail-call program".into())
                     })?;
-                    let realm = match self.heap.get(callee) {
-                        Some(Cell::Function { object, .. }) => object.realm,
-                        _ => self.realm.globals,
-                    };
+                    let realm = self
+                        .heap
+                        .function(callee)
+                        .map_or(self.realm.globals, |function| function.realm);
                     let result = self.with_call_roots(
                         [callee, this].into_iter().chain(args.iter().copied()),
                         |vm| {

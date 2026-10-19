@@ -554,7 +554,7 @@ mod tests {
         vm.collect_now(module.residual());
         assert!(vm.heap.is_live(first_env));
         assert!(
-            matches!(vm.heap.get(function), Some(Cell::Function { env, .. }) if *env == first_env)
+            matches!(vm.heap.function(function), Some(FunctionRecord { env, .. }) if *env == first_env)
         );
         assert_eq!(vm.wasm_table_get(table, 0).unwrap(), function);
         assert!(vm.release_root(second.environment));
