@@ -707,6 +707,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "fsBindingReaddirRecursive" (0) => crate::modules::fs_directory_shared_vm::readdir_recursive,
         method "fsPromisesGlobInitialize" (0) => crate::modules::fs_shared_vm::initialize_promises_glob_policy,
         method "fsReadStreamInitialize" (0) => crate::modules::fs_shared_vm::initialize_read_stream,
+        method "fsModuleInitialize" (0) => crate::modules::fs_shared_vm::initialize_module,
         method "perfHooksObserversInitialize" (0) => crate::modules::perf_hooks::initialize_observers,
         method "fsLibraryPolicyInitialize" (0) => crate::modules::fs_shared_vm::initialize_library_policy,
         method "fsWriteStreamInitialize" (0) => crate::modules::fs_shared_vm::write_stream::initialize,
@@ -1068,12 +1069,14 @@ impl quench_runtime::Host for NodeHost {
         bytes: &[u8],
         mode: quench_runtime::ExecutionMode,
     ) -> Result<quench_runtime::WasmModule, String> {
-        let module = quench_wasm::Engine::new()
-            .compile(bytes)
+        // Decoding with validation, and lowering, each run once per module and touch code
+        // the other does not: each phase's pages leave the resident set before the next
+        // phase, and the module runs.
+        let module = quench_wasm::Engine::new().compile(bytes);
+        crate::host::resident_pages::release_read_only_pages();
+        let module = module
             .and_then(|module| module.lower_shared_module_for(mode))
             .map_err(|error| error.to_string());
-        // Decoding, validation and lowering run once per module; their code leaves the
-        // resident set before the module runs.
         crate::host::resident_pages::release_read_only_pages();
         module
     }
