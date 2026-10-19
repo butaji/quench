@@ -11,6 +11,8 @@ use std::{
 use crate::NodeOutcome;
 
 pub const DEFAULT_CASE_TIMEOUT_SECS: u64 = 30;
+/// How often a running case is checked for exit; it bounds the error of `CaseObservation::wall`.
+const POLL_INTERVAL: Duration = Duration::from_millis(1);
 pub const NODE_PARALLEL_DIR: &str = "tests/node/test/parallel";
 const WORKER_OPTION: &str = "--case-worker";
 
@@ -40,9 +42,19 @@ pub struct CaseObservation {
     pub worker: Option<NodeOutcome>,
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
-    /// The observed process's own peak resident set size (`wait4`'s `ru_maxrss`), where
-    /// the platform reports it.
-    pub peak_rss_bytes: Option<u64>,
+    /// The observed process's resource usage (`wait4`), where the platform reports it.
+    pub usage: Option<ResourceUsage>,
+    /// From spawn to reaping, within `POLL_INTERVAL`.
+    pub wall: Duration,
+}
+
+/// What `wait4` reports for a reaped process.
+#[derive(Clone, Copy, Debug, serde::Serialize)]
+pub struct ResourceUsage {
+    /// The process's own peak resident set size (`ru_maxrss`).
+    pub peak_rss_bytes: u64,
+    /// User plus system CPU time (`ru_utime + ru_stime`).
+    pub cpu: Duration,
 }
 
 impl CaseObservation {
@@ -273,18 +285,20 @@ fn observe_process_in(
     let mut child = command
         .spawn()
         .map_err(|error| format!("spawn observed process: {error}"))?;
-    let deadline = Instant::now() + timeout;
-    let mut peak_rss_bytes = None;
+    let started = Instant::now();
+    let deadline = started + timeout;
+    let mut usage = None;
     let waited = loop {
-        match try_wait(&mut child, &mut peak_rss_bytes) {
+        match try_wait(&mut child, &mut usage) {
             Ok(Some(status)) => break Ok(Some(status)),
             Ok(None) if Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(10));
+                std::thread::sleep(POLL_INTERVAL);
             }
             Ok(None) => break Ok(None),
             Err(error) => break Err(error),
         }
     };
+    let wall = started.elapsed();
     let timed_out = matches!(waited, Ok(None));
     // A fixture may leave child processes running even when its worker exits
     // normally or fails early. The case owns the entire process group, so
@@ -298,7 +312,7 @@ fn observe_process_in(
         pending => {
             #[cfg(not(unix))]
             let _ = child.kill();
-            let status = wait(&mut child, &mut peak_rss_bytes).map_err(|error| error.to_string())?;
+            let status = wait(&mut child, &mut usage).map_err(|error| error.to_string())?;
             pending.map_err(|error| format!("wait for Node worker: {error}"))?;
             status
         }
@@ -321,32 +335,36 @@ fn observe_process_in(
             .and_then(|bytes| serde_json::from_slice(&bytes).ok()),
         stdout: fs::read(stdout).map_err(|error| format!("read worker stdout: {error}"))?,
         stderr: fs::read(stderr).map_err(|error| format!("read worker stderr: {error}"))?,
-        peak_rss_bytes,
+        usage,
+        wall,
     })
 }
 
 /// `wait4` reports the reaped child's resource usage; Linux counts `ru_maxrss` in KiB.
 #[cfg(target_os = "linux")]
 const MAXRSS_UNIT_BYTES: u64 = 1024;
+/// `timeval` counts microseconds.
+#[cfg(target_os = "linux")]
+const NANOS_PER_MICRO: u32 = 1_000;
 
 /// Reap `child` if it has exited, recording its peak RSS.
 #[cfg(target_os = "linux")]
-fn try_wait(child: &mut std::process::Child, peak_rss_bytes: &mut Option<u64>) -> std::io::Result<Option<std::process::ExitStatus>> {
-    reap(child, libc::WNOHANG, peak_rss_bytes)
+fn try_wait(child: &mut std::process::Child, usage: &mut Option<ResourceUsage>) -> std::io::Result<Option<std::process::ExitStatus>> {
+    reap(child, libc::WNOHANG, usage)
 }
 
 /// Reap `child`, blocking until it exits, recording its peak RSS.
 #[cfg(target_os = "linux")]
-fn wait(child: &mut std::process::Child, peak_rss_bytes: &mut Option<u64>) -> std::io::Result<std::process::ExitStatus> {
+fn wait(child: &mut std::process::Child, usage: &mut Option<ResourceUsage>) -> std::io::Result<std::process::ExitStatus> {
     loop {
-        if let Some(status) = reap(child, 0, peak_rss_bytes)? {
+        if let Some(status) = reap(child, 0, usage)? {
             return Ok(status);
         }
     }
 }
 
 #[cfg(target_os = "linux")]
-fn reap(child: &mut std::process::Child, options: libc::c_int, peak_rss_bytes: &mut Option<u64>) -> std::io::Result<Option<std::process::ExitStatus>> {
+fn reap(child: &mut std::process::Child, options: libc::c_int, observed: &mut Option<ResourceUsage>) -> std::io::Result<Option<std::process::ExitStatus>> {
     use std::os::unix::process::ExitStatusExt;
     let mut status = 0;
     // SAFETY: zeroed rusage is a valid output buffer for wait4.
@@ -357,19 +375,25 @@ fn reap(child: &mut std::process::Child, options: libc::c_int, peak_rss_bytes: &
         0 => Ok(None),
         pid if pid < 0 => Err(std::io::Error::last_os_error()),
         _ => {
-            *peak_rss_bytes = u64::try_from(usage.ru_maxrss).ok().map(|kib| kib * MAXRSS_UNIT_BYTES);
+            let time = |time: libc::timeval| {
+                Duration::new(time.tv_sec as u64, (time.tv_usec as u32) * NANOS_PER_MICRO)
+            };
+            *observed = u64::try_from(usage.ru_maxrss).ok().map(|kib| ResourceUsage {
+                peak_rss_bytes: kib * MAXRSS_UNIT_BYTES,
+                cpu: time(usage.ru_utime) + time(usage.ru_stime),
+            });
             Ok(Some(std::process::ExitStatus::from_raw(status)))
         }
     }
 }
 
 #[cfg(not(target_os = "linux"))]
-fn try_wait(child: &mut std::process::Child, _: &mut Option<u64>) -> std::io::Result<Option<std::process::ExitStatus>> {
+fn try_wait(child: &mut std::process::Child, _: &mut Option<ResourceUsage>) -> std::io::Result<Option<std::process::ExitStatus>> {
     child.try_wait()
 }
 
 #[cfg(not(target_os = "linux"))]
-fn wait(child: &mut std::process::Child, _: &mut Option<u64>) -> std::io::Result<std::process::ExitStatus> {
+fn wait(child: &mut std::process::Child, _: &mut Option<ResourceUsage>) -> std::io::Result<std::process::ExitStatus> {
     child.wait()
 }
 

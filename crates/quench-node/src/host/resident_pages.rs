@@ -32,10 +32,41 @@ const MAPS_PATH: &str = "/proc/self/maps";
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const CODE_MAPPING: &str = "r-xp";
 
+/// A release and the refaults of the code a run touches again after it cost about 1.2 ms
+/// (about 730 pages at 1.7 µs, the lodash npm scenario, x86_64 VM, 2026-10-19). Releases after
+/// library loads (`release_read_only_pages_after_load`) come at most once per this interval,
+/// which bounds that cost to about 1% of a run's time: loads that follow each other faster run
+/// the same loader and compiler code, which a release would only refault (semver scenario
+/// 926 -> 741 ms). Collections keep releasing at each boundary (`at_collection_boundary`):
+/// even a 10 ms interval there raised V8-v7 NavierStokes max RSS 5236 -> 5516 KiB.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const LOAD_RELEASE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// When the read-only pages were last released.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+static LAST_RELEASE: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+
+/// Releases the read-only pages after a library load unless they were released less than
+/// `LOAD_RELEASE_INTERVAL` ago.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub fn release_read_only_pages_after_load() {
+    let recent = LAST_RELEASE
+        .lock()
+        .ok()
+        .and_then(|last| *last)
+        .is_some_and(|last| last.elapsed() < LOAD_RELEASE_INTERVAL);
+    if !recent {
+        release_read_only_pages();
+    }
+}
+
 /// Unmaps the read-only pages above from the resident set; the next touch of each refaults it
 /// from its file.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn release_read_only_pages() {
+    if let Ok(mut last) = LAST_RELEASE.lock() {
+        *last = Some(std::time::Instant::now());
+    }
     // SAFETY: the linker defines both symbols at the bounds of the read-only segments, which
     // are never written, so discarding their pages loses nothing.
     unsafe {
@@ -185,3 +216,6 @@ pub fn map_touched_pages_only() {}
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 pub fn release_read_only_pages() {}
+
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+pub fn release_read_only_pages_after_load() {}

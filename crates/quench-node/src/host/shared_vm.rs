@@ -1052,6 +1052,14 @@ impl quench_runtime::Host for NodeHost {
         crate::host::resident_pages::release_read_only_pages();
     }
 
+    fn kept_compiled_program(&mut self, name: &str, parts: &[&str]) -> Option<Vec<u8>> {
+        self.compile_cache.entry(name, parts)?.load()
+    }
+    fn keep_compiled_program(&mut self, name: &str, parts: &[&str], bytes: &[u8]) {
+        if let Some(entry) = self.compile_cache.entry(name, parts) {
+            entry.store(bytes);
+        }
+    }
     fn proper_tail_calls(&self) -> bool {
         false
     }
@@ -1113,9 +1121,13 @@ impl quench_runtime::Host for NodeHost {
     ) -> Result<Option<quench_runtime::ModuleSource>, quench_runtime::ModuleLoadError> {
         use std::path::Path;
 
-        let builtin_exports: std::collections::BTreeMap<String, Vec<String>> =
+        // Parsed once: every import resolves through here, and the table is 21 KB of JSON.
+        static BUILTIN_EXPORTS: std::sync::OnceLock<std::collections::BTreeMap<String, Vec<String>>> =
+            std::sync::OnceLock::new();
+        let builtin_exports = BUILTIN_EXPORTS.get_or_init(|| {
             serde_json::from_str(include_str!("builtin_esm_exports.json"))
-                .expect("generated Node builtin export names are valid JSON");
+                .expect("generated Node builtin export names are valid JSON")
+        });
         let builtin_name = specifier.strip_prefix("node:").unwrap_or(specifier);
         let builtin = crate::host::shared_vm::commonjs::is_builtin_specifier(specifier);
         if !builtin && specifier.starts_with("node:") {
