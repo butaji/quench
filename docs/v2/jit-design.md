@@ -131,15 +131,15 @@ calls bypass the entry hook and are charged to the enclosing entry. Use the
 data to choose a function for deeper profiling, not as per-function CPU time
 or benchmark evidence.
 
-A one-round selective diagnostic sampled QuickSort's defined-function index 1
-(`Quicksort`, symbol index 3) 12 times for 2.146 ms total, out of 3,112
-recorded entries. The GCC loop profile's top sampled entries were individually
-sub-millisecond in aggregate, with `example25` at 0.830 ms and `example7` at
-0.762 ms. This identifies QuickSort's recursive sort body as the next codegen
-profiling target, but does not isolate its loop-body cost or establish a JIT
-speed change. The report used an iteration binary built from a dirty tree and
-is diagnostics-only; after the instrumentation lands, collect a clean-source
-profile before using its function attribution to guide an optimization.
+A clean-source, one-round selective diagnostic sampled QuickSort's defined
+body index 1 (`Quicksort`, symbol index 3) 12 times for 1.203 ms total, out of
+3,112 recorded entries. In GCC loops, the top sampled bodies were
+`example25` at 0.673 ms and `example10a` at 0.552 ms. This identifies
+QuickSort's recursive sort body as the next codegen inspection target, but
+does not isolate its loop-body cost or establish a JIT speed change. Both
+fixture outputs validated; the diagnostic report is not performance evidence.
+The report, sample mapping and reproduction command are in
+`evidence/jit-jetstream3-wasm-2026-10-19/native-entry-sampling/`.
 
 ## Deferred indirect-call fallback lookups
 
