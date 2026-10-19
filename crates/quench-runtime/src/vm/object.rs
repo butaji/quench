@@ -416,11 +416,20 @@ impl<H: Host> Vm<H> {
         // Non-shape properties, including array length and indexed elements,
         // keep explicit attributes in descriptors. Array length always exists;
         // its unchanged attributes derive from the array exotic contract.
-        self.descriptors.get(&(object, key)).copied().or_else(|| {
+        self.side_descriptor(object, key).or_else(|| {
             (key == PropertyKey::string(self.length_atom)
                 && self.own_array_length(object).is_some())
             .then_some(super::object_array::ARRAY_LENGTH_ATTRIBUTES)
         })
+    }
+    /// `object`'s attributes for `key` in the descriptor table, which an object only has
+    /// entries in once marked (`Object::has_side_descriptors`); any other value is looked up.
+    #[inline(always)]
+    pub(super) fn side_descriptor(&self, object: Value, key: PropertyKey) -> Option<PropertyAttributes> {
+        if self.object_data(object).is_some_and(|data| !data.has_side_descriptors()) {
+            return None;
+        }
+        self.descriptors.get(&(object, key)).copied()
     }
     /// The one place descriptors are recorded. Objects remember whether any index-keyed entry
     /// exists, so plain arrays can skip the per-index descriptor proof.
@@ -430,11 +439,12 @@ impl<H: Host> Vm<H> {
         key: PropertyKey,
         attributes: PropertyAttributes,
     ) {
-        if let PropertyKey::String(atom) = key
-            && self.atom_class(atom).contains(AtomClass::ARRAY_INDEX)
-            && let Some(data) = self.object_data_mut(object)
-        {
-            data.mark_indexed_descriptors();
+        let index_key = matches!(key, PropertyKey::String(atom) if self.atom_class(atom).contains(AtomClass::ARRAY_INDEX));
+        if let Some(data) = self.object_data_mut(object) {
+            data.mark_side_descriptors();
+            if index_key {
+                data.mark_indexed_descriptors();
+            }
         }
         self.descriptors.insert((object, key), attributes);
     }
