@@ -4440,6 +4440,14 @@ impl<H: Host> Vm<H> {
         callee: Value,
     ) -> Option<ScriptCallTarget> {
         let index = callee.heap_index()? as usize & (SCRIPT_CALL_TARGETS - 1);
+        // A function the JavaScript tier may still claim keeps its frame, where the tier
+        // counts and enters it; uncached, so the lane takes it once the tier declines it.
+        if let Some((program, function, _)) = self.same_realm_user_target(callee)
+            && program == self.active_program
+            && self.js_tier_may_claim(code, program, function)
+        {
+            return None;
+        }
         let rejected = RejectedCallTarget {
             callee,
             generation: self.lane_stack.generation,
