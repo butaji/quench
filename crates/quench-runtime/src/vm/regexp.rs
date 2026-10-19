@@ -2367,6 +2367,41 @@ impl<H: Host> Vm<H> {
         Ok(matched)
     }
 
+    /// `RegExp.prototype.exec` or `test` when the call runs no guest code and raises
+    /// nothing, so it observes no frame (`lane_call_native`): a RegExp receiver, a string
+    /// subject, an own writable data `lastIndex` holding a Number (`regexp_last_index_slot`,
+    /// so its conversion and any store run no guest code), and for `test` the builtin `exec`
+    /// (`regexp_builtin_exec_matcher`). The call is the native's own; `None` leaves any other
+    /// call to the general path.
+    pub(super) fn steady_regexp_call(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        receiver: Value,
+        subject: Value,
+    ) -> Option<Result<Value, JsError>> {
+        if !matches!(native, Native::RegExpExec | Native::RegExpTest)
+            || !matches!(self.heap.get(receiver), Some(Cell::RegExp { .. }))
+            || !self.is_string(subject)
+        {
+            return None;
+        }
+        let slot = self.regexp_last_index_slot(receiver)?;
+        let last_index = self
+            .object_data(receiver)
+            .and_then(|object| self.heap.property_get(object, slot))?;
+        if last_index.as_number().is_none()
+            || (native == Native::RegExpTest && self.regexp_builtin_exec_matcher(receiver).is_none())
+        {
+            return None;
+        }
+        let arguments = [subject];
+        Some(match native {
+            Native::RegExpExec => self.regexp_builtin_exec(p, receiver, &arguments),
+            _ => self.regexp_test(p, receiver, &arguments),
+        })
+    }
+
     pub(super) fn regexp_builtin_exec(
         &mut self,
         p: &ResidualProgram,
