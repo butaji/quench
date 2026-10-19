@@ -428,7 +428,7 @@ impl ProgramStore {
         self.entry(id).is_some_and(|entry| {
             matches!(entry.origin, CompilationOrigin::FunctionConstructor { .. })
                 && entry.residual.functions.get(function as usize)
-                    .is_some_and(|function| function.parent == Some(super::ROOT_FUNCTION_ID))
+                    .is_some_and(|function| function.header().parent == Some(super::ROOT_FUNCTION_ID))
         })
     }
 
@@ -1336,7 +1336,8 @@ impl Drop for ProgramStore {
             let function_name = entry
                 .and_then(|entry| entry.residual.functions.get(*function as usize).map(|f| (entry, f)))
                 .and_then(|(entry, function)| {
-                    let atom = function.name.or(function.inferred_name)? as usize;
+                    let header = function.header();
+                    let atom = header.name.or(header.inferred_name)? as usize;
                     (atom < entry.residual.atoms.len()).then(|| &entry.residual.atoms[atom])
                 })
                 .or_else(|| counters.function_name.as_deref())

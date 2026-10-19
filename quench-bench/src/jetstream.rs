@@ -256,8 +256,10 @@ mod tests {
             source_path(&fixture_path("typescript-lib")),
             Path::new(SUITE_DIR)
         );
-        assert!(workspace
-            .join(source_path(&fixture_path("typescript-lib")))
-            .is_dir());
+        assert!(
+            workspace
+                .join(source_path(&fixture_path("typescript-lib")))
+                .is_dir()
+        );
     }
 }
