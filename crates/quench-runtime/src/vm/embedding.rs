@@ -1371,6 +1371,60 @@ impl<H: Host> Vm<H> {
         Ok(self.pending_lazy_data_property(holder, key, listener, index))
     }
 
+    /// `define_data_property_rooted` for a string key the host spells, without allocating
+    /// the key where it can: an absent key of an extensible plain object is a shape addition
+    /// with the given attributes, exactly as `[[DefineOwnProperty]]` adds it.
+    pub(crate) fn define_named_data_property_rooted(
+        &mut self,
+        object: RootId,
+        name: &str,
+        value: RootId,
+        writable: bool,
+        enumerable: bool,
+        configurable: bool,
+    ) -> Result<bool, JsError> {
+        let object = self.embedding_value(object)?;
+        let value = self.embedding_value(value)?;
+        let program = self.embedding_program()?;
+        let atom = self.intern_atom(name);
+        let key = super::property_key::PropertyKey::string(atom);
+        let absent_plain = self.plain_named_key(atom)
+            && !self.descriptors.contains_key(&(object, key))
+            && self.heap.ordinary_object(object).is_some_and(|data| {
+                data.is_extensible()
+                    && !data.is_module_namespace()
+                    && data.deferred_module().is_none()
+                    && self.property_shape_slot(data.shape(), key).is_none()
+            });
+        if absent_plain {
+            let attributes = super::PropertyAttributes {
+                writable,
+                enumerable,
+                configurable,
+                accessor: false,
+                getter: None,
+                setter: None,
+            };
+            self.set_property_with_attributes(object, atom, value, attributes)?;
+            return Ok(true);
+        }
+        let key = self.atom_string(atom);
+        let key = self.to_property_key(&program, key)?;
+        self.define_own_property_record(
+            &program,
+            object,
+            key,
+            super::object_descriptors::PropertyDescriptorRecord {
+                value: Some(value),
+                writable: Some(writable),
+                enumerable: Some(enumerable),
+                configurable: Some(configurable),
+                getter: None,
+                setter: None,
+            },
+        )
+    }
+
     pub(crate) fn materialize_lazy_data_property_rooted(
         &mut self,
         holder: RootId,
