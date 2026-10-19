@@ -1690,11 +1690,13 @@ impl Function {
                 && !self.activation_binding_reads(atoms)
                 // A plain activation makes no closure, whichever bindings it would see.
                 && !self.instructions().any(|instruction| instruction.op() == Op::MakeClosure);
+            // A field initializer is an ordinary method call on the instance whose
+            // activation keeps its implicit bindings (`activation_binding_reads`); only the
+            // derived instance initializer, which `super()` runs, is entered natively.
             let in_loop = !self.is_async
                 && !self.is_generator
                 && !self.is_class_constructor
                 && !self.derived_constructor
-                && !self.class_initializer
                 && !self.parameter_eval_arguments_error;
             let legacy_reflection = !self.has_restricted_legacy_caller_access();
             let live_parameters = self.reflects_live_parameters(program);
