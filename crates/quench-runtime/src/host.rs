@@ -93,6 +93,11 @@ pub trait Host {
     /// depends on. At these boundaries the code about to run differs from the code that ran.
     fn at_collection_boundary(&mut self) {}
 
+    /// A WebAssembly module's native compilation, which runs once per module, is about to
+    /// start: like `at_collection_boundary`, the code about to run (the code generator)
+    /// differs from the code that ran before it (loading, linking, instantiation).
+    fn before_wasm_native_compilation(&mut self) {}
+
     fn write_line(&mut self, text: &str);
     fn clock_millis(&mut self) -> f64;
 

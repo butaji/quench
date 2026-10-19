@@ -101,6 +101,7 @@ impl<H: Host> Vm<H> {
             shape_attribute_memo: Default::default(),
             name_atom_memo: Default::default(),
             shapes: Shape::table(),
+            shape_constructors: Vec::new(),
             shape_accessors: Vec::new(),
             transitions: Default::default(),
             atom_text: AtomTable::default(),
