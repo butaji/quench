@@ -569,6 +569,10 @@ fn compact_encoding_names_every_atom_by_its_text() {
     decoded.atoms = super::AtomTable::from_rcs(&table);
     decoded.validate().unwrap();
     assert_eq!(decoded.encode_compact().0, bytes);
+    let mut corrupted = bytes.clone();
+    corrupted[bytes.len() / 2] ^= 1;
+    let text = super::SourceText::Shared(std::sync::Arc::from(source));
+    assert!(ResidualProgram::decode_compact(&corrupted, &mut |name| original[name], text).is_err());
     let shifted = |program: &ResidualProgram| {
         program.functions.iter().filter_map(|function| function.name).collect::<Vec<_>>()
     };

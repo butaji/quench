@@ -1946,11 +1946,10 @@ impl<H: Host> Vm<H> {
         locals
             .into_iter()
             .map(|(local, exported)| {
-                let local_atom = residual.atoms.iter().position(|name| name == local)?;
-                let slot = root
-                    .local_atoms
-                    .iter()
-                    .position(|atom| *atom as usize == local_atom)?;
+                // A stored module shares the VM's atom ids, so the VM finds its local's atom
+                // without scanning the program's (and so the VM's) whole table.
+                let local_atom = self.lookup_atom(&local)?;
+                let slot = root.local_atoms.iter().position(|atom| *atom == local_atom)?;
                 Some((
                     exported,
                     StaticModuleValue::Binding {

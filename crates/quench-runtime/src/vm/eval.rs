@@ -359,7 +359,9 @@ impl<H: Host> Vm<H> {
         }
         program.atoms =
             crate::bytecode::AtomTable::shared(self.atom_sequence.clone(), self.atom_sequence.len());
-        program.validate()?;
+        // The bytes are this build's compiler output (the host keys them by build, and their
+        // checksum held), which runs unvalidated when compiled in place; the decoder checked
+        // their structure and every atom is now one of this VM's.
         Ok(program)
     }
 
