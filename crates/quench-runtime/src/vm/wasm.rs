@@ -4629,12 +4629,12 @@ mod tests {
         module.program = Rc::new(ResidualProgram::read_binary(&path).unwrap());
         std::fs::remove_file(path).unwrap();
         let mut invalid = (*module.program).clone();
-        let address = invalid.functions[0]
+        let address = invalid.function(0)
             .code
             .iter()
             .map(|packed| {
                 if packed.is_wide() {
-                    invalid.functions[0].wide[packed.wide_index()]
+                    invalid.function(0).wide[packed.wide_index()]
                 } else {
                     packed.as_wide()
                 }
@@ -5234,7 +5234,7 @@ mod tests {
         let module = root_first_hot_fallback_fixture();
         let function = module.select_function(0).unwrap();
         let program_code = &module.module.program;
-        let root_code = &program_code.functions[0];
+        let root_code = &program_code.function(0);
         let root_instructions = root_code
             .code
             .iter()
@@ -5392,7 +5392,7 @@ mod tests {
             .map(|(params, locals, result, ops)| (params, locals, result, ops.into_iter().map(Ok))),
         )
         .unwrap();
-        let root_code = &module.module.program.functions[0];
+        let root_code = &module.module.program.function(0);
         let root_instructions = root_code
             .code
             .iter()

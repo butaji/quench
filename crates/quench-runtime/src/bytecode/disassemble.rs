@@ -6,6 +6,7 @@ use std::fmt::{self, Write};
 impl ResidualProgram {
     pub fn disassemble(&self) -> String {
         let mut output = String::new();
+        self.compile_released();
         for (id, function) in self.functions.iter().enumerate() {
             let name = function
                 .name

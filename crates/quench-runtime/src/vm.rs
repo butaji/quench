@@ -53,6 +53,14 @@ struct RuntimeAtoms {
     name: Atom,
     /// The empty string, an anonymous function's initial name.
     empty: Atom,
+    /// An iterator result's keys, in its literal order.
+    value: Atom,
+    done: Atom,
+    /// The internal keys a bound function's environment holds its parts under
+    /// (`Vm::bound_function_parts`).
+    bound_target: Atom,
+    bound_this: Atom,
+    bound_args: Atom,
 }
 pub(crate) mod activation;
 mod agent;
@@ -576,6 +584,10 @@ struct FieldCache {
     holder: u32,
     slot: u16,
 }
+/// The internal keys of a bound function's environment object.
+const BOUND_TARGET_KEY: &str = "\0quench:bound-target";
+const BOUND_THIS_KEY: &str = "\0quench:bound-this";
+const BOUND_ARGS_KEY: &str = "\0quench:bound-args";
 const NO_FIELD_HOLDER: u32 = u32::MAX;
 /// A field site's read of an accessor on the immediate prototype of a shaped receiver: it
 /// holds while receiver and prototype keep these shapes, whose `slot` attributes carry the
@@ -1450,6 +1462,9 @@ pub(crate) struct Vm<H> {
     /// `prototype` (`construction::ClosureShapes`); derived from shapes, so field-cache
     /// invalidation clears it.
     closure_shapes: [Option<construction::ClosureShapes>; 2],
+    /// The shape of an iterator result `{ value, done }` (`Vm::iterator_result`); derived
+    /// from shapes, so field-cache invalidation clears it.
+    iterator_result_shape: Option<u32>,
     /// The shape a new RegExp object starts in and the one its own `lastIndex` moves it to
     /// (`Vm::regexp_from_matcher`), as the first one recorded; derived from shapes, so
     /// field-cache invalidation clears it.
@@ -1753,14 +1768,14 @@ impl<H: Host> Vm<H> {
         if current.function != ROOT_FUNCTION_ID {
             return;
         }
-        let Some(atom) = program.functions[ROOT_FUNCTION_ID as usize]
+        let Some(atom) = program.function(ROOT_FUNCTION_ID as usize)
             .local_atoms
             .get(slot)
             .copied()
         else {
             return;
         };
-        if program.functions[ROOT_FUNCTION_ID as usize]
+        if program.function(ROOT_FUNCTION_ID as usize)
             .global_lexical_atoms()
             .contains(&atom)
         {
@@ -1782,7 +1797,7 @@ impl<H: Host> Vm<H> {
 
     #[inline(never)]
     fn persist_root_global_lexical_bindings(&mut self, program: &ResidualProgram, frame: &Frame) {
-        let metadata = &program.functions[ROOT_FUNCTION_ID as usize];
+        let metadata = &program.function(ROOT_FUNCTION_ID as usize);
         let bindings = metadata
             .global_lexical_atoms()
             .iter()
@@ -1954,7 +1969,7 @@ impl<H: Host> Vm<H> {
     pub(crate) fn report_function_use(&self) {
         let (mut functions, mut called, mut uncalled_bytes) = (0usize, 0usize, 0usize);
         for program in self.programs.residuals() {
-            for function in &program.functions {
+            for function in program.functions.iter().filter_map(crate::bytecode::FunctionSlot::record) {
                 functions += 1;
                 if function.call_plan.get().is_some() {
                     called += 1;
@@ -2246,6 +2261,11 @@ impl<H: Host> Vm<H> {
             constructor: self.intern_atom("constructor"),
             name: self.intern_atom("name"),
             empty: self.intern_atom(""),
+            value: self.intern_atom("value"),
+            done: self.intern_atom("done"),
+            bound_target: self.intern_atom(BOUND_TARGET_KEY),
+            bound_this: self.intern_atom(BOUND_THIS_KEY),
+            bound_args: self.intern_atom(BOUND_ARGS_KEY),
         };
         self.field_caches = vec![EMPTY_CACHE; program.cache_sites as usize];
         Self::prime_loop_decoding(program);
@@ -2270,6 +2290,7 @@ impl<H: Host> Vm<H> {
         self.programs.reset(program.clone());
         self.instanceof_constructor_layout = None;
         self.closure_shapes = [None; 2];
+        self.iterator_result_shape = None;
         self.regexp_object_shapes = None;
         self.regexp_last_index_layout = None;
         self.regexp_builtin_layout = None;
@@ -2353,7 +2374,8 @@ impl<H: Host> Vm<H> {
     }
     /// Primes every looping function of an installed `program` to expand on first entry.
     fn prime_loop_decoding(program: &ResidualProgram) {
-        for function in &program.functions {
+        // A released function primes as it compiles again (`ResidualProgram::function`).
+        for function in program.functions.iter().filter_map(crate::bytecode::FunctionSlot::record) {
             function.decoded.prime_loop(&function.code, &function.wide);
         }
     }
@@ -2559,8 +2581,7 @@ impl<H: Host> Vm<H> {
                     .map_or(self.realm.globals, |function| function.realm);
                 let current_global = self.switch_realm_global(realm);
                 let result = if program
-                    .functions
-                    .get(id as usize)
+                    .function_get(id as usize)
                     .is_some_and(|function| function.is_class_constructor)
                     && !self.construct_target.is_some_and(|target| target.callee == callee)
                 {

@@ -236,7 +236,10 @@ impl<H: Host> Vm<H> {
         }
         let Some(record) = value.direct_object_index() else {
             // A primitive has no prototype chain to hold the prototype; any other object
-            // takes the walk.
+            // takes the walk. A value outside the heap is never an object.
+            if value.heap_index().is_none() {
+                return Some(false);
+            }
             return (!self.is_object_like(value)).then_some(false);
         };
         let mut link = self.heap.object_record_by_id(record).proto();
@@ -406,7 +409,7 @@ impl<H: Host> Vm<H> {
                 _ => None,
             };
             if let Some(env) = bound_env {
-                let target_atom = vm.intern_atom("\0quench:bound-target");
+                let target_atom = vm.runtime_atoms.bound_target;
                 let target = vm
                     .own_property(env, target_atom)
                     .unwrap_or(Value::UNDEFINED);
