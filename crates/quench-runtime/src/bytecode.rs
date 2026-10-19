@@ -1197,6 +1197,14 @@ impl FunctionSlot {
         }
     }
 
+    /// A function whose record its program compiles again on the function's first read.
+    pub(crate) fn released(header: FunctionHeader) -> Self {
+        Self {
+            header,
+            record: std::cell::OnceCell::new(),
+        }
+    }
+
     #[inline(always)]
     pub(crate) fn header(&self) -> &FunctionHeader {
         &self.header

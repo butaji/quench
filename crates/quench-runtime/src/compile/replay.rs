@@ -241,11 +241,28 @@ fn constant_hashes(constants: &[crate::bytecode::Constant]) -> Vec<(u64, u32)> {
     hashes
 }
 
-/// The functions a compilation makes, by id. At load the compiler owns every record. A replay
+/// One function of a compilation at load: reserved while it compiles, then compiled, or
+/// finished and released when a replay can make its record again.
+pub(super) enum FunctionEntry {
+    Reserved,
+    Compiled(crate::bytecode::Function),
+    Released(Box<ReleasedFunction>),
+}
+
+/// A function finished during its program's load and released: its header, which the
+/// function making it may still name, and in verifying builds the record a replay must
+/// equal.
+pub(super) struct ReleasedFunction {
+    pub(super) header: crate::bytecode::FunctionHeader,
+    #[cfg(feature = "verify-replay")]
+    pub(super) record: crate::bytecode::Function,
+}
+
+/// The functions a compilation makes, by id. At load the compiler owns every entry. A replay
 /// makes one record, the replayed function's; the functions nested in it keep the ids and
 /// records the load gave them, and the replay reads their headers from the program.
 pub(super) enum FunctionTable<'a> {
-    Owned(Vec<Option<crate::bytecode::Function>>),
+    Owned(Vec<FunctionEntry>),
     Replay {
         program: &'a [crate::bytecode::FunctionSlot],
         target: u32,
@@ -264,14 +281,14 @@ impl<'a> FunctionTable<'a> {
     /// The id the next function takes.
     pub(super) fn len(&self) -> usize {
         match self {
-            Self::Owned(records) => records.len(),
+            Self::Owned(entries) => entries.len(),
             Self::Replay { next, .. } => *next as usize,
         }
     }
 
     pub(super) fn reserve_exact(&mut self, additional: usize) {
-        if let Self::Owned(records) = self {
-            records.reserve_exact(additional);
+        if let Self::Owned(entries) = self {
+            entries.reserve_exact(additional);
         }
     }
 
@@ -286,7 +303,7 @@ impl<'a> FunctionTable<'a> {
     pub(super) fn reserve(&mut self) -> u32 {
         let id = self.len() as u32;
         match self {
-            Self::Owned(records) => records.push(None),
+            Self::Owned(entries) => entries.push(FunctionEntry::Reserved),
             Self::Replay { next, .. } => *next += 1,
         }
         id
@@ -294,7 +311,7 @@ impl<'a> FunctionTable<'a> {
 
     pub(super) fn set(&mut self, id: u32, function: crate::bytecode::Function) {
         match self {
-            Self::Owned(records) => records[id as usize] = Some(function),
+            Self::Owned(entries) => entries[id as usize] = FunctionEntry::Compiled(function),
             Self::Replay { target, record, .. } => {
                 assert_eq!(id, *target, "a replay makes only its target's record");
                 *record = Some(function);
@@ -302,55 +319,103 @@ impl<'a> FunctionTable<'a> {
         }
     }
 
-    /// A record this compilation made.
+    /// A record this compilation made and still holds.
     pub(super) fn get(&self, id: u32) -> Option<&crate::bytecode::Function> {
         match self {
-            Self::Owned(records) => records.get(id as usize)?.as_ref(),
+            Self::Owned(entries) => match entries.get(id as usize)? {
+                FunctionEntry::Compiled(function) => Some(function),
+                _ => None,
+            },
             Self::Replay { target, record, .. } => (id == *target).then_some(record.as_ref()?),
         }
     }
 
     pub(super) fn get_mut(&mut self, id: u32) -> Option<&mut crate::bytecode::Function> {
         match self {
-            Self::Owned(records) => records.get_mut(id as usize)?.as_mut(),
+            Self::Owned(entries) => match entries.get_mut(id as usize)? {
+                FunctionEntry::Compiled(function) => Some(function),
+                _ => None,
+            },
             Self::Replay { target, record, .. } => {
                 if id == *target { record.as_mut() } else { None }
             }
         }
     }
 
-    /// The header of a function a replay skipped: the load made its record.
-    pub(super) fn loaded_header(&self, id: u32) -> Option<&crate::bytecode::FunctionHeader> {
+    /// The header of a function whose record this compilation does not hold: one a replay
+    /// skipped, which the load made, or one the load released.
+    pub(super) fn header_without_record(&self, id: u32) -> Option<&crate::bytecode::FunctionHeader> {
         match self {
-            Self::Owned(_) => None,
+            Self::Owned(entries) => match entries.get(id as usize)? {
+                FunctionEntry::Released(released) => Some(&released.header),
+                _ => None,
+            },
             Self::Replay { program, .. } => Some(program.get(id as usize)?.header()),
         }
     }
 
-    /// The records this compilation made.
-    pub(super) fn records(&self) -> impl Iterator<Item = &crate::bytecode::Function> {
-        let (owned, replayed) = match self {
-            Self::Owned(records) => (Some(records.iter().flatten()), None),
-            Self::Replay { record, .. } => (None, record.as_ref()),
+    /// Names a released function made from an anonymous definition.
+    pub(super) fn name_released(&mut self, id: u32, name: Atom) {
+        if let Self::Owned(entries) = self
+            && let Some(FunctionEntry::Released(released)) = entries.get_mut(id as usize)
+        {
+            released.header.inferred_name = Some(name);
+            #[cfg(feature = "verify-replay")]
+            {
+                released.record.inferred_name = Some(name);
+            }
+        }
+    }
+
+    /// Takes the record of a compiled function to finish it.
+    pub(super) fn take(&mut self, id: u32) -> Option<crate::bytecode::Function> {
+        let Self::Owned(entries) = self else {
+            return None;
         };
-        owned.into_iter().flatten().chain(replayed)
+        let entry = entries.get_mut(id as usize)?;
+        match std::mem::replace(entry, FunctionEntry::Reserved) {
+            FunctionEntry::Compiled(function) => Some(function),
+            other => {
+                *entry = other;
+                None
+            }
+        }
+    }
+
+    /// Releases a finished function, keeping its header.
+    pub(super) fn release(&mut self, id: u32, function: crate::bytecode::Function) {
+        if let Self::Owned(entries) = self {
+            entries[id as usize] = FunctionEntry::Released(Box::new(ReleasedFunction {
+                header: crate::bytecode::FunctionHeader::of(&function),
+                #[cfg(feature = "verify-replay")]
+                record: function,
+            }));
+        }
     }
 
     pub(super) fn first_mut(&mut self) -> Option<&mut crate::bytecode::Function> {
         match self {
-            Self::Owned(records) => records.first_mut()?.as_mut(),
+            Self::Owned(entries) => match entries.first_mut()? {
+                FunctionEntry::Compiled(function) => Some(function),
+                _ => None,
+            },
             Self::Replay { .. } => None,
         }
     }
 
-    /// Every record, in id order, once all are made.
-    pub(super) fn into_records(self) -> Vec<crate::bytecode::Function> {
+    /// Every entry, in id order, once all are made.
+    pub(super) fn into_entries(self) -> Vec<FunctionEntry> {
         match self {
-            Self::Owned(records) => records
-                .into_iter()
-                .map(|record| record.expect("every reserved function is compiled"))
-                .collect(),
-            Self::Replay { record, .. } => record.into_iter().collect(),
+            Self::Owned(entries) => entries,
+            Self::Replay { record, .. } => record.into_iter().map(FunctionEntry::Compiled).collect(),
+        }
+    }
+
+    /// A replay's record.
+    pub(super) fn into_replayed(self) -> Option<crate::bytecode::Function> {
+        match self {
+            Self::Owned(_) => None,
+            Self::Replay { record, .. } => record,
         }
     }
 }
@@ -461,6 +526,10 @@ pub(crate) struct ProgramReplay {
     pub(super) exits: Box<[TableCursors]>,
     /// The functions a replay can compile, by id.
     pub(super) functions: FxHashMap<u32, FunctionReplay>,
+    /// In verifying builds, the records of functions the load released, which their replays
+    /// must equal.
+    #[cfg(feature = "verify-replay")]
+    pub(super) released: FxHashMap<u32, crate::bytecode::Function>,
     pub(super) views: ReplayViews,
 }
 
@@ -749,8 +818,7 @@ pub(crate) fn recompile(
         return Err(format!("the replay failed to compile: {}", error.message));
     }
     let mut function = std::mem::take(&mut compiler.functions)
-        .into_records()
-        .pop()
+        .into_replayed()
         .ok_or("the replay made no record")?;
     function.arguments_slot = function_replay.arguments_slot;
     capture_layout::apply_function(&mut function, id as usize, &function_replay.layout, &compiler.atoms);
@@ -837,7 +905,10 @@ pub(crate) fn verify(program: &crate::bytecode::ResidualProgram) {
     let mut lines = Vec::new();
     let (mut same, mut differ, mut failed) = (0usize, 0usize, 0usize);
     for id in ids {
-        let loaded = format!("{:?}", &*program.functions[id as usize]);
+        let loaded = match program.functions[id as usize].record() {
+            Some(record) => format!("{record:?}"),
+            None => format!("{:?}", replay.released[&id]),
+        };
         match recompile(program, id) {
             Ok(recompiled) => {
                 let replayed = format!("{:?}", recompiled.function);
