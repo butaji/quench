@@ -799,7 +799,8 @@ impl FunctionCompiler<'_, '_> {
                 self.emit(Op::SetField, value, this, cache, field_atom);
             } else {
                 let field_atom = name.unwrap();
-                self.emit(Op::DefineField, value, this, 0, field_atom);
+                let cache = self.owner.cache_site();
+                self.emit(Op::DefineField, value, this, cache, field_atom);
             }
         }
     }
