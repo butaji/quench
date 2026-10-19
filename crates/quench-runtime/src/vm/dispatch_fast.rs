@@ -422,6 +422,49 @@ enum CallEntry {
     /// Its body reads a field of `this` or a parameter, then an element of that by a
     /// parameter, and returns it (`element_read_body`), which a call answers likewise.
     ReadsElement,
+    /// Its body returns a call of a method of a field of `this` or a parameter with its
+    /// parameters in order (`forwarding_read_body`), which a call answers where that method
+    /// is a `Reads` or `ReadsElement` target whose read hits.
+    ForwardsRead,
+}
+
+impl CallEntry {
+    /// A body a call answers by reading alone (`lane_call_leaf_read`).
+    #[inline(always)]
+    fn reads(self) -> bool {
+        matches!(self, Self::Reads | Self::ReadsElement)
+    }
+}
+
+/// Whether `body` is `GetField` of `this` or a parameter, `GetField` of a method of that,
+/// moves of its parameters in order into a call window, and the call of that method on the
+/// first field returning its completion (`CallEntry::ForwardsRead`), as `at(i) { return
+/// this.items.at(i); }` compiles.
+fn forwarding_read_body(body: &Function) -> bool {
+    let count = usize::from(body.params);
+    let Some(code) = body.code.get(..count + 3) else {
+        return false;
+    };
+    let decoded: Vec<WideInstruction> =
+        code.iter().map(|packed| decoded_instruction(body, *packed)).collect();
+    let (field, method, call) = (decoded[0], decoded[1], decoded[count + 2]);
+    let base = crate::bytecode::FieldBase(field.b());
+    let window = ImmediateLayout::call_window_base(call.imm());
+    field.op() == Op::GetField
+        && !field.returns_from_frame()
+        && base.0 != crate::bytecode::FieldBase::NESTED
+        && base.register_index().is_none_or(|register| register < body.params)
+        && method.op() == Op::GetField
+        && !method.returns_from_frame()
+        && crate::bytecode::FieldBase(method.b()).register_index() == Some(field.a())
+        && decoded[2..count + 2].iter().zip(0..body.params).all(|(moved, parameter)| {
+            moved.op() == Op::Move && moved.b() == parameter && moved.a() == window + parameter
+        })
+        && call.op() == Op::Call
+        && call.a() & crate::bytecode::RETURN_REGISTER != 0
+        && call.b() == method.a()
+        && call.c() == field.a()
+        && ImmediateLayout::argument_count(call.imm()) == body.params
 }
 
 /// Whether `body` is `GetField` of `this` or a parameter, `GetIndex` of its result by a
@@ -4382,6 +4425,8 @@ impl<H: Host> Vm<H> {
                 CallEntry::Reads
             } else if element_read_body(body) {
                 CallEntry::ReadsElement
+            } else if forwarding_read_body(body) {
+                CallEntry::ForwardsRead
             } else {
                 CallEntry::Activates
             },
@@ -4496,12 +4541,13 @@ lane_handler! {
         let arguments = ImmediateLayout::call_window_base(i.imm());
         let argc = ImmediateLayout::argument_count(i.imm());
         let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
-        let value = if !matches!(target.entry, CallEntry::Reads | CallEntry::ReadsElement)
+        let value = if target.entry == CallEntry::Activates
             || returns && !lane_returning_call_admitted(cx)
         {
             None
         } else {
-            unsafe { lane_call_read(cx, r, &target, arguments, argc, this) }
+            let argument = |parameter: u16| (parameter < argc).then(|| r.get(arguments + parameter));
+            unsafe { lane_call_read(cx, &target, argument, this) }
         };
         let Some(value) = value else {
             match lane_activate(cx, r, ip, &target, arguments, this, false) {
@@ -5970,48 +6016,69 @@ fn returning_field_hit<H: Host, const KIND: u8>(
     }
 }
 
-/// The value a frameless callee whose body is one returning `GetField`
-/// (`CallEntry::Reads`), or a field then an element read (`CallEntry::ReadsElement`),
-/// returns for this call, where the reads its records have quickened to hit: the record's own read, of `this` or a parameter as its activation
-/// would hold them (`lane_activate`). Answering it at the call leaves nothing for an
-/// activation to observe: the hit runs no guest code and allocates nothing. `None` for any
-/// other record state or a miss, which the call activates to run.
+/// The value a frameless read target (`CallEntry::reads`, `CallEntry::ForwardsRead`)
+/// returns for a call passing `argument(k)` as parameter `k` (`None` where not passed) on
+/// `this`, where the reads its records have quickened to hit. Answering it at the call
+/// leaves nothing for an activation to observe: each hit runs no guest code and allocates
+/// nothing. `None` for any other record state or a miss, which the call activates to run.
 ///
 /// # Safety
-/// `cx` is the running lane's context, `r` the caller's registers, and `target` a target of
-/// its program.
+/// `cx` is the running lane's context and `target` a target of its program.
 #[inline(always)]
 unsafe fn lane_call_read<H: Host>(
     cx: *mut LaneContext<H>,
-    r: Registers,
     target: &ScriptCallTarget,
-    arguments: u16,
-    argc: u16,
+    argument: impl Fn(u16) -> Option<Value>,
     this: Value,
 ) -> Option<Value> {
+    if target.entry != CallEntry::ForwardsRead {
+        return unsafe { lane_call_leaf_read(cx, target, argument, this) };
+    }
     // SAFETY: the program store keeps a derived view alive with its program, and the
-    // context's program outlives the lane run.
+    // context's program outlives the lane run; a forwarding body's view holds its method
+    // read after its field read.
+    let (records, code) = unsafe { ((*target.view).records(), &*(*cx).code) };
+    let (field, method) = unsafe { (&*records, &*records.add(1)) };
+    let vm = unsafe { vm(cx) };
+    let base = lane_read_base(crate::bytecode::FieldBase(field.b), &argument, this)?;
+    let receiver = lane_record_field_hit(vm, code, field, base)?;
+    let callee = lane_record_field_hit(vm, code, method, receiver)?;
+    let inner = vm.script_call_target(callee).filter(|inner| inner.entry.reads())?;
+    let inner_this = lane_direct_call_this(vm, &inner, receiver)?;
+    // The call passes the parameters in order, so its argument `k` is parameter `k`.
+    let passed = target.params;
+    unsafe {
+        lane_call_leaf_read(
+            cx,
+            &inner,
+            |parameter| if parameter < passed { argument(parameter) } else { None },
+            inner_this,
+        )
+    }
+}
+
+/// `lane_call_read` of a `CallEntry::reads` target.
+///
+/// # Safety
+/// As for `lane_call_read`.
+#[inline(always)]
+unsafe fn lane_call_leaf_read<H: Host>(
+    cx: *mut LaneContext<H>,
+    target: &ScriptCallTarget,
+    argument: impl Fn(u16) -> Option<Value>,
+    this: Value,
+) -> Option<Value> {
+    // SAFETY: as for `lane_call_read`.
     let (entry, code) = unsafe { (&*(*target.view).records(), &*(*cx).code) };
     let vm = unsafe { vm(cx) };
-    // Register `k` of the activation is argument `k`; an unpassed parameter or a local
-    // holds `undefined`, whose read never hits.
-    let base = |base: crate::bytecode::FieldBase| match base.register_index() {
-        Some(register) => (register < argc).then(|| r.get(arguments + register)),
-        None => Some(this),
-    };
+    let base = |base: crate::bytecode::FieldBase| lane_read_base(base, &argument, this);
     let handler = entry.handler;
     if target.entry == CallEntry::ReadsElement {
-        // The field record's own-entry read, then the dense element its `GetIndex` names.
+        // The field record's read, then the dense element its `GetIndex` names.
         // SAFETY: an element-read body's view holds its `GetIndex` record after the field's.
         let element = unsafe { &*(*target.view).records().add(1) };
-        if handler != lane_get_field_own::<H, true> as *const ()
-            && handler != lane_get_field_own::<H, false> as *const ()
-        {
-            return None;
-        }
-        let array = vm.primary_own_field_hit(code, base(crate::bytecode::FieldBase(entry.b))?, entry.c)?;
-        let key = (element.c < argc).then(|| r.get(arguments + element.c))?;
-        return vm.direct_dense_element(array, key);
+        let array = lane_record_field_hit(vm, code, entry, base(crate::bytecode::FieldBase(entry.b))?)?;
+        return vm.direct_dense_element(array, argument(element.c)?);
     }
     if handler == lane_returning::<H, RETURNING_FIELD_NESTED> as *const () {
         // SAFETY: a nested record names its site.
@@ -6027,6 +6094,44 @@ unsafe fn lane_call_read<H: Host>(
         returning_field_hit::<H, RETURNING_FIELD_HOLDER>(vm, code, object, entry.c)
     } else if handler == lane_returning::<H, RETURNING_FIELD_INHERITED> as *const () {
         returning_field_hit::<H, RETURNING_FIELD_INHERITED>(vm, code, object, entry.c)
+    } else {
+        None
+    }
+}
+
+/// The object a read body's field record names: `this`, or the parameter its activation
+/// would hold in that register; `None` for an unpassed one, whose `undefined` no read hits.
+#[inline(always)]
+fn lane_read_base(
+    base: crate::bytecode::FieldBase,
+    argument: &impl Fn(u16) -> Option<Value>,
+    this: Value,
+) -> Option<Value> {
+    match base.register_index() {
+        Some(register) => argument(register),
+        None => Some(this),
+    }
+}
+
+/// The hit of a non-returning `GetField` record's quickened primary entry, own or holder
+/// (`lane_get_field_own`, `lane_get_field_holder`), on `object`; `None` for any other
+/// record state or a miss.
+#[inline(always)]
+fn lane_record_field_hit<H: Host>(
+    vm: &mut Vm<H>,
+    code: &ResidualProgram,
+    record: &LaneInstruction,
+    object: Value,
+) -> Option<Value> {
+    let handler = record.handler;
+    if handler == lane_get_field_own::<H, true> as *const ()
+        || handler == lane_get_field_own::<H, false> as *const ()
+    {
+        vm.primary_own_field_hit(code, object, record.c)
+    } else if handler == lane_get_field_holder::<H, true> as *const ()
+        || handler == lane_get_field_holder::<H, false> as *const ()
+    {
+        vm.primary_holder_field_hit(code, object, record.c)
     } else {
         None
     }
