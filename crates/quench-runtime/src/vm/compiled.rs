@@ -6029,6 +6029,31 @@ impl<H: Host> Vm<H> {
         self.execution_mode
     }
 
+    /// Whether the per-function JavaScript tier runs: compiled execution, in a build whose
+    /// profiles do not count interpreted work exactly.
+    pub(super) fn js_tier_runs(&self) -> bool {
+        !cfg!(any(
+            feature = "profile-aggregate",
+            feature = "profile-trace",
+            feature = "profile-memory",
+            feature = "profile-gc-time"
+        )) && self.execution_mode == ExecutionMode::Compiled
+    }
+
+    /// Whether the JavaScript tier may still claim `function` of `program`: it runs, the
+    /// function passes its candidate filter, and the tier has not declined it. The tier
+    /// observes and enters functions at frame entry (`js_jit_at_entry`), so such calls keep
+    /// their frames rather than running frameless in the lane.
+    pub(super) fn js_tier_may_claim(&self, program: &ResidualProgram, id: ProgramId, function: u32) -> bool {
+        self.js_tier_runs()
+            && program.kind != crate::bytecode::ProgramKind::Wasm
+            && program
+                .functions
+                .get(function as usize)
+                .is_some_and(|body| super::js_compiled::function_candidate(body, program))
+            && !self.programs.js_tier_declined(id, function)
+    }
+
     /// Try the per-function JavaScript tier at an already-initialized frame's
     /// entry. A guard miss leaves the frame untouched so the interpreter can
     /// run from the same bytecode PC.
@@ -6037,13 +6062,7 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
         frame: usize,
     ) -> Option<(usize, crate::bytecode::Register, Value)> {
-        if cfg!(any(
-            feature = "profile-aggregate",
-            feature = "profile-trace",
-            feature = "profile-memory",
-            feature = "profile-gc-time"
-        )) || self.execution_mode != ExecutionMode::Compiled
-            || program.kind == crate::bytecode::ProgramKind::Wasm
+        if !self.js_tier_runs() || program.kind == crate::bytecode::ProgramKind::Wasm
             || self.frames.get(frame)?.pc != 0
         {
             return None;

@@ -1141,7 +1141,8 @@ fn comparison(
     registers: &[cranelift_frontend::Variable],
     strings: &[Option<StringJitRegister>],
 ) -> Option<ir::Value> {
-    let relation = super::operations::NumberRelation::from_operator(instruction.binary_operator())?;
+    // A conditional jump's operator is its first field; the immediate is the target.
+    let relation = super::operations::NumberRelation::from_operator(instruction.binary_operator_field())?;
     let code = match relation {
         super::operations::NumberRelation::LessThan => FloatCC::LessThan,
         super::operations::NumberRelation::LessEqual => FloatCC::LessThanOrEqual,
