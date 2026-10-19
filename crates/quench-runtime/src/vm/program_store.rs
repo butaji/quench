@@ -973,6 +973,7 @@ impl ProgramStore {
         id: ProgramId,
         function: u32,
         numeric: bool,
+        numeric_loop_candidate: bool,
     ) -> bool {
         let compiled_functions = self.js_jit_compiled_functions;
         let can_track = self.js_jit_tracked_functions < JS_JIT_MAX_TRACKED_FUNCTIONS;
@@ -989,13 +990,18 @@ impl ProgramStore {
                 inserted = true;
                 if compiled_functions >= JS_JIT_MAX_FUNCTIONS {
                     slot.insert(JsTierState::Unsupported);
+                    false
+                } else if numeric && numeric_loop_candidate {
+                    slot.insert(JsTierState::PromotionPending);
+                    promoted = true;
+                    true
                 } else {
                     slot.insert(JsTierState::Hot {
                         observations: 1,
                         numeric: u8::from(numeric),
                     });
+                    false
                 }
-                false
             }
             std::collections::hash_map::Entry::Occupied(mut slot) => match slot.get_mut() {
                 JsTierState::Hot {
@@ -1008,6 +1014,9 @@ impl ProgramStore {
                     if compiled_functions >= JS_JIT_MAX_FUNCTIONS {
                         *slot.get_mut() = JsTierState::Unsupported;
                         false
+                    } else if numeric && numeric_loop_candidate {
+                        promoted = true;
+                        true
                     } else if decision == Some(true) {
                         promoted = true;
                         if numeric {
