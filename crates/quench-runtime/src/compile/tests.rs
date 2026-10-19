@@ -96,6 +96,7 @@ fn register_promotion_admits_statement_level_and_nested_writes() {
         "delete.js",
     )
     .unwrap();
+    program.compile_released();
     assert!(program.functions[1].local_registers.is_empty());
     program.validate().unwrap();
 }
