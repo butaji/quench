@@ -7507,7 +7507,8 @@ mod tests {
     fn emscripten_memcpy_leaf_copies_overlap_and_observes_cache_miss_and_interrupt() {
         use std::sync::atomic::{AtomicBool, Ordering};
 
-        let mut bytes = [0, 1, 2, 3, 4, 5];
+        // Wasm memory bytes: an untyped literal would be `[i32; 6]`.
+        let mut bytes: [u8; 6] = [0, 1, 2, 3, 4, 5];
         let mut cache = EmscriptenMemcpyCache {
             valid: 1,
             function: 7,
