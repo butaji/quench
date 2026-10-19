@@ -1,5 +1,6 @@
 //! Canonical Node host backed by the shared runtime.
 
+pub(crate) mod compile_cache;
 pub(crate) mod node_host;
 pub mod resident_pages;
 pub(crate) mod shared_vm;
