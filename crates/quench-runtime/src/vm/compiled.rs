@@ -2207,6 +2207,7 @@ pub(super) struct CompiledJsFunction {
     params: usize,
     mapped_bytes: usize,
     return_constants: Vec<(u32, u32)>,
+    field_argument: Option<(u32, u16)>,
     #[cfg(test)]
     native_entries: std::cell::Cell<u64>,
 }
@@ -2240,6 +2241,7 @@ impl CompiledJsFunction {
     pub(super) fn from_artifact(artifact: super::js_compiled::JsJitArtifact) -> Option<Self> {
         let code = CodeMemory::new(&artifact.code)?;
         let mapped_bytes = code.length;
+        let field_argument = artifact.field_argument;
         let (entry, return_constants) = match artifact.result {
             super::js_compiled::JsJitResultKind::Number => {
                 // SAFETY: the numeric JS compiler emits `fn(*const f64) -> f64`.
@@ -2307,6 +2309,7 @@ impl CompiledJsFunction {
             params: artifact.params,
             mapped_bytes,
             return_constants,
+            field_argument,
             #[cfg(test)]
             native_entries: std::cell::Cell::new(0),
         })
@@ -2314,6 +2317,10 @@ impl CompiledJsFunction {
 
     pub(super) fn params(&self) -> usize {
         self.params
+    }
+
+    pub(super) fn field_argument(&self) -> Option<(u32, u16)> {
+        self.field_argument
     }
 
     pub(super) fn call(
@@ -6089,19 +6096,8 @@ impl<H: Host> Vm<H> {
 
         let params = usize::from(function.params);
         let registers = self.frames[frame].registers.get(..params)?;
-        let string_hash_candidate =
-            super::js_compiled::has_string_hash_loop_candidate(program, function)
-                && params == 1
-                && self.js_jit_string_hash_guard()
-                && matches!(self.heap.get(registers[0]), Some(Cell::String(_)));
-        let string_hash_units = if string_hash_candidate {
-            let Some(Cell::String(string)) = self.heap.get(registers[0]) else {
-                unreachable!("guarded JIT string argument changed")
-            };
-            Some(string.units())
-        } else {
-            None
-        };
+        let first_argument = registers.first().copied();
+        let field_argument = super::js_compiled::number_field_argument_candidate(program, function);
         let mut arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
         let mut numeric = true;
         for value in registers {
@@ -6113,6 +6109,35 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
+        if let Some((_, cache_site)) = field_argument {
+            let receiver = first_argument?;
+            arguments.clear();
+            numeric = false;
+            if let super::object::FieldCacheProbe::Hit(value) =
+                self.cached_field_hit(program, receiver, cache_site)
+                && let Some(number) = value.as_number()
+            {
+                arguments.push(number);
+                numeric = true;
+            }
+        }
+        let string_hash_candidate =
+            super::js_compiled::has_string_hash_loop_candidate(program, function)
+                && params == 1
+                && self.js_jit_string_hash_guard()
+                && matches!(
+                    first_argument.and_then(|value| self.heap.get(value)),
+                    Some(Cell::String(_))
+                );
+        let string_hash_units = if string_hash_candidate {
+            let Some(Cell::String(string)) = first_argument.and_then(|value| self.heap.get(value))
+            else {
+                unreachable!("guarded JIT string argument changed")
+            };
+            Some(string.units())
+        } else {
+            None
+        };
         if tier.is_none() && !function.wide.is_empty() && !numeric {
             return None;
         }
@@ -6138,7 +6163,9 @@ impl<H: Host> Vm<H> {
                     program_id,
                     function_id,
                     numeric,
-                    (numeric && numeric_loop_candidate) || string_hash_units.is_some(),
+                    (numeric
+                        && (numeric_loop_candidate || field_argument.is_some()))
+                        || string_hash_units.is_some(),
                 ) || (!numeric && string_hash_units.is_none())
                 {
                     return None;
@@ -6260,6 +6287,9 @@ impl<H: Host> Vm<H> {
             super::program_store::JsTierState::Compiled(compiled) => compiled,
             _ => return None,
         };
+        if compiled.field_argument().is_some() {
+            return None;
+        }
         let params = usize::from(function.params);
         if compiled.params() != params || arguments.len() < params {
             return None;
