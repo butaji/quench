@@ -3341,6 +3341,73 @@ mod tests {
     }
 
     #[test]
+    fn compiled_wasm_unrolled_loop_runs_every_trip_count() {
+        // A small program's innermost loop runs as copies of its body; every trip count,
+        // a multiple of the copies or not, takes the same values as the loop once.
+        let signature = crate::WasmSignature {
+            params: vec![crate::WasmType::I32],
+            results: vec![crate::WasmType::I32],
+        };
+        let module = crate::Engine::lower_wasm_module_for(
+            crate::ExecutionMode::Compiled,
+            "compiled-wasm-unrolled-loop",
+            [crate::WasmFunctionBody {
+                ty: crate::WasmCallableType::Embedded(signature),
+                locals: vec![wasmparser::ValType::I32, wasmparser::ValType::I32],
+                operators: vec![
+                    Operator::Block { blockty: wasmparser::BlockType::Empty },
+                    Operator::LocalGet { local_index: 0 },
+                    Operator::I32Eqz,
+                    Operator::BrIf { relative_depth: 0 },
+                    Operator::Loop { blockty: wasmparser::BlockType::Empty },
+                    Operator::LocalGet { local_index: 2 },
+                    Operator::LocalGet { local_index: 1 },
+                    Operator::I32Add,
+                    Operator::LocalSet { local_index: 2 },
+                    Operator::LocalGet { local_index: 1 },
+                    Operator::I32Const { value: 1 },
+                    Operator::I32Add,
+                    Operator::LocalTee { local_index: 1 },
+                    Operator::LocalGet { local_index: 0 },
+                    Operator::I32LtU,
+                    Operator::BrIf { relative_depth: 0 },
+                    Operator::End,
+                    Operator::End,
+                    Operator::LocalGet { local_index: 2 },
+                    Operator::End,
+                ]
+                .into_iter()
+                .map(Ok),
+            }],
+            &crate::WasmTypes::default(),
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+        )
+        .unwrap();
+        let mut vm = Vm::new(crate::SystemHost);
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        let instance = vm.instantiate_wasm_module(&module).unwrap();
+        for trips in 0..13 {
+            assert_eq!(
+                vm.invoke_wasm(&instance, 0, &[crate::WasmValue::I32(trips)]).unwrap(),
+                Some(crate::WasmValue::I32(trips * (trips - 1) / 2)),
+                "{trips} trips"
+            );
+        }
+        let program = vm
+            .programs
+            .find_shared(&module.program)
+            .expect("registered Wasm program");
+        let compiled = vm.programs.compiled(program).flatten().expect("compiled loop");
+        assert_eq!(compiled.native_entries(0), Some(13));
+    }
+
+    #[test]
     fn compiled_wasm_fallback_caller_keeps_native_callee_entries() {
         crate::wasm::COMPILED_CALLS_KEPT_FOR_TEST.with(|kept| kept.set(true));
         let caller_signature = crate::WasmSignature {
