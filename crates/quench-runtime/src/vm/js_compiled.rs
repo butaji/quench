@@ -70,7 +70,7 @@ fn compile_number_domain_boolean_tree(
     function_id: u32,
     function: &Function,
 ) -> Option<JsJitArtifact> {
-    if !function_candidate(function, &program.atoms)
+    if !function_candidate(function, program)
         || usize::from(function.registers) > MAX_REGISTERS
         || function
             .code
