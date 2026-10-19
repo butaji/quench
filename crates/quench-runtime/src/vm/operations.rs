@@ -85,6 +85,17 @@ const NUMERIC_BINARY_OPERATORS: [BinaryOperator; NUMERIC_BINARY_OPERATOR_COUNT] 
     BinaryOperator::BitwiseAnd,
 ];
 
+/// `number_relation` of two integers alone: `None` for any other pair. Few values stay live,
+/// so a lane handler inlining it saves no registers.
+#[inline(always)]
+pub(super) fn integer_relation(op: u32, left: Value, right: Value) -> Option<bool> {
+    if op > LAST_COMPARISON_OPERATOR {
+        return None;
+    }
+    let (a, b) = Value::int_pair(left, right)?;
+    Some(number_comparison(op, a, b))
+}
+
 /// A comparison operator on two Numbers, comparing integers as integers; `None` for any
 /// other operator or value.
 #[inline(always)]
