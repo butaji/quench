@@ -46,9 +46,20 @@ impl FunctionCompiler<'_, '_> {
         self.literal(Constant::Undefined)
     }
 
+    /// Whether this function binds `atom` in its own scope or an active block, so a reference
+    /// to it does not reach an outer scope.
+    pub(in crate::compile) fn binds_name(&self, atom: Atom) -> bool {
+        self.function_scope.contains(&atom)
+            || self.active_lexical_binding(atom).is_some()
+            || self.scopes.contains(atom)
+    }
+
     pub(super) fn unary(&mut self, value: &UnaryExpression<'_>) -> Register {
         if value.operator == UnaryOperator::Delete {
             return self.delete_expression(&value.argument);
+        }
+        if let Some(constant) = binding_time::unary(value).static_value() {
+            return self.literal(constant);
         }
         let input = if value.operator == UnaryOperator::Typeof {
             let mut operand = &value.argument;
@@ -57,10 +68,7 @@ impl FunctionCompiler<'_, '_> {
             }
             if let Expression::Identifier(identifier) = operand {
                 let atom = self.owner.atom(identifier.name.as_str());
-                let bound = self.function_scope.contains(&atom)
-                    || self.active_lexical_binding(atom).is_some()
-                    || self.scopes.contains(atom);
-                if bound {
+                if self.binds_name(atom) {
                     self.expression(operand)
                 } else {
                     let input = self.reg();

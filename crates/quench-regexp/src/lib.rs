@@ -297,6 +297,9 @@ struct CompleteMatcher {
     backtracking: Option<backtrack::Program>,
     /// `required_literal` as bytes, when every unit is ASCII.
     required_bytes: Option<LiteralFinder>,
+    /// The fewest code points any match consumes (`min_length`). A code point is at least
+    /// one unit of any subject, so a search with fewer units left has no match.
+    min_length: usize,
 }
 
 /// A searcher for a literal byte run. The searcher is several hundred bytes, so it is boxed:
@@ -319,6 +322,7 @@ impl CompleteMatcher {
             let bytes = required_literal.iter().map(|unit| *unit as u8).collect::<Vec<_>>();
             literal_finder(&bytes)
         });
+        let min_length = min_length(&program);
         let tree = OnceCell::new();
         if backtracking.is_none() {
             let _ = tree.set(program);
@@ -328,6 +332,7 @@ impl CompleteMatcher {
             required_literal,
             backtracking,
             required_bytes,
+            min_length,
         }
     }
 }
@@ -627,6 +632,9 @@ impl Regex {
             }
             let complete = self.complete();
             let program = complete.backtracking.as_ref()?;
+            if bytes.len().saturating_sub(start) < complete.min_length {
+                return Some(None);
+            }
             // Every match consumes the required literal, so a subject without it has none.
             if let Some(literal) = &complete.required_bytes {
                 if literal.find(&bytes[start..]).is_none() {
@@ -646,6 +654,9 @@ impl Regex {
         let unicode = self.flags.unicode || self.flags.unicode_sets;
         let complete = self.complete();
         let program = complete.backtracking.as_ref()?;
+        if subject.len().saturating_sub(start) < complete.min_length {
+            return Some(None);
+        }
         if let (false, Some(units)) = (unicode, subject.wide()) {
             // Outside unicode mode a code unit is a pattern unit: no decoding, and
             // positions are offsets.
@@ -1428,6 +1439,30 @@ fn units_from_str(text: &str, unicode: bool) -> Vec<Unit> {
 /// The longest run of literal units that every match consumes contiguously: consecutive
 /// literals of the top-level sequence, read through captures, which a match always enters.
 /// Empty for case-insensitive patterns, whose literals match more than their own value.
+/// The fewest code points a match of `expr` consumes. Assertions, lookarounds and
+/// backreferences may consume none; a class consumes one code point unless it has string
+/// alternatives (`v`-mode `\q{…}`), which may be empty.
+fn min_length(expr: &Expr) -> usize {
+    fn class_has_strings(class: &ClassExpr) -> bool {
+        class.items.iter().any(|item| match item {
+            ClassItem::String(_) => true,
+            ClassItem::Nested(nested) => class_has_strings(nested),
+            _ => false,
+        })
+    }
+    match expr {
+        Expr::Sequence(parts) => parts
+            .iter()
+            .fold(0, |total, part| total.saturating_add(min_length(part))),
+        Expr::Alternation(branches) => branches.iter().map(min_length).min().unwrap_or(0),
+        Expr::Literal(_) | Expr::Dot => 1,
+        Expr::Class(class) => usize::from(!class_has_strings(class)),
+        Expr::Capture { body, .. } | Expr::Mode { body, .. } => min_length(body),
+        Expr::Repeat { body, min, .. } => min.saturating_mul(min_length(body)),
+        Expr::Assertion(_) | Expr::Lookaround { .. } | Expr::Backreference(_) => 0,
+    }
+}
+
 fn required_literal(program: &Expr, flags: Flags) -> Box<[u32]> {
     fn visit(expr: &Expr, run: &mut Vec<u32>, best: &mut Vec<u32>) {
         match expr {
@@ -3081,7 +3116,8 @@ fn is_line_terminator(value: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        contains_code_units, normalize_new_unicode_scripts, Flags, Regex, NEW_UNICODE_SCRIPTS,
+        contains_code_units, normalize_new_unicode_scripts, Flags, Regex, Subject,
+        NEW_UNICODE_SCRIPTS,
     };
 
     #[test]
@@ -3211,5 +3247,35 @@ mod tests {
         )
         .unwrap();
         assert!(regex.find_from("abc", 0).next().is_some());
+    }
+
+    #[test]
+    fn subjects_shorter_than_every_match_fail_and_longer_ones_still_match() {
+        // The minimum length gates every search path: ASCII and wide subjects, sticky and
+        // ranged searches, with case folding, optional tails, and empty-matching parts.
+        let find = |pattern: &str, flags: &str, text: &str, start: usize| {
+            let regex = Regex::with_flags(pattern, Flags::from(flags)).unwrap();
+            let units: std::rc::Rc<[u16]> = text.encode_utf16().collect::<Vec<_>>().into();
+            let subject = Subject::new(units);
+            let found = regex.find_in_subject(&subject, start).next().map(|m| m.range);
+            let sticky = regex.find_sticky_in_subject(&subject, start).next().map(|m| m.range);
+            let range = regex.find_range_in_subject(&subject, start);
+            assert_eq!(found, range, "{pattern} on {text:?}");
+            (found, sticky)
+        };
+        let route = r"^(?:\/users\/profile)(?:\/$)?$";
+        assert_eq!(find(route, "i", "/", 0), (None, None));
+        assert_eq!(find(route, "i", "/USERS/profile", 0), (Some(0..14), Some(0..14)));
+        assert_eq!(find(route, "i", "/users/profile/", 0), (Some(0..15), Some(0..15)));
+        assert_eq!(find("a{3}", "", "xaa", 0), (None, None));
+        assert_eq!(find("a{3}", "", "xaaa", 1), (Some(1..4), Some(1..4)));
+        assert_eq!(find("ab|c", "", "xc", 1), (Some(1..2), Some(1..2)));
+        // Zero-width parts consume nothing, so an empty remainder still matches.
+        assert_eq!(find("(?=)", "", "ab", 2), (Some(2..2), Some(2..2)));
+        assert_eq!(find(r"(a?)\1$", "", "", 0), (Some(0..0), Some(0..0)));
+        assert_eq!(find(r"[\q{}]", "v", "", 0), (Some(0..0), Some(0..0)));
+        // One astral code point is two units of the subject.
+        assert_eq!(find("\u{1F600}", "u", "x\u{1F600}", 1), (Some(1..3), Some(1..3)));
+        assert_eq!(find(".", "u", "\u{1F600}", 0), (Some(0..2), Some(0..2)));
     }
 }
