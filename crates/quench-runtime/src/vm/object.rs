@@ -423,18 +423,27 @@ impl<H: Host> Vm<H> {
         })
     }
     /// The one place descriptors are recorded. Objects remember whether any index-keyed entry
-    /// exists, so plain arrays can skip the per-index descriptor proof.
+    /// exists, so plain arrays can skip the per-index descriptor proof, and whether a `length`
+    /// one does, so they can skip the lookup of their length's attributes.
     pub(super) fn insert_descriptor(
         &mut self,
         object: Value,
         key: PropertyKey,
         attributes: PropertyAttributes,
     ) {
-        if let PropertyKey::String(atom) = key
-            && self.atom_class(atom).contains(AtomClass::ARRAY_INDEX)
-            && let Some(data) = self.object_data_mut(object)
-        {
-            data.mark_indexed_descriptors();
+        if let PropertyKey::String(atom) = key {
+            let length = atom == self.length_atom;
+            let index = self.atom_class(atom).contains(AtomClass::ARRAY_INDEX);
+            if (length || index)
+                && let Some(data) = self.object_data_mut(object)
+            {
+                if index {
+                    data.mark_indexed_descriptors();
+                }
+                if length {
+                    data.mark_length_descriptor();
+                }
+            }
         }
         self.descriptors.insert((object, key), attributes);
     }
@@ -684,6 +693,7 @@ impl<H: Host> Vm<H> {
         self.accessor_field_caches.clear();
         self.instanceof_constructor_layout = None;
         self.closure_shapes = [None; 2];
+        self.iterator_result_shape = None;
         self.regexp_object_shapes = None;
         self.regexp_last_index_layout = None;
         self.regexp_builtin_layout = None;
@@ -1197,6 +1207,44 @@ impl<H: Host> Vm<H> {
         self.profile
             .field_cache_hit(usize::from(hit.tier), hit.depth);
         Some(hit.value)
+    }
+
+    /// `inherited_field_hit` while the entry's proof holds (the prototype layout epoch and
+    /// the receiver's prototype it was made under) and the holder is an object record: no
+    /// chain walk and no call, so a lane handler inlining it saves no registers. `None`
+    /// leaves any other read to `inherited_field_hit`.
+    #[inline(always)]
+    pub(super) fn proved_inherited_field_hit(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        site: u16,
+    ) -> Option<Value> {
+        debug_assert!(self.lane_admits(p));
+        let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
+        // SAFETY: as for `cached_inherited_field_value`.
+        let index = unsafe { *self.inherited_field_indices.get_unchecked(self.field_cache_index(site)) };
+        if index == NO_INHERITED_FIELD {
+            return None;
+        }
+        let cache = unsafe { self.inherited_field_caches.get_unchecked(index as usize) };
+        if cache.receiver != receiver.shape()
+            || cache.proved_epoch != crate::heap::prototype_layout_epoch()
+            || cache.proved_prototype != receiver.proto()
+        {
+            return None;
+        }
+        let value = match cache.answer {
+            InheritedFieldAnswer::Slot(slot) => {
+                let holder = self.heap.object_record(cache.proved_holder)?;
+                // SAFETY: the proof keeps the holder and its recorded shape.
+                unsafe { self.heap.property_get_shaped(holder, usize::from(slot)) }?
+            }
+            InheritedFieldAnswer::Absent => Value::UNDEFINED,
+        };
+        let depth = u16::from(cache.depth);
+        self.profile.field_cache_hit(0, depth);
+        Some(value)
     }
 
     /// Whether the site has an inherited entry (`inherited_field_hit`).
@@ -1714,6 +1762,11 @@ impl<H: Host> Vm<H> {
     /// Records the accessor a field read at `site` meets on `object`'s immediate prototype,
     /// when shapes answer both lookups and `object` holds no own `atom`.
     fn record_accessor_field_cache(&mut self, object: Value, atom: Atom, site: usize) {
+        // The shared overflow site serves reads of every atom; an entry there would answer
+        // one name's read with another's getter.
+        if !self.field_cache_records(site) {
+            return;
+        }
         let Some(receiver) = self.shape_property_lookup(object, atom) else {
             return;
         };
