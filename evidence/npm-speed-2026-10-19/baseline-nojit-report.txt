@@ -1,0 +1,54 @@
+verdicts {"behavior-pass":286,"declarations-pass":13,"oracle-failed":1}
+passing 299  fastest wall 3  fastest cpu 0  lowest rss 282
+wall median (ms) quench 513.5 node 108.2 bun 69.2
+cpu median (ms) quench 506.7 node 119.4 bun 69.8
+rss median (MiB) quench 18.5 node 72.0 bun 37.8
+slowest relative to the faster of Node and Bun (wall ms):
+  date-fns                                 q    8512 n   1535 b     77  x111.0
+  undici                                   q    1246 n    275 b     63  x19.7
+  color-name                               q     572 n     73 b     46  x12.5
+  ws                                       q     727 n    127 b     59  x12.3
+  axios                                    q    1441 n    256 b    118  x12.3
+  @typescript-eslint/type-utils            q    6016 n    691 b    500  x12.0
+  safe-buffer                              q     584 n     81 b     52  x11.2
+  path-scurry                              q     560 n    184 b     51  x11.0
+  @typescript-eslint/project-service       q    2589 n    287 b    238  x10.9
+  @aws-sdk/types                           q     511 n     96 b     47  x10.9
+  agent-base                               q     625 n     86 b     58  x10.8
+  node-releases                            q     532 n     79 b     50  x10.7
+  node-fetch                               q     764 n    193 b     72  x10.7
+  react-refresh                            q     551 n    245 b     52  x10.6
+  @asamuzakjp/css-color                    q     695 n    119 b     65  x10.6
+  is-fullwidth-code-point                  q     531 n     86 b     51  x10.4
+  minipass                                 q     566 n     85 b     55  x10.3
+  @babel/helper-string-parser              q     546 n     92 b     53  x10.3
+  @babel/helper-compilation-targets        q     961 n    152 b     94  x10.2
+  nanoid                                   q     547 n     80 b     54  x10.2
+  mkdirp                                   q     537 n    119 b     53  x10.1
+  color-convert                            q     879 n    159 b     87  x10.1
+  @radix-ui/react-primitive                q     705 n    161 b     70  x10.1
+  @babel/traverse                          q    1390 n    392 b    139  x10.0
+  supports-preserve-symlinks-flag          q     472 n     91 b     47  x10.0
+  strip-ansi                               q     481 n     81 b     49  x9.9
+  esbuild                                  q    1099 n   1073 b    113  x9.8
+  @aws-sdk/xml-builder                     q     453 n     94 b     46  x9.7
+  globals                                  q     427 n    235 b     44  x9.7
+  strip-bom                                q     413 n     79 b     43  x9.7
+not lowest rss: 17
+  undici-types                             q 74.7 n 74.7 b 74.3
+  typescript                               q 41.8 n 71.8 b 41.7
+  jiti                                     q 48.4 n 98.6 b 39.4
+  @typescript-eslint/typescript-estree     q 109.5 n 143.2 b 93.8
+  @types/react                             q 54.3 n 71.7 b 54.0
+  @typescript-eslint/scope-manager         q 115.1 n 146.2 b 90.2
+  @types/json-schema                       q 45.1 n 71.6 b 44.6
+  @typescript-eslint/parser                q 108.8 n 145.1 b 93.0
+  @typescript-eslint/eslint-plugin         q 147.9 n 227.9 b 146.6
+  @typescript-eslint/type-utils            q 189.5 n 204.9 b 125.0
+  @typescript-eslint/project-service       q 111.0 n 124.1 b 77.9
+  @typescript-eslint/tsconfig-utils        q 116.8 n 141.0 b 82.6
+  jsdom                                    q 97.8 n 186.7 b 97.4
+  @types/babel__template                   q 53.4 n 71.7 b 53.1
+  @types/yargs                             q 46.2 n 71.8 b 46.0
+  @types/ms                                q 44.8 n 71.8 b 44.1
+  @types/ws                                q 72.7 n 72.4 b 71.8
