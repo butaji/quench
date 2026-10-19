@@ -2557,10 +2557,25 @@ pub(crate) struct ProgramSource {
 
 /// Starts of JavaScript source lines, including an empty line after a final terminator.
 pub(crate) fn source_line_starts(text: &str) -> impl Iterator<Item = usize> + '_ {
-    std::iter::once(0).chain(text.char_indices().filter_map(|(index, character)| {
-        let crlf_prefix = character == '\r' && text.as_bytes().get(index + 1) == Some(&b'\n');
-        (matches!(character, '\n' | '\r' | '\u{2028}' | '\u{2029}') && !crlf_prefix)
-            .then_some(index + character.len_utf8())
+    const LINE_SEPARATOR: &[u8] = "\u{2028}".as_bytes();
+    const PARAGRAPH_SEPARATOR: &[u8] = "\u{2029}".as_bytes();
+    // Scanned as bytes: every terminator but LS and PS is ASCII, and those two share their
+    // UTF-8 lead byte, so no other byte needs decoding.
+    let bytes = text.as_bytes();
+    std::iter::once(0).chain(bytes.iter().enumerate().filter_map(move |(index, &byte)| {
+        let width = match byte {
+            b'\n' => 1,
+            // CR LF ends one line, after the LF.
+            b'\r' if bytes.get(index + 1) != Some(&b'\n') => 1,
+            lead if lead == LINE_SEPARATOR[0]
+                && (bytes[index..].starts_with(LINE_SEPARATOR)
+                    || bytes[index..].starts_with(PARAGRAPH_SEPARATOR)) =>
+            {
+                LINE_SEPARATOR.len()
+            }
+            _ => return None,
+        };
+        Some(index + width)
     }))
 }
 
