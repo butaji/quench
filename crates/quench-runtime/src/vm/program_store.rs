@@ -23,6 +23,7 @@ struct JsJitCounters {
     fallback_entries: u64,
     interpreter_completions: u64,
     interpreter_inclusive_ns: u64,
+    opcode_counts: Vec<(u16, u32)>,
     code_bytes: usize,
 }
 
@@ -1219,7 +1220,7 @@ impl ProgramStore {
         if diagnostics.len() >= JS_JIT_MAX_DIAGNOSTIC_FUNCTIONS {
             return;
         }
-        let (source_name, function_name, instruction_count) = self
+        let (source_name, function_name, instruction_count, opcode_counts) = self
             .entry(id)
             .map(|entry| {
                 let function_code = entry.residual.functions.get(function as usize);
@@ -1234,10 +1235,25 @@ impl ProgramStore {
                 let instruction_count = function_code.map_or(0, |function| {
                     u32::try_from(function.code.len()).unwrap_or(u32::MAX)
                 });
+                let mut opcode_counts = vec![0_u32; crate::bytecode::Op::COUNT];
+                if let Some(function) = function_code {
+                    for instruction in &function.code {
+                        let opcode = instruction.as_wide().op() as usize;
+                        opcode_counts[opcode] = opcode_counts[opcode].saturating_add(1);
+                    }
+                }
+                let opcode_counts = opcode_counts
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(|(opcode, count)| {
+                        (count != 0).then(|| (u16::try_from(opcode).unwrap_or(u16::MAX), count))
+                    })
+                    .collect();
                 (
                     entry.residual.source_name.clone(),
                     function_name,
                     instruction_count,
+                    opcode_counts,
                 )
             })
             .unwrap_or_default();
@@ -1247,6 +1263,7 @@ impl ProgramStore {
             counters.function_name = Some(function_name.into_boxed_str());
             counters.parameter_count = parameter_count;
             counters.instruction_count = instruction_count;
+            counters.opcode_counts = opcode_counts;
             counters.entries = counters.entries.saturating_add(1);
             counters.numeric_entries = counters
                 .numeric_entries
@@ -1562,9 +1579,9 @@ impl Drop for ProgramStore {
             } else {
                 let _ = write!(stderr, "null");
             }
-            let _ = writeln!(
+            let _ = write!(
                 stderr,
-                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"code_bytes\":{}}}",
+                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"opcodes\":[",
                 counters.parameter_count,
                 counters.instruction_count,
                 counters.entries,
@@ -1577,8 +1594,20 @@ impl Drop for ProgramStore {
                 counters.fallback_entries,
                 counters.interpreter_completions,
                 counters.interpreter_inclusive_ns,
-                counters.code_bytes,
             );
+            for (index, (opcode, count)) in counters.opcode_counts.iter().enumerate() {
+                if index != 0 {
+                    let _ = write!(stderr, ",");
+                }
+                let name = crate::bytecode::Op::NAMES
+                    .get(usize::from(*opcode))
+                    .copied()
+                    .unwrap_or("unknown");
+                let _ = write!(stderr, "[");
+                let _ = write_json_string(&mut stderr, name);
+                let _ = write!(stderr, ",{count}]");
+            }
+            let _ = writeln!(stderr, "],\"code_bytes\":{}}}", counters.code_bytes);
         }
     }
 }
