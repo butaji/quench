@@ -201,36 +201,32 @@ impl GenerationalPacing {
     }
 }
 
-/// Production pacing on the Score lane (`v2-cloud-c`), whose owner sets V8-v7 Score as its
-/// only target (2026-10-18), diverging from the trunk's memory-first table (TOD-123: young
-/// collections every half live set, 384-weight minimums, one live set of old growth or
-/// allocation per full collection). Young collections run every eight live sets (at least
-/// `SCORE_MINIMUM_YOUNG`), a full collection once the old generation has grown by four live
-/// sets or four live sets of allocation have passed since the last one (at least
-/// `SCORE_MINIMUM_FULL_INTERVAL`), and, when more than half of young allocations survive,
-/// full collections with four live sets between them, probing survival with a minor
-/// collection every fourth one. Measured with the `gc-tuning` build against the trunk table,
-/// Linux x86_64, 4 vCPU, three-round medians: Splay 4566 -> 5931, RayTrace 1910 -> 2430,
-/// DeltaBlue 951 -> 1135, EarleyBoyer 1980 -> 2167, RegExp 931 -> 1042; doubling the
-/// factors and minimums again, or a 2^17 young minimum, was within noise. The trunk keeps its
-/// memory-first table (reaffirmed 2026-10-18: this table raised npm peak RSS by up to 17 MiB
-/// per package); merges from it keep this one on this lane.
+/// Production pacing, memory-first on the owner's direction of 2026-10-17 (TOD-123): young
+/// collections every eighth of a live set (at least 384 weight; from half a live set: V8-v7
+/// max RSS EarleyBoyer 9136 -> 8324 KiB, RegExp 8460 -> 7940, the rest within noise, static
+/// x86_64, 2026-10-18), a full collection once the old
+/// generation has doubled or one live set of allocation has passed since the last one, and,
+/// when more than half of young allocations survive, full collections with one live set
+/// between them, probing survival with a minor collection every fourth one. The minimums are
+/// the pre-generational 384-cell headroom. The Score lane's table (eight live sets per young
+/// collection, four per full one, 2^15 and 2^18 minimums) raised npm peak RSS by up to 17 MiB
+/// per package (semver 27.6 -> 45.2, typescript-eslint 188 -> 226); the owner reaffirmed
+/// memory-first on 2026-10-18.
 pub(super) const PRODUCTION_PACING: GenerationalPacing = GenerationalPacing {
-    young: Ratio::new(8, 1),
-    minimum_young: SCORE_MINIMUM_YOUNG,
-    old_growth: Ratio::new(4, 1),
-    minimum_old_growth: SCORE_MINIMUM_FULL_INTERVAL,
-    allocation_cap: Ratio::new(4, 1),
-    minimum_allocation_cap: SCORE_MINIMUM_FULL_INTERVAL,
+    young: Ratio::new(1, 8),
+    minimum_young: MEMORY_FIRST_MINIMUM_ALLOCATION,
+    old_growth: Ratio::new(1, 1),
+    minimum_old_growth: MEMORY_FIRST_MINIMUM_ALLOCATION,
+    allocation_cap: Ratio::new(1, 1),
+    minimum_allocation_cap: MEMORY_FIRST_MINIMUM_ALLOCATION,
     survival_limit: SURVIVAL_SCALE / 2,
-    full_only_headroom: Ratio::new(4, 1),
+    full_only_headroom: Ratio::new(1, 1),
     probe_interval: 4,
 };
 
-/// The fewest allocations between collections, whatever survived.
-const SCORE_MINIMUM_YOUNG: usize = 1 << 15;
-/// The fewest allocations, or old-generation growth, between full collections.
-const SCORE_MINIMUM_FULL_INTERVAL: usize = 1 << 18;
+/// The fewest allocations between collections, whatever survived: the pre-generational
+/// minimum headroom.
+const MEMORY_FIRST_MINIMUM_ALLOCATION: usize = 384;
 
 #[cfg(not(feature = "gc-tuning"))]
 pub(super) fn pacing() -> GenerationalPacing {

@@ -1,0 +1,385 @@
+{
+  "schema": 1,
+  "report_kind": "jit_wasm_indexed_offset_reuse_ab_diagnostic",
+  "created_unix_ns": 1792346746487082738,
+  "input_report_path": "evidence/jit-jetstream3-wasm-2026-10-18/indexed-offset-reuse/screen-3.json",
+  "input_report_sha256": "fbb888a8a06c0a3d0dc1718c4cc8e60249cf132e35d6b1f5f02afa1f4d07dc38",
+  "suite": "jet-stream3",
+  "jit_mode": "jit",
+  "quench_bench_binary": {
+    "path": "/workspace/quench/target/production/quench-bench",
+    "size_bytes": 1623008,
+    "modified_unix_ns": 1792346721783792769,
+    "sha256": "c261a6ca405b977f5cd526b5e765b3f63ff720248ec3457b696dfabf57c71f6a"
+  },
+  "source_revision": "816ea03afcb1d15850769aa92410351acadc1826",
+  "source_dirty": false,
+  "corpus_revision": "06785cf861ac44855f168cbbe829278c2802e6de",
+  "timeout_ms": 600000,
+  "host": {
+    "uname": "Linux f3da3ef8e0e6 6.18.55 #1 SMP Wed Oct 14 19:45:18 UTC 2026 x86_64 GNU/Linux",
+    "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.1\nLLVM version: 23.1.1",
+    "model": null,
+    "memory_bytes": 18882674688,
+    "memory_limit_bytes": 17179869184,
+    "cpu_quota": "400000 100000",
+    "process_metrics_backend": "Linux wait4 rusage"
+  },
+  "engine_provenance": [
+    {
+      "name": "quench_indexed_offset_reuse_off",
+      "executable": "/workspace/quench/target/production/quench-node",
+      "executable_sha256": "c159313cf9cf0375dd184b75d271644819db4727abf7cb0c6dfa98e52b54e5d9",
+      "version": "Quench shared-VM JIT build; package 0.1.0",
+      "argv": [
+        "--jit"
+      ],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback",
+        "QUENCH_WASM_JIT_INDEXED_OFFSET_REUSE": "0"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-by-cli-flag",
+      "jit_proof_command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit"
+      ],
+      "jit_proof": "the measured Quench process is launched with --jit; diagnostic indexed-offset-reuse A/B arm with QUENCH_WASM_JIT_INDEXED_OFFSET_REUSE=0"
+    },
+    {
+      "name": "quench_indexed_offset_reuse_on",
+      "executable": "/workspace/quench/target/production/quench-node",
+      "executable_sha256": "c159313cf9cf0375dd184b75d271644819db4727abf7cb0c6dfa98e52b54e5d9",
+      "version": "Quench shared-VM JIT build; package 0.1.0",
+      "argv": [
+        "--jit"
+      ],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback",
+        "QUENCH_WASM_JIT_INDEXED_OFFSET_REUSE": "1"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-by-cli-flag",
+      "jit_proof_command": [
+        "/workspace/quench/target/production/quench-node",
+        "--jit"
+      ],
+      "jit_proof": "the measured Quench process is launched with --jit; diagnostic indexed-offset-reuse A/B arm with QUENCH_WASM_JIT_INDEXED_OFFSET_REUSE=1"
+    },
+    {
+      "name": "bun",
+      "executable": "/workspace/.local/bench-runtimes/bun-linux-x64/bun",
+      "executable_sha256": "a83d263767d839e4d2649ca8e35d07159c7afc99afdc96d731ced29e056dda0c",
+      "version": "1.4.2",
+      "argv": [],
+      "environment": {
+        "BUN_JSC_useJIT": "1",
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-and-probed",
+      "jit_proof_command": [
+        "BUN_JSC_useJIT=1",
+        "BUN_JSC_dumpOptions=1",
+        "/workspace/.local/bench-runtimes/bun-linux-x64/bun",
+        "-e",
+        "console.log(Bun.version)"
+      ],
+      "jit_proof": "command succeeded and reported \"useJIT=true\": 1.4.2\n\nModified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=true (default: true)"
+    },
+    {
+      "name": "node",
+      "executable": "/workspace/.local/bench-runtimes/node-v26.10.0-linux-x64/bin/node",
+      "executable_sha256": "ab9c8eecf9f82d6693cdc3accced17034065c8d96213b0aa76a7e803d20ae1da",
+      "version": "v26.10.0",
+      "argv": [],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/home/agent/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "enabled-and-probed",
+      "jit_proof_command": [
+        "/workspace/.local/bench-runtimes/node-v26.10.0-linux-x64/bin/node",
+        "--trace-opt",
+        "--no-concurrent-recompilation",
+        "-e",
+        "function hot(x) { return x + 1; } for (let i = 0; i < 100000; i++) hot(i);"
+      ],
+      "jit_proof": "command succeeded and reported \"completed compiling\": [marking 0x0ac5190b4d91 <JSFunction hot (sfi = 0xac5190b1571)> for optimization to MAGLEV, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[compiling method 0x0ac5190b4d91 <JSFunction hot (sfi = 0xac5190b1571)> (target MAGLEV), mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x0ac5190b4d91 <JSFunction hot (sfi = 0xac5190b1571)> (target MAGLEV) - took 0.004, 0.157, 0.002 ms]\n[marking 0x0ac5190b4d21 <JSFunction (sfi = 0xac5190b14c9)> for optimization to MAGLEV, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[marking 0x0ac5190b4d91 <JSFunction hot (sfi = 0xac5190b1571)> for optimization to TURBOFAN_JS, ConcurrencyMode::kConcurrent, reason: hot and stable]\n[compiling method 0x0ac5190b4d91 <JSFunction hot (sfi = 0xac5190b1571)> (target TURBOFAN_JS), mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x0ac5190b4d91 <JSFunction hot (sfi = 0xac5190b1571)> (target TURBOFAN_JS) - took 0.007, 0.602, 0.008 ms]\n[compiling method 0x0ac5190b4d21 <JSFunction (sfi = 0xac5190b14c9)> (target MAGLEV) OSR, mode: ConcurrencyMode::kSynchronous]\n[completed compiling 0x0ac5190b4d21 <JSFunction (sfi = 0xac5190b14c9)> (target MAGLEV) OSR - took 0.000, 0.157, 0.002 ms]"
+    }
+  ],
+  "rounds_per_fixture": 3,
+  "analysis_runtime": "quench-bench Rust analyzer; rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.1\nLLVM version: 23.1.1",
+  "suite_inputs": [
+    {
+      "path": "quench-bench/jetstream/cli.js",
+      "size_bytes": 5600,
+      "modified_unix_ns": 1792229119091972874,
+      "sha256": "22ee4b987b07940dd7397ed7f88345c71acc415e2549b64bf45ba43f7572e5f0"
+    },
+    {
+      "path": "quench-bench/jetstream/JetStreamDriver.js",
+      "size_bytes": 110633,
+      "modified_unix_ns": 1792229118593919588,
+      "sha256": "f105bddfd402514b2325fe9ea6e1df5ce776a4ad4570a8006c7c8559159440fc"
+    },
+    {
+      "path": "quench-bench/jetstream/utils/params.js",
+      "size_bytes": 8047,
+      "modified_unix_ns": 1792229119770704165,
+      "sha256": "0e9d28c0fd2de5583c64678ffc61307b10d983bcb419fe2e3bb383c8b7ded647"
+    },
+    {
+      "path": "quench-bench/jetstream/utils/shell-config.js",
+      "size_bytes": 2352,
+      "modified_unix_ns": 1792229119770904880,
+      "sha256": "9a83000be5e6526a3c26a414fc3a23043e57ef8e4cd67aaff459066a2c347bca"
+    }
+  ],
+  "bootstrap": {
+    "name": "paired percentile bootstrap of median log-ratios, reported as ratios",
+    "interval_level": 0.95,
+    "replicates": 100000,
+    "base_seed": "0x51a7beefcafe2c31",
+    "resampling": "resample matching round indices jointly for candidate and reference",
+    "statistic": "exp(median(log(candidate / reference)))",
+    "interval": "exponentiated linear-interpolated log-ratio percentiles"
+  },
+  "fixtures": {
+    "quicksort-wasm": {
+      "input_sha256": "9db1f95f13c3d9817439554e7f851465828d58c136f6988bd39fd854a2afa3ec",
+      "paired_rounds": 3,
+      "raw_rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench_indexed_offset_reuse_off",
+            "quench_indexed_offset_reuse_on",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 533204374,
+              "score": 330.18,
+              "peak_rss_bytes": 49381376
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 515876056,
+              "score": 411.13,
+              "peak_rss_bytes": 64565248
+            },
+            "quench_indexed_offset_reuse_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1116065850,
+              "score": 179.36,
+              "peak_rss_bytes": 44875776
+            },
+            "quench_indexed_offset_reuse_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1113727011,
+              "score": 198.98,
+              "peak_rss_bytes": 45281280
+            }
+          }
+        },
+        {
+          "round": 1,
+          "execution_order": [
+            "quench_indexed_offset_reuse_on",
+            "bun",
+            "node",
+            "quench_indexed_offset_reuse_off"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 645929811,
+              "score": 297.41,
+              "peak_rss_bytes": 49397760
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 521001224,
+              "score": 383.12,
+              "peak_rss_bytes": 64798720
+            },
+            "quench_indexed_offset_reuse_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1050640615,
+              "score": 194.34,
+              "peak_rss_bytes": 45088768
+            },
+            "quench_indexed_offset_reuse_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1115772975,
+              "score": 202.02,
+              "peak_rss_bytes": 45277184
+            }
+          }
+        },
+        {
+          "round": 2,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench_indexed_offset_reuse_off",
+            "quench_indexed_offset_reuse_on"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 522959918,
+              "score": 355.16,
+              "peak_rss_bytes": 49434624
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 515072912,
+              "score": 417.43,
+              "peak_rss_bytes": 64299008
+            },
+            "quench_indexed_offset_reuse_off": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1005703520,
+              "score": 226.59,
+              "peak_rss_bytes": 45137920
+            },
+            "quench_indexed_offset_reuse_on": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 1071055897,
+              "score": 196.77,
+              "peak_rss_bytes": 45330432
+            }
+          }
+        }
+      ],
+      "engine_medians": {
+        "bun": {
+          "score": 330.18,
+          "max_rss_bytes": 49397760.0
+        },
+        "node": {
+          "score": 411.13,
+          "max_rss_bytes": 64565248.0
+        },
+        "quench_indexed_offset_reuse_off": {
+          "score": 194.34,
+          "max_rss_bytes": 45088768.0
+        },
+        "quench_indexed_offset_reuse_on": {
+          "score": 198.98,
+          "max_rss_bytes": 45281280.0
+        }
+      },
+      "comparisons": {
+        "quench_indexed_offset_reuse_on_vs_bun": {
+          "candidate_engine": "quench_indexed_offset_reuse_on",
+          "reference_engine": "bun",
+          "score": {
+            "candidate_median": 198.98,
+            "reference_median": 330.18,
+            "median_ratio": 0.6026409837058574,
+            "paired_ratio_interval_95": [
+              0.5540319855839622,
+              0.6792643152550352
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x8d3d2ab0e63bbf0f"
+          },
+          "max_rss": {
+            "candidate_median": 45281280.0,
+            "reference_median": 49397760.0,
+            "median_ratio": 0.916970802919708,
+            "paired_ratio_interval_95": [
+              0.9165837479270315,
+              0.9169773800646284
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x1b7b1b5107064988"
+          }
+        },
+        "quench_indexed_offset_reuse_on_vs_node": {
+          "candidate_engine": "quench_indexed_offset_reuse_on",
+          "reference_engine": "node",
+          "score": {
+            "candidate_median": 198.98,
+            "reference_median": 411.13,
+            "median_ratio": 0.48398316834091404,
+            "paired_ratio_interval_95": [
+              0.4713844237357162,
+              0.5273021507621634
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x28807e035a38a4e2"
+          },
+          "max_rss": {
+            "candidate_median": 45281280.0,
+            "reference_median": 64565248.0,
+            "median_ratio": 0.7013258897418004,
+            "paired_ratio_interval_95": [
+              0.6987357774968395,
+              0.7049942667855778
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x1a9b3ded7248bd89"
+          }
+        },
+        "quench_indexed_offset_reuse_on_vs_quench_indexed_offset_reuse_off": {
+          "candidate_engine": "quench_indexed_offset_reuse_on",
+          "reference_engine": "quench_indexed_offset_reuse_off",
+          "score": {
+            "candidate_median": 198.98,
+            "reference_median": 194.34,
+            "median_ratio": 1.039518369867243,
+            "paired_ratio_interval_95": [
+              0.8683966635773865,
+              1.1093889384478144
+            ],
+            "interval_excludes_tie": false,
+            "seed": "0x6b4c040d5e9fb495"
+          },
+          "max_rss": {
+            "candidate_median": 45281280.0,
+            "reference_median": 45088768.0,
+            "median_ratio": 1.0042649727767694,
+            "paired_ratio_interval_95": [
+              1.0041787790697674,
+              1.0090361445783131
+            ],
+            "interval_excludes_tie": true,
+            "seed": "0x1ba988ed990c872e"
+          }
+        }
+      },
+      "qualified": false
+    }
+  },
+  "qualified": false
+}
