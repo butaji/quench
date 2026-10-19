@@ -201,33 +201,36 @@ impl GenerationalPacing {
     }
 }
 
-/// Production pacing, memory-first on the owner's direction of 2026-10-17 (TOD-123): young
-/// collections every sixty-fourth of a live set (at least 384 weight; from an eighth, with
-/// read-only pages released after every collection: V8-v7 max RSS RegExp 7244-7500 -> 6852
-/// KiB, EarleyBoyer 7792-8000 -> 9040-9160, the floor-bound fixtures unchanged, static
-/// x86_64 unbolted, 2026-10-18; RSS is this lane's only criterion), a full collection once the old
-/// generation has doubled or one live set of allocation has passed since the last one, and,
-/// when more than half of young allocations survive, full collections with one live set
-/// between them, probing survival with a minor collection every fourth one. The minimums are
-/// the pre-generational 384-cell headroom. The Score lane's table (eight live sets per young
-/// collection, four per full one, 2^15 and 2^18 minimums) raised npm peak RSS by up to 17 MiB
-/// per package (semver 27.6 -> 45.2, typescript-eslint 188 -> 226); the owner reaffirmed
-/// memory-first on 2026-10-18.
+/// Production pacing on the JetStream lane (`v2-cloud-jet`), whose target is JetStream score
+/// and max RSS against Bun and Node: the trunk's memory-first ratios (TOD-123) with headroom
+/// minimums sized for allocation-heavy programs. Young collections run every eighth of a
+/// live set, but at least `MINIMUM_YOUNG` allocations apart; a full collection follows once
+/// the old generation has doubled or one live set of allocation has passed since the last
+/// one, but at least `MINIMUM_FULL_INTERVAL` apart; and, when more than half of young
+/// allocations survive, full collections with one live set between them, probing survival
+/// with a minor collection every fourth one. Against the trunk's sixty-fourth and 384-cell
+/// minimums (gc-tuning build, JetStream, Linux x86_64 4 vCPU, 2026-10-19, score / max RSS):
+/// raytrace-public-class-fields 3.15 / 18.0 MB -> 7.00 / 19.3, earley-boyer 15.9 / 25.4 ->
+/// 18.9 / 26.2, splay 29.3 / 52.8 -> 28.0 / 52.8 (within noise). The Score lane's table
+/// (eight and four live sets) reached 7.09 / 31.0 on raytrace and 30.9 / 185 MB on splay,
+/// where Bun without its JIT uses 26.8 and 67.9 MB. Merges from the trunk keep this table
+/// on this lane.
 pub(super) const PRODUCTION_PACING: GenerationalPacing = GenerationalPacing {
-    young: Ratio::new(1, 64),
-    minimum_young: MEMORY_FIRST_MINIMUM_ALLOCATION,
+    young: Ratio::new(1, 8),
+    minimum_young: MINIMUM_YOUNG,
     old_growth: Ratio::new(1, 1),
-    minimum_old_growth: MEMORY_FIRST_MINIMUM_ALLOCATION,
+    minimum_old_growth: MINIMUM_FULL_INTERVAL,
     allocation_cap: Ratio::new(1, 1),
-    minimum_allocation_cap: MEMORY_FIRST_MINIMUM_ALLOCATION,
+    minimum_allocation_cap: MINIMUM_FULL_INTERVAL,
     survival_limit: SURVIVAL_SCALE / 2,
     full_only_headroom: Ratio::new(1, 1),
     probe_interval: 4,
 };
 
-/// The fewest allocations between collections, whatever survived: the pre-generational
-/// minimum headroom.
-const MEMORY_FIRST_MINIMUM_ALLOCATION: usize = 384;
+/// The fewest allocations between collections, whatever survived.
+const MINIMUM_YOUNG: usize = 1 << 15;
+/// The fewest allocations, or old-generation growth, between full collections.
+const MINIMUM_FULL_INTERVAL: usize = 1 << 18;
 
 #[cfg(not(feature = "gc-tuning"))]
 pub(super) fn pacing() -> GenerationalPacing {
