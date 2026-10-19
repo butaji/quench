@@ -2911,6 +2911,28 @@ lane_handler! {
 }
 
 lane_handler! {
+    /// `lane_jump_binary_false` of a register under strict equality against a boolean
+    /// constant (`specialize_register_operands`), the `x !== false` truthiness test of
+    /// compiled code: a boolean strictly equals only itself, which has one encoding, so the
+    /// test is the register's identity with the constant `c` names.
+    fn lane_jump_boolean_false<BACKWARD: bool>(cx, r, ip, i, view) {
+        let Some((true, negated)) = super::operations::equality_operator(u32::from(i.a)) else {
+            return exit(ip);
+        };
+        let constant = if i.c == STRICT_BOOLEAN_TRUE { Value::TRUE } else { Value::FALSE };
+        let equal = r.get(i.b) == constant;
+        if equal == negated {
+            return lane_jump(cx, r, ip, BACKWARD, view, None);
+        }
+        next!(cx, r, following(ip), view)
+    }
+}
+
+/// The boolean a `lane_jump_boolean_false` record compares against, in its `c` field.
+const STRICT_BOOLEAN_FALSE: u16 = 0;
+const STRICT_BOOLEAN_TRUE: u16 = 1;
+
+lane_handler! {
     /// `lane_jump_nullish_false`'s loose test of a heap value outside the records, which only
     /// an [[IsHTMLDDA]] object passes; out of line, so the common tests make no call.
     #[inline(never)]
@@ -5274,10 +5296,34 @@ script_handler! {
         {
             return exit(ip);
         }
-        let Some(target) = lane_script_target(cx, callee).filter(|target| target.constructs)
-        else {
+        // The cached target in place, as a call reads it (`Vm::script_call_entry`); an
+        // uncached callee resolves (`lane_script_target`), after which the construction
+        // retries.
+        let entry = if lane_constructing(vm, callee) { None } else { vm.script_call_entry(callee) };
+        let Some(entry) = entry else {
+            if lane_script_target(cx, callee).is_some_and(|target| target.constructs) {
+                sibling!(lane_script_construct::<H>, r, ip, Carried::script(cx))
+            }
             sibling!(lane_native_construct::<H>, r, ip, Carried::script(cx))
         };
+        // SAFETY: as `Vm::script_call_entry`; the planned construction below resolves no
+        // target, and any other path copies the target first.
+        let target = unsafe { &*entry };
+        if target.entry == CallEntry::Frame || !target.constructs {
+            sibling!(lane_native_construct::<H>, r, ip, Carried::script(cx))
+        }
+        // A planned construction into a register, the common `new C(…)`: the receiver is
+        // the finished object, and the body completed with `undefined`.
+        if target.initializes
+            && i.a & crate::bytecode::RETURN_REGISTER == 0
+            && let Some(this) = lane_planned_construction(vm, callee, r, i)
+        {
+            // Allocating the receiver can make a collection due.
+            note_allocation(vm);
+            r.set(i.a, this);
+            next!(cx, r, following(ip), Carried::script(cx))
+        }
+        let target = *target;
         if target.forwards() {
             // The site constructs a forwarding target: later runs enter the keeping
             // construction directly, which moves the record back for any other target.
@@ -7932,6 +7978,29 @@ fn specialize_register_operands<H: Host>(
                 lane_jump_nullish_false::<H, true>
             } else {
                 lane_jump_nullish_false::<H, false>
+            };
+            record.handler = handler as *const ();
+            record.b = left.payload();
+            record.c = constant;
+            continue;
+        }
+        let boolean = (right_kind == Constant && record.handler != get_index)
+            .then(|| constants.get(usize::from(right.payload())))
+            .flatten()
+            .and_then(|constant| match *constant {
+                Value::TRUE => Some(STRICT_BOOLEAN_TRUE),
+                Value::FALSE => Some(STRICT_BOOLEAN_FALSE),
+                _ => None,
+            })
+            .filter(|_| {
+                super::operations::equality_operator(u32::from(instruction.a()))
+                    .is_some_and(|(strict, _)| strict)
+            });
+        if let Some(constant) = boolean {
+            let handler: Handler = if backward {
+                lane_jump_boolean_false::<H, true>
+            } else {
+                lane_jump_boolean_false::<H, false>
             };
             record.handler = handler as *const ();
             record.b = left.payload();
