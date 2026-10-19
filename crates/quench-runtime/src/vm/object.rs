@@ -771,14 +771,19 @@ impl FieldCacheSet {
             overflow: None,
         }
     }
+    /// The inline entries recorded so far. A walk of `len` entries without a slice bound,
+    /// which would add a panic call to every lane read that inlines it.
+    #[inline(always)]
+    pub(super) fn recorded(&self) -> impl Iterator<Item = &FieldCache> {
+        self.entries.iter().take(usize::from(self.len))
+    }
     #[inline(always)]
     pub(super) fn get(&self, receiver: u32, holder: u32) -> Option<FieldCache> {
         let key = field_cache_key(receiver, holder);
         if let Some(entries) = &self.overflow {
             return entries.get(&key).copied();
         }
-        self.entries[..usize::from(self.len)]
-            .iter()
+        self.recorded()
             .find(|entry| entry.receiver == receiver && entry.holder == holder)
             .copied()
     }
@@ -1202,6 +1207,31 @@ impl<H: Host> Vm<H> {
         object: Value,
         site: u16,
     ) -> Option<Value> {
+        self.polymorphic_field_entries_hit::<true>(p, object, site)
+    }
+
+    /// `polymorphic_field_hit` among the inline entries alone: `None` for a site whose
+    /// entries moved to the hash, which the general cached read (`cached_field_polymorphic_hit`)
+    /// answers. Its probe keeps few values live, so a lane handler inlining it saves no
+    /// registers.
+    #[inline(always)]
+    pub(super) fn inline_polymorphic_field_hit(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        site: u16,
+    ) -> Option<Value> {
+        self.polymorphic_field_entries_hit::<false>(p, object, site)
+    }
+
+    /// `polymorphic_field_hit`, probing the hashed entries where `HASHED`.
+    #[inline(always)]
+    fn polymorphic_field_entries_hit<const HASHED: bool>(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        site: u16,
+    ) -> Option<Value> {
         debug_assert!(self.lane_admits(p));
         let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
         let index = self.field_cache_index(site);
@@ -1214,6 +1244,9 @@ impl<H: Host> Vm<H> {
         let set = unsafe { self.megamorphic_fields.get_unchecked(table_index as usize) };
         let shape = receiver.shape();
         if set.overflow.is_some() {
+            if !HASHED {
+                return None;
+            }
             // The hashed entries: an own one for the receiver's shape, else one for its
             // immediate prototype in an object record. A shape either holds the atom or not,
             // so at most one of the two is recorded; a set of holders alone has no own one.
@@ -1235,7 +1268,7 @@ impl<H: Host> Vm<H> {
             self.profile.field_cache_hit(2, 1);
             return Some(value);
         }
-        for entry in &set.entries[..usize::from(set.len)] {
+        for entry in set.recorded() {
             if entry.receiver != shape {
                 continue;
             }
@@ -1306,8 +1339,8 @@ impl<H: Host> Vm<H> {
         if set.overflow.is_some() {
             return None;
         }
-        let slot = set.entries[..usize::from(set.len)]
-            .iter()
+        let slot = set
+            .recorded()
             .find(|entry| entry.receiver == receiver && entry.holder == NO_FIELD_HOLDER)?
             .slot;
         Some(slot)
