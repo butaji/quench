@@ -4331,6 +4331,12 @@ lane_handler! {
                     std::slice::from_raw_parts(r.0.add(usize::from(window)), usize::from(argc))
                 };
                 vm.pure_string_method_call(code, r.get(i.b), receiver, args)
+                    .or_else(|| {
+                        let matched = vm.pure_regexp_exec(code, r.get(i.b), receiver, args)?;
+                        // The match array and its strings are new cells.
+                        note_allocation(vm);
+                        Some(matched)
+                    })
                     .or_else(|| lane_call_native(cx, r, ip, i))
             }
         };
