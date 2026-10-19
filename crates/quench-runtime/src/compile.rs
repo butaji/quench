@@ -3077,6 +3077,9 @@ impl<'a> Compiler<'a> {
         frame_registers::promote(function, superinstructions, undefined_constant, |atom| {
             self.atoms.get(atom)
         });
+        if self.mode == SpecializationMode::Enabled {
+            rewrite::coalesce_promoted_moves(function, method_sites, field_sites, superinstructions);
+        }
         if function
             .code
             .iter()
