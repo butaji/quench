@@ -1125,11 +1125,9 @@ impl Heap {
     ) -> (ValueVec, [Value; INLINE_PROPERTY_COUNT]) {
         self.properties.assert_shape_length(shape, values.len());
         if inline && values.len() <= INLINE_PROPERTY_COUNT {
-            let mut inline = [Value::UNDEFINED; INLINE_PROPERTY_COUNT];
-            // At most `INLINE_PROPERTY_COUNT` values: element moves, not a `memcpy` call.
-            for (slot, value) in inline.iter_mut().zip(values) {
-                *slot = *value;
-            }
+            // At most `INLINE_PROPERTY_COUNT` values: a loop over the fixed bound unrolls to
+            // element moves, where one over `values` becomes a `memcpy` call.
+            let inline = std::array::from_fn(|slot| values.get(slot).copied().unwrap_or(Value::UNDEFINED));
             (ValueVec::inline_property_storage(shape), inline)
         } else {
             (
