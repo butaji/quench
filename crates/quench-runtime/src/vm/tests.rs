@@ -10794,6 +10794,34 @@ fn lane_closures_share_and_update_their_promoted_environment() {
 }
 
 #[test]
+fn unary_operators_on_literals_fold_to_their_constants() {
+    // `void` of a literal, `!` of a literal and the sign of a number fold at compile time;
+    // signed zero, NaN, BigInt operands and string coercions keep their run-time results.
+    let source = r#"
+      const out = [];
+      const z = -0, m = -(1), p = +2.5, n = -NaN;
+      out.push(Object.is(z, -0), Object.is(-0, 0), m, p, Number.isNaN(n), 1 / -0);
+      out.push(void 0, void "x", void (0), typeof void 0, void 0 === undefined);
+      out.push(!0, !1, !"", !"a", !null, !(0), !NaN, !-0, !!1, !void 0);
+      let x; out.push(x === void 0, x == void 0, x !== void 0);
+      const o = { a: void 0, b: !0, c: !1 }; out.push(JSON.stringify(o), "a" in o, o.a);
+      function f(a = void 0, b = !0) { return [a, b]; } out.push(f().join());
+      out.push([void 0, !0, -1, +3].map(String).join());
+      switch (!0) { case true: out.push("sw"); }
+      out.push(-(-1), !!!0, !(!0), -"3", +"4", !1n, !0n, -(2 ** 2));
+      out.push(typeof -0, (-0).toString(), 1 / (+(-0)));
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    vm.execute(&Engine::specialize(source, "unary-folding.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["true|false|-1|2.5|true|-Infinity||||undefined|true|true|false|true|false|true|true|true|true|true|true|true|true|false|{\"b\":true,\"c\":false}|true||,true|undefined,true,-1,3|sw|1|true|false|-3|4|false|true|-4|number|0|-Infinity"]
+    );
+}
+
+#[test]
 fn lane_arrows_take_this_from_their_environment() {
     // Arrows called as frameless activations read `this` from the environment they
     // closed over: call/apply/bind receivers are ignored, a derived constructor's
