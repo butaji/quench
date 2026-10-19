@@ -6,7 +6,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn diagnostic_object_receiver(&mut self, object: Value) -> String {
         let to_string = self.intern_atom("toString");
         let method = self.diagnostic_data_property(object, PropertyKey::string(to_string));
-        if method.is_some_and(|method| matches!(self.heap.get(method), Some(Cell::Function { kind: FunctionKind::Native(Native::ObjectPrototypeToString), .. }))) {
+        if method.is_some_and(|method| matches!(self.heap.function(method), Some(FunctionRecord { kind: FunctionKind::Native(Native::ObjectPrototypeToString), .. }))) {
             return "#<Object>".to_owned();
         }
         let tag = self.well_known_symbols.get("toStringTag").copied()

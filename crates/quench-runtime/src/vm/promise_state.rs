@@ -4,10 +4,7 @@ use super::*;
 impl<H: Host> Vm<H> {
     /// The state of `promise`, or `None` when the value is not a promise.
     pub(super) fn promise_record(&self, promise: Value) -> Option<&super::promise::PromiseRecord> {
-        match self.heap.get(promise)? {
-            Cell::Promise(promise) => Some(&promise.record),
-            _ => None,
-        }
+        self.heap.promise(promise).map(|promise| &promise.record)
     }
 
     /// The state of `promise` for an update; the heap's write barrier logs the promise, so a
@@ -16,10 +13,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         promise: Value,
     ) -> Option<&mut super::promise::PromiseRecord> {
-        match self.heap.get_mut(promise)? {
-            Cell::Promise(promise) => Some(&mut promise.record),
-            _ => None,
-        }
+        self.heap.promise_mut(promise).map(|promise| &mut promise.record)
     }
 
     pub(super) fn is_promise(&self, value: Value) -> bool {

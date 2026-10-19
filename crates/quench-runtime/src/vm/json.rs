@@ -1102,7 +1102,7 @@ impl<H: Host> Vm<H> {
         if let Some(raw) = self.json_raw_text(value) {
             return Ok(Some(JsonValue::Raw(raw)));
         }
-        if self.heap.object_record(value).is_some() {
+        if self.heap.object_record(value).is_some() || self.heap.promise(value).is_some() {
             return self.json_serialize_object(p, value, state).map(Some);
         }
         if self.heap.array(value).is_some() {
@@ -1114,15 +1114,15 @@ impl<H: Host> Vm<H> {
             Some(Cell::BigInt(_)) => {
                 Err(self.type_error(p, "Do not know how to serialize a BigInt".into()))
             }
-            Some(Cell::Function { .. }) | None => Ok(None),
-            Some(Cell::Array { .. }) => {
-                unreachable!("heap.array classifies live arrays before this match")
+            Some(Cell::Function(_)) | None => Ok(None),
+            Some(Cell::Array { .. } | Cell::Promise(_)) => {
+                unreachable!("heap.array and heap.promise classify their values before this match")
             }
             _ if self.json_raw_text(value).is_some() => {
                 Ok(self.json_raw_text(value).map(JsonValue::Raw))
             }
             _ if self.is_array(p, value)? => self.json_serialize_array(p, value, state).map(Some),
-            Some(Cell::Object(_) | Cell::Promise(_)) => {
+            Some(Cell::Object(_)) => {
                 self.json_serialize_object(p, value, state).map(Some)
             }
             Some(Cell::Proxy { .. })

@@ -54,13 +54,14 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn is_function(&self, value: Value) -> bool {
-        match self.heap.get(value) {
-            Some(Cell::Function { .. }) => true,
-            Some(Cell::Proxy { kind, .. }) => {
-                matches!(kind, ProxyKind::Callable | ProxyKind::Constructor)
-            }
-            _ => false,
-        }
+        self.heap.is_function_value(value)
+            || matches!(
+                self.heap.get(value),
+                Some(Cell::Proxy {
+                    kind: ProxyKind::Callable | ProxyKind::Constructor,
+                    ..
+                })
+            )
     }
 
     #[cfg(feature = "profile-aggregate")]
@@ -462,7 +463,7 @@ impl<H: Host> Vm<H> {
         let callee = self.get_field_cached(p, this, metadata.atom, metadata.cache)?;
         if specialized
             && let Some(guard) = guard
-            && matches!(self.heap.get(callee), Some(Cell::Function { .. }))
+            && self.heap.is_function_value(callee)
             && let Ok(target) = self.call_target(callee)
         {
             let cache_proto = if guard.depth == 0 { this } else { proto };

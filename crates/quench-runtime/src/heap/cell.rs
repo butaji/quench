@@ -1244,7 +1244,9 @@ const PROTO_UNDEFINED: u32 = PROTO_INDEX_BITS - 1;
 pub(crate) const MAX_HEAP_CELLS: usize = 1 << 27;
 const PROTO_OBJECT_RECORD_BASE: u32 = MAX_HEAP_CELLS as u32;
 const PROTO_ARRAY_RECORD_BASE: u32 = PROTO_OBJECT_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
-const PROTO_RECORD_END: u32 = PROTO_ARRAY_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
+const PROTO_FUNCTION_RECORD_BASE: u32 = PROTO_ARRAY_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
+const PROTO_PROMISE_RECORD_BASE: u32 = PROTO_FUNCTION_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
+const PROTO_RECORD_END: u32 = PROTO_PROMISE_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
 const _: () = assert!(PROTO_RECORD_END <= PROTO_UNDEFINED);
 const OBJECT_ARRAY: u32 = 1 << 28;
 const OBJECT_INLINE_STORAGE: u32 = 1 << 29;
@@ -1595,6 +1597,8 @@ impl Object {
             }
             Some(HeapReference::ObjectRecord(id)) => PROTO_OBJECT_RECORD_BASE + id,
             Some(HeapReference::ArrayRecord(id)) => PROTO_ARRAY_RECORD_BASE + id,
+            Some(HeapReference::FunctionRecord(id)) => PROTO_FUNCTION_RECORD_BASE + id,
+            Some(HeapReference::PromiseRecord(id)) => PROTO_PROMISE_RECORD_BASE + id,
             None if proto.is_null() => PROTO_NULL,
             None => {
                 debug_assert!(proto.is_undefined(), "a prototype is an object or null");
@@ -1611,9 +1615,15 @@ impl Object {
             index if index < PROTO_ARRAY_RECORD_BASE => {
                 Value::direct_object(index - PROTO_OBJECT_RECORD_BASE)
             }
+            index if index < PROTO_FUNCTION_RECORD_BASE => {
+                Value::direct_array(index - PROTO_ARRAY_RECORD_BASE)
+            }
+            index if index < PROTO_PROMISE_RECORD_BASE => {
+                Value::direct_function(index - PROTO_FUNCTION_RECORD_BASE)
+            }
             index => {
                 debug_assert!(index < PROTO_RECORD_END);
-                Value::direct_array(index - PROTO_ARRAY_RECORD_BASE)
+                Value::direct_promise(index - PROTO_PROMISE_RECORD_BASE)
             }
         }
     }
@@ -2504,24 +2514,25 @@ impl IteratorExt {
     }
 }
 
-/// A function's ordinary object and creation realm. The realm rides in the box, which
-/// calls already reach through property and prototype reads, so the cell keeps four words.
+/// A function: its ordinary object, creation realm, code and closure environment. The
+/// heap keeps it in the function record family (`Heap::function`), where a dead closure
+/// costs its occupancy bit; a heap whose record range is unavailable boxes it in a
+/// `Cell::Function` slot.
 #[derive(Clone, Debug)]
-pub(crate) struct FunctionObject {
+pub(crate) struct FunctionRecord {
     pub(crate) object: Object,
     pub(crate) realm: Value,
+    pub(crate) env: Value,
+    pub(crate) kind: FunctionKind,
 }
 
-impl std::ops::Deref for FunctionObject {
-    type Target = Object;
-    fn deref(&self) -> &Object {
-        &self.object
-    }
-}
-
-impl std::ops::DerefMut for FunctionObject {
-    fn deref_mut(&mut self) -> &mut Object {
-        &mut self.object
+impl FunctionRecord {
+    /// The program whose code this function runs, which keeps that program alive.
+    pub(crate) fn program(&self) -> Option<ProgramId> {
+        match self.kind {
+            FunctionKind::User(program, _) | FunctionKind::NumericUser(program, _) => Some(program),
+            FunctionKind::Native(_) => None,
+        }
     }
 }
 
@@ -2720,11 +2731,8 @@ pub(crate) enum Cell {
         target: Value,
         handler: Value,
     },
-    Function {
-        object: Box<FunctionObject>,
-        kind: FunctionKind,
-        env: Value,
-    },
+    /// A function where no function record is available (`FunctionRecord`).
+    Function(Box<FunctionRecord>),
     BindingReference {
         environment: Value,
         slot: u16,
@@ -2865,7 +2873,7 @@ impl Cell {
             Self::ArrayFromAsyncState(_) => "array_from_async_state",
             Self::AwaitState(_) => "await_state",
             Self::Proxy { .. } => "proxy",
-            Self::Function { .. } => "function",
+            Self::Function(_) => "function",
             Self::BindingReference { .. } => "binding_reference",
             Self::Environment { .. } => "environment",
             Self::WasmBits64(_) => "wasm_bits64",
@@ -2903,10 +2911,7 @@ impl Cell {
     /// a user function's code, an environment's scope, a suspended generator.
     pub(crate) fn program_references(&self, mut visit: impl FnMut(ProgramId)) {
         match self {
-            Self::Function {
-                kind: FunctionKind::User(program, _) | FunctionKind::NumericUser(program, _),
-                ..
-            } => visit(*program),
+            Self::Function(function) => function.program().into_iter().for_each(&mut visit),
             Self::Environment { scope, .. } => {
                 if let Some(program) = scope.program() {
                     visit(ProgramId::from_raw(program));
